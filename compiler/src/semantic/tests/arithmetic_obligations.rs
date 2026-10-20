@@ -798,6 +798,25 @@ fn a_call_bridge_domain_retains_one_exact_goal_and_ordered_component_parents() {
                 ..
             }
         ));
+        // [ENT-3.S16] supplies the header bound directly to L0, so both
+        // components now discharge through the canonical normalization.
+        // Pin its goal, sign and ordered component proofs, not just the
+        // aggregate's one normalization parent.
+        let [normalization] = parents.as_slice() else {
+            panic!("the aggregate retains one complete normalization");
+        };
+        let DerivationNode::GoalNormalization {
+            goal: normalized_goal,
+            sign,
+            clause,
+            parents,
+        } = &walk.entailment.derivations.nodes[normalization.0 as usize]
+        else {
+            panic!("the finite L0 route retains its normalization");
+        };
+        assert_eq!(normalized_goal, goal);
+        assert_eq!(*sign, super::super::entailment::GoalSign::Positive);
+        assert_eq!(*clause, 0);
         assert_eq!(parents.len(), 2, "upper component precedes lower component");
         assert_eq!(domain.components.len(), 2);
         let lower = domain.components[1];

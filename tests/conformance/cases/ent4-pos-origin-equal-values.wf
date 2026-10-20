@@ -1,0 +1,19 @@
+fn same(first: u64, second: u64) -> r: unit pure contract {
+  requires first == second;
+} {
+  doc "Consume the equality of two still-equivalent evaluated values.";
+  return unit;
+}
+
+fn witness(x: u64) -> r: unit pure {
+  doc "Identical valid definitions connect facts on separate evaluated bindings.";
+  let first = iand(x, 1_u64);
+  let second = iand(x, 1_u64);
+  same(first: first, second: second);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Check the ordinary function body.";
+  return std::process::exit_status(code: 0_u8);
+}

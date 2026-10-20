@@ -546,6 +546,37 @@ direction for it is the join, [direction A1](#direction-a1-reduce-or-demand-the-
 Gate run 37834305243 at `2e21e2c90` confirms unchanged conformance and corpus
 verdicts and the full-rebuild differentials.
 
+## Promotion after Halo's regression
+
+A Halo-wf bisect on the 14900K (runs 37880685345 and 37882393995, the same
+Halo sources, 6 rounds with a twin) placed a 12-13% slower check of Halo's
+`pkg::vm` (9.16 s to 10.29 s) on the demanded index alone; the handler-word
+change merged with it does not affect checking. The suspect was the final
+AUTO family: exhausting it discovered up to N^2 vectors and each cold vector
+demand scanned all N left candidates, cubic per exhausted family. The index
+now builds the complete strongest-vector map once per residency when the
+final family is entered or when cold demands reach the candidate count, so
+later present and absent demands are lookups; the map equals the eager
+builder's, which remains the tests' oracle.
+
+Observed on the 14900K:
+
+| workload | base | head | head/base | twin/base | run |
+|---|---:|---:|---:|---:|---|
+| Halo `--check-module pkg::vm` (Halo main `d116d6a`) | 10.265 s | 8.575 s | 0.835 | 1.002 | Halo-wf 37887766480 |
+| natural wasm interpreter | 3.490 s | 3.460 s | 0.991 | 0.999 | Whitefoot 37887782082 |
+| plain series, 640 arms | 16.065 s | 16.215 s | 1.009 | 1.009 | Whitefoot 37887782082 |
+
+Base is main `64c0f956d` (release `wf-64c0f956df63`), head the promotion
+change (`wf-exp-1b988b826eab` for Halo). Halo's check is now faster than
+before the demanded index (9.1-9.2 s), and the wasm interpreter keeps its
+gain; the natural input here is a later `gen.py` output than the earlier
+table's, so only ratios compare. `WHITEFOOT_CHECK_WORK` on Halo's check under
+the head counts 12,803 affine attempts, 11,244 memo hits, 11,012 final-family
+starts of which 10,982 exhausted, 5,417 cold demands, 154,433 left candidates
+scanned and 216 promotions: nearly every final-family entry fails, the shape
+that made the lazy path cubic.
+
 ## Lazy-index read-only review and remaining evidence
 
 A separate read-only GPT-6-based Codex agent reviewed
@@ -573,3 +604,259 @@ family cost are recorded above; performance remains unverified. D1, T1, V3 and
 new verification-stage T8 are not applicable. Design-lint counts and readiness
 are unverified. The reviewer used source/Git reads and official GitHub
 reference lookup, with no execution of builds, tests, checks or measurements.
+
+
+## Halo's profile and the first cost reductions
+
+Question: can shared syntax preparation, indexed argument provenance and one
+small allocation removal reduce package checking without changing any verdict,
+diagnostic text, diagnostic order or source attribution? The supplied analysis
+(`sol-costnext.txt`, sections 4, 1 and 3) selects these first reductions from
+[Halo-wf profile run 37893283903](https://github.com/Ming-Research/Halo-wf/actions/runs/37893283903).
+Its manifest pins Halo source `98114a4ded00351391ca092848178e68a3af768b`, compiler
+`wf-exp-1b988b826eab`, DWARF call graphs and a plain check of 8.542 s on the
+14900K. These are baseline observations, not measurements of this change.
+
+| Profile entry | Inclusive CPU share | Self share |
+|---|---:|---:|
+| Syntax view construction / path sorting / destruction | 4.88% / 1.92% / 1.18% | — |
+| Declaration reads | 6.69% | 0.06% |
+| Descendant traversal | 3.74% | 3.43% |
+| Generic template validation | 15.23% | 0.00% |
+| Generic substitution / binding-site recording | 2.79% / 2.17% | 0.06% / 2.03% |
+| Frontier join with transport | 18.31% | 0.00% |
+| Vector growth / libc realloc / memmove | 7.58% / 6.13% / 4.51% | — / — / 4.51% |
+
+The analysis transcribed declaration reads as 6.74%; the supplied
+`children-full.txt:53` says 6.69%, used here. Inclusive entries overlap and are
+not a partition of a phase or additive savings. The exports lack complete
+caller trees, particularly allocator stacks; they do not attribute the growth
+share to `BoundStore::slots_for`.
+
+- **A — syntax preparation.** `DeclarationReads` builds item adjacency,
+  module membership and module roots once for the target and its dependency
+  queries over one resolved unit. Each query keeps its own visited set.
+  `SyntaxView` constructs paths on the first path request and the sorted
+  reverse index only on its first lookup; path components reserve the known
+  tree depth. The immutable syntax is their only input. Those reductions left
+  descendant DFS unchanged: finalized node IDs are postorder, while its result
+  is preorder;
+  an indexed replacement needs an additional ordered subtree representation,
+  beyond these local setup changes. No semantic judgments are cached.
+- **B — provenance.** A nested hash index keys the complete region-free
+  substitution and parameter key, retaining exactly the smallest source-node
+  index. Binding order, argument kinds and group-member identity remain part
+  of equality. The map is never iterated to choose a diagnostic. Substitution
+  preparation and every semantic judgment still run as before.
+- **C — allocation.** The at-most-two missing terms in `BoundStore::slots_for`
+  use a stack array and populated slice, retaining sort order and duplicate
+  elimination. Bulk layout changes are deferred: copying selected cells and
+  extra candidates is wider work with no caller-level allocation attribution.
+
+The new Rust tests are implementation checks in the existing unit-test gate:
+A compares every lazy path and reverse lookup against an eager child-walk
+oracle on empty, sibling and nested syntax, including both first-request
+orders; reversed components or sorting by node ID fail it. Its four-module
+fixture asserts explicit direct and transitive read sets, repeats queries in
+reverse order, and distinguishes unused declarations and an empty module;
+sharing visited state across queries fails it. No fixture declaration is
+reached only through a provisional contract use, so that adjacency input,
+carried unchanged from the per-module construction, is not tested here.
+B repeats and reorders registrations from two call sites with equal arguments
+and different region axes, checking independent parameters and fallback for
+other arguments; keeping the first/last registration or keying regions fails
+it. C inserts both missing endpoints in reverse order on append and relayout,
+plus equal, one-missing and existing endpoints, asserting slots, ordered cells,
+selected proofs and clone independence; dropping an endpoint, failing to sort
+or failing to deduplicate fails it. Existing bound-store candidate/transition,
+generic source-order, interface-fingerprint and cold/warm driver tests remain.
+
+Validation: the gate passed on the changed compiler (run 37897424627 at
+`555a926b5`); later commits change only this record and leave
+`docs/todo.md` as the base has it. Timing used the base/twin/head protocol
+above on the 14900K with counters unset, six rotating rounds, base
+`wf-exp-5f1c70cd829a` (the tree of main `c35fffd73`) and head
+`wf-exp-555a926b5fbc`, the twin a byte copy of base:
+
+| Input | Base median | Head median | Twin/base | Head/base | Run |
+|---|---:|---:|---:|---:|---|
+| Halo `pkg::vm` (Halo-wf main source) | 8.701 s (range 1.11%) | 7.729 s (range 1.35%) | 1.001 | 0.888 | Halo-wf 37903060714 |
+| Natural wasm interpreter (v2h) | 3.460 s | 3.435 s | 0.994 | 0.993 | Whitefoot 37901726190 |
+| Plain series, 640 arms | 16.165 s | 16.175 s | 0.990 | 1.001 | same |
+| Plain series, 320 arms | 1.585 s [1.570, 1.600] | 1.620 s [1.610, 1.630] | 0.997 | 1.022 | same |
+| Plain series, 40-160 arms | 0.010-0.220 s | equal | 1.000 | 1.000 | same |
+
+Halo's check falls by 11.2%: every head round (7.70-7.80 s) lies below
+every base and twin round (8.63-8.73 s). The panel does not apportion the
+saving among the three reductions. The v2h and 640-arm
+results are within twin spread, as expected: their time is in the affine
+index and joins, which these changes do not touch, and the series still
+grows about tenfold per doubling. The 320-arm head rounds lie above every
+base round by about 2% while 160 and 640 arms show no difference; the cause
+is unexplained and no consumer of that size is known, so it is recorded
+rather than attributed. Allocation savings are not attributed separately.
+
+
+An independent read-only Codex reviewer (inherited model; exact identifier
+unavailable) inspected `c35fffd731118da889bc3c6298402f8dc470aeec` through this
+working diff, all changed files, direct consumers, relevant specification and
+design commitments, and the tests' failure conditions. It found none within
+that scope: A4, D2, C4, T4–T6, G1–G3 and DC1–DC3 passed source inspection;
+DC4 and all executable validation, design-lint counts/readiness and performance
+remain unverified. The tests' claimed mutation failures are by inspection,
+not executed results. D1, T1, T7, T8 and V3 are not applicable to this diff.
+
+## The second profile and three further reductions
+
+Question: do direct declaration lookup, indexed syntax descendants and reusable
+coefficient storage reduce Halo's package check while preserving every verdict,
+diagnostic, selected proof and source attribution? Compare unchanged Halo source
+with base/twin/head on the 14900K; reject the performance hypothesis if head does
+not improve beyond paired base/twin variation. The supplied `sol-next.txt`
+analysis of [Halo-wf run 37906684746](https://github.com/Ming-Research/Halo-wf/actions/runs/37906684746)
+uses `wf-exp-555a926b5fbc` on the 14900K; check without perf is 7.750 s.
+These profile shares overlap and must not be added or read as predicted savings.
+
+| Profile entry | Inclusive share | Self share |
+|---|---:|---:|
+| Effect projection (`effect_paths_for_place`) | 3.81% | 3.44% |
+| Syntax descendants | 4.32% | 4.04% |
+| Affine target / candidate residual proof | 12.80% / 11.77% | — |
+| Residual formation | 3.02% | 1.04% |
+| Join transport / frontier sealing | 22.09% / 21.87% | — |
+| L0 join orchestration / `join_at_once` | 5.41% / 4.68% | — / 0.48% |
+| Closure globally / predecessor closure within `join_at_once` | 9.38% / 0.45% | — |
+| Kills / pre-kill materialization / all materialization | 7.10% / 5.63% / 7.49% | — |
+| Contributing-input clone / all flow clones / all bound-store clones | 0.42% / 1.00% / 0.57% | — |
+
+At least approximately 16.68 percentage points of transport lie outside
+`join_at`; loop relation proving has a 13.04% global share, without isolated
+frontier ancestry. Global memmove (4.26%) and bulk layout (0.93% inclusive)
+do not establish join-specific savings. Kills and materialization are adjacent
+flow work, not direct join calls. These observations do not select the deferred
+A1 join redesign.
+
+1. Effect projection, captured-parameter classification and atomic-binder
+   classification use the dense declaration accessor, which returns the record
+   formerly found by equality scan. Binding search, capture validity, missing
+   records and path conversion retain their behavior.
+2. The syntax view lazily builds strict subtree intervals and production lists
+   in preorder. Queries slice those lists without walking the subtree, exclude
+   their root and retain discovery order despite postorder NodeIds. Consumers
+   keep their calls. The additional design line is proposed; the index contains
+   written syntax only.
+3. Pair formation borrows its premises and reuses two coefficient buffers.
+   Candidate residuals and their at-most-two tightenings reuse query-local
+   buffers. Interval requests read the already canonical coefficient order.
+   Checked operations, limits, candidate/tightening order and selected parents
+   remain in their former sequence; no proof-answer cache is added. Buffer
+   growth, proof-parent vectors and unchanged L0 preparation can still allocate.
+   The certificate's initial owned residual remains to preserve its diagnostic
+   formation order; automatic-premise collection and other owning arithmetic
+   consumers remain outside this change.
+
+Unit tests retain the old declaration scan for every role and absent identity;
+compare cold and warm descendants with an independent child walk over nested,
+sibling, empty and repeated-production syntax; and compare affine arithmetic,
+candidate traces, source choices and selected parents with the allocating paths.
+Wrong dense lookup or role classification, root inclusion, NodeId sorting,
+stale scratch after a failed candidate, regrouped MIN cancellation, dropped
+formation limits, reordered tightenings and later-witness selection each have
+an assertion that distinguishes them. Existing proof-family fixtures now also
+compare the old traversal, including DIRECT and the final L0 family. These
+failure conditions are established by inspection, not executed mutations.
+
+Validation: the gate passed at `a71229fea` (run 37915524732); no
+specification or conformance verdict changes. Timing used the same protocol on
+the 14900K (Hyper-V guest, before its native reinstall), six rotating rounds of
+Halo's `pkg::vm` check on Halo-wf main 638acad (Halo-wf run 37990719861): base
+`wf-exp-df58869aecb0` (the first three reductions on main 21823ee86), head
+`wf-exp-a71229fea094` (these three on top), twin a byte copy of base.
+
+| Variant | Median | Range | Ratio to base |
+|---|---:|---:|---:|
+| base | 7.165 s | 1.67% | 1.000 |
+| head | 6.358 s | 1.16% | 0.887 |
+| twin | 7.168 s | 0.74% | 1.000 |
+
+Every head round (6.35-6.42 s) lies below every base and twin round
+(7.12-7.24 s): the three reductions cut Halo's check by 11.3%. The panel does
+not apportion the saving among them, and the wasm interpreter and arm series
+were not re-timed for this round.
+
+An independent read-only completion review (inherited model; exact identifier
+unavailable) covered the complete working diff against `df58869aec` and its
+direct consumers, applicable A/D/C/T/V checks and G1–G3/DC1–DC4. It found two
+issues, both fixed and re-inspected: the declaration test now calls the actual
+checker methods, and the copied affine reference uses the correct work-counter
+module path. No findings remain within that source-inspection scope; executable
+preservation and DC4's validation evidence remain unverified. A subsequent local
+allocation repair uses `reserve_exact` in the shared merge so existing owning
+callers retain the former initial capacity request; its arithmetic and limits
+are unchanged. This repair was inspected by the implementing agent.
+
+## The many-arm join: implicit-bound evidence
+
+**Question and criterion, fixed before this round.** The arm series (one
+`set v = i` per arm, joined after the `match`) still grew about tenfold per
+doubling after the on-demand index ([14900K timing results](#14900k-timing-results)).
+The status board's acceptance, written on 2026-10-09 before this work: on the
+14900K, with the same base/twin/head comparison, each doubling of the series
+grows the check time by at most 2.5 times, every verdict is unchanged, and
+the eager-join differential holds.
+
+**Attribution by work counters.** `WHITEFOOT_CHECK_WORK` on a hosted
+ubuntu-24.04 runner (Whitefoot run 38138266398, compiler of main 4ad4f5786)
+shows one join per series input, with N inputs, N+2 union rows and every one
+of the (N+2)² evaluated pairs retained. Parent references equal
+N·((N+2)²−2), N parents on all but two pairs (33,178,240 at 320 arms;
+263,783,680 at 640), and the join's ledger interning
+is about three times that (789,297,920 at 640). Each arm's assignment creates
+a commit value known only in that arm, so almost every pair joins to the
+bound the two terms' types imply, yet received a proof with N parents. The
+stage-3 interpreter (`nat.wf`) differs: 1,441 small joins (at most 62 rows)
+and 292,117 join interns out of 4,164,570; its cost lies elsewhere.
+
+**Change.** A join stops scanning a pair once one contributing input reaches
+the exact implicit-only closed bound (the full implicit component closure)
+and records implicit evidence instead of a join node with every predecessor
+as a parent; stronger bounds keep their complete predecessor evidence
+(design/compiler/incremental-closure.md). Bounded relation delivery had
+skipped a candidate by inspecting its proof ancestry; ENT-5 selects delivered
+relations by derivability in the closed state and DIAG-2 lets a redundant
+delivery root be absent, so delivery now omits a substituted candidate
+exactly when the implicit closure derives it (design/compiler/checker-facts.md).
+A delivery root that was redundant can therefore disappear; no closed state
+or verdict changes.
+
+**Counters after the change** (Whitefoot run 38141481679, same inputs): at
+640 arms parent references 410,880 and join interns 2,460,798; at 320 arms
+103,040 and 615,998. Parent references now equal N·(N+2), quadratic in N,
+while the (N+2)² evaluated pairs remain. For
+`nat.wf` parent references fall from 311,524 to 179,966 while join interns
+rise from 292,117 to 545,647 (implicit evidence nodes and derivability
+queries).
+
+**14900K timing** (Whitefoot run 38142600594, 2026-10-11; base = main
+4ad4f5786, twin = a byte copy of base, head = e517e7a47 carrying this change;
+six rotating rounds; `whitefootc --check`, one process at a time, no host
+setting changed; every binary exited 0 on every input):
+
+| Input (`--check`) | Base median (s) | Twin / base | Head median (s) | Head / base | Head range over 6 rounds (s) |
+|---|---:|---:|---:|---:|---|
+| Arm series, 160 arms | 0.261 | 1.015 | 0.036 | 0.138 | 0.034–0.042 |
+| Arm series, 320 arms | 1.800 | 1.000 | 0.081 | 0.045 | 0.078–0.085 |
+| Arm series, 640 arms | 17.392 | 1.000 | 0.253 | 0.015 | 0.249–0.267 |
+| Stage-3 interpreter, `nat.wf` | 3.827 | 0.993 | 3.835 | 1.002 | 3.818–3.872 |
+| Halo `pkg::vm` (Halo-wf 3ec418a72) | 2.657 | 1.006 | 2.599 | 0.978 | 2.559–2.620 |
+
+**Result against the criterion.** The cubic term is gone: 640 arms check in
+0.015 of the base time. The head grows 2.25 times from 160 to 320 arms and
+3.12 times from 320 to 640, so the 2.5-times criterion holds for the first
+doubling and fails for the second; what remains is enumerating the (N+2)²
+pairs. The interpreter is unchanged within the twin's spread, and Halo's
+check is 2.2% faster with all six head rounds below the base median. The
+timing covers these three inputs on one machine. Meeting the criterion at
+640 arms needs a join that enumerates only the pairs default values cannot
+reconstruct (correlated zero bounds and disequalities are its open
+obligations).

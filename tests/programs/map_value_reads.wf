@@ -1,0 +1,69 @@
+const key_bytes: Array<u8, 2> =[97_u8, 98_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  doc "Separate whole-map value reads release a present entry before the next read or keyed update, and an absent entry stays absent.";
+  let map = shared_map_new::<u64>(capacity: 2_u64);
+  let present_key = &key_bytes[0_u64..1_u64];
+  let absent_key = &key_bytes[1_u64..2_u64];
+  atomic slot = &map[present_key] {
+    set slot^ = Some<u64>(value: 17_u64);
+  }
+  let first = None<u64>();
+  atomic t = &map {
+    let copied = t^[present_key];
+    set first = copied;
+  }
+  let second = None<u64>();
+  atomic t = &map {
+    set second = t^[present_key];
+  }
+  match first {
+    Some(value: found) => {
+      if found != 17_u64 {
+        return std::process::exit_status(code: 1_u8);
+      }
+    }
+    None() => {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  match second {
+    Some(value: found) => {
+      if found != 17_u64 {
+        return std::process::exit_status(code: 3_u8);
+      }
+    }
+    None() => {
+      return std::process::exit_status(code: 4_u8);
+    }
+  }
+  atomic slot = &map[present_key] {
+    set slot^ = Some<u64>(value: 23_u64);
+  }
+  let updated = None<u64>();
+  atomic t = &map {
+    set updated = t^[present_key];
+  }
+  match updated {
+    Some(value: found) => {
+      if found != 23_u64 {
+        return std::process::exit_status(code: 5_u8);
+      }
+    }
+    None() => {
+      return std::process::exit_status(code: 6_u8);
+    }
+  }
+  let missing = Some<u64>(value: 99_u64);
+  atomic t = &map {
+    set missing = t^[absent_key];
+  }
+  match missing {
+    Some(value: unexpected) => {
+      return std::process::exit_status(code: 7_u8);
+    }
+    None() => {
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

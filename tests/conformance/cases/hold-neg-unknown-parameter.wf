@@ -1,0 +1,5 @@
+fn observe(value: &u64) -> result: u64 reads(value) contract {
+  requires held(missing);
+} {
+  return value^;
+}

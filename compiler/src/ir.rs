@@ -175,6 +175,8 @@ impl IrAddressed {
 /// rediscovers it, and no lowering may infer one action from a type shape.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum IrReleaseClass {
+    /// [SHARE-1] release a frozen handle; the last handle releases the value.
+    Frozen,
     /// A free to the general store the run was taken from.
     General,
 }
@@ -290,95 +292,58 @@ pub(crate) fn type_derives_release(
     elements: &[IrType],
     ty: IrType,
 ) -> Option<bool> {
-    let nominal_kind = |id: IrNominalId| nominals.get(id.index()).map(IrNominal::kind);
-    let mut pending = vec![ty];
-    let mut visited = std::collections::HashSet::new();
-    while let Some(current) = pending.pop() {
-        if !visited.insert(current) {
-            continue;
-        }
-        match current {
-            // A runtime-capacity block is one heap object the owner frees
-            // [TYPE-9, STOR-3], so it always derives a release.
-            IrType::Buffer { .. }
-            | IrType::Segments { .. }
-            | IrType::Window {
-                capacity: None, ..
-            } => return Some(true),
-            // A key set's store is the runtime's, which its release frees
-            // [SHARE-1].
-            IrType::KeySet => return Some(true),
-            // A constant-capacity window reclaims nothing of its own; it
-            // still needs a walk when its slots hold values that derive one,
-            // and [PROV-6] visits those before the block is released.
-            IrType::Array { element, .. }
-            | IrType::Window {
-                element,
-                capacity: Some(_),
-                ..
-            } => {
-                pending.push(*elements.get(element.index())?);
-            }
-            // S39 a cell needs a release exactly when its own storage or
-            // its referent does: a bump extent's cell whose referent derives
-            // nothing needs no walk at all.
-            IrType::Nominal(id)
-                if matches!(
-                    nominal_kind(id),
-                    Some(IrNominalKind::Box {
-                        release: IrReleaseClass::General,
-                        ..
-                    })
-                ) =>
-            {
-                return Some(true);
-            }
-            IrType::Nominal(id)
-                if matches!(nominal_kind(id), Some(IrNominalKind::Box { .. })) =>
-            {
-                let Some(IrNominalKind::Box { referent, .. }) = nominal_kind(id) else {
-                    return None;
-                };
-                pending.push(*referent);
-            }
-            IrType::Nominal(id) => match nominal_kind(id)? {
+    crate::release::has_release(ty, crate::release::ReleaseQuery::Scope, |current| {
+        use crate::release::ReleaseShape;
+        Ok::<_, ()>(match current {
+            IrType::KeySet => ReleaseShape::KeySet,
+            IrType::Nominal(id) => match nominals.get(id.index()).ok_or(())?.kind() {
+                IrNominalKind::Box { .. } => ReleaseShape::Box,
+                IrNominalKind::Shared { .. } => ReleaseShape::Shared,
                 IrNominalKind::Struct { fields } => {
-                    pending.extend(fields.iter().map(IrField::ty));
+                    ReleaseShape::Owned(fields.iter().map(IrField::ty).collect())
                 }
-                IrNominalKind::Enum { variants } => {
-                    pending.extend(
-                        variants
-                            .iter()
-                            .flat_map(IrVariant::fields)
-                            .map(IrField::ty),
-                    );
-                }
-                // A handle's release releases a share of its object, and the
-                // last one its state [SHARE-1].
-                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
-                    return Some(true);
-                }
-                // Ordinary opaque values have empty release [PRE-1].
-                IrNominalKind::Opaque => {}
+                IrNominalKind::Enum { variants } => ReleaseShape::Owned(
+                    variants
+                        .iter()
+                        .flat_map(IrVariant::fields)
+                        .map(IrField::ty)
+                        .collect(),
+                ),
+                IrNominalKind::Opaque => ReleaseShape::Empty,
             },
-            IrType::Unit
+            IrType::Window {
+                shape: IrWindowShape::Paged,
+                ..
+            } => ReleaseShape::Paged,
+            IrType::Array { element, length } => ReleaseShape::Repeated {
+                element: *elements.get(element.index()).ok_or(())?,
+                statically_empty: length == 0,
+                runtime_backing: false,
+            },
+            IrType::Window {
+                element, capacity, ..
+            } => ReleaseShape::Repeated {
+                element: *elements.get(element.index()).ok_or(())?,
+                statically_empty: capacity == Some(0),
+                runtime_backing: capacity.is_none(),
+            },
+            IrType::Buffer { element } | IrType::Segments { element } => ReleaseShape::Repeated {
+                element: *elements.get(element.index()).ok_or(())?,
+                statically_empty: false,
+                runtime_backing: true,
+            },
+            IrType::Entries { element } | IrType::Run { element } | IrType::Range { element } => {
+                ReleaseShape::Borrowed(*elements.get(element.index()).ok_or(())?)
+            }
+            IrType::Address(_)
+            | IrType::RuntimeBoxPayload { .. }
+            | IrType::Unit
             | IrType::Bool
             | IrType::Integer { .. }
-            | IrType::Float { .. }
-            // [REF-4, TYPE-8] a range reference is a name for elements it
-            // does not own, so nothing of it is ever released.
-            | IrType::Run { .. }
-            | IrType::Range { .. }
-            // A synthesized payload capture borrows the source Box allocation
-            // and never carries ownership or cleanup authority.
-            | IrType::RuntimeBoxPayload { .. }
-            // The entries an entry binding names are its statement's record,
-            // which owns nothing [SHARE-2].
-            | IrType::Entries { .. }
-            | IrType::Address(_) => {}
-        }
-    }
-    Some(false)
+            | IrType::Float { .. } => ReleaseShape::Empty,
+        })
+    })
+    .ok()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -418,10 +383,8 @@ pub enum IrNominalKind {
     },
     Box {
         referent: IrType,
-        /// [PROV-6, S39] which release action this cell's own reclamation is.
-        /// The ambient-heap `box<T>` [STOR-1] and a `Box<'s, T>` at a general
-        /// store both free their cell; a `Box<'s, T>` at a bump extent is
-        /// reclaimed by its region's own reset and has no action of its own.
+        /// [PROV-6, STOR-3, SHARE-1] owned-cell or frozen-handle release.
+        /// Frozen content is immutable and released only by its last handle.
         release: IrReleaseClass,
     },
     /// An ordinary opaque nominal supplied by PRE-1.
@@ -768,11 +731,60 @@ impl IrRuntimeTargetObligations {
 /// The [MSR-1] measure one reader row loads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrMeasure {
+    /// Heap bytes retained by a KeySet.
+    Bytes,
     /// Number of pages holding initialized elements.
     Pages,
     Length,
     Capacity,
     Head,
+}
+
+impl IrMeasure {
+    /// A declared [PRE-1, MSR-1] measure fixed by the source type.
+    /// Its readonly reference may share immutable target storage [STOR-7].
+    pub(crate) const fn type_constant(self, ty: IrType) -> Option<u64> {
+        match (self, ty) {
+            (Self::Length, IrType::Array { length, .. }) => Some(length),
+            (
+                Self::Capacity,
+                IrType::Window {
+                    capacity: Some(capacity),
+                    ..
+                },
+            ) => Some(capacity),
+            _ => None,
+        }
+    }
+
+    /// The actual descriptor word of a declared [PRE-1, MSR-2] measure.
+    /// Type-constant fields use immutable target storage instead, and
+    /// [MSR-1] derived observations never name addressable descriptor storage.
+    pub(crate) const fn descriptor_field(self, ty: IrType) -> Option<u32> {
+        match (self, ty) {
+            (Self::Length, IrType::Buffer { .. } | IrType::Segments { .. } | IrType::KeySet)
+            | (Self::Length, IrType::Window { .. }) => Some(0),
+            (Self::Length, IrType::Entries { .. }) => Some(2),
+            (Self::Capacity, IrType::Window { capacity: None, .. }) => Some(1),
+            (
+                Self::Head,
+                IrType::Window {
+                    shape: IrWindowShape::Ring,
+                    capacity: Some(_),
+                    ..
+                },
+            ) => Some(1),
+            (
+                Self::Head,
+                IrType::Window {
+                    shape: IrWindowShape::Ring,
+                    capacity: None,
+                    ..
+                },
+            ) => Some(2),
+            _ => None,
+        }
+    }
 }
 
 /// Which of [BLK-3]'s four boundary operations one run operation is.
@@ -803,6 +815,9 @@ impl IrBoundary {
 pub enum IrPlaceStep {
     /// A field of directly stored nominal content.
     Field { nominal: IrNominalId, field: u32 },
+    /// A declared readonly [PRE-1, MSR-2] field, using immutable target
+    /// storage when its value is fixed by the source type.
+    Measure { measure: IrMeasure },
     /// The allocation payload reached through a stored Box owner slot.
     BoxReferent { nominal: IrNominalId },
     /// One payload field of an enum in directly addressed storage.
@@ -851,6 +866,61 @@ pub enum IrWorkEstimate {
     Difference(Box<Self>, Box<Self>),
     /// The divisor is a positive compiler constant.
     Quotient(Box<Self>, u64),
+}
+
+/// [SHARE-3] A wake test: a condition over one object target's state that
+/// the statement's guard implies, which the runtime evaluates for the watch
+/// after a statement writes the object (compiler/waiting-contexts/state-locks).
+///
+/// `values[0]` is the address of the target's state; every other value is a
+/// scalar's address in that state or an operand the registration captures,
+/// which atoms name by position. `program` combines the atoms in postfix
+/// order. A guard that implies nothing checkable has no test.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrWakeTest {
+    pub(crate) values: Vec<IrValueId>,
+    pub(crate) atoms: Vec<IrWakeAtom>,
+    pub(crate) program: Vec<IrWakeCode>,
+}
+
+/// One comparison of a wake test: the scalar at `field`'s address against
+/// `operand`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IrWakeAtom {
+    pub(crate) field: usize,
+    pub(crate) comparison: IrWakeComparison,
+    pub(crate) operand: IrWakeOperand,
+}
+
+/// The right side of a wake atom, by position in [`IrWakeTest`]'s values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrWakeOperand {
+    /// A value of the scalar's type, captured when the watch registers.
+    Value(usize),
+    /// The address of another scalar of the same type in the same state.
+    Field(usize),
+}
+
+/// A wake atom's comparison, with the scalar on the left.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrWakeComparison {
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+}
+
+/// One postfix code of a wake test's program.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrWakeCode {
+    /// The value of the atom at this position.
+    Atom(u8),
+    /// Both of the two values before.
+    And,
+    /// Either of the two values before.
+    Or,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -911,7 +981,7 @@ pub enum IrOperation {
         operation: IrBooleanOperation,
         arguments: Vec<IrValueId>,
     },
-    EnumEquality {
+    ValueEquality {
         equal: bool,
         operand_type: IrType,
         arguments: [IrValueId; 2],
@@ -1146,6 +1216,21 @@ pub enum IrOperation {
         end: IrValueId,
         private_type: IrType,
     },
+    /// A singleton block-pointer directory borrowing the source allocation.
+    /// Split sites replace it with one separately allocated block per leaf.
+    IndexedBlocks {
+        address: IrValueId,
+    },
+    /// Borrow the first block of a leaf's directory (also the sequential root).
+    IndexedBlock {
+        blocks: IrValueId,
+    },
+    /// Rebuild the borrowed argument's fixed ancestor slots around private
+    /// blocks. No ownership or cleanup authority passes to the callee.
+    IndexedReference {
+        original: IrValueId,
+        roots: Vec<IrIndexedRootReference>,
+    },
     SliceMeasure {
         slice: IrValueId,
     },
@@ -1182,6 +1267,16 @@ pub enum IrOperation {
     SharedNew {
         nominal: IrNominalId,
     },
+    /// [PRE-1] an Open one-shot decision cell with one shared handle.
+    DecisionCellNew {
+        nominal: IrNominalId,
+    },
+    /// [SHARE-3] an independent cell observation or single-attempt claim.
+    /// `winner` is None for a read, 1 for Written and 2 for Killed.
+    DecisionCell {
+        object: IrValueId,
+        winner: Option<u32>,
+    },
     /// The address of the state of the shared object `object` names. Defines
     /// an address of the nominal's state type.
     SharedState {
@@ -1194,6 +1289,11 @@ pub enum IrOperation {
         nominal: IrNominalId,
         object: IrValueId,
     },
+    /// Native snapshot signal preparation before any atomic acquisition.
+    /// Erased when the composition uses no snapshot export.
+    SnapshotAtomicBegin,
+    /// Activates prepared captures after all atomic targets are released.
+    SnapshotAtomicEnd,
     /// [SHARE-2, SHARE-3] waits until this context holds the object alone.
     /// Defines `Unit`.
     SharedAcquire {
@@ -1207,14 +1307,18 @@ pub enum IrOperation {
         object: IrValueId,
     },
     /// [SHARE-3] a guard read false: gives up the hold and waits until a
-    /// statement that writes the object ends. Defines `Unit`.
+    /// statement that writes the object ends, leaving `test`, when there is
+    /// one, possibly true. Defines `Unit`.
     SharedWatch {
         object: IrValueId,
+        test: Option<IrWakeTest>,
     },
     /// [SHARE-3] gives up this context's hold, after a statement that may
-    /// have written the object. Defines `Unit`.
+    /// have written the object when `wrote`, and otherwise after one whose
+    /// block writes nothing through it. Defines `Unit`.
     SharedUnlock {
         object: IrValueId,
+        wrote: bool,
     },
     /// [SHARE-1] a new shared map object of `nominal`, whose entries are
     /// `Option<V>`, sized for `capacity` keys and holding none. Defines its
@@ -1223,13 +1327,28 @@ pub enum IrOperation {
         nominal: IrNominalId,
         capacity: IrValueId,
     },
+    /// Fills target `index` of a type group's record: its object, its
+    /// table hold when it is a map, and, for an ordinary object, whether the
+    /// statement's block or guard may write it, so that the group's release
+    /// gives it up as written only then [SHARE-3]. Defines `Unit`.
     AtomicGroupTarget {
         record: IrRecord,
         index: u32,
         object: IrValueId,
         hold: Option<IrRecord>,
+        wrote: bool,
     },
+    /// [SHARE-2, SHARE-3] takes every target of a type group, as
+    /// `SharedTake` does, for a statement already holding an earlier group.
+    /// Defines `Unit`.
     AtomicGroupTake {
+        record: IrRecord,
+    },
+    /// [SHARE-2, SHARE-3] takes every target of the statement's first type
+    /// group: waits, as `SharedAcquire` does, until this context holds the
+    /// group's first object, suspending with nothing held, and then takes
+    /// the others. Defines `Unit`.
+    AtomicGroupAcquire {
         record: IrRecord,
     },
     AtomicGroupRelease {
@@ -1262,6 +1381,15 @@ pub enum IrOperation {
         count: IrValueId,
         set: IrValueId,
     },
+    /// [SHARE-1] a scan whose peak heap growth is at most `limit`.
+    /// Defines the prelude `ScanStep` enum, Next(cursor) or Needs(bytes).
+    ConcurrentHashMapScanWithin {
+        table: IrValueId,
+        cursor: IrValueId,
+        count: IrValueId,
+        limit: IrValueId,
+        set: IrValueId,
+    },
     /// [SHARE-1] makes every entry of the table `table` `None`; the values
     /// they held are released once the statement holding the table gives
     /// its hold up. Defines `Unit`.
@@ -1269,7 +1397,7 @@ pub enum IrOperation {
         table: IrValueId,
     },
     /// [SHARE-3] locks the entry under the bytes the range `key` names in the
-    /// table `table`, creating it holding `None` when absent, and keeps the
+    /// table `table`, creating it holding `None` when absent only if `inserts`, and keeps the
     /// lock in `record`; with `read`, beside the other statements that only
     /// read it. Defines `Unit`; [`Self::TableEntrySlot`] reads the entry's
     /// address.
@@ -1278,6 +1406,7 @@ pub enum IrOperation {
         table: IrValueId,
         key: IrValueId,
         read: bool,
+        inserts: bool,
         stable_absence: bool,
     },
     /// The address of the entry the lock in `record` holds, an `Option<V>` of
@@ -1378,6 +1507,11 @@ pub enum IrOperation {
         set: IrValueId,
         key: IrValueId,
     },
+    /// [SHARE-1] reads the heap bytes held by the set's storage, including
+    /// unused allocated capacity. Defines `u64`, an execution input [WAIT-2].
+    KeySetBytes {
+        set: IrValueId,
+    },
     /// [SHARE-1] copies the first bytes of the key at `index` of the set
     /// `set` addresses into the range `out`, as many as both lengths allow.
     /// Defines `u64`, the key's length.
@@ -1392,10 +1526,12 @@ pub enum IrOperation {
         record: IrRecord,
     },
     /// Watches the object `object` names for a statement that writes its
-    /// state outside its tables. Defines `Unit`.
+    /// state outside its tables and leaves `test`, when there is one,
+    /// possibly true. Defines `Unit`.
     WatchObject {
         record: IrRecord,
         object: IrValueId,
+        test: Option<IrWakeTest>,
     },
     /// Watches the table `table` for a statement that writes an entry of it
     /// or holds it whole. Defines `Unit`.
@@ -1521,6 +1657,23 @@ pub struct IrIndexedReduction {
     pub count: usize,
     pub projection: IrIndexedProjection,
     pub kind: IrIndexedFamilyKind,
+    /// None denotes the established dense family slab. Root-shaped families
+    /// share `capture` and `private` with every family in the same owner.
+    pub root: Option<IrIndexedRoot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrIndexedRoot {
+    pub block_type: IrType,
+    /// Fixed fields from the owning block to this Array or Slots root.
+    pub fields: Vec<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrIndexedRootReference {
+    pub block: IrValueId,
+    /// Typed path from the actual reference to the block's owning place.
+    pub path: Vec<IrPlaceStep>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1543,9 +1696,24 @@ pub enum IrIndexedFamilyKind {
 
 impl IrIndexedReduction {
     pub(crate) fn private_type(&self) -> IrType {
+        if self.root.is_some() {
+            return self.projection.value_type;
+        }
         match self.kind {
             IrIndexedFamilyKind::Reduce { .. } => self.projection.value_type,
             IrIndexedFamilyKind::Mark { .. } => IrType::Bool,
+        }
+    }
+
+    pub(crate) fn private_identity(&self) -> IrConstant {
+        match self.kind {
+            IrIndexedFamilyKind::Reduce { identity, .. } => identity,
+            IrIndexedFamilyKind::Mark { constant } if self.root.is_some() => match constant {
+                IrConstant::Bool(value) => IrConstant::Bool(!value),
+                IrConstant::Integer { ty, bits } => IrConstant::Integer { ty, bits: bits ^ 1 },
+                _ => unreachable!("checked indexed marks are integer or Bool"),
+            },
+            IrIndexedFamilyKind::Mark { .. } => IrConstant::Bool(false),
         }
     }
 }
@@ -1638,6 +1806,23 @@ impl IrMatchTarget {
     }
 }
 
+/// One exact integer constant selection, retaining the scrutinee's integer
+/// representation rather than projecting an enum tag.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IrIntegerMatchTarget {
+    pub(crate) value: i128,
+    pub(crate) block: IrBlockId,
+}
+
+impl IrIntegerMatchTarget {
+    pub const fn value(self) -> i128 {
+        self.value
+    }
+    pub const fn block(self) -> IrBlockId {
+        self.block
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrTerminator {
     /// A checker-proved uninhabited function body. The function keeps its
@@ -1652,6 +1837,12 @@ pub enum IrTerminator {
         scrutinee: IrValueId,
         enum_type: IrEnumType,
         targets: Vec<IrMatchTarget>,
+    },
+    IntegerMatch {
+        scrutinee: IrValueId,
+        targets: Vec<IrIntegerMatchTarget>,
+        /// The checked else arm; None means complete type-domain coverage.
+        default: Option<IrBlockId>,
     },
     Return {
         value: IrValueId,
@@ -1719,6 +1910,9 @@ pub enum RecursionBudget {
 /// block of one function. The compute scheduler may hand out every member but
 /// the last, runs that source-last member on the calling lane, and joins the
 /// handed-out calls before any value use or block exit.
+/// Independent non-call statements between members keep their instruction
+/// positions on the calling lane, inside that window. They neither add a
+/// member nor move the join beyond the last call.
 ///
 /// The group is a permission the target stage may take, never an obligation:
 /// a target that hands nothing out emits exactly the sequential code, because
@@ -1871,6 +2065,16 @@ pub struct IrFunction {
     /// writes and by-value consumption throughout the call. Scheduling uses
     /// those checked facts without inferring new lifetimes.
     pub(crate) readonly_reference_parameters: Vec<IrValueId>,
+    /// Ordinary reference formals with a bare-root declared `reads` entry.
+    /// EFF-1 covers their complete supplied state, including every descendant
+    /// header word; absence of writes is a separate fact above. Narrow rows
+    /// need not cover every implicit descriptor access.
+    pub(crate) whole_read_reference_parameters: Vec<IrValueId>,
+    /// Ordinary reference formals with a bare-root declared `writes` entry.
+    /// Together with another formal's complete read coverage, EFF-5 separates
+    /// each actual header store from every read carrying that formal's scope.
+    /// Compiler-synthesized functions receive neither complete-state fact.
+    pub(crate) whole_write_reference_parameters: Vec<IrValueId>,
     /// Original reference formals whose every declared write lies below the
     /// referent's `Box` content (a path starting with `.inner`), copied from
     /// checked effects, so a call cannot replace the box the formal reaches.
@@ -1882,6 +2086,8 @@ pub struct IrFunction {
     /// Only calls lowered from checked source; synthesized calls do not
     /// acquire invented source use or provenance records.
     pub(crate) source_calls: Vec<IrSourceCall>,
+    /// Developer-only atomic acquisition lines, recorded during lowering.
+    pub(crate) lock_ledger: Vec<String>,
     pub(crate) result: IrType,
     pub(crate) values: Vec<IrType>,
     pub(crate) blocks: Vec<IrBlock>,

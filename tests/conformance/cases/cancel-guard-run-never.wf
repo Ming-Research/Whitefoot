@@ -1,0 +1,26 @@
+struct Views {
+  first: SharedRead<std::time::CancelState>;
+  second: SharedRead<std::time::CancelState>;
+}
+
+fn never_views() -> result: Views pure {
+  let never = std::time::cancel_never();
+  let first = std::time::cancel_state(watch: &never);
+  let second = std::time::cancel_state(watch: &never);
+  return Views(first: move first, second: move second);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let views = never_views();
+  let Views(first: first, second: second) = move views;
+  let source = std::time::cancel_source();
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  atomic one = &first, two = &second {
+    let fired = bor(one^.fired, two^.fired);
+    if fired {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

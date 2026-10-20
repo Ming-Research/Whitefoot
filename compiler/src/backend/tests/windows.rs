@@ -46,22 +46,37 @@ use crate::target::{
 
 use super::system::with_ir;
 use super::*;
+use crate::{IrInstruction, IrOperation, IrType};
 
-/// The baseline clears the complete empty-window representation, including
-/// every descriptor word. This checks the shared row, not its callers.
-fn assert_empty_window_zeroed(module: &str, row: &str, header_fields: usize) {
+/// Only descriptor words may be stored by an empty-window constructor.
+/// Inspect the shared row: callers use the same ordinary construction body.
+fn assert_empty_window_headers(module: &str, row: &str, header_fields: usize, capacity: usize) {
     let body = emitted_prelude_row(module, row);
     assert!(!body.contains("poison"), "{body}");
     assert!(!body.contains("undef"), "{body}");
-    let store = body
+    assert!(!body.contains("zeroinitializer"), "{body}");
+    assert!(!body.contains("@llvm.mem"), "{body}");
+    assert!(!body.contains("@memset"), "{body}");
+    let stores = body
         .lines()
         .map(str::trim)
-        .find(|line| line.ends_with(" zeroinitializer, ptr %wf.result"))
-        .expect("the complete empty window is initialized in its result destination");
-    assert!(
-        store.starts_with(&format!("store {{ {}[", "i64, ".repeat(header_fields))),
-        "the zero aggregate includes every descriptor word before its slots: {body}"
-    );
+        .filter(|line| line.starts_with("store "))
+        .collect::<Vec<_>>();
+    assert_eq!(stores.len(), header_fields, "{body}");
+    for (field, store) in stores.into_iter().enumerate() {
+        let address = store
+            .strip_prefix("store i64 0, ptr ")
+            .expect("one zero header word");
+        assert!(
+            body.lines().any(|line| {
+                line.trim().starts_with(&format!(
+                    "{address} = getelementptr inbounds {{ {}[{capacity} x ",
+                    "i64, ".repeat(header_fields)
+                )) && line.ends_with(&format!(", ptr %wf.result, i32 0, i32 {field}"))
+            }),
+            "header store must address the expected word, not an element: {body}"
+        );
+    }
 }
 
 const U64_RUNTIME_WINDOW: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
@@ -159,9 +174,15 @@ fn slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap() {
 
 #[test]
 fn empty_fixed_windows_initialize_descriptors_before_return() {
-    let source = br#"fn main() -> status: std::process::ExitStatus pure {
-  let slots = slots_new::<Array<u64, 32>, 4>();
-  let ring = ring_new::<Array<u64, 32>, 4>();
+    let source = br#"struct Frame {
+  first: u32;
+  second: u32;
+  third: u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slots = slots_new::<Frame, 64>();
+  let ring = ring_new::<Frame, 64>();
   if slots.len != 0_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -175,12 +196,398 @@ fn empty_fixed_windows_initialize_descriptors_before_return() {
 }
 "#;
     let module = compile(source);
-    assert_empty_window_zeroed(&module, "slots_new", 1);
-    assert_empty_window_zeroed(&module, "ring_new", 2);
+    assert!(
+        module
+            .lines()
+            .any(|line| line.ends_with(" = type { i32, i32, i32 }"))
+    );
+    assert_empty_window_headers(&module, "slots_new", 1, 64);
+    assert_empty_window_headers(&module, "ring_new", 2, 64);
     let output = compile_and_run(&module);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+/// The zero branch reaches only the pointer phi and return; initialization
+/// and Array element stores must stay on the allocating path.
+fn assert_shared_empty_construction(body: &str, stores: usize) {
+    let lines = body.lines().collect::<Vec<_>>();
+    let phi = lines
+        .iter()
+        .position(|line| line.contains(" = phi ptr [ @wf__empty_window, %"))
+        .expect("capacity zero returns the shared header");
+    let empty = lines[phi]
+        .split_once("[ @wf__empty_window, %")
+        .unwrap()
+        .1
+        .split_once(" ]")
+        .unwrap()
+        .0;
+    let empty_block = lines
+        .iter()
+        .position(|line| *line == format!("{empty}:"))
+        .expect("the empty path has its own block");
+    let jump = lines[empty_block + 1].trim();
+    let join = jump.strip_prefix("br label %").expect("empty path jumps");
+    assert!(
+        lines[empty_block + 2].ends_with(':'),
+        "empty path contains only its jump: {body}"
+    );
+    assert_eq!(lines[phi - 1], format!("{join}:"), "{body}");
+    let zero = lines
+        .iter()
+        .position(|line| line.contains(" = icmp eq i64 ") && line.ends_with(", 0"))
+        .expect("construction tests its count");
+    assert!(
+        lines[..zero].iter().all(|line| {
+            !line.trim().starts_with("store ")
+                && !line.contains("@wf__heap_take")
+                && !line.contains("@llvm.mem")
+        }),
+        "construction has no writes or allocation before testing zero: {body}"
+    );
+    let predicate = lines[zero].trim().split_once(" = ").unwrap().0;
+    assert!(
+        lines[zero + 1]
+            .trim()
+            .starts_with(&format!("br i1 {predicate}, label %{empty}, label %")),
+        "zero count takes the empty branch: {body}"
+    );
+    assert!(
+        lines[phi + 1..].iter().all(|line| {
+            !line.trim().starts_with("store ")
+                && !line.contains("@wf__heap_take")
+                && !line.contains("@llvm.mem")
+        }),
+        "{body}"
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.trim().starts_with("store i64 "))
+            .count(),
+        stores,
+        "the allocating path retains its header and element stores: {body}"
+    );
+}
+
+#[test]
+fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
+    for shape in ["slots", "ring"] {
+        let source = format!(
+            "fn main() -> status: std::process::ExitStatus pure {{\n  doc \"Zero-capacity construction and empty transfers must never write the shared header.\";\n  let source = box_{shape}_new::<u64>(capacity: 0_u64);\n  let destination = box_{shape}_new::<u64>(capacity: 0_u64);\n  let array = box_array_filled::<u64>(count: 0_u64, value: 7_u64);\n  append(destination: &destination.inner, source: &source.inner);\n  split_off(source: &source.inner, index: 0_u64, destination: &destination.inner);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        let module = compile(source.as_bytes());
+        assert!(module.contains("@wf__empty_window = external constant [64 x i8], align 64"));
+        assert_shared_empty_construction(
+            emitted_prelude_row(&module, &format!("box_{shape}_new")),
+            if shape == "slots" { 2 } else { 3 },
+        );
+        assert_shared_empty_construction(emitted_prelude_row(&module, "box_array_filled"), 2);
+        for row in ["append", "split_off"] {
+            let body = emitted_prelude_row(&module, row);
+            let lines = body.lines().collect::<Vec<_>>();
+            let mut in_transfer = false;
+            let element_transfer = lines
+                .iter()
+                .map(|line| {
+                    if line.starts_with("  ; layout-bounded transfer from ") {
+                        in_transfer = true;
+                    }
+                    let inside = in_transfer;
+                    if line.starts_with("  ; end layout-bounded transfer from ") {
+                        in_transfer = false;
+                    }
+                    inside
+                })
+                .collect::<Vec<_>>();
+            let header_store = |index: usize| {
+                !element_transfer[index] && lines[index].trim().starts_with("store i64 ")
+            };
+            let zero = lines
+                .iter()
+                .position(|line| line.contains(" = icmp eq i64 ") && line.ends_with(", 0"))
+                .expect("transfer tests the moved count");
+            let count = lines[zero]
+                .split_once(" = icmp eq i64 ")
+                .unwrap()
+                .1
+                .strip_suffix(", 0")
+                .unwrap();
+            assert!(
+                lines[zero - 1]
+                    .trim()
+                    .starts_with(&format!("{count} = sub i64 ")),
+                "{body}"
+            );
+            let predicate = lines[zero].trim().split_once(" = ").unwrap().0;
+            let branch = lines[zero + 1].trim();
+            let tail = branch
+                .strip_prefix(&format!("br i1 {predicate}, label %"))
+                .expect("zero branch");
+            let (done, head) = tail.split_once(", label %").unwrap();
+            assert!(done.starts_with("run.move.done."), "{body}");
+            assert!(head.starts_with("run.move.head."), "{body}");
+            let done = lines
+                .iter()
+                .position(|line| *line == format!("{done}:"))
+                .unwrap();
+            assert!(
+                lines[done + 1..]
+                    .iter()
+                    .all(|line| !line.contains("store ") && !line.contains("@llvm.mem")),
+                "{body}"
+            );
+            assert_eq!(
+                (0..lines.len())
+                    .filter(|&index| header_store(index))
+                    .count(),
+                2,
+                "{body}"
+            );
+            let commit = lines
+                .iter()
+                .position(|line| line.ends_with(".commit:"))
+                .expect("positive transfer commits its headers");
+            assert!(
+                (0..commit).all(|index| !header_store(index)),
+                "header stores occur only after positive transfer: {body}"
+            );
+            assert_eq!(
+                (commit + 1..done)
+                    .filter(|&index| header_store(index))
+                    .count(),
+                2,
+                "{body}"
+            );
+            assert!(
+                body.contains("@llvm.memmove") || element_transfer.contains(&true),
+                "positive transfers still move their elements: {body}"
+            );
+        }
+    }
+}
+
+/// One compilation covers recursive layout selection and initialization
+/// boundaries; its native run checks the shifted byte/window sentinels.
+#[test]
+fn aggregate_construction_omits_only_copied_window_fields() {
+    let source = br#"struct Holder {
+  prefix: u64;
+  slots: Slots<u32, 64>;
+  suffix: Array<u64, 2>;
+}
+
+struct Outer {
+  value: Holder;
+  marker: u64;
+}
+
+struct Many {
+  values: Array<Slots<u32, 64>, 2>;
+  marker: u64;
+}
+
+enum Product {
+  Active(value: Holder);
+  Empty();
+}
+
+enum Choice {
+  Active(prefix: u64, value: Slots<u32, 64>, marker: u64);
+  Other(bytes: Array<u64, 64>);
+}
+
+struct Plain {
+  values: Array<u64, 2>;
+  marker: u64;
+}
+
+struct BytePrefix {
+  first: u8;
+  second: u8;
+  third: u8;
+  fourth: u8;
+  fifth: u8;
+}
+
+enum ByteChoice {
+  ByteActive(prefix: BytePrefix, value: Slots<u8, 4>, suffix: u8);
+  ByteOther(bytes: Array<u8, 32>);
+}
+
+fn byte_choice(value: Slots<u8, 4>) -> result: ByteChoice pure {
+  let prefix = BytePrefix(first: 129_u8, second: 193_u8, third: 251_u8, fourth: 131_u8, fifth: 197_u8);
+  return ByteChoice::ByteActive(prefix: prefix, value: move value, suffix: 253_u8);
+}
+
+fn holder() -> result: Holder pure {
+  let slots = slots_new::<u32, 64>();
+  let suffix = array_filled::<u64, 2>(value: 73_u64);
+  return Holder(prefix: 11_u64, slots: move slots, suffix: suffix);
+}
+
+fn outer(value: Holder) -> result: Outer pure {
+  return Outer(value: move value, marker: 17_u64);
+}
+
+fn many(values: Array<Slots<u32, 64>, 2>) -> result: Many pure {
+  return Many(values: move values, marker: 19_u64);
+}
+
+fn product(value: Holder) -> result: Product pure {
+  return Product::Active(value: move value);
+}
+
+fn empty_product() -> result: Product pure {
+  return Product::Empty();
+}
+
+fn choice(value: Slots<u32, 64>) -> result: Choice pure {
+  return Choice::Active(prefix: 23_u64, value: move value, marker: 29_u64);
+}
+
+fn other() -> result: Choice pure {
+  let bytes = array_filled::<u64, 64>(value: 31_u64);
+  return Choice::Other(bytes: bytes);
+}
+
+fn plain() -> result: Plain pure {
+  let values = array_filled::<u64, 2>(value: 37_u64);
+  return Plain(values: values, marker: 41_u64);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let bytes = slots_new::<u8, 4>();
+  place_back(window: &bytes, value: 171_u8);
+  place_back(window: &bytes, value: 173_u8);
+  let packed = byte_choice(value: move bytes);
+  match move packed {
+    ByteActive(prefix: p, value: v, suffix: s) => {
+      if p.first != 129_u8 {
+        return std::process::exit_status(code: 1_u8);
+      }
+      if p.second != 193_u8 {
+        return std::process::exit_status(code: 2_u8);
+      }
+      if p.third != 251_u8 {
+        return std::process::exit_status(code: 3_u8);
+      }
+      if p.fourth != 131_u8 {
+        return std::process::exit_status(code: 4_u8);
+      }
+      if p.fifth != 197_u8 {
+        return std::process::exit_status(code: 5_u8);
+      }
+      if s != 253_u8 {
+        return std::process::exit_status(code: 6_u8);
+      }
+      if v.len == 2_u64 {
+        if v[0_u64] != 171_u8 {
+          return std::process::exit_status(code: 7_u8);
+        }
+        if v[1_u64] != 173_u8 {
+          return std::process::exit_status(code: 8_u8);
+        }
+        return std::process::exit_status(code: 0_u8);
+      }
+      return std::process::exit_status(code: 9_u8);
+    }
+    ByteOther(..) => {
+      return std::process::exit_status(code: 10_u8);
+    }
+  }
+}
+"#;
+    let module = compile(source);
+    let zero_stores = |name| {
+        emitted_body(&module, name)
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains(" zeroinitializer, ptr "))
+            .map(|line| line.split_once(", ptr ").expect("store address").0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        zero_stores("holder"),
+        [
+            "store i64 zeroinitializer",
+            "store [2 x i64] zeroinitializer"
+        ]
+    );
+    assert_eq!(zero_stores("outer"), ["store i64 zeroinitializer"]);
+    assert_eq!(zero_stores("many"), ["store i64 zeroinitializer"]);
+    assert_eq!(zero_stores("product"), ["store i8 zeroinitializer"]);
+    // A byte tag and five prefix bytes put the copied window at [8, 24).
+    // A stale synthetic u32 tag instead puts it at [16, 32), so these
+    // intervals discriminate the initializer's layout from target emission.
+    // BytePrefix's own construction initializes its five-byte value; the
+    // enum's two byte intervals still exclude exactly the copied window.
+    let prefix_zero = format!("store {} zeroinitializer", nominal_type("BytePrefix"));
+    assert_eq!(
+        zero_stores("byte_choice"),
+        [
+            prefix_zero.as_str(),
+            "store [8 x i8] zeroinitializer",
+            "store [16 x i8] zeroinitializer"
+        ]
+    );
+    let byte_choice = emitted_body(&module, "byte_choice");
+    let prefix_destination = byte_choice
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&format!("{prefix_zero}, ptr "))
+        })
+        .expect("the prefix has its own zero initializer");
+    assert_ne!(prefix_destination, "%wf.result", "{byte_choice}");
+    assert!(
+        byte_choice.lines().any(|line| {
+            let Some(definition) = line
+                .trim()
+                .strip_prefix(&format!("{prefix_destination} = "))
+            else {
+                return false;
+            };
+            definition.starts_with("alloca ")
+                || (definition.starts_with("getelementptr ")
+                    && definition.contains(", ptr %wf.frame,"))
+        }),
+        "the prefix initializer addresses local backing, not the enum result: {byte_choice}"
+    );
+    for offset in [0, 24] {
+        assert!(byte_choice.lines().any(|line| {
+            line.contains("getelementptr inbounds i8, ptr %wf.result")
+                && line.ends_with(&format!(", i64 {offset}"))
+        }), "{byte_choice}");
+    }
+    // The union is 520 bytes (tag, padding, 64 u64s). Its active window
+    // occupies [16, 280): retain both the prefix and all inactive suffix.
+    assert_eq!(
+        zero_stores("choice"),
+        [
+            "store [16 x i8] zeroinitializer",
+            "store [240 x i8] zeroinitializer"
+        ]
+    );
+    let choice = emitted_body(&module, "choice");
+    for offset in [0, 280] {
+        assert!(
+            choice.lines().any(
+                |line| line.contains("getelementptr inbounds i8, ptr %wf.result")
+                    && line.ends_with(&format!(", i64 {offset}"))
+            ),
+            "{choice}"
+        );
+    }
+    for name in ["empty_product", "other", "plain"] {
+        let stores = zero_stores(name);
+        assert_eq!(stores.len(), 1, "{name}: {stores:?}");
+        assert!(stores[0].starts_with("store %wf.t."), "{name}: {stores:?}");
+    }
+    let output = compile_and_run(&module);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
 /// A take changes the descriptor even when no element bytes exist. Ring's
@@ -389,8 +796,8 @@ fn main() -> status: std::process::ExitStatus pure {
         );
         module
     });
-    assert_empty_window_zeroed(&module, "slots_new", 1);
-    assert_empty_window_zeroed(&module, "ring_new", 2);
+    assert_empty_window_headers(&module, "slots_new", 1, 0);
+    assert_empty_window_headers(&module, "ring_new", 2, 0);
     let observed = super::owned_places::retain_calls(&module)
         .replace("@wf__heap_take(", "@wf_observe_window_allocate(");
     let observer = r#"
@@ -812,7 +1219,11 @@ fn range_references_cross_helpers_without_transferring_ownership() {
         .collect::<Vec<_>>();
     assert_eq!(exits.len(), 6);
     for exit in exits {
-        assert_eq!(exit.matches("call void @wf__heap_give").count(), 2, "{exit}");
+        assert_eq!(
+            exit.matches("call void @wf__heap_give").count(),
+            2,
+            "{exit}"
+        );
     }
     assert_eq!(main.matches("call void @wf__heap_give").count(), 12);
     assert!(main.contains("call i8 @wf_fill"));
@@ -914,7 +1325,7 @@ fn a_referenced_pool_tree_preserves_range_reference_and_result_abi() {
         (build, build_body, "build", 3),
         (checksum, checksum_body, "checksum", 2),
     ] {
-        register_result_type(&llvm, function, &["i32", "i64", "i32"]);
+        register_result_type(&llvm, function, &["i8", "i64", "i8"]);
         let header = function.lines().next().expect("helper signature");
         assert!(
             header.contains(&format!(" @wf_{name}(ptr noalias nonnull ")),
@@ -945,7 +1356,7 @@ fn a_referenced_pool_tree_preserves_range_reference_and_result_abi() {
         }
         // The body's destination still receives the tag, u64 success
         // payload and three-variant PoolError, each written on its route.
-        assert_scalar_result_fields(&llvm, body, &["i32", "i64", "i32"]);
+        assert_scalar_result_fields(&llvm, body, &["i8", "i64", "i8"]);
     }
     for definition in [build, build_body] {
         assert!(
@@ -984,7 +1395,11 @@ fn a_referenced_pool_tree_preserves_range_reference_and_result_abi() {
         .collect::<Vec<_>>();
     assert_eq!(exits.len(), 5);
     for exit in exits {
-        assert_eq!(exit.matches("call void @wf__heap_give").count(), 2, "{exit}");
+        assert_eq!(
+            exit.matches("call void @wf__heap_give").count(),
+            2,
+            "{exit}"
+        );
     }
     assert_eq!(main.matches("call void @wf__heap_give").count(), 10);
 }
@@ -1165,7 +1580,26 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("captured pointer definition")
         .trim();
     assert!(guard < captured && captured < rhs && rhs < store);
-    assert_eq!(update[guard..rhs].matches(" = load ptr, ptr ").count(), 1);
+    // Bounded copies of Columns load both Box fields too. Count reads of
+    // the captured field address, whose result the target chain below uses;
+    // the two Columns GEPs above still forbid reevaluating that projection.
+    let load_prefix = " = load ptr, ptr ";
+    let field = update[captured + load_prefix.len()..]
+        .lines()
+        .next()
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap();
+    assert_eq!(
+        update
+            .lines()
+            .filter_map(|line| line.split_once(load_prefix))
+            .filter(|(_, operand)| operand.split(',').next() == Some(field))
+            .count(),
+        1,
+        "the target's Box pointer is loaded once: {update}"
+    );
     let address = update[captured..rhs]
         .lines()
         .find_map(|line| {
@@ -1195,6 +1629,9 @@ fn main() -> status: std::process::ExitStatus pure {
             .lines()
             .next()
             .unwrap()
+            .split(", !tbaa !")
+            .next()
+            .unwrap()
             .ends_with(&format!("ptr {target}"))
     );
     assert!(!update[rhs..store].contains("load ptr, ptr "));
@@ -1220,7 +1657,7 @@ struct Owner {
   suffix: Box<Slots<u64>>;
 }
 
-fn release(owner: Owner) -> result: unit pure {
+fn finish(owner: Owner) -> result: unit pure {
   doc "Holds the whole nested owner and nothing else, so its one return edge carries exactly four cell releases.";
   return unit;
 }
@@ -1232,18 +1669,18 @@ fn main() -> status: std::process::ExitStatus pure {
   let prefix = box_slots_new::<u32>(capacity: 1_u64);
   let suffix = box_slots_new::<u64>(capacity: 1_u64);
   let owner = Owner(prefix: move prefix, pair: move pair, suffix: move suffix);
-  release(owner: move owner);
+  finish(owner: move owner);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
-    // `release` holds the whole nested owner and nothing else, so its one
+    // `finish` holds the whole nested owner and nothing else, so its one
     // return edge carries exactly four run releases. Allocation identities
     // and their order are checked by the owned-place execution controls.
-    let release = emitted_function(&llvm, "release");
+    let release = emitted_function(&llvm, "finish");
     assert_eq!(release.matches("call void @wf__heap_give").count(), 4);
     // Allocation is total [STOR-8], so `main` has no refusal arm to hold a
-    // partly built owner on: its one edge hands the whole owner to `release`
+    // partly built owner on: its one edge hands the whole owner to `finish`
     // and carries no release of its own.
     let main = emitted_function(&llvm, "main");
     assert_eq!(main.matches("call void @wf__heap_give").count(), 0);
@@ -1383,4 +1820,552 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+/// [REF-1, PRE-1, MSR-2] a measure borrow reaches its real descriptor word,
+/// including the distinct Ring-head and Entries-count positions. Derived
+/// observations never reach this projection. Type-constant fields use
+/// immutable target storage, checked separately below. The Entries row reads
+/// only its descriptor but must retain its implicit `Option<u8>` element
+/// nominal through signature preflight and ordinary activation [SHARE-2].
+#[test]
+fn measure_references_project_actual_descriptor_words() {
+    let cases = [
+        ("&Box<Array<u8>>", "source^.inner", "len", 0),
+        ("&Slots<u8, 4>", "source^", "len", 0),
+        ("&Ring<u8, 4>", "source^", "len", 0),
+        ("&Ring<u8, 4>", "source^", "head", 1),
+        ("&Box<Slots<u8>>", "source^.inner", "len", 0),
+        ("&Box<Slots<u8>>", "source^.inner", "cap", 1),
+        ("&Box<Ring<u8>>", "source^.inner", "len", 0),
+        ("&Box<Ring<u8>>", "source^.inner", "cap", 1),
+        ("&Box<Ring<u8>>", "source^.inner", "head", 2),
+        ("&Box<Segments<u8>>", "source^.inner", "len", 0),
+        ("&Box<Paged<u8>>", "source^.inner", "len", 0),
+        ("&Box<Paged<u8>>", "source^.inner", "cap", 1),
+        ("&KeySet", "source^", "len", 0),
+        ("&Entries<u8>", "source^", "len", 2),
+        ("&Array<u8>", "source^", "len", 0),
+        ("&Slots<u8>", "source^", "len", 0),
+        ("&Slots<u8>", "source^", "cap", 1),
+        ("&Ring<u8>", "source^", "len", 0),
+        ("&Ring<u8>", "source^", "cap", 1),
+        ("&Ring<u8>", "source^", "head", 2),
+        ("&Segments<u8>", "source^", "len", 0),
+        ("&Paged<u8>", "source^", "len", 0),
+        ("&Paged<u8>", "source^", "cap", 1),
+        ("Slots<u8, 4>", "source", "len", 0),
+        ("Ring<u8, 4>", "source", "head", 1),
+        ("Box<Array<u8>>", "source.inner", "len", 0),
+        ("Box<Slots<u8>>", "source.inner", "cap", 1),
+        ("Box<Ring<u8>>", "source.inner", "head", 2),
+    ];
+    for (ty, place, measure, expected_field) in cases {
+        let effects = if ty.starts_with('&') {
+            "reads(source)"
+        } else {
+            "pure"
+        };
+        let source = format!(
+            "fn peek(n: &u64) -> result: u64 reads(n) {{\n  return n^;\n}}\n\nfn observe(source: {ty}) -> result: u64 {effects} {{\n  return peek(n: &{place}.{measure});\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        with_ir(source.as_bytes(), |program| {
+            let function = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "observe")
+                .expect("observer");
+            if ty.starts_with('&') {
+                assert!(
+                    matches!(function.parameters()[0].1, IrType::Address(_)),
+                    "{ty}: borrow parameters carry their actual descriptor address"
+                );
+            }
+            let (result, address, projection) = function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result,
+                        operation:
+                            IrOperation::ProjectAddress {
+                                address,
+                                projection: crate::IrPlaceStep::Measure { measure },
+                            },
+                        ..
+                    } => Some((*result, *address, *measure)),
+                    _ => None,
+                })
+                .expect("actual descriptor projection");
+            let Some(IrType::Address(base)) = function.value_type(address) else {
+                panic!("descriptor owner address")
+            };
+            if let IrType::Entries { element } = base.ty() {
+                let Some(IrType::Nominal(option)) = program.element(element) else {
+                    panic!("Entries retains its implicit Option element")
+                };
+                assert!(program.nominal(option).is_some());
+            }
+            assert_eq!(
+                projection.descriptor_field(base.ty()),
+                Some(expected_field),
+                "{ty}.{measure}"
+            );
+            assert!(function.blocks().iter().flat_map(|block| block.instructions()).any(|instruction| {
+                matches!(instruction, IrInstruction::Define { operation: IrOperation::Call { arguments, .. }, .. } if arguments.contains(&result))
+            }), "callee receives the descriptor address");
+        });
+        let module = emit(source.as_bytes());
+        let body = emitted_function(&module, "observe");
+        assert!(
+            body.lines()
+                .any(|line| line.contains("getelementptr inbounds")
+                    && line.ends_with(&format!(", i32 0, i32 {expected_field}"))),
+            "{ty}.{measure}: {body}"
+        );
+    }
+}
+
+/// [REF-1, TYPE-9] a runtime Array reference addresses its Box's header,
+/// matching the address supplied by its caller. It must never promote a
+/// value copy of the unsized block into a local address [STOR-1].
+#[test]
+fn runtime_array_reference_parameters_keep_descriptor_addresses() {
+    let source = super::system::corpus_source("ref1-pos-runtime-array-and-capacity-references");
+    for overlap in [crate::OverlapLowering::Off, crate::OverlapLowering::On] {
+        super::system::with_mutated_ir_lowering(&source, overlap, |program| {
+            let array_length = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "array_length")
+                .expect("runtime Array reader");
+            assert!(matches!(
+                array_length.parameters()[0].1,
+                IrType::Address(crate::IrAddressed::Buffer { .. })
+            ));
+            for caller in program.functions() {
+                for instruction in caller
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                {
+                    match instruction {
+                        IrInstruction::Define {
+                            operation: IrOperation::AddressOf { referent, .. },
+                            ..
+                        } => assert!(
+                            !matches!(referent.ty(), IrType::Buffer { .. }),
+                            "an unsized Array header is already addressed in Box storage"
+                        ),
+                        IrInstruction::Define {
+                            operation:
+                                IrOperation::Call {
+                                    function,
+                                    arguments,
+                                },
+                            ..
+                        } => {
+                            let callee = &program.functions()[*function as usize];
+                            for (argument, (_, expected)) in
+                                arguments.iter().zip(callee.parameters())
+                            {
+                                assert_eq!(caller.value_type(*argument), Some(*expected));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            crate::emit_llvm(program).expect("actual runtime descriptor pointers emit");
+        });
+    }
+}
+
+/// [REF-1, GIVE-1, REF-4] aliases and value-if arms deliver the selected
+/// runtime Array header address. Range formation and element reads must use
+/// that same allocation after the reference is passed to another callable.
+#[test]
+fn runtime_array_reference_joins_keep_element_backing() {
+    let source = br#"fn inspect_join(array: &Array<u8>) -> result: u8 reads(array) {
+  let part = &array^[0_u64..array^.len];
+  if part^.len > 0_u64 {
+    return part^[0_u64];
+  } else {
+    return 0_u8;
+  }
+}
+
+fn choose_join(first: &Array<u8>, second: &Array<u8>, pick: Bool) -> result: u8 reads(first), reads(second) {
+  let chosen = if pick {
+    give &first^;
+  } else {
+    give &second^;
+  }
+  let observed_state = chosen;
+  return inspect_join(array: observed_state);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first_owner = box_array_filled::<u8>(count: 4_u64, value: 7_u8);
+  let second_owner = box_array_filled::<u8>(count: 6_u64, value: 9_u8);
+  let pick = True();
+  let seen = choose_join(first: &first_owner.inner, second: &second_owner.inner, pick: pick);
+  if seen == 7_u8 {
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for overlap in [crate::OverlapLowering::Off, crate::OverlapLowering::On] {
+        super::system::with_mutated_ir_lowering(source, overlap, |program| {
+            let choose = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "choose_join")
+                .expect("reference join");
+            let passed = choose
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation:
+                            IrOperation::Call {
+                                function,
+                                arguments,
+                            },
+                        ..
+                    } if program.functions()[*function as usize].name() == "inspect_join" => {
+                        Some(arguments[0])
+                    }
+                    _ => None,
+                })
+                .expect("joined reference argument");
+            assert!(matches!(
+                choose.value_type(passed),
+                Some(IrType::Address(crate::IrAddressed::Buffer { .. }))
+            ));
+            assert!(choose.blocks().iter().any(|block| {
+                block
+                    .parameters()
+                    .iter()
+                    .any(|(parameter, _)| *parameter == passed)
+            }));
+            let inspect = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "inspect_join")
+                .expect("range and element reader");
+            assert!(inspect.blocks().iter().flat_map(|block| block.instructions()).any(|instruction| {
+                matches!(instruction, IrInstruction::Define { operation: IrOperation::SliceFromBuffer { buffer }, .. } if *buffer == inspect.parameters()[0].0)
+            }));
+            crate::emit_llvm(program).expect("joined descriptor address and range emit");
+        });
+    }
+}
+
+/// [PAR-2, MSR-1] a runtime Array's fixed lifetime length remains available
+/// to scheduling through its header reference, including when a helper's
+/// counted extent contributes to an outer split's work estimate.
+#[test]
+fn runtime_array_reference_lengths_reach_work_estimates() {
+    fn contains_length(work: &crate::IrWorkEstimate, expected: crate::IrValueId) -> bool {
+        use crate::IrWorkEstimate as Work;
+        match work {
+            Work::Length(value) => *value == expected,
+            Work::Sum(parts) => parts.iter().any(|part| contains_length(part, expected)),
+            Work::Product(left, right) | Work::Difference(left, right) => {
+                contains_length(left, expected) || contains_length(right, expected)
+            }
+            Work::Quotient(value, _) => contains_length(value, expected),
+            _ => false,
+        }
+    }
+    let source = br#"fn sum_runtime(source: &Array<u64>) -> result: u64 reads(source) {
+  let total = 0_u64;
+  for (index in 0_u64..source^.len) {
+    set total = total +wrap source^[index];
+  }
+  return total;
+}
+
+fn repeat_runtime(source: &Array<u64>, output: &[u64]) -> result: unit reads(source), writes(output) {
+  for (index in 0_u64..output^.len) {
+    set output^[index] = sum_runtime(source: source);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let input_owner = box_array_filled::<u64>(count: 17_u64, value: 1_u64);
+  let output_owner = array_filled::<u64, 4>(value: 0_u64);
+  let copied = repeat_runtime(source: &input_owner.inner, output: &output_owner[0_u64..4_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    super::system::with_parallel_ir(source, |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "repeat_runtime")
+            .expect("outer split consumer");
+        let source = function.parameters()[0].0;
+        assert!(function.blocks().iter().flat_map(|block| block.instructions()).any(|instruction| {
+            matches!(instruction, IrInstruction::Define { operation: IrOperation::LoopSplit { work: Some(work), captures, .. }, .. } if captures.contains(&source) && contains_length(work, source))
+        }), "the source header length remains in the dynamic work estimate");
+        let module = crate::emit_llvm(program)
+            .expect("runtime Array work estimate emits")
+            .into_string();
+        assert!(emitted_function(&module, "repeat_runtime").contains("load i64"));
+    });
+}
+
+const TYPE_CONSTANT_REFERENCES: &[u8] =
+    br#"fn peek_constant(word: &u64) -> result: u64 reads(word) {
+  return word^;
+}
+
+fn array_four(source: &Array<u8, 4>) -> result: u64 reads(source.len) {
+  return peek_constant(word: &source^.len);
+}
+
+fn slots_four(source: &Slots<u8, 4>) -> result: u64 reads(source.cap) {
+  return peek_constant(word: &source^.cap);
+}
+
+fn ring_four(source: &Ring<u8, 4>) -> result: u64 reads(source.cap) {
+  return peek_constant(word: &source^.cap);
+}
+
+fn array_zero(source: &Array<u8, 0>) -> result: u64 reads(source.len) {
+  return peek_constant(word: &source^.len);
+}
+
+fn slots_six(source: &Slots<u8, 6>) -> result: u64 reads(source.cap) {
+  return peek_constant(word: &source^.cap);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = array_filled::<u8, 4>(value: 0_u8);
+  let s = slots_new::<u8, 4>();
+  let r = ring_new::<u8, 4>();
+  let first = array_four(source: &a);
+  let second = slots_four(source: &s);
+  let third = ring_four(source: &r);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// [REF-1, MSR-1, STOR-7] equal type-constant fields share readonly target
+/// storage even when their source owners and selected fields differ.
+#[test]
+fn type_constant_measure_references_share_readonly_globals() {
+    for overlap in [crate::OverlapLowering::Off, crate::OverlapLowering::On] {
+        let module = crate::compile_for_emission(
+            &[crate::SourceInput::new(
+                "constant-measures.wf",
+                TYPE_CONSTANT_REFERENCES,
+            )],
+            crate::CompilerLimits::default(),
+            overlap,
+            None,
+            true,
+        )
+        .expect("type-constant references compile")
+        .0;
+        let text = module.as_str();
+        let globals = text
+            .lines()
+            .filter(|line| line.starts_with("@.wf_measure."))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            globals,
+            [
+                "@.wf_measure.0 = private unnamed_addr constant i64 0, align 8",
+                "@.wf_measure.4 = private unnamed_addr constant i64 4, align 8",
+                "@.wf_measure.6 = private unnamed_addr constant i64 6, align 8",
+            ]
+        );
+        for (name, value) in [
+            ("array_four", 4),
+            ("slots_four", 4),
+            ("ring_four", 4),
+            ("array_zero", 0),
+            ("slots_six", 6),
+        ] {
+            let body = emitted_function(text, name);
+            let suffix = format!(" = getelementptr i8, ptr @.wf_measure.{value}, i64 0");
+            let pointer = body
+                .lines()
+                .find_map(|line| line.trim().strip_suffix(&suffix))
+                .expect("constant backing address");
+            assert!(
+                body.lines()
+                    .any(|line| line.contains("call i64 @wf_peek_constant(")
+                        && line.contains(pointer)),
+                "callee must receive the constant pointer: {body}"
+            );
+            assert!(
+                !body.contains("!alias.scope") && !body.contains("!noalias"),
+                "constant storage has no owner allocation scope: {body}"
+            );
+        }
+        // Cache decoding must preserve private replication, not just the
+        // printed header: both models must split to identical private globals.
+        let decoded =
+            crate::LlvmModule::decode(&module.encode()).expect("emission model roundtrip");
+        for granularity in [
+            crate::FragmentGranularity::Function,
+            crate::FragmentGranularity::Module,
+        ] {
+            let fragments = crate::split_module(&module, granularity).expect("constant fragments");
+            assert_eq!(
+                crate::split_module(&decoded, granularity).expect("decoded constant fragments"),
+                fragments
+            );
+            for fragment in &fragments {
+                for value in [0, 4, 6] {
+                    let symbol = format!("@.wf_measure.{value}");
+                    if fragment.contains(&symbol) {
+                        let definition = format!(
+                            "{symbol} = private unnamed_addr constant i64 {value}, align 8"
+                        );
+                        assert_eq!(
+                            fragment.lines().filter(|line| *line == definition).count(),
+                            1,
+                            "each using module owns one readonly copy: {fragment}"
+                        );
+                    }
+                }
+                assert!(
+                    !fragment
+                        .lines()
+                        .any(|line| line.starts_with("@.wf_measure.")
+                            && !line.contains(" = private unnamed_addr constant ")),
+                    "no external or hidden constant backing: {fragment}"
+                );
+            }
+        }
+    }
+}
+
+const CAPTURED_CONSTANT_MEASURE: &[u8] =
+    br#"fn peek_captured(word: &u64) -> result: u64 reads(word) {
+  return word^;
+}
+
+fn copy_count(source: &Array<u8, 4>, out: &[u64]) -> result: unit reads(source.len), writes(out) {
+  let word = &source^.len;
+  for (index in 0_u64..out^.len) {
+    set out^[index] = peek_captured(word: word);
+  }
+  return unit;
+}
+
+fn wait_read(word: &u64) -> result: u64 reads(word) waits {
+  return word^;
+}
+
+fn waiting_count(source: Array<u8, 4>) -> result: u64 pure waits {
+  let word = &source.len;
+  let seen = wait_read(word: word);
+  return seen;
+}
+
+fn shared_count(source: Shared<Array<u8, 4>>) -> result: u64 pure waits {
+  let seen = 0_u64;
+  atomic state = &source {
+    let word = &state^.len;
+    set seen = peek_captured(word: word);
+  }
+  return seen;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let source = array_filled::<u8, 4>(value: 0_u8);
+  let out = array_filled::<u64, 8>(value: 0_u64);
+  copy_count(source: &source, out: &out[0_u64..8_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// [PAR-2, WAIT-1, SHARE-2] task captures, waiting calls and atomic reads
+/// transport the constant pointer as an ordinary reference argument.
+#[test]
+fn constant_measure_pointers_survive_parallel_and_waiting_consumers() {
+    super::system::with_parallel_ir(CAPTURED_CONSTANT_MEASURE, |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "copy_count")
+            .expect("count copier");
+        let measure_pointer = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result,
+                    operation:
+                        IrOperation::ProjectAddress {
+                            projection:
+                                crate::IrPlaceStep::Measure {
+                                    measure: crate::IrMeasure::Length,
+                                },
+                            ..
+                        },
+                    ..
+                } => Some(*result),
+                _ => None,
+            })
+            .expect("formed constant reference");
+        let captures = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    operation: IrOperation::LoopSplit { captures, .. },
+                    ..
+                } => Some(captures),
+                _ => None,
+            })
+            .expect("counted loop must actualize a split");
+        assert!(
+            captures.contains(&measure_pointer),
+            "the split must capture the formed readonly pointer"
+        );
+    });
+    let module = super::emit_with_overlap(CAPTURED_CONSTANT_MEASURE);
+    for name in ["waiting_count", "shared_count", "copy_count"] {
+        let body = emitted_function(&module, name);
+        let suffix = " = getelementptr i8, ptr @.wf_measure.4, i64 0";
+        let pointer = body
+            .lines()
+            .find_map(|line| line.trim().strip_suffix(suffix))
+            .expect("constant pointer in every consumer");
+        if name == "shared_count" {
+            assert!(
+                body.lines()
+                    .any(|line| line.contains("call i64 @wf_peek_captured(")
+                        && line.contains(pointer)),
+                "the atomic call must receive the constant pointer: {body}"
+            );
+        } else {
+            let callee = if name == "waiting_count" {
+                "call ptr @wf_wait_read("
+            } else {
+                "@wf__par_split_"
+            };
+            assert!(
+                body.lines().any(|line| line.contains("call ")
+                    && line.contains(callee)
+                    && line.contains(&format!("ptr {pointer}"))),
+                "the waiting callee or loop splitter must receive the constant pointer: {body}"
+            );
+        }
+        assert!(!body.contains("!alias.scope") && !body.contains("!noalias"));
+    }
 }

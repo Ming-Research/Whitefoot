@@ -1,0 +1,17 @@
+fn need(xs: &Array<u64, 4>, n: u64) -> result: unit pure contract {
+  requires forall small(k in 0_u64..n): xs^[k] < 4_u64;
+} {
+  return unit;
+}
+
+fn caller(xs: &Array<u64, 4>) -> result: unit pure {
+  let n = 0_u64;
+  let r = &n;
+  set r^ = 4_u64;
+  need(xs: xs, n: n);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

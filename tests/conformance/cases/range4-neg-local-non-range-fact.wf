@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn probe(targets: &Array<u64, 4>, table: &Array<u64, 4>, i: u64) -> result: unit reads(targets), reads(table) contract {
+  requires i < 4_u64;
+  requires forall valid(j in 0_u64..4_u64): targets^[j] < 4_u64;
+} {
+  doc "RANGE-4 refuses this malformed written instance inside the local invariant.";
+  invariant ordinary: i < 4_u64;
+  let t = targets^[i];
+  invariant bounded: t < 4_u64 {
+    use ordinary(i);
+  }
+  let v = table^[t];
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

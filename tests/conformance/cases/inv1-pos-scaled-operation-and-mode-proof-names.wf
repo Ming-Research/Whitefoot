@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn inv1_scaled_proof_names(limit: u64) -> total: u64 pure contract {
+  requires limit <= 100_u64;
+} {
+  doc "The proof-only names cvt and checked denote sum <= 2*i and sum <= 2*limit; cvt still independently selects the conversion operation. Each scaled premise P stays outside ENT-3.S16. Each certificate target is 3*P: ENT-6 AUTO uses P at most twice, DIRECT cannot discharge the scaled residual by L0 or intervals, and integer tightening only divides candidates. Both named multiplicity-three certificates are required.";
+  let sum = 0_u64;
+  for (
+    i in 0_u64..limit,
+    invariant cvt: sum <= 2_u64 * i
+  ) {
+    invariant tripled_bound: 3_u64 * sum <= 6_u64 * i {
+      use 3 times cvt;
+    }
+    let increment = cvt::<u8, u64>(1_u8);
+    set sum = sum + increment;
+  }
+  invariant checked: sum <= 2_u64 * limit;
+  invariant scaled_bound: 3_u64 * sum <= 6_u64 * limit {
+    use 3 times checked;
+  }
+  return sum;
+}
+
+fn main() -> status: ExitStatus pure {
+  let total = inv1_scaled_proof_names(limit: 5_u64);
+  if total == 5_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

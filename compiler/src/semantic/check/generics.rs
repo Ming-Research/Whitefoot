@@ -12,24 +12,29 @@ use crate::{
     SemanticRule,
 };
 
+use super::super::entailment::{EntailmentCallee, finalize_function_entailment};
 use super::super::model::{
     CheckedConst, CheckedGenericRequirement, CheckedNominalKind, CheckedType, IntegerType,
     NominalId,
 };
-use super::{CheckStop, Checker, FunctionSignature, FunctionTemplate, PreludeType};
+use super::{
+    CheckStop, CheckedFunctionInventory, Checker, FunctionSignature, FunctionTemplate, PreludeType,
+};
 
 /// [FN-2, PROV-6] the at most one bound a type parameter carries.
 ///
 /// A bound is a closed filter on the argument, derived from the language's
 /// existing classifications, and never a user trait: `Int` and `Float` are
-/// [OP-1]'s numeric rows and each implies copy, and `Class` is the class the
-/// capability bound grants the body -- copy for `T: copy`, affine for
+/// [OP-1]'s numeric rows, `Eq` admits [OP-16] equality, each implies copy,
+/// and `Class` is the class the capability bound grants the body --
+/// copy for `T: copy`, affine for
 /// `T: drop`, and linear for a parameter written with no bound. It selects no
 /// behavior and admits no contract member.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum GenericBound {
     Int,
     Float,
+    Eq,
     Class(super::linearity::LinearityClass),
 }
 
@@ -1123,6 +1128,11 @@ impl<'unit> Checker<'_, 'unit> {
         let mut declared_effects = self
             .types
             .parse_effects(check_context, effects, &parameters)?;
+        if let super::effect_repairs::RepairMode::Validate(rows) = &self.types.effect_repairs
+            && let Some(row) = rows.get(&template.declaration)
+        {
+            declared_effects = row.clone();
+        }
         // [EFF-3] the allocation fact of a boundary that takes from the heap
         // by definition: the boxed [OP-13] construction functions and
         // [OP-10]'s `grow`. It is not a row category [EFF-1, STOR-8], so it is
@@ -1130,6 +1140,13 @@ impl<'unit> Checker<'_, 'unit> {
         // call graph by the ordinary effect walk.
         declared_effects.allocates |=
             HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&template.name.as_str());
+        let waits = self.types.declarations.tree.direct_token_with(
+            template.node,
+            crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
+        )?.is_some();
+        let held_parameters = self.form_held_parameters(
+            template.node, &parameters, waits, &declared_effects,
+        )?;
         // [MOD-3] functions of different modules may share a name, so a
         // module other than the root prefixes its path; a source bundle's
         // root-module symbols keep their plain names.
@@ -1137,7 +1154,34 @@ impl<'unit> Checker<'_, 'unit> {
             .types
             .declarations
             .module_symbol_base(template.declaration, &template.name);
-        let symbol = if template.generic_parameters.is_empty() {
+        let host = self
+            .types
+            .declarations
+            .declaration_home(template.declaration)
+            .is_some_and(|(package, path)| {
+                *package == crate::PackageKey::Standard && crate::library::is_host_module(path)
+            });
+        // PRE-2 supplies one definition for every instance. Until the
+        // linked ABI supports more shapes, require fixed scalars and
+        // references to statically known shapes; in particular an owned
+        // T or an &T cannot select a different ABI at a concrete instance.
+        if host
+            && !template.generic_parameters.is_empty()
+            && (!template
+                .generic_parameters
+                .iter()
+                .all(|parameter| matches!(parameter, GenericParameter::Type { .. }))
+                || !self.fixed_host_abi_type(result_mode, result)?
+                || parameters
+                    .iter()
+                    .map(|parameter| self.fixed_host_abi_type(parameter.mode, parameter.ty))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .iter()
+                    .any(|admitted| !admitted))
+        {
+            return Err(SemanticCompilerFailure::UnsupportedGenericHostAbi.into());
+        }
+        let symbol = if template.generic_parameters.is_empty() || host {
             base
         } else {
             // An instance's symbol names its template and a digest of its
@@ -1173,15 +1217,9 @@ impl<'unit> Checker<'_, 'unit> {
             result_list,
             effects_node: effects,
             declared_effects,
-            waits: self
-                .types
-                .declarations
-                .tree
-                .direct_token_with(
-                    template.node,
-                    crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
-                )?
-                .is_some(),
+            contract_reads: None,
+            waits,
+            held_parameters,
             formal_parameter: None,
             substitution,
         })
@@ -1190,7 +1228,7 @@ impl<'unit> Checker<'_, 'unit> {
     pub(super) fn validate_generic_templates(
         &mut self,
         check_context: &CheckContext<'_>,
-    ) -> Result<(), CheckStop> {
+    ) -> Result<Option<CheckStop>, CheckStop> {
         if !self.analysis.generic_requirements.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -1206,7 +1244,7 @@ impl<'unit> Checker<'_, 'unit> {
             .iter()
             .all(|template| template.generic_parameters.is_empty())
         {
-            return Ok(());
+            return Ok(None);
         }
         let concrete_view = self.types.view.clone();
         let concrete_allocations = concrete_view
@@ -1266,7 +1304,33 @@ impl<'unit> Checker<'_, 'unit> {
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
         self.admit_postcondition_selectors_including(check_context, &canonical_seeds)?;
-        let mut phase_a = self.check_function_view(check_context, Vec::new())?;
+        // [FN-2] every canonical instance precedes the instances discovered
+        // from it in the view, so its body is checked, and its admitted
+        // schema clauses recorded, before any instance that renames it.
+        let const_types = self.types.const_generic_types().collect::<HashMap<_, _>>();
+        for (index, declaration) in &canonical_generic_signatures {
+            let signature = &self.types.signatures[*index];
+            if let Some(class) = symbolic_renaming_class(signature, &const_types) {
+                self.analysis
+                    .symbolic_canonical
+                    .insert(*declaration, (signature.id, class));
+            }
+        }
+        self.analysis.symbolic_const_types = const_types;
+        self.analysis.symbolic_type_bounds = self
+            .types
+            .generic_parameters()
+            .filter_map(|parameter| match parameter {
+                GenericParameter::Type { declaration, bound } => Some((*declaration, *bound)),
+                _ => None,
+            })
+            .collect();
+        let phase_a = self.check_function_view(check_context, Vec::new());
+        self.analysis.symbolic_canonical.clear();
+        self.analysis.symbolic_const_types.clear();
+        self.analysis.symbolic_type_bounds.clear();
+        self.analysis.symbolic_admitted.clear();
+        let mut phase_a = phase_a?;
         self.types.close_allocation_metadata(&mut phase_a)?;
         for (canonical, declaration) in &canonical_generic_signatures {
             let checked = phase_a
@@ -1284,8 +1348,8 @@ impl<'unit> Checker<'_, 'unit> {
         }
         self.install_call_requirements(check_context, &mut phase_a)?;
         self.types.form_obligation_records(&mut phase_a)?;
-        let callees = self.types.entailment_callees()?;
-        self.validate_generic_body_entailment(
+        let callees = self.types.entailment_callees(&phase_a)?;
+        let range_stop = self.validate_generic_body_entailment(
             &mut phase_a,
             &canonical_generic_signatures,
             &callees,
@@ -1300,7 +1364,102 @@ impl<'unit> Checker<'_, 'unit> {
         let retained_concrete = self.activate_schema_written_instances(check_context)?;
         self.analysis.postcondition_selectors.clear();
         self.admit_postcondition_selectors_including(check_context, &retained_concrete)?;
-        Ok(())
+        Ok(range_stop)
+    }
+
+    /// Checks every source-generic body once with symbolic arguments, even when
+    /// no concrete instantiation is reachable from the executable program.
+    /// The ordinary entailment engine is the only acceptance path: generic
+    /// bodies do not receive a separate proof language or an assertion-based
+    /// exception.
+    fn validate_generic_body_entailment(
+        &mut self,
+        functions: &mut [CheckedFunctionInventory],
+        canonical: &[(usize, DeclarationId)],
+        callees: &[EntailmentCallee],
+    ) -> Result<Option<CheckStop>, CheckStop> {
+        let optimistic_batch = functions.iter().any(|checked| {
+            !checked.function.postconditions.is_empty()
+                || !checked.function.range_facts.postconditions.is_empty()
+                || Checker::statements_contain_value_if(
+                    checked.function.body.as_deref().unwrap_or_default(),
+                )
+        });
+        // Only the canonical instances are judged below, and a judged body
+        // reads another function's analysis solely through the postcondition
+        // summaries of its callees. Every other body of this symbolic view —
+        // every nongeneric function among them — is analyzed only when its
+        // component can publish a summary such a body reads; the concrete
+        // phase analyzes the nongeneric ones again, so analyzing the rest
+        // here would repeat that cost for a result nothing reads.
+        let analyzed = Checker::generic_validation_scope(functions, canonical)?;
+        let mut judged = vec![false; functions.len()];
+        for (index, _) in canonical {
+            judged[*index] = true;
+        }
+        self.analyze_function_inventory(
+            functions,
+            callees,
+            optimistic_batch,
+            Some(&analyzed),
+            false,
+            Some(&judged),
+        )?;
+        if optimistic_batch {
+            for (index, (checked, analyzed)) in functions.iter_mut().zip(&analyzed).enumerate() {
+                if *analyzed && !self.analysis.renamed_summaries[index] {
+                    finalize_function_entailment(&mut checked.function.entailment);
+                }
+            }
+        }
+        if !self.reject_entailment {
+            return Ok(None);
+        }
+        for checked in functions.iter_mut() {
+            checked.function.body_disposition = checked.function.entailment.body_disposition;
+        }
+        let range_functions = functions
+            .iter()
+            .map(|checked| &checked.function)
+            .collect::<Vec<_>>();
+        let ranges = super::super::range_judgment::judge_program(
+            &range_functions,
+            &self.types.nominals,
+            &self.types.elements,
+            &judged,
+            &self.types.checked_constants,
+            super::super::range_judgment::JudgmentScope::Symbolic,
+            self.types.declarations.resolved,
+        );
+        for (index, declaration) in canonical {
+            let checked = functions
+                .get(*index)
+                .filter(|checked| checked.function.declaration == *declaration)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            self.types.entailment_rejection_after_range(
+                &checked.function,
+                &ranges[*index].discharged,
+                &ranges[*index].inconclusive,
+            )?;
+        }
+        if let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
+            matches!(
+                issue,
+                super::super::range_judgment::RangeIssue::Unsupported { .. }
+                    | super::super::range_judgment::RangeIssue::Undischarged {
+                        capacity: Some(_),
+                        ..
+                    }
+            )
+        }) {
+            return Ok(Some(self.range_issue(issue)));
+        }
+        for (index, _) in canonical {
+            if let Some(issue) = ranges[*index].issues.first() {
+                return Err(self.range_issue(issue));
+            }
+        }
+        Ok(None)
     }
 
     /// The symbolic discovery walk already found every written source call.
@@ -1394,7 +1553,7 @@ impl<'unit> Checker<'_, 'unit> {
                     } => GenericArgument::Type(CheckedType::GenericFloat(declaration)),
                     GenericParameter::Type {
                         declaration,
-                        bound: GenericBound::Class(_),
+                        bound: GenericBound::Class(_) | GenericBound::Eq,
                         ..
                     } => GenericArgument::Type(CheckedType::Generic(declaration)),
                     GenericParameter::Const { declaration, .. } => {
@@ -1627,8 +1786,8 @@ impl<'unit> Checker<'_, 'unit> {
                         };
                         GenericArgument::Type(self.parse_type_with(check_context, ty, caller)?)
                     }
-                    GenericParameter::Const { .. } => {
-                        let Some(value) = self
+                    GenericParameter::Const { ty, .. } => {
+                        let Some(written) = self
                             .types
                             .declarations
                             .tree
@@ -1640,11 +1799,10 @@ impl<'unit> Checker<'_, 'unit> {
                                 "a const argument occupies this parameter position",
                             );
                         };
-                        GenericArgument::Const(self.parse_const_expression_with(
-                            check_context,
-                            value,
-                            caller,
-                        )?)
+                        let value =
+                            self.parse_const_expression_with(check_context, written, caller)?;
+                        self.check_const_argument(check_context, written, value, ty)?;
+                        GenericArgument::Const(value)
                     }
                     GenericParameter::Function { .. } => GenericArgument::Function(
                         self.parse_function_argument(check_context, source, caller)?,
@@ -1653,6 +1811,10 @@ impl<'unit> Checker<'_, 'unit> {
             };
             match (parameter, value) {
                 (GenericParameter::Type { declaration, bound }, GenericArgument::Type(ty)) => {
+                    self.check_type_parameter_placement(source, declaration, ty, caller)?;
+                    if self.types.is_frozen_content_parameter(declaration)? {
+                        self.types.reject_frozen_part(source, ty)?;
+                    }
                     let requirement = match bound {
                         GenericBound::Int
                             if !matches!(
@@ -1682,14 +1844,29 @@ impl<'unit> Checker<'_, 'unit> {
                             ),
                         );
                     }
+                    if bound == GenericBound::Eq {
+                        self.types.require_equality_type(
+                            check_context,
+                            source,
+                            ty,
+                            SemanticRule::Fn2,
+                        )?;
+                    }
                     if let GenericBound::Class(required) = bound {
                         let spelling = self.types.declarations.declaration_spelling(declaration)?;
+                        let bound_site = if self.types.declarations.tree.production(node)?
+                            == Production::Call
+                        {
+                            node
+                        } else {
+                            source
+                        };
                         self.types.check_linearity_bound(
                             check_context,
                             &spelling,
                             required,
                             ty,
-                            source,
+                            bound_site,
                         )?;
                     }
                 }
@@ -1716,6 +1893,48 @@ impl<'unit> Checker<'_, 'unit> {
             .record_behavior_binding_sites(&substitution, &binding_sites)?;
         Ok(substitution)
     }
+
+    /// [TYPE-9, FN-2] places belong to the actual type parameter, including
+    /// when its function is supplied as a function-kind argument. A bound
+    /// call's effective signature keeps the formal's node and cannot identify
+    /// the prelude row that owns this obligation.
+    pub(super) fn check_type_parameter_placement(
+        &mut self,
+        source: NodeId,
+        parameter: DeclarationId,
+        ty: CheckedType,
+        caller: &GenericSubstitution,
+    ) -> Result<(), CheckStop> {
+        let Some(template) = self.types.function_templates.iter().find(|template| {
+            template.name == "swap"
+                && template
+                    .generic_parameters
+                    .iter()
+                    .any(|candidate| candidate.key() == GenericParameterKey::Source(parameter))
+        }) else {
+            return Ok(());
+        };
+        if !self
+            .types
+            .declarations
+            .tree
+            .is_prelude_node(template.node)?
+        {
+            return Ok(());
+        }
+        // Retain the caller parameter's identity at the symbolic instance;
+        // equal concrete arguments must not blame a different written targ.
+        if caller.is_symbolic()
+            && let CheckedType::Generic(parameter) = ty
+        {
+            self.types
+                .behavior
+                .exchange_parameters
+                .insert(source, parameter);
+        }
+        self.types
+            .reject_placement(source, ty, super::types::Placement::Exchange, caller)
+    }
 }
 
 impl<'unit> TypeContext<'unit> {
@@ -1732,12 +1951,37 @@ impl<'unit> TypeContext<'unit> {
             .find_map(|(candidate, ty)| (candidate == declaration).then_some(ty))
             .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }
-    /// The declared type of each const parameter, before any caller supplies
-    /// it to a differently typed const formal or uses it as a storage extent.
-    /// ENT-2's symbolic constant identity remains its declaration in each use.
+    /// The declared type of each const parameter. [CONST-1] forwards it only
+    /// to a formal or storage extent of that same type, and ENT-2's symbolic
+    /// constant identity remains its declaration in each use.
     pub(super) fn const_generic_types(
         &self,
     ) -> impl Iterator<Item = (DeclarationId, IntegerType)> + '_ {
+        self.generic_parameters()
+            .filter_map(|parameter| match parameter {
+                GenericParameter::Const { declaration, ty } => Some((*declaration, *ty)),
+                _ => None,
+            })
+    }
+    /// Copy bounds remain available to symbolic proof origins, including
+    /// Eq parameters nested inside instantiated nominal fields.
+    pub(super) fn copy_type_parameters(&self) -> Vec<DeclarationId> {
+        self.generic_parameters()
+            .filter_map(|parameter| match parameter {
+                GenericParameter::Type {
+                    declaration,
+                    bound:
+                        GenericBound::Int
+                        | GenericBound::Float
+                        | GenericBound::Eq
+                        | GenericBound::Class(super::linearity::LinearityClass::Copy),
+                } => Some(*declaration),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn generic_parameters(&self) -> impl Iterator<Item = &GenericParameter> {
         self.function_templates
             .iter()
             .flat_map(|template| template.generic_parameters.iter())
@@ -1752,11 +1996,8 @@ impl<'unit> TypeContext<'unit> {
                     .values()
                     .flat_map(|formal| formal.parameters.iter()),
             )
-            .filter_map(|parameter| match parameter {
-                GenericParameter::Const { declaration, ty } => Some((*declaration, *ty)),
-                _ => None,
-            })
     }
+
     pub(super) fn collect_function_templates(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -2080,6 +2321,8 @@ impl<'unit> TypeContext<'unit> {
                         PreludeType::Overflow => out.push_str("Overflow"),
                         PreludeType::DivError => out.push_str("DivError"),
                         PreludeType::NarrowError => out.push_str("NarrowError"),
+                        PreludeType::ScanStep => out.push_str("ScanStep"),
+                        PreludeType::DecisionState => out.push_str("DecisionState"),
                     }
                     if ordering {
                         out.push(')');
@@ -2253,10 +2496,17 @@ impl<'unit> TypeContext<'unit> {
                 .declaration_at(node, DeclarationRole::GenericType)?
                 .id();
             // [GRAM-2, PROV-6] the bound is optional and never inferred: a
-            // `capability_bound` atom, a numeric marker TYPEID, or nothing,
+            // `capability_bound` atom, a built-in bound TYPEID, or nothing,
             // and an absent bound grants the body no capability, which is
             // the linear class read at the parameter.
-            let bound = match self
+            let bound = self.written_generic_bound(node)?;
+            parameters.push(GenericParameter::Type { declaration, bound });
+        }
+        Ok(parameters)
+    }
+    pub(super) fn written_generic_bound(&self, node: NodeId) -> Result<GenericBound, CheckStop> {
+        Ok(
+            match self
                 .declarations
                 .resolved
                 .lexical_uses_at(node)
@@ -2274,9 +2524,12 @@ impl<'unit> TypeContext<'unit> {
                 Some((ResolvedTarget::Prelude(id), _)) if id == BuiltinPreludeId::FLOAT => {
                     GenericBound::Float
                 }
+                Some((ResolvedTarget::Prelude(id), _)) if id == BuiltinPreludeId::EQ => {
+                    GenericBound::Eq
+                }
                 Some((
                     ResolvedTarget::Source {
-                        class: DeclarationClass::NumericBound,
+                        class: DeclarationClass::BuiltinBound,
                         ..
                     },
                     coordinate,
@@ -2289,10 +2542,8 @@ impl<'unit> TypeContext<'unit> {
                     );
                 }
                 Some(_) => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-            };
-            parameters.push(GenericParameter::Type { declaration, bound });
-        }
-        Ok(parameters)
+            },
+        )
     }
 }
 
@@ -2374,6 +2625,43 @@ pub(super) fn symbolic_renaming_class(
     (!kinds.is_empty()).then_some((signature.declaration, kinds))
 }
 
+/// Whether a renamed symbolic instance supplies, for each of its
+/// declaration's parameters, an argument the body treats as it treats that
+/// parameter at the canonical instance: a type parameter carrying the same
+/// bound, or the same interface member, whose contract and `waits` are
+/// shared. Kinds and const types are the renaming class's; a raw
+/// function-kind parameter supplied by another declaration's is not shared,
+/// so such an instance is checked and analyzed itself [FN-2, FN-3].
+pub(super) fn renames_canonical_parameters(
+    signature: &FunctionSignature,
+    bounds: &HashMap<DeclarationId, GenericBound>,
+) -> bool {
+    signature
+        .substitution
+        .bindings()
+        .iter()
+        .all(|(key, argument)| match (key, argument) {
+            (
+                GenericParameterKey::Source(own),
+                GenericArgument::Type(
+                    CheckedType::Generic(actual)
+                    | CheckedType::GenericInt(actual)
+                    | CheckedType::GenericFloat(actual),
+                ),
+            ) => bounds
+                .get(own)
+                .is_some_and(|bound| bounds.get(actual) == Some(bound)),
+            (_, GenericArgument::Const(CheckedConst::Parameter(_))) => true,
+            (
+                GenericParameterKey::Member { member, .. },
+                GenericArgument::Function(super::behavior::FunctionArgument::Parameter(
+                    GenericParameterKey::Member { member: actual, .. },
+                )),
+            ) => member == actual,
+            _ => false,
+        })
+}
+
 /// What a symbolic instance's callers read of another instance's analysis:
 /// its body disposition, invariant outcomes and postcondition proofs, with
 /// no published summary until this instance's own component publishes one.
@@ -2386,8 +2674,58 @@ pub(super) fn summary_entailment(
     }
     super::super::entailment::FunctionEntailment {
         body_disposition: entailment.body_disposition,
+        operation_intervals: entailment.operation_intervals.clone(),
         loop_invariants: entailment.loop_invariants.clone(),
         postconditions,
         ..super::super::entailment::FunctionEntailment::default()
+    }
+}
+
+/// The supported part of a generic linked boundary has one ABI even at its
+/// symbolic instance. Nominal references are pointer slots irrespective of
+/// their fields or type arguments; owned aggregates and generic bare types
+/// need a representation protocol that the host boundary does not yet carry.
+pub(super) fn generic_host_abi_type(mode: super::super::model::CheckedMode, ty: CheckedType) -> bool {
+    use super::super::model::CheckedMode;
+    match mode {
+        CheckedMode::Own => matches!(
+            ty,
+            CheckedType::Unit | CheckedType::Bool | CheckedType::Integer(_) | CheckedType::Float(_)
+        ),
+        CheckedMode::Reference => matches!(
+            ty,
+            CheckedType::Unit
+                | CheckedType::Bool
+                | CheckedType::Integer(_)
+                | CheckedType::Float(_)
+                | CheckedType::Nominal(_)
+                | CheckedType::Array { .. }
+                | CheckedType::KeySet
+        ),
+        CheckedMode::Range | CheckedMode::Run => false,
+    }
+}
+
+#[cfg(test)]
+mod host_abi_tests {
+    use super::*;
+    use crate::semantic::CheckedMode;
+
+    #[test]
+    fn a_generic_host_boundary_refuses_unfixed_or_unsupported_abi_shapes() {
+        let generic = CheckedType::Generic(crate::DeclarationId::from_index(0).unwrap());
+        assert!(!generic_host_abi_type(CheckedMode::Own, generic));
+        assert!(!generic_host_abi_type(CheckedMode::Reference, generic));
+        let nominal = CheckedType::Nominal(NominalId(0));
+        assert!(!generic_host_abi_type(CheckedMode::Own, nominal));
+        assert!(!generic_host_abi_type(
+            CheckedMode::Range,
+            CheckedType::Integer(IntegerType::U8)
+        ));
+        assert!(generic_host_abi_type(CheckedMode::Reference, nominal));
+        assert!(generic_host_abi_type(
+            CheckedMode::Own,
+            CheckedType::Integer(IntegerType::U64)
+        ));
     }
 }

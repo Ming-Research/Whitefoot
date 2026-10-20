@@ -13,12 +13,45 @@
 //! stands, which is where their moves and copies take effect, and hands the
 //! values to the start; the wrapper runs later, in its own context.
 
-use crate::semantic::{BindingId, CheckedExpression, CheckedProjectedDrop};
+use crate::semantic::{BindingId, CheckedExpression, CheckedProjectedDrop, CheckedStatement};
 use crate::{IrConstant, IrOperation, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath};
 
 use super::IrBuilder;
 
 impl IrBuilder<'_> {
+    /// Records the permission site of a statement whose entry just awaited a
+    /// bound context. Matches use their scrutinee or guarded call's occurrence
+    /// as their permission site, since they have no statement node of their own.
+    pub(super) fn note_awaited_site(&mut self, statement: &CheckedStatement) {
+        let site = match statement {
+            CheckedStatement::Let { node_path, .. }
+            | CheckedStatement::DestructuringLet { node_path, .. }
+            | CheckedStatement::PropagateLet { node_path, .. }
+            | CheckedStatement::Set { node_path, .. }
+            | CheckedStatement::Evaluate { node_path, .. }
+            | CheckedStatement::DropExpression { node_path, .. }
+            | CheckedStatement::Return { node_path, .. }
+            | CheckedStatement::ValueMatchLet { node_path, .. }
+            | CheckedStatement::Give { node_path, .. }
+            | CheckedStatement::Loop { node_path, .. }
+            | CheckedStatement::CountedRange { node_path, .. }
+            | CheckedStatement::Break { node_path, .. }
+            | CheckedStatement::Continue { node_path, .. }
+            | CheckedStatement::Atomic { node_path, .. } => Some(node_path),
+            CheckedStatement::Proof(proof) => Some(&proof.node_path),
+            CheckedStatement::Match {
+                scrutinee: CheckedExpression::UserCall { call, .. },
+                ..
+            } => Some(call),
+            CheckedStatement::Match { .. } => {
+                crate::semantic::permission::conditional_call(statement).map(|call| call.site)
+            }
+        };
+        if let Some(site) = site {
+            self.awaited_sites.insert(site.clone());
+        }
+    }
+
     /// Whether the statement at `node_path` starts a context.
     pub(super) fn starts_context(&self, node_path: &NodePath) -> bool {
         self.context_starts.contains(node_path)
@@ -57,24 +90,38 @@ impl IrBuilder<'_> {
         while position < self.pending_contexts.len() {
             let due = self.pending_contexts[position]
                 .before
-                .is_none_or(|before| before <= index);
+                .is_some_and(|before| before <= index);
             if !due {
                 position += 1;
                 continue;
             }
             let pending = self.pending_contexts.remove(position);
-            let value = self.define(
-                pending.result,
-                IrOperation::ContextAwait {
-                    start: pending.start,
-                },
-            )?;
-            if self.bindings.insert(pending.binding, value).is_some() {
-                return Err(LoweringFailure::InvalidCheckedProgram);
-            }
-            self.promote_binding_if_needed(pending.binding)?;
+            self.await_context(pending)?;
         }
         Ok(())
+    }
+
+    /// At the block's normal end, awaits every context it still owns without
+    /// touching contexts pending in an enclosing block [WAIT-3].
+    pub(super) fn await_contexts_at_block_end(&mut self, from: usize) -> Result<(), LoweringFailure> {
+        while self.pending_contexts.len() > from {
+            let pending = self.pending_contexts.remove(from);
+            self.await_context(pending)?;
+        }
+        Ok(())
+    }
+
+    fn await_context(&mut self, pending: PendingContext) -> Result<(), LoweringFailure> {
+        let value = self.define(
+            pending.result,
+            IrOperation::ContextAwait {
+                start: pending.start,
+            },
+        )?;
+        if self.bindings.insert(pending.binding, value).is_some() {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        self.promote_binding_if_needed(pending.binding)
     }
 
     fn bound_result_type(&self, start: IrValueId) -> Result<IrType, LoweringFailure> {

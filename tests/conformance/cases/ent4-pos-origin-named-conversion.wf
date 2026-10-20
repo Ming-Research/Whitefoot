@@ -1,0 +1,22 @@
+fn need(input: u16) -> r: unit pure contract {
+  define reduced = cvt.wrap::<u16, u8>(input);
+  requires reduced == 1_u8;
+} {
+  doc "Consume the conversion goal over a named actual.";
+  return unit;
+}
+
+fn witness() -> r: unit pure {
+  doc "The guard's complete expansion and the call's partial spelling share one origin.";
+  let input = 257_u16;
+  let reduced = cvt.wrap::<u16, u8>(input);
+  if reduced == 1_u8 {
+    need(input: input);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Check transport through the named conversion input.";
+  return std::process::exit_status(code: 0_u8);
+}

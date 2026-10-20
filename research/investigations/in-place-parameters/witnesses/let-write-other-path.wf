@@ -1,0 +1,61 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct InplaceLetRow {
+  f: u64;
+  g: u64;
+  h: u64;
+  j: u64;
+  k: u64;
+  l: u64;
+  m: u64;
+  n: u64;
+}
+
+struct InplaceLetBig {
+  inner: Array<InplaceLetRow, 2>;
+}
+
+fn inplace_let_sink(big: &InplaceLetBig) -> result: unit writes(big) {
+  doc "Changes both fields observed by the reader in either array element.";
+  set big^.inner[0_u64].f = 99_u64;
+  set big^.inner[0_u64].g = 7_u64;
+  set big^.inner[1_u64].f = 99_u64;
+  set big^.inner[1_u64].g = 7_u64;
+  return unit;
+}
+
+fn inplace_let_probe(big: &InplaceLetBig, i: u64, c: Bool) -> result: u64 writes(big) contract {
+  requires i < 2_u64;
+} {
+  doc "The fast arm reads the snapshot; only the other arm writes its source.";
+  let r = big^.inner[i];
+  if c {
+    return r.f +wrap r.g;
+  }
+  inplace_let_sink(big: big);
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  let row = InplaceLetRow(f: 11_u64, g: 31_u64, h: 3_u64, j: 4_u64, k: 5_u64, l: 6_u64, m: 7_u64, n: 8_u64);
+  let rows = array_filled::<InplaceLetRow, 2>(value: row);
+  let big = InplaceLetBig(inner: rows);
+  let yes = True();
+  let no = False();
+  let fast = inplace_let_probe(big: &big, i: 1_u64, c: yes);
+  if fast != 42_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let slow = inplace_let_probe(big: &big, i: 1_u64, c: no);
+  if slow != 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if big.inner[1_u64].f != 99_u64 {
+    return exit_status(code: 3_u8);
+  }
+  if big.inner[1_u64].g != 7_u64 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

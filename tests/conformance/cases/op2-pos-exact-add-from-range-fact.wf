@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn probe(xs: &[u16]) -> result: unit reads(xs) contract {
+  requires forall small(k in 0_u64..xs^.len): xs^[k] <= 1000_u16;
+} {
+  doc "Adds each element to itself with the exact operator.";
+  for (i in 0_u64..xs^.len) {
+    let y = xs^[i] + xs^[i];
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

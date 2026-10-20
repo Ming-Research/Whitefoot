@@ -5,7 +5,8 @@ use super::super::{
     CanonicalResourceFailure, FinalizeOutcome, audit_canonical, finalize,
 };
 use super::support::{
-    CANONICAL_LIMITS, FINALIZE_LIMITS, reaches_canonical_syntax, rendered_bytes, with_parsed,
+    CANONICAL_LIMITS, FINALIZE_LIMITS, reaches_canonical_syntax, rendered_bytes, token_spellings,
+    with_parsed,
 };
 
 fn audit_source(source: &[u8], audit: impl FnOnce(CanonicalOutcome)) {
@@ -33,6 +34,35 @@ fn exact_empty_and_nonempty_source_forests_publish_canonical_syntax() {
             assert_eq!(unit.root_extent().len(), 1);
         });
     }
+}
+
+/// [GRAM-5, RANGE-1, FORM-2] Bool variant guards and comparison guards share
+/// the comma-separated guard list; the colon still begins relation conclusions.
+#[test]
+fn range_bool_variant_guards_round_trip_with_comparison_guards() {
+    let source = b"fn inspect(nodes: &[Bool], enabled: Bool) -> result: unit pure contract {\n  requires forall observed(k in 0_u64..nodes^.len) when k < nodes^.len, nodes^[k] is True, enabled is True: k == k;\n} {\n  return unit;\n}\n";
+    assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
+    audit_source(source, |outcome| {
+        assert!(
+            matches!(outcome, CanonicalOutcome::Complete(_)),
+            "Bool variant and comparison guards must render canonically: {outcome:?}"
+        );
+    });
+}
+
+/// [GRAM-5, RANGE-1, FORM-2] a variant relation, plain and negated, is a
+/// guard and a conclusion: `is` and `not` are spaced words before the
+/// variant's TYPEID, beside comparison guards.
+#[test]
+fn range_variant_relations_round_trip_as_guards_and_conclusions() {
+    let source = b"enum Step {\n  Next();\n  Stop();\n}\n\nfn inspect(steps: &[Step], flags: &[Bool]) -> result: unit pure contract {\n  requires forall observed(k in 0_u64..steps^.len) when k < flags^.len, steps^[k] is not Stop, flags^[k] is True: steps^[k] is Next, k + 1_u64 < steps^.len;\n} {\n  return unit;\n}\n";
+    assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
+    audit_source(source, |outcome| {
+        assert!(
+            matches!(outcome, CanonicalOutcome::Complete(_)),
+            "variant relations must render canonically: {outcome:?}"
+        );
+    });
 }
 
 /// [FORM-2] a `<` or `>` selected by `compare_op` belongs to neither
@@ -335,13 +365,14 @@ fn canonical_audit_resource_edges_are_explicit_and_deterministic() {
     });
 }
 
-/// Asserts that a source is canonical and that no single-byte trivia edit is.
+/// Asserts that a source is canonical and no token-preserving trivia edit is.
 ///
 /// The renderer is held to the same fixtures: canonical bytes must render to
 /// themselves, so every layout rule pinned here is pinned in both directions.
 fn only_these_trivia_bytes_render(canonical: &[u8]) {
     assert!(reaches_canonical_syntax(canonical));
     assert_eq!(rendered_bytes(canonical).as_deref(), Some(canonical));
+    let canonical_tokens = token_spellings(canonical).expect("canonical tokens");
     let trivia_positions: Vec<_> = canonical
         .iter()
         .enumerate()
@@ -351,18 +382,8 @@ fn only_these_trivia_bytes_render(canonical: &[u8]) {
     for position in trivia_positions {
         let mut removed = canonical.to_vec();
         removed.remove(position);
-        assert!(
-            !reaches_canonical_syntax(&removed),
-            "removing canonical trivia at byte {position} unexpectedly stayed canonical: {:?}",
-            String::from_utf8_lossy(&removed)
-        );
-
         let mut duplicated = canonical.to_vec();
         duplicated.insert(position, canonical[position]);
-        assert!(
-            !reaches_canonical_syntax(&duplicated),
-            "duplicating canonical trivia at byte {position} unexpectedly stayed canonical"
-        );
 
         let mut replaced = canonical.to_vec();
         replaced[position] = if canonical[position] == b' ' {
@@ -370,23 +391,40 @@ fn only_these_trivia_bytes_render(canonical: &[u8]) {
         } else {
             b' '
         };
-        assert!(
-            !reaches_canonical_syntax(&replaced),
-            "replacing canonical trivia at byte {position} unexpectedly stayed canonical"
-        );
-
         // Whatever a mutation derives, rendering it lands on canonical bytes
         // and stays there. A mutation that keeps the token stream renders back
         // to `canonical`; one that changes it renders that other program. The
         // fixed point is what holds for both, so it is what is asserted.
         for mutation in [&removed, &duplicated, &replaced] {
+            let same_tokens = token_spellings(mutation).as_ref() == Some(&canonical_tokens);
+            if same_tokens {
+                assert!(
+                    !reaches_canonical_syntax(mutation),
+                    "changing canonical trivia at byte {position} unexpectedly stayed canonical: {:?}",
+                    String::from_utf8_lossy(mutation)
+                );
+            }
             let Some(rendered) = rendered_bytes(mutation) else {
                 continue;
             };
+            if same_tokens {
+                assert_eq!(rendered.as_slice(), canonical);
+            }
             assert!(reaches_canonical_syntax(&rendered));
             assert_eq!(rendered_bytes(&rendered).as_ref(), Some(&rendered));
         }
     }
+}
+
+/// Removing the separator between `move` and its operand changes the tokens:
+/// `movetaken` is a valid bare place, not a noncanonical explicit move.
+#[test]
+fn copy_and_consuming_destructuring_keep_distinct_canonical_tokens() {
+    let consuming = b"fn probe() -> result: unit pure {\n  let Tree(left: kept, ..) = move taken;\n  return unit;\n}\n";
+    let copy = b"fn probe() -> result: unit pure {\n  let Tree(left: kept, ..) = movetaken;\n  return unit;\n}\n";
+    assert_ne!(token_spellings(consuming), token_spellings(copy));
+    only_these_trivia_bytes_render(consuming);
+    only_these_trivia_bytes_render(copy);
 }
 
 #[test]
@@ -502,6 +540,16 @@ fn if_else_renders_its_join_line_and_indents_both_blocks() {
     only_these_trivia_bytes_render(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let flag = True();\n  if flag {\n    let first = flag;\n  } else if flag {\n    let second = flag;\n  } else if flag {\n    let third = flag;\n  } else {\n    let fourth = flag;\n  }\n  return unit;\n}\n",
     );
+}
+
+/// Match arm `else` does not own an if continuation. Grammar permits a
+/// following arm so GRAM-12 can reject its position after FORM-2 succeeds.
+#[test]
+fn match_else_arms_keep_the_ordinary_block_boundary() {
+    let source =
+        include_bytes!("../../../../../../tests/conformance/cases/gram12-neg-else-not-final.wf");
+    only_these_trivia_bytes_render(source);
+    assert_eq!(rendered_bytes(source).as_deref(), Some(source.as_slice()));
 }
 
 #[test]

@@ -13,6 +13,9 @@ mod scopes;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use tests::with_each_declaration_role;
+
 use crate::syntax::NodeId;
 use crate::{CanonicalSyntaxUnit, NodePath, SyntaxCoordinate};
 
@@ -165,7 +168,18 @@ impl BuiltinPreludeId {
     pub(crate) const NARROW_ERROR: Self = Self(21);
     pub(crate) const INT: Self = Self(22);
     pub(crate) const FLOAT: Self = Self(23);
-    pub(crate) const RUN: Self = Self(24);
+    pub(crate) const EQ: Self = Self(24);
+    pub(crate) const RUN: Self = Self(25);
+
+    pub(crate) const SCAN_STEP: Self = Self(26);
+    pub(crate) const NEXT: Self = Self(27);
+    pub(crate) const NEXT_CURSOR: Self = Self(28);
+    pub(crate) const NEEDS: Self = Self(29);
+    pub(crate) const NEEDS_BYTES: Self = Self(30);
+    pub(crate) const DECISION_STATE: Self = Self(31);
+    pub(crate) const OPEN: Self = Self(32);
+    pub(crate) const WRITTEN: Self = Self(33);
+    pub(crate) const KILLED: Self = Self(34);
 
     /// Returns the internal built-in record index.
     #[must_use]
@@ -227,8 +241,8 @@ pub enum DeclarationClass {
     StructConstructor,
     /// Source or prelude enum variant.
     EnumVariant,
-    /// One built-in numeric bound: Int or Float.
-    NumericBound,
+    /// One built-in bound: Int, Float or Eq.
+    BuiltinBound,
     /// A named parameter-group abbreviation.
     Interface,
     /// A named argument-group abbreviation.
@@ -252,8 +266,8 @@ pub enum DeclarationDomain {
     NominalType,
     /// Struct constructors and enum variants.
     Constructor,
-    /// Built-in numeric bounds.
-    NumericBound,
+    /// Built-in type bounds.
+    BuiltinBound,
     /// Loop labels.
     Label,
     /// Machine-checked invariant facts.
@@ -262,13 +276,13 @@ pub enum DeclarationDomain {
 
 impl DeclarationDomain {
     /// [DIAG-1] fixes the conflict-domain order as lexical-IDENT,
-    /// nominal-type, constructor, numeric-bound, LABEL, invariant.
+    /// nominal-type, constructor, built-in-bound, LABEL, invariant.
     pub(crate) const fn ordinal(self) -> u8 {
         match self {
             Self::LexicalIdentifier => 0,
             Self::NominalType => 1,
             Self::Constructor => 2,
-            Self::NumericBound => 3,
+            Self::BuiltinBound => 3,
             Self::Label => 4,
             Self::Invariant => 5,
         }
@@ -346,7 +360,7 @@ pub enum DependentDeclarationRole {
 pub enum LexicalUseRole {
     /// U01: nominal or generic type.
     Type,
-    /// U02: built-in numeric bound.
+    /// U02: built-in type bound.
     GenericBound,
     /// An interface group in a header or forwarding/member application.
     FormalGroup,
@@ -371,6 +385,8 @@ pub enum LexicalUseRole {
     Const,
     /// U13: constant-value identifier.
     ConstValue,
+    /// [GRAM-12] an integer arm IDENT, admitting a named const alone.
+    IntegerMatchValue,
     /// U14: place base.
     PlaceBase,
     /// U15: identifier callee.
@@ -405,12 +421,18 @@ pub enum DeferredUseRole {
     /// [GRAM-5, EFF-1]. Which variant a place's enum type has is the owner
     /// type's judgment, exactly as the paired field name is.
     PayloadVariant,
+    /// The variant TYPEID of a range clause's variant relation, `e is V`
+    /// [GRAM-5, RANGE-1], resolved against the tested value's enum type as
+    /// an arm label is against its scrutinee's.
+    TestedVariant,
     /// The member name on the left side of a named binding.
     FunctionBinding,
     /// The member selected by a qualified group call.
     FunctionMember,
     /// A statically selected field after an effect-path root.
     EffectField,
+    /// A reference parameter named by its callable held requirement.
+    HeldParameter,
 }
 
 /// Exact source origin of one resolver role.
@@ -942,6 +964,8 @@ pub enum ResolutionRule {
     Gram2,
     /// Match-binder freshness.
     Gram10,
+    /// Integer arm constant lookup.
+    Gram12,
     /// Type or place lookup.
     Type5,
     /// Namespace collision, constructor, or label lookup.
@@ -993,6 +1017,7 @@ impl ResolutionRule {
             Self::Form5 => "FORM-5",
             Self::Gram2 => "GRAM-2",
             Self::Gram10 => "GRAM-10",
+            Self::Gram12 => "GRAM-12",
             Self::Type5 => "TYPE-5",
             Self::Type6 => "TYPE-6",
             Self::Set1 => "SET-1",

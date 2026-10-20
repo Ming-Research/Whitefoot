@@ -110,6 +110,7 @@ impl Reasoning<'_, '_, '_> {
                         facts,
                         affine: values,
                         closed: closed.as_ref(),
+                        origin_view: OriginView::Pending,
                     },
                     goal,
                 )

@@ -86,6 +86,44 @@ struct SlabHandle {
   generation: u64;
 }
 
+enum HaloCell {
+  HaloA(first: u8, second: u8, third: u8, word: u32);
+  HaloB(first: u8, second: u8, third: u8, word: u32);
+}
+
+fn halo_word(cell: &HaloCell) -> result: u32 reads(cell) {
+  match cell^ {
+    HaloA(first: a, second: b, third: c, word: w) => {
+      if a^ != 129_u8 {
+        return 0_u32;
+      }
+      if b^ != 193_u8 {
+        return 0_u32;
+      }
+      if c^ != 251_u8 {
+        return 0_u32;
+      }
+      return w^;
+    }
+    HaloB(first: a, second: b, third: c, word: w) => {
+      if a^ != 131_u8 {
+        return 0_u32;
+      }
+      if b^ != 197_u8 {
+        return 0_u32;
+      }
+      if c^ != 253_u8 {
+        return 0_u32;
+      }
+      return w^;
+    }
+  }
+}
+
+fn halo_cell() -> result: HaloCell pure {
+  return HaloCell::HaloA(first: 129_u8, second: 193_u8, third: 251_u8, word: 305419896_u32);
+}
+
 fn component(code: u32) -> result: Component pure {
   return Component::Delim(code_point: code);
 }
@@ -118,6 +156,18 @@ fn main() -> status: std::process::ExitStatus pure {
   let third = written(value: 3_u64);
   let fourth = small(value: 4_u64);
   let fifth = pair(value: 5_u64);
+  let first_cell = halo_cell();
+  let cells = array_filled::<HaloCell, 2>(value: first_cell);
+  let second_cell = HaloCell::HaloB(first: 131_u8, second: 197_u8, third: 253_u8, word: 2271560481_u32);
+  set cells[1_u64] = second_cell;
+  let first_word = halo_word(cell: &cells[0_u64]);
+  let second_word = halo_word(cell: &cells[1_u64]);
+  if first_word != 305419896_u32 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second_word != 2271560481_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -144,18 +194,30 @@ fn sequence(fields: impl IntoIterator<Item = (u64, u64)>) -> (u64, u64) {
     (size.next_multiple_of(align), align)
 }
 
-const TAG: (u64, u64) = (4, 4);
+// Independent of target::enum_tag_width: these are the approved count
+// boundaries, not values obtained from the layout implementation under test.
+fn payload_tag(variants: usize) -> (u64, u64) {
+    let bytes = match variants {
+        0..=256 => 1,
+        257..=65536 => 2,
+        _ => 4,
+    };
+    (bytes, bytes)
+}
 
 /// Every enum with a payload in `program`: its link name, its selected
 /// layout, its product layout (the tag followed by every variant's fields,
 /// with nested enums in their own selected layouts), and each payload
 /// variant's view (the tag followed by that variant's fields).
 struct EnumLayout {
+    name: String,
     link: String,
     union: bool,
     selected: (u64, u64),
     product: (u64, u64),
     views: Vec<(u32, (u64, u64))>,
+    tag_bytes: u64,
+    prefix_bytes: u64,
 }
 
 fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
@@ -168,8 +230,26 @@ fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
             continue;
         }
         let field = |ty: IrType| selected(program, ty);
+        let tag = payload_tag(variants.len());
+        // Independent of the prefix planner: walk declared views, ignore
+        // zero-sized fields, and bound 1/2/4-byte transport by the earliest
+        // occupied payload offset in any variant.
+        let mut first_payload = None;
+        for variant in variants {
+            let mut end = tag.0;
+            for declared in variant.fields() {
+                let (size, align) = field(declared.ty());
+                let offset = end.next_multiple_of(align);
+                if size != 0 {
+                    first_payload = Some(first_payload.map_or(offset, |prior: u64| prior.min(offset)));
+                }
+                end = offset + size;
+            }
+        }
+        let vacant_prefix = first_payload.unwrap_or(tag.0);
+        let prefix_bytes = if vacant_prefix >= 4 { 4 } else if vacant_prefix >= 2 { 2 } else { 1 };
         let product = sequence(
-            std::iter::once(TAG).chain(
+            std::iter::once(tag).chain(
                 variants
                     .iter()
                     .flat_map(|variant| variant.fields())
@@ -181,19 +261,22 @@ fn enum_layouts(program: &IrProgram) -> Vec<EnumLayout> {
             .filter(|variant| !variant.fields().is_empty())
             .map(|variant| {
                 let view = sequence(
-                    std::iter::once(TAG)
+                    std::iter::once(tag)
                         .chain(variant.fields().iter().map(|declared| field(declared.ty()))),
                 );
                 (variant.tag(), view)
             })
             .collect();
         layouts.push(EnumLayout {
+            name: nominal.name().to_owned(),
             link: nominal.link_name().to_owned(),
             union: is_union_enum(program.nominals(), program.elements(), nominal.id())
                 .expect("eligibility"),
             selected: selected(program, IrType::Nominal(nominal.id())),
             product,
             views,
+            tag_bytes: tag.0,
+            prefix_bytes,
         });
     }
     layouts
@@ -252,6 +335,7 @@ fn union_layouts_match_the_target_computation_and_the_emitted_types() {
         // Register-returned products keep their layout.
         assert_eq!(result_layout(program, "small"), ((16, 8), false));
         assert_eq!(result_layout(program, "pair"), ((24, 8), false));
+        assert_eq!(result_layout(program, "halo_cell"), ((8, 4), true));
         let written = program
             .functions()
             .iter()
@@ -281,7 +365,7 @@ fn union_layouts_match_the_target_computation_and_the_emitted_types() {
                 let expected = (
                     size.expect("payload view")
                         .next_multiple_of(layout.selected.1),
-                    align.expect("payload view").max(4),
+                    align.expect("payload view").max(layout.tag_bytes),
                 );
                 assert_eq!(layout.selected, expected, "{}", layout.link);
             } else {
@@ -310,22 +394,54 @@ fn union_layouts_match_the_target_computation_and_the_emitted_types() {
             .find_map(|line| line.strip_prefix(&format!("%wf.t.{} = type ", layout.link)))
             .unwrap_or_else(|| panic!("declared enum {}", layout.link));
         if layout.union {
+            assert!(declaration.starts_with(&format!("{{ i{}, ", layout.prefix_bytes * 8)),
+                "the raw carrier merges only the independently computed common tag/padding prefix: {declaration}");
             assert_eq!(
                 declaration.split(", ").nth(1),
-                Some(format!("[{} x i8]", layout.selected.0 - 4).as_str()),
+                Some(format!("[{} x i8]", layout.selected.0 - layout.prefix_bytes).as_str()),
                 "{declaration}"
             );
         } else {
             assert!(!declaration.contains(" x i8], [0 x "), "{declaration}");
         }
     }
-    assert_llvm_layouts(&llvm, probes);
+    let halo = layouts.iter().find(|layout| layout.name == "HaloCell")
+        .expect("the two-variant Halo-shaped union is emitted");
+    for variant in 0..2 {
+        assert!(llvm.contains(&format!(
+            "%wf.t.{}.v{variant} = type {{ i8, i8, i8, i8, i32 }}", halo.link
+        )), "{llvm}");
+    }
+    let mut offsets = Vec::new();
+    for variant in 0..2 {
+        for (field, expected) in [0, 1, 2, 3, 4].into_iter().enumerate() {
+            offsets.push((format!(
+                "i64 ptrtoint (ptr getelementptr (%wf.t.{}.v{variant}, ptr null, i32 0, i32 {field}) to i64)",
+                halo.link
+            ), expected));
+        }
+    }
+    offsets.push((format!(
+        "i64 ptrtoint (ptr getelementptr ([2 x %wf.t.{}], ptr null, i32 0, i32 1) to i64)",
+        halo.link
+    ), 8));
+    assert_llvm_layouts_and_offsets(&llvm, probes, offsets);
 }
 
 /// Run the program and observe LLVM DataLayout's size and alignment constants
 /// in the same executable. Shared with handler-word layout coverage.
 pub(super) fn assert_llvm_layouts(llvm: &str, probes: BTreeMap<String, (u64, u64)>) {
-    let entries: Vec<_> = probes
+    assert_llvm_layouts_and_offsets(llvm, probes, Vec::new());
+}
+
+/// Observe field offsets and array strides in the existing layout executable,
+/// so a consistent wrong representation still fails the independent constants.
+pub(super) fn assert_llvm_layouts_and_offsets(
+    llvm: &str,
+    probes: BTreeMap<String, (u64, u64)>,
+    offsets: Vec<(String, u64)>,
+) {
+    let mut entries: Vec<_> = probes
         .keys()
         .flat_map(|name| {
             [
@@ -336,6 +452,7 @@ pub(super) fn assert_llvm_layouts(llvm: &str, probes: BTreeMap<String, (u64, u64
             ]
         })
         .collect();
+    entries.extend(offsets.iter().map(|(expression, _)| expression.clone()));
     let module = format!(
         "{llvm}\n@wf_test_layouts = constant [{} x i64] [{}]\n",
         entries.len(),
@@ -361,10 +478,11 @@ __attribute__((constructor)) static void wf_test_print_layouts(void) {{
         .lines()
         .map(|line| line.parse().expect("one decimal per line"))
         .collect();
-    let expected: Vec<u64> = probes
+    let mut expected: Vec<u64> = probes
         .values()
         .flat_map(|(size, align)| [*size, *align])
         .collect();
+    expected.extend(offsets.iter().map(|(_, expected)| *expected));
     assert!(
         output.status.code() == Some(0) && measured == expected,
         "program result and LLVM layouts: {output:?}; measured {measured:?}, expected {expected:?}; types {:?}",
@@ -666,7 +784,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
 
 /// Union-laid-out enums cross waiting calls and contexts as memory: every
 /// result, bound or direct, and every argument handed to a context is
-/// copied by memmove and never first-class, every observation matches, and
+/// copied through storage and never first-class, every observation matches, and
 /// every owner is released exactly once. Contexts may run on several
 /// drivers, which the observer's lock serves too.
 #[test]
@@ -719,8 +837,8 @@ fn peek(holder: &Holder) -> result: u64 reads(holder) {
   }
 }
 
-fn fill(held: Shared<Holder>, seed: u64) -> result: unit pure waits {
-  atomic state = &held {
+fn fill(observed_state: Shared<Holder>, seed: u64) -> result: unit pure waits {
+  atomic state = &observed_state {
     let cell = box_new::<u64>(value: seed);
     let next = Holder::Boxed(cell: move cell, stamp: 100_u64);
     set state^ = move next;
@@ -728,10 +846,10 @@ fn fill(held: Shared<Holder>, seed: u64) -> result: unit pure waits {
   return unit;
 }
 
-fn fill_all(held: &Shared<Holder>) -> result: unit reads(held) waits {
+fn fill_all(observed_state: &Shared<Holder>) -> result: unit reads(observed_state) waits {
   for @start (index in 0_u64..4_u64) {
-    let handle = shared_share::<Holder>(shared: held);
-    spawn fill(held: move handle, seed: index);
+    let handle = shared_share::<Holder>(shared: observed_state);
+    spawn fill(observed_state: move handle, seed: index);
   }
   return unit;
 }
@@ -740,17 +858,17 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let values = box_slots_new::<u64>(capacity: 2_u64);
   place_back(window: &values.inner, value: 1_u64);
   let start = Holder::Many(values: move values);
-  let held = shared_new::<Holder>(value: move start);
+  let observed_state = shared_new::<Holder>(value: move start);
   let seen = 0_u64;
-  atomic state = &held {
+  atomic state = &observed_state {
     set seen = peek(holder: state);
   }
   if seen != 1001_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  fill_all(held: &held);
+  fill_all(observed_state: &observed_state);
   let last = 0_u64;
-  atomic state = &held {
+  atomic state = &observed_state {
     set last = peek(holder: state);
   }
   if last < 100_u64 {
@@ -901,7 +1019,7 @@ fn a_by_value_parameter_nothing_writes_is_read_in_place() {
             .take_while(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '%')
             .collect();
         assert!(
-            !body.contains("@llvm.memmove"),
+            !body.contains("@llvm.memmove") && !body.contains("; layout-bounded transfer "),
             "{overlap:?}: no copy of {incoming}: {body}"
         );
         assert!(
@@ -1025,8 +1143,12 @@ fn unchanged_by_value_parameters_are_read_in_place_across_branches() {
                 .filter(|(_, parameter_ty)| *parameter_ty == ty)
                 .map(|(value, _)| *value)
                 .collect();
-            assert_eq!(carries.len(), 1, "{name}: one continuation record");
-            assert_eq!(storage.slot(parameter), storage.slot(carries[0]), "{name}");
+            // rec_pick reads r after its branch. rec_push and rec_set return
+            // False on their continuation, so their old r carry is dead.
+            assert_eq!(carries.len(), usize::from(name == "rec_pick"), "{name}");
+            for carry in carries {
+                assert_eq!(storage.slot(parameter), storage.slot(carry), "{name}");
+            }
             assert!(storage.holds_only(parameter), "{name}: unchanged contents");
         }
     });
@@ -1042,7 +1164,9 @@ fn unchanged_by_value_parameters_are_read_in_place_across_branches() {
         ] {
             let body = super::emitted_function(&module, name);
             assert_eq!(
-                body.matches("@llvm.memmove").count() + body.matches("@llvm.memcpy").count(),
+                body.matches("@llvm.memmove").count()
+                    + body.matches("@llvm.memcpy").count()
+                    + body.matches("; layout-bounded transfer ").count(),
                 copies,
                 "{overlap:?} {name}: {body}"
             );
@@ -1102,9 +1226,246 @@ fn rec_rebind(r: Rec, c: Bool) -> s: u64 pure {
         let body = super::emitted_function(&module, "rec_rebind");
         let copies: Vec<_> = body
             .lines()
-            .filter(|line| line.contains("@llvm.memmove") || line.contains("@llvm.memcpy"))
+            .filter(|line| {
+                line.contains("@llvm.memmove")
+                    || line.contains("@llvm.memcpy")
+                    || line.contains("; layout-bounded transfer ")
+            })
             .collect();
         assert_eq!(copies.len(), 1, "{overlap:?}: {body}");
-        assert!(copies[0].contains(", ptr %wf.arg.v0,"), "{overlap:?}: {body}");
+        assert!(
+            copies[0].contains(", ptr %wf.arg.v0,") || copies[0].contains(" from %wf.arg.v0 to "),
+            "{overlap:?}: {body}"
+        );
+    }
+}
+
+/// Shared source for ordinary and split-dispatch selection. Two payload
+/// variants force union layout; Jump's tag and three words occupy 32 bytes.
+pub(super) const SELECT_STEP: &str = include_str!("select_step.wf");
+
+/// Keep producer calls visible through host optimization, without changing the
+/// split dispatcher's alwaysinline contract or any source semantics.
+pub(super) fn retain_step_producers(module: &str) -> String {
+    module
+        .lines()
+        .map(|line| {
+            if line.starts_with("define ")
+                && ["prepare", "unwind"]
+                    .iter()
+                    .any(|name| line.contains(&format!(" @wf_{name}(")))
+            {
+                format!("{} noinline {{\n", line.strip_suffix(" {").expect("header"))
+            } else {
+                format!("{line}\n")
+            }
+        })
+        .collect()
+}
+
+/// Both the raw and optimized definition must pass its actual result pointer
+/// to each producer. The fixture has no other copy, so forbidding all memory
+/// copies is stronger than matching a target-dependent spelling of size 32.
+pub(super) fn assert_step_destination(body: &str) {
+    // LLVM may infer pointer attributes containing commas inside parentheses.
+    // Only the first comma outside those attributes ends the argument.
+    let first_argument = |arguments: &str| {
+        let mut depth = 0;
+        let end = arguments
+            .char_indices()
+            .find_map(|(index, character)| match character {
+                '(' => {
+                    depth += 1;
+                    None
+                }
+                ')' if depth > 0 => {
+                    depth -= 1;
+                    None
+                }
+                ',' | ')' if depth == 0 => Some(index),
+                _ => None,
+            })
+            .expect("first argument ends");
+        arguments[..end]
+            .split_whitespace()
+            .last()
+            .expect("pointer operand")
+            .to_owned()
+    };
+    let result = first_argument(
+        body.lines()
+            .next()
+            .and_then(|header| header.split_once('('))
+            .expect("result destination parameter")
+            .1,
+    );
+    assert!(result.starts_with('%'), "{body}");
+    for producer in ["prepare", "unwind"] {
+        let calls = body
+            .lines()
+            .filter_map(|line| line.split_once(&format!("@wf_{producer}(")))
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 1, "one retained {producer} call: {body}");
+        let destination = first_argument(calls[0].1);
+        assert_eq!(destination, result, "{body}");
+    }
+    assert!(!body.contains("@llvm.memmove."), "{body}");
+    assert!(!body.contains("@llvm.memcpy."), "{body}");
+    assert!(!body.contains("; layout-bounded transfer "), "{body}");
+}
+
+#[test]
+fn unused_selection_carry_writes_both_producers_into_the_result() {
+    let source = format!(
+        "{SELECT_STEP}{}",
+        r#"
+fn main() -> status: std::process::ExitStatus pure {
+  for (n in 0_u64..5_u64) {
+    let step = select_step(n: n);
+    let valid = valid_step(step: step, n: n);
+    if bnot(valid) {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    );
+    with_ir(source.as_bytes(), |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "select_step")
+            .expect("selection function");
+        assert_eq!(selected(program, function.result()), (32, 8));
+        let prepare = program
+            .functions()
+            .iter()
+            .position(|function| function.name() == "prepare")
+            .expect("producer function");
+        let produced = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instruction| match instruction {
+                crate::IrInstruction::Define {
+                    result,
+                    operation: crate::IrOperation::Call { function, .. },
+                    ..
+                } if *function as usize == prepare => Some(*result),
+                _ => None,
+            })
+            .expect("producer call");
+        let returned = function
+            .blocks()
+            .iter()
+            .find_map(|block| match block.terminator() {
+                crate::IrTerminator::Return { value, .. } => Some(*value),
+                _ => None,
+            })
+            .expect("returned selection");
+        let storage = super::super::storage::FunctionStoragePlan::build(program, function)
+            .expect("storage plan");
+        assert!(storage.slot(produced).is_some());
+        assert_eq!(storage.slot(produced), storage.slot(returned));
+    });
+    // On the base, step and final_step both survive as join destinations;
+    // their interference blocks this storage equality and the direct call.
+    let module = super::owned_places::retain_calls(&super::emit(source.as_bytes()));
+    assert_step_destination(super::emitted_function(&module, "select_step"));
+    let optimized = super::host_optimized_module(&module);
+    assert_step_destination(super::emitted_function(&optimized, "select_step"));
+    let output = compile_link_and_run(&module, None, &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn observed_provisional_values_and_simultaneous_aggregate_carries_survive() {
+    let source = format!(
+        "{SELECT_STEP}{}",
+        r#"
+fn preserve_step(n: u64) -> result: u64 pure {
+  let step = prepare(n: n);
+  let final_step = step;
+  match step {
+    Error() => {
+      set final_step = unwind(n: n);
+    }
+    Jump(..) => {
+    }
+    Done(..) => {
+    }
+    Stop() => {
+    }
+    Budget() => {
+    }
+  }
+  let before = weight(step: step);
+  let after = weight(step: final_step);
+  let high = before *wrap 1000_u64;
+  return high +wrap after;
+}
+
+fn rotate(rounds: u64) -> result: u64 pure {
+  let first = Step::Jump(pc: 11_u64, base: 13_u64, kbase: 17_u64);
+  let second = Step::Done(count: 23_u64);
+  for (round in 0_u64..rounds) {
+    let saved = first;
+    set first = second;
+    set second = saved;
+  }
+  let left = weight(step: first);
+  let right = weight(step: second);
+  let high = left *wrap 1000_u64;
+  return high +wrap right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (n in 0_u64..5_u64) {
+    let expected = 400400_u64;
+    if n == 0_u64 {
+      set expected = 7099_u64;
+    }
+    if n == 1_u64 {
+      set expected = 41041_u64;
+    }
+    if n == 2_u64 {
+      set expected = 23023_u64;
+    }
+    if n == 3_u64 {
+      set expected = 300300_u64;
+    }
+    let actual = preserve_step(n: n);
+    if actual != expected {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let swapped = rotate(rounds: n);
+    let odd = iand(n, 1_u64);
+    let exchange_expected = 41023_u64;
+    if odd != 0_u64 {
+      set exchange_expected = 23041_u64;
+    }
+    if swapped != exchange_expected {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    );
+    // Removing the still-observed carry changes 7 to 99 on recovery;
+    // sequentializing the swap gives two equal weights after one iteration.
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let module = super::owned_places::retain_calls(&emit_lowered(source.as_bytes(), overlap));
+        let output = compile_link_and_run(&module, None, &[]);
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+        assert!(
+            output.stdout.is_empty() && output.stderr.is_empty(),
+            "{output:?}"
+        );
     }
 }

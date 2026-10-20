@@ -17,15 +17,18 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         constants: &[],
         constant_ids: &constant_ids,
         const_parameter_types: &const_parameter_types,
+        copy_type_parameters: &[],
         nominals: &[],
         elements: &[],
         contract_queries: &[],
         verified_postconditions: &[],
         verified_postcondition_proofs: &[],
+        component_postconditions: &[],
         binding_names: &[],
     };
     let function = CheckedFunction {
         formal_hypothesis: false,
+        summary_source: None,
         prelude_element: None,
         id: crate::semantic::model::FunctionId(0),
         declaration: crate::DeclarationId::from_index(0).unwrap(),
@@ -52,7 +55,10 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         declared_state_writes: Vec::new(),
         declared_state_reads: Vec::new(),
         requirements: Vec::new(),
+        held_parameters: Vec::new(),
+        held_calls: Vec::new(),
         requirement_places: Vec::new(),
+        routed_requirements: Vec::new(),
         postconditions: Vec::new(),
         range_facts: Default::default(),
         body: None,
@@ -70,6 +76,315 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
     check(&mut analyzer);
 }
 
+#[test]
+fn projected_contract_measure_has_the_operation_forms_affine_image() {
+    with_analyzer(|analyzer| {
+        let integer = CheckedType::Integer(IntegerType::U64);
+        let projected = goal_binding_place(
+            BindingId(0),
+            [GoalProjection::Measure(CheckedMeasure::Length)],
+            integer,
+        );
+        let operation = GoalExpression::Operation {
+            row: GoalOperation::ContainerMeasure {
+                measure: CheckedMeasure::Length,
+                measured: MeasuredKind::KeySet,
+                element: None,
+                constant: None,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: integer,
+            arguments: vec![goal_binding_place(BindingId(0), [], CheckedType::KeySet)],
+        };
+        let state = AffineFlowState::default();
+        let expected = analyzer
+            .reasoning()
+            .affine_goal_value(&operation, &state)
+            .expect("the ordinary measure operation has an affine image");
+        assert_eq!(
+            analyzer.reasoning().affine_goal_value(&projected, &state),
+            Some(expected)
+        );
+    });
+}
+
+#[test]
+fn joined_opaque_views_keep_origin_sign_transport_without_numeric_sources() {
+    use crate::semantic::entailment::state::{GoalOrigin, join};
+    use crate::semantic::goal::GoalAdmission;
+    use crate::semantic::places::{CaptureId, CapturedTerm};
+
+    with_analyzer(|analyzer| {
+        let captured = CapturedValue::new(CaptureId::ValueDetermined, CapturedTerm::Literal(0));
+        let expression = |admission| {
+            GoalExpression::Datum(GoalDatum::Place {
+                root: BindingId(0),
+                projections: vec![GoalProjection::Subscript(captured)],
+                ty: CheckedType::Bool,
+                admission,
+            })
+        };
+        let plain_expression = expression(GoalAdmission::plain(CheckedType::Bool));
+        let mut indexed_admission = GoalAdmission::plain_range(CheckedType::Bool);
+        indexed_admission
+            .projections
+            .push(GoalProjection::Subscript(captured));
+        let indexed_expression = expression(indexed_admission);
+        let plain = analyzer
+            .reasoning()
+            .intern_goal_expression(plain_expression.clone());
+        let indexed = analyzer
+            .reasoning()
+            .intern_goal_expression(indexed_expression);
+        assert_ne!(plain, indexed);
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S1, None);
+        let mut left = FactState::new();
+        left.establish_goal(
+            plain,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let mut right = FactState::new();
+        right.establish_goal(
+            indexed,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let mut joined = join(
+            &[left, right],
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(joined.opaque_sources.is_empty());
+        let binding = BindingId(1);
+        let origin_event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding,
+                value: plain,
+                event: origin_event,
+            });
+        joined
+            .goal_origins
+            .insert(binding, GoalOrigin { goal: plain, proof });
+        let submitted = goal_binding_place(binding, [], CheckedType::Bool);
+        let affine = AffineFlowState::default();
+        let view = analyzer
+            .reasoning()
+            .origin_query_view(ProofContext::new(&joined, &affine), Some(&submitted));
+        let goal = analyzer
+            .vocabulary
+            .goals
+            .id(&submitted)
+            .expect("submitted origin member interned");
+        let closed = close(
+            &view,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(closed.holds_opaque(goal, GoalSign::Positive, &analyzer.vocabulary.goals));
+        assert!(view.opaque_sources.is_empty());
+        assert_eq!(view.live_l0_relations(), joined.live_l0_relations());
+    });
+}
+
+#[test]
+fn joined_opaque_views_project_a_genuine_ordinary_let_origin() {
+    use crate::semantic::entailment::state::{GoalOrigin, join};
+    use crate::semantic::goal::GoalAdmission;
+    use crate::semantic::places::{CaptureId, CapturedTerm};
+
+    with_integer_parameters(&[IntegerType::U8, IntegerType::U8], |analyzer| {
+        let ty = CheckedType::Integer(IntegerType::U8);
+        let captured = CapturedValue::new(CaptureId::ValueDetermined, CapturedTerm::Literal(0));
+        let place = |admission| {
+            GoalExpression::Datum(GoalDatum::Place {
+                root: BindingId(0),
+                projections: vec![GoalProjection::Subscript(captured)],
+                ty,
+                admission,
+            })
+        };
+        let comparison = |value| GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::LessEqual,
+                operand_type: ty,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![
+                value,
+                GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                    ty: IntegerType::U8,
+                    bits: 1,
+                })),
+            ],
+        };
+        let plain_value = place(GoalAdmission::plain(ty));
+        let mut indexed_admission = GoalAdmission::plain_range(ty);
+        indexed_admission
+            .projections
+            .push(GoalProjection::Subscript(captured));
+        let indexed_value = place(indexed_admission);
+        let indexed = analyzer
+            .reasoning()
+            .intern_goal_expression(comparison(indexed_value.clone()));
+        let plain = analyzer
+            .reasoning()
+            .intern_goal_expression(comparison(plain_value));
+        assert_ne!(plain, indexed);
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S1, None);
+        let mut left = FactState::new();
+        left.establish_goal(
+            plain,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let mut right = FactState::new();
+        right.establish_goal(
+            indexed,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let mut joined = join(
+            &[left, right],
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(joined.opaque_sources.is_empty());
+        let binding = BindingId(1);
+        let definition = analyzer.reasoning().intern_goal_expression(indexed_value);
+        let origin_event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding,
+                value: definition,
+                event: origin_event,
+            });
+        joined.goal_origins.insert(
+            binding,
+            GoalOrigin {
+                goal: definition,
+                proof,
+            },
+        );
+        let submitted = comparison(goal_binding_place(binding, [], ty));
+        let affine = AffineFlowState::default();
+        let view = analyzer
+            .reasoning()
+            .origin_query_view(ProofContext::new(&joined, &affine), Some(&submitted));
+        let goal = analyzer
+            .vocabulary
+            .goals
+            .id(&submitted)
+            .expect("submitted origin member interned");
+        let relation = analyzer
+            .vocabulary
+            .goals
+            .projection(goal)
+            .cloned()
+            .expect("ordinary-let integer binding is admitted");
+        let closed = close(
+            &view,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(closed.derives(&relation));
+        let entering = close(
+            &joined,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(!entering.derives(&relation));
+        let Relation::Bound { left, right, bound } = relation else {
+            panic!("one ordinary comparison bound");
+        };
+        let retained = closed
+            .bound_proof(left, right, bound, &mut analyzer.vocabulary.derivations)
+            .expect("the transported relation retains its proof");
+        let mut pending = vec![retained];
+        let mut ancestors = HashSet::new();
+        while let Some(parent) = pending.pop() {
+            if ancestors.insert(parent) {
+                pending
+                    .extend(analyzer.vocabulary.derivations.nodes[parent.0 as usize].parent_ids());
+            }
+        }
+        assert!(
+            ancestors.contains(&proof),
+            "numeric transport retains the live ordinary-let introduction"
+        );
+        assert!(ancestors.iter().any(|parent| matches!(
+            &analyzer.vocabulary.derivations.nodes[parent.0 as usize],
+            DerivationNode::OriginTransport { origins, .. } if origins.contains(&proof)
+        )));
+        assert!(view.opaque_sources.is_empty());
+    });
+}
+
+#[test]
+fn measure_term_forms_pages_only_for_paged() {
+    for (measured, has_pages) in [
+        (MeasuredKind::RuntimeRing, false),
+        (MeasuredKind::RuntimeSlots, false),
+        (MeasuredKind::Paged, true),
+    ] {
+        with_analyzer(|analyzer| {
+            let path = ResolvedPlace::binding(BindingId(0));
+            analyzer
+                .reasoning()
+                .measure_term(CheckedMeasure::Length, path.clone(), measured, None);
+            for measure in [
+                CheckedMeasure::Length,
+                CheckedMeasure::Capacity,
+                CheckedMeasure::Head,
+                CheckedMeasure::Pages,
+            ] {
+                assert_eq!(
+                    analyzer
+                        .vocabulary
+                        .terms
+                        .interned(&TermKind::Measure(measure, path.clone()))
+                        .is_some(),
+                    measure != CheckedMeasure::Pages || has_pages,
+                    "{measured:?}: {measure:?}",
+                );
+            }
+        });
+    }
+}
+
 /// The oracle is the unchanged full pair enumeration, called without the
 /// memo. Compare both ordered witnesses and every exact-vector boundary
 /// query, so losing even an image that another AUTO route can recover fails.
@@ -84,6 +399,7 @@ fn assert_affine_index_matches_rebuild(
         &mut analyzer.vocabulary.derivations,
     );
     let full = affine_l0_index(&candidates, &closed, &mut AffineCheckState::new());
+    assert_affine_promotion_matches_rebuild(&candidates, &closed, &full);
     let (actual_closed, actual) = analyzer.reasoning().affine_query_view(context);
     assert!(Rc::ptr_eq(&closed, &actual_closed));
     // Demand exact vectors in reverse order first. The final family's order
@@ -93,13 +409,13 @@ fn assert_affine_index_matches_rebuild(
         assert_eq!(
             actual
                 .entry(entry.inequality.terms(), &closed, &mut check)
-                .as_ref(),
+                .as_deref(),
             Some(entry)
         );
     }
     let mut entries = Vec::new();
     while let Some(entry) = actual.ordered_entry(entries.len(), &closed, &mut check) {
-        entries.push(entry);
+        entries.push(entry.clone());
     }
     assert_eq!(entries, full.entries);
     let by_terms: WordHashMap<Box<[AffineCoefficient]>, usize> = entries
@@ -141,6 +457,137 @@ fn assert_affine_index_matches_rebuild(
     (closed, actual)
 }
 
+/// Each trigger must produce the eager map, even when exact requests visit
+/// vectors in a different order, repeat a cached absence, or ask for a new
+/// absent residual after promotion. Run this over the same alias, overflow,
+/// state-change and inventory fixtures as the memo differential above.
+fn assert_affine_promotion_matches_rebuild(
+    candidates: &[AffineL0Candidate],
+    closed: &ClosedState,
+    full: &AffineL0Index,
+) {
+    let mut check = AffineCheckState::new();
+    let absent = AffineForm::term(AffineTermId::from_index(u32::MAX));
+    assert!(candidates.iter().all(|candidate| {
+        candidate
+            .value
+            .terms()
+            .iter()
+            .all(|term| term.term() != absent.unit_term().unwrap())
+    }));
+    let mut demands = full
+        .entries
+        .iter()
+        .map(|entry| entry.inequality.terms().to_vec())
+        .collect::<Vec<_>>();
+    // Ensure at least N unique requests, including when aliases leave fewer
+    // than N present vectors. Two more guarantee new absences after promotion.
+    for factor in 1..=candidates.len() + 2 {
+        demands.push(
+            absent
+                .scale(factor as i128, &mut check)
+                .unwrap()
+                .terms()
+                .to_vec(),
+        );
+    }
+    let forward = (0..demands.len()).collect::<Vec<_>>();
+    let reverse = forward.iter().copied().rev().collect::<Vec<_>>();
+    let mut interleaved = Vec::new();
+    for first in 0..demands.len().div_ceil(2) {
+        interleaved.push(first);
+        let last = demands.len() - 1 - first;
+        if first != last {
+            interleaved.push(last);
+        }
+    }
+    for order in [&forward, &reverse, &interleaved] {
+        for family_trigger in [false, true] {
+            let index = LazyAffineL0Index::new(candidates.to_vec());
+            let prefix = if family_trigger {
+                candidates.len().saturating_sub(1).min(2)
+            } else {
+                0
+            };
+            for (position, &demand) in order.iter().enumerate() {
+                if family_trigger && position == prefix {
+                    assert!(index.complete.borrow().is_none());
+                    assert_eq!(
+                        index.ordered_entry(0, closed, &mut check).as_deref(),
+                        full.entries.first()
+                    );
+                    assert!(index.complete.borrow().is_some(), "family entry promotes");
+                }
+                let terms = &demands[demand];
+                let expected = full
+                    .by_terms
+                    .get(terms.as_slice())
+                    .map(|&i| &full.entries[i]);
+                assert_eq!(index.entry(terms, closed, &mut check).as_deref(), expected);
+                let work = check.used();
+                assert_eq!(index.entry(terms, closed, &mut check).as_deref(), expected);
+                assert_eq!(check.used(), work, "warm hits must not rebuild witnesses");
+                let promoted = if family_trigger {
+                    position >= prefix
+                } else {
+                    position + 1 >= candidates.len()
+                };
+                assert_eq!(index.complete.borrow().is_some(), promoted);
+                if promoted {
+                    assert!(
+                        index.exact.borrow().is_empty(),
+                        "complete misses stay map lookups"
+                    );
+                } else {
+                    assert_eq!(index.exact.borrow().len(), position + 1);
+                }
+            }
+            let complete = index.complete.borrow();
+            let complete = complete.as_ref().unwrap();
+            assert_eq!(complete.entries, full.entries);
+            assert_eq!(complete.by_terms, full.by_terms);
+            // Repeated family walks and residual lookups may coexist with a
+            // borrowed entry and must not rebuild or mutate the complete map.
+            let target = AffineInequality::from_bounded_forms(
+                &absent,
+                &AffineForm::constant(0),
+                0,
+                &mut check,
+            )
+            .unwrap();
+            let work = check.used();
+            for _ in 0..2 {
+                for (ordinal, expected) in full.entries.iter().enumerate() {
+                    let entry = index.ordered_entry(ordinal, closed, &mut check).unwrap();
+                    assert_eq!(&*entry, expected);
+                    let exact = index
+                        .entry(entry.inequality.terms(), closed, &mut check)
+                        .unwrap();
+                    assert!(std::ptr::eq(&*entry, &*exact), "warm entries are borrowed");
+                    assert!(index.entry(absent.terms(), closed, &mut check).is_none());
+                    // A residual containing the fresh atom cannot be an L0
+                    // image. Overflowed residuals keep their ordinary skip.
+                    if let Ok(residual) = AffineInequality::residual_after(
+                        &target,
+                        &entry.inequality,
+                        &mut AffineCheckState::new(),
+                    ) {
+                        assert!(!full.by_terms.contains_key(residual.terms()));
+                        assert!(index.entry(residual.terms(), closed, &mut check).is_none());
+                        assert!(index.exact.borrow().is_empty());
+                    }
+                }
+                assert!(
+                    index
+                        .ordered_entry(full.entries.len(), closed, &mut check)
+                        .is_none()
+                );
+            }
+            assert_eq!(check.used(), work, "promotion happens only once");
+        }
+    }
+}
+
 /// Inject the original full rebuild into the same proof-family traversal.
 /// All lookups (including absent vectors) use that complete result; no lazy
 /// pair search is allowed to repair a missing oracle entry.
@@ -148,26 +595,15 @@ fn full_affine_query_index(
     candidates: Vec<AffineL0Candidate>,
     full: &AffineL0Index,
 ) -> LazyAffineL0Index {
-    let count = candidates.len();
     LazyAffineL0Index {
         candidates,
         by_image: WordHashMap::default(),
-        exact: RefCell::new(
-            full.entries
-                .iter()
-                .map(|entry| (entry.inequality.terms().into(), Some(entry.clone())))
-                .collect(),
-        ),
-        ordered: RefCell::new(AffineL0Order {
-            left: count,
-            right: 0,
-            terms: full
-                .entries
-                .iter()
-                .map(|entry| entry.inequality.terms().into())
-                .collect(),
-            seen: WordHashSet::default(),
-        }),
+        exact: RefCell::default(),
+        complete: RefCell::new(Some(AffineL0Index {
+            postings: std::cell::OnceCell::new(),
+            entries: full.entries.clone(),
+            by_terms: full.by_terms.clone(),
+        })),
     }
 }
 
@@ -194,6 +630,280 @@ fn cache_bound(
         &mut analyzer.vocabulary.derivations,
         event,
     );
+}
+
+fn affine_test_target(left: &AffineForm, right: &AffineForm, upper: i128) -> AffineInequality {
+    AffineInequality::from_bounded_forms(left, right, upper, &mut AffineCheckState::new()).unwrap()
+}
+
+fn affine_test_datums(
+    analyzer: &mut Analyzer<'_, '_>,
+    affine: &AffineFlowState,
+    images: &[AffineForm],
+) -> Vec<TermId> {
+    images
+        .iter()
+        .enumerate()
+        .map(|(ordinal, image)| {
+            let datum = analyzer.vocabulary.terms.intern(TermKind::CallDatum {
+                call_path: vec![u32::try_from(ordinal).unwrap()],
+                formal: 0,
+                projections: Vec::new(),
+                measure: None,
+                ty: IntegerType::I32,
+            });
+            affine
+                .measure_atoms
+                .borrow_mut()
+                .insert(datum, image.clone());
+            datum
+        })
+        .collect()
+}
+
+// The old bridge traversal, using the independently allocating AUTO evaluator
+// below. It deliberately creates a new query for each residual, with no shared
+// interval preparation, and keeps the bridge's appended parent.
+fn reference_numeric_bridge(
+    analyzer: &mut Analyzer<'_, '_>,
+    target: &AffineInequality,
+    right: TermId,
+    context: ProofContext<'_>,
+) -> Option<AffineConsequenceProof> {
+    let assumptions = affine_facts(context.affine);
+    if let Some(proof) =
+        analyzer
+            .reasoning()
+            .reference_affine_target_proof(target, &assumptions, context)
+    {
+        return Some(proof);
+    }
+    let right_value = analyzer
+        .vocabulary
+        .affine_term_value(right, context.affine)?;
+    let candidates = analyzer
+        .reasoning()
+        .affine_right_bridge_candidates(context.affine);
+    let closed = context.close(
+        &analyzer.vocabulary.terms,
+        &analyzer.vocabulary.goals,
+        &mut analyzer.vocabulary.derivations,
+    );
+    for candidate in candidates {
+        let Some(bound) = closed.tight_bound(candidate.term, right) else {
+            continue;
+        };
+        let image = affine_test_target(&candidate.value, &right_value, bound);
+        let residual =
+            AffineInequality::residual_after(target, &image, &mut AffineCheckState::new()).unwrap();
+        if let Some(mut proof) =
+            analyzer
+                .reasoning()
+                .reference_affine_target_proof(&residual, &assumptions, context)
+        {
+            proof.parents.push(
+                closed
+                    .bound_proof(
+                        candidate.term,
+                        right,
+                        bound,
+                        &mut analyzer.vocabulary.derivations,
+                    )
+                    .unwrap(),
+            );
+            return Some(proof);
+        }
+    }
+    None
+}
+
+// Uses the production TSV formatter; observer tests do not mutate the process
+// environment or the output OnceLock shared with concurrent tests.
+pub(super) fn affine_metric_value(rows: &str, metric: &str) -> u64 {
+    let matching = rows
+        .lines()
+        .filter_map(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            (fields[3] == "function" && fields[5] == metric)
+                .then(|| fields[6].parse::<u64>().unwrap())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1, "exactly one emitted metric {metric}");
+    matching[0]
+}
+
+fn prepare_failed_auto(
+    analyzer: &mut Analyzer<'_, '_>,
+    target: &AffineInequality,
+    facts: &FactState,
+    auto: &mut AffineAutoQuery<'_>,
+) {
+    assert!(
+        analyzer
+            .reasoning()
+            .prepared_affine_target_proof(target, facts, None, auto)
+            .is_none()
+    );
+    assert!(!auto.prepared.as_ref().unwrap().intervals.is_empty());
+}
+
+#[test]
+fn affine_preparation_refreshes_intervals_after_changed_facts() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b] = [0; 2].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        let datums = affine_test_datums(analyzer, &affine, &[a.clone(), b.clone()]);
+        let target = affine_test_target(
+            &a.add(&b, &mut AffineCheckState::new()).unwrap(),
+            &AffineForm::constant(0),
+            -1,
+        );
+        let mut facts = FactState::new();
+        let mut auto = AffineAutoQuery::new(&affine, &[]);
+        prepare_failed_auto(analyzer, &target, &facts, &mut auto);
+        cache_bound(analyzer, &mut facts, datums[0], ZERO, 0);
+        cache_bound(analyzer, &mut facts, datums[1], ZERO, -1);
+        let scope = work::AffineTestScope::new();
+        let proof = analyzer
+            .reasoning()
+            .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+            .unwrap();
+        // Retaining stale intervals incorrectly enters the final L0 family.
+        assert_eq!(
+            affine_metric_value(&scope.rows(), "affine_final_family_starts"),
+            0
+        );
+        let expected = analyzer
+            .reasoning()
+            .reference_affine_target_proof(&target, &[], ProofContext::new(&facts, &affine))
+            .unwrap();
+        assert_eq!(proof.parents, expected.parents);
+        assert_eq!(proof.premises, expected.premises);
+    });
+}
+
+#[test]
+fn affine_preparation_refreshes_measure_associations_after_changed_images() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b, c] = [0; 3].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        let datums = affine_test_datums(analyzer, &affine, &[a, c.clone()]);
+        let target = affine_test_target(
+            &b.add(&c, &mut AffineCheckState::new()).unwrap(),
+            &AffineForm::constant(0),
+            0,
+        );
+        let mut facts = FactState::new();
+        for &datum in &datums {
+            cache_bound(analyzer, &mut facts, datum, ZERO, 0);
+        }
+        let mut auto = AffineAutoQuery::new(&affine, &[]);
+        prepare_failed_auto(analyzer, &target, &facts, &mut auto);
+        // The FactState and term inventory are unchanged. Interior mutation
+        // moves x's bound from a to b; only the prepared candidate images differ.
+        affine.measure_atoms.borrow_mut().insert(datums[0], b);
+        let scope = work::AffineTestScope::new();
+        let proof = analyzer
+            .reasoning()
+            .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+            .unwrap();
+        assert_eq!(
+            affine_metric_value(&scope.rows(), "affine_final_family_starts"),
+            0
+        );
+        let expected = analyzer
+            .reasoning()
+            .reference_affine_target_proof(&target, &[], ProofContext::new(&facts, &affine))
+            .unwrap();
+        assert_eq!(proof.parents, expected.parents);
+        assert_eq!(proof.premises, expected.premises);
+    });
+}
+
+#[test]
+fn affine_preparation_invalidates_after_lazy_image_preparation() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let target = affine_test_target(&a, &AffineForm::constant(0), -1);
+        let facts = FactState::new();
+        let mut auto = AffineAutoQuery::new(&affine, &[]);
+        prepare_failed_auto(analyzer, &target, &facts, &mut auto);
+        let previous_index = Rc::clone(&auto.prepared.as_ref().unwrap().l0);
+        let fresh = cache_measure(analyzer, 0);
+        assert!(!affine.measure_atoms.borrow().contains_key(&fresh));
+        // Ordinary candidate formation mints this image before view validation;
+        // the enlarged inventory must replace the shared prepared index.
+        prepare_failed_auto(analyzer, &target, &facts, &mut auto);
+        assert!(affine.measure_atoms.borrow().contains_key(&fresh));
+        assert!(!Rc::ptr_eq(
+            &previous_index,
+            &auto.prepared.as_ref().unwrap().l0
+        ));
+    });
+}
+
+#[test]
+fn affine_preparation_keeps_later_distinct_bridge_success_and_parents() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b, c, d, e, f] =
+            [0; 6].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        let mut check = AffineCheckState::new();
+        let cd = c.add(&d, &mut check).unwrap();
+        let ef = e.add(&f, &mut check).unwrap();
+        let remainder = a
+            .subtract(&cd, &mut check)
+            .unwrap()
+            .subtract(&ef, &mut check)
+            .unwrap();
+        let datums = affine_test_datums(
+            analyzer,
+            &affine,
+            &[b.clone(), b.clone(), b.clone(), cd, ef, remainder],
+        );
+        let [r, d1, d2, m, n, p]: [TermId; 6] = datums.try_into().unwrap();
+        let mut facts = FactState::new();
+        for datum in [d1, d2] {
+            cache_bound(analyzer, &mut facts, datum, r, 0);
+            cache_bound(analyzer, &mut facts, r, datum, 0);
+        }
+        cache_bound(analyzer, &mut facts, m, r, 0);
+        cache_bound(analyzer, &mut facts, n, ZERO, 0);
+        cache_bound(analyzer, &mut facts, p, ZERO, -1);
+        let target = affine_test_target(&a, &b, -1);
+        let context = ProofContext::new(&facts, &affine);
+        let expected = reference_numeric_bridge(analyzer, &target, r, context).unwrap();
+        let scope = work::AffineTestScope::new();
+        let actual = analyzer
+            .reasoning()
+            .numeric_affine_proof(&target, Some(r), context)
+            .unwrap();
+        let rows = scope.rows();
+        assert_eq!(affine_metric_value(&rows, "affine_auto_calls_initial"), 1);
+        assert_eq!(affine_metric_value(&rows, "affine_auto_calls_bridge"), 4);
+        assert_eq!(affine_metric_value(&rows, "affine_direct_initial"), 5);
+        assert_eq!(affine_metric_value(&rows, "affine_final_family_starts"), 5);
+        assert_eq!(
+            affine_metric_value(&rows, "affine_final_family_exhaustions"),
+            4
+        );
+        assert_eq!(actual.premises, expected.premises);
+        assert_eq!(actual.parents, expected.parents);
+        let closed = context.close(
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        let bridge = closed
+            .bound_proof(m, r, 0, &mut analyzer.vocabulary.derivations)
+            .unwrap();
+        assert_eq!(
+            actual.parents.last(),
+            Some(&bridge),
+            "the successful bridge stays appended"
+        );
+    });
 }
 
 #[test]
@@ -345,6 +1055,7 @@ fn affine_index_cache_keys_complete_current_images_even_with_a_closed_context() 
                 facts: &facts,
                 affine: &affine,
                 closed: Some(&closed),
+                origin_view: OriginView::Pending,
             };
             let (view, index) = assert_affine_index_matches_rebuild(analyzer, context);
             assert!(
@@ -421,6 +1132,7 @@ fn affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction() {
         facts.establish_goal(
             goal,
             GoalSign::Positive,
+            &analyzer.vocabulary.goals,
             &mut analyzer.vocabulary.derivations,
             event,
         );
@@ -451,6 +1163,7 @@ fn affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction() {
         facts.establish_goal(
             goal,
             GoalSign::Negative,
+            &analyzer.vocabulary.goals,
             &mut analyzer.vocabulary.derivations,
             event,
         );
@@ -539,7 +1252,7 @@ fn affine_index_cache_preserves_direct_auto_families_and_selected_parents() {
             analyzer.vocabulary.affine_l0_cache = None;
             let (closed, primed) = analyzer.reasoning().affine_query_view(context);
             assert!(primed.exact.borrow().is_empty());
-            assert!(primed.ordered.borrow().terms.is_empty());
+            assert!(primed.complete.borrow().is_none());
             let observed = analyzer
                 .reasoning()
                 .affine_target_proof(&target, &assumptions, context)
@@ -561,7 +1274,183 @@ fn affine_index_cache_preserves_direct_auto_families_and_selected_parents() {
                 .affine_target_proof(&target, &assumptions, context)
                 .map(|proof| (proof.premises, proof.parents));
             assert_eq!(observed, rebuilt, "{target:?}");
+            analyzer.vocabulary.affine_l0_cache = None;
+            let reference = analyzer
+                .reasoning()
+                .reference_affine_target_proof(&target, &assumptions, context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(observed, reference, "allocating route: {target:?}");
             assert_eq!(observed.is_some(), expected, "{target:?}");
+        }
+    });
+}
+
+#[test]
+fn affine_scratch_preserves_late_winners_cancellation_and_boundary_routes() {
+    with_analyzer(|analyzer| {
+        let [a, b] = [0; 2].map(|_| {
+            analyzer
+                .vocabulary
+                .new_affine_atom(IntegerType::I32)
+                .unit_term()
+                .unwrap()
+        });
+        let inequality = |terms: &[(AffineTermId, i128)], upper| {
+            AffineInequality::from_terms(terms, upper, &mut AffineCheckState::new()).unwrap()
+        };
+        let source = |ordinal| {
+            SourceAffineFactRef::LoopInvariant(SourceLoopInvariantRef {
+                loop_id: CheckedLoopId(0),
+                source_ordinal: ordinal,
+            })
+        };
+        let cases = [
+            (
+                "unrepresentable single before first of two successes",
+                inequality(&[(a, 1)], 4),
+                vec![
+                    inequality(&[(a, i128::MIN), (b, 1)], 0),
+                    inequality(&[(a, 1)], 4),
+                    inequality(&[(a, 1)], 3),
+                ],
+                Some(vec![(1, 1)]),
+            ),
+            (
+                "failed and overflowing pairs before the successful pair",
+                inequality(&[(a, 1), (b, 1)], 10),
+                vec![
+                    inequality(&[(a, i128::MAX)], 0),
+                    inequality(&[(a, 1)], 4),
+                    inequality(&[(b, 1)], 6),
+                ],
+                Some(vec![(1, 1), (2, 1)]),
+            ),
+            (
+                "pair cancellation then zero residual",
+                inequality(&[(a, 1)], 0),
+                vec![
+                    inequality(&[(a, 2), (b, -2)], 0),
+                    inequality(&[(a, -1), (b, 2)], 0),
+                ],
+                Some(vec![(0, 1), (1, 1)]),
+            ),
+            (
+                "MIN coefficient cancellation still fails before addition",
+                inequality(&[(a, i128::MIN)], 0),
+                vec![inequality(&[(a, i128::MIN)], 0)],
+                None,
+            ),
+            (
+                "residual coefficient overflow is not a proof",
+                inequality(&[(a, i128::MAX)], 0),
+                vec![inequality(&[(a, -1)], 0)],
+                None,
+            ),
+            (
+                "upper overflow does not hide the later exact MIN bound",
+                inequality(&[(a, 1)], i128::MIN),
+                vec![inequality(&[(a, 1)], 1), inequality(&[(a, 1)], i128::MIN)],
+                Some(vec![(1, 1)]),
+            ),
+        ];
+        let facts = FactState::new();
+        let affine = AffineFlowState::default();
+        for (name, target, premises, expected_sources) in cases {
+            let assumptions = premises
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, inequality)| ActiveAffineFact {
+                    inequality,
+                    evidence: AffineFactEvidence::Source(source(u32::try_from(ordinal).unwrap())),
+                })
+                .collect::<Vec<_>>();
+            let context = ProofContext::new(&facts, &affine);
+            analyzer.vocabulary.affine_l0_cache = None;
+            let actual = analyzer
+                .reasoning()
+                .affine_target_proof(&target, &assumptions, context)
+                .map(|proof| (proof.premises, proof.parents));
+            analyzer.vocabulary.affine_l0_cache = None;
+            let expected = analyzer
+                .reasoning()
+                .reference_affine_target_proof(&target, &assumptions, context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(actual, expected, "{name}");
+            assert_eq!(
+                actual.as_ref().map(|(premises, _)| premises.clone()),
+                expected_sources.map(|selected| selected
+                    .into_iter()
+                    .map(|(ordinal, factor)| {
+                        AffinePremiseUse {
+                            source: source(ordinal),
+                            factor,
+                        }
+                    })
+                    .collect::<Vec<_>>()),
+                "source selection pins the single/pair route: {name}"
+            );
+        }
+    });
+}
+
+#[test]
+fn canonical_interval_requests_keep_endpoint_ties_and_selected_parents() {
+    with_integer_parameters(&[IntegerType::I32; 3], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), a.clone());
+        affine.values.insert(BindingId(2), b.clone());
+        let candidates = analyzer.reasoning().affine_l0_candidates(&affine);
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, candidates[1].term, ZERO, 5);
+        cache_bound(analyzer, &mut facts, candidates[2].term, ZERO, 5);
+        cache_bound(analyzer, &mut facts, ZERO, candidates[3].term, 2);
+        let (closed, l0) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&facts, &affine));
+        let mut selected = vec![
+            closed
+                .bound_proof(
+                    candidates[1].term,
+                    ZERO,
+                    5,
+                    &mut analyzer.vocabulary.derivations,
+                )
+                .unwrap(),
+            closed
+                .bound_proof(
+                    ZERO,
+                    candidates[3].term,
+                    2,
+                    &mut analyzer.vocabulary.derivations,
+                )
+                .unwrap(),
+        ];
+        selected.sort_unstable_by_key(|parent| parent.0);
+        selected.dedup();
+        let mut query = AffineDirectQuery::new(&l0, &affine, &closed);
+        let mut reference = AffineDirectQuery::new(&l0, &affine, &closed);
+        for upper in [9, 8, 9] {
+            let target = AffineInequality::from_terms(
+                &[(b.unit_term().unwrap(), -2), (a.unit_term().unwrap(), 1)],
+                upper,
+                &mut AffineCheckState::new(),
+            )
+            .unwrap();
+            let actual = analyzer.reasoning().affine_interval_proof(
+                &target,
+                &mut query,
+                &mut AffineCheckState::new(),
+            );
+            let expected = analyzer.reasoning().reference_affine_interval_proof(
+                &target,
+                &mut reference,
+                &mut AffineCheckState::new(),
+            );
+            assert_eq!(actual, expected);
+            assert_eq!(actual, Ok((upper == 9).then(|| selected.clone())));
         }
     });
 }
@@ -594,10 +1483,17 @@ fn affine_index_cache_demands_only_requested_vectors_and_memoizes_absence() {
                 .is_some()
         );
         assert_eq!(index.exact.borrow().len(), 1);
-        let order = index.ordered.borrow();
-        assert_eq!((order.left, order.right), (0, 0));
-        assert!(order.terms.is_empty());
-        drop(order);
+        assert!(index.complete.borrow().is_none());
+        {
+            let mut check = AffineCheckState::new();
+            let first = index.entry(a.terms(), &closed, &mut check).unwrap();
+            let repeated = index.entry(a.terms(), &closed, &mut check).unwrap();
+            assert!(
+                std::ptr::eq(&*first, &*repeated),
+                "lazy warm hits are borrowed"
+            );
+            assert_eq!(check.used(), 0);
+        }
         let absent = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
         for _ in 0..2 {
             assert!(
@@ -606,15 +1502,368 @@ fn affine_index_cache_demands_only_requested_vectors_and_memoizes_absence() {
                     .is_none()
             );
             assert_eq!(index.exact.borrow().len(), 2);
-            assert!(matches!(index.exact.borrow().get(absent.terms()), Some(None)));
+            assert!(matches!(
+                index.exact.borrow().get(absent.terms()),
+                Some(None)
+            ));
         }
         let (_, repeated) = analyzer.reasoning().affine_query_view(context);
         assert!(Rc::ptr_eq(&index, &repeated));
     });
 }
 
+fn compare_final_filter(
+    analyzer: &mut Analyzer<'_, '_>,
+    target: &AffineInequality,
+    affine: &AffineFlowState,
+    facts: &FactState,
+    succeeds: bool,
+) -> String {
+    let context = ProofContext::new(facts, affine);
+    let expected = analyzer
+        .reasoning()
+        .reference_affine_target_proof(target, &[], context)
+        .map(|proof| (proof.premises, proof.parents));
+    let scope = work::AffineTestScope::new();
+    let actual = analyzer
+        .reasoning()
+        .affine_target_proof(target, &[], context)
+        .map(|proof| (proof.premises, proof.parents));
+    assert_eq!(
+        actual, expected,
+        "the complete reference fixes answers and first parents"
+    );
+    assert_eq!(actual.is_some(), succeeds);
+    scope.rows()
+}
+
 #[test]
-fn affine_index_cache_lazy_final_family_keeps_disjoint_images_and_late_winners() {
+fn final_l0_filter_skips_feasible_disjoint_images() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b] = [0; 2].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        let r = affine_test_datums(analyzer, &affine, &[b])[0];
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, r, ZERO, 0);
+        let target = affine_test_target(&a, &AffineForm::constant(0), -1);
+        let rows = compare_final_filter(analyzer, &target, &affine, &facts, false);
+        assert_eq!(affine_metric_value(&rows, "affine_final_images_total"), 3);
+        assert_eq!(
+            affine_metric_value(&rows, "affine_final_images_selected"),
+            0
+        );
+        assert_eq!(affine_metric_value(&rows, "affine_final_images_visited"), 0);
+        assert_eq!(affine_metric_value(&rows, "affine_final_images_skipped"), 3);
+        assert_eq!(
+            affine_metric_value(&rows, "affine_final_filter_fallbacks"),
+            0
+        );
+    });
+}
+
+#[test]
+fn final_l0_filter_rebuilds_infeasible_exceptions_after_changed_facts_or_images() {
+    for change_image in [false, true] {
+        with_analyzer(|analyzer| {
+            let affine = AffineFlowState::default();
+            let [a, b, c] = [0; 3].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::U64));
+            // A zero-width structural atom, independent of the sum's opaque L0 name.
+            analyzer.vocabulary.affine_atoms[a.unit_term().unwrap().index() as usize].maximum = 0;
+            let sum = b.add(&c, &mut AffineCheckState::new()).unwrap();
+            let r = affine_test_datums(analyzer, &affine, std::slice::from_ref(&sum))[0];
+            let target = affine_test_target(&a, &AffineForm::constant(0), -1);
+            let assumptions = Vec::new();
+            let mut auto = AffineAutoQuery::new(&affine, &assumptions);
+            let mut facts = FactState::new();
+            cache_bound(analyzer, &mut facts, r, ZERO, 0);
+            assert!(
+                analyzer
+                    .reasoning()
+                    .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+                    .is_none()
+            );
+            assert!(
+                auto.prepared
+                    .as_ref()
+                    .unwrap()
+                    .final_interval_exceptions
+                    .as_ref()
+                    .unwrap()
+                    .is_empty()
+            );
+            let previous_closed = Rc::clone(&auto.prepared.as_ref().unwrap().closed);
+            if change_image {
+                affine.measure_atoms.borrow_mut().insert(
+                    r,
+                    sum.add(&AffineForm::constant(1), &mut AffineCheckState::new())
+                        .unwrap(),
+                );
+            } else {
+                cache_bound(analyzer, &mut facts, r, ZERO, -1);
+            }
+            let closed = close(
+                &facts,
+                &analyzer.vocabulary.terms,
+                &analyzer.vocabulary.goals,
+                &mut analyzer.vocabulary.derivations,
+            );
+            assert!(
+                !closed.contradictory(),
+                "L0 cannot see the sum's nonnegative operands"
+            );
+            let expected = analyzer
+                .reasoning()
+                .reference_affine_target_proof(&target, &[], ProofContext::new(&facts, &affine))
+                .unwrap();
+            let scope = work::AffineTestScope::new();
+            let actual = analyzer
+                .reasoning()
+                .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+                .unwrap();
+            assert_eq!(actual.parents, expected.parents);
+            assert_eq!(actual.premises, expected.premises);
+            if change_image {
+                assert!(
+                    Rc::ptr_eq(&previous_closed, &auto.prepared.as_ref().unwrap().closed),
+                    "an image change invalidates classification even with the same closed facts"
+                );
+            }
+            let rows = scope.rows();
+            assert_eq!(
+                affine_metric_value(&rows, "affine_final_images_selected"),
+                1
+            );
+            assert_eq!(affine_metric_value(&rows, "affine_final_images_visited"), 1);
+            assert_eq!(affine_metric_value(&rows, "affine_final_images_skipped"), 2);
+            assert!(
+                !auto
+                    .prepared
+                    .as_ref()
+                    .unwrap()
+                    .final_interval_exceptions
+                    .as_ref()
+                    .unwrap()
+                    .is_empty()
+            );
+        });
+    }
+}
+
+#[test]
+fn final_l0_filter_keeps_first_overlapping_parent_before_later_winner() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b, c, d, e] = [0; 5].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::U64));
+        analyzer.vocabulary.affine_atoms[a.unit_term().unwrap().index() as usize].maximum = 0;
+        let mut check = AffineCheckState::new();
+        let images = [
+            d,
+            a.add(&b, &mut check).unwrap(),
+            a.add(&c, &mut check).unwrap(),
+            e.scale(2, &mut check).unwrap(),
+        ];
+        let datums = affine_test_datums(analyzer, &affine, &images);
+        let mut facts = FactState::new();
+        for (term, upper) in [
+            (datums[0], 0),
+            (datums[1], -1),
+            (datums[2], -1),
+            (datums[3], -2),
+        ] {
+            cache_bound(analyzer, &mut facts, term, ZERO, upper);
+        }
+        let target = affine_test_target(&a, &AffineForm::constant(0), -1);
+        let rows = compare_final_filter(analyzer, &target, &affine, &facts, true);
+        assert!(affine_metric_value(&rows, "affine_final_images_skipped") > 0);
+        assert!(
+            affine_metric_value(&rows, "affine_final_images_visited")
+                < affine_metric_value(&rows, "affine_final_images_selected"),
+            "a later retained winner is not visited after the first proof"
+        );
+        let (closed, l0) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&facts, &affine));
+        let mut query = AffineDirectQuery::new(&l0, &affine, &closed);
+        let later = affine_test_target(&images[3], &AffineForm::constant(0), -2);
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_candidate_residual_proof(
+                    &target,
+                    &later,
+                    &mut query,
+                    &mut AffineCheckState::new(),
+                )
+                .is_some(),
+            "the later disjoint candidate independently succeeds"
+        );
+        let proof = analyzer
+            .reasoning()
+            .affine_target_proof(&target, &[], ProofContext::new(&facts, &affine))
+            .unwrap();
+        let closed = close(
+            &facts,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        let first = closed
+            .bound_proof(datums[1], ZERO, -1, &mut analyzer.vocabulary.derivations)
+            .unwrap();
+        assert!(
+            proof.parents.contains(&first),
+            "the first overlapping winner remains selected"
+        );
+    });
+}
+
+#[test]
+fn final_l0_filter_keeps_disjoint_exact_complements_and_gcd_tightenings() {
+    for factor in [1, 2] {
+        with_analyzer(|analyzer| {
+            let affine = AffineFlowState::default();
+            let [a, b] = [0; 2].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+            let mut check = AffineCheckState::new();
+            let images = [
+                b.scale(factor, &mut check).unwrap(),
+                a.subtract(&b, &mut check).unwrap(),
+            ];
+            let datums = affine_test_datums(analyzer, &affine, &images);
+            let mut facts = FactState::new();
+            cache_bound(analyzer, &mut facts, datums[0], ZERO, 0);
+            cache_bound(analyzer, &mut facts, datums[1], ZERO, -1);
+            let target = affine_test_target(&a, &AffineForm::constant(0), -1);
+            let rows = compare_final_filter(analyzer, &target, &affine, &facts, true);
+            assert_eq!(
+                affine_metric_value(&rows, "affine_final_filter_fallbacks"),
+                0
+            );
+            assert!(affine_metric_value(&rows, "affine_final_images_visited") > 0);
+        });
+    }
+}
+
+#[test]
+fn final_l0_filter_falls_back_when_disjoint_terms_repair_interval_prefix_overflow() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b, c, d] = [0; 4].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        for form in [&a, &b, &c, &d] {
+            let atom =
+                &mut analyzer.vocabulary.affine_atoms[form.unit_term().unwrap().index() as usize];
+            atom.minimum = 1;
+            atom.maximum = 1;
+        }
+        let r = affine_test_datums(analyzer, &affine, &[b])[0];
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, r, ZERO, 1);
+        let target = AffineInequality::from_terms(
+            &[
+                (a.unit_term().unwrap(), i128::MAX),
+                (c.unit_term().unwrap(), 1),
+                (d.unit_term().unwrap(), -i128::MAX),
+            ],
+            1,
+            &mut AffineCheckState::new(),
+        )
+        .unwrap();
+        let rows = compare_final_filter(analyzer, &target, &affine, &facts, true);
+        assert_eq!(
+            affine_metric_value(&rows, "affine_final_filter_fallbacks"),
+            1
+        );
+        assert_eq!(affine_metric_value(&rows, "affine_final_images_skipped"), 0);
+        assert_eq!(
+            affine_metric_value(&rows, "affine_final_images_total"),
+            affine_metric_value(&rows, "affine_final_images_selected")
+        );
+    });
+}
+
+#[test]
+fn final_l0_filter_retains_disjoint_images_with_overflowing_interval_minima() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let [a, b, c, d] = [0; 4].map(|_| analyzer.vocabulary.new_affine_atom(IntegerType::I32));
+        for (form, endpoint) in [(&a, 0), (&b, 1), (&c, 1), (&d, 1)] {
+            let atom =
+                &mut analyzer.vocabulary.affine_atoms[form.unit_term().unwrap().index() as usize];
+            atom.minimum = endpoint;
+            atom.maximum = endpoint;
+        }
+        let mut check = AffineCheckState::new();
+        // min(R) overflows MAX+1 before cancellation; T-R sums -MAX-1+MAX
+        // representably to -1. Unknown feasibility must retain this witness.
+        let image = b
+            .scale(i128::MAX, &mut check)
+            .unwrap()
+            .add(&c, &mut check)
+            .unwrap()
+            .subtract(&d.scale(i128::MAX, &mut check).unwrap(), &mut check)
+            .unwrap();
+        let r = affine_test_datums(analyzer, &affine, &[image])[0];
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, r, ZERO, 0);
+        let target = affine_test_target(&a, &AffineForm::constant(0), -1);
+        let rows = compare_final_filter(analyzer, &target, &affine, &facts, true);
+        assert_eq!(
+            affine_metric_value(&rows, "affine_final_images_selected"),
+            1
+        );
+        assert_eq!(affine_metric_value(&rows, "affine_final_images_visited"), 1);
+        assert_eq!(affine_metric_value(&rows, "affine_final_images_skipped"), 2);
+        assert_eq!(
+            affine_metric_value(&rows, "affine_final_filter_fallbacks"),
+            0
+        );
+    });
+}
+
+#[test]
+fn final_l0_filter_preserves_checked_coefficient_and_bound_skips() {
+    for (coefficient, upper, image_coefficient, image_upper, endpoint, succeeds) in [
+        (i128::MIN, -1, i128::MIN, 0, 0, false),
+        (i128::MAX, i128::MAX - 1, 2, -2, 1, true),
+        (1, i128::MIN, 2, 1, 0, false),
+    ] {
+        with_analyzer(|analyzer| {
+            let affine = AffineFlowState::default();
+            let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+            let atom_id = a.unit_term().unwrap();
+            let atom = &mut analyzer.vocabulary.affine_atoms[atom_id.index() as usize];
+            atom.minimum = endpoint;
+            atom.maximum = endpoint;
+            let image = a
+                .scale(image_coefficient, &mut AffineCheckState::new())
+                .unwrap();
+            let r = affine_test_datums(analyzer, &affine, &[image])[0];
+            let mut facts = FactState::new();
+            cache_bound(analyzer, &mut facts, r, ZERO, image_upper);
+            let target = AffineInequality::from_terms(
+                &[(atom_id, coefficient)],
+                upper,
+                &mut AffineCheckState::new(),
+            )
+            .unwrap();
+            let rows = compare_final_filter(analyzer, &target, &affine, &facts, succeeds);
+            let candidate = AffineInequality::from_terms(
+                &[(atom_id, image_coefficient)],
+                image_upper,
+                &mut AffineCheckState::new(),
+            )
+            .unwrap();
+            assert_eq!(
+                AffineInequality::residual_after(&target, &candidate, &mut AffineCheckState::new()),
+                Err(AffineCheckError::ArithmeticOverflow),
+                "the raw residual must retain its original checked-arithmetic skip"
+            );
+            assert!(affine_metric_value(&rows, "affine_final_images_visited") > 0);
+        });
+    }
+}
+
+#[test]
+fn affine_index_cache_promoted_final_family_keeps_disjoint_images_and_late_winners() {
     with_integer_parameters(&[IntegerType::I32; 3], |analyzer| {
         let mut affine = AffineFlowState::default();
         let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
@@ -654,6 +1903,11 @@ fn affine_index_cache_lazy_final_family_keeps_disjoint_images_and_late_winners()
                 .affine_target_proof(&target, &[], context)
                 .map(|proof| (proof.premises, proof.parents));
             assert_eq!(observed.is_some(), upper == 0);
+            assert!(
+                lazy.complete.borrow().is_some(),
+                "success and exhaustion promote"
+            );
+            assert!(lazy.exact.borrow().is_empty());
             analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
                 closed: Rc::clone(&closed),
                 index: Rc::new(full_affine_query_index(candidates.clone(), &full)),
@@ -897,4 +2151,416 @@ fn finite_lower_component_uses_the_original_right_term_for_step_six() {
         assert_eq!(unknown.disposition, ProofDisposition::Unknown);
         assert!(unknown.derivation.is_none());
     });
+}
+
+// Before the repair, the first request panics while folding MAX + 1.
+// This tests the existing checked-folding policy, not a source verdict.
+#[test]
+fn offset_request_folding_uses_the_existing_checked_constant_domain() {
+    let mut terms = TermTable::new();
+    let one = terms.intern(TermKind::Constant(1));
+    let x = terms.intern(TermKind::Place(
+        ResolvedPlace::binding(BindingId(0)),
+        IntegerType::I64,
+    ));
+    let mut requests = [
+        BoundsRequest {
+            left: Some(x),
+            right: one,
+            bound: i128::MAX,
+            distinct: true,
+        },
+        BoundsRequest {
+            left: Some(one),
+            right: x,
+            bound: i128::MIN,
+            distinct: true,
+        },
+        BoundsRequest {
+            left: Some(x),
+            right: ZERO,
+            bound: i128::MIN,
+            distinct: true,
+        },
+    ];
+    normalize_distinct_requests(&mut requests, &terms);
+    assert!(request_relation(&requests[0]).is_none());
+    assert!(request_relation(&requests[1]).is_none());
+    assert_eq!(
+        request_relation(&requests[2]),
+        Some(Relation::Distinct {
+            left: ZERO,
+            right: x,
+            difference: i128::MAX,
+        })
+    );
+}
+
+// The replacement crosses term ordering without changing the mathematical
+// relation. Previously both transport helpers evaluated -MIN unchecked.
+#[test]
+fn offset_extremes_survive_delivery_and_call_term_replacement() {
+    let first = TermId(1);
+    let second = TermId(2);
+    let replacement = TermId(3);
+    for (offset, reversed) in [
+        (i128::MIN, i128::MAX),
+        (i128::MIN + 1, i128::MAX),
+        (i128::MAX - 1, i128::MIN + 2),
+        (i128::MAX, i128::MIN + 1),
+    ] {
+        for (left, right, expected) in [
+            (
+                first,
+                second,
+                Relation::Distinct {
+                    left: second,
+                    right: replacement,
+                    difference: reversed,
+                },
+            ),
+            (
+                second,
+                first,
+                Relation::Distinct {
+                    left: second,
+                    right: replacement,
+                    difference: offset,
+                },
+            ),
+        ] {
+            let relation = Relation::Distinct {
+                left,
+                right,
+                difference: offset,
+            };
+            assert_eq!(
+                sources::substitute_delivery_relation(&relation, first, replacement),
+                expected
+            );
+            assert_eq!(
+                postconditions::replace_relation_term(&relation, first, replacement),
+                expected
+            );
+        }
+    }
+}
+
+/// A judgment window that is rolled back discards the atoms it minted, and the
+/// next atom reuses the first discarded index. A power atom or product record
+/// that survived the rollback would then name that unrelated value; with the
+/// rollback reduced to truncating the atom table, the product-record
+/// assertion and the final distinct-atom assertion both fail.
+#[test]
+fn discarded_atoms_leave_no_record_naming_a_reused_index() {
+    with_analyzer(|analyzer| {
+        let vocabulary = &mut analyzer.vocabulary;
+        let amount = vocabulary.new_affine_atom(IntegerType::U32);
+        let start = vocabulary.affine_atoms.len();
+        let discarded = vocabulary.power_atom(&amount, IntegerType::U64).unwrap();
+        let power = discarded.unit_term().unwrap();
+        let shift = amount.unit_term().unwrap();
+        vocabulary.product_atoms.insert(power, (shift, shift));
+        vocabulary.discard_atoms_from(start);
+        let unrelated = vocabulary.new_affine_atom(IntegerType::U64);
+        assert_eq!(unrelated, discarded);
+        assert!(!vocabulary.product_atoms.contains_key(&power));
+        let fresh = vocabulary.power_atom(&amount, IntegerType::U64).unwrap();
+        assert_ne!(fresh, unrelated);
+    });
+}
+
+// Allocating traversal retained from the base revision. It deliberately keeps
+// the original pair clones, residual formation and sorted atom requests so
+// comparisons do not simply run the new scratch path twice.
+use crate::semantic::entailment::affine::{
+    integer_tightenings, reference_residual_after, sum_explicit_inequalities,
+};
+
+impl Reasoning<'_, '_, '_> {
+    pub(super) fn reference_affine_interval_proof(
+        &mut self,
+        inequality: &AffineInequality,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        let mut requested = inequality
+            .terms()
+            .iter()
+            .map(|coefficient| coefficient.term())
+            .collect::<Vec<_>>();
+        requested.sort_unstable();
+        requested.dedup();
+
+        if query.measures.is_none() {
+            query.measures = Some(self.vocabulary.measure_terms_by_atom(query.values));
+        }
+        let measures = query
+            .measures
+            .as_ref()
+            .expect("measure index prepared above");
+        for atom_id in requested {
+            if query.intervals.contains_key(&atom_id) {
+                continue;
+            }
+            let atom = *self
+                .vocabulary
+                .affine_atoms
+                .get(atom_id.index() as usize)
+                .ok_or(AffineCheckError::CoefficientMismatch)?;
+            let mut interval = AffineAtomInterval {
+                minimum: atom.minimum,
+                maximum: atom.maximum,
+                minimum_parent: None,
+                maximum_parent: None,
+            };
+            let mut bindings = query
+                .values
+                .values
+                .iter()
+                .filter_map(|(binding, value)| {
+                    (value.unit_term() == Some(atom_id)).then_some(*binding)
+                })
+                .collect::<Vec<_>>();
+            bindings.sort_by_key(|binding| binding.0);
+            let mut terms = bindings
+                .into_iter()
+                .filter_map(|binding| {
+                    if self.input.affine_binding_type(binding) != Some(atom.ty) {
+                        return None;
+                    }
+                    Some(self.vocabulary.terms.intern(TermKind::Place(
+                        ResolvedPlace::spelled(PlaceRoot::Binding(binding), false, Vec::new()),
+                        atom.ty,
+                    )))
+                })
+                .collect::<Vec<_>>();
+            if let Some(measures) = measures.get(&atom_id) {
+                terms.extend(measures.iter().copied());
+            }
+            for term in terms {
+                if let Some(upper) = query.closed.tight_bound(term, ZERO)
+                    && upper < interval.maximum
+                {
+                    interval.maximum = upper;
+                    interval.maximum_parent = Some((term, ZERO, upper));
+                }
+                if let Some(negative_lower) = query.closed.tight_bound(ZERO, term)
+                    && let Some(lower) = negative_lower.checked_neg()
+                    && lower > interval.minimum
+                {
+                    interval.minimum = lower;
+                    interval.minimum_parent = Some((ZERO, term, negative_lower));
+                }
+            }
+            query.intervals.insert(atom_id, interval);
+        }
+
+        if query.closed.contradictory() {
+            return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
+        }
+        let proved = interval_proves(
+            inequality,
+            |term| {
+                query
+                    .intervals
+                    .get(&term)
+                    .map(|interval| (interval.minimum, interval.maximum))
+            },
+            check,
+        )?;
+        if !proved {
+            return Ok(None);
+        }
+        let mut parents = Vec::new();
+        for coefficient in inequality.terms() {
+            let interval = query
+                .intervals
+                .get(&coefficient.term())
+                .ok_or(AffineCheckError::CoefficientMismatch)?;
+            let selected = if coefficient.coefficient() > 0 {
+                interval.maximum_parent
+            } else {
+                interval.minimum_parent
+            };
+            if let Some((left, right, bound)) = selected {
+                let parent = query
+                    .closed
+                    .bound_proof(left, right, bound, &mut self.vocabulary.derivations)
+                    .ok_or(AffineCheckError::CoefficientMismatch)?;
+                parents.push(parent);
+            }
+        }
+        parents.sort_unstable_by_key(|parent| parent.0);
+        parents.dedup();
+        Ok(Some(parents))
+    }
+
+    pub(super) fn reference_affine_residual_proof(
+        &mut self,
+        inequality: &AffineInequality,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        if query.closed.contradictory() {
+            return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
+        }
+        if let Some(parents) =
+            self.vocabulary
+                .affine_l0_proof(inequality, query.l0, query.closed, check)?
+        {
+            return Ok(Some(parents));
+        }
+        self.reference_affine_interval_proof(inequality, query, check)
+    }
+
+    pub(super) fn reference_affine_candidate_residual_proof(
+        &mut self,
+        target: &AffineInequality,
+        candidate: &AffineInequality,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Option<Vec<DerivationId>> {
+        let tightenings = integer_tightenings(candidate, target, check);
+        for accumulated in std::iter::once(candidate).chain(tightenings.iter()) {
+            let Ok(residual) = reference_residual_after(target, accumulated, check) else {
+                continue;
+            };
+            if let Ok(Some(parents)) = self.reference_affine_residual_proof(&residual, query, check)
+            {
+                return Some(parents);
+            }
+        }
+        None
+    }
+
+    pub(super) fn reference_affine_l0_then_direct_proof(
+        &mut self,
+        target: &AffineInequality,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Option<Vec<DerivationId>> {
+        super::super::super::work::affine_final_family_start();
+        let l0 = query.l0;
+        let mut ordinal = 0;
+        while let Some(entry) = l0.ordered_entry(ordinal, query.closed, check) {
+            ordinal += 1;
+            let Some(mut parents) = self.reference_affine_candidate_residual_proof(
+                target,
+                &entry.inequality,
+                query,
+                check,
+            ) else {
+                continue;
+            };
+            let Some(parent) = query.closed.bound_proof(
+                entry.left,
+                entry.right,
+                entry.bound,
+                &mut self.vocabulary.derivations,
+            ) else {
+                continue;
+            };
+            parents.push(parent);
+            parents.sort_unstable_by_key(|parent| parent.0);
+            parents.dedup();
+            return Some(parents);
+        }
+        super::super::super::work::affine_final_family_exhausted();
+        None
+    }
+
+    pub(super) fn reference_affine_target_proof(
+        &mut self,
+        target: &AffineInequality,
+        assumptions: &[ActiveAffineFact],
+        context: ProofContext<'_>,
+    ) -> Option<AffineConsequenceProof> {
+        let values = context.affine;
+        let mut check = AffineCheckState::new();
+        let (closed, l0) = self.affine_query_view(context);
+        let mut query = AffineDirectQuery::new(&l0, values, &closed);
+        if let Ok(Some(parents)) =
+            self.reference_affine_residual_proof(target, &mut query, &mut check)
+        {
+            return Some(AffineConsequenceProof {
+                premises: Vec::new(),
+                parents,
+            });
+        }
+        let automatic = automatic_affine_premises(assumptions, &mut check).ok()?;
+
+        // Preserve the complete coefficient-one single-premise route. Every
+        // premise is tried independently; an arithmetic error in one candidate
+        // cannot suppress a later source or value-image fact.
+        for (index, assumption) in automatic.iter().enumerate() {
+            // A candidate that cannot participate in an i128 residual grants
+            // no authority, but it must not hide a later independently
+            // representable source fact in the same deterministic order.
+            if let Some(parents) = self.reference_affine_candidate_residual_proof(
+                target,
+                &assumption.inequality,
+                &mut query,
+                &mut check,
+            ) {
+                return Some(affine_consequence_from_residual(
+                    &[(index, 1)],
+                    &automatic,
+                    parents,
+                ));
+            }
+        }
+
+        // R2 exhausts the source-shaped set of unordered coefficient-one
+        // pairs, including one premise used twice. There is no greedy state,
+        // backtracking cutoff, or cumulative work budget: fact order changes
+        // only which successful derivation is retained, never acceptance.
+        if let Some((first, second, parents)) =
+            reference_first_two_premise_candidate(&automatic, &mut check, |sum, check| {
+                self.reference_affine_candidate_residual_proof(target, sum, &mut query, check)
+            })
+        {
+            let selected = if first == second {
+                vec![(first, 2)]
+            } else {
+                vec![(first, 1), (second, 1)]
+            };
+            return Some(affine_consequence_from_residual(
+                &selected, &automatic, parents,
+            ));
+        }
+
+        // Ordinary L0 relations remain outside the affine premise set. This
+        // is the specification's final `DIRECT(T - R)` family: subtract each
+        // strongest indexed L0 image once, then run the ordinary DIRECT check
+        // on the residual. DIRECT may itself close an exact L0 image, but the
+        // route never publishes or recursively saturates either relation.
+        self.reference_affine_l0_then_direct_proof(target, &mut query, &mut check)
+            .map(|parents| AffineConsequenceProof {
+                premises: Vec::new(),
+                parents,
+            })
+    }
+}
+
+pub(super) fn reference_first_two_premise_candidate<T>(
+    premises: &[AutomaticAffinePremise],
+    check: &mut AffineCheckState,
+    mut prove: impl FnMut(&AffineInequality, &mut AffineCheckState) -> Option<T>,
+) -> Option<(usize, usize, T)> {
+    for first in 0..premises.len() {
+        for second in first..premises.len() {
+            let pair = [
+                premises[first].inequality.clone(),
+                premises[second].inequality.clone(),
+            ];
+            let Ok(sum) = sum_explicit_inequalities(&pair, check) else {
+                continue;
+            };
+            if let Some(proof) = prove(&sum, check) {
+                return Some((first, second, proof));
+            }
+        }
+    }
+    None
 }

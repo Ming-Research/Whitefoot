@@ -117,8 +117,8 @@ whose replies firn follows.
 long double has another format answers it, and `INCRBYFLOAT`, differently:
 in binary128 on aarch64 Linux, and in a double where long double is one.
 
-What is not there yet is listed in [docs/todo.md](../../docs/todo.md) under
-"firn"; the measurements and the design are in
+What is not there yet is listed on the
+[status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip), in its `firn-server` and `firn-ops` areas; the measurements and the design are in
 [research/investigations/firn](../../research/investigations/firn/DESIGN.md).
 
 ## Build and run

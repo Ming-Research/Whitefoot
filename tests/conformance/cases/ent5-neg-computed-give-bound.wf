@@ -1,0 +1,17 @@
+fn pick_line(lines: &Box<Slots<u64, 8>>, flag: Bool) -> result: u64 reads(lines) {
+  let count = lines^.inner.len;
+  if count == 0_u64 {
+    return 0_u64;
+  }
+  let line_at = if flag {
+    give count;
+  } else {
+    give 0_u64;
+  }
+  let line = lines^.inner[line_at];
+  return line;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

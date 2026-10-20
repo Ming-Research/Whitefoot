@@ -11,7 +11,8 @@
 # that compiler-release-cleanup.yml removed. An unmerged compiler change a
 # downstream wants to try, such as a performance experiment, gets an
 # experiment release, `wf-exp-` and the commit's first 12 hex digits, of any
-# commit whose own gate run passed:
+# commit whose own gate run passed on both platforms (a draft push runs only
+# Linux; dispatch gate.yml on the branch to qualify its tip):
 #
 #   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true
 #
@@ -25,17 +26,16 @@
 #
 #   whitefootc-linux-x86_64.tar.gz  whitefootc built on ubuntu-24.04
 #   whitefootc-macos-arm64.tar.gz   whitefootc built on macos-15
+#   whitefoot-language.tar.gz       the commit's spec/kernel-spec.md,
+#                                   lib/std/modules.wfg and every
+#                                   lib/std/**/module.wfm at their
+#                                   repository paths, which the writers of
+#                                   a project pinning this release read
 #   whitefoot-release.json          tag, full commit, specification version,
 #                                   the gate run that passed it, the LLVM
 #                                   major its Linux compiler is built with,
 #                                   asset names
-#   SHA256SUMS                      the checksums of the three files above
-#
-# It carries no documents yet: a downstream's writers read the
-# specification, the maintained programs and the standard library's
-# interfaces in this repository at the release's commit, until the choice
-# of what a release carries for them is made (docs/todo.md, "A compiler
-# release carries no documents").
+#   SHA256SUMS                      the checksums of the four files above
 #
 # Each compiler is the `gate` Cargo profile the gate tests. Like the gate's,
 # it builds programs with the host's /usr/bin/clang, and on Linux links them
@@ -159,14 +159,23 @@ jobs:
           else
             echo "dry run: $commit changes workflow files, so a dispatch would refuse it"
           fi
-          gate_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$commit&status=success&per_page=1" \
-            --jq '.workflow_runs[0].id // empty')
+          # A successful gate run qualifies the revision when its matrix
+          # included macOS: a draft push runs the groups on Linux only.
+          gate_run=
+          for run in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$commit&status=success&per_page=100" --jq '.workflow_runs[].id'); do
+            macos=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
+              --jq '.jobs[] | select(.name | endswith("(macos-15)")) | .id')
+            if [ -n "$macos" ]; then
+              gate_run=$run
+              break
+            fi
+          done
           if [ -z "$gate_run" ]; then
             if [ "$publish" = true ]; then
-              echo "::error::no successful gate run for $commit; dispatch gate.yml on main or choose another commit"
+              echo "::error::no gate run qualified $commit on both platforms; dispatch gate.yml on its branch or choose another commit"
               exit 1
             fi
-            echo "dry run: no successful gate run for $commit yet"
+            echo "dry run: no gate run has qualified $commit on both platforms yet"
             gate_run=none
           fi
           build=true
@@ -267,6 +276,20 @@ jobs:
           merge-multiple: true
           path: release
 
+      - name: Pack the specification and the standard library interfaces
+        run: |
+          set -euo pipefail
+          wanted=$(git ls-files spec/kernel-spec.md lib/std/modules.wfg 'lib/std/**/module.wfm' | LC_ALL=C sort)
+          tr '\n' '\0' <<< "$wanted" |
+            tar --null --files-from=- --owner=0 --group=0 --numeric-owner --mtime='1970-01-01' \
+              --mode='a+r,u+w,go-w' -cf - |
+            gzip -n -9 > release/whitefoot-language.tar.gz
+          listing=$(tar -tzf release/whitefoot-language.tar.gz)
+          echo "$listing"
+          grep -qx 'spec/kernel-spec.md' <<< "$listing"
+          grep -qx 'lib/std/modules.wfg' <<< "$listing"
+          test "$listing" = "$wanted"
+
       - name: Write the manifest and checksums
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
@@ -281,10 +304,11 @@ jobs:
             '{tag: $tag, commit: $commit, spec: $spec, gate_run: $gate_run,
               linux_llvm_major: (if $llvm == "" then null else $llvm end),
               assets: {"linux-x86_64": "whitefootc-linux-x86_64.tar.gz",
-                       "macos-arm64": "whitefootc-macos-arm64.tar.gz"}}' > release/whitefoot-release.json
+                       "macos-arm64": "whitefootc-macos-arm64.tar.gz",
+                       "language": "whitefoot-language.tar.gz"}}' > release/whitefoot-release.json
           cd release
           sha256sum whitefootc-linux-x86_64.tar.gz whitefootc-macos-arm64.tar.gz \
-            whitefoot-release.json > SHA256SUMS
+            whitefoot-language.tar.gz whitefoot-release.json > SHA256SUMS
           ls -l
           cat whitefoot-release.json SHA256SUMS
 

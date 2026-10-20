@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nocopy enum PayloadEq {
+  PayloadEmpty();
+  PayloadValue(value: u32);
+}
+
+fn compare(left: PayloadEq, right: PayloadEq) -> return_value: Bool pure {
+  doc "OP-16 excludes an enum whose declaration removes a capability, even when all payload fields are equality types.";
+  return left == right;
+}
+
+fn main() -> return_value: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,30 @@
+fn unchanged_left(base: u64, limit: u64) -> after: u64 pure contract {
+  ensures after <= base + 1_u64 * limit;
+} {
+  doc "A literal unit coefficient preserves the extra parameter's coefficient one; the prior checker rejected all datum multiplication at FN-9 formation.";
+  return base;
+}
+
+fn unchanged_right(base: u64, limit: u64) -> after: u64 pure contract {
+  ensures base <= after;
+  ensures after <= base + limit * 1_u64;
+} {
+  doc "A unit coefficient on the right forms the same bound and publishes it for caller accounting.";
+  return base;
+}
+
+fn account(before: u64, left: u64) -> remaining: u64 pure {
+  let after = unchanged_right(base: before, limit: left);
+  let used = after - before;
+  set left = left - used;
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let after = unchanged_left(base: 18446744073709551615_u64, limit: 7_u64);
+  let remaining = account(before: after, left: 7_u64);
+  if remaining == 7_u64 {
+    return std::process::exit_status(code: 42_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

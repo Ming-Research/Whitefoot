@@ -48,14 +48,16 @@ fn retains_every_equal_width_reinterpret_pair() {
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             expected.len() + 1
         );
-        for (function, (expected_source, expected_destination)) in
-            checked.data.functions.iter().zip(expected)
+        for (function, (expected_source, expected_destination)) in checked
+            .data
+            .executable_functions()
+            .filter(|function| function.body.is_some())
+            .zip(expected)
         {
             let [
                 CheckedStatement::Return {
@@ -90,7 +92,7 @@ fn reinterpret_shape_pair_and_operand_failures_keep_their_rule_owners() {
         assert_rule(
             source,
             SemanticRule::Op1,
-            SemanticIssueKind::InvalidOperation,
+            SemanticIssueKind::invalid_operation(),
         );
     }
     assert_rule_kind(

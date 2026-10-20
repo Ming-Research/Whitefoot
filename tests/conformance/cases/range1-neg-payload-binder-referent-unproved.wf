@@ -1,0 +1,45 @@
+enum Instr {
+  Jump(t: u64);
+  Branch(t: u64, c: u64);
+  Halt();
+}
+
+fn need_below(value: u64, bound: u64) -> result: unit pure contract {
+  requires value < bound;
+} {
+  return unit;
+}
+
+fn follow(code: &Box<Slots<Instr>>, pc: u64) -> r: u64 reads(code) contract {
+  requires pc < code^.inner.len;
+  requires forall targets(j in 0_u64..code^.inner.len): code^.inner[j].Jump.t < code^.inner.len, code^.inner[j].Branch.t < code^.inner.len;
+} {
+  doc "Returns the step after pc. Each arm passes its payload binder's referent directly, bounded by its own conclusion of targets.";
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Jump(t: jump_to) => {
+      need_below(value: jump_to^, bound: n);
+      return jump_to^;
+    }
+    Branch(t: branch_to, ..) => {
+      need_below(value: branch_to^, bound: n);
+      return branch_to^;
+    }
+    Halt() => {
+      return pc;
+    }
+  }
+}
+
+fn run(code: &Box<Slots<Instr>>) -> r: u64 reads(code) contract {
+  requires 0_u64 < code^.inner.len;
+  requires forall jumps(j in 0_u64..code^.inner.len): code^.inner[j].Jump.t < code^.inner.len;
+} {
+  doc "Knows the Jump targets only, so the Branch conclusion of follow's targets is unproved for a Branch element.";
+  let landed = follow(code: code, pc: 0_u64);
+  return landed;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

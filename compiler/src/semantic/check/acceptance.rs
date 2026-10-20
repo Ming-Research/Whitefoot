@@ -21,6 +21,7 @@ use super::super::entailment::{
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedNumericType, FunctionId};
 use super::super::obligations::{ObligationRecord, RecordAnswer};
+use super::control::SHARE2_PROVE_THE_HANDLE_PLACES_APART;
 use super::{CheckStop, references, repairs};
 
 /// One position in the causal order in which obligations are decided.
@@ -184,10 +185,16 @@ impl<'unit> DeclarationInventory<'unit> {
                 kind: SemanticIssueKind::UndischargedBoundsObligation {
                     residual: failure.required.clone(),
                     disposition,
-                    mechanical_fix: format!(
-                        "prove this subscript bound on every incoming instance of invariant `{}`",
-                        outcome.name
-                    ),
+                    mechanical_fix: match &outcome.element {
+                        Some(element) if failure.offset == Some(element.binder) => {
+                            repairs::counted_element_invariant(
+                                &outcome.name,
+                                element,
+                                &failure.extent,
+                            )
+                        }
+                        _ => repairs::loop_invariant_formation(&outcome.name),
+                    },
                 },
                 request: None,
             });
@@ -358,22 +365,6 @@ impl<'unit> DeclarationInventory<'unit> {
             request: None,
         })
     }
-    /// Whether a node lies in a `requires_clause` or a `contract_define`,
-    /// whose places a requirement forms at body entry and which evaluate
-    /// nothing [FN-8].
-    fn in_requirement(&self, path: &NodePath) -> Result<bool, CheckStop> {
-        let mut node = self.tree.node_with_path(path);
-        while let Some(current) = node {
-            if matches!(
-                self.tree.production(current)?,
-                Production::RequiresClause | Production::ContractDefine
-            ) {
-                return Ok(true);
-            }
-            node = self.tree.parent(current)?;
-        }
-        Ok(false)
-    }
 }
 
 impl<'unit> TypeContext<'unit> {
@@ -389,6 +380,15 @@ impl<'unit> TypeContext<'unit> {
     /// judgment answering none, are the checker and the engine disagreeing,
     /// and the function is not accepted.
     pub(super) fn entailment_rejection(&self, function: &CheckedFunction) -> Result<(), CheckStop> {
+        self.entailment_rejection_after_range(function, &[], &[])
+    }
+
+    pub(super) fn entailment_rejection_after_range(
+        &self,
+        function: &CheckedFunction,
+        discharged: &[usize],
+        inconclusive: &[usize],
+    ) -> Result<(), CheckStop> {
         let entailment = &function.entailment;
         if entailment.answers.len() != function.obligations.len()
             || !entailment.unrecorded.is_empty()
@@ -397,7 +397,17 @@ impl<'unit> TypeContext<'unit> {
         }
         let mut body = Vec::new();
         let mut relations = Vec::new();
-        for (record, answer) in function.obligations.iter().zip(&entailment.answers) {
+        for (index, (record, answer)) in function
+            .obligations
+            .iter()
+            .zip(&entailment.answers)
+            .enumerate()
+        {
+            // The range walk reports a capability gap or structural ceiling
+            // separately; neither is an ordinary unproved-source verdict.
+            if discharged.contains(&index) || inconclusive.contains(&index) {
+                continue;
+            }
             let Some(answer) = *answer else {
                 continue;
             };
@@ -434,7 +444,7 @@ impl<'unit> TypeContext<'unit> {
                 self.undischarged_issue(function, record, answer)?,
             ));
         }
-        if entailment.answers.iter().any(Option::is_none) {
+        if inconclusive.is_empty() && entailment.answers.iter().any(Option::is_none) {
             return Err(SemanticCompilerFailure::ObligationContract.into());
         }
         Ok(())
@@ -459,9 +469,11 @@ impl<'unit> TypeContext<'unit> {
                 | SemanticRule::Op2
                 | SemanticRule::Op6
                 | SemanticRule::Eff5
+                | SemanticRule::Hold1
                 | SemanticRule::Op11
                 | SemanticRule::Ref2
-                | SemanticRule::Ref4,
+                | SemanticRule::Ref4
+                | SemanticRule::Share2,
                 RecordAnswer::Obligation(index),
             ) => self.undischarged_obligation(function, record.rule, index),
             (
@@ -593,13 +605,42 @@ impl<'unit> TypeContext<'unit> {
                     Some(TermRead::Constant)
                 );
                 let calls = self.killing_calls(function, &outcome.killed_by)?;
-                let mechanical_fix = if self.declarations.in_requirement(&outcome.node_path)? {
-                    repairs::clause_bounds(&case, constant_offset)
-                } else if let (Some(note), false) = (outcome.killed_by.first(), calls.is_empty()) {
-                    repairs::bounds_after_kill(&case, &note.measure, &calls)
-                } else {
-                    repairs::bounds(&case, constant_offset)
-                };
+                // A definition's place is formed by the first requirement
+                // reaching it, and otherwise at the returns of the
+                // postconditions reaching it [ENT-2].
+                let mechanical_fix =
+                    if super::obligations::requirement_forms_site(function, &outcome.node_path) {
+                        let existing = self.with_contract_context(function, |context| {
+                            super::super::entailment::matching_requirement(
+                                function, context, outcome,
+                            )
+                        });
+                        let existing = existing
+                            .and_then(|path| self.declarations.tree.node_with_path(&path))
+                            .map(|node| self.declarations.tree.source_spelling(node))
+                            .transpose()?;
+                        repairs::clause_bounds(&case, constant_offset, existing.as_deref())
+                    } else if let Some(exit) = &outcome.selected_return {
+                        let (_, line) = self.declarations.tree.source_line(&exit.statement)?;
+                        // [FORM-2] a requirement is spelled canonically, so
+                        // one the contract already writes has this spelling.
+                        let required = format!("requires {};", exit.requirement);
+                        let held = function.requirements.iter().any(|requirement| {
+                            requirement.subject.is_none()
+                                && self
+                                    .declarations
+                                    .tree
+                                    .path_spelling(&requirement.clause)
+                                    .is_ok_and(|spelling| spelling == required)
+                        });
+                        repairs::postcondition_bounds(&case, constant_offset, line, exit, held)
+                    } else if let (Some(note), false) =
+                        (outcome.killed_by.first(), calls.is_empty())
+                    {
+                        repairs::bounds_after_kill(&case, &note.measure, &calls)
+                    } else {
+                        repairs::bounds(&case, constant_offset)
+                    };
                 SemanticIssueKind::UndischargedBoundsObligation {
                     mechanical_fix,
                     residual,
@@ -651,6 +692,17 @@ impl<'unit> TypeContext<'unit> {
                     disposition,
                 }
             }
+            (SemanticRule::Hold1, ObligationFamily::CallSeparation(query)) => {
+                let use_site = function.call_separations.get(query as usize)
+                    .and_then(|separation| separation.held_use.as_ref())
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let requirement = self.declarations.tree.node_with_path(&use_site.requirement)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                SemanticIssueKind::InvalidHeldContract {
+                    reason: format!("{}: {residual}", self.declarations.tree.source_spelling(requirement)?),
+                    mechanical_fix: super::held::REPAIR,
+                }
+            }
             (SemanticRule::Eff5, ObligationFamily::CallSeparation(query)) => {
                 let separation = function
                     .call_separations
@@ -669,6 +721,12 @@ impl<'unit> TypeContext<'unit> {
                 SemanticIssueKind::UndischargedCallSeparation {
                     residual,
                     mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation",
+                }
+            }
+            (SemanticRule::Share2, ObligationFamily::AtomicTargetSeparation(_)) => {
+                SemanticIssueKind::UndischargedCallSeparation {
+                    residual,
+                    mechanical_fix: SHARE2_PROVE_THE_HANDLE_PLACES_APART,
                 }
             }
             (SemanticRule::Ref2, ObligationFamily::ReferencePreservation(query)) => {
@@ -857,6 +915,25 @@ impl<'unit> TypeContext<'unit> {
         else {
             if !proof.exits.is_empty() {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
+            }
+            if let Some(postcondition) = function.postconditions.get(index)
+                && !postcondition.selected_returns.is_empty()
+                && postcondition.relation.operands.iter().any(|operand| {
+                    std::iter::once(&operand.datum)
+                        .chain(operand.parameter.iter())
+                        .any(|datum| {
+                            matches!(datum,
+                                super::super::postcondition::RelationDatum::Measure(_, place)
+                                if matches!(place.projections.last(),
+                                    Some(super::super::goal::GoalProjection::Page(_)
+                                        | super::super::goal::GoalProjection::FormalPage { .. })))
+                        })
+                })
+            {
+                return Err(CheckStop::Unsupported(crate::SemanticUnsupported {
+                    feature: crate::UnsupportedSemanticFeature::PageLengthPostcondition,
+                    node: self.declarations.source_location(&proof.block)?,
+                }));
             }
             return Ok(SemanticIssue {
                 rule: SemanticRule::Fn9,

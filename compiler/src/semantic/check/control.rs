@@ -25,7 +25,7 @@ use super::super::model::{
 use super::references::{InvalidationEvent, REF3_RETURN_AN_INDEX, ReferenceInfo};
 use super::{CheckStop, Checker, EffectSet, LocalBinding};
 use crate::semantic::places::PlaceRoot;
-pub(super) use atomic::SHARE2_WAIT_OUTSIDE_THE_BLOCK;
+pub(super) use atomic::{SHARE2_PROVE_THE_HANDLE_PLACES_APART, SHARE2_WAIT_OUTSIDE_THE_BLOCK};
 pub(super) use commit::CommitReadOut;
 use loops::{LoopContext, LoopTransferState};
 
@@ -363,8 +363,9 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_if(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
-                        enum_type: matched.enum_type,
+                        match_type: matched.match_type,
                         arms: matched.arms,
                         continues: matched.can_continue,
                     },
@@ -380,8 +381,9 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_match(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
-                        enum_type: matched.enum_type,
+                        match_type: matched.match_type,
                         arms: matched.arms,
                         continues: matched.can_continue,
                     },
@@ -592,7 +594,7 @@ impl<'unit> Checker<'_, 'unit> {
             // [REF-1] a binder every arm of which delivers a reference is
             // itself a reference variable, naming the union of the path sets
             // its delivering arms name, rather than taking a type [TYPE-5].
-            let reference = if mode.is_reference() {
+            let mut reference = if mode.is_reference() {
                 Some(
                     matched
                         .delivered_reference
@@ -602,6 +604,9 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 None
             };
+            if let Some(reference) = &mut reference {
+                reference.anchor_selection(self.types.declarations.tree.path(node)?, binding);
+            }
             if matched.can_continue
                 && let Some(reference) = &reference
             {
@@ -620,8 +625,11 @@ impl<'unit> Checker<'_, 'unit> {
                             live: true,
                             loop_depth: scope.loops.len(),
                             compiler_updated: false,
+                            read_only_state: false,
                             reference,
+                            commit_target: None,
                             refinement_witnesses: Vec::new(),
+                            handle_watch: None,
                             call_value: false,
                         },
                     )
@@ -642,7 +650,7 @@ impl<'unit> Checker<'_, 'unit> {
                     result_mode: mode,
                     result_range_element,
                     scrutinee: matched.scrutinee,
-                    enum_type: matched.enum_type,
+                    match_type: matched.match_type,
                     arms: matched.arms,
                     continues: matched.can_continue,
                 },
@@ -696,7 +704,10 @@ impl<'unit> Checker<'_, 'unit> {
         // that reads a reference variable, is itself a reference variable
         // naming the same path — an alias, not a copy of the referent. The
         // binder takes that reference kind rather than a type [TYPE-5].
-        let reference = value.reference.clone();
+        let mut reference = value.reference.clone();
+        if let Some(reference) = &mut reference {
+            reference.anchor_selection(self.types.declarations.tree.path(node)?, binding);
+        }
         if mode.is_reference() && reference.is_none() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -706,24 +717,32 @@ impl<'unit> Checker<'_, 'unit> {
             self.body
                 .record_reference_origins(binding, &reference.paths);
         }
-        if bindings
-            .insert(
-                declaration_id,
-                LocalBinding {
-                    binding,
-                    declaration: declaration_id,
-                    mode,
-                    ty: expected,
-                    live: true,
-                    loop_depth: scope.loops.len(),
-                    compiler_updated: false,
-                    reference,
-                    refinement_witnesses: Vec::new(),
-                    call_value: false,
-                },
-            )
-            .is_some()
+        let local = LocalBinding {
+            binding,
+            declaration: declaration_id,
+            mode,
+            ty: expected,
+            live: true,
+            loop_depth: scope.loops.len(),
+            compiler_updated: false,
+            read_only_state: false,
+            reference,
+            commit_target: None,
+            refinement_witnesses: Vec::new(),
+            handle_watch: None,
+            call_value: false,
+        };
+        // [ENT-2] a range-reference variable bound to a bare range-reference
+        // variable is a range alias identified through that source.
+        if !contract_definition
+            && let CheckedExpression::Binding {
+                binding: source, ..
+            } = &value.expression
+            && let Some(source) = bindings.values().find(|local| local.binding == *source)
         {
+            self.body.note_range_alias(&local, source);
+        }
+        if bindings.insert(declaration_id, local).is_some() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
         Ok(Checker::continuing_statement(
@@ -761,7 +780,7 @@ impl<'unit> TypeContext<'unit> {
     /// The compiler-derived releases one edge leaving a scope carries
     /// [STOR-3, LIV-1], and the [PROV-6] refusal of a value that is linear in
     /// this scope and has no derived release to carry it there.
-    fn live_affine_drops(
+    pub(super) fn live_affine_drops(
         &self,
         check_context: &CheckContext<'_>,
         bindings: &HashMap<DeclarationId, LocalBinding>,

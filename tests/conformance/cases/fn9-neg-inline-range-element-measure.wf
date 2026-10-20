@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn strip_length(strip: &[Array<u64, 4>]) -> r: u64 reads(strip) contract {
+  ensures r == strip^.len;
+} {
+  return strip^.len;
+}
+
+fn main() -> status: ExitStatus pure {
+  let row = array_filled::<u64, 4>(value: 9_u64);
+  let rows = array_filled::<Array<u64, 4>, 6>(value: row);
+  let size = strip_length(strip: &rows[1_u64..3_u64]);
+  invariant element_width: size == 4_u64;
+  return exit_status(code: 0_u8);
+}

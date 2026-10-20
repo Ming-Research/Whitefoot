@@ -105,9 +105,9 @@ fn main() -> status: std::process::ExitStatus pure {
         .map(|offset| helper_start + offset + 3)
         .expect("drop helper must close");
     let helper = &llvm[helper_start..helper_end];
-    assert!(helper.contains("switch i32 %tag"));
-    assert!(helper.contains("i32 0, label %variant.0"));
-    assert!(helper.contains("i32 1, label %variant.1"));
+    assert!(helper.contains("switch i8 %tag"));
+    assert!(helper.contains("i8 0, label %variant.0"));
+    assert!(helper.contains("i8 1, label %variant.1"));
     assert_eq!(helper.matches("call void @wf__heap_give").count(), 2);
     assert_eq!(abandon.matches(&format!("call void @{cleanup}")).count(), 1);
     let consume = emitted_function(&llvm, "consume");
@@ -139,7 +139,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_ne!(renamed, llvm);
     let dirty = "ptr inttoptr (i64 -6510615555426900571 to ptr)";
     let linked_constructor = format!(
-        "{renamed}\ndefine {result} @wf_make_empty() {{\n  %tag = insertvalue {result} poison, i32 0, 0\n  %left = insertvalue {result} %tag, {dirty}, 1, 0\n  %right = insertvalue {result} %left, {dirty}, 1, 1\n  ret {result} %right\n}}\n"
+        "{renamed}\ndefine {result} @wf_make_empty() {{\n  %tag = insertvalue {result} poison, i8 0, 0\n  %left = insertvalue {result} %tag, {dirty}, 1, 0\n  %right = insertvalue {result} %left, {dirty}, 1, 1\n  ret {result} %right\n}}\n"
     );
     for module in [&llvm, &linked_constructor] {
         let observed = super::owned_places::retain_calls(module)
@@ -172,10 +172,22 @@ fn result_run_transfer_error_and_abandonment_execute() {
     let llvm = compile(include_bytes!(
         "../../../../tests/conformance/cases/x-result-buffer-transform-run.wf"
     ));
-    assert!(
-        !llvm.contains("define private void @wf.drop."),
-        "a Result over an inline run owns no storage and needs no drop helper"
-    );
+    // `std::process` names `std::time`, whose `cancel_state` result
+    // `SharedRead<CancelState>` [PRE-2] gives the program a shared-handle
+    // release helper that nothing here calls. Every other helper, the
+    // Result's own and any run walk among them, is refused, and no release
+    // helper may be called.
+    for helper in llvm
+        .split("\ndefine ")
+        .filter(|definition| definition.starts_with("private void @wf.drop."))
+    {
+        let helper = helper.split_once("\n}\n").map_or(helper, |(body, _)| body);
+        assert!(
+            helper.contains("call i32 @wf__shared_release("),
+            "a Result over an inline run owns no storage and needs no drop helper:\n{helper}"
+        );
+    }
+    assert!(!llvm.contains("call void @wf.drop."));
     assert!(!llvm.contains("call ptr @wf__heap_take"));
     assert!(!llvm.contains("call void @wf__heap_give"));
     let transforms: Vec<_> = llvm

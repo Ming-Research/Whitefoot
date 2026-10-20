@@ -23,9 +23,9 @@ use crate::syntax::NodeId;
 use crate::{DeclarationId, Production, SemanticCompilerFailure, SemanticIssueKind, SemanticRule};
 
 use super::super::super::model::{CheckedMode, CheckedSetTarget, CheckedStatement};
-use super::super::super::places::{PlaceRoot, ResolvedPlace};
+use super::super::super::places::{PlaceRoot, PlaceStep, ResolvedPlace};
 use super::super::expressions::{MutationTarget, ResolvedPlaceSet, WIN3_LINEAR_TARGET};
-use super::super::references::{InvalidationEvent, RequiredReferent};
+use super::super::references::{InvalidationEvent, ReferenceInfo, ReferenceKind, RequiredReferent};
 use super::super::{CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding};
 use super::{ControlScope, StatementResult};
 
@@ -201,8 +201,18 @@ impl<'unit> Checker<'_, 'unit> {
         // [SET-1] evaluates the right-hand side under ordinary ownership.
         // [OP-12] alone recognizes its direct call's first target actual as
         // an atomic read-out rather than a root-killing consume.
-        let (value, atomic_read_out) =
-            self.check_commit_value(context, &mutation, value_node, bindings, scope.loops.len())?;
+        bindings
+            .get_mut(&mutation.declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .commit_target = Self::commit_payload_reference(&mutation)?;
+        let outcome =
+            self.check_commit_value(context, &mutation, value_node, bindings, scope.loops.len());
+        let captured_target = bindings
+            .get_mut(&mutation.declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .commit_target
+            .take();
+        let (value, atomic_read_out) = outcome?;
         effects = effects.union(value.effects.clone());
 
         // [TYPE-5] "the right-hand side of `set p = e;` must produce exactly
@@ -224,7 +234,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     value_node,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `p^`",
+                        mechanical_fix: "write `p^`".to_owned(),
                     },
                 );
             }
@@ -248,6 +258,7 @@ impl<'unit> Checker<'_, 'unit> {
             &mutation,
             target_node,
             atomic_read_out,
+            captured_target.as_ref(),
             bindings,
         )?;
         // [WIN-3, STOR-3] "Assigning over a live owned place releases the old
@@ -258,6 +269,10 @@ impl<'unit> Checker<'_, 'unit> {
         // or path, so the judgment that settled them records its answer here
         // for lowering [SET-1, LIV-1, DIAG-2].
         let displaces_live_value = root_live_after_rhs && !atomic_read_out;
+        let releases_displaced_storage = displaces_live_value
+            && self
+                .types
+                .may_release_storage(target_type, CheckedMode::Own)?;
         // Every source rejection of this statement is judged above; a target
         // this compiler cannot lower stops here and nowhere earlier [DIAG-1].
         if let Some(feature) = mutation.unsupported {
@@ -267,6 +282,7 @@ impl<'unit> Checker<'_, 'unit> {
         // target is a proper prefix of. Writing the storage at the target's
         // own path, or below it, is a content write and invalidates nothing.
         for place in &mutation.place.members {
+            self.record_held_write(node, place);
             self.types.invalidate_references_with_separation(
                 bindings,
                 place,
@@ -287,6 +303,7 @@ impl<'unit> Checker<'_, 'unit> {
                 target: mutation.target,
                 value: value.expression,
                 displaces_live_value,
+                releases_displaced_storage,
             },
             effects,
         ))
@@ -340,6 +357,7 @@ impl<'unit> Checker<'_, 'unit> {
         mutation: &MutationTarget,
         target_node: NodeId,
         atomic_read_out: bool,
+        captured_target: Option<&super::super::references::ReferenceInfo>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
         // The root's liveness is re-established after the right-hand side
@@ -363,6 +381,9 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         self.revalidate_mutation_access(mutation.through_reference, bindings, target_node)?;
+        if !atomic_read_out && let Some(reference) = captured_target {
+            self.check_reference_info_valid(mutation.declaration, reference, target_node)?;
+        }
         let ty = mutation.target.ty();
         if self.types.is_copy_type(check_context, ty)? || atomic_read_out || !root_live {
             return Ok(());
@@ -439,7 +460,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 target_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `p^`",
+                    mechanical_fix: "write `p^`".to_owned(),
                 },
             );
         };
@@ -488,6 +509,8 @@ impl<'unit> Checker<'_, 'unit> {
                 return Err(CheckStop::ReferenceSummaryChanged);
             }
         }
+        // [REF-1] rebinding replaces this reference value, not the selected
+        // target retained by an earlier alias or match witness.
         self.body
             .record_reference_origins(binding, &reference.paths);
         let local = bindings
@@ -508,8 +531,49 @@ impl<'unit> Checker<'_, 'unit> {
                 value: value.expression,
                 // [REF-1] a reference rebinding displaces no owner.
                 displaces_live_value: false,
+                releases_displaced_storage: false,
             },
             value.effects,
+        )))
+    }
+
+    /// [SET-1, REF-2] retain the storage selected by a newly written payload
+    /// step across the RHS. Inline fields inherit that storage; they do not
+    /// form another reference whose proper prefixes must remain unwritten.
+    /// Later Box or subscript selections do select storage and stay in the
+    /// captured path. References already used to reach the target are checked
+    /// separately by `revalidate_mutation_access`.
+    fn commit_payload_reference(
+        mutation: &MutationTarget,
+    ) -> Result<Option<ReferenceInfo>, CheckStop> {
+        let written = match &mutation.target {
+            CheckedSetTarget::Place(_) => return Ok(None),
+            CheckedSetTarget::RangeIndex(place) => place.place_path(),
+            CheckedSetTarget::Storage(root) => root.place_path(),
+        };
+        if !written
+            .iter()
+            .any(|step| matches!(step, PlaceStep::Payload { .. }))
+        {
+            return Ok(None);
+        }
+        let inline_fields = written
+            .iter()
+            .rev()
+            .take_while(|step| matches!(step, PlaceStep::Field(_)))
+            .count();
+        let mut selected = mutation.place.members.clone();
+        for member in &mut selected {
+            let length = member
+                .path
+                .len()
+                .checked_sub(inline_fields)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            member.path.truncate(length);
+        }
+        Ok(Some(ReferenceInfo::formed_paths(
+            ReferenceKind::Single,
+            selected,
         )))
     }
 

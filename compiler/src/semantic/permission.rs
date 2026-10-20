@@ -97,8 +97,9 @@ use super::model::{
     CheckedStatement, FunctionId, expression_children,
 };
 use super::places::{
-    CaptureId, CapturedRange, CapturedValue, PlaceMap, PlaceRoot, PlaceStep, ResolvedPlace,
-    SeparationOracle, UnprovedSeparations, named_place, places_overlap, range_separation_candidate,
+    CaptureId, CapturedRange, CapturedValue, NamingForm, PlaceMap, PlaceRoot, PlaceStep,
+    ResolvedPlace, SeparationOracle, UnprovedSeparations, named_place, places_overlap,
+    range_separation_candidate,
 };
 use crate::NodePath;
 
@@ -107,6 +108,8 @@ use crate::NodePath;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PermissionSignature {
     pub(crate) name: String,
+    /// [SHARE-3] a signature that may observe or decide an independent cell.
+    pub(crate) decision_cell: bool,
     pub(crate) parameter_declarations: Vec<crate::DeclarationId>,
     pub(crate) parameter_modes: Vec<CheckedMode>,
     /// Whether consuming each owned parameter, or writing through each
@@ -256,6 +259,8 @@ pub(crate) enum Denial {
     /// A statement that contains a waiting call [WAIT-1], which has no
     /// overlap permission with any statement [PAR-1].
     WaitingCall { side: PairSide, call: NodePath },
+    /// A call can observe or decide an independently ordered cell [SHARE-3].
+    DecisionCell { side: PairSide, call: NodePath },
 }
 
 impl Denial {
@@ -267,7 +272,7 @@ impl Denial {
             | Self::UnresolvedFootprint { .. }
             | Self::UnclassifiedForm { .. } => 1,
             Self::SkippingExit { .. } => 2,
-            Self::WaitingCall { .. } => 3,
+            Self::WaitingCall { .. } | Self::DecisionCell { .. } => 3,
         }
     }
 }
@@ -319,24 +324,85 @@ pub(crate) struct PermissionSite {
 /// `None` is a place whose root is unknown and overlaps every place.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CallStorageEffects {
-    borrowed: Vec<Option<ResolvedPlace>>,
-    released: Vec<Option<ResolvedPlace>>,
+    borrowed: Vec<StoragePlace>,
+    released: Vec<StoragePlace>,
+}
+
+/// A resolved lifetime boundary and the actual that supplied it. A loaded
+/// owner slot or argument cleanup covers the owner of the cited selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StoragePlace {
+    pub(crate) place: Option<ResolvedPlace>,
+    pub(crate) source: NodePath,
+    pub(crate) owner: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CallStorageConflict {
+    pub(crate) releasing: PairSide,
+    pub(crate) released: StoragePlace,
+    pub(crate) borrowed: StoragePlace,
 }
 
 impl CallStorageEffects {
-    pub(crate) fn conflicts(&self, other: &Self) -> bool {
-        let overlaps = |released: &[Option<ResolvedPlace>], borrowed: &[Option<ResolvedPlace>]| {
-            released.iter().any(|release| {
-                borrowed.iter().any(|borrow| match (release, borrow) {
-                    (Some(release), Some(borrow)) => {
-                        places_overlap(&UnprovedSeparations, release, borrow)
-                    }
-                    _ => true,
-                })
-            })
-        };
-        overlaps(&self.released, &other.borrowed) || overlaps(&other.released, &self.borrowed)
+    /// Whether reference formation here loads an owner slot.
+    #[cfg(test)]
+    pub(crate) fn has_owner_slot_borrow(&self) -> bool {
+        self.borrowed.iter().any(|place| place.owner)
     }
+
+    pub(crate) fn conflict(
+        &self,
+        oracle: &dyn SeparationOracle,
+        other: &Self,
+    ) -> Option<CallStorageConflict> {
+        for (releasing, released, borrowed) in [
+            (PairSide::First, &self.released, &other.borrowed),
+            (PairSide::Second, &other.released, &self.borrowed),
+        ] {
+            for release in released {
+                for borrow in borrowed {
+                    let overlaps = match (&release.place, &borrow.place) {
+                        // A loaded owner slot is not storage of any place
+                        // below it: those lie in the block it points to, and a
+                        // release frees and writes only its own subtree. Path
+                        // length alone is not ancestry (a range step and an
+                        // index name one slot at different depths); the full
+                        // formation borrow recorded beside every slot still
+                        // meets such a release.
+                        (Some(release), Some(slot)) if borrow.owner => {
+                            release.path.len() <= slot.path.len()
+                                && places_overlap(oracle, release, slot)
+                        }
+                        (Some(release), Some(borrow)) => places_overlap(oracle, release, borrow),
+                        _ => true,
+                    };
+                    if overlaps {
+                        return Some(CallStorageConflict {
+                            releasing,
+                            released: release.clone(),
+                            borrowed: borrow.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// The lifetime boundary answered with this ordered pair's PAR-1 oracle,
+/// including every intervening statement's writes. Lowering never substitutes
+/// another pair's proof. The text is prepared while source spellings exist,
+/// and emitted only if this conflict actually ends an overlap group.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CallStoragePair {
+    pub(crate) first: NodePath,
+    pub(crate) second: NodePath,
+    pub(crate) first_name: String,
+    pub(crate) second_name: String,
+    pub(crate) conflict: Option<CallStorageConflict>,
+    pub(crate) ledger: String,
 }
 
 /// One ordered pair of adjacent statements and its verdict.
@@ -359,6 +425,7 @@ pub(crate) struct FunctionPermissions {
     pub(crate) function: String,
     pub(crate) pairs: Vec<PermissionPair>,
     pub(crate) runs: Vec<PermissionRun>,
+    pub(crate) storage_pairs: Vec<CallStoragePair>,
     /// The [PAR-2] verdict of every counted loop of this function, in source
     /// order.
     pub(crate) loops: Vec<LoopPermission>,
@@ -395,7 +462,7 @@ pub(crate) fn analyze_permission(
     signatures: &[PermissionSignature],
     selected: &[bool],
 ) -> PermissionMetadata {
-    let program = Program { signatures };
+    let program = Program::new(functions, signatures);
     PermissionMetadata {
         functions: functions
             .iter()
@@ -419,11 +486,12 @@ pub(crate) fn plan_permission_separations(
     function: &CheckedFunction,
     signatures: &[PermissionSignature],
 ) -> Vec<PermissionSeparationQuery> {
-    let program = Program { signatures };
+    let program = Program::new(&[], signatures);
     program.plan_function_separations(function)
 }
 
 pub(super) struct Program<'check> {
+    pub(super) indexed_summaries: super::loop_permission::IndexedSummaries<'check>,
     signatures: &'check [PermissionSignature],
 }
 
@@ -457,10 +525,106 @@ pub(super) fn call_projection(value: &CheckedExpression) -> Option<CallProjectio
     }
 }
 
+/// A Bool dispatch whose only action can be transported as one guarded call.
+/// Permission and lowering share this shape test so argument speculation has
+/// exactly the same boundary in both consumers.
+pub(crate) struct ConditionalCall<'check> {
+    pub(crate) scrutinee: &'check CheckedExpression,
+    pub(crate) statement: &'check CheckedStatement,
+    pub(crate) value: &'check CheckedExpression,
+    pub(crate) site: &'check NodePath,
+    pub(crate) tag: u32,
+}
+
+pub(crate) fn conditional_call(statement: &CheckedStatement) -> Option<ConditionalCall<'_>> {
+    let CheckedStatement::Match {
+        scrutinee,
+        match_type: super::model::CheckedMatchType::Enum(super::model::CheckedEnumType::Bool),
+        arms,
+        ..
+    } = statement
+    else {
+        return None;
+    };
+    if matches!(scrutinee, CheckedExpression::UserCall { .. }) {
+        return None;
+    }
+    let mut found = None;
+    for arm in arms {
+        if !arm.binders.is_empty() || !arm.covered.is_empty() || !arm.fallthrough_drops.is_empty() {
+            return None;
+        }
+        if arm.body.is_empty() {
+            continue;
+        }
+        let [
+            statement @ CheckedStatement::Evaluate {
+                value:
+                    value @ CheckedExpression::UserCall {
+                        call, arguments, ..
+                    },
+                ..
+            },
+        ] = arm.body.as_slice()
+        else {
+            return None;
+        };
+        if found.is_some() || !arguments.iter().all(unconditional_argument) {
+            return None;
+        }
+        found = Some(ConditionalCall {
+            scrutinee,
+            statement,
+            value,
+            site: call,
+            tag: match arm.selection {
+                super::model::CheckedMatchSelection::Variant(tag) => tag,
+                _ => return None,
+            },
+        });
+    }
+    found
+}
+
+/// Only total place reads, references to those places, and constants may move
+/// outside the arm. Checked own-place reads carry their copy/consume judgment;
+/// reference holders do not consume, and non-copy Box takes have another form.
+/// Reject operators and every subscript even when its proof holds in the arm.
+fn unconditional_argument(value: &CheckedExpression) -> bool {
+    match value {
+        CheckedExpression::Constant(_)
+        | CheckedExpression::NamedConstant { .. }
+        | CheckedExpression::Binding {
+            consume_root: false,
+            ..
+        }
+        | CheckedExpression::DerefAddressed { .. } => true,
+        CheckedExpression::Project {
+            consume_root: false,
+            residual_drops,
+            ..
+        } => residual_drops.is_empty(),
+        CheckedExpression::ProjectValue { value, .. }
+        | CheckedExpression::BoxDeref { value, .. } => unconditional_argument(value),
+        CheckedExpression::ReadStorage { root, .. }
+        | CheckedExpression::BorrowAddressed { root, .. } => root.path.iter().all(|step| {
+            matches!(
+                step,
+                super::model::CheckedPlaceStep::Field(_)
+                    | super::model::CheckedPlaceStep::Payload { .. }
+                    | super::model::CheckedPlaceStep::BoxReferent(_)
+                    | super::model::CheckedPlaceStep::Measure(_)
+            )
+        }),
+        _ => false,
+    }
+}
+
 /// One statement of a block, classified once for every adjacency it takes
 /// part in.
 ///
-/// A call-rooted match uses its scrutinee call's node as its site. Other
+/// Call-rooted and conditional matches use their call's node as their site.
+/// Refused conditional calls use an inner statement only to report the refusal; other
 /// statements without a node of their own remain unreported run boundaries.
 struct Classified {
     site: Option<PermissionSite>,
@@ -488,6 +652,16 @@ enum Refusal {
 }
 
 impl<'check> Program<'check> {
+    pub(super) fn new(
+        functions: &'check [CheckedFunction],
+        signatures: &'check [PermissionSignature],
+    ) -> Self {
+        Self {
+            signatures,
+            indexed_summaries: super::loop_permission::IndexedSummaries::new(functions),
+        }
+    }
+
     fn plan_function_separations(
         &self,
         function: &'check CheckedFunction,
@@ -532,6 +706,34 @@ impl<'check> Program<'check> {
                         &evaluable,
                         &mut queries,
                     );
+                    // An ignored reference can still borrow released storage
+                    // without contributing an effect-row read. Ask its range
+                    // questions in the same pair-local flow state as PAR-1.
+                    for (released, borrowed) in [
+                        (
+                            &first_site.storage_effects.released,
+                            &second_site.storage_effects.borrowed,
+                        ),
+                        (
+                            &second_site.storage_effects.released,
+                            &first_site.storage_effects.borrowed,
+                        ),
+                    ] {
+                        for release in released {
+                            for borrow in borrowed {
+                                if let (Some(release), Some(borrow)) =
+                                    (&release.place, &borrow.place)
+                                {
+                                    push_range_query(
+                                        (first_site, second_site),
+                                        (release, borrow),
+                                        &evaluable,
+                                        &mut queries,
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
             for statement in block {
@@ -556,6 +758,7 @@ impl<'check> Program<'check> {
             function: function.name.clone(),
             pairs: Vec::new(),
             runs: Vec::new(),
+            storage_pairs: Vec::new(),
             loops: Vec::new(),
             context_awaits: Vec::new(),
         };
@@ -629,6 +832,50 @@ impl<'check> Program<'check> {
             .iter()
             .map(|statement| self.classify_waiting(places, waiting, statement))
             .collect::<Vec<_>>();
+        // Group calls need not be adjacent. Retain an answer for each call
+        // and every later statement: non-call statements run on the owning
+        // thread inside the window and can also form borrowed arguments.
+        // Missing optional proofs remain ordinary overlap.
+        for (index, first) in classified.iter().enumerate() {
+            let Some(first_site) = &first.site else {
+                continue;
+            };
+            if first_site.call.is_none() {
+                continue;
+            }
+            for (later, second) in classified.iter().enumerate().skip(index + 1) {
+                let Some(second_site) = &second.site else {
+                    continue;
+                };
+                let before_second = classified[index..later]
+                    .iter()
+                    .map(|member| member.footprint.as_ref().ok())
+                    .collect::<Option<Vec<_>>>();
+                let conflict = if let Some(before_second) = before_second {
+                    let oracle = PairSeparationOracle {
+                        first: &first_site.statement,
+                        second: &second_site.statement,
+                        proofs,
+                        before_second,
+                    };
+                    first_site
+                        .storage_effects
+                        .conflict(&oracle, &second_site.storage_effects)
+                } else {
+                    first_site
+                        .storage_effects
+                        .conflict(&UnprovedSeparations, &second_site.storage_effects)
+                };
+                permissions.storage_pairs.push(CallStoragePair {
+                    first: first_site.statement.clone(),
+                    second: second_site.statement.clone(),
+                    first_name: first_site.callee_name.clone(),
+                    second_name: second_site.callee_name.clone(),
+                    conflict,
+                    ledger: String::new(),
+                });
+            }
+        }
         for window in classified.windows(2) {
             let [first, second] = window else {
                 continue;
@@ -718,6 +965,11 @@ impl<'check> Program<'check> {
         let expression = |value: &CheckedExpression| {
             expression_names(value, binding) || reaches(&self.value_footprint(places, value, site))
         };
+        let dispatch = |value: &CheckedExpression| {
+            let mut footprint = self.value_footprint(places, value, site);
+            collect_match_dispatch_reads(places, value, site, &mut footprint);
+            expression_names(value, binding) || reaches(&footprint)
+        };
         let block = |statements: &'check [CheckedStatement], inner: &mut InnerTargets| {
             statements.iter().any(|statement| {
                 self.requires_bound_result(places, binding, site, statement, inner)
@@ -726,7 +978,7 @@ impl<'check> Program<'check> {
         match statement {
             CheckedStatement::Match {
                 scrutinee, arms, ..
-            } => expression(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner)),
+            } => dispatch(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner)),
             // A `give` in an arm delivers to this statement, not out of the
             // block the context was started in.
             CheckedStatement::ValueMatchLet {
@@ -734,7 +986,7 @@ impl<'check> Program<'check> {
             } => {
                 inner.values += 1;
                 let requires =
-                    expression(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner));
+                    dispatch(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner));
                 inner.values -= 1;
                 requires
             }
@@ -808,6 +1060,12 @@ impl<'check> Program<'check> {
                     });
                 }
                 Ok(footprint) => {
+                    if let Some(call) = &footprint.decision_cell {
+                        return PermissionVerdict::Denied(Denial::DecisionCell {
+                            side,
+                            call: call.clone(),
+                        });
+                    }
                     if let Some(argument) = &footprint.unresolved {
                         return PermissionVerdict::Denied(Denial::UnresolvedFootprint {
                             side,
@@ -943,6 +1201,8 @@ impl<'check> Program<'check> {
     /// permission. Every form is either given a footprint here or refused
     /// here.
     fn classify(&self, places: &PlaceMap, statement: &'check CheckedStatement) -> Classified {
+        let conditional = conditional_call(statement);
+        let mut storage_effects = CallStorageEffects::default();
         let (node, binding, call, label, footprint) = match statement {
             // A source proof is checked before permission and erased before
             // lowering: no runtime evaluation, effect, exit edge, or
@@ -960,36 +1220,54 @@ impl<'check> Program<'check> {
                 binding,
                 value,
             } => {
-                let mut footprint = self.value_footprint(places, value, node_path);
+                let (footprint, effects) = self.member_effects(places, value, node_path, []);
+                storage_effects = effects;
                 // "a `let`'s defined binding is a write path" [PAR-1]. This
                 // is what makes reading what an earlier statement defines a
                 // footprint conflict rather than a rule of its own.
-                footprint.writes.push(Access {
-                    place: ResolvedPlace::binding(*binding),
-                    argument: node_path.clone(),
+                let footprint = footprint.map(|mut footprint| {
+                    footprint.writes.push(Access {
+                        place: ResolvedPlace::binding(*binding),
+                        argument: node_path.clone(),
+                    });
+                    footprint
                 });
                 let projection = call_projection(value);
                 let label = projection
                     .as_ref()
                     .map_or("a let statement", |_| "a call statement");
                 let call = projection.map(|projection| projection.call.clone());
-                (Some(node_path), Some(*binding), call, label, Ok(footprint))
+                (Some(node_path), Some(*binding), call, label, footprint)
             }
             CheckedStatement::Set {
                 node_path,
                 target,
                 value,
+                releases_displaced_storage,
                 ..
             } => {
-                let mut footprint = self.value_footprint(places, value, node_path);
-                set_target_place(places, target, node_path, &mut footprint);
-                (
-                    Some(node_path),
-                    None,
-                    None,
-                    "a set statement",
-                    Ok(footprint),
-                )
+                let (footprint, effects) = self.member_effects(places, value, node_path, []);
+                storage_effects = effects;
+                let footprint = footprint.map(|mut footprint| {
+                    let target_start = footprint.writes.len();
+                    set_target_place(places, target, node_path, &mut footprint);
+                    if *releases_displaced_storage {
+                        // Replacing an owner releases its old storage even
+                        // when the RHS contains no call. Keep that storage
+                        // alive until earlier borrowed calls have joined.
+                        storage_effects.released.extend(
+                            footprint.writes[target_start..]
+                                .iter()
+                                .map(|access| StoragePlace {
+                                    place: Some(access.place.clone()),
+                                    source: node_path.clone(),
+                                    owner: false,
+                                }),
+                        );
+                    }
+                    footprint
+                });
+                (Some(node_path), None, None, "a set statement", footprint)
             }
             // Exit-bearing forms.
             CheckedStatement::PropagateLet { node_path, .. } => (
@@ -1029,26 +1307,68 @@ impl<'check> Program<'check> {
                 arms,
                 ..
             } => {
-                let mut footprint = self.value_footprint(places, value, call);
-                let mut result = Ok(());
-                for arm in arms {
-                    for child in &arm.body {
-                        match self.classify(places, child).footprint {
-                            Ok(child) => footprint.absorb(&child),
-                            Err(refusal) => result = Err(refusal),
-                        }
-                    }
-                }
+                let (footprint, effects) =
+                    self.match_effects(places, value, call, arms.iter().flat_map(|arm| &arm.body));
+                storage_effects = effects;
                 (
                     Some(call),
                     None,
                     Some(call.clone()),
                     "a call-rooted match",
-                    result.map(|()| footprint),
+                    footprint,
                 )
             }
-            CheckedStatement::Match { .. } => (
-                None,
+            CheckedStatement::Match { .. } if conditional.is_some() => {
+                let conditional = conditional.as_ref().expect("matched conditional call");
+                let (footprint, effects) = self.match_effects(
+                    places,
+                    conditional.scrutinee,
+                    conditional.site,
+                    [conditional.statement],
+                );
+                storage_effects = effects;
+                (
+                    Some(conditional.site),
+                    None,
+                    Some(conditional.site.clone()),
+                    "a conditional call",
+                    footprint,
+                )
+            }
+            CheckedStatement::Match {
+                match_type, arms, ..
+            } => (
+                // Report a refused Bool conditional only when its sole acting
+                // arm is one call statement, including a discarded result that
+                // needs release. It gets a diagnostic site, not a call member.
+                // Multi-statement arms, multiple acting arms and other matches
+                // keep their existing unreported boundary.
+                matches!(
+                    match_type,
+                    super::model::CheckedMatchType::Enum(super::model::CheckedEnumType::Bool)
+                )
+                .then(|| {
+                    let mut acting = arms.iter().filter(|arm| !arm.body.is_empty());
+                    let arm = acting.next()?;
+                    if acting.next().is_some() {
+                        return None;
+                    }
+                    match arm.body.as_slice() {
+                        [
+                            CheckedStatement::Evaluate {
+                                node_path,
+                                value: CheckedExpression::UserCall { .. },
+                            }
+                            | CheckedStatement::DropExpression {
+                                node_path,
+                                value: CheckedExpression::UserCall { .. },
+                                ..
+                            },
+                        ] => Some(node_path),
+                        _ => None,
+                    }
+                })
+                .flatten(),
                 None,
                 None,
                 "a match statement",
@@ -1103,13 +1423,14 @@ impl<'check> Program<'check> {
             | CheckedStatement::DropExpression {
                 node_path, value, ..
             } => {
-                let footprint = self.value_footprint(places, value, node_path);
+                let (footprint, effects) = self.member_effects(places, value, node_path, []);
+                storage_effects = effects;
                 let projection = call_projection(value);
                 let label = projection
                     .as_ref()
                     .map_or("an expression statement", |_| "a call statement");
                 let call = projection.map(|projection| projection.call.clone());
-                (Some(node_path), None, call, label, Ok(footprint))
+                (Some(node_path), None, call, label, footprint)
             }
         };
         let callee_name = statement_value(statement)
@@ -1120,10 +1441,6 @@ impl<'check> Program<'check> {
                     .map(|signature| signature.name.clone())
             })
             .unwrap_or_else(|| label.to_owned());
-        let storage_effects = statement_value(statement)
-            .filter(|value| call_projection(value).is_some())
-            .map(|value| self.call_storage_effects(places, value))
-            .unwrap_or_default();
         Classified {
             site: node.cloned().map(|statement| PermissionSite {
                 statement,
@@ -1136,17 +1453,67 @@ impl<'check> Program<'check> {
         }
     }
 
+    /// Dispatch observes a borrowed scrutinee's tag separately from forming
+    /// its reference [EFF-2, OWN-13, PAR-1].
+    fn match_effects(
+        &self,
+        places: &PlaceMap,
+        value: &CheckedExpression,
+        node: &NodePath,
+        children: impl IntoIterator<Item = &'check CheckedStatement>,
+    ) -> (Result<Footprint, Refusal>, CallStorageEffects) {
+        let (footprint, effects) = self.member_effects(places, value, node, children);
+        let footprint = footprint.map(|mut footprint| {
+            collect_match_dispatch_reads(places, value, node, &mut footprint);
+            footprint
+        });
+        (footprint, effects)
+    }
+
+    /// Collect both boundaries from the same value and absorbed statements.
+    /// In particular, a match member includes its scrutinee and every acting
+    /// arm, even though only its root or guarded call can be handed out.
+    fn member_effects(
+        &self,
+        places: &PlaceMap,
+        value: &CheckedExpression,
+        node: &NodePath,
+        children: impl IntoIterator<Item = &'check CheckedStatement>,
+    ) -> (Result<Footprint, Refusal>, CallStorageEffects) {
+        let mut footprint = self.value_footprint(places, value, node);
+        let mut storage_effects = self.call_storage_effects(places, value, node);
+        let mut result = Ok(());
+        for statement in children {
+            let child = self.classify(places, statement);
+            match child.footprint {
+                Ok(child) => footprint.absorb(&child),
+                Err(refusal) => result = Err(refusal),
+            }
+            if let Some(site) = child.site {
+                storage_effects
+                    .borrowed
+                    .extend(site.storage_effects.borrowed);
+                storage_effects
+                    .released
+                    .extend(site.storage_effects.released);
+            }
+        }
+        (result.map(|()| footprint), storage_effects)
+    }
+
     /// Resolve the call's lifetime boundary while the checker's reference
     /// inventories are available. Neither these sets nor their conflicts
-    /// change source permission, its proof questions, or its diagnostics.
+    /// change source permission or its diagnostics. Their optional range
+    /// questions use the same pair-local proof planner as permission.
     fn call_storage_effects(
         &self,
         places: &PlaceMap,
         expression: &CheckedExpression,
+        source: &NodePath,
     ) -> CallStorageEffects {
         let mut effects = CallStorageEffects::default();
-        let mut pending = vec![expression];
-        while let Some(expression) = pending.pop() {
+        let mut pending = vec![(expression, source)];
+        while let Some((expression, source)) = pending.pop() {
             if let Some(call) = call_projection(expression) {
                 if let Some(signature) = self.signatures.get(call.target.0 as usize) {
                     let writes = call
@@ -1154,8 +1521,9 @@ impl<'check> Program<'check> {
                         .map_or(&signature.writes, |row| &row.writes);
                     for (index, mode) in signature.parameter_modes.iter().enumerate() {
                         let argument = call.arguments.get(index);
+                        let source = call.argument_nodes.get(index).unwrap_or(call.call);
                         if mode.is_reference() {
-                            extend_storage_places(&mut effects.borrowed, places, argument);
+                            extend_storage_places(&mut effects.borrowed, places, argument, source);
                         }
                         // A range parameter's type is its element type. A
                         // write anywhere below a reference formal may release
@@ -1174,12 +1542,17 @@ impl<'check> Program<'check> {
                                 .copied()
                                 .unwrap_or(true)
                         {
-                            extend_storage_places(&mut effects.released, places, argument);
+                            extend_storage_places(&mut effects.released, places, argument, source);
                         }
                     }
                 } else {
-                    effects.borrowed.push(None);
-                    effects.released.push(None);
+                    let unknown = StoragePlace {
+                        place: None,
+                        source: source.clone(),
+                        owner: false,
+                    };
+                    effects.borrowed.push(unknown.clone());
+                    effects.released.push(unknown);
                 }
             }
             match expression {
@@ -1191,26 +1564,34 @@ impl<'check> Program<'check> {
                     // Moving a selected field also cleans up its siblings:
                     // the consumed aggregate, not the selected argument, is
                     // the lifetime boundary [WIN-3, STOR-3].
-                    effects.released.extend(storage_places_at(
-                        places,
-                        PlaceRoot::Binding(*binding),
-                        &[],
-                    ));
+                    effects.released.extend(
+                        storage_places_at(places, PlaceRoot::Binding(*binding), &[])
+                            .into_iter()
+                            .map(|place| StoragePlace {
+                                place,
+                                source: source.clone(),
+                                owner: true,
+                            }),
+                    );
                 }
                 CheckedExpression::BoxTake {
                     binding, cleanup, ..
                 } if !cleanup.is_empty() => {
-                    effects.released.extend(storage_places_at(
-                        places,
-                        PlaceRoot::Binding(*binding),
-                        &[],
-                    ));
+                    effects.released.extend(
+                        storage_places_at(places, PlaceRoot::Binding(*binding), &[])
+                            .into_iter()
+                            .map(|place| StoragePlace {
+                                place,
+                                source: source.clone(),
+                                owner: true,
+                            }),
+                    );
                 }
                 CheckedExpression::BorrowAddressed { .. }
                 | CheckedExpression::BorrowRangeIndex { .. }
                 | CheckedExpression::BorrowSegment { .. }
                 | CheckedExpression::RangeOf { .. } => {
-                    extend_storage_places(&mut effects.borrowed, places, Some(expression));
+                    extend_storage_places(&mut effects.borrowed, places, Some(expression), source);
                     if let Some(named) = named_place(expression) {
                         let mut prefix = Vec::new();
                         for step in named.steps.iter().chain(&named.suffix) {
@@ -1218,9 +1599,15 @@ impl<'check> Program<'check> {
                                 // Only the written formation loads this Box
                                 // slot. Forwarding a reference to a subtree
                                 // does not reload its resolved ancestors.
-                                effects
-                                    .borrowed
-                                    .extend(storage_places_at(places, named.root, &prefix));
+                                effects.borrowed.extend(
+                                    storage_places_at(places, named.root, &prefix)
+                                        .into_iter()
+                                        .map(|place| StoragePlace {
+                                            place,
+                                            source: source.clone(),
+                                            owner: true,
+                                        }),
+                                );
                             }
                             prefix.push(*step);
                         }
@@ -1228,7 +1615,20 @@ impl<'check> Program<'check> {
                 }
                 _ => {}
             }
-            pending.extend(expression_children(expression));
+            if let Some(call) = call_projection(expression) {
+                pending.extend(call.arguments.iter().enumerate().map(|(index, argument)| {
+                    (
+                        argument,
+                        call.argument_nodes.get(index).unwrap_or(call.call),
+                    )
+                }));
+            } else {
+                pending.extend(
+                    expression_children(expression)
+                        .into_iter()
+                        .map(|child| (child, source)),
+                );
+            }
         }
         effects
     }
@@ -1270,6 +1670,12 @@ impl<'check> Program<'check> {
             footprint.unresolved = Some(call.call.clone());
             return;
         };
+        if signature.decision_cell {
+            // A decision has its own shared-effect point. Its ordinary read
+            // footprint on the handle cannot authorize moving that point.
+            footprint.unresolved = Some(call.call.clone());
+            footprint.decision_cell = Some(call.call.clone());
+        }
 
         // "A by-value consumption counts as a write of the argument's place"
         // [PAR-1]. The affine discipline already forbids two consumers of one
@@ -1442,11 +1848,17 @@ pub(super) struct Footprint {
     /// Set where a footprint element's caller place is not resolved. Every
     /// such statement denies [PAR-1].
     pub(super) unresolved: Option<NodePath>,
+    /// Independently ordered effects also close consumers that only inspect
+    /// unresolved footprints; this witness gives the precise denial reason.
+    pub(super) decision_cell: Option<NodePath>,
 }
 
 impl Footprint {
     /// Adds one statement's halves to a running union [checker-facts].
     fn absorb(&mut self, other: &Self) {
+        if let Some(call) = &other.decision_cell {
+            self.decision_cell.get_or_insert_with(|| call.clone());
+        }
         self.writes.extend(other.writes.iter().cloned());
         self.reads.extend(other.reads.iter().cloned());
         self.operand_reads
@@ -1780,6 +2192,9 @@ pub(super) fn set_target_place(
         // [REF-4] a range reference names one path, so the element a
         // subscript through it writes is that path extended by the index.
         CheckedSetTarget::RangeIndex(target) => {
+            if let Some(formation) = target.root.formation.as_deref() {
+                collect_operand_reads(places, formation, node, footprint);
+            }
             collect_operand_reads(places, &target.offset, node, footprint);
             for step in &target.path {
                 if let CheckedPlaceStep::Subscript(index) = step {
@@ -1811,6 +2226,31 @@ pub(super) fn set_target_place(
 
 pub(super) fn field_steps(fields: &[u32]) -> Vec<PlaceStep> {
     fields.iter().copied().map(PlaceStep::Field).collect()
+}
+
+/// A field-only projection of a binding reads the selected path, not the
+/// aggregate used to spell it. Return the leaf as well so PAR-2 retains the
+/// dereference carrier that RANGE-5 uses for a reference to an element.
+/// These leaves have no evaluated children; every other base keeps its
+/// ordinary walk, including element reads and their subscript operands.
+pub(super) fn binding_read_projection(
+    expression: &CheckedExpression,
+) -> (&CheckedExpression, Vec<PlaceStep>) {
+    let mut base = expression;
+    let mut path = Vec::new();
+    while let CheckedExpression::ProjectValue { value, field, .. } = base {
+        path.push(PlaceStep::Field(*field));
+        base = value;
+    }
+    if matches!(
+        base,
+        CheckedExpression::Binding { .. } | CheckedExpression::DerefAddressed { .. }
+    ) {
+        path.reverse();
+        (base, path)
+    } else {
+        (expression, Vec::new())
+    }
 }
 
 /// The resolved steps of one checked storage path.
@@ -1981,7 +2421,7 @@ fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
         | CheckedExpression::NumericConversion { .. }
         | CheckedExpression::Reinterpret { .. }
         | CheckedExpression::BooleanOperation { .. }
-        | CheckedExpression::EnumEquality { .. }
+        | CheckedExpression::ValueEquality { .. }
         | CheckedExpression::BoxDeref { .. }
         | CheckedExpression::ConstructStruct { .. }
         | CheckedExpression::ConstructEnum { .. }
@@ -2023,12 +2463,13 @@ fn push_reference_holder_read(
 /// The match is exhaustive on purpose. A future expression form that reads
 /// caller storage must be classified here rather than silently contributing
 /// nothing, because a missing operand read widens permission.
-fn collect_operand_reads(
+pub(super) fn collect_operand_reads(
     places: &PlaceMap,
     expression: &CheckedExpression,
     node: &NodePath,
     footprint: &mut Footprint,
 ) {
+    let (expression, projection) = binding_read_projection(expression);
     let read = |footprint: &mut Footprint, resolved: Vec<ResolvedPlace>| {
         if resolved.is_empty() {
             footprint.unresolved.get_or_insert(node.clone());
@@ -2053,7 +2494,7 @@ fn collect_operand_reads(
         | CheckedExpression::NumericConversion { .. }
         | CheckedExpression::Reinterpret { .. }
         | CheckedExpression::BooleanOperation { .. }
-        | CheckedExpression::EnumEquality { .. }
+        | CheckedExpression::ValueEquality { .. }
         | CheckedExpression::ConstructStruct { .. }
         | CheckedExpression::ConstructEnum { .. }
         | CheckedExpression::ProjectValue { .. } => {}
@@ -2069,7 +2510,10 @@ fn collect_operand_reads(
             }
         }
         CheckedExpression::Binding { binding, .. } => {
-            read(footprint, places.resolve(PlaceRoot::Binding(*binding), &[]));
+            read(
+                footprint,
+                places.resolve(PlaceRoot::Binding(*binding), &projection),
+            );
         }
         CheckedExpression::Project {
             binding, fields, ..
@@ -2080,7 +2524,10 @@ fn collect_operand_reads(
         // `p^` is the path `p` names [TYPE-7, REF-1], which is what
         // resolving its root through the reference summary produces.
         CheckedExpression::DerefAddressed { binding, .. } => {
-            read(footprint, places.resolve(PlaceRoot::Binding(*binding), &[]));
+            read(
+                footprint,
+                places.resolve(PlaceRoot::Binding(*binding), &projection),
+            );
         }
         CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => {
@@ -2092,7 +2539,7 @@ fn collect_operand_reads(
         CheckedExpression::RangeMeasure { root, .. } => {
             read(
                 footprint,
-                places.resolve(PlaceRoot::Binding(root.binding), &[]),
+                places.resolve(PlaceRoot::Binding(root.binding), &root.place_path()),
             );
         }
         CheckedExpression::RangeElementMeasure { place, .. }
@@ -2140,6 +2587,43 @@ fn collect_operand_reads(
     }
 }
 
+/// The referents whose tags a borrowed dispatch observes [EFF-2, OWN-13].
+/// `None` is a value dispatch; an empty set is an unresolved reference and
+/// must deny permission. Keep reference formation itself free of this read.
+pub(super) fn match_referents(
+    places: &PlaceMap,
+    scrutinee: &CheckedExpression,
+) -> Option<Vec<ResolvedPlace>> {
+    let named = named_place(scrutinee)?;
+    match named.form {
+        NamingForm::Borrow => Some(named.resolve(places, false)),
+        NamingForm::Binding(binding) if places.is_reference(binding) => {
+            Some(named.resolve(places, false))
+        }
+        _ => None,
+    }
+}
+
+fn collect_match_dispatch_reads(
+    places: &PlaceMap,
+    scrutinee: &CheckedExpression,
+    node: &NodePath,
+    footprint: &mut Footprint,
+) {
+    let Some(referents) = match_referents(places, scrutinee) else {
+        return;
+    };
+    if referents.is_empty() {
+        footprint.unresolved.get_or_insert(node.clone());
+    }
+    footprint
+        .operand_reads
+        .extend(referents.into_iter().map(|place| Access {
+            place,
+            argument: node.clone(),
+        }));
+}
+
 /// Resolve storage for the lowering boundary. An empty reference inventory
 /// leaves even the referent's root unknown: the holder is not that root.
 fn storage_places_at(
@@ -2156,6 +2640,21 @@ fn storage_places_at(
 }
 
 fn extend_storage_places(
+    into: &mut Vec<StoragePlace>,
+    places: &PlaceMap,
+    expression: Option<&CheckedExpression>,
+    source: &NodePath,
+) {
+    let mut resolved = Vec::new();
+    resolve_storage_places(&mut resolved, places, expression);
+    into.extend(resolved.into_iter().map(|place| StoragePlace {
+        place,
+        source: source.clone(),
+        owner: false,
+    }));
+}
+
+fn resolve_storage_places(
     into: &mut Vec<Option<ResolvedPlace>>,
     places: &PlaceMap,
     expression: Option<&CheckedExpression>,
@@ -2197,4 +2696,82 @@ pub(super) fn argument_places(
 ) -> Option<Vec<ResolvedPlace>> {
     let resolved = named_place(argument)?.resolve(places, false);
     (!resolved.is_empty()).then_some(resolved)
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+    use crate::semantic::places::CapturedTerm;
+
+    /// The storage boundary must ask its caller's oracle for index proofs,
+    /// just as it does for the range proofs exercised through lowering.
+    struct DistinctIndices(CapturedValue, CapturedValue);
+
+    impl SeparationOracle for DistinctIndices {
+        fn indices_distinct(&self, left: CapturedValue, right: CapturedValue) -> bool {
+            (left == self.0 && right == self.1) || (left == self.1 && right == self.0)
+        }
+        fn ranges_disjoint(&self, _left: CapturedRange, _right: CapturedRange) -> bool {
+            false
+        }
+        fn index_is_live(&self, _window: &ResolvedPlace, _index: CapturedValue) -> bool {
+            false
+        }
+        fn index_outside_range(&self, _index: CapturedValue, _range: CapturedRange) -> bool {
+            false
+        }
+        fn range_within_length(&self, _window: &ResolvedPlace, _range: CapturedRange) -> bool {
+            false
+        }
+        fn window_length_is_shared(&self, _window: &ResolvedPlace) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn storage_conflicts_consume_index_proofs_but_never_separate_unknown_roots() {
+        let left = CapturedValue::new(CaptureId::source(1), CapturedTerm::Binding(BindingId(1)));
+        let right = CapturedValue::new(CaptureId::source(2), CapturedTerm::Binding(BindingId(2)));
+        let oracle = DistinctIndices(left, right);
+        let place = |index| StoragePlace {
+            place: Some(ResolvedPlace {
+                root: PlaceRoot::Binding(BindingId(0)),
+                path: vec![PlaceStep::Index(index)],
+                atomic_aliases: Vec::new(),
+            }),
+            source: NodePath {
+                components: vec![0],
+            },
+            owner: false,
+        };
+        let mut release = CallStorageEffects {
+            released: vec![place(left)],
+            borrowed: Vec::new(),
+        };
+        let mut borrow = CallStorageEffects {
+            released: Vec::new(),
+            borrowed: vec![place(right)],
+        };
+        assert!(release.conflict(&UnprovedSeparations, &borrow).is_some());
+        assert!(release.conflict(&oracle, &borrow).is_none());
+        assert!(borrow.conflict(&oracle, &release).is_none());
+        borrow.borrowed[0].place = None;
+        assert!(release.conflict(&oracle, &borrow).is_some());
+        assert!(borrow.conflict(&oracle, &release).is_some());
+        borrow.borrowed[0] = place(right);
+        release.released[0].place = None;
+        assert!(release.conflict(&oracle, &borrow).is_some());
+        assert!(borrow.conflict(&oracle, &release).is_some());
+        release.released[0] = place(left);
+        borrow.borrowed[0] = place(left);
+        assert!(
+            release.conflict(&oracle, &borrow).is_some(),
+            "equal indices still overlap"
+        );
+        borrow.borrowed[0].place.as_mut().unwrap().path.clear();
+        assert!(
+            release.conflict(&oracle, &borrow).is_some(),
+            "a prefix still overlaps"
+        );
+    }
 }

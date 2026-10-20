@@ -4,7 +4,7 @@
 //! program here stopped, or ran on without end, on the runtime before the
 //! change that makes it pass, on the route or driver count it names
 //! (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.4).
-//! The last case is a bound spawn's result crossing its join [WAIT-3].
+//! Bound-spawn cases also check their results and block-end joins [WAIT-3].
 
 use super::support::{build_program, compile_program, compile_sources};
 
@@ -158,7 +158,7 @@ fn close(handles: &std::io::HandleFactory, directory: std::fs::DirectoryRead) ->
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let back = spawn keep(directory: move cwd);
@@ -174,6 +174,22 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 #[test]
 fn a_bound_spawn_moves_its_host_handle_on_after_the_join() {
     let program = build_program(&compile_sources(&[("handle_result.wf", HANDLE_RESULT)]));
+    for drivers in ["1", "4"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "drivers {drivers}: {output:?}"
+        );
+    }
+}
+
+/// A bound spawn unused in its loop body joins at the body's end [WAIT-3].
+/// Joining before the next statement waits for the guarded context before
+/// the starter makes its guard true, so the runtime reports a deadlock.
+#[test]
+fn an_unused_bound_spawn_joins_after_the_statement_that_enables_its_guard() {
+    let program = build_program(&compile_program("bound_context_block_end.wf"));
     for drivers in ["1", "4"] {
         let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
         assert_eq!(

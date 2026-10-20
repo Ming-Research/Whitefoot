@@ -1,0 +1,16 @@
+fn exchange<T: drop>(target: &T, incoming: &T) -> result: unit writes(target), writes(incoming) {
+  doc "FN-2: T takes the exchange place through swap.";
+  swap(first: target, second: incoming);
+  return unit;
+}
+
+fn exchange_maps(target: &ConcurrentHashMap<u8>, incoming: &ConcurrentHashMap<u8>) -> result: unit writes(target), writes(incoming) {
+  doc "TYPE-9: ConcurrentHashMap admits the exchange place in a generic instance as well as a direct swap.";
+  exchange::<ConcurrentHashMap<u8>>(target: target, incoming: incoming);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The concrete helper body is the conformance obligation.";
+  return std::process::exit_status(code: 0_u8);
+}

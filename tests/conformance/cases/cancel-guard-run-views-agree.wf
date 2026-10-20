@@ -1,0 +1,23 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  let stop = std::time::cancel_state(watch: &watch);
+  let source_alias = std::time::cancel_share(source: &source);
+  let other_watch = std::time::cancel_watch(source: &source_alias);
+  let second = std::time::cancel_state(watch: &other_watch);
+  let third = shared_read_share::<std::time::CancelState>(shared: &stop);
+  std::time::cancel_fire(source: &source_alias);
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source_alias);
+  std::time::close_cancel_watch(watch: move other_watch);
+  std::time::close_cancel_watch(watch: move watch);
+  std::time::close_cancel_source(source: move source);
+  atomic first_state = &stop, second_state = &second, third_state = &third {
+    let pair = band(first_state^.fired, second_state^.fired);
+    let all = band(pair, third_state^.fired);
+    if all {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}

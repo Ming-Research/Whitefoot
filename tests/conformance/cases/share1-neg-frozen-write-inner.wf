@@ -1,0 +1,5 @@
+fn denied() -> result: unit pure {
+  let observed = frozen_new::<u8>(value: 7_u8);
+  set observed.inner = 1_u8;
+  return unit;
+}

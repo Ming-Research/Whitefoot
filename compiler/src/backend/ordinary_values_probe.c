@@ -2,7 +2,11 @@
  * launcher values as a native caller would, then exercises ownership transfer,
  * refusal, ranges and explicit close. View operations enter their private
  * pointer-parameter C bodies; separate WF executions check the LLVM ABI. */
-#if !defined(_WIN32)
+#if defined(__APPLE__)
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE 1
+#endif
+#elif !defined(_WIN32)
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -36,7 +40,11 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <locale.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 #define wf_chdir chdir
 #define wf_getcwd getcwd
 #define wf_mkdir(path) mkdir(path, 0700)
@@ -165,7 +173,305 @@ static void text_probe(void) {
     assert(value.tag == 1 && value.err.error == 0);
 }
 
+typedef void (*wf_probe_description)(wf_copy_result *, const wf_io_error *, wf_view *, uint64_t, uint64_t);
+extern void wf_test_public_error_copy_description(wf_copy_result *, const wf_io_error *, wf_view *, uint64_t, uint64_t);
+
+/* The independent host oracle supplies bytes, never runtime-generated text.
+ * Exact, short and empty windows distinguish whole-copy behavior from a
+ * truncating formatter; the whole destination also observes a stray NUL.
+ * Before this addition both entry points are absent, so this probe cannot
+ * link; a stub or tag-only description fails the byte comparison. */
+static void description_window_probe(wf_probe_description copy,
+                                     const wf_io_error *error, const char *text) {
+    size_t length = strlen(text);
+    assert(length > 0);
+    unsigned char *bytes = malloc(length + 8);
+    unsigned char *expected = malloc(length + 8);
+    assert(bytes != NULL && expected != NULL);
+    wf_view view = {bytes, length + 8};
+    wf_copy_result copied;
+    memset(bytes, 90, length + 8);
+    memset(expected, 90, length + 8);
+    copy(&copied, error, &view, 3, 3 + length - 1);
+    assert(copied.tag == 1 && copied.err.error.tag == 0);
+    assert(copied.err.error.required == length);
+    assert(memcmp(bytes, expected, length + 8) == 0);
+    copy(&copied, error, &view, 3, 3);
+    assert(copied.tag == 1 && copied.err.error.tag == 0);
+    assert(copied.err.error.required == length);
+    assert(memcmp(bytes, expected, length + 8) == 0);
+    copy(&copied, error, &view, 3, 3 + length);
+    assert(copied.tag == 0 && copied.ok.value == 3 + length);
+    memcpy(expected + 3, text, length);
+    assert(memcmp(bytes, expected, length + 8) == 0);
+    free(expected);
+    free(bytes);
+}
+
+/* The host's own text for a nonzero code, produced independently of the
+ * runtime's lookup: FormatMessageW in US English on Windows, and strerror
+ * under a private C locale on POSIX. The caller frees the copy. */
+static char *host_description_oracle(uint32_t code) {
+#if defined(_WIN32)
+    WCHAR *wide = NULL;
+    DWORD length = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER
+                                 | FORMAT_MESSAGE_FROM_SYSTEM
+                                 | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                 NULL, (DWORD)code, 0x0409,
+                                 (LPWSTR)&wide, 0, NULL);
+    assert(length > 0 && wide != NULL);
+    while (length > 0 && (wide[length - 1] == L'\r' || wide[length - 1] == L'\n')) --length;
+    int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                                   (int)length, NULL, 0, NULL, NULL);
+    assert(count > 0);
+    char *text = malloc((size_t)count + 1);
+    assert(text != NULL);
+    assert(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                              (int)length, text, count, NULL, NULL) == count);
+    text[count] = 0;
+    LocalFree(wide);
+    return text;
+#else
+    locale_t locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    assert(locale != (locale_t)0);
+#if defined(__APPLE__)
+    /* Darwin has no strerror_l symbol. Snapshot its ordinary strerror
+     * text under the private C locale, independently of the runtime's
+     * grow-and-retry strerror_r implementation. */
+    locale_t previous = uselocale(locale);
+    assert(previous != (locale_t)0);
+    const char *oracle = strerror((int)code);
+#else
+    const char *oracle = strerror_l((int)code, locale);
+#endif
+    assert(oracle != NULL);
+    size_t length = strlen(oracle);
+    char *text = malloc(length + 1);
+    assert(text != NULL);
+    memcpy(text, oracle, length + 1);
+#if defined(__APPLE__)
+    assert(uselocale(previous) != (locale_t)0);
+#endif
+    freelocale(locale);
+    return text;
+#endif
+}
+
+/* Both a too-small and an empty window, and an ample one, leave every byte
+ * unchanged for a description that is unavailable. */
+static void description_unavailable_probe(wf_probe_description copy,
+                                          const wf_io_error *error) {
+    unsigned char bytes[64], expected[64];
+    wf_view view = {bytes, sizeof(bytes)};
+    wf_copy_result copied;
+    memset(bytes, 90, sizeof(bytes));
+    memset(expected, 90, sizeof(expected));
+    copy(&copied, error, &view, 3, sizeof(bytes));
+    assert(copied.tag == 1 && copied.err.error.tag == 1);
+    assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
+    copy(&copied, error, &view, 3, 3);
+    assert(copied.tag == 1 && copied.err.error.tag == 1);
+    assert(memcmp(bytes, expected, sizeof(bytes)) == 0);
+}
+
+static void description_probe(wf_probe_description copy) {
+    static const struct { uint32_t tag; const char *text; } fixed[] = {
+        {WF_IO_NOT_FOUND, "Not found"},
+        {WF_IO_PERMISSION_DENIED, "Permission denied"},
+        {WF_IO_ALREADY_EXISTS, "Already exists"},
+        {WF_IO_NOT_DIRECTORY, "Not a directory"},
+        {WF_IO_IS_DIRECTORY, "Is a directory"},
+        {WF_IO_DIRECTORY_NOT_EMPTY, "Directory not empty"},
+        {WF_IO_READ_ONLY, "Read-only resource"},
+        {WF_IO_RESOURCE_BUSY, "Resource busy"},
+        {WF_IO_INVALID_INPUT, "Invalid input"},
+        {WF_IO_INVALID_PATH, "Invalid path"},
+        {WF_IO_UNSUPPORTED, "Unsupported operation"},
+        {WF_IO_TIMED_OUT, "Timed out"},
+        {WF_IO_DEADLINE_PASSED, "Deadline passed"},
+        {WF_IO_CANCELLED, "Cancelled"},
+        {WF_IO_BROKEN_PIPE, "Broken pipe"},
+        {WF_IO_WRITE_ZERO, "Write returned zero bytes"},
+        {WF_IO_UNEXPECTED_END, "Unexpected end of input"},
+        {WF_IO_CONNECTION_REFUSED, "Connection refused"},
+        {WF_IO_CONNECTION_RESET, "Connection reset"},
+        {WF_IO_CONNECTION_ABORTED, "Connection aborted"},
+        {WF_IO_NOT_CONNECTED, "Not connected"},
+        {WF_IO_ADDRESS_IN_USE, "Address in use"},
+        {WF_IO_ADDRESS_UNAVAILABLE, "Address unavailable"},
+        {WF_IO_RESOURCE_EXHAUSTED, "Resource exhausted"},
+        {WF_IO_FILE_TOO_LARGE, "File too large"},
+        {WF_IO_NO_SPACE, "No space left"},
+        {WF_IO_QUOTA_EXCEEDED, "Quota exceeded"},
+        {WF_IO_CROSS_DEVICE, "Cross-device operation"},
+        {WF_IO_DEVICE_FAILURE, "Device failure"},
+        {WF_IO_OTHER, "Other I/O error"}
+    };
+    for (size_t index = 0; index < sizeof(fixed) / sizeof(fixed[0]); ++index) {
+        wf_io_error error = {fixed[index].tag, 0, 0};
+        description_window_probe(copy, &error, fixed[index].text);
+        if (error.tag == WF_IO_DEADLINE_PASSED || error.tag == WF_IO_CANCELLED) {
+            /* These variants own no payload. Poison spare representation
+             * bytes so a mistaken code/origin read cannot pass as code zero. */
+            error.code = UINT32_MAX;
+            error.origin = 255;
+            description_window_probe(copy, &error, fixed[index].text);
+        }
+    }
+#if defined(_WIN32)
+    static const struct { uint32_t tag; DWORD code; } host[] = {
+        {WF_IO_NO_SPACE, ERROR_DISK_FULL},
+        {WF_IO_DEVICE_FAILURE, ERROR_IO_DEVICE},
+        {WF_IO_PERMISSION_DENIED, ERROR_ACCESS_DENIED},
+        {WF_IO_READ_ONLY, ERROR_WRITE_PROTECT},
+        {WF_IO_FILE_TOO_LARGE, ERROR_FILE_TOO_LARGE}
+    };
+#else
+    static const struct { uint32_t tag; int code; } host[] = {
+        {WF_IO_NO_SPACE, ENOSPC},
+        {WF_IO_DEVICE_FAILURE, EIO},
+        {WF_IO_QUOTA_EXCEEDED, EDQUOT},
+        {WF_IO_READ_ONLY, EROFS},
+        {WF_IO_FILE_TOO_LARGE, EFBIG}
+    };
+#endif
+    for (size_t index = 0; index < sizeof(host) / sizeof(host[0]); ++index) {
+        char *text = host_description_oracle((uint32_t)host[index].code);
+        wf_io_error error = {host[index].tag, (uint32_t)host[index].code, 3};
+        description_window_probe(copy, &error, text);
+        error.origin = 9;
+        description_window_probe(copy, &error, text);
+        free(text);
+    }
+    /* A host's unknown-code prose is not a successful description. Both an
+     * ample and empty window must refuse it without touching any sentinel. */
+    static const uint32_t unknown_codes[] = {INT32_MAX, UINT32_MAX};
+    for (size_t index = 0; index < sizeof(unknown_codes) / sizeof(unknown_codes[0]); ++index) {
+        wf_io_error unknown = {WF_IO_OTHER, unknown_codes[index], 3};
+        description_unavailable_probe(copy, &unknown);
+    }
+}
+
+extern void wf_test_public_error_copy_class_description(wf_copy_result *, const wf_io_error *, wf_view *, uint64_t, uint64_t);
+
+/* [PRE-2] the class-to-code table, restated from the specification apart
+ * from the runtime's own table: every class in tag order with its code on
+ * this host, zero for a class whose entry is None or whose constant the host
+ * C library does not define. Windows codes are the specification's numbers
+ * rather than the SDK's names, so a wrong name in the runtime fails too. */
+static const struct { uint32_t tag; uint32_t code; } wf_probe_class_codes[] = {
+#if defined(_WIN32)
+    {WF_IO_NOT_FOUND, 2},
+    {WF_IO_PERMISSION_DENIED, 5},
+    {WF_IO_ALREADY_EXISTS, 183},
+    {WF_IO_NOT_DIRECTORY, 267},
+    {WF_IO_IS_DIRECTORY, 0},
+    {WF_IO_DIRECTORY_NOT_EMPTY, 145},
+    {WF_IO_READ_ONLY, 19},
+    {WF_IO_RESOURCE_BUSY, 170},
+    {WF_IO_INVALID_INPUT, 87},
+    {WF_IO_INVALID_PATH, 123},
+    {WF_IO_UNSUPPORTED, 50},
+    {WF_IO_TIMED_OUT, 121},
+    {WF_IO_DEADLINE_PASSED, 0},
+    {WF_IO_CANCELLED, 0},
+    {WF_IO_BROKEN_PIPE, 109},
+    {WF_IO_WRITE_ZERO, 0},
+    {WF_IO_UNEXPECTED_END, 0},
+    {WF_IO_CONNECTION_REFUSED, 1225},
+    {WF_IO_CONNECTION_RESET, 64},
+    {WF_IO_CONNECTION_ABORTED, 1235},
+    {WF_IO_NOT_CONNECTED, 2250},
+    {WF_IO_ADDRESS_IN_USE, 10048},
+    {WF_IO_ADDRESS_UNAVAILABLE, 10049},
+    {WF_IO_RESOURCE_EXHAUSTED, 4},
+    {WF_IO_FILE_TOO_LARGE, 223},
+    {WF_IO_NO_SPACE, 112},
+    {WF_IO_QUOTA_EXCEEDED, 1816},
+    {WF_IO_CROSS_DEVICE, 17},
+    {WF_IO_DEVICE_FAILURE, 1117},
+    {WF_IO_OTHER, 0},
+#else
+    {WF_IO_NOT_FOUND, ENOENT},
+    {WF_IO_PERMISSION_DENIED, EACCES},
+    {WF_IO_ALREADY_EXISTS, EEXIST},
+    {WF_IO_NOT_DIRECTORY, ENOTDIR},
+    {WF_IO_IS_DIRECTORY, EISDIR},
+    {WF_IO_DIRECTORY_NOT_EMPTY, ENOTEMPTY},
+    {WF_IO_READ_ONLY, EROFS},
+    {WF_IO_RESOURCE_BUSY, EBUSY},
+    {WF_IO_INVALID_INPUT, EINVAL},
+    {WF_IO_INVALID_PATH, ENAMETOOLONG},
+    {WF_IO_UNSUPPORTED, ENOTSUP},
+    {WF_IO_TIMED_OUT, ETIMEDOUT},
+    {WF_IO_DEADLINE_PASSED, 0},
+    {WF_IO_CANCELLED, 0},
+    {WF_IO_BROKEN_PIPE, EPIPE},
+    {WF_IO_WRITE_ZERO, 0},
+    {WF_IO_UNEXPECTED_END, 0},
+    {WF_IO_CONNECTION_REFUSED, ECONNREFUSED},
+    {WF_IO_CONNECTION_RESET, ECONNRESET},
+    {WF_IO_CONNECTION_ABORTED, ECONNABORTED},
+    {WF_IO_NOT_CONNECTED, ENOTCONN},
+    {WF_IO_ADDRESS_IN_USE, EADDRINUSE},
+    {WF_IO_ADDRESS_UNAVAILABLE, EADDRNOTAVAIL},
+    {WF_IO_RESOURCE_EXHAUSTED, EMFILE},
+    {WF_IO_FILE_TOO_LARGE, EFBIG},
+    {WF_IO_NO_SPACE, ENOSPC},
+#ifdef EDQUOT
+    {WF_IO_QUOTA_EXCEEDED, EDQUOT},
+#else
+    {WF_IO_QUOTA_EXCEEDED, 0},
+#endif
+    {WF_IO_CROSS_DEVICE, EXDEV},
+    {WF_IO_DEVICE_FAILURE, EIO},
+    {WF_IO_OTHER, 0},
+#endif
+};
+
+/* [PRE-2] a class's description is its host code's text whatever code and
+ * origin the error carries, for every row of the class table. On Linux the
+ * text for NoSpace is also glibc's exact "No space left on device". Each coded
+ * class is compared with the host's own strerror or FormatMessageW text for
+ * the code the table names, so a runtime table entry naming another code, a
+ * body that returned the fixed table text or read the error's code fails the
+ * byte comparison; a codeless class must stay unavailable even when its
+ * error carries a describable code. */
+static void class_description_probe(wf_probe_description copy) {
+#if defined(__linux__)
+    {
+        wf_io_error error = {WF_IO_NO_SPACE, 0, 0};
+        description_window_probe(copy, &error, "No space left on device");
+    }
+#endif
+    _Static_assert(sizeof(wf_probe_class_codes) / sizeof(wf_probe_class_codes[0])
+                   == WF_IO_OTHER + 1, "one row for every IoError class");
+    const size_t rows = sizeof(wf_probe_class_codes) / sizeof(wf_probe_class_codes[0]);
+    for (size_t index = 0; index < rows; ++index) {
+        assert(wf_probe_class_codes[index].tag == index);
+        const uint32_t code = wf_probe_class_codes[index].code;
+        wf_io_error error = {wf_probe_class_codes[index].tag, 0, 0};
+        if (code == 0) {
+            description_unavailable_probe(copy, &error);
+            error.code = wf_probe_class_codes[0].code;
+            error.origin = 3;
+            description_unavailable_probe(copy, &error);
+            continue;
+        }
+        char *text = host_description_oracle(code);
+        description_window_probe(copy, &error, text);
+        error.code = 12345;
+        error.origin = 9;
+        description_window_probe(copy, &error, text);
+        error.code = UINT32_MAX;
+        description_window_probe(copy, &error, text);
+        free(text);
+    }
+}
+
 typedef void (*wf_probe_open)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
+static wf_cancel_handle wf_probe_never;
+
 typedef void (*wf_probe_read)(wf_read_result *, wf_value *, wf_value *, wf_view *, uint64_t, uint64_t, uint64_t);
 extern void wf_test_public_open(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
 typedef void (*wf_probe_open_directory_write)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
@@ -483,13 +789,13 @@ static void tcp_probe(wf_inputs *inputs) {
         listener.err.error.origin);
     assert(listener.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 1);
     wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.ok.value));
-    wf__body_tcp_connect(&first_client, &inputs->handles, &address, NULL);
+    wf__body_tcp_connect(&first_client, &inputs->handles, &address, NULL, &wf_probe_never);
     assert(first_client.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 2);
-    wf__body_tcp_accept(&first_server, &inputs->handles, &listener.ok.value, NULL);
+    wf__body_tcp_accept(&first_server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
     assert(first_server.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
-    wf__body_tcp_connect(&second_client, &inputs->handles, &address, NULL);
+    wf__body_tcp_connect(&second_client, &inputs->handles, &address, NULL, &wf_probe_never);
     assert(second_client.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 4);
-    wf__body_tcp_accept(&second_server, &inputs->handles, &listener.ok.value, NULL);
+    wf__body_tcp_accept(&second_server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
     assert(second_server.tag == 0);
     assert(WF_PROBE_INPUT_BUDGET == before - 5);
     crossed_a.receive = first_server.ok.value.connection.receive;
@@ -500,14 +806,14 @@ static void tcp_probe(wf_inputs *inputs) {
     assert(WF_PROBE_INPUT_BUDGET == before - 5 && other_factory.words[0] == 0);
     wf__body_close_send(&closed, &inputs->handles, &crossed_a.send); check_close(&closed);
     assert(WF_PROBE_INPUT_BUDGET == before - 5 && other_factory.words[0] == 0);
-    wf__body_send_once(&sent, &crossed_b.send, &source, 0, 1, NULL);
+    wf__body_send_once(&sent, &crossed_b.send, &source, 0, 1, NULL, &wf_probe_never);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &first_client.ok.value.receive, &destination, 0, 1, NULL);
+    wf__body_receive_next(&received, &first_client.ok.value.receive, &destination, 0, 1, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     target = 0;
-    wf__body_send_once(&sent, &second_client.ok.value.send, &source, 0, 1, NULL);
+    wf__body_send_once(&sent, &second_client.ok.value.send, &source, 0, 1, NULL, &wf_probe_never);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &crossed_b.receive, &destination, 0, 1, NULL);
+    wf__body_receive_next(&received, &crossed_b.receive, &destination, 0, 1, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     wf__body_close_send(&closed, &other_factory, &crossed_b.send); check_close(&closed);
     assert(other_factory.words[0] == 1 && WF_PROBE_INPUT_BUDGET == before - 5);
@@ -524,6 +830,72 @@ static void tcp_probe(wf_inputs *inputs) {
     wf__body_close_listener(&closed, &inputs->handles, &listener.ok.value); check_close(&closed);
     assert(WF_PROBE_INPUT_BUDGET == before - 1 && other_factory.words[0] == 1);
     assert(WF_PROBE_INPUT_BUDGET + other_factory.words[0] == before);
+}
+
+/* [PRE-2] An address reads back as the constructor call that built it, every
+ * component and both bytes of every group and port differing so that a
+ * misplaced or byte-swapped read differs. A connection then reports both its
+ * ends: the accepted peer is 127.0.0.1 at the port the host's own
+ * `getsockname` gives the connecting socket, the connecting side's
+ * `local_address` is that same peer, and the accepted connection's
+ * `local_address` is the listened address after its sending half has closed.
+ * No query spends or returns a credit. */
+static void address_probe(wf_inputs *inputs) {
+    static const uint16_t groups[8] = {
+        0x2001u, 0x0db8u, 0x1234u, 0x5678u, 0x9abcu, 0xdef0u, 0x0102u, 0xfffeu
+    };
+    wf_value address;
+    wf_ip_address ip;
+    wf_open_result listener, local;
+    wf_connect_result client;
+    wf_accept_result server;
+    wf_close_result closed;
+    uint64_t before = WF_PROBE_INPUT_BUDGET;
+    unsigned index;
+
+    wf__body_socket_address_v4(&address, 192, 168, 1, 200, 0x8001u);
+    wf__body_socket_address_ip(&ip, &address);
+    assert(ip.tag == WF_IP_ADDRESS_V4);
+    assert(ip.v4.octets[0] == 192 && ip.v4.octets[1] == 168);
+    assert(ip.v4.octets[2] == 1 && ip.v4.octets[3] == 200);
+    assert((unsigned)wf__body_socket_address_port(&address) == 0x8001u);
+    wf__body_socket_address_v6(&address, groups[0], groups[1], groups[2], groups[3],
+                               groups[4], groups[5], groups[6], groups[7], 0xbeefu);
+    wf__body_socket_address_ip(&ip, &address);
+    assert(ip.tag == WF_IP_ADDRESS_V6);
+    for (index = 0; index < 8u; index++) assert(ip.v6.groups[index] == groups[index]);
+    assert((unsigned)wf__body_socket_address_port(&address) == 0xbeefu);
+
+    wf__body_socket_address_v4(&address, 127, 0, 0, 1, 0);
+    wf__body_tcp_listen(&listener, &inputs->handles, &address);
+    assert(listener.tag == 0);
+    wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.ok.value));
+    wf__body_tcp_connect(&client, &inputs->handles, &address, NULL, &wf_probe_never);
+    assert(client.tag == 0);
+    wf__body_tcp_accept(&server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
+    assert(server.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
+
+    wf__body_socket_address_ip(&ip, &server.ok.value.peer);
+    assert(ip.tag == WF_IP_ADDRESS_V4);
+    assert(ip.v4.octets[0] == 127 && ip.v4.octets[1] == 0);
+    assert(ip.v4.octets[2] == 0 && ip.v4.octets[3] == 1);
+    assert((unsigned)wf__body_socket_address_port(&server.ok.value.peer) != 0u);
+    assert((unsigned)wf__body_socket_address_port(&server.ok.value.peer)
+           == wf_test_socket_port((int)client.ok.value.receive.words[0]));
+    wf__body_local_address(&local, &client.ok.value.receive);
+    assert(local.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
+    assert(memcmp(local.ok.value.words, server.ok.value.peer.words, 3 * sizeof(uint64_t)) == 0);
+
+    wf__body_close_send(&closed, &inputs->handles, &server.ok.value.connection.send); check_close(&closed);
+    wf__body_local_address(&local, &server.ok.value.connection.receive);
+    assert(local.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
+    assert(memcmp(local.ok.value.words, address.words, 3 * sizeof(uint64_t)) == 0);
+
+    wf__body_close_receive(&closed, &inputs->handles, &server.ok.value.connection.receive); check_close(&closed);
+    wf__body_close_send(&closed, &inputs->handles, &client.ok.value.send); check_close(&closed);
+    wf__body_close_receive(&closed, &inputs->handles, &client.ok.value.receive); check_close(&closed);
+    wf__body_close_listener(&closed, &inputs->handles, &listener.ok.value); check_close(&closed);
+    assert(WF_PROBE_INPUT_BUDGET == before);
 }
 
 static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
@@ -545,9 +917,9 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
     wf__body_tcp_listen(&listener, &inputs->handles, &address);
     assert(listener.tag == 0);
     wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.ok.value));
-    wf__body_tcp_connect(&client, &inputs->handles, &address, NULL);
+    wf__body_tcp_connect(&client, &inputs->handles, &address, NULL, &wf_probe_never);
     assert(client.tag == 0);
-    wf__body_tcp_accept(&server, &inputs->handles, &listener.ok.value, NULL);
+    wf__body_tcp_accept(&server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
     assert(server.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
     descriptor = server.ok.value.connection.send.words[0];
     memset(&call, 0, sizeof(call));
@@ -587,19 +959,19 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
      * The just-released lowest slot must therefore be reused, on both the
      * POSIX table and Windows CRT registry, without an open-until-reused loop.
      * Fresh bidirectional IO checks that its half-close state was reset. */
-    wf__body_tcp_connect(&replacement, &call.factory, &address, NULL);
+    wf__body_tcp_connect(&replacement, &call.factory, &address, NULL, &wf_probe_never);
     assert(replacement.tag == 0 && call.factory.words[0] == 0);
     assert(replacement.ok.value.receive.words[0] == descriptor);
-    wf__body_tcp_accept(&replacement_server, &inputs->handles, &listener.ok.value, NULL);
+    wf__body_tcp_accept(&replacement_server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);
     assert(replacement_server.tag == 0);
-    wf__body_send_once(&sent, &replacement.ok.value.send, &source, 0, 1, NULL);
+    wf__body_send_once(&sent, &replacement.ok.value.send, &source, 0, 1, NULL, &wf_probe_never);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &replacement_server.ok.value.connection.receive, &destination, 0, 1, NULL);
+    wf__body_receive_next(&received, &replacement_server.ok.value.connection.receive, &destination, 0, 1, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     target = 0;
-    wf__body_send_once(&sent, &replacement_server.ok.value.connection.send, &source, 0, 1, NULL);
+    wf__body_send_once(&sent, &replacement_server.ok.value.connection.send, &source, 0, 1, NULL, &wf_probe_never);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &replacement.ok.value.receive, &destination, 0, 1, NULL);
+    wf__body_receive_next(&received, &replacement.ok.value.receive, &destination, 0, 1, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     wf__body_close_send(&closed, &inputs->handles, &replacement.ok.value.send); check_close(&closed);
     wf__body_close_receive(&closed, &inputs->handles, &replacement.ok.value.receive); check_close(&closed);
@@ -899,32 +1271,32 @@ static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write 
 /* [PRE-2] two reads through one clock do not go back, a sleep outside every
  * context lasts until its deadline, and every instant operation is total. */
 static void time_probe(wf_inputs *inputs) {
-    wf_value first, second, deadline, later, latest;
-    uint8_t unit = 1;
+    wf_instant first, second, deadline, later, latest;
+    wf_sleep_result slept;
     wf__body_now(&first, &inputs->clock);
     wf__body_now(&second, &inputs->clock);
     assert(wf__body_nanoseconds_from(&second, &first) == 0);
     wf__body_instant_after(&deadline, &second, 2000000u);
     assert(!wf__body_instant_reached(&deadline, &second));
-    wf__body_sleep_until(&unit, &deadline);
-    assert(unit == 0);
+    wf__body_sleep_until(&slept, &deadline, &wf_probe_never);
+    assert(slept.tag == 0);
     wf__body_now(&later, &inputs->clock);
     assert(wf__body_instant_reached(&deadline, &later));
     assert(wf__body_nanoseconds_from(&second, &later) >= 2000000u);
     wf__body_instant_after(&latest, &later, UINT64_MAX);
-    assert(latest.words[0] == UINT64_MAX);
+    assert(latest.ticks == UINT64_MAX);
     wf__body_instant_after(&latest, &latest, 1u);
-    assert(latest.words[0] == UINT64_MAX);
+    assert(latest.ticks == UINT64_MAX);
     assert(!wf__body_instant_reached(&latest, &later));
     /* 2020-01-01T00:00:00Z. */
     assert(wf__body_unix_nanoseconds(&inputs->wall_clock) > INT64_C(1577836800000000000));
 }
 
 typedef void (*wf_probe_stop_open)(wf_open_result *, wf_value *, const wf_value *);
-typedef void (*wf_probe_stop_next)(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *);
+typedef void (*wf_probe_stop_next)(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *, const wf_cancel_handle *);
 typedef void (*wf_probe_stop_close)(wf_close_result *, wf_value *, const wf_value *);
 extern void wf_test_public_stop_listen(wf_open_result *, wf_value *, const wf_value *);
-extern void wf_test_public_stop_next(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *);
+extern void wf_test_public_stop_next(wf_stop_result *, wf_value *, wf_value *, const wf_deadline *, const wf_cancel_handle *);
 extern void wf_test_public_close_stop_listener(wf_close_result *, wf_value *, const wf_value *);
 
 #if defined(__linux__)
@@ -972,7 +1344,7 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
     wf_deadline expired;
     memset(&expired, 0, sizeof(expired));
     expired.tag = WF_OPTION_SOME;
-    expired.value.words[0] = 1;
+    expired.value.ticks = 1;
     open_listener(&opened, &factory, &inputs->stops);
     assert(opened.tag == 1 && opened.err.error.tag == WF_IO_RESOURCE_EXHAUSTED);
     factory.words[0] = 1;
@@ -990,10 +1362,10 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
     for (unsigned index = 0; index < 1025; ++index) wf__stop_observe(index % 2);
     for (unsigned index = 0; index < 1025; ++index) {
         /* An already-produced request wins even against an expired deadline. */
-        next(&received, &factory, &opened.ok.value, &expired);
+        next(&received, &factory, &opened.ok.value, &expired, &wf_probe_never);
         assert(received.tag == 0 && received.ok.value == index % 2);
     }
-    next(&received, &factory, &opened.ok.value, &expired);
+    next(&received, &factory, &opened.ok.value, &expired, &wf_probe_never);
     assert(received.tag == 1 && received.err.error.tag == WF_IO_DEADLINE_PASSED);
     wf_completion_record pending;
     wf__completion_stop_next_submit(&pending);
@@ -1010,14 +1382,14 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
     wf__stop_observe(0);
     wf__completion_file_join(&pending, &kind, &error);
     assert(kind == -1 && wf__completion_deadline_passed(&pending));
-    next(&received, &factory, &opened.ok.value, NULL);
+    next(&received, &factory, &opened.ok.value, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 0);
     wf__stop_observe(1);
     close_listener(&closed, &factory, &opened.ok.value);
     assert(closed.tag == 0 && factory.words[0] == 1);
     open_listener(&opened, &factory, &inputs->stops);
     assert(opened.tag == 0);
-    next(&received, &factory, &opened.ok.value, &expired);
+    next(&received, &factory, &opened.ok.value, &expired, &wf_probe_never);
     assert(received.tag == 1 && received.err.error.tag == WF_IO_DEADLINE_PASSED);
 #if defined(_WIN32)
     /* Exercise the actual callback's lifetime, independently of Windows'
@@ -1031,7 +1403,7 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
         call.event = events[index];
         atomic_init(&call.returned, 0);
         assert(wf_prim_thread_start(&thread, stop_handler_thread, &call, 0) == 0);
-        next(&received, &factory, &opened.ok.value, NULL);
+        next(&received, &factory, &opened.ok.value, NULL, &wf_probe_never);
         assert(received.tag == 0 && received.ok.value == 1);
         assert(atomic_load_explicit(&call.returned, memory_order_acquire) == 0);
         close_listener(&closed, &factory, &opened.ok.value);
@@ -1041,10 +1413,10 @@ static void stop_probe(wf_inputs *inputs, wf_probe_stop_open open_listener,
         while (!atomic_load_explicit(&call.returned, memory_order_acquire)) wf_prim_yield();
     }
     assert(wf__stop_console_handler(CTRL_C_EVENT));
-    next(&received, &factory, &opened.ok.value, NULL);
+    next(&received, &factory, &opened.ok.value, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 0);
     assert(wf__stop_console_handler(CTRL_BREAK_EVENT));
-    next(&received, &factory, &opened.ok.value, NULL);
+    next(&received, &factory, &opened.ok.value, NULL, &wf_probe_never);
     assert(received.tag == 0 && received.ok.value == 1);
 #endif
     close_listener(&closed, &factory, &opened.ok.value);
@@ -1060,7 +1432,14 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     int directory = all || strcmp(group, "directory") == 0;
     int tcp = all || strcmp(group, "tcp") == 0;
     assert(text || files || directory || tcp);
-    if (text) { text_probe(); puts("ordinary text: PASS"); }
+    if (text) {
+        text_probe();
+        description_probe(wf__body_error_copy_description);
+        description_probe(wf_test_public_error_copy_description);
+        class_description_probe(wf__body_error_copy_class_description);
+        class_description_probe(wf_test_public_error_copy_class_description);
+        puts("ordinary text: PASS");
+    }
     if (!files && !directory && !tcp) return 0;
     char previous[4096], fixture[64];
     assert(wf_getcwd(previous, sizeof(previous)) != NULL);
@@ -1070,6 +1449,7 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     wf_inputs inputs;
     wf_close_result closed;
     assert(wf__ordinary_inputs(&inputs, 0, NULL));
+    wf__body_cancel_never(&wf_probe_never);
     assert(inputs.handles.words[2] != 0 && *(uint64_t *)(uintptr_t)inputs.handles.words[2] >= 8);
     {
         /* [PRE-2] a shared factory names the same budget: an acquisition
@@ -1109,15 +1489,16 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     }
 #endif
     if (tcp) {
-        wf_test_guard_phase("ordinary TCP crossed halves/concurrent close/credits");
+        wf_test_guard_phase("ordinary TCP crossed halves/addresses/concurrent close/credits");
         assert(wf_prim_wait_init(&half_close.wait) == 0);
         atomic_store(&half_close_initialized, 1);
         tcp_probe(&inputs);
+        address_probe(&inputs);
         concurrent_half_close_probe(&inputs, 1);
         concurrent_half_close_probe(&inputs, 0);
         atomic_store(&half_close_initialized, 0);
         wf_prim_wait_destroy(&half_close.wait);
-        puts("ordinary TCP crossed halves/concurrent close/credits: PASS");
+        puts("ordinary TCP crossed halves/addresses/concurrent close/credits: PASS");
     }
     wf__body_close_directory_write(&closed, &inputs.handles, &inputs.cwd_write);
     check_close(&closed);
@@ -1125,6 +1506,7 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     check_close(&closed);
     assert(wf_chdir("..") == 0 && wf_rmdir(fixture) == 0);
     assert(wf_chdir(previous) == 0);
+    wf__body_close_cancel_watch(&wf_probe_never);
     return 0;
 }
 

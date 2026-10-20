@@ -1,0 +1,21 @@
+struct EntPair {
+  x: u8;
+  y: u8;
+}
+
+fn need(a: EntPair, b: EntPair) -> result: unit pure contract {
+  requires a == b;
+} {
+  return unit;
+}
+
+fn forward(a: EntPair, b: EntPair) -> result: unit pure {
+  if a.x == b.x {
+    need(a: a, b: b);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

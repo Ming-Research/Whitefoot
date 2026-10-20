@@ -1,0 +1,9 @@
+nodrop struct Ticket {
+  id: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let ticket = Ticket(id: 7_u64);
+  release::<Ticket>(value: move ticket);
+  return std::process::exit_status(code: 0_u8);
+}

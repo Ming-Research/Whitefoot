@@ -145,7 +145,7 @@ fn digest(cells: &[u64]) -> result: u64 reads(cells) {
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Generates ten million keys, folds the digest of each of K histograms into one checksum, and writes that checksum as one little-endian word; K=0 supplies the process baseline.";
-  let Inputs(args: arguments, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let Inputs(args: arguments, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, ..) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -173,7 +173,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let after_checksum = spell(destination: window, at: 0_u64, value: checksum);
   let no_deadline = None<std::time::Instant>();
   let report_length = window^.len;
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: report_length, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: report_length, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: written_end) => {
       return exit_status(code: 0_u8);
     }

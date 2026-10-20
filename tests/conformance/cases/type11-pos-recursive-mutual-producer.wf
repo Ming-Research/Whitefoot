@@ -1,0 +1,32 @@
+struct BoundedSource {
+  values: Box<Array<u32>>;
+  invariant limit(owner): owner.values.inner.len <= 1073741824_u64;
+}
+
+fn source_length(source: &BoundedSource) -> length: u64 reads(source) {
+  return source^.values.inner.len;
+}
+
+fn make_first(nested: Bool) -> made: Result<BoundedSource, u32> pure {
+  if nested {
+    let no = False();
+    let inner = propagate make_second(nested: no);
+    let length = source_length(source: &inner);
+    return Ok<BoundedSource, u32>(value: move inner);
+  }
+  let values = box_array_filled::<u32>(count: 1_u64, value: 0_u32);
+  let source = BoundedSource(values: move values);
+  return Ok<BoundedSource, u32>(value: move source);
+}
+
+fn make_second(nested: Bool) -> made: Result<BoundedSource, u32> pure {
+  if nested {
+    let no = False();
+    let inner = propagate make_first(nested: no);
+    let length = source_length(source: &inner);
+    return Ok<BoundedSource, u32>(value: move inner);
+  }
+  let values = box_array_filled::<u32>(count: 1_u64, value: 0_u32);
+  let source = BoundedSource(values: move values);
+  return Ok<BoundedSource, u32>(value: move source);
+}

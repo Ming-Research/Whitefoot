@@ -93,7 +93,10 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
                   return exit_status(code: 12_u8);
                 }
                 let no_deadline = None<std::time::Instant>();
-                match write_once(factory: files, output: out, source: page_window, start: 0_u64, end: chunk, deadline: no_deadline) {
+                let wait_cancel_1 = std::time::cancel_never();
+                let wait_outcome_1 = write_once(factory: files, output: out, source: page_window, start: 0_u64, end: chunk, deadline: no_deadline, cancel: &wait_cancel_1);
+                std::time::close_cancel_watch(watch: move wait_cancel_1);
+                match wait_outcome_1 {
                   Ok(value: written) => {
                     set total = total +wrap written;
                   }
@@ -117,7 +120,10 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
               }
               let echo_window = &echo[0_u64..64_u64];
               let no_deadline = None<std::time::Instant>();
-              match write_once(factory: files, output: err, source: echo_window, start: 0_u64, end: name_length, deadline: no_deadline) {
+              let wait_cancel_2 = std::time::cancel_never();
+              let wait_outcome_2 = write_once(factory: files, output: err, source: echo_window, start: 0_u64, end: name_length, deadline: no_deadline, cancel: &wait_cancel_2);
+              std::time::close_cancel_watch(watch: move wait_cancel_2);
+              match wait_outcome_2 {
                 Ok(value: written) => {
                   let masked = iand(total, 255_u64);
                   let code = cvt::<u64, u8>(masked);
@@ -148,7 +154,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);

@@ -7,7 +7,9 @@ use super::super::model::{
     CheckedConst, CheckedExpression, CheckedIntegerOperation, CheckedNominalKind, CheckedStatement,
     CheckedType, CheckedValue, IntegerType, MeasuredKind, WindowShape,
 };
-use super::{assert_rule, with_resolved_semantics, with_semantics, with_semantics_dark};
+use super::{
+    assert_rule, assert_rule_kind, with_resolved_semantics, with_semantics, with_semantics_dark,
+};
 
 #[test]
 fn wrapping_conversion_goal_identity_retains_its_operand_support() {
@@ -1406,7 +1408,9 @@ fn below(value: u64) -> result: u64 pure contract {
 
         assert!(matches!(
             &instantiated_call_goal_arguments(calls[0])[0],
-            GoalExpression::Datum(GoalDatum::Place { root, projections, ty })
+            GoalExpression::Datum(GoalDatum::Place {
+                root, projections, ty, ..
+            })
                 if *root == *local && projections.is_empty()
                     && *ty == CheckedType::Integer(IntegerType::U64)
         ));
@@ -1846,55 +1850,55 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// The OWN-1 bare-affine rejection inside a static requirement carries the
-/// clause-specific repair because [FN-8] rejects `move` inside a contract.
+/// Equality's domain excludes capability-removing declarations, including
+/// inside a pure contract; the OP-16 repair names that exclusion.
 #[test]
-fn requires_clause_bare_affine_use_carries_the_static_repair() {
-    let expected_fix =
-        "restate the definition or clause over copy operands or non-consuming admitted reads";
-    assert_rule(
+fn requires_clause_non_equality_type_carries_its_domain_repair() {
+    assert_rule_kind(
         br#"nocopy enum Holder {
   Value();
 }
 
 fn inspect(holder: Holder) -> result: unit pure contract {
-  requires eeq(holder, holder);
+  requires holder == holder;
 } {
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let holder = Holder::Value();
-  let held = inspect(holder: move holder);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-        SemanticRule::Own1,
-        SemanticIssueKind::BareAffineUse {
-            mechanical_fix: expected_fix,
-        },
+        SemanticRule::Op1,
+        |kind| matches!(kind, SemanticIssueKind::InvalidEqualityType { mechanical_fix } if mechanical_fix.contains("removes a capability")),
     );
 }
 
 #[test]
 fn affine_requirements_publish_only_established_non_l0_ordering_leaves() {
     let cases = [
-        ("  requires a + b <= limit;", true),
+        ("  requires a + b <= limit;", true, true),
         (
             "  define sum = a + b;\n  define bound = sum <= limit;\n  define permitted = a <= 16_u64;\n  requires band(bound, permitted);",
+            true,
             true,
         ),
         (
             "  define sum = a + b;\n  define overflow = sum > limit;\n  define excluded = a > 16_u64;\n  define either = bor(overflow, excluded);\n  requires bnot(either);",
             true,
+            true,
         ),
         (
             "  define sum = a + b;\n  define bound = sum <= limit;\n  define permitted = a <= 16_u64;\n  requires bor(bound, permitted);",
             false,
+            false,
         ),
-        ("  requires a + b == limit;", false),
+        // [ENT-4.OT] the established equality gains the term view
+        // total == limit after total's definition. It proves the subtraction
+        // through L0, while S4 still publishes no affine equality leaf.
+        ("  requires a + b == limit;", true, false),
     ];
-    for (requirement, accepted) in cases {
+    for (requirement, accepted, affine_image) in cases {
         // Contract definitions precede every requirement in canonical source.
         let source = format!(
             "fn room(a: u64, b: u64, limit: u64) -> result: u64 pure contract {{\n{requirement}\n  requires a <= 16_u64;\n  requires b <= 16_u64;\n}} {{\n  let total = a + b;\n  let remaining = limit - total;\n  return remaining;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
@@ -1911,17 +1915,40 @@ fn affine_requirements_publish_only_established_non_l0_ordering_leaves() {
                     .find(|f| f.name == "room")
                     .unwrap();
                 super::entailment::validate_derivations(&function.entailment);
-                assert!(
+                assert_eq!(
                     function
                         .entailment
                         .derivations
                         .nodes
                         .iter()
-                        .any(|node| matches!(
+                        .filter(|node| matches!(
                             node,
                             super::super::entailment::DerivationNode::RequirementAffineImage { .. }
                         ))
+                        .count(),
+                    usize::from(affine_image),
+                    "only an established non-L0 ordering leaf supplies an affine image"
                 );
+                if !affine_image {
+                    assert!(
+                        function
+                            .entailment
+                            .derivations
+                            .nodes
+                            .iter()
+                            .any(|node| matches!(
+                                node,
+                                super::super::entailment::DerivationNode::OriginProjection {
+                                    sign: super::super::entailment::GoalSign::Positive,
+                                    relation: super::super::entailment::Relation::Equal {
+                                        difference: 0,
+                                        ..
+                                    },
+                                    ..
+                                }
+                            ))
+                    );
+                }
             } else {
                 let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
                     panic!("an unestablished ordering leaf must remain unavailable: {outcome:?}");

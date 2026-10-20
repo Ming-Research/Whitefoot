@@ -2,9 +2,70 @@
 //! their origins and interning, signed Boolean decompositions and the
 //! integer-domain goals of exact operations.
 
+use super::super::state::GoalOrigin;
 use super::*;
+use crate::NodePath;
 
 impl Input<'_, '_> {
+    /// [ENT-2, ENT-3] The only synthesized equality goals are the ordered
+    /// fields of this exact struct comparison. Enums and Arrays stay roots.
+    fn struct_equality_fields(
+        &self,
+        expression: &GoalExpression,
+    ) -> Option<(bool, Vec<GoalExpression>)> {
+        let GoalExpression::Operation {
+            row:
+                GoalOperation::ValueEquality {
+                    equal,
+                    operand_type: CheckedType::Nominal(id),
+                },
+            arguments,
+            ..
+        } = expression
+        else {
+            return None;
+        };
+        let fields = match &self.context.nominals.get(id.0 as usize)?.kind {
+            CheckedNominalKind::Struct { fields } => fields.as_slice(),
+            CheckedNominalKind::Opaque => &[],
+            _ => return None,
+        };
+        let [left, right] = arguments.as_slice() else {
+            return None;
+        };
+        let members = fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                let projection = GoalProjection::Field(u32::try_from(index).ok()?);
+                let left = left.clone().with_projection(projection, field.ty)?;
+                let right = right.clone().with_projection(projection, field.ty)?;
+                let row = if matches!(
+                    field.ty,
+                    CheckedType::Integer(_) | CheckedType::GenericInt(_)
+                ) {
+                    GoalOperation::Integer {
+                        operation: CheckedIntegerOperation::Equal,
+                        operand_type: field.ty,
+                    }
+                } else {
+                    GoalOperation::ValueEquality {
+                        equal: true,
+                        operand_type: field.ty,
+                    }
+                };
+                Some(GoalExpression::Operation {
+                    row,
+                    type_arguments: Vec::new(),
+                    const_arguments: Vec::new(),
+                    result: CheckedType::Bool,
+                    arguments: vec![left, right],
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some((*equal, members))
+    }
+
     /// Converts one source expression to ENT-3's exact direct pure/total
     /// origin. Any excluded child excludes the whole expression.
     pub(super) fn direct_goal_expression(
@@ -40,17 +101,24 @@ impl Input<'_, '_> {
         // affine and cannot be a standalone goal datum.
         if self.is_copy(expression.ty())
             && let Some(path) = self.read_place_path(expression)
-            && let PlaceRoot::Binding(root) = path.root
+            && matches!(path.root, PlaceRoot::Binding(_))
         {
-            return Some(GoalExpression::Datum(GoalDatum::Place {
-                root,
-                projections: path
-                    .path
-                    .iter()
-                    .map(goal_projection_of_step)
-                    .collect::<Option<Vec<_>>>()?,
-                ty: expression.ty(),
-            }));
+            let mut goal = self.goal_place_datum(&path, expression.ty())?;
+            let written = match expression {
+                CheckedExpression::ReadStorage { root, .. } => {
+                    Some(CheckedSetTarget::Storage(root.clone()))
+                }
+                CheckedExpression::RangeIndex { place, .. } => {
+                    Some(CheckedSetTarget::RangeIndex(place.clone()))
+                }
+                _ => None,
+            };
+            if let Some(written) = written
+                && let GoalExpression::Datum(datum) = &mut goal
+            {
+                *datum.admission_mut()? = GoalAdmission::written(written);
+            }
+            return Some(goal);
         }
         let build_operation = |row, type_arguments, const_arguments, result, arguments: Vec<_>| {
             Some(GoalExpression::Operation {
@@ -65,11 +133,14 @@ impl Input<'_, '_> {
             CheckedExpression::Constant(value) => {
                 Some(GoalExpression::Datum(GoalDatum::Literal(value.clone())))
             }
-            CheckedExpression::NamedConstant { declaration, value } => {
+            CheckedExpression::NamedConstant {
+                declaration, value, ..
+            } => {
                 Some(GoalExpression::Datum(GoalDatum::NamedConst {
                     declaration: *declaration,
                     projections: Vec::new(),
                     ty: value.ty(),
+                    admission: GoalAdmission::default(),
                 }))
             }
             CheckedExpression::Binding { binding, ty, .. } if self.is_copy(*ty) => {
@@ -77,6 +148,7 @@ impl Input<'_, '_> {
                     root: *binding,
                     projections: Vec::new(),
                     ty: *ty,
+                    admission: GoalAdmission::default(),
                 }))
             }
             CheckedExpression::Project {
@@ -89,6 +161,7 @@ impl Input<'_, '_> {
                 root: *binding,
                 projections: fields.iter().copied().map(GoalProjection::Field).collect(),
                 ty: *ty,
+                admission: GoalAdmission::default(),
             })),
             // [ENT-2] a holder exact here is read at its proof path, which
             // reaches this arm only when that path starts at a named const.
@@ -100,6 +173,7 @@ impl Input<'_, '_> {
                     root: *binding,
                     projections: Vec::new(),
                     ty: *ty,
+                    admission: GoalAdmission::default(),
                 })),
             },
             CheckedExpression::BoxDeref {
@@ -204,13 +278,13 @@ impl Input<'_, '_> {
                     .map(|argument| self.goal_expression(argument, admitted_partial))
                     .collect::<Option<Vec<_>>>()?,
             ),
-            CheckedExpression::EnumEquality {
+            CheckedExpression::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
                 ..
             } => build_operation(
-                GoalOperation::EnumEquality {
+                GoalOperation::ValueEquality {
                     equal: *equal,
                     operand_type: *operand_type,
                 },
@@ -357,8 +431,7 @@ impl Input<'_, '_> {
             }
             // [MSR-1, REF-4] the one measure a range reference has.
             CheckedExpression::RangeMeasure { measure, root } => {
-                let argument =
-                    goal_binding_place(root.binding, Vec::new(), root.element_type);
+                let argument = self.goal_place_datum(&root.proof_place(), root.element_type)?;
                 build_operation(
                     // Clause formation uses the ordinary measured-place
                     // row. A body read must have that same structural goal
@@ -379,11 +452,7 @@ impl Input<'_, '_> {
                 if place.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
                 let measured = place.measured()?;
-                let argument = goal_binding_place(
-                    place.root.binding,
-                    place.goal_projections(),
-                    place.ty,
-                );
+                let argument = self.goal_place_datum(&place.proof_place(), place.ty)?;
                 build_operation(
                     GoalOperation::ContainerMeasure {
                         measure: *measure,
@@ -401,11 +470,7 @@ impl Input<'_, '_> {
             | CheckedExpression::BorrowRangeIndex { place, .. }
                 if admitted_partial && place.path.is_empty() =>
             {
-                let collection = goal_binding_place(
-                    place.root.binding,
-                    Vec::new(),
-                    place.root.element_type,
-                );
+                let collection = self.goal_place_datum(&place.root.proof_place(), place.root.element_type)?;
                 build_operation(
                     GoalOperation::RunIndex {
                         measured: MeasuredKind::Range,
@@ -478,6 +543,7 @@ impl Input<'_, '_> {
                     declaration,
                     projections: Vec::new(),
                     ty,
+                    admission: GoalAdmission::default(),
                 }))
             }
         }
@@ -489,7 +555,12 @@ impl Input<'_, '_> {
         &self,
         root: &CheckedContainerRoot,
     ) -> Option<GoalExpression> {
-        self.goal_place_datum(&root.proof_place(), root.ty)
+        let mut expression = self.goal_place_datum(&root.proof_place(), root.ty)?;
+        let GoalExpression::Datum(datum) = &mut expression else {
+            unreachable!("a storage place is a goal datum")
+        };
+        *datum.admission_mut()? = GoalAdmission::written(CheckedSetTarget::Storage(root.clone()));
+        Some(expression)
     }
 
     /// The Goal datum one [ENT-2] proof path names, at a binding or at a
@@ -500,9 +571,8 @@ impl Input<'_, '_> {
         ty: CheckedType,
     ) -> Option<GoalExpression> {
         let projections = place
-            .path
-            .iter()
-            .map(goal_projection_of_step)
+            .proof_steps()
+            .map(|step| goal_projection_of_step(&step))
             .collect::<Option<Vec<_>>>()?;
         Some(match place.root {
             PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, ty),
@@ -510,6 +580,7 @@ impl Input<'_, '_> {
                 declaration: self.context.constant_declaration(id)?,
                 projections,
                 ty,
+                admission: GoalAdmission::default(),
             }),
         })
     }
@@ -532,66 +603,6 @@ impl Input<'_, '_> {
             ty = fields.get(*field as usize)?.ty;
         }
         Some(ty)
-    }
-
-    pub(super) fn goal_projection_type(
-        &self,
-        input: CheckedType,
-        projection: GoalProjection,
-    ) -> Option<CheckedType> {
-        match projection {
-            GoalProjection::Deref => match input {
-                CheckedType::Nominal(nominal) => {
-                    match self.context.nominals.get(nominal.0 as usize)?.kind {
-                        CheckedNominalKind::Box { referent, .. } => Some(referent),
-                        _ => Some(input),
-                    }
-                }
-                // Borrow holders retain the referent type in checked form.
-                _ => Some(input),
-            },
-            GoalProjection::Field(field) => {
-                let CheckedType::Nominal(nominal) = input else {
-                    return None;
-                };
-                let CheckedNominalKind::Struct { fields } =
-                    &self.context.nominals.get(nominal.0 as usize)?.kind
-                else {
-                    return None;
-                };
-                fields.get(field as usize).map(|field| field.ty)
-            }
-            GoalProjection::Payload { variant, field } => {
-                let CheckedType::Nominal(nominal) = input else {
-                    return None;
-                };
-                let CheckedNominalKind::Enum { variants } =
-                    &self.context.nominals.get(nominal.0 as usize)?.kind
-                else {
-                    return None;
-                };
-                variants
-                    .iter()
-                    .find(|candidate| candidate.tag == variant)?
-                    .fields
-                    .get(field as usize)
-                    .map(|field| field.ty)
-            }
-            // [OP-4] a subscript selects the base's element type, which
-            // [MSR-1] admits in a measure place and [WIN-1] gives the one
-            // slot a run holds.
-            GoalProjection::Subscript(_) => element_type(input, self.context.elements),
-            // [REF-4, TYPE-8] a range step selects the run of T elements the
-            // range names, and `&[T]` is a reference kind and not a type, so
-            // that run's checked image is its element type, exactly as a
-            // `&[T]` parameter's is.
-            GoalProjection::Range(_) | GoalProjection::Page(_) => {
-                element_type(input, self.context.elements)
-            }
-            // [MSR-1] the same element selection a written subscript makes;
-            // the offset is what the reader substitutes, not the type.
-            GoalProjection::FormalSubscript { .. } => element_type(input, self.context.elements),
-        }
     }
 
     pub(super) fn goal_place_path(&self, datum: &GoalDatum) -> Option<ResolvedPlace> {
@@ -628,6 +639,47 @@ impl Input<'_, '_> {
         self.body_goal_expression(&requirement.template.root)
     }
 
+    /// A declaration template's projections below the parameter `binding`
+    /// as this callable's body names them: [`Self::body_projections`] with
+    /// every formal-valued offset instantiated [`Self::body_formal_offsets`].
+    pub(super) fn body_template_projections(
+        &self,
+        binding: BindingId,
+        projections: &[GoalProjection],
+    ) -> Option<Vec<GoalProjection>> {
+        self.body_formal_offsets(self.body_projections(PlaceRoot::Binding(binding), projections))
+    }
+
+    /// A declaration template's projections with every formal-valued offset
+    /// replaced by the offset this callable's body reads.
+    ///
+    /// [MSR-1, ENT-2] a formal-valued subscript names a value parameter of
+    /// this same callable, so inside the body it is that parameter's own
+    /// binding: `rows^[i].len` written in a clause and written in the body
+    /// are one term because their canonical spellings are byte-identical
+    /// there. The requirement and postcondition readers both use it [FN-8,
+    /// FN-9].
+    pub(super) fn body_formal_offsets(
+        &self,
+        projections: &[GoalProjection],
+    ) -> Option<Vec<GoalProjection>> {
+        projections
+            .iter()
+            .map(|projection| {
+                projection.instantiate_formal(|ordinal| {
+                    let offset = self.function.parameters.get(ordinal as usize)?;
+                    Some(
+                        CapturedValue::new(
+                            CaptureId::source(u32::MAX),
+                            CapturedTerm::Binding(offset.binding),
+                        )
+                        .goal_identity(),
+                    )
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn body_goal_expression(
         &self,
         expression: &GoalExpression,
@@ -640,35 +692,18 @@ impl Input<'_, '_> {
             }) => {
                 let parameter = self.function.parameters.get(*ordinal as usize)?;
                 let binding = parameter.binding;
-                // [MSR-1, ENT-2] a formal-valued subscript names a value
-                // parameter of this same callable, so inside the body it is
-                // that parameter's own binding: `rows^[i].len` written
-                // in the clause and written in the body are one term because
-                // their canonical spellings are byte-identical there.
-                let projections = self
-                    .body_projections(PlaceRoot::Binding(binding), projections)
-                    .iter()
-                    .map(|projection| match projection {
-                        GoalProjection::FormalSubscript { ordinal } => self
-                            .function
-                            .parameters
-                            .get(*ordinal as usize)
-                            .map(|offset| {
-                                GoalProjection::Subscript(
-                                    CapturedValue::new(
-                                        CaptureId::source(u32::MAX),
-                                        CapturedTerm::Binding(offset.binding),
-                                    )
-                                    .goal_identity(),
-                                )
-                            }),
-                        other => Some(*other),
-                    })
-                    .collect::<Option<Vec<_>>>()?;
+                let projections = self.body_template_projections(binding, projections)?;
+                let mut admission = if parameter.mode.is_range() {
+                    GoalAdmission::plain_range(parameter.ty)
+                } else {
+                    GoalAdmission::plain(parameter.ty)
+                };
+                admission.projections = projections.clone();
                 Some(GoalExpression::Datum(GoalDatum::Place {
                     root: binding,
                     projections,
                     ty: *ty,
+                    admission,
                 }))
             }
             GoalExpression::Datum(GoalDatum::EvaluatedValue { .. }) => None,
@@ -694,13 +729,12 @@ impl Input<'_, '_> {
 
     pub(super) fn goal_integer_constant(&self, expression: &GoalExpression) -> Option<i128> {
         match expression {
-            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer { ty, bits })) => {
-                Some(integer_value(*ty, *bits))
-            }
+            GoalExpression::Datum(GoalDatum::Literal(value)) => literal_integer_constant(value),
             GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration,
                 projections,
                 ty,
+                ..
             }) if projections.is_empty() => {
                 let CheckedValue::Integer {
                     ty: value_type,
@@ -732,6 +766,7 @@ impl Vocabulary {
             root,
             projections,
             ty: CheckedType::Bool,
+            ..
         }) = self.goals.expression(member)
         else {
             return None;
@@ -834,7 +869,7 @@ impl Vocabulary {
                 });
                 IntegerDomainPlanKind::Conjunction
             };
-            normalize_distinct_requests(&mut components);
+            normalize_distinct_requests(&mut components, &self.terms);
             return Some(IntegerDomainPlan { components, kind });
         }
 
@@ -856,7 +891,7 @@ impl Vocabulary {
                 bound: 0,
                 distinct: true,
             }];
-            normalize_distinct_requests(&mut components);
+            normalize_distinct_requests(&mut components, &self.terms);
             return Some(IntegerDomainPlan {
                 components,
                 kind: IntegerDomainPlanKind::Conjunction,
@@ -912,7 +947,14 @@ impl Reasoning<'_, '_, '_> {
         let right = self
             .measure_operand(right_expression)
             .or_else(|| self.read_operand(right_expression))?;
-        sources::comparison_relation(*operation, left, right, 0)
+        let (left, left_constant) = self.vocabulary.terms.constant_part(left);
+        let (right, right_constant) = self.vocabulary.terms.constant_part(right);
+        sources::comparison_relation(
+            *operation,
+            left,
+            right,
+            right_constant.checked_sub(left_constant)?,
+        )
     }
 
     /// [ENT-3] comparison origin of a match scrutinee: shape (a) directly, or
@@ -987,6 +1029,7 @@ impl Reasoning<'_, '_, '_> {
                 root,
                 projections,
                 ty,
+                ..
             }) => {
                 let Some(origin) = state.goal_origins.get(root).copied() else {
                     return expression.clone();
@@ -994,7 +1037,7 @@ impl Reasoning<'_, '_, '_> {
                 if !expanding.insert(*root) {
                     return expression.clone();
                 }
-                let origin = self.vocabulary.goals.expression(origin).clone();
+                let origin = self.vocabulary.goals.expression(origin.goal).clone();
                 let mut expanded = self.expand_goal_expression_inner(
                     &origin,
                     state,
@@ -1003,7 +1046,9 @@ impl Reasoning<'_, '_, '_> {
                 );
                 expanding.remove(root);
                 for projection in projections {
-                    let Some(result) = self.input.goal_projection_type(expanded.ty(), *projection)
+                    let Some(result) = self
+                        .input
+                        .goal_expression_projection_type(&expanded, *projection)
                     else {
                         return expression.clone();
                     };
@@ -1082,6 +1127,7 @@ impl Reasoning<'_, '_, '_> {
 
     pub(super) fn record_goal_origin(
         &mut self,
+        site: &NodePath,
         binding: BindingId,
         value: &CheckedExpression,
         state: &mut FactState,
@@ -1090,7 +1136,25 @@ impl Reasoning<'_, '_, '_> {
             return;
         };
         let origin = self.intern_goal_expression(direct);
-        state.goal_origins.insert(binding, origin);
+        let event = self
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, Some(site.clone()));
+        let proof = self
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding,
+                value: origin,
+                event,
+            });
+        state.goal_origins.insert(
+            binding,
+            GoalOrigin {
+                goal: origin,
+                proof,
+            },
+        );
         state.ambiguous_goal_origins.remove(&binding);
     }
 
@@ -1107,25 +1171,80 @@ impl Reasoning<'_, '_, '_> {
                 }
             }
         }
+        let fields = self
+            .input
+            .struct_equality_fields(&expression)
+            .map(|(equal, fields)| {
+                (
+                    equal,
+                    fields
+                        .into_iter()
+                        .map(|field| self.intern_goal_expression(field))
+                        .collect(),
+                )
+            });
+        let integer_comparison = if let GoalExpression::Operation {
+            row: GoalOperation::Integer { operation, .. },
+            arguments,
+            ..
+        } = &expression
+        {
+            let sign = match operation {
+                CheckedIntegerOperation::Equal => Some(GoalSign::Negative),
+                CheckedIntegerOperation::NotEqual => Some(GoalSign::Positive),
+                _ => None,
+            };
+            sign.and_then(|sign| {
+                let [left, right] = arguments.as_slice() else {
+                    return None;
+                };
+                self.input
+                    .goal_integer_constant(right)
+                    .map(|constant| (left.clone(), constant, sign))
+                    .or_else(|| {
+                        self.input
+                            .goal_integer_constant(left)
+                            .map(|constant| (right.clone(), constant, sign))
+                    })
+            })
+        } else {
+            None
+        };
         let projection = self.goal_projection(&expression);
         let normalization = self.goal_normalization(&expression);
         let mut support = Vec::new();
         collect_goal_support(&expression, None, &mut support);
-        self.vocabulary
+        let goal = self
+            .vocabulary
             .goals
-            .intern(expression, projection, normalization, support)
+            .intern(expression, projection, normalization, support);
+        if let Some(comparison) = integer_comparison {
+            let canonical = self.vocabulary.goals.canonical(goal);
+            self.vocabulary
+                .goals
+                .integer_comparisons
+                .insert(canonical, comparison);
+        }
+        if let Some((equal, fields)) = fields {
+            self.vocabulary
+                .goals
+                .set_struct_equality_fields(goal, equal, fields);
+        }
+        goal
     }
 
-    /// [O11 candidate] The signed Boolean decomposition set of one
+    /// [ENT-3] The signed Boolean decomposition set of one
     /// established goal: `+band` and `-bor` decompose into their signed
-    /// children recursively, `bnot` flips the sign, and every other root —
+    /// children recursively, `bnot` flips the sign, and a positive struct
+    /// equality (or negative inequality) contributes its field equalities.
+    /// Every other root —
     /// in particular `-band` and `+bor`, whose content is genuinely
     /// disjunctive, and `bxor` on either sign — contributes nothing.
     ///
     /// Members are interned so their exact identities, projections, and
-    /// supports are retained in the inventory, but nothing establishes them
-    /// as facts in this version: v0.30 acceptance is untouched. Design:
-    /// `research/investigations/o11-composition/DESIGN.md`.
+    /// supports are retained in the inventory. Source establishment uses this
+    /// set; query-time Boolean introduction and origin transport never
+    /// decompose a derived parent into new premises.
     pub(super) fn signed_boolean_decomposition(
         &mut self,
         parent: GoalId,
@@ -1164,6 +1283,7 @@ impl Reasoning<'_, '_, '_> {
             root,
             projections,
             ty: CheckedType::Bool,
+            ..
         }) = expression
             && projections.is_empty()
         {
@@ -1174,9 +1294,9 @@ impl Reasoning<'_, '_, '_> {
             // guard binding holds a comparison, so this settles the common case
             // without retaining the origin.
             if !matches!(
-                self.vocabulary.goals.expression(origin),
+                self.vocabulary.goals.expression(origin.goal),
                 GoalExpression::Operation {
-                    row: GoalOperation::Boolean(_),
+                    row: GoalOperation::Boolean(_) | GoalOperation::ValueEquality { .. },
                     ..
                 }
             ) {
@@ -1185,9 +1305,27 @@ impl Reasoning<'_, '_, '_> {
             if !following.insert(*root) {
                 return;
             }
-            let origin = self.vocabulary.goals.expression(origin).clone();
+            let origin = self.vocabulary.goals.expression(origin.goal).clone();
             self.collect_decomposition_members(&origin, sign, state, members, following);
             following.remove(root);
+            return;
+        }
+        if let Some((equal, fields)) = self.input.struct_equality_fields(expression) {
+            if equal == (sign == GoalSign::Positive) {
+                for field in fields {
+                    let member = self.intern_goal_expression(field.clone());
+                    if !members.contains(&(member, GoalSign::Positive)) {
+                        members.push((member, GoalSign::Positive));
+                    }
+                    self.collect_decomposition_members(
+                        &field,
+                        GoalSign::Positive,
+                        state,
+                        members,
+                        following,
+                    );
+                }
+            }
             return;
         }
         let GoalExpression::Operation {
@@ -1236,7 +1374,13 @@ impl Reasoning<'_, '_, '_> {
         event: FlowEventId,
     ) {
         for (member, member_sign) in self.signed_boolean_decomposition(parent, sign, state) {
-            state.establish_goal(member, member_sign, &mut self.vocabulary.derivations, event);
+            state.establish_goal(
+                member,
+                member_sign,
+                &self.vocabulary.goals,
+                &mut self.vocabulary.derivations,
+                event,
+            );
             let Some(relation) = self
                 .vocabulary
                 .goals
@@ -1286,19 +1430,12 @@ impl Reasoning<'_, '_, '_> {
 
     /// One clause side as a term displaced by a constant [MSR-5].
     ///
-    /// A side with no term at all is one constant and keeps the constant term
-    /// [ENT-2] folds it onto; a side carrying two terms, or a term with any
-    /// coefficient other than one, is outside the difference-bound fragment
+    /// A constant side folds through Z [ENT-2]; a side carrying two terms,
+    /// or a term with any coefficient other than one, is outside the difference-bound fragment
     /// and projects to nothing, which only under-derives [ENT-1].
     pub(super) fn goal_side(&mut self, expression: &GoalExpression) -> Option<(TermId, i128)> {
         let (term, constant) = self.goal_affine_side(expression)?;
-        match term {
-            Some(term) => Some((term, constant)),
-            None => Some((
-                self.vocabulary.terms.intern(TermKind::Constant(constant)),
-                0,
-            )),
-        }
+        Some((term.unwrap_or(ZERO), constant))
     }
 
     pub(super) fn goal_affine_side(
@@ -1347,10 +1484,8 @@ impl Reasoning<'_, '_, '_> {
                 }
             };
         }
-        if let GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer { ty, bits })) =
-            expression
-        {
-            return Some((None, integer_value(*ty, *bits)));
+        if let Some(value) = self.input.goal_integer_constant(expression) {
+            return Some((None, value));
         }
         // [ENT-2] a widening conversion denotes its operand's mathematical
         // value, so a comparison-origin side over one is that operand's side:
@@ -1362,7 +1497,11 @@ impl Reasoning<'_, '_, '_> {
         {
             return self.goal_affine_side(argument);
         }
-        Some((Some(self.goal_operand(expression)?), 0))
+        // An instantiated anonymous range's length can itself resolve to a
+        // constant term. Fold it just like a written integer operand.
+        let operand = self.goal_operand(expression)?;
+        let (term, constant) = self.vocabulary.terms.constant_part(operand);
+        Some(((term != ZERO).then_some(term), constant))
     }
 
     pub(super) fn goal_operand(&mut self, expression: &GoalExpression) -> Option<TermId> {
@@ -1381,6 +1520,7 @@ impl Reasoning<'_, '_, '_> {
                 declaration,
                 projections,
                 ty,
+                ..
             }) if projections.is_empty() => {
                 let CheckedValue::Integer {
                     ty: value_type,
@@ -1397,12 +1537,17 @@ impl Reasoning<'_, '_, '_> {
             }
             GoalExpression::Datum(datum) => {
                 let fragment = fragment_type(datum.ty())?;
+                // [ENT-2] opaque value identity does not admit its integer
+                // endpoint to L0. Check the written place after every owned
+                // projection, including synthesized struct equality fields.
+                if let Some(admission) = datum.admission()
+                    && !self.input.goal_integer_place_admitted(admission)
+                {
+                    return None;
+                }
                 let path = self.input.goal_place_path(datum)?;
-                Some(
-                    self.vocabulary
-                        .terms
-                        .intern(TermKind::Place(path, fragment)),
-                )
+                let measure_base = self.input.goal_measure_base_type(datum);
+                self.place_operand(path, fragment, measure_base)
             }
             GoalExpression::Operation { row, arguments, .. }
                 if matches!(
@@ -1656,21 +1801,22 @@ impl Judging<'_, '_, '_> {
 pub(super) fn goal_projection_of_step(step: &PlaceStep) -> Option<GoalProjection> {
     match step {
         PlaceStep::Deref => Some(GoalProjection::Deref),
+        PlaceStep::Measure(measure) => Some(GoalProjection::Measure(*measure)),
         PlaceStep::Field(field) => Some(GoalProjection::Field(*field)),
         PlaceStep::Payload { variant, field } => Some(GoalProjection::Payload {
             variant: *variant,
             field: *field,
         }),
         PlaceStep::Index(offset) => Some(GoalProjection::Subscript(offset.goal_identity())),
-        // A page, like a range, retains its formation identity: its length
-        // is captured then, even if another formation selects the same page.
+        // [ENT-2] retain the supplied page identity: borrowed pages carry
+        // their formation capture; direct selectors are already canonical.
         PlaceStep::Page(offset) => Some(GoalProjection::Page(*offset)),
         // [REF-4] a range step's endpoint captures identify the formation
         // whose immutable affine image gives the anonymous range its length.
         // Canonicalizing those captures by endpoint spelling would merge two
         // formations that read the same binding at different times.
         PlaceStep::Range(range) => Some(GoalProjection::Range(*range)),
-        PlaceStep::Part(_) | PlaceStep::Measure(_) | PlaceStep::Descendant(_) => None,
+        PlaceStep::Part(_) | PlaceStep::Descendant(_) => None,
     }
 }
 
@@ -1748,6 +1894,7 @@ pub(super) fn goal_binding_place(
         root: binding,
         projections: projections.into_iter().collect(),
         ty,
+        admission: GoalAdmission::default(),
     })
 }
 
@@ -1933,4 +2080,42 @@ pub(super) fn element_type(input: CheckedType, elements: &[CheckedType]) -> Opti
 pub(super) fn element_write_place(mut base: ResolvedPlace, offset: CapturedValue) -> ResolvedPlace {
     base.path.push(PlaceStep::Index(offset));
     base
+}
+
+/// Numeric identities are integer constants only in an Int-constrained body.
+fn literal_integer_constant(value: &CheckedValue) -> Option<i128> {
+    match value {
+        CheckedValue::NumericIdentity {
+            ty: CheckedType::GenericInt(_),
+            one,
+        } => Some(i128::from(*one)),
+        CheckedValue::Integer { ty, bits } => Some(integer_value(*ty, *bits)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod integer_constant_tests {
+    use super::*;
+    use crate::DeclarationId;
+
+    #[test]
+    fn numeric_identity_constants_require_an_int_constraint() {
+        for one in [false, true] {
+            assert_eq!(
+                literal_integer_constant(&CheckedValue::NumericIdentity {
+                    ty: CheckedType::GenericInt(DeclarationId::from_index(0).unwrap()),
+                    one,
+                }),
+                Some(i128::from(one))
+            );
+            assert_eq!(
+                literal_integer_constant(&CheckedValue::NumericIdentity {
+                    ty: CheckedType::GenericFloat(DeclarationId::from_index(0).unwrap()),
+                    one,
+                }),
+                None
+            );
+        }
+    }
 }

@@ -2,7 +2,7 @@
 //!
 //! A storage shape's value is its complete storage: a `Slots<T, n>` is the
 //! descriptor word `len` followed by `n` inline slots, and an `Array<T, n>`
-//! is `n` slots whose `len` and `cap` are both the type constant and are
+//! is `n` slots whose `len` is the type constant and is
 //! stored nowhere [TYPE-9, WIN-1, OP-9]. No slot carries a tag: the window
 //! is the complete typestate, so every measure here is one descriptor read
 //! or a compile-time constant and every subscript is one address
@@ -26,6 +26,7 @@ pub(super) const fn lower_measure(measure: CheckedMeasure) -> IrMeasure {
         CheckedMeasure::Capacity => IrMeasure::Capacity,
         CheckedMeasure::Head => IrMeasure::Head,
         CheckedMeasure::Pages => IrMeasure::Pages,
+        CheckedMeasure::Bytes => IrMeasure::Bytes,
     }
 }
 
@@ -63,33 +64,43 @@ impl IrBuilder<'_> {
                     .ok_or(LoweringFailure::InvalidCheckedProgram)?;
                 self.lower_fixed_measure(length)
             }
-            // A `Segments` block is reached through its cell and its count
-            // is the word heading it [TYPE-9].
-            MeasureCell::ExactRuntime if matches!(root.ty, CheckedType::Segments { .. }) => {
-                let segments = self.lower_place_address(root)?;
-                self.define(
-                    IrType::Integer {
-                        width: 64,
-                        signed: false,
-                    },
-                    IrOperation::SegmentsMeasure { segments },
-                )
-            }
             MeasureCell::ExactExtent | MeasureCell::ExactRuntime | MeasureCell::Bounded => {
-                let container = self.container_root_value(root)?;
-                self.define(
-                    IrType::Integer {
-                        width: 64,
-                        signed: false,
-                    },
-                    IrOperation::ContainerMeasure {
-                        measure: lower_measure(measure),
-                        container,
-                    },
-                )
+                let container = if matches!(root.ty, CheckedType::Segments { .. }) {
+                    self.lower_place_address_access(root, false)?
+                } else {
+                    self.container_root_value(root)?
+                };
+                self.lower_runtime_measure(measure, root.ty, container)
             }
             MeasureCell::Absent => Err(LoweringFailure::InvalidCheckedProgram),
         }
+    }
+
+    /// Runtime measure dispatch is independent of how the place was reached.
+    /// A Segments count heads its block; other shapes use their descriptor.
+    pub(super) fn lower_runtime_measure(
+        &mut self,
+        measure: CheckedMeasure,
+        ty: CheckedType,
+        container: IrValueId,
+    ) -> Result<IrValueId, LoweringFailure> {
+        let operation = if matches!(ty, CheckedType::Segments { .. }) {
+            IrOperation::SegmentsMeasure {
+                segments: container,
+            }
+        } else {
+            IrOperation::ContainerMeasure {
+                measure: lower_measure(measure),
+                container,
+            }
+        };
+        self.define(
+            IrType::Integer {
+                width: 64,
+                signed: false,
+            },
+            operation,
+        )
     }
 
     /// Reads one measured place's value out of the value at its root:
@@ -106,10 +117,35 @@ impl IrBuilder<'_> {
                 CheckedPlaceStep::Field(field) => {
                     self.project_struct_path(value, &[*field], false)?
                 }
+                CheckedPlaceStep::Payload {
+                    nominal,
+                    variant,
+                    field,
+                } => {
+                    let nominal = self.erased(*nominal)?;
+                    let IrNominalKind::Enum { variants } = &self.nominals[nominal.index()].kind
+                    else {
+                        return Err(LoweringFailure::InvalidCheckedProgram);
+                    };
+                    let ty = variants
+                        .get(*variant as usize)
+                        .and_then(|variant| variant.fields.get(*field as usize))
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                        .ty;
+                    self.define(
+                        ty,
+                        IrOperation::ProjectVariant {
+                            aggregate: value,
+                            nominal,
+                            variant: *variant,
+                            field: *field,
+                        },
+                    )?
+                }
                 // Box-referent places are promoted by storage planning and
                 // lowered through their owner slot's address. Reaching this
                 // value-only path would take an address from a copied Box.
-                CheckedPlaceStep::BoxReferent(_) => {
+                CheckedPlaceStep::BoxReferent(_) | CheckedPlaceStep::Measure(_) => {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }
                 CheckedPlaceStep::Subscript(subscript) => {
@@ -141,7 +177,7 @@ impl IrBuilder<'_> {
         root: &CheckedContainerRoot,
     ) -> Result<IrValueId, LoweringFailure> {
         let Some(binding) = root.binding() else {
-            return self.lower_place_address(root);
+            return self.lower_place_address_access(root, false);
         };
         if self
             .bindings
@@ -149,7 +185,7 @@ impl IrBuilder<'_> {
             .copied()
             .is_some_and(|storage| matches!(self.value_type(storage), Ok(IrType::Address(_))))
         {
-            return self.lower_place_address(root);
+            return self.lower_place_address_access(root, false);
         }
         let value = self.binding_value(binding)?;
         let value = self.project_place_path(value, &root.path)?;

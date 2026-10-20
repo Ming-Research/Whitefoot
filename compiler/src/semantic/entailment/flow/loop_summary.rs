@@ -98,7 +98,10 @@ impl Input<'_, '_> {
                 reaches
             }
             CheckedStatement::Loop {
-                id, body, continues, ..
+                id,
+                body,
+                continues,
+                ..
             } => {
                 reachability.breaks.push((*id, normal_reaches));
                 reachability.continues.push((*id, false));
@@ -358,7 +361,10 @@ pub(super) fn loop_statement_reaches(
             reaches
         }
         CheckedStatement::Loop {
-            id, body, continues, ..
+            id,
+            body,
+            continues,
+            ..
         } => {
             // A nested loop body reaches its successor through its own
             // break edges, or can escape through another visible target.

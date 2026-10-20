@@ -55,6 +55,18 @@ the work-branch and merge boundary.
 - [Result proof transport](investigations/result-proof-transport/DESIGN.md):
   compare verified result facts across direct matches, named outcomes and
   propagation, including capture, invalidation and composition boundaries.
+- [Origin transport](investigations/origin-transport/DESIGN.md): the proposed
+  finite goal disposition over live ordinary-let definitions, including
+  invalidation, joins, contract expansion and retained derivation evidence.
+- [Range field terms](investigations/range-field-terms/DESIGN.md): range
+  terms that read a struct field, `Box` content or an enum payload below an
+  element, with copy provenance, for Snowghost's stored left inverse.
+- [Range facts for ordinary obligations](investigations/ordinary-range-obligations/DESIGN.md):
+  how a bounds, overflow or invariant obligation uses a range fact, comparing
+  deferral to the range judgment with range facts inside ordinary entailment.
+- [Range type invariants](investigations/range-type-invariants/DESIGN.md):
+  a struct's range fact over its own stores, kept by its module's writers and
+  assumed by every function that receives the struct.
 - [Writer-lost facts](investigations/writer-lost-facts/DESIGN.md): facts
   agent writers established and the checker dropped (loop exit, conjunction,
   value `if`, `Option`, chained certificates), each classified against v0.77
@@ -67,10 +79,17 @@ the work-branch and merge boundary.
 - [Aggregate postconditions](investigations/aggregate-postconditions/DESIGN.md):
   integer fields of struct results and routed Ok payloads as relation data,
   the placement transport they need, and the separate lockstep-join limit.
+- [Value equality](investigations/value-equality/DESIGN.md): `==` on
+  structs, enums and Arrays with one definition for code and proofs, the
+  equality types, floats, `eeq` retirement, the `Eq` bound and the proof
+  decomposition, against other languages' rules.
 - [Indexed reductions](investigations/indexed-reductions/DESIGN.md): PAR-2
   permission for histogram-like loops whose iterations combine into shared
   indexed cells, the lowering choices and the criterion recorded before
   implementation.
+- [Window growth under parallel workers](investigations/grow-allocator-contention/DESIGN.md):
+  why `realloc` growth serialized Snowghost's four workers on glibc's arena
+  lock, the copy-below-a-size proposal and its rejection criteria.
 - [Readable diagnostics](investigations/readable-diagnostics/DESIGN.md): the
   labeled record every compiler stop prints, its text and JSON renderings,
   and the rejected rendering paths.
@@ -110,6 +129,18 @@ the work-branch and merge boundary.
   a keyed table as a field whose entries are named in the statement's header,
   locking by parts as an implementation liberty with its order, taking and
   release, and the forms it replaced.
+- [Atomic targets as one form](investigations/atomic-targets/DESIGN.md): the
+  target forms of the atomic statement designed together, present and
+  pending (entries, key sets, shards, the atomic value, a target held only
+  when a condition holds, a guard wait with a deadline), with three ways to
+  place the condition, Firn's programs under each, other languages' designs
+  and failures, and the recommendation of a per-target condition in the
+  header.
+- [Meta commit](investigations/meta-commit/README.md): whether two atomic
+  statements on different keys of a shared map compute at the same time and
+  meet only when each takes the next sequence number from a shared Meta object
+  at its end, with the control that holds Meta through the computation and the
+  duration criterion that compares the two runs in the same test.
 - [Repair wording](investigations/repair-wording/DESIGN.md): every repair the
   specification prescribes against the compiler's printed text, refuted and
   unproved probes of each, and whether the words belong to the specification
@@ -135,7 +166,8 @@ the work-branch and merge boundary.
   manual base/twin/head timing panel on the CI 14900K runner.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
-known compiler defects and implementation costs are in [todo](../docs/todo.md).
+known compiler defects and implementation costs are on the
+[status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip).
 Dated results state what their recorded program, toolchain, and environment
 established; they are not descriptions of current compiler capabilities.
 Historical approval or phase language in evidence does not add current

@@ -186,6 +186,131 @@ A reference result (`-> &[u8]`) is refused by [REF-3] today, and appending to a
 `Box<Slots<u8>>` would fix a growth policy in the prelude. Firn-wf copies
 each key into its reply buffer anyway.
 
+## Retained bytes and the contract-language gap
+
+The owner's option B for firn's reservation accounting selects
+`key_set_bytes(keys: &KeySet) -> u64`: the heap holding attributable to the
+set's storage, including unused capacity, and exactly the holding its release
+returns. The v0.128 amendment states the operation in [SHARE-1] and [PRE-1]
+of the [active specification](../../../spec/kernel-spec.md), and states
+that a successful bounded scan increases this quantity by at most its limit.
+`ScanStep` keeps its existing fields. The owner's subsequent option A ruling
+closes the contract-language gap through the ordinary callable boundary.
+
+The minimal semantic witness is one map containing a key and one destination
+set. Save its retained holding B, call `map_scan_within` with limit L, and
+on `Next` observe holding A. The needed mathematical proposition is
+`A - B <= L`. A caller needs to carry that fact into reservation accounting
+without testing the inequality again. Inspection of v0.127 found four
+independent restrictions:
+
+- [FN-9] admits routed postconditions only for `Result.Ok` and
+  `Option.Some`, each with the field `value`. Neither `when Next(next: r)`
+  nor a `Next` route with a renamed field is admitted for `ScanStep`.
+- [FN-8] excludes ordinary function calls from clauses. Calling
+  `key_set_bytes` in a clause is therefore unavailable even though the
+  operation only reads its parameter. [MSR-1] gives `KeySet` only a `len`
+  measure, which cannot name retained bytes or establish that a byte query
+  observes the same state datum.
+- [MSR-3] already supplies `entry(parameter)` for a written reference's
+  entry-state measure or fragment-integer place. No `old` former is needed,
+  but the existing former has no byte measure to project and cannot name
+  the value of a call.
+- [FN-9] publishes only difference-bound relations: one datum with
+  coefficient one plus a constant on each side. `A - B <= L` has three
+  varying datums. A contract `define` expands inline, so it neither makes
+  the difference one datum nor captures B. The affine range-clause route
+  [RANGE-1] also excludes calls and entry images, and requires a bound
+  variable; it does not supply this missing state relation.
+
+The selected option A keeps `ScanStep` and adds no general enum route solely
+for this operation: a `Needs` outcome leaves the set unchanged, so the bound
+holds unconditionally. [MSR-1] adds the readonly KeySet `bytes` measure,
+and `key_set_bytes` declares its result equal to that measure. [MSR-3]'s
+entry former names its call-entry value, with the projected spelling
+`entry(keys^.bytes)` and the existing `entry(keys)^.bytes` denoting the same
+quantity. [FN-9] admits one additional own integer parameter term with
+coefficient one on one side of a relation. The bounded scan declares:
+
+```whitefoot
+ensures entry(keys^.bytes) <= keys^.bytes;
+ensures keys^.bytes <= entry(keys^.bytes) + limit;
+```
+
+Formation, selected-return proof, caller publication, effect invalidation and
+the existing fixed affine residual families apply generally to user functions
+as well as prelude declarations. An internal mathematical sum retains the
+ordinary relation and evidence path; it does not execute an addition and need
+not fit u64. The query result preserves the byte measure's immutable image,
+so a prior observation survives a scan while a subsequent observation reads
+the new state. An intervening KeySet write kills the scan's exit-byte fact.
+Conformance cases require both reservation subtractions to be admitted and
+reject a missing entry observation, an unrelated reservation value and a
+post-scan write. These conformance cases ran and passed on `e5f3ac05d`
+in the corpus jobs on Linux and macOS.
+
+Option B, the runtime keeping the reservation account, was rejected because
+it only solves this one interface and reverses the shape just chosen. Option C,
+a runtime check in firn, was rejected because it routes around a language gap
+with a runtime check. Calls remain excluded from contract expressions; the
+measure and ordinary result equality supply the needed state observation.
+
+A caller writes the account as two subtractions bound by `let`
+(`let used = after - before;` then `left - used`), the composition
+[GRAM-6] prescribes for every expression; the conformance witness uses
+that form.
+
+The comparison that decides the proposal is the same witness through an
+ordinary wrapper: the caller must prove the reservation relation from the
+wrapper's declared boundary alone. It must lose the current-state relation
+after a write to the set while preserving the saved entry observation.
+Reject a route that needs a runtime inequality check, changes `ScanStep`,
+publishes a fact only for the prelude's symbol, or admits a stale observation
+after a write. The conformance proof-checking runs on `e5f3ac05d` passed
+in the corpus jobs on Linux and macOS.
+
+The runtime byte query sums the host-granted item/index store and byte arena
+capacities; live key lengths alone omit unused capacity. A KeySet release
+must lower the metered heap by that sum. The first implementation of this
+meaning met it by removing the thread-local spare, whose kept allocations had
+stayed in the heap reading after release, and returning every release's
+storage to the runtime pool.
+
+That removal cost firn a quarter of its two-core `MSET` throughput: depth
+16, two server CPUs on the i9-14900K, 1.14 and 1.18 million requests a second
+against 1.57 and 1.52 million before the upgrade
+([Firn-wf run 38210016742](https://github.com/Ming-Research/Firn-wf/actions/runs/38210016742),
+[run 38209182739](https://github.com/Ming-Research/Firn-wf/actions/runs/38209182739)).
+Each statement builds a set, and without the spare every build and release
+takes the runtime pool's one free-list lock on every driver; that the lock is
+what costs the throughput is an inference, since restoring the spare removes
+the loss but no run separated the lock from the rest of the pool's work. The spare is restored with the release still
+lowering the reading by the reported holding: the heap holding [PRE-2]
+excludes released blocks an allocator retains, so the spare's granted bytes
+are recorded as released when it is kept and as taken when a set reuses it,
+and a reused set reports the spare's capacities. A store of at most 1,024
+keys with an arena of at most 64 KiB is kept; larger ones return to the
+pool, so one thread retains at most one bounded spare.
+
+The restored spare was compared on the same machine against firn on the
+release before the upgrade: firn at its pre-upgrade revision with its pin
+moved to the experiment release of the fix and one line binding the drivers
+field that release adds to the program's inputs, two server CPUs, `MSET` at
+pipeline depths 16 and 1, both sides with a twin, eight interleaved passes
+([Firn-wf run 38221198675](https://github.com/Ming-Research/Firn-wf/actions/runs/38221198675)).
+Medians, million requests a second:
+
+| Depth | Before the upgrade | Its twin | With the restored spare | Its twin | Restored / before |
+|---|---|---|---|---|---|
+| 16 | 1.557 | 1.543 | 1.553 | 1.528 | 0.9975 |
+| 1 | 0.609 | 0.604 | 0.606 | 0.605 | 0.9947 |
+
+Each gap from the pre-upgrade build is smaller than that build's gap from its
+own twin (0.9911 at depth 16, 0.9919 at depth 1), so the regression is gone
+within this run's noise. The restored build's own twin differs by 0.984 at
+depth 16 and 0.998 at depth 1, so this run does not resolve a cost below
+about 1.6 percent at depth 16.
+
 ## The runtime step under a whole hold
 
 A step runs in a statement holding or reading the map whole, which has

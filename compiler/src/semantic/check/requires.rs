@@ -26,6 +26,8 @@ pub(super) struct CheckedRequires {
     pub(super) requirements: Vec<CheckedRequirement>,
     /// [RANGE-1] the range clauses among the requirements, in source order.
     pub(super) range: Vec<super::super::range_facts::CheckedRangeClause>,
+    /// Expanded erased definitions used by range-clause contract positions.
+    pub(super) definitions: Vec<(BindingId, GoalExpression)>,
     /// The [ENT-2] clause (b) places each requirement forms, index-aligned
     /// with `requirements` [`super::super::model::CheckedFunction::requirement_places`].
     pub(super) places: Vec<Vec<CheckedExpression>>,
@@ -53,6 +55,9 @@ fn collect_clause_places(expression: &CheckedExpression, places: &mut Vec<Checke
         | CheckedExpression::ReadStorage { root, .. }
             if subscripted(&root.path) =>
         {
+            places.push(expression.clone());
+        }
+        CheckedExpression::RangeMeasure { root, .. } if root.formation.is_some() => {
             places.push(expression.clone());
         }
         CheckedExpression::RangeElementMeasure { .. } | CheckedExpression::RangeIndex { .. } => {
@@ -138,12 +143,115 @@ fn expand_definition_offsets(place: &mut CheckedExpression, offsets: &Definition
         | CheckedExpression::ReadStorage { root, .. } => {
             expand_definition_path_offsets(&mut root.path, offsets);
         }
+        CheckedExpression::RangeMeasure { root, .. } => {
+            if let Some(formation) = root.formation.as_deref_mut() {
+                expand_definition_offsets(formation, offsets);
+            }
+        }
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            match root {
+                super::super::model::CheckedSegmentSource::Storage(root) => {
+                    expand_definition_path_offsets(&mut root.path, offsets)
+                }
+                super::super::model::CheckedSegmentSource::Element(place) => {
+                    if let Some(formation) = place.root.formation.as_deref_mut() {
+                        expand_definition_offsets(formation, offsets);
+                    }
+                    expand_definition_offset(&mut place.offset, &mut place.captured, offsets);
+                    expand_definition_path_offsets(&mut place.path, offsets);
+                }
+            }
+            if let super::super::model::CheckedSegmentSelect::One(index)
+            | super::super::model::CheckedSegmentSelect::Page(index) = segment
+            {
+                expand_definition_offset(&mut index.offset, &mut index.captured, offsets);
+            }
+        }
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. } => {
+            if let Some(formation) = place.root.formation.as_deref_mut() {
+                expand_definition_offsets(formation, offsets);
+            }
             expand_definition_offset(&mut place.offset, &mut place.captured, offsets);
             expand_definition_path_offsets(&mut place.path, offsets);
         }
         _ => {}
+    }
+}
+
+/// [ENT-2] the clause (b) places one `contract_block` forms: each
+/// definition's own places, with every offset read through an earlier
+/// definition expanded, and the places each clause forms through the
+/// definitions its expansion reaches [FN-8, FN-9].
+#[derive(Default)]
+pub(super) struct ClausePlaces {
+    definitions: Vec<ClauseDefinition>,
+    offsets: DefinitionOffsets,
+}
+
+impl ClausePlaces {
+    /// Records one checked definition, in written order.
+    pub(super) fn define(&mut self, binding: BindingId, value: &CheckedExpression) {
+        let mut places = Vec::new();
+        collect_clause_places(value, &mut places);
+        for place in &mut places {
+            expand_definition_offsets(place, &self.offsets);
+        }
+        if let Some(offset) = definition_offset(value, &self.definitions, &self.offsets) {
+            self.offsets.insert(binding, offset);
+        }
+        let mut uses = Vec::new();
+        collect_clause_reads(value, &mut uses);
+        uses.retain(|read| {
+            self.definitions
+                .iter()
+                .any(|earlier| earlier.binding == *read)
+        });
+        self.definitions.push(ClauseDefinition {
+            binding,
+            places,
+            uses,
+        });
+    }
+
+    /// The recorded definitions' bindings, in written order.
+    pub(super) fn bindings(&self) -> impl Iterator<Item = BindingId> + '_ {
+        self.definitions.iter().map(|definition| definition.binding)
+    }
+
+    /// The places one clause forms: those of every definition its expansion
+    /// reaches that `formed` does not already hold, in definition order,
+    /// then its own. Each definition reached is added to `formed`.
+    pub(super) fn clause(
+        &self,
+        condition: &CheckedExpression,
+        formed: &mut HashSet<BindingId>,
+    ) -> Vec<CheckedExpression> {
+        let mut reached = HashSet::new();
+        let mut pending = Vec::new();
+        collect_clause_reads(condition, &mut pending);
+        while let Some(read) = pending.pop() {
+            if let Some(definition) = self
+                .definitions
+                .iter()
+                .find(|definition| definition.binding == read)
+                && reached.insert(read)
+            {
+                pending.extend(definition.uses.iter().copied());
+            }
+        }
+        let mut places = Vec::new();
+        for definition in &self.definitions {
+            if reached.contains(&definition.binding) && formed.insert(definition.binding) {
+                places.extend(definition.places.iter().cloned());
+            }
+        }
+        let own = places.len();
+        collect_clause_places(condition, &mut places);
+        for place in &mut places[own..] {
+            expand_definition_offsets(place, &self.offsets);
+        }
+        places
     }
 }
 
@@ -303,6 +411,7 @@ impl ExpandedClauseExpression {
                 declaration,
                 projections,
                 ty,
+                admission: Default::default(),
             })),
             Self::Datum(ExpandedClauseDatum::Literal { value, .. }) => {
                 Some(GoalExpression::Datum(GoalDatum::Literal(value)))
@@ -343,8 +452,7 @@ impl<'unit> Checker<'_, 'unit> {
             function,
         } = context;
         let mut expanded_bindings = HashMap::new();
-        let mut definitions: Vec<ClauseDefinition> = Vec::new();
-        let mut definition_offsets = DefinitionOffsets::new();
+        let mut clause_places = ClausePlaces::default();
         for (ordinal, parameter) in function.parameters.iter().enumerate() {
             let local = bindings
                 .get(&parameter.declaration)
@@ -373,6 +481,8 @@ impl<'unit> Checker<'_, 'unit> {
                 .tree
                 .first_child_with(definition, Production::Expr)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            self.types
+                .check_range_referent_places(check_context, expression, bindings)?;
             if !self.types.declarations.validate_clause_computation(
                 ClauseKind::Requires,
                 definition,
@@ -419,22 +529,7 @@ impl<'unit> Checker<'_, 'unit> {
                 &expanded_bindings,
             )?;
             expanded_bindings.insert(*binding, expanded);
-            let mut places = Vec::new();
-            collect_clause_places(value, &mut places);
-            for place in &mut places {
-                expand_definition_offsets(place, &definition_offsets);
-            }
-            if let Some(offset) = definition_offset(value, &definitions, &definition_offsets) {
-                definition_offsets.insert(*binding, offset);
-            }
-            let mut uses = Vec::new();
-            collect_clause_reads(value, &mut uses);
-            uses.retain(|read| definitions.iter().any(|earlier| earlier.binding == *read));
-            definitions.push(ClauseDefinition {
-                binding: *binding,
-                places,
-                uses,
-            });
+            clause_places.define(*binding, value);
         }
 
         // [ENT-2, FN-8] a requirement forms its places at body entry, in the
@@ -453,6 +548,9 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .children_with(block, Production::RequiresClause)?
         {
+            if self.types.declarations.tree.first_child_with(clause, Production::HeldClause)?.is_some() {
+                continue;
+            }
             if let Some(range_clause) = self
                 .types
                 .declarations
@@ -468,6 +566,8 @@ impl<'unit> Checker<'_, 'unit> {
                 .tree
                 .first_child_with(clause, Production::ClauseExpr)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            self.types
+                .check_range_referent_places(check_context, expression, bindings)?;
             self.types.declarations.validate_clause_condition(
                 ClauseKind::Requires,
                 clause,
@@ -505,34 +605,21 @@ impl<'unit> Checker<'_, 'unit> {
                 clause: self.types.declarations.tree.path(clause)?.clone(),
                 subject: None,
             });
-            let mut reached = HashSet::new();
-            let mut pending = Vec::new();
-            collect_clause_reads(&condition.expression, &mut pending);
-            while let Some(read) = pending.pop() {
-                if let Some(definition) = definitions
-                    .iter()
-                    .find(|definition| definition.binding == read)
-                    && reached.insert(read)
-                {
-                    pending.extend(definition.uses.iter().copied());
-                }
-            }
-            let mut places = Vec::new();
-            for definition in &definitions {
-                if reached.contains(&definition.binding)
-                    && expanded_definitions.insert(definition.binding)
-                {
-                    places.extend(definition.places.iter().cloned());
-                }
-            }
-            let own = places.len();
-            collect_clause_places(&condition.expression, &mut places);
-            for place in &mut places[own..] {
-                expand_definition_offsets(place, &definition_offsets);
-            }
-            requirement_places.push(places);
+            requirement_places
+                .push(clause_places.clause(&condition.expression, &mut expanded_definitions));
         }
+        let definitions = clause_places
+            .bindings()
+            .map(|binding| {
+                let expression = expanded_bindings
+                    .remove(&binding)
+                    .and_then(ExpandedClauseExpression::into_goal_expression)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                Ok((binding, expression))
+            })
+            .collect::<Result<Vec<_>, CheckStop>>()?;
         Ok(CheckedRequires {
+            definitions,
             requirements,
             range,
             places: requirement_places,
@@ -548,12 +635,10 @@ impl<'unit> Checker<'_, 'unit> {
         let CheckStop::Issue(mut issue) = stop else {
             return stop;
         };
-        if matches!(issue.kind, SemanticIssueKind::BareAffineUse { .. })
+        if let SemanticIssueKind::BareAffineUse { mechanical_fix, .. } = &mut issue.kind
             && matches!(issue.rule, SemanticRule::Own1)
         {
-            issue.kind = SemanticIssueKind::BareAffineUse {
-                mechanical_fix: "restate the definition or clause over copy operands or non-consuming admitted reads",
-            };
+            *mechanical_fix = "restate the definition or clause over copy operands or non-consuming admitted reads".to_owned();
         }
         CheckStop::Issue(issue)
     }
@@ -674,6 +759,17 @@ impl<'unit> DeclarationInventory<'unit> {
         entry: NodeId,
         expression: NodeId,
     ) -> Result<(), CheckStop> {
+        // [RANGE-1] the grammar retains this shape to diagnose its misplaced use.
+        if self.tree.has_fixed(expression, FixedTerminal::Unchanged)? {
+            return self.issue_node(
+                SemanticRule::Range1,
+                expression,
+                SemanticIssueKind::InvalidRangeClause {
+                    reason: "unchanged occurs in an ordinary relation",
+                    mechanical_fix: "state unchanged in an ensures forall conclusion",
+                },
+            );
+        }
         match self.tree.children(expression)? {
             [side] => {
                 let side = *side;
@@ -951,6 +1047,7 @@ impl<'unit> TypeContext<'unit> {
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?
         };
         let (element, constant) = match ty {
+            _ if range_referent => (Some(self.intern_element(ty)?), None),
             CheckedType::Window {
                 element, capacity, ..
             } => (Some(element), capacity),
@@ -960,7 +1057,6 @@ impl<'unit> TypeContext<'unit> {
             | CheckedType::Entries { element } => (Some(element), None),
             // [SHARE-1] a key set's keys are no element type of the program.
             CheckedType::KeySet => (None, None),
-            _ if range_referent => (Some(self.intern_element(ty)?), None),
             _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
         };
         Ok(GoalOperation::ContainerMeasure {
@@ -1119,13 +1215,13 @@ impl<'unit> TypeContext<'unit> {
                 CheckedType::Bool,
                 arguments.as_slice(),
             )),
-            CheckedExpression::EnumEquality {
+            CheckedExpression::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
                 ..
             } => Some((
-                GoalOperation::EnumEquality {
+                GoalOperation::ValueEquality {
                     equal: *equal,
                     operand_type: *operand_type,
                 },
@@ -1256,27 +1352,44 @@ impl<'unit> TypeContext<'unit> {
             }
             [left, _operator, right] => {
                 let (left, right) = (*left, *right);
-                let CheckedExpression::IntegerOperation {
-                    operation,
-                    operand_type,
-                    arguments,
-                    result,
-                    ..
-                } = checked
-                else {
-                    return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+                let (row, arguments, result) = match checked {
+                    CheckedExpression::IntegerOperation {
+                        operation,
+                        operand_type,
+                        arguments,
+                        result,
+                        ..
+                    } => (
+                        GoalOperation::Integer {
+                            operation: *operation,
+                            operand_type: *operand_type,
+                        },
+                        arguments,
+                        *result,
+                    ),
+                    CheckedExpression::ValueEquality {
+                        equal,
+                        operand_type,
+                        arguments,
+                        ..
+                    } => (
+                        GoalOperation::ValueEquality {
+                            equal: *equal,
+                            operand_type: *operand_type,
+                        },
+                        arguments,
+                        CheckedType::Bool,
+                    ),
+                    _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
                 };
                 let [checked_left, checked_right] = arguments.as_slice() else {
                     return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
                 };
                 Ok(ExpandedClauseExpression::Operation {
-                    row: GoalOperation::Integer {
-                        operation: *operation,
-                        operand_type: *operand_type,
-                    },
+                    row,
                     type_arguments: Vec::new(),
                     const_arguments: Vec::new(),
-                    result: *result,
+                    result,
                     arguments: vec![
                         self.build_clause_affine(
                             check_context,
@@ -1498,7 +1611,7 @@ impl<'unit> TypeContext<'unit> {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             };
             let bytes = self.declarations.tree.token_bytes(literal)?;
-            let origin = if matches!(bytes, b"0_T" | b"1_T") {
+            let origin = if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                 let usage = self.declarations.use_at(
                     check_context,
                     atom,
@@ -1513,7 +1626,7 @@ impl<'unit> TypeContext<'unit> {
                 };
                 PostconditionConstantOrigin::GenericNumericIdentity {
                     type_parameter: declaration,
-                    one: bytes == b"1_T",
+                    one: bytes.first() == Some(&b'1'),
                 }
             } else {
                 PostconditionConstantOrigin::Literal
@@ -1614,7 +1727,7 @@ impl<'unit> TypeContext<'unit> {
         else {
             // [CALL-4] a fragment-integer place reached through struct-field
             // and `Box` content steps is a datum as its own value.
-            let (projections, reached) = self.clause_member_projections(
+            let (projections, reached, _) = self.clause_member_projections(
                 check_context,
                 &suffixes,
                 datum_type,
@@ -1638,7 +1751,7 @@ impl<'unit> TypeContext<'unit> {
                 },
             )));
         };
-        let (projections, measured_type) = self.clause_member_projections(
+        let (projections, measured_type, measured_range) = self.clause_member_projections(
             check_context,
             &suffixes[..suffixes.len()
                 - if measure == CheckedMeasure::Pages {
@@ -1651,7 +1764,7 @@ impl<'unit> TypeContext<'unit> {
             bindings,
             expanded_bindings,
         )?;
-        let row = self.clause_measure_row(measure, measured_type, false)?;
+        let row = self.clause_measure_row(measure, measured_type, measured_range)?;
         Ok(Some(ExpandedClauseExpression::Operation {
             row,
             type_arguments: Vec::new(),
@@ -1695,7 +1808,7 @@ impl<'unit> TypeContext<'unit> {
                 .source_spelling(*prefix.last().unwrap())?
                 == ".pages"
         {
-            let (_, reached) = self.clause_member_projections(
+            let (_, reached, reached_range) = self.clause_member_projections(
                 check_context,
                 &prefix[..prefix.len() - 1],
                 base,
@@ -1703,20 +1816,22 @@ impl<'unit> TypeContext<'unit> {
                 bindings,
                 expanded_bindings,
             )?;
-            if matches!(
-                reached,
-                CheckedType::Window {
-                    shape: super::super::model::WindowShape::Paged,
-                    ..
-                }
-            ) {
+            if !reached_range
+                && matches!(
+                    reached,
+                    CheckedType::Window {
+                        shape: super::super::model::WindowShape::Paged,
+                        ..
+                    }
+                )
+            {
                 return Ok(Some(CheckedMeasure::Pages));
             }
         }
         let (ty, range_referent) = if prefix.is_empty() {
             (base, range_referent)
         } else {
-            let (_, reached) = self.clause_member_projections(
+            let (_, reached, reached_range) = self.clause_member_projections(
                 check_context,
                 prefix,
                 base,
@@ -1724,7 +1839,7 @@ impl<'unit> TypeContext<'unit> {
                 bindings,
                 expanded_bindings,
             )?;
-            (reached, false)
+            (reached, reached_range)
         };
         let measured = range_referent
             || super::expressions::flat_storage::measured_kind_of(ty).is_some()
@@ -1753,8 +1868,9 @@ impl<'unit> TypeContext<'unit> {
         mut range_referent: bool,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
-    ) -> Result<(Vec<GoalProjection>, CheckedType), CheckStop> {
+    ) -> Result<(Vec<GoalProjection>, CheckedType, bool), CheckStop> {
         let mut projections = Vec::with_capacity(suffixes.len());
+        let mut pages = false;
         for suffix in suffixes {
             let range_step = std::mem::replace(&mut range_referent, false);
             // [ENT-2] clause (b) forms a place with field selections,
@@ -1771,8 +1887,34 @@ impl<'unit> TypeContext<'unit> {
                     bindings,
                     expanded_bindings,
                 )?;
-                projections.push(projection);
+                range_referent =
+                    !range_step && (pages || matches!(ty, CheckedType::Segments { .. }));
+                projections.push(if pages {
+                    match projection {
+                        GoalProjection::Subscript(offset) => GoalProjection::Page(offset),
+                        GoalProjection::FormalSubscript { ordinal } => {
+                            GoalProjection::FormalPage { ordinal }
+                        }
+                        _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+                    }
+                } else {
+                    projection
+                });
+                pages = false;
                 ty = element;
+                continue;
+            }
+            if !range_step
+                && matches!(
+                    ty,
+                    CheckedType::Window {
+                        shape: super::super::model::WindowShape::Paged,
+                        ..
+                    }
+                )
+                && self.declarations.tree.source_spelling(*suffix)? == ".pages"
+            {
+                pages = true;
                 continue;
             }
             if let CheckedType::Nominal(nominal) = ty
@@ -1802,7 +1944,7 @@ impl<'unit> TypeContext<'unit> {
             projections.extend(fields.into_iter().map(GoalProjection::Field));
             ty = reached;
         }
-        Ok((projections, ty))
+        Ok((projections, ty, range_referent))
     }
     /// One written subscript inside a clause (b) place [ENT-2].
     ///
@@ -1836,9 +1978,9 @@ impl<'unit> TypeContext<'unit> {
             // type, which is the type its checked datum carries.
             _ if range_referent => base,
             CheckedType::Buffer { element } => self.element_type(element)?,
-            CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
-                self.element_type(element)?
-            }
+            CheckedType::Array { element, .. }
+            | CheckedType::Window { element, .. }
+            | CheckedType::Segments { element } => self.element_type(element)?,
             _ => {
                 return self
                     .declarations
@@ -2056,6 +2198,9 @@ impl<'unit> TypeContext<'unit> {
             if !holder_pending {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
+            if range_referent {
+                self.declarations.check_range_referent(first)?;
+            }
             let ty = expression.ty();
             expression = expression
                 .with_projection(GoalProjection::Deref, ty)
@@ -2090,7 +2235,7 @@ impl<'unit> TypeContext<'unit> {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
         if !fields_only.is_empty() {
-            let (projections, final_ty) = self.clause_member_projections(
+            let (projections, final_ty, selected_range) = self.clause_member_projections(
                 check_context,
                 fields_only,
                 expression.ty(),
@@ -2103,7 +2248,7 @@ impl<'unit> TypeContext<'unit> {
                     .with_projection(projection, final_ty)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             }
-            range_referent = false;
+            range_referent = selected_range;
         }
         // [OP-14, TYPE-9] `free_empty` writes one source contract for both
         // direct windows and Boxes holding runtime-capacity windows. At the

@@ -1,0 +1,46 @@
+fn signed_up(cursor: i64) -> result: i64 pure {
+  doc "Excluding the signed maximum tightens the implicit type upper bound.";
+  if cursor == 9223372036854775807_i64 {
+    return cursor;
+  }
+  return cursor + 1_i64;
+}
+
+fn signed_down(cursor: i64) -> result: i64 pure {
+  doc "Excluding the signed minimum tightens the implicit type lower bound.";
+  if -9223372036854775808_i64 == cursor {
+    return cursor;
+  }
+  return cursor - 1_i64;
+}
+
+fn unsigned_up(cursor: u64) -> result: u64 pure {
+  doc "The full unsigned maximum remains a mathematical offset without signed truncation.";
+  if cursor == 18446744073709551615_u64 {
+    return cursor;
+  }
+  return cursor + 1_u64;
+}
+
+fn unsigned_down(cursor: u64) -> result: u64 pure {
+  doc "Zero-offset disequality retains its existing boundary behavior.";
+  if cursor == 0_u64 {
+    return cursor;
+  }
+  return cursor - 1_u64;
+}
+
+fn signed_divide(cursor: i64, divisor: i64) -> result: i64 pure {
+  doc "The signed division domain queries the same folded minimum-value disequality.";
+  if cursor == -9223372036854775808_i64 {
+    return 0_i64;
+  }
+  if divisor == 0_i64 {
+    return 0_i64;
+  }
+  return cursor / divisor;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -132,7 +132,7 @@ fn recognize_guard(
         scrutinee: CheckedExpression::Binding {
             binding: scrutinee, ..
         },
-        enum_type: CheckedEnumType::Bool,
+        match_type: crate::semantic::CheckedMatchType::Enum(CheckedEnumType::Bool),
         arms,
         ..
     } = guard_match
@@ -319,7 +319,7 @@ fn statement_is_neutral(
         }
         CheckedStatement::Match {
             scrutinee: CheckedExpression::Binding { binding, .. },
-            enum_type: CheckedEnumType::Bool,
+            match_type: crate::semantic::CheckedMatchType::Enum(CheckedEnumType::Bool),
             arms,
             ..
         } => {
@@ -345,7 +345,7 @@ fn statement_is_neutral(
 
 /// Whether the expression is pure and statically total under the frozen
 /// whitelist: constants, binding reads, checked integer operations, Boolean
-/// operations, enum equality, numeric conversion, and reinterpretation.
+/// operations, value equality, numeric conversion, and reinterpretation.
 fn expression_is_pure(expression: &CheckedExpression) -> bool {
     match expression {
         CheckedExpression::Constant(_)
@@ -353,7 +353,7 @@ fn expression_is_pure(expression: &CheckedExpression) -> bool {
         | CheckedExpression::Binding { .. } => true,
         CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::BooleanOperation { arguments, .. }
-        | CheckedExpression::EnumEquality { arguments, .. } => {
+        | CheckedExpression::ValueEquality { arguments, .. } => {
             arguments.iter().all(expression_is_pure)
         }
         CheckedExpression::NumericConversion { value, .. }
@@ -423,7 +423,8 @@ fn outside_binding(
 }
 
 fn bool_arm(arms: &[CheckedMatchArm], tag: u32) -> Option<&CheckedMatchArm> {
-    arms.iter().find(|arm| arm.tag == tag)
+    arms.iter()
+        .find(|arm| arm.selection == crate::semantic::CheckedMatchSelection::Variant(tag))
 }
 
 impl IrBuilder<'_> {

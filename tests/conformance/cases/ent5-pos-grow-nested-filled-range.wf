@@ -1,0 +1,13 @@
+fn reserve(rows: &Slots<Box<Slots<u64>>, 2>, selected: u64, capacity: u64) -> result: unit writes(rows[selected]) contract {
+  requires selected < rows^.len;
+  requires capacity >= rows^[selected].inner.cap;
+  requires forall contents(r in 0_u64..rows^.len, k in 0_u64..rows^[r].inner.len): rows^[r].inner[k] == k;
+  ensures forall preserved(r in 0_u64..rows^.len, k in 0_u64..rows^[r].inner.len): rows^[r].inner[k] == k;
+} {
+  grow(cell: &rows^[selected], capacity: capacity);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

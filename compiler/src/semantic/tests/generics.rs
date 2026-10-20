@@ -496,7 +496,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
 }
 
@@ -637,6 +637,50 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// [FN-3] an interface application in an argument list forwards, in order,
+/// the binders one in-scope introduction declares, and anything else is
+/// refused at the application with its repair. A primitive type argument
+/// writes no name, so its binder lookup stopped with an internal failure,
+/// as the literal of `fn3-neg-literal-in-interface-application` did; a
+/// const generic that no introduction declares was cited as FN-5's choice
+/// between in-scope groups, though no group was in scope.
+#[test]
+fn an_interface_application_of_other_than_declared_binders_is_refused_under_fn3() {
+    let primitive = br#"interface Wrap<T> {
+}
+
+fn inner<interface Wrap<T>>() -> r: u64 pure {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let v = inner::<Wrap<u64>>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let undeclared_binder = br#"interface Sized<const n: u8> {
+}
+
+fn inner<interface Sized<j>>() -> r: u64 pure {
+  return 0_u64;
+}
+
+fn outer<const m: u8>() -> r: u64 pure {
+  return inner::<Sized<m>>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let v = outer::<7>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for source in [primitive.as_slice(), undeclared_binder.as_slice()] {
+        assert_rule_kind(source, SemanticRule::Fn3, |kind| {
+            matches!(kind, SemanticIssueKind::UnforwardedGroupApplication { .. })
+        });
+    }
+}
+
 /// Same-position forwarding preserves the instance key on a recursive edge.
 #[test]
 fn a_generic_call_cycle_at_the_callers_own_parameters_monomorphizes() {
@@ -732,9 +776,8 @@ fn a_closed_type_on_a_recursive_call_monomorphizes() {
 
 #[test]
 fn closed_callbacks_nested_through_one_helper_monomorphize_once_per_instance() {
-    let source = include_str!(
-        "../../../../tests/conformance/cases/fn6-pos-closed-term-callback-cycle.wf"
-    );
+    let source =
+        include_str!("../../../../tests/conformance/cases/fn6-pos-closed-term-callback-cycle.wf");
     let specialized = source
         .replace("fn outer(value:", "fn outer<T: drop>(value:")
         .replace("fn outer>", "fn outer::<Box<u64>>>");
@@ -833,6 +876,110 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// [FN-9] symbolic validation of a generic body analyzes the callees whose
+/// summaries it reads, transitively: `seven`'s postcondition is proved only
+/// through `base`'s, and the generic body's subtraction is proved only
+/// through `seven`'s. `noise` publishes no summary, which the verdict does
+/// not need.
+#[test]
+fn a_generic_body_reads_a_summary_proved_through_another_summary() {
+    let source = br#"fn base() -> r: u64 pure contract {
+  ensures r == 7_u64;
+} {
+  return 7_u64;
+}
+
+fn seven() -> r: u64 pure contract {
+  ensures r == 7_u64;
+} {
+  let v = base();
+  return v;
+}
+
+fn noise(x: u64) -> r: u64 pure {
+  return x;
+}
+
+fn pick<T: copy>(value: T) -> r: T pure {
+  let n = seven();
+  let m = noise(x: n);
+  let q = n - 7_u64;
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "the generic body's subtraction stands on a two-deep summary chain: {outcome:?}"
+        );
+    });
+}
+
+/// [FN-2, FN-9] `seven_of::<T>` inside `pick` renames `seven_of`'s own
+/// symbolic instance, so its body is not checked again: it takes that
+/// instance's outcomes, and its published summary is what proves the generic
+/// caller's subtraction.
+#[test]
+fn a_renamed_symbolic_instance_publishes_its_canonical_instances_summary() {
+    let source = br#"fn seven_of<T: copy>(value: T) -> r: u64 pure contract {
+  ensures r == 7_u64;
+} {
+  return 7_u64;
+}
+
+fn pick<U: copy>(value: U) -> r: U pure {
+  let n = seven_of::<U>(value: value);
+  let q = n - 7_u64;
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "the renamed instance's summary proves the caller's subtraction: {outcome:?}"
+        );
+    });
+}
+
+/// [WAIT-3, FN-2] `run::<U>` inside `outer` renames `run`'s own symbolic
+/// instance, so its body is not checked again; the spawn in that body was
+/// recorded as a waiting call when the canonical instance was checked.
+#[test]
+fn a_renamed_symbolic_instance_keeps_its_bodys_spawn_admitted() {
+    let source = br#"fn weigh(weight: u64) -> r: u64 pure waits {
+  return weight;
+}
+
+fn run<T: copy>(value: T) -> r: T pure waits {
+  spawn weigh(weight: 7_u64);
+  return value;
+}
+
+fn outer<U: copy>(value: U) -> r: U pure waits {
+  let v = run::<U>(value: value);
+  return v;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "a renamed instance's spawn is admitted by its canonical body check: {outcome:?}"
+        );
+    });
+}
+
 #[test]
 fn unused_int_generic_body_is_checked_for_the_complete_bound_domain() {
     let source = br#"fn invalid<T: Int>(value: T) -> result: T pure {
@@ -872,7 +1019,7 @@ fn transfer<T: drop>(value: T) -> result: T pure {
 fn main() -> status: std::process::ExitStatus pure {
   let copied = transfer::<u8>(value: 7_u8);
   let payload = Payload(value: 3_u8);
-  let held = transfer::<Payload>(value: move payload);
+  let observed_state = transfer::<Payload>(value: move payload);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -907,7 +1054,7 @@ fn forward<T: drop>(value: T) -> result: T pure {
 fn main() -> status: std::process::ExitStatus pure {
   let copied = forward::<u64>(value: 7_u64);
   let payload = Payload(value: 3_u64);
-  let held = forward::<Payload>(value: move payload);
+  let observed_state = forward::<Payload>(value: move payload);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1140,14 +1287,15 @@ fn main() -> status: std::process::ExitStatus pure {{
     }
 }
 
-/// A u8 parameter used as a u64 storage extent is still the same symbolic
-/// constant; neither the measure nor a forwarded formal may widen its bound.
+/// A u64 parameter used as a u64 storage extent is still the same symbolic
+/// constant, and forwards unchanged to a u64 formal. [CONST-1] admits a
+/// const generic only at a parameter of its own declared type; the narrower
+/// forms are refused by the conformance cases.
 #[test]
 fn const_generic_extent_and_forwarding_keep_one_declared_type_identity() {
-    let source = br#"fn extent<const n: u8>() -> result: unit pure {
+    let source = br#"fn extent<const n: u64>() -> result: unit pure {
   let values = slots_new::<u8, n>();
   invariant same: values.cap == n;
-  invariant bounded: values.cap <= 255_u64;
   return unit;
 }
 
@@ -1158,7 +1306,7 @@ fn increment<const limit: u64>(value: u64) -> result: u64 pure {
   return value;
 }
 
-fn forward<const n: u8>(value: u64) -> result: u64 pure {
+fn forward<const n: u64>(value: u64) -> result: u64 pure {
   extent::<n>();
   return increment::<n>(value: value);
 }
@@ -1395,7 +1543,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let short = Packet<2>(bytes: move short_bytes);
   let long_bytes = slots_new::<u8, 5>();
   let long = Packet<5>(bytes: move long_bytes);
-  let held = Holder<Packet<2>>(value: move short);
+  let observed_state = Holder<Packet<2>>(value: move short);
   return std::process::exit_status(code: 0_u8);
 }
 "#;

@@ -1,0 +1,31 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn scaled_bound(limit: u64) -> total: u64 pure {
+  doc "The operation and mode spellings cvt and checked remain valid proof names. ENT-3.S16 makes the header sum <= i and local sum <= limit conclusions L0 difference bounds, so AUTO subtracts two copies and DIRECT proves the third; PRF-1 rejects the first certificate as redundant.";
+  let sum = 0_u64;
+  for (
+    i in 0_u64..limit,
+    invariant cvt: sum <= i
+  ) {
+    invariant tripled_bound: 3_u64 * sum <= 3_u64 * i {
+      use 3 times cvt;
+    }
+    let increment = cvt::<u8, u64>(1_u8);
+    set sum = sum + increment;
+  }
+  invariant checked: sum <= limit;
+  invariant scaled_bound: 3_u64 * sum <= 3_u64 * limit {
+    use 3 times checked;
+  }
+  return sum;
+}
+
+fn main() -> status: ExitStatus pure {
+  let total = scaled_bound(limit: 5_u64);
+  if total == 5_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

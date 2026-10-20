@@ -1,0 +1,20 @@
+fn require_ready(ready: Bool) -> result: unit pure contract {
+  requires ready;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  let stop = std::time::cancel_state(watch: &watch);
+  std::time::cancel_fire(source: &source);
+  let no = False();
+  let work = shared_new::<Bool>(value: no);
+  atomic item = &work, cancellation = &stop when bor(item^, cancellation^.fired) {
+    require_ready(ready: item^);
+  }
+  std::time::close_cancel_watch(watch: move watch);
+  std::time::close_cancel_source(source: move source);
+  return std::process::exit_status(code: 0_u8);
+}

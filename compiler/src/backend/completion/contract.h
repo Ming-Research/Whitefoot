@@ -100,6 +100,8 @@ enum wf_file_operation_kind {
     WF_FILE_MOVE = 23,
     WF_FILE_STOP_NEXT = 24,
     WF_FILE_STOP_CLOSE = 25,
+    /* Runtime-owned snapshot collection and its one confirmed reap. */
+    WF_FILE_SNAPSHOT_FINISH = 26,
 };
 
 /* Which direction of one connection a half-close releases (ordinary native library). */
@@ -162,6 +164,12 @@ enum wf_file_open_outcome {
 typedef struct wf_file_request {
     enum wf_file_operation_kind kind;
     union {
+        /* WF_COMPLETION_ROUTE_SHARED stays within the context runtime. */
+        void *shared;
+        struct {
+            void *owner;
+            uint32_t abort_requested;
+        } snapshot;
         struct {
             int directory;
             /* The submitting frame's own bytes, live until the join. */
@@ -301,7 +309,8 @@ enum wf_completion_route {
     /* No engine at all: the driver whose context waits on the record
      * completes it when the monotonic clock reaches its deadline. */
     WF_COMPLETION_ROUTE_TIMER = 6,
-    WF_COMPLETION_ROUTE_STOP = 7
+    WF_COMPLETION_ROUTE_STOP = 7,
+    WF_COMPLETION_ROUTE_SHARED = 8
 };
 
 /* A record's deadline once the driver has cancelled its operation for it,
@@ -360,7 +369,14 @@ typedef struct wf_completion_record {
     _Atomic unsigned issued;
     int opened_descriptor;
     unsigned open_outcome;
-    int open_error;
+    /* A file open and a watched wait are disjoint request kinds. The
+     * driver's wait reason shares the open diagnostic's word, preserving
+     * the 160-byte record. Submit initializes it before publication; only
+     * the owning driver writes wait_cancelled, through the call's finish. */
+    union {
+        int open_error;
+        unsigned wait_cancelled;
+    };
     /* The intrusive link of the file adapter's pending list.  The queue is
      * threaded through the records themselves, so it has no capacity of its
      * own and cannot refuse an operation (design §7). */

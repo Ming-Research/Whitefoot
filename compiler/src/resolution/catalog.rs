@@ -3,7 +3,7 @@ use super::{
     ReservedNameClass,
 };
 
-pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 25] = [
+pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 35] = [
     prelude(
         BuiltinPreludeId::BOOL,
         "Bool",
@@ -91,14 +91,56 @@ pub(crate) const PRELUDE_DECLARATIONS: [BuiltinPreludeDeclarationRecord; 25] = [
         Some(DeclarationClass::EnumVariant),
     ),
     prelude(
+        BuiltinPreludeId::SCAN_STEP,
+        "ScanStep",
+        Some(DeclarationClass::NominalType),
+    ),
+    prelude(
+        BuiltinPreludeId::NEXT,
+        "Next",
+        Some(DeclarationClass::EnumVariant),
+    ),
+    prelude(BuiltinPreludeId::NEXT_CURSOR, "next", None),
+    prelude(
+        BuiltinPreludeId::NEEDS,
+        "Needs",
+        Some(DeclarationClass::EnumVariant),
+    ),
+    prelude(BuiltinPreludeId::NEEDS_BYTES, "bytes", None),
+    prelude(
+        BuiltinPreludeId::DECISION_STATE,
+        "DecisionState",
+        Some(DeclarationClass::NominalType),
+    ),
+    prelude(
+        BuiltinPreludeId::OPEN,
+        "Open",
+        Some(DeclarationClass::EnumVariant),
+    ),
+    prelude(
+        BuiltinPreludeId::WRITTEN,
+        "Written",
+        Some(DeclarationClass::EnumVariant),
+    ),
+    prelude(
+        BuiltinPreludeId::KILLED,
+        "Killed",
+        Some(DeclarationClass::EnumVariant),
+    ),
+    prelude(
         BuiltinPreludeId::INT,
         "Int",
-        Some(DeclarationClass::NumericBound),
+        Some(DeclarationClass::BuiltinBound),
     ),
     prelude(
         BuiltinPreludeId::FLOAT,
         "Float",
-        Some(DeclarationClass::NumericBound),
+        Some(DeclarationClass::BuiltinBound),
+    ),
+    prelude(
+        BuiltinPreludeId::EQ,
+        "Eq",
+        Some(DeclarationClass::BuiltinBound),
     ),
     prelude(
         BuiltinPreludeId::RUN,
@@ -120,7 +162,7 @@ const fn prelude(
 }
 
 /// Distinct OP-1 spellings in normative table order.
-pub(crate) const OPERATION_FAMILIES: [&str; 90] = [
+pub(crate) const OPERATION_FAMILIES: [&str; 88] = [
     "+wrap",
     "-wrap",
     "*wrap",
@@ -149,8 +191,6 @@ pub(crate) const OPERATION_FAMILIES: [&str; 90] = [
     "<=",
     ">",
     ">=",
-    "eeq",
-    "ene",
     "fadd.strict",
     "fsub.strict",
     "fmul.strict",
@@ -263,8 +303,8 @@ mod tests {
 
     #[test]
     fn exact_catalogs_are_closed_and_unique_where_required() {
-        assert_eq!(PRELUDE_DECLARATIONS.len(), 25);
-        assert_eq!(OPERATION_FAMILIES.len(), 90);
+        assert_eq!(PRELUDE_DECLARATIONS.len(), 35);
+        assert_eq!(OPERATION_FAMILIES.len(), 88);
         assert_eq!(
             OPERATION_FAMILIES
                 .iter()
@@ -295,7 +335,7 @@ mod tests {
                 "{spelling} occupies family ordinal {ordinal}"
             );
         }
-        for retired in ["ieq", "ine", "ilt", "ile", "igt", "ige"] {
+        for retired in ["ieq", "ine", "ilt", "ile", "igt", "ige", "eeq", "ene"] {
             assert_eq!(
                 reserved_name(retired),
                 None,
@@ -327,9 +367,11 @@ mod tests {
         // PRE-1 construction function [OP-13], so it is taken by declaration
         // collision rather than by reservation.
         assert_eq!(reserved_name("box_new"), None);
+        // OP-1 has 42 distinct spellings before `cvt`: 22 integer
+        // arithmetic, 6 comparisons, 10 float, and 4 Boolean operations.
         assert_eq!(
             reserved_name("cvt"),
-            Some((ReservedNameClass::DotlessOperation, 44))
+            Some((ReservedNameClass::DotlessOperation, 42))
         );
         assert_eq!(
             reserved_name("wrap"),
@@ -367,7 +409,7 @@ mod tests {
     /// storage shapes and the cell `Box` — which this catalog does not carry:
     /// those are parsed prelude records whose declarations are ordinary
     /// source text. The records read here are the enums of the enum fence
-    /// that follows, plus the two numeric bounds the sentence after it names.
+    /// that follows, plus the three built-in bounds the sentence after it names.
     fn extract_prelude_records(spec: &str) -> Vec<(String, Option<DeclarationClass>)> {
         let (block, after) = spec
             .split_once("[PRE-1] The prelude contributes")
@@ -429,8 +471,10 @@ mod tests {
             }
         }
         assert!(after.contains("The two built-in numeric bounds `Int` and `Float`"));
-        records.push(("Int".to_owned(), Some(DeclarationClass::NumericBound)));
-        records.push(("Float".to_owned(), Some(DeclarationClass::NumericBound)));
+        records.push(("Int".to_owned(), Some(DeclarationClass::BuiltinBound)));
+        records.push(("Float".to_owned(), Some(DeclarationClass::BuiltinBound)));
+        assert!(after.contains("the built-in equality bound `Eq`"));
+        records.push(("Eq".to_owned(), Some(DeclarationClass::BuiltinBound)));
         assert!(after.contains("the reference-kind name `Run`"));
         records.push(("Run".to_owned(), Some(DeclarationClass::NominalType)));
         records

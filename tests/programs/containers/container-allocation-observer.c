@@ -27,6 +27,17 @@
 
 extern int wf_fixture_main(int argc, char **argv);
 
+// [STOR-1] a capacity-0 runtime window is the shared empty header: it is
+// never allocated, so its release or growth is not a ledger event. Each
+// capacity-0 construction ends in exactly one such release or growth, which
+// the observer counts so that the total equals the allocations a per-window
+// header would have made. Every empty owner shares one address, so the count
+// is an aggregate: unlike an allocation, a shared header's release is not
+// tied to its owner, and a missing release offset by a repeated one is not
+// detected here.
+extern const unsigned char wf__empty_window[64];
+static atomic_size_t shared_header_events;
+
 enum { MAX_ALLOCATIONS = 256 };
 
 typedef struct {
@@ -78,6 +89,10 @@ void *wf_observe_allocate(uint64_t bytes) {
 
 void wf_observe_release(void *pointer, uint64_t bytes) {
     if (pointer == NULL) return;
+    if (pointer == (const void *)wf__empty_window) {
+        atomic_fetch_add(&shared_header_events, 1);
+        return;
+    }
     lock_ledger();
     for (size_t index = 0; index < allocation_count; ++index) {
         Allocation *allocation = &allocations[index];
@@ -103,6 +118,12 @@ void wf_observe_release(void *pointer, uint64_t bytes) {
 // pointer identity ambiguous.
 void *wf_observe_reallocate(void *pointer, uint64_t old_bytes, uint64_t bytes) {
     if (pointer == NULL) return wf_observe_allocate(bytes);
+    if (pointer == (const void *)wf__empty_window) {
+        atomic_fetch_add(&shared_header_events, 1);
+        void *fresh = wf_observe_allocate(bytes);
+        memcpy(fresh, pointer, (size_t)old_bytes);
+        return fresh;
+    }
     void *moved = wf_observe_allocate(bytes);
     lock_ledger();
     for (size_t index = 0; index < allocation_count; ++index) {
@@ -199,8 +220,8 @@ int main(int argc, char **argv) {
     }
     for (size_t index = 0; index < allocation_count; ++index)
         free(allocations[index].pointer);
-    printf("container allocation observer: %zu allocations, each released exactly once\n",
-           allocation_count);
+    printf("container allocation observer: %zu events, each allocation released exactly once and each shared empty header released or grown\n",
+           allocation_count + atomic_load(&shared_header_events));
     unlock_ledger();
     return 0;
 }

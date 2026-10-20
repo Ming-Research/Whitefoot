@@ -19,6 +19,7 @@ mod programs {
     #[cfg(unix)]
     mod binary;
     mod containers;
+    mod driver_count;
     #[cfg(unix)]
     mod contexts;
     mod file_replacement;
@@ -30,6 +31,8 @@ mod programs {
     #[cfg(unix)]
     mod image;
     mod memory;
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    mod snapshot_export;
     mod network;
     #[cfg(unix)]
     mod numerics;

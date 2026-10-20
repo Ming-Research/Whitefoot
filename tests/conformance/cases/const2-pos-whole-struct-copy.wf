@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Stamp {
+  bytes: Array<u8, 2>;
+  tag: u64;
+}
+
+const original: Stamp = Stamp(bytes: "ab", tag: 7_u64);
+
+fn main() -> status: ExitStatus pure {
+  let duplicate = original;
+  set duplicate.tag = 9_u64;
+  set duplicate.bytes[1_u64] = 'Z'_u8;
+  if duplicate.tag != 9_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if duplicate.bytes[1_u64] != 'Z'_u8 {
+    return exit_status(code: 2_u8);
+  }
+  if original.tag != 7_u64 {
+    return exit_status(code: 3_u8);
+  }
+  if original.bytes[1_u64] != 'b'_u8 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

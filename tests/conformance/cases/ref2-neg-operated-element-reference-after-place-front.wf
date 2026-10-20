@@ -1,0 +1,8 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let ring = ring_new::<u64, 4>();
+  place_back(window: &ring, value: 1_u64);
+  let element = &ring[0_u64];
+  place_front(window: &ring, value: 2_u64);
+  let observed = element^;
+  return std::process::exit_status(code: 0_u8);
+}

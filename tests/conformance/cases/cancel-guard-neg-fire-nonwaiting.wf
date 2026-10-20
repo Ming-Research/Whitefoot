@@ -1,0 +1,6 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let source = std::time::cancel_source();
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,5 @@
+# Compiler sources over the source-size limit (Makefile, source-size), each
+# with the key of the status board item that records its split.
+# Format: <repository path> <board key>
+compiler/src/semantic/entailment/state.rs coord-wfbl-07-01
+compiler/src/semantic/tests/entailment.rs coord-wfbl-07-01

@@ -1,0 +1,16 @@
+fn probe(x: u64, y: u64) -> result: unit pure contract {
+  requires 2_u64 * x <= 8_u64;
+} {
+  doc "Equal value images do not turn a three-source-term conclusion into an L0 source.";
+  let z = y;
+  invariant affine_only: x - y + z <= 4_u64;
+  if x == 4_u64 {
+    return unit;
+  }
+  invariant unavailable: x <= 3_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,4 @@
+Decision: A `Frozen<T>` handle is lowered as a pointer to its value inside one runtime pool block whose header holds an atomic handle count and the block's extent and no lock, `frozen_share` being a relaxed increment and a release an acquire-release decrement whose last caller releases the value in place and returns the block, and the checker and lowering model it as the cell kind with a distinct frozen release class, because a read through `inner` is then exactly a cell's content read, the count protocol is the shared object's without the lock an immutable value never needs, and every place the cell kind grants an owner's power checks the release class, instead of reusing the shared-object block with its lock, or a separate nominal kind whose every arm would duplicate the cell's read path now.
+
+Rejected:
+- Reusing the shared-object block and its lock for frozen values: rejected because no write ever reaches a frozen value, so the lock would only serialize readers.

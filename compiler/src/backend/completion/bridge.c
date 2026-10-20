@@ -62,6 +62,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -109,6 +110,7 @@ static int wf_bridge_file_error;
 static _Atomic int wf_bridge_helpers_pinned;
 static _Atomic unsigned wf_bridge_ready;
 static _Atomic unsigned wf_bridge_file_ready;
+static _Atomic unsigned wf_bridge_wake_ready;
 /* Records completed, and of those the ones the engine executed inside the
  * submitting call itself. */
 static _Atomic uint64_t wf_bridge_publications;
@@ -244,17 +246,21 @@ static int wf_bridge_ensure_file(void) {
     return wf_bridge_file_ready != 0;
 }
 
+static void wf_bridge_print_report(void);
+
 static void wf_bridge_shutdown(void) {
-    if (wf_bridge_ready == 0) {
+    if (wf_bridge_wake_ready == 0) {
         return;
     }
     if (wf_bridge_file_ready != 0) {
         (void)wf_file_adapter_shutdown(&wf_bridge_adapter);
         wf_bridge_file_ready = 0;
     }
+    wf_bridge_print_report();
     wf_bridge_ring_shutdown();
     (void)wf_completion_runtime_destroy(&wf_bridge_runtime);
     wf_bridge_ready = 0;
+    wf_bridge_wake_ready = 0;
 }
 
 /* ------------------------------------------------------------- the ring */
@@ -302,10 +308,10 @@ static _Noreturn void wf_bridge_fail_with_code(const char *reason, int code) {
 /* WF_IO_NO_NATIVE_RING: run this process on the bounded adapter route.
  *
  * Runtime policy of the same class as WF_IO_NOCACHE and WF_IO_HELPERS, and
- * test-only within that class: no Whitefoot source names it, no accepted
- * program changes meaning under it, and no byte any operation produces
- * differs with it set.  Absent -- and any value other than the exact text "1"
- * -- is today's behaviour exactly.
+ * test-only within that class: no Whitefoot source names it and the operation
+ * contracts stay the same. The execution input Inputs.drivers reflects the
+ * resulting one-driver policy. Absent -- and any value other than the exact
+ * text "1" -- keeps the ordinary native-ring selection.
  *
  * It exists because the route a host takes is not a choice a test can
  * otherwise make.  A host with a kernel completion ring takes every positioned
@@ -805,15 +811,15 @@ int wf__bridge_report(char *buffer, size_t capacity) {
  * core's entry, before the program's first operation, and the first operation's
  * once-control is a window another thread can park inside.
  *
- * So the epoch has its own start, taken by whichever of the two arrives first:
- * a seam call, or the bridge's own initializer.  It is a mutex, a condition
- * variable and a counter -- no ring, no helper, no descriptor -- so a program
- * that never submits anything pays for those and nothing else.  Both sleep
+ * So the epoch has its own start, taken by whichever arrives first: a seam
+ * call, driver-count selection, or the bridge's own initializer. It is a
+ * mutex, a condition variable and a counter -- no ring, no helper, no
+ * descriptor. Driver-count selection separately initializes the root ring
+ * before entry, without starting any thread. Both sleep
  * mechanisms announce themselves against this one epoch under this one lock,
  * the ring's `epoll_wait` included, so one wake reaches a sleeper on either. */
 static unsigned wf_bridge_wake_once;
 static int wf_bridge_wake_error;
-static _Atomic unsigned wf_bridge_wake_ready;
 
 static void wf_bridge_initialize_wake(void) {
     wf_bridge_wake_error = wf_completion_runtime_init(&wf_bridge_runtime);
@@ -827,25 +833,41 @@ static int wf_bridge_ensure_wake(void) {
     return wf_bridge_wake_ready != 0;
 }
 
-static void wf_bridge_initialize(void) {
+/* Inputs needs the actual ring policy before entry, but selecting the count
+ * must not start helpers, executors or the deadline monitor. Build the root
+ * ring once and retain its result for the later full bridge initializer. */
+static unsigned wf_bridge_ring_once;
+
+static void wf_bridge_initialize_ring(void) {
     if (!wf_bridge_ensure_wake()) {
         wf_bridge_error = wf_bridge_wake_error != 0 ? wf_bridge_wake_error : EAGAIN;
         return;
     }
+    (void)wf_bridge_ring_start();
+    if (atexit(wf_bridge_shutdown) != 0) {
+        /* Registration failure changes cleanup at process exit, not the
+         * completion contract of any admitted operation. */
+    }
+}
+
+static int wf_bridge_ensure_ring(void) {
+    wf__sched_once(&wf_bridge_ring_once, wf_bridge_initialize_ring);
+    return wf_bridge_wake_ready != 0;
+}
+
+static void wf_bridge_initialize(void) {
+    if (!wf_bridge_ensure_ring()) return;
     /* The ring where this run has one, and the bounded typed adapter where it
      * does not: a target with no kernel completion facility for regular files
      * -- Darwin in the supported set, and either of the other two under
      * WF_IO_NO_NATIVE_RING -- must have the adapter before it is ready, because
      * that adapter is then the whole engine. */
-    if (!wf_bridge_ring_start() && !wf_bridge_ensure_file()) {
+    if (!wf_bridge_ring_ready() && !wf_bridge_ensure_file()) {
         (void)wf_completion_runtime_destroy(&wf_bridge_runtime);
+        wf_bridge_wake_ready = 0;
         return;
     }
     wf_bridge_ready = 1;
-    if (atexit(wf_bridge_shutdown) != 0) {
-        /* Registration failure changes cleanup at process exit, not the
-         * completion contract of any admitted operation. */
-    }
 }
 
 /* The bridge, or nothing.
@@ -915,14 +937,12 @@ static int wf_bridge_progress(void) {
     return progressed;
 }
 
-/* Parks until the wake changes or timeout_ms passes, UINT32_MAX for no
- * bound: a driver bounds it by its earliest deadline. */
-static void wf_bridge_park(uint64_t observed_epoch, uint32_t timeout_ms) {
+/* Parks without a generic progress pass. Linux reaps after the driver has
+ * restored SERVICE; Windows publishes the packet its wait consumes inline
+ * and must retain SERVICE. Returns whether ring progress follows the wait. */
+static int wf_bridge_wait(uint64_t observed_epoch, uint32_t timeout_ms) {
     if (wf_bridge_ring_park(observed_epoch, timeout_ms)) {
-        /* Reap what the ring has first; the caller's next turn re-reads its
-         * own record. */
-        (void)wf_bridge_progress();
-        return;
+        return 1;
     }
     {
         enum wf_completion_park_result parked =
@@ -937,11 +957,18 @@ static void wf_bridge_park(uint64_t observed_epoch, uint32_t timeout_ms) {
             );
         }
     }
+    return 0;
+}
+
+/* Parks until the wake changes or timeout_ms passes, UINT32_MAX for no
+ * bound. Reap what the ring has before the caller re-reads its record. */
+static void wf_bridge_park(uint64_t observed_epoch, uint32_t timeout_ms) {
+    if (wf_bridge_wait(observed_epoch, timeout_ms)) (void)wf_bridge_progress();
 }
 
 /* ------------------------------------------------------- waiting contexts */
 
-/* Contexts [WAIT-2]: the root, which runs the entry on the floor's thread,
+/* Contexts [WAIT-2]: the root, which starts the entry on the floor's thread,
  * and every call a spawn starts [WAIT-3].
  *
  * A context is a chain of resumable frames
@@ -952,12 +979,10 @@ static void wf_bridge_park(uint64_t observed_epoch, uint32_t timeout_ms) {
  * and suspends, which returns to the driver below.  The driver resumes the
  * next ready context, or reaps and parks the thread until one is ready.
  *
- * They all live on that one thread, and a context changes hands only where
- * one of its frames suspends.  A compute task never waits [PAR-1, PAR-2], so
- * no suspension happens between a compute offer and its join, and the
- * scheduler's lane state stays with the thread.  With one thread and hand-
- * overs only there, the queues need no lock and a context started with a
- * factory shares its budget counter without an atomic.
+ * A context changes drivers only after its native resume has unwound at a
+ * suspension. A compute task never waits [PAR-1, PAR-2], so no migration
+ * happens between a compute offer and its join. Driver-private service state
+ * belongs to the service token; ready queues retain their separate locks.
  *
  * A record still carries no waiter: a parked context names its record, a
  * record this thread publishes wakes its context by the record's address, and
@@ -1013,7 +1038,14 @@ static wf_pool_block *wf_pool_released[WF_POOL_CLASSES];
 static unsigned char *wf_pool_cursor;
 static size_t wf_pool_remaining;
 static atomic_flag wf_pool_lock = ATOMIC_FLAG_INIT;
-static int64_t wf_pool_live_bytes;
+/* The pool's granted total.  Only a holder of the pool lock changes it, with
+ * a relaxed load and store and no read-modify-write; it is atomic, and padded
+ * to a cache line of its own, so that a heap reading loads it without taking
+ * the lock and a reading on every driver writes no shared line. */
+typedef struct {
+    _Alignas(64) _Atomic int64_t bytes;
+} wf_pool_total;
+static wf_pool_total wf_pool_live_bytes;
 
 static void wf_spin_lock(atomic_flag *flag) {
     while (atomic_flag_test_and_set_explicit(flag, memory_order_acquire)) {
@@ -1089,7 +1121,9 @@ static void *wf_pool_take(size_t bytes, size_t *granted) {
     void *block;
     wf_spin_lock(&wf_pool_lock);
     block = wf_pool_take_locked(bytes, granted);
-    wf_pool_live_bytes += (int64_t)*granted;
+    atomic_store_explicit(&wf_pool_live_bytes.bytes,
+        atomic_load_explicit(&wf_pool_live_bytes.bytes, memory_order_relaxed) + (int64_t)*granted,
+        memory_order_relaxed);
     wf_spin_unlock(&wf_pool_lock);
     return block;
 }
@@ -1149,7 +1183,9 @@ static void wf_pool_give(void *block, size_t granted) {
         return;
     }
     wf_spin_lock(&wf_pool_lock);
-    wf_pool_live_bytes -= (int64_t)granted;
+    atomic_store_explicit(&wf_pool_live_bytes.bytes,
+        atomic_load_explicit(&wf_pool_live_bytes.bytes, memory_order_relaxed) - (int64_t)granted,
+        memory_order_relaxed);
     if (granted > WF_POOL_LARGEST) {
         wf_spin_unlock(&wf_pool_lock);
         wf_pool_host_release(block, granted);
@@ -1197,6 +1233,12 @@ struct wf_watch_link {
     wf_watch_link **back;
     wf_watch *watch;
     uint32_t *count;
+    /* Object links only, NULL on a table's list: the link's wake test, in the
+     * watching frame, never NULL there; and, on its bucket's newest link,
+     * that bucket's place in the object's chain of buckets. */
+    const wf_wake_test *test;
+    wf_watch_link *bucket_next;
+    wf_watch_link **bucket_back;
 };
 #define WF_WATCH_INLINE_LINKS 4u
 #define WF_WATCH_CHUNK_LINKS 8u
@@ -1216,6 +1258,124 @@ struct wf_watch {
 };
 _Static_assert(sizeof(wf_watch) == WF_WATCH_SIZE, "WF_WATCH_SIZE is a watch's size");
 _Static_assert(_Alignof(wf_watch) == WF_WATCH_ALIGN, "WF_WATCH_ALIGN is a watch's alignment");
+_Static_assert(sizeof(wf_wake_atom) == 24u, "a wake atom is 24 bytes");
+_Static_assert(sizeof(wf_wake_test) == WF_WAKE_TEST_SIZE, "WF_WAKE_TEST_SIZE is a wake test's size");
+_Static_assert(offsetof(wf_wake_test, atoms) == 8u, "a wake test's atoms follow its program");
+_Static_assert(offsetof(wf_watch_link, next) == 0u, "a link's back pointer names its predecessor");
+
+/* A statement that cannot park and missed its object keeps this record on
+ * its own stack until it holds the object (wf__shared_take). Links, and
+ * the reservation the queue's tail keeps, change only under the object's
+ * lock; granting publishes the hold with release and is the giver's last
+ * access to the record, which its owner may then leave. */
+typedef struct wf_shared_take_claim wf_shared_take_claim;
+struct wf_shared_take_claim {
+    wf_shared_take_claim *next;
+    /* On the tail alone: the object's reservation, which the header's slot
+     * cannot hold while it names this tail. */
+    wf_context *reservation;
+    uint32_t write;
+    _Atomic unsigned granted;
+};
+
+typedef struct wf_shared {
+    _Atomic uint64_t handles;
+    atomic_flag lock;
+    /* Set while a statement that cannot park borrows the hold an unlock
+     * handed a parked context, and once that context runs again and waits
+     * for the hold back, which ends the borrowing. */
+    _Atomic uint8_t borrowed;
+    _Atomic uint8_t claimed;
+    /* Under the lock: set when an unlock handed a parked context the object
+     * while claims waited, so the next free unlock grants the oldest claim;
+     * cleared by every claim's admission. In the header's padding. */
+    uint8_t take_turn;
+    uint32_t watched;
+    _Atomic uint64_t holders;
+    /* Protected by this object's lock, including watch-list selection (which
+     * additionally takes wf_watch_lock), and read only through
+     * wf_shared_reservation and wf_shared_claims. With its low bit clear it
+     * is the reservation: the one context the object's current notification
+     * went to, which refuses newcomers only while that context's
+     * guard_reserved is set; that owner remains live and retains this object
+     * until its saved-target retry releases the hold. With the low bit set
+     * it is the tail of the circular queue of claims (tail->next is the
+     * head), and the tail keeps the reservation. One slot leaves the header
+     * within WF_SHARED_STATE_OFFSET. No relaxed hint reads it outside the
+     * lock. */
+    uintptr_t arbiter;
+    /* Circular queue: tail->next is the head. One pointer leaves room for
+     * the fairness slot within WF_SHARED_STATE_OFFSET, with constant-time operations. */
+    wf_context *waiting_tail;
+    wf_watch_link *watching;
+    /* The parked context an unlock handed the object to, until it resumes
+     * and takes it. */
+    _Atomic(wf_context *) granted;
+    size_t pool_bytes;
+} wf_shared;
+
+/* The arbiter's low bit tells a claim tail from a reservation. Both are
+ * read and changed under the object's lock. */
+#define WF_SHARED_CLAIMS ((uintptr_t)1u)
+
+/* The tail of the object's claims, NULL when none waits. */
+static wf_shared_take_claim *wf_shared_claims(const wf_shared *shared) {
+    return (shared->arbiter & WF_SHARED_CLAIMS) != 0u
+        ? (wf_shared_take_claim *)(shared->arbiter & ~WF_SHARED_CLAIMS)
+        : NULL;
+}
+
+/* The context the object's notification went to, NULL when none has it. */
+static wf_context *wf_shared_reservation(const wf_shared *shared) {
+    wf_shared_take_claim *tail = wf_shared_claims(shared);
+    return tail != NULL ? tail->reservation : (wf_context *)shared->arbiter;
+}
+
+static void wf_shared_set_reservation(wf_shared *shared, wf_context *owner) {
+    wf_shared_take_claim *tail = wf_shared_claims(shared);
+    if (tail != NULL) {
+        tail->reservation = owner;
+    } else {
+        shared->arbiter = (uintptr_t)owner;
+    }
+}
+
+/* Makes `tail` the claim queue's tail, or ends the queue when NULL, moving
+ * the reservation to wherever the slot now keeps it. */
+static void wf_shared_set_claims(wf_shared *shared, wf_shared_take_claim *tail) {
+    wf_context *owner = wf_shared_reservation(shared);
+    if (tail != NULL) {
+        tail->reservation = owner;
+        shared->arbiter = (uintptr_t)tail | WF_SHARED_CLAIMS;
+    } else {
+        shared->arbiter = (uintptr_t)owner;
+    }
+}
+
+/* Sources, watches and SharedRead views retain one ordinary shared object.
+ * Guard-visible Bool storage is protected by its unit. Host waits observe
+ * the atomic mirror, published in the same held false-to-true transition. */
+typedef struct wf_cancel {
+    union {
+        wf_shared shared;
+        unsigned char header[WF_SHARED_STATE_OFFSET];
+    };
+    uint8_t visible_fired;
+    _Atomic unsigned fired;
+} wf_cancel;
+_Static_assert(offsetof(wf_cancel, visible_fired) == WF_SHARED_STATE_OFFSET,
+               "CancelState.fired uses the ordinary shared-state address");
+/* A never watch and each of its views retain this private unfired unit.
+ * Permanent storage owns one reference, so every program handle uses
+ * ordinary shared release without freeing the permanent unit. */
+static wf_cancel wf_never_state = {
+    .shared = { .handles = 1u, .lock = ATOMIC_FLAG_INIT }
+};
+
+/* A watch without a clock deadline uses the existing timer-slot fast exit
+ * for cleanup: zero still means no wait bookkeeping at all. No heap entry
+ * is allocated for this sentinel. */
+#define WF_CANCEL_ONLY SIZE_MAX
 
 struct wf_context {
     /* The frame the driver resumes when the context is chosen. */
@@ -1253,7 +1413,70 @@ struct wf_context {
      * and whether an unlock handed it the object while it was parked. */
     uint32_t shared_woken;
     uint32_t shared_write;
+    /* Written before queue insertion under the object's lock and read only
+     * while queued under that same lock; retain native cancellation's
+     * admission exemption when its update must park behind a holder. */
+    uint32_t shared_exempt;
     _Atomic uint32_t shared_granted;
+    /* Actual holds, including borrowed holds, but not a reservation that
+     * an unlock handed us before we resume. Owned by the running context. */
+    uint64_t shared_holds;
+    /* At most one: a wake removes the watch from every unit. Published by
+     * the watch lock for an early wake, or the run queue for a parked one;
+     * consumed under this object's lock at release. Every write that wakes
+     * watches also holds wf_watch_lock: a false retry can be notified on
+     * another unit before releasing the original reservation. Admission
+     * reads while running or queued, when no watch can newly publish
+     * ownership to that context. */
+    wf_shared *shared_turn;
+    /* Only accessed under the reserved object's lock. An exempt writer may
+     * set this while the owner runs: carry it along the finite sweep, then
+     * restart once at the end so writes cannot lose an earlier notification
+     * or continually reset the cursor before younger watches get a retry. */
+    unsigned guard_rescan;
+    /* Protected by the reserved object's lock; copied before publication
+     * through wf_watch_lock/run queue, then carried unchanged on transfer.
+     * The write's monotonic sample bounds the cohort: newly waiting
+     * statements cannot extend an old sweep indefinitely. */
+    uint64_t guard_cutoff;
+    /* Whether the notification this context owns refuses newcomers: set when
+     * it was given to a watch older than WF_GUARD_TURN_AGE_NS at the sweep's
+     * clock sample. Protected like guard_cutoff. */
+    unsigned guard_reserved;
+#if WF_GUARD_COUNTERS
+    /* Set at wake under wf_watch_lock, published by that lock for an early
+     * wake or by the run queue for a parked one. Only the resumed context
+     * consumes it, once, when it next registers a false guard. */
+    unsigned guard_retry;
+    /* First false registration records ordinary-object participation under
+     * wf_watch_lock; wake reads it there. Table-only guards have no success
+     * callback in this bridge, so false-repark attribution excludes them. */
+    unsigned guard_has_object;
+    /* Owned by the running context, consumed by its next actual park. */
+    unsigned guard_false_retry;
+    /* Diagnostic mark/sample state is owned only by the running context.
+     * Publishing that context through the existing run-queue lock carries
+     * these fields across suspension and driver migration; no writer of an
+     * object or watch reads them. State 1 is unsampled, 2 awaits first entry,
+     * and 3 retains the sampled start through every acquisition retry. */
+    unsigned guard_acquire_mark;
+    unsigned guard_acquire_phase;
+    uint64_t guard_acquire_started;
+    /* Hand-off latency: written by the installing releaser under the
+     * object's lock and wf_watch_lock, read by this context under that
+     * object's lock when it next takes it. Installations 1, 65, ... of
+     * each context are sampled. */
+    unsigned guard_handoff_mark;
+    unsigned guard_handoff_phase;
+    uint64_t guard_handoff_started;
+#endif
+    /* First false-guard registration of the current statement, retained
+     * across retries, and zero before it waits or after it completes.
+     * Only statements holding an ordinary object need an age: they release
+     * such a hold on completion, which clears it. Table-only waits cannot
+     * receive an object's notification. Published to writers under
+     * wf_watch_lock. */
+    uint64_t guard_started;
     /* The watch its running statement registered after a false guard and
      * has not parked yet, while that statement's releases write nothing;
      * and the watch `wf__shared_watch` registers for a guard that read only
@@ -1265,9 +1488,25 @@ struct wf_context {
     uint32_t passes;
     /* While the context waits with a deadline [PRE-2]: the reading of the
      * monotonic clock at which its driver next looks at it, and its place in
-     * that driver's deadline heap plus one, zero when it has none. */
+     * that driver's deadline heap plus one; zero means no timer or watch,
+     * and WF_CANCEL_ONLY means a watch without a heap entry. Before park,
+     * timer_at preserves a watched call's original optional clock deadline. */
     uint64_t timer_at;
     size_t timer_slot;
+    /* Intrusive watched-wait record, owned only by this driver.
+     * Kept here so the native completion record remains 160 bytes. */
+    wf_cancel *cancel;
+    wf_context *cancel_next;
+    wf_context **cancel_previous;
+    /* A shared/guard/join wake may precede native unwind. Only that wait's
+     * registration arms this gate; ordinary host waits are adopted after
+     * unwind and need no gate RMW. */
+    _Atomic unsigned wake_gate;
+    /* Native-return ingress has its own linkage: an external wake may still
+     * own the shared/guard/join linkage until adoption opens wake_gate. */
+    wf_context *ingress_next;
+    unsigned disposition;
+    unsigned disposition_wake;
     /* The one host operation the context has pending. */
     union {
         unsigned char bytes[WF_CONTEXT_OPERATION_BYTES];
@@ -1287,9 +1526,10 @@ _Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a cont
 #define WF_CONTEXT_RECORD_BUCKETS 4096u
 /* The most drivers a program runs, whatever WF_DRIVERS asks for. */
 #define WF_DRIVER_LIMIT 64u
+#define WF_EXECUTOR_LIMIT (2u * WF_DRIVER_LIMIT)
 
 /* One cache line per allocation-producing thread: the entry, context
- * drivers and compute workers. Each registers once; these runtime pools
+ * executors and compute workers. Each registers once; these runtime pools
  * start at most their declared ceilings of threads during an execution.
  * Slots outlive threads, since a block may be freed on another driver.
  * A slot is single-writer. Relaxed atomic loads/stores permit concurrent
@@ -1299,7 +1539,7 @@ _Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a cont
  * sum stays exact because the live total is below 2^63. A concurrent change
  * can make an unsynchronized sum read as a negative total, which is clamped
  * to zero. This is not a snapshot. */
-#define WF_HEAP_COUNTERS (1u + WF_DRIVER_LIMIT + WF_SCHED_MAX_THREADS)
+#define WF_HEAP_COUNTERS (1u + WF_EXECUTOR_LIMIT + WF_SCHED_MAX_THREADS)
 typedef struct {
     _Alignas(64) _Atomic uint64_t bytes;
 } wf_heap_counter;
@@ -1322,10 +1562,7 @@ void wf__heap_change(int64_t change) {
 }
 
 uint64_t wf__heap_in_use(void) {
-    uint64_t bytes;
-    wf_spin_lock(&wf_pool_lock);
-    bytes = (uint64_t)wf_pool_live_bytes;
-    wf_spin_unlock(&wf_pool_lock);
+    uint64_t bytes = (uint64_t)atomic_load_explicit(&wf_pool_live_bytes.bytes, memory_order_relaxed);
     /* Fixed storage also covers a slot still being registered, and retains
      * deltas from drivers that have stopped. */
     unsigned count = atomic_load_explicit(&wf_heap_counter_count, memory_order_relaxed);
@@ -1399,12 +1636,29 @@ int wf__resident_bytes(uint64_t *bytes) {
 #endif
 }
 
-/* One driver: a thread that runs ready contexts, each on the ring of the
- * driver that runs it (`research/investigations/io-model/WAITS.md`,
- * Experiment 5).  Everything here but the run queue and the two flags is its
- * own thread's alone. */
+/* One atomic word names an epoch, physical executor and service phase.
+ * Borrow/PROBE restore the exact departure; reassignment advances the epoch
+ * and changes the executor. No independent identity read grants ownership. */
+enum {
+    WF_DRIVER_SERVICE, WF_DRIVER_OUTSIDE, WF_DRIVER_BORROWED_SERVICE,
+    WF_DRIVER_PROBE, WF_DRIVER_RESERVED, WF_DRIVER_PARKED, WF_DRIVER_STOPPED
+};
+#define WF_DRIVER_PHASE_MASK UINT64_C(7)
+#define WF_DRIVER_EXECUTOR_SHIFT 3u
+#define WF_DRIVER_EXECUTOR_MASK UINT64_C(1016)
+#define WF_DRIVER_EPOCH_STEP UINT64_C(1024)
+_Static_assert(WF_EXECUTOR_LIMIT <= 128u, "executor identity fits the service token");
+
 typedef struct wf_driver wf_driver;
 struct wf_driver {
+    _Atomic uint64_t service_token;
+    /* Epoch plus executor, written only with SERVICE (or acquired RESERVED). */
+    uint64_t departure;
+    _Atomic uint64_t deadline_hint;
+    atomic_flag ingress_lock;
+    wf_context *ingress_head;
+    wf_context *ingress_tail;
+    _Atomic unsigned ingress_count;
     /* The contexts ready to run here, which a driver with none may take
      * about half of, and their count, read without the lock as a hint. */
     atomic_flag run_lock;
@@ -1416,16 +1670,19 @@ struct wf_driver {
     _Atomic unsigned idle;
     _Atomic unsigned searcher;
     wf_context *parked;
+    /* Next parked record to inspect in a bounded borrowed pass. Updated by
+     * every unpark so it never retains a released context. */
+    wf_context *borrow_cursor;
+    unsigned borrow_victim;
     /* Contexts waiting for a descriptor's readiness, with no ring to wait
      * in; only a program with one driver has any. */
     wf_context *polling;
     size_t polling_count;
     wf_file_readiness polls[WF_FILE_READINESS_BATCH];
     wf_context *polled[WF_FILE_READINESS_BATCH];
-    /* Parked contexts by the address of their record. A record published on
-     * this driver's thread wakes its context here at once; one another
-     * thread publishes is found by a pass over the parked contexts, which
-     * runs only after such a publication. */
+    /* Parked contexts by the address of their record. A record published by
+     * this driver's service owner wakes its context here at once; another
+     * publisher's record is found by a pass over the parked contexts. */
     wf_context *by_record[WF_CONTEXT_RECORD_BUCKETS];
     uint64_t foreign_seen;
     /* The wake this driver parks on: the process's for driver 0, its own for
@@ -1434,44 +1691,120 @@ struct wf_driver {
     wf_completion_runtime own_runtime;
 #if defined(__linux__)
     wf_linux_io_uring_adapter own_adapter;
-    wf_prim_thread thread;
 #endif
-    _Atomic unsigned exited;
-    /* Its slot in wf_drivers, which numbers its thread for the runtime's
-     * concurrent maps. */
+    /* Stable logical role, independent of the physical executor. */
     unsigned index;
     size_t pool_bytes;
     /* Contexts resumed since this driver last looked for host completions. */
     unsigned runs_since_reap;
+    /* Only the service owner touches the watched list. A firing thread
+     * sets the pending flag before raising this driver's wake epoch. */
+    wf_context *cancel_waits;
+    _Atomic unsigned cancel_pending;
     /* The contexts parked or polling here with a deadline, as a binary heap
      * on `timer_at` in storage from the context pool, and the bytes that
-     * storage was granted.  Only this driver's thread touches them. */
+     * storage was granted. Only the service owner touches them. */
     wf_context **timers;
     size_t timer_count;
     size_t timer_capacity;
     size_t timer_bytes;
     /* This driver's contexts parked on a host operation's record or polling a
-     * descriptor: the waits a host outcome can end. Written only by this
-     * driver's thread, and read by another only once this one is idle. */
+     * descriptor: the waits a host outcome can end. Written only by its
+     * service owner, and read atomically by the stuck-program detector. */
     _Atomic unsigned host_waits;
 };
 
 static wf_context wf_context_root;
-/* Driver 0 runs the entry on the floor's thread, and every program has it. */
+/* Stable root role. The original physical executor coordinates teardown;
+ * the root context and its role may both change executors. */
 static wf_driver wf_driver_root;
 /* Atomic, since a driver looking for a program that can take no step reads
  * every slot while the entry publishes the next driver. */
 static _Atomic(wf_driver *) wf_drivers[WF_DRIVER_LIMIT];
 static _Atomic unsigned wf_driver_count;
+/* Selection is immutable once Inputs is constructed. The active count above
+ * still publishes only initialized, started roles to scheduler readers. */
+static unsigned wf_driver_selection_once;
+static unsigned wf_driver_selected_count;
+/* Attribution belongs to the driver doing the borrowing or stealing. Static
+ * storage survives driver teardown for WF_SCHED_REPORT=2 at process exit.
+ * Exceptional assistance/transfer paths increment these observational counters. */
+typedef struct wf_driver_statistics {
+    _Atomic uint64_t borrow_attempts;
+    _Atomic uint64_t borrows;
+    _Atomic uint64_t borrowed_sleeps;
+    _Atomic uint64_t borrowed_terminals;
+    _Atomic uint64_t stolen_contexts;
+    _Atomic uint64_t reassignments;
+    _Atomic uint64_t ingress_commits;
+    _Atomic uint64_t reserve_misses;
+} wf_driver_statistics;
+static wf_driver_statistics wf_driver_stats[WF_DRIVER_LIMIT];
+static _Atomic unsigned wf_driver_stats_count;
+
+static int wf_driver_report(unsigned index, char *buffer, size_t capacity) {
+    if (buffer == NULL || capacity == 0u
+        || index >= atomic_load_explicit(&wf_driver_stats_count, memory_order_acquire))
+        return 0;
+    const wf_driver_statistics *stats = &wf_driver_stats[index];
+    int written = snprintf(buffer, capacity,
+        "driver: index=%u borrow_attempts=%llu borrows=%llu borrowed_sleeps=%llu "
+        "borrowed_terminals=%llu stolen_contexts=%llu reassignments=%llu "
+        "ingress_commits=%llu reserve_misses=%llu", index,
+        (unsigned long long)atomic_load_explicit(&stats->borrow_attempts, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->borrows, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->borrowed_sleeps, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->borrowed_terminals, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->stolen_contexts, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->reassignments, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->ingress_commits, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->reserve_misses, memory_order_relaxed));
+    return written > 0 && (size_t)written < capacity;
+}
+
+/* Reuse the scheduler's automatic-report setting and the existing ring
+ * formatter. Print before ring shutdown; driver counters outlive their roles. */
+static void wf_bridge_print_report(void) {
+    unsigned long wanted = 0;
+    if (!wf__sched_setting("WF_SCHED_REPORT", 2ul, &wanted) || wanted != 2u) return;
+    /* A program that never started a second driver and never handed a role
+     * over keeps its report to the compute line alone. */
+    if (atomic_load_explicit(&wf_driver_stats_count, memory_order_acquire) < 2u) {
+        const wf_driver_statistics *only = &wf_driver_stats[0];
+        if (atomic_load_explicit(&only->reassignments, memory_order_relaxed) == 0u
+            && atomic_load_explicit(&only->ingress_commits, memory_order_relaxed) == 0u
+            && atomic_load_explicit(&only->reserve_misses, memory_order_relaxed) == 0u)
+            return;
+    }
+    char buffer[512];
+    for (unsigned index = 0; wf_driver_report(index, buffer, sizeof(buffer)); ++index)
+        fprintf(stderr, "%s\n", buffer);
+}
+
+/* A new executor may already have captured a one-driver, unbounded wait.
+ * Publish first, then advance its wake epoch and signal its wait endpoint:
+ * either it sees the new count or its obsolete park is woken/rejected. Only
+ * the Linux driver start calls it; the driver-service probe calls it on
+ * every host. */
+__attribute__((unused)) static inline void wf_driver_publish_started(wf_driver *driver) {
+    atomic_store_explicit(&wf_driver_stats_count, driver->index + 1u, memory_order_release);
+    atomic_store_explicit(&wf_driver_count, driver->index + 1u, memory_order_release);
+    wf_completion_notify_target(driver->runtime);
+}
+
 static _Atomic unsigned wf_drivers_stopping;
 static unsigned wf_drivers_once;
+/* Submission role stays bound through a native invocation, even after its
+ * service is reassigned. Map identity belongs to the physical executor. */
 static _Thread_local wf_driver *wf_driver_self;
+static _Thread_local wf_driver *wf_driver_service;
+static _Thread_local unsigned wf_executor_index;
+static _Thread_local uint64_t wf_context_outside;
 static _Thread_local wf_context *wf_context_current;
-/* Set when the running context has parked where another driver may make it
- * ready: waiting for its group or for a shared object.  Another driver may
- * then resume, finish and release the context before its frame has returned
- * here, so the driver that ran it reads nothing of it afterwards. */
+/* Set when suspension registered an external wake or a fairness yield.
+ * Its wake gate is committed only after the native resume returns. */
 static _Thread_local int wf_context_parked_away;
+static _Atomic unsigned wf_context_root_done;
 /* The context `wf__context_prepare` made and `wf__context_launch` starts. */
 static _Thread_local wf_context *wf_context_prepared;
 /* Started and not finished, on every driver; the root is not counted. */
@@ -1496,6 +1829,85 @@ static _Atomic unsigned wf_drivers_searching;
  * while it moves contexts between two queues. */
 static _Atomic uint64_t wf_drivers_changes;
 static _Atomic unsigned wf_drivers_moving;
+/* Includes displaced invocations. Publish/adopt disposition before decrement;
+ * the stuck detector reads this before any role's idle/work counts. */
+static _Atomic unsigned wf_active_invocations;
+
+typedef struct wf_executor {
+    wf_prim_thread thread;
+    wf_completion_runtime wake;
+    /* Both fields below are protected by wf_executor_lock. */
+    wf_driver *assignment;
+    unsigned available;
+    unsigned index;
+    _Atomic unsigned ready;
+    _Atomic unsigned exited;
+} wf_executor;
+static wf_executor wf_executors[WF_EXECUTOR_LIMIT];
+static atomic_flag wf_executor_lock = ATOMIC_FLAG_INIT;
+static unsigned wf_executor_count;
+static wf_prim_thread wf_monitor_thread;
+static wf_completion_runtime wf_monitor_wake;
+static _Atomic unsigned wf_monitor_stopping, wf_monitor_exited;
+static unsigned wf_monitor_started;
+
+static uint64_t wf_driver_next_epoch(uint64_t token, unsigned executor) {
+    uint64_t epoch = token & ~(WF_DRIVER_EPOCH_STEP - 1u);
+    if (epoch > UINT64_MAX - WF_DRIVER_EPOCH_STEP)
+        wf_bridge_fail("driver service epoch exhausted");
+    return (epoch + WF_DRIVER_EPOCH_STEP)
+        | ((uint64_t)executor << WF_DRIVER_EXECUTOR_SHIFT);
+}
+
+static uint64_t wf_driver_leave_service(wf_driver *driver) {
+    driver->departure = wf_driver_next_epoch(driver->departure, wf_executor_index);
+    uint64_t outside = driver->departure | WF_DRIVER_OUTSIDE;
+    atomic_store_explicit(&driver->deadline_hint,
+        driver->timer_count ? driver->timers[0]->timer_at : 0u, memory_order_relaxed);
+    wf_driver_service = NULL;
+    atomic_store_explicit(&driver->service_token, outside, memory_order_release);
+    return outside;
+}
+
+static int wf_driver_try_return(wf_driver *driver, uint64_t outside) {
+    return atomic_compare_exchange_strong_explicit(
+        &driver->service_token, &outside,
+        (outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_SERVICE,
+        memory_order_acquire, memory_order_relaxed);
+}
+
+static int wf_driver_return_service(wf_driver *driver, uint64_t outside) {
+    while (!wf_driver_try_return(driver, outside)) {
+        /* A borrow/probe of this epoch is temporary. A reservation or newer
+         * epoch is permanent loss; never read private state on that path. */
+        uint64_t token = atomic_load_explicit(&driver->service_token, memory_order_relaxed);
+        if (token != ((outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_BORROWED_SERVICE)
+            && token != ((outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_PROBE)
+            && token != outside) return 0;
+        wf_prim_yield();
+    }
+    wf_driver_service = driver;
+    return 1;
+}
+
+static int wf_driver_try_borrow(wf_driver *victim, uint64_t *outside) {
+    *outside = atomic_load_explicit(&victim->service_token, memory_order_relaxed);
+    if ((*outside & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE) return 0;
+    return atomic_compare_exchange_strong_explicit(
+        &victim->service_token, outside,
+        (*outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_BORROWED_SERVICE,
+        memory_order_acquire, memory_order_relaxed);
+}
+
+static void wf_driver_release_borrow(wf_driver *victim, uint64_t outside) {
+    atomic_store_explicit(&victim->service_token, outside, memory_order_release);
+}
+
+enum { WF_WAKE_NONE, WF_WAKE_ARMING, WF_WAKE_EARLY };
+
+static void wf_context_arm_wake(wf_context *context) {
+    atomic_store_explicit(&context->wake_gate, WF_WAKE_ARMING, memory_order_relaxed);
+}
 
 /* Appends a ready context to a driver's run queue. */
 static void wf_run_push(wf_driver *driver, wf_context *context) {
@@ -1556,7 +1968,7 @@ static void wf_drivers_wake_one(void) {
     count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
     for (index = 0; index < count; index++) {
         wf_driver *driver = wf_drivers[index];
-        if (driver == NULL || driver == wf_driver_self) {
+        if (driver == NULL || driver == wf_driver_service) {
             continue;
         }
         if (atomic_exchange_explicit(&driver->idle, 0u, memory_order_seq_cst) != 0u) {
@@ -1574,9 +1986,19 @@ static void wf_drivers_wake_one(void) {
  * when it is another; with more ready here than this driver runs next, a
  * parked driver is woken to take some. */
 static void wf_context_ready(wf_context *context) {
+    unsigned gate = atomic_load_explicit(&context->wake_gate, memory_order_acquire);
+    if (gate != WF_WAKE_NONE) {
+        if (gate == WF_WAKE_EARLY || atomic_compare_exchange_strong_explicit(
+                &context->wake_gate, &gate, WF_WAKE_EARLY,
+                memory_order_acq_rel, memory_order_acquire)) {
+            return;
+        }
+        /* Native unwind committed the registration first. Its release
+         * orders the frame before this enqueue, and only this waker owns it. */
+    }
     wf_driver *target = context->driver;
     wf_run_push(target, context);
-    if (target != wf_driver_self) {
+    if (target != wf_driver_service) {
         /* The epoch rises after the queue holds the context, so a driver
          * that sampled the epoch before this either sees the context or
          * parks on a changed epoch, which returns at once. */
@@ -1584,6 +2006,13 @@ static void wf_context_ready(wf_context *context) {
     } else if (atomic_load_explicit(&target->run_count, memory_order_relaxed) > 1u) {
         wf_drivers_wake_one();
     }
+}
+
+static void wf_context_commit_wake(wf_context *context) {
+    unsigned gate = atomic_exchange_explicit(
+        &context->wake_gate, WF_WAKE_NONE, memory_order_acq_rel);
+    if (gate == WF_WAKE_EARLY) wf_context_ready(context);
+    /* Otherwise a waker can now enqueue and release it. No later access. */
 }
 
 /* How many waits in a row a context may have answered at once before it
@@ -1601,23 +2030,27 @@ static void wf_context_ready(wf_context *context) {
  * its driver continues, since there is no one to yield to. */
 static int wf_context_pass(wf_context *self, void *frame) {
     wf_driver *driver = wf_driver_self;
+    if (driver == NULL) return 0;
+    /* Only legal waiting boundaries reach here, before any shared/keyed
+     * hold or compute offer. Even an immediately answered wait hands back a
+     * displaced invocation; a temporary borrow does not force suspension. */
+    uint64_t token = atomic_load_explicit(&driver->service_token, memory_order_acquire);
+    int displaced = (token & ~WF_DRIVER_PHASE_MASK)
+        != (wf_context_outside & ~WF_DRIVER_PHASE_MASK);
     self->passes += 1u;
-    if (self->passes < WF_CONTEXT_YIELD_PASSES) {
-        return 0;
-    }
-    self->passes = 0u;
-    if (driver == NULL
-        || atomic_load_explicit(&driver->run_count, memory_order_relaxed) == 0u) {
-        return 0;
+    if (!displaced) {
+        if (self->passes < WF_CONTEXT_YIELD_PASSES) return 0;
+        self->passes = 0u;
+        if (atomic_load_explicit(&driver->run_count, memory_order_relaxed) == 0u) return 0;
     }
     self->resume = frame;
     wf_context_parked_away = 1;
+    wf_context_arm_wake(self);
     wf_context_ready(self);
     return 1;
 }
 
-/* Moves about half of another driver's ready contexts here, never the
- * root's, which runs on the entry's thread.  A ready context has no
+/* Moves about half of another driver's ready contexts here. A ready context has no
  * operation in flight, so it can run on any driver; it submits its next
  * operation to the ring of the driver that runs it.  Returns nonzero when it
  * moved one. */
@@ -1634,7 +2067,6 @@ static int wf_driver_steal(wf_driver *driver) {
         wf_driver *victim = wf_drivers[(self_index + offset) % count];
         wf_context *taken = NULL;
         wf_context *taken_tail = NULL;
-        wf_context *previous = NULL;
         wf_context *context;
         unsigned available;
         unsigned wanted;
@@ -1653,26 +2085,18 @@ static int wf_driver_steal(wf_driver *driver) {
         context = victim->run_head;
         while (context != NULL && moved < wanted) {
             wf_context *next = context->next;
-            if (context == &wf_context_root) {
-                previous = context;
-            } else {
-                if (previous != NULL) {
-                    previous->next = next;
-                } else {
-                    victim->run_head = next;
-                }
-                if (victim->run_tail == context) {
-                    victim->run_tail = previous;
-                }
-                context->next = NULL;
-                if (taken_tail != NULL) {
-                    taken_tail->next = context;
-                } else {
-                    taken = context;
-                }
-                taken_tail = context;
-                moved += 1u;
+            victim->run_head = next;
+            if (victim->run_tail == context) {
+                victim->run_tail = NULL;
             }
+            context->next = NULL;
+            if (taken_tail != NULL) {
+                taken_tail->next = context;
+            } else {
+                taken = context;
+            }
+            taken_tail = context;
+            moved += 1u;
             context = next;
         }
         atomic_store_explicit(&victim->run_count, available - moved, memory_order_relaxed);
@@ -1681,6 +2105,8 @@ static int wf_driver_steal(wf_driver *driver) {
             atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
             continue;
         }
+        atomic_fetch_add_explicit(&wf_driver_stats[driver->index].stolen_contexts,
+            moved, memory_order_relaxed);
         while (taken != NULL) {
             wf_context *next = taken->next;
             taken->driver = driver;
@@ -1736,6 +2162,16 @@ static size_t wf_context_record_bucket(const wf_completion_record *record) {
 
 static void wf_timer_remove(wf_driver *driver, wf_context *context);
 
+static void wf_cancel_unlink(wf_context *context) {
+    if (context->cancel == NULL) return;
+    *context->cancel_previous = context->cancel_next;
+    if (context->cancel_next != NULL)
+        context->cancel_next->cancel_previous = context->cancel_previous;
+    context->cancel = NULL;
+    context->cancel_next = NULL;
+    context->cancel_previous = NULL;
+}
+
 static void wf_context_park(wf_driver *driver, wf_context *context) {
     size_t bucket = wf_context_record_bucket(context->record);
     atomic_store_explicit(
@@ -1758,12 +2194,13 @@ static void wf_context_unpark(wf_driver *driver, wf_context *context) {
         *link = context->record_next;
     }
     context->record_next = NULL;
+    if (driver->borrow_cursor == context) driver->borrow_cursor = context->next;
     wf_context_unlink(&driver->parked, context);
 }
 
-/* One of this driver's host waits has ended, after its context was made
- * ready: a driver looking for a stop that reads the lowered count then sees
- * the context counted as ready, since this store releases the push. */
+/* One of this driver's host waits has ended. Ordinary service has already
+ * queued the context, published by this release; borrowed service keeps the
+ * moving counter raised until every detached context is queued. */
 static void wf_context_host_wait_ended(wf_driver *driver) {
     atomic_store_explicit(
         &driver->host_waits,
@@ -1833,7 +2270,9 @@ static void wf_timer_remove(wf_driver *driver, wf_context *context) {
     size_t index;
     if (context->timer_slot == 0) return;
     index = context->timer_slot - 1u;
+    wf_cancel_unlink(context);
     context->timer_slot = 0;
+    if (index == WF_CANCEL_ONLY - 1u) return;
     driver->timer_count -= 1u;
     if (index != driver->timer_count) {
         wf_timer_place(driver, index, driver->timers[driver->timer_count]);
@@ -1928,7 +2367,50 @@ static void wf_drivers_notify_others(void) {
     count = atomic_load_explicit(&wf_driver_count, memory_order_seq_cst);
     for (index = 0; index < count; index++) {
         wf_driver *driver = wf_drivers[index];
-        if (driver != NULL && driver != wf_driver_self) {
+        if (driver != NULL && driver != wf_driver_service) {
+            wf_completion_notify_target(driver->runtime);
+        }
+    }
+    atomic_fetch_sub_explicit(&wf_drivers_notifying, 1u, memory_order_seq_cst);
+}
+
+void *wf__cancel_new(void) {
+    wf_cancel *source = wf__shared_new(sizeof(*source) - WF_SHARED_STATE_OFFSET);
+    source->visible_fired = 0u;
+    atomic_init(&source->fired, 0u);
+    return source;
+}
+
+void *wf__cancel_never(void) {
+    wf__shared_share(&wf_never_state);
+    return &wf_never_state;
+}
+
+/* Keep never watches on the existing unbounded/deadline-only host path.
+ * This translation affects wait registration, not ownership or release. */
+void *wf__cancel_wait_state(void *state) {
+    return state == &wf_never_state ? NULL : state;
+}
+
+/* The waiting call's start selects the ordinary resumable acquisition path.
+ * Its finish runs while that unit is held, and releases before returning. */
+void wf__cancel_fire_held(void *opaque) {
+    wf_cancel *source = opaque;
+    source->visible_fired = 1u;
+    unsigned fired = atomic_exchange_explicit(&source->fired, 1u, memory_order_acq_rel);
+    wf__shared_unlock(source, 1u);
+    if (fired) return;
+    atomic_fetch_add_explicit(&wf_drivers_notifying, 1u, memory_order_seq_cst);
+    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_seq_cst);
+    for (unsigned index = 0; index < count; ++index) {
+        wf_driver *driver = atomic_load_explicit(&wf_drivers[index], memory_order_seq_cst);
+        if (driver != NULL) {
+            /* Chain concurrent firings: overwriting a release store with
+             * another store could hide the first source's publication from
+             * the scan that consumes the second. The RMW acquires it and
+             * republishes both sources before this driver's wake. */
+            (void)atomic_exchange_explicit(&driver->cancel_pending, 1u,
+                                           memory_order_acq_rel);
             wf_completion_notify_target(driver->runtime);
         }
     }
@@ -1940,7 +2422,13 @@ static void wf_drivers_notify_others(void) {
  * context's own, by counting a publication every driver's next pass over its
  * parked contexts looks for. */
 static int wf_context_record_published(const wf_completion_record *record) {
-    wf_driver *driver = wf_driver_self;
+    /* Only compare the address: DONE was the publisher's last record touch.
+     * The running context is never in private service lists. */
+    if (wf_context_current != NULL
+        && (const void *)record == (const void *)wf_context_current->operation.bytes) {
+        return 1;
+    }
+    wf_driver *driver = wf_driver_service;
     wf_context *context = NULL;
     if (driver != NULL) {
         context = driver->by_record[wf_context_record_bucket(record)];
@@ -1953,15 +2441,6 @@ static int wf_context_record_published(const wf_completion_record *record) {
         context->record = NULL;
         wf_context_ready(context);
         wf_context_host_wait_ended(driver);
-        return 1;
-    }
-    if (driver != NULL && wf_context_current != NULL
-        && (const void *)record == (const void *)wf_context_current->operation.bytes) {
-        /* The running context's own operation, answered before it waits:
-         * it reads its record before it parks, and nothing else waits on
-         * it.  Every other record, such as one the shared helper pool
-         * completed and this driver's progress published, may be parked on
-         * any driver. */
         return 1;
     }
     atomic_fetch_add_explicit(&wf_context_foreign_publications, 1, memory_order_release);
@@ -2099,9 +2578,70 @@ static void wf_context_arm_deadline(wf_driver *driver, wf_context *self,
                                     wf_completion_record *record) {
     uint64_t deadline = atomic_load_explicit(&record->deadline, memory_order_relaxed);
     if (deadline != 0 && deadline != WF_COMPLETION_DEADLINE_FIRED) {
-        wf_timer_insert(driver, self, deadline);
+        /* A watched helper has a nonzero internal bound so it cannot run
+         * on the waiting driver and Windows accept stays interruptible.
+         * Its original clock bound, possibly zero, is saved before submit. */
+        if (self->cancel != NULL) deadline = self->timer_at;
+        if (deadline != 0) wf_timer_insert(driver, self, deadline);
     }
 }
+
+/* Adopt only after wf__coro_resume returned and SERVICE was reacquired.
+ * Until then the running context owns just its wait intent: no borrower can
+ * see it through the heap, cancellation list, readiness list or record hash. */
+static void wf_context_adopt_wait(wf_driver *driver, wf_context *self) {
+    wf_completion_record *record = self->record;
+    if (wf_bridge_record_state(record) == WF_COMPLETION_DONE) {
+        self->record = NULL;
+        self->cancel = NULL;
+        self->poll_events = 0;
+        wf_context_ready(self);
+        return;
+    }
+    if (self->cancel != NULL) {
+        self->cancel_next = driver->cancel_waits;
+        self->cancel_previous = &driver->cancel_waits;
+        if (self->cancel_next != NULL) self->cancel_next->cancel_previous = &self->cancel_next;
+        driver->cancel_waits = self;
+        self->timer_slot = WF_CANCEL_ONLY;
+        /* A fire before registration may already have had its pending bit
+         * consumed. A later fire sets it itself; neither window loses it. */
+        if (atomic_load_explicit(&self->cancel->fired, memory_order_acquire)) {
+            (void)atomic_exchange_explicit(&driver->cancel_pending, 1u, memory_order_acq_rel);
+        }
+    }
+    if (self->poll_events != 0) {
+        atomic_fetch_add_explicit(&driver->host_waits, 1u, memory_order_relaxed);
+        wf_context_link(&driver->polling, self);
+        driver->polling_count += 1u;
+    } else {
+        wf_context_park(driver, self);
+    }
+    wf_context_arm_deadline(driver, self, record);
+    /* Host completion can precede registration too. No publication counter
+     * snapshot is sufficient to replace this recheck. Readiness has no
+     * external publisher; its record is owned by service. */
+    if (self->poll_events == 0
+        && wf_bridge_record_state(record) == WF_COMPLETION_DONE) {
+        wf_context_unpark(driver, self);
+        self->record = NULL;
+        wf_context_ready(self);
+        wf_context_host_wait_ended(driver);
+    }
+}
+
+/* A native waiting body may acquire one ordinary shared unit. Start returns
+ * 3 so its emitted continuation retries after each wake, just like an atomic
+ * acquisition; finish receives the hold and must release it without waiting.
+ * This record is never submitted to a host adapter or linked as a host wait. */
+int wf__shared_start(void *object, void *operation) {
+    wf_completion_record *record = operation;
+    record->route = WF_COMPLETION_ROUTE_SHARED;
+    record->request.operation.shared = object;
+    return 3;
+}
+
+static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int exempt);
 
 int wf__context_wait(void *operation, void *frame) {
     wf_context *self = wf_context_current;
@@ -2109,6 +2649,9 @@ int wf__context_wait(void *operation, void *frame) {
     wf_completion_record *record = (wf_completion_record *)operation;
     if (self == NULL || frame == NULL || driver == NULL) {
         wf_bridge_fail("a host operation waited outside every context");
+    }
+    if (record->route == WF_COMPLETION_ROUTE_SHARED) {
+        return wf_shared_acquire_as(record->request.operation.shared, 1u, frame, 1);
     }
     if (record->route == WF_COMPLETION_ROUTE_READINESS) {
         const wf_file_request *request = &record->request;
@@ -2133,23 +2676,14 @@ int wf__context_wait(void *operation, void *frame) {
         }
         self->record = record;
         self->resume = frame;
-        atomic_store_explicit(
-            &driver->host_waits,
-            atomic_load_explicit(&driver->host_waits, memory_order_relaxed) + 1u,
-            memory_order_relaxed
-        );
-        wf_context_link(&driver->polling, self);
-        driver->polling_count += 1u;
-        wf_context_arm_deadline(driver, self, record);
         return 1;
     }
     if (wf_bridge_record_state(record) == WF_COMPLETION_DONE) {
+        self->cancel = NULL;
         return wf_context_pass(self, frame);
     }
     self->record = record;
     self->resume = frame;
-    wf_context_park(driver, self);
-    wf_context_arm_deadline(driver, self, record);
     return 1;
 }
 
@@ -2284,6 +2818,7 @@ int wf__context_join_wait(uint64_t *group, void *frame) {
     }
     self->resume = frame;
     wf_context_parked_away = 1;
+    wf_context_arm_wake(self);
     __atomic_store_n(&group[1], (uint64_t)(uintptr_t)self, __ATOMIC_SEQ_CST);
     for (;;) {
         count = __atomic_load_n(&group[0], __ATOMIC_SEQ_CST);
@@ -2298,6 +2833,7 @@ int wf__context_join_wait(uint64_t *group, void *frame) {
                 &group[1], &expected, 0u, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
             self->resume = NULL;
             wf_context_parked_away = 0;
+            atomic_store_explicit(&self->wake_gate, WF_WAKE_NONE, memory_order_relaxed);
             return 0;
         }
         /* The last context took this waiter and wakes it. */
@@ -2353,21 +2889,187 @@ static void wf_context_finish(wf_context *context) {
     wf_group_finish(group);
 }
 
+#if WF_GUARD_COUNTERS
+enum { WF_GUARD_COUNT_WOKEN, WF_GUARD_COUNT_SPURIOUS,
+       WF_GUARD_COUNT_REFUSED, WF_GUARD_COUNT_CLOCK,
+       WF_GUARD_COUNT_AGE_SELECTION,
+       WF_GUARD_COUNT_FALSE_HANDOFF, WF_GUARD_COUNT_RESCAN,
+       WF_GUARD_COUNT_RETURN_MARKED, WF_GUARD_COUNT_RETURN_SAMPLES,
+       WF_GUARD_COUNT_RETURN_NS, WF_GUARD_COUNT_RETURN_MAX,
+       WF_GUARD_COUNT_RETURN_CLOCK_FAILURE,
+       WF_GUARD_COUNT_TEST_EVALUATED, WF_GUARD_COUNT_WAKE_AVOIDED,
+       WF_GUARD_COUNT_HANDOFF_INSTALLED, WF_GUARD_COUNT_HANDOFF_SAMPLES,
+       WF_GUARD_COUNT_HANDOFF_NS, WF_GUARD_COUNT_HANDOFF_MAX,
+       WF_GUARD_COUNT_HANDOFF_CLOCK_FAILURE, WF_GUARD_COUNT_VALUES };
+/* Instrumented builds only. Each thread owns a cache-line-aligned slot;
+ * registration uses one relaxed RMW, then increments and local maxima need
+ * no shared RMW. Atomic relaxed slots permit diagnostic observations without
+ * a data race; the final report follows driver termination. Contexts can
+ * migrate, so a completed sample contributes to its finishing thread's slot,
+ * while its start timestamp travels with the context. Counters are modulo
+ * 2^64, like the existing totals; no counter affects runtime admission. */
+typedef struct {
+    _Alignas(64) _Atomic uint64_t value[WF_GUARD_COUNT_VALUES];
+} wf_guard_counter_slot;
+static wf_guard_counter_slot wf_guard_counters[WF_HEAP_COUNTERS];
+static _Atomic unsigned wf_guard_counter_count;
+static _Thread_local wf_guard_counter_slot *wf_guard_counter_self;
+static _Atomic uint64_t *wf_guard_counter_value(unsigned which) {
+    if (wf_guard_counter_self == NULL) {
+        unsigned slot = atomic_fetch_add_explicit(
+            &wf_guard_counter_count, 1u, memory_order_relaxed);
+        if (slot >= WF_HEAP_COUNTERS) wf_bridge_fail("too many guard counter threads");
+        wf_guard_counter_self = &wf_guard_counters[slot];
+    }
+    return &wf_guard_counter_self->value[which];
+}
+static void wf_guard_add(unsigned which, uint64_t amount) {
+    _Atomic uint64_t *value = wf_guard_counter_value(which);
+    atomic_store_explicit(value, atomic_load_explicit(value, memory_order_relaxed) + amount,
+                          memory_order_relaxed);
+}
+static void wf_guard_max(unsigned which, uint64_t sample) {
+    _Atomic uint64_t *value = wf_guard_counter_value(which);
+    if (sample > atomic_load_explicit(value, memory_order_relaxed))
+        atomic_store_explicit(value, sample, memory_order_relaxed);
+}
+#define WF_GUARD_COUNT(which) wf_guard_add(which, 1u)
+
+/* Mark a caller-chosen ordinary acquire, never inspect the state it protects.
+ * The diagnostic caller marks once before its retry label. Marks 1, 65, ...
+ * in each context are sampled; every mark is counted to check placement. */
+void wf__guard_measure_next_acquire(void) {
+    wf_context *self = wf_context_current;
+    if (self == NULL || self->guard_acquire_mark != 0u)
+        wf_bridge_fail("an acquisition diagnostic was marked outside a context or twice");
+    self->guard_acquire_mark = self->guard_acquire_phase == 0u ? 2u : 1u;
+    self->guard_acquire_phase = (self->guard_acquire_phase + 1u) & 63u;
+    WF_GUARD_COUNT(WF_GUARD_COUNT_RETURN_MARKED);
+}
+static void wf_guard_acquire_begin(wf_context *self) {
+    if (self != NULL && self->guard_acquire_mark == 2u) {
+        self->guard_acquire_started = wf_file_monotonic_ns();
+        self->guard_acquire_mark = 3u;
+    }
+}
+static void wf_guard_acquire_end(wf_context *self) {
+    if (self->guard_acquire_mark == 3u) {
+        /* These two diagnostic clock reads are intentionally separate from
+         * the fairness-policy clock counter. Zero/backward samples are
+         * reported as failures and excluded from the sample sum and maximum. */
+        uint64_t ended = wf_file_monotonic_ns();
+        uint64_t started = self->guard_acquire_started;
+        if (started != 0u && ended >= started) {
+            uint64_t elapsed = ended - started;
+            WF_GUARD_COUNT(WF_GUARD_COUNT_RETURN_SAMPLES);
+            wf_guard_add(WF_GUARD_COUNT_RETURN_NS, elapsed);
+            wf_guard_max(WF_GUARD_COUNT_RETURN_MAX, elapsed);
+        } else {
+            WF_GUARD_COUNT(WF_GUARD_COUNT_RETURN_CLOCK_FAILURE);
+        }
+    }
+    self->guard_acquire_mark = 0u;
+}
+static void wf_guard_report(void) {
+    uint64_t totals[WF_GUARD_COUNT_VALUES] = {0u};
+    for (unsigned slot = 0; slot < WF_HEAP_COUNTERS; ++slot) {
+        for (unsigned field = 0; field < WF_GUARD_COUNT_VALUES; ++field) {
+            uint64_t value = atomic_load_explicit(
+                &wf_guard_counters[slot].value[field], memory_order_relaxed);
+            if (field == WF_GUARD_COUNT_RETURN_MAX || field == WF_GUARD_COUNT_HANDOFF_MAX) {
+                if (value > totals[field]) totals[field] = value;
+            } else {
+                totals[field] += value;
+            }
+        }
+    }
+    fprintf(stderr, "guard_counters,%llu,%llu,%llu,%llu\n",
+            (unsigned long long)totals[WF_GUARD_COUNT_WOKEN],
+            (unsigned long long)totals[WF_GUARD_COUNT_SPURIOUS],
+            (unsigned long long)totals[WF_GUARD_COUNT_REFUSED],
+            (unsigned long long)totals[WF_GUARD_COUNT_CLOCK]);
+    /* Age-qualified selections, false hand-offs and rescans. The
+     * guard-fairness experiment's summary read seven fields here, four of
+     * them for runtime variants this runtime no longer has; it runs only at
+     * that experiment's revision, so this line prints the live counters. */
+    fprintf(stderr, "guard_events,%llu,%llu,%llu\n",
+            (unsigned long long)totals[WF_GUARD_COUNT_AGE_SELECTION],
+            (unsigned long long)totals[WF_GUARD_COUNT_FALSE_HANDOFF],
+            (unsigned long long)totals[WF_GUARD_COUNT_RESCAN]);
+    fprintf(stderr, "guard_return_wait,%llu,%llu,%llu,%llu,%llu\n",
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_MARKED],
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_SAMPLES],
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_NS],
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_MAX],
+            (unsigned long long)totals[WF_GUARD_COUNT_RETURN_CLOCK_FAILURE]);
+    /* Bucket tests a releaser evaluated, and watches a write left
+     * registered that waking every watch would have woken. */
+    fprintf(stderr, "guard_wake_tests,%llu,%llu\n",
+            (unsigned long long)totals[WF_GUARD_COUNT_TEST_EVALUATED],
+            (unsigned long long)totals[WF_GUARD_COUNT_WAKE_AVOIDED]);
+    fprintf(stderr, "guard_handoff,%llu,%llu,%llu,%llu,%llu\n",
+            (unsigned long long)totals[WF_GUARD_COUNT_HANDOFF_INSTALLED],
+            (unsigned long long)totals[WF_GUARD_COUNT_HANDOFF_SAMPLES],
+            (unsigned long long)totals[WF_GUARD_COUNT_HANDOFF_NS],
+            (unsigned long long)totals[WF_GUARD_COUNT_HANDOFF_MAX],
+            (unsigned long long)totals[WF_GUARD_COUNT_HANDOFF_CLOCK_FAILURE]);
+}
+/* A notification was given to `owner`, under the object's lock and
+ * wf_watch_lock: count it and start a sampled latency. */
+static void wf_guard_installed(wf_context *owner) {
+    WF_GUARD_COUNT(WF_GUARD_COUNT_HANDOFF_INSTALLED);
+    owner->guard_handoff_mark = owner->guard_handoff_phase == 0u;
+    if (owner->guard_handoff_mark) owner->guard_handoff_started = wf_file_monotonic_ns();
+    owner->guard_handoff_phase = (owner->guard_handoff_phase + 1u) & 63u;
+}
+/* The owner took the notified object, under its lock. */
+static void wf_guard_handoff_taken(wf_context *self) {
+    if (!self->guard_handoff_mark) return;
+    self->guard_handoff_mark = 0u;
+    uint64_t ended = wf_file_monotonic_ns();
+    uint64_t started = self->guard_handoff_started;
+    if (started != 0u && ended >= started) {
+        WF_GUARD_COUNT(WF_GUARD_COUNT_HANDOFF_SAMPLES);
+        wf_guard_add(WF_GUARD_COUNT_HANDOFF_NS, ended - started);
+        wf_guard_max(WF_GUARD_COUNT_HANDOFF_MAX, ended - started);
+    } else {
+        WF_GUARD_COUNT(WF_GUARD_COUNT_HANDOFF_CLOCK_FAILURE);
+    }
+}
+#else
+#define WF_GUARD_COUNT(which) ((void)0)
+#endif
+
 /* ------------------------------------------------------ guard watches */
+
+/* How many unlocks wake a parked statement to try again before the next one
+ * hands it the object: one retry lets the common case keep the object with a
+ * running context, and the bound keeps a statement from being overtaken
+ * without end. */
+#define WF_SHARED_HANDOFF 2u
+/* Provisional: let short guard waits race normally, but give a long wait a
+ * turn. The 1 ms threshold is a hypothesis, to be rejected or revisited by
+ * the probe and firn engine criteria in guard-fairness/DESIGN.md; it is not
+ * a measured optimum or a language progress bound. */
+#ifndef WF_GUARD_TURN_AGE_NS
+#define WF_GUARD_TURN_AGE_NS UINT64_C(1000000)
+#endif
 
 /* A statement whose guard reads false registers a watch, while it still
  * holds every unit its guard read, on each such unit's list: the object's
  * other fields, or a keyed table's entries (keyed_table.c).  It then
- * releases every unit and parks.  A statement that wrote a unit wakes every
- * watch on the unit's list as it ends: a parked watch's context is made
- * ready, and a watch not yet parked is marked woken, so its park answers at
- * once and no wake is lost.  Waking a watch takes every link of it off every
- * list, so a watch is registered nowhere once its park has answered or its
- * context resumed.  One lock guards every list, because guards wait rarely,
- * while a statement that finds no link on its unit reads one word and takes
- * no lock.  A release that follows its own statement's false guard writes
- * nothing [SHARE-2] and wakes no one, or the watches on one unit would wake
- * one another without end. */
+ * releases every unit and parks.  A statement that wrote a unit wakes the
+ * watches on the unit's list as it ends: every watch of a table, and an
+ * object's oldest watch whose wake test holds, whose retry passes the
+ * notification on.  A parked watch's context is made ready, and a watch not
+ * yet parked is marked woken, so its park answers at once and no wake is
+ * lost.  Waking a watch takes every link of it off every list, so a watch is
+ * registered nowhere once its park has answered or its context resumed.  One
+ * lock guards every list, because guards wait rarely, while a statement that
+ * finds no link on its unit reads one word and takes no lock.  A release
+ * that follows its own statement's false guard writes nothing [SHARE-2]; it
+ * may pass an earlier write's notification to the next watch whose test
+ * holds, but cannot start a new sweep. */
 enum { WF_GUARD_IDLE, WF_GUARD_REGISTERED, WF_GUARD_WOKEN, WF_GUARD_PARKED };
 
 static atomic_flag wf_watch_lock = ATOMIC_FLAG_INIT;
@@ -2376,6 +3078,18 @@ static atomic_flag wf_watch_lock = ATOMIC_FLAG_INIT;
  * does nothing. */
 __attribute__((weak)) void wf__watch_seen(unsigned moment) {
     (void)moment;
+}
+
+/* Clock seam for deterministic runtime tests, like the observation hooks
+ * above. Production uses the same platform monotonic clock as host waits.
+ * Called at watch registration and when an object notification sweep starts. */
+__attribute__((weak)) uint64_t wf__guard_clock_ns(void) {
+    return wf_file_monotonic_ns();
+}
+
+static uint64_t wf_guard_now(void) {
+    WF_GUARD_COUNT(WF_GUARD_COUNT_CLOCK);
+    return wf__guard_clock_ns();
 }
 
 static void wf_ready_all(wf_context *list) {
@@ -2399,6 +3113,197 @@ static uint32_t wf_watch_inline_used(const wf_watch *watch) {
     return watch->used < WF_WATCH_INLINE_LINKS ? watch->used : WF_WATCH_INLINE_LINKS;
 }
 
+/* A watch's key: its statement's first registration, then the context's
+ * identity for equal samples. */
+static int wf_guard_before(const wf_context *left, const wf_context *right) {
+    return left->guard_started < right->guard_started
+        || (left->guard_started == right->guard_started
+            && (uintptr_t)left < (uintptr_t)right);
+}
+
+/* Wake tests (bridge.h).  An object's watch links sit in buckets, one per
+ * distinct test: a bucket is a ring of links in key order (the oldest
+ * statement first) through `next`, each link's `back` naming its
+ * predecessor's `next`, and its newest link, whose `next` is its oldest,
+ * carries the bucket's place in the object's chain of buckets, which
+ * `watching` heads.  The links of one bucket have byte-identical tests, so
+ * a releaser evaluates each bucket's test once, on its newest link's copy,
+ * and the oldest watch whose test holds is the oldest head among the
+ * buckets whose test holds.  Every access is under wf_watch_lock; the test
+ * bytes stay in the watching frame, unchanged while the link is linked. */
+static const wf_wake_test wf_wake_always = {0u, {0u}, {{0u, 0u, 0u, 0u, 0u, 0u, {0u}}}};
+
+/* How many atoms a valid program reads; fails on a malformed test, which
+ * only a defective compiler emits. */
+static unsigned wf_wake_used(const wf_wake_test *test, uint64_t state_bytes) {
+    unsigned depth = 0u, used = 0u;
+    if (test->length > WF_WAKE_PROGRAM) wf_bridge_fail("a wake test's program is too long");
+    for (unsigned index = 0u; index < test->length; ++index) {
+        unsigned code = test->program[index];
+        if (code == WF_WAKE_AND || code == WF_WAKE_OR) {
+            if (depth < 2u) wf_bridge_fail("a wake test combines missing values");
+            depth -= 1u;
+            continue;
+        }
+        if (code == 0u || code > WF_WAKE_ATOMS) wf_bridge_fail("a wake test names no atom");
+        const wf_wake_atom *atom = &test->atoms[code - 1u];
+        unsigned width = atom->width;
+        if ((width != 1u && width != 2u && width != 4u && width != 8u)
+            || atom->comparison > WF_WAKE_GREATER_EQUAL
+            || (atom->flags & ~(unsigned)(WF_WAKE_SIGNED | WF_WAKE_BIT | WF_WAKE_FIELD)) != 0u
+            || (uint64_t)atom->offset + width > state_bytes
+            || ((atom->flags & WF_WAKE_FIELD) != 0u && (uint64_t)atom->other + width > state_bytes))
+            wf_bridge_fail("a wake test's atom lies outside its object's state");
+        if (code > used) used = code;
+        depth += 1u;
+    }
+    if (test->length != 0u && depth != 1u) wf_bridge_fail("a wake test leaves no single value");
+    return used;
+}
+
+/* The bytes two tests of one condition share. */
+static size_t wf_wake_bytes(const wf_wake_test *test) {
+    unsigned used = 0u;
+    for (unsigned index = 0u; index < test->length; ++index) {
+        unsigned code = test->program[index];
+        if (code != WF_WAKE_AND && code != WF_WAKE_OR && code > used) used = code;
+    }
+    return offsetof(wf_wake_test, atoms) + (size_t)used * sizeof(wf_wake_atom);
+}
+
+static int wf_wake_same(const wf_wake_test *left, const wf_wake_test *right) {
+    size_t bytes = wf_wake_bytes(left);
+    return bytes == wf_wake_bytes(right) && memcmp(left, right, bytes) == 0;
+}
+
+static uint64_t wf_wake_load(const unsigned char *state, uint32_t offset, unsigned width,
+                             unsigned flags) {
+    uint64_t value;
+    if (width == 1u) {
+        uint8_t raw;
+        memcpy(&raw, state + offset, sizeof(raw));
+        value = (flags & WF_WAKE_SIGNED) != 0u ? (uint64_t)(int64_t)(int8_t)raw : raw;
+    } else if (width == 2u) {
+        uint16_t raw;
+        memcpy(&raw, state + offset, sizeof(raw));
+        value = (flags & WF_WAKE_SIGNED) != 0u ? (uint64_t)(int64_t)(int16_t)raw : raw;
+    } else if (width == 4u) {
+        uint32_t raw;
+        memcpy(&raw, state + offset, sizeof(raw));
+        value = (flags & WF_WAKE_SIGNED) != 0u ? (uint64_t)(int64_t)(int32_t)raw : raw;
+    } else {
+        memcpy(&value, state + offset, sizeof(value));
+    }
+    return (flags & WF_WAKE_BIT) != 0u ? value & 1u : value;
+}
+
+static int wf_wake_atom_holds(const wf_wake_atom *atom, const unsigned char *state) {
+    unsigned flags = atom->flags;
+    uint64_t left = wf_wake_load(state, atom->offset, atom->width, flags);
+    uint64_t right = (flags & WF_WAKE_FIELD) != 0u
+        ? wf_wake_load(state, atom->other, atom->width, flags) : atom->value;
+    int equal = left == right;
+    int less = (flags & WF_WAKE_SIGNED) != 0u ? (int64_t)left < (int64_t)right : left < right;
+    switch (atom->comparison) {
+    case WF_WAKE_EQUAL: return equal;
+    case WF_WAKE_NOT_EQUAL: return !equal;
+    case WF_WAKE_LESS: return less;
+    case WF_WAKE_LESS_EQUAL: return less || equal;
+    case WF_WAKE_GREATER: return !less && !equal;
+    default: return !less;
+    }
+}
+
+/* Whether the test holds in the object's state, which the caller's hold or
+ * the object's lock keeps still. */
+static int wf_wake_holds(const wf_wake_test *test, const wf_shared *shared) {
+    const unsigned char *state = (const unsigned char *)shared + WF_SHARED_STATE_OFFSET;
+    uint32_t values = 0u;
+    WF_GUARD_COUNT(WF_GUARD_COUNT_TEST_EVALUATED);
+#if WF_GUARD_TEST_HOOKS
+    wf__watch_seen(WF_WATCH_TESTED);
+#endif
+    if (test->length == 0u) return 1;
+    for (unsigned index = 0u; index < test->length; ++index) {
+        unsigned code = test->program[index];
+        if (code == WF_WAKE_AND || code == WF_WAKE_OR) {
+            uint32_t right = values & 1u;
+            values >>= 1u;
+            uint32_t left = values & 1u;
+            values = (values & ~1u) | (code == WF_WAKE_AND ? (left & right) : (left | right));
+        } else {
+            values = (values << 1u) | (uint32_t)wf_wake_atom_holds(&test->atoms[code - 1u], state);
+        }
+    }
+    return (int)(values & 1u);
+}
+
+static wf_watch_link *wf_bucket_previous(wf_watch_link *link) {
+    return (wf_watch_link *)(void *)link->back;
+}
+
+/* Moves a bucket's place in the chain from its newest link to another. */
+static void wf_bucket_newest(wf_watch_link *from, wf_watch_link *to) {
+    to->bucket_next = from->bucket_next;
+    to->bucket_back = from->bucket_back;
+    *to->bucket_back = to;
+    if (to->bucket_next != NULL) to->bucket_next->bucket_back = &to->bucket_next;
+    from->bucket_next = NULL;
+    from->bucket_back = NULL;
+}
+
+/* Links `link` before `place` in place's ring. */
+static void wf_bucket_link_before(wf_watch_link *link, wf_watch_link *place) {
+    link->next = place;
+    link->back = place->back;
+    *place->back = link;
+    place->back = &link->next;
+}
+
+/* Registers `link` of `self`'s watch in the bucket of its test, at its key's
+ * place: a new statement is the newest, so it costs one comparison; a false
+ * retry keeps its age and is placed by a walk from the bucket's oldest. */
+static void wf_bucket_insert(wf_shared *shared, wf_watch_link *link, const wf_wake_test *test,
+                             const wf_context *self) {
+    wf_watch_link *newest = shared->watching;
+    while (newest != NULL && !wf_wake_same(newest->test, test)) newest = newest->bucket_next;
+    link->test = test;
+    if (newest == NULL) {
+        link->next = link;
+        link->back = &link->next;
+        link->bucket_next = shared->watching;
+        link->bucket_back = &shared->watching;
+        if (shared->watching != NULL) shared->watching->bucket_back = &link->bucket_next;
+        shared->watching = link;
+        return;
+    }
+    if (!wf_guard_before(self, newest->watch->context)) {
+        wf_bucket_link_before(link, newest->next);
+        wf_bucket_newest(newest, link);
+        return;
+    }
+    wf_watch_link *place = newest->next;
+    while (!wf_guard_before(self, place->watch->context)) place = place->next;
+    wf_bucket_link_before(link, place);
+}
+
+static void wf_bucket_remove(wf_watch_link *link) {
+    if (link->next == link) {
+        *link->bucket_back = link->bucket_next;
+        if (link->bucket_next != NULL) link->bucket_next->bucket_back = link->bucket_back;
+    } else {
+        wf_watch_link *previous = wf_bucket_previous(link);
+        if (link->bucket_back != NULL) wf_bucket_newest(link, previous);
+        previous->next = link->next;
+        link->next->back = link->back;
+    }
+    link->next = NULL;
+    link->back = NULL;
+    link->bucket_next = NULL;
+    link->bucket_back = NULL;
+    link->test = NULL;
+}
+
 /* Whether the watch has a link on the list a unit counts in `count`. */
 static int wf_watch_on_unit(const wf_watch *watch, const uint32_t *count) {
     uint32_t index;
@@ -2419,13 +3324,22 @@ static int wf_watch_on_unit(const wf_watch *watch, const uint32_t *count) {
 }
 
 /* Registers the running statement's watch on a unit's list, which the unit
- * counts in `count`.  A watch already woken is registered no further, since
- * its park answers at once. */
-static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head) {
+ * counts in `count`: `object`'s, with the wake test `test` (NULL for none),
+ * or a table's when `object` is NULL.  A watch already woken is registered
+ * no further, since its park answers at once. */
+static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head,
+                        wf_shared *object, const wf_wake_test *test) {
     wf_context *self = wf_context_current;
     wf_watch_chunk *fresh = NULL;
     if (self == NULL || watch == NULL || watch->context != self) {
         wf_bridge_fail("a guard registered a watch outside its context");
+    }
+    if (object != NULL) {
+        if (test == NULL) test = &wf_wake_always;
+        /* The permanent never state has no pool block; nothing bounds it. */
+        (void)wf_wake_used(test, object->pool_bytes > WF_SHARED_STATE_OFFSET
+                                     ? (uint64_t)(object->pool_bytes - WF_SHARED_STATE_OFFSET)
+                                     : UINT64_MAX);
     }
     for (;;) {
         wf_watch_link *link;
@@ -2433,6 +3347,18 @@ static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head) 
         if (watch->state == WF_GUARD_WOKEN || wf_watch_on_unit(watch, count)) {
             wf_spin_unlock(&wf_watch_lock);
             break;
+        }
+#if WF_GUARD_COUNTERS
+        if (watch->state == WF_GUARD_IDLE) {
+            self->guard_has_object = self->shared_holds != 0u;
+            self->guard_false_retry = self->guard_has_object && self->guard_retry;
+            self->guard_retry = 0u;
+        }
+#endif
+        /* The key is sampled only before a round's first link, so it never
+         * changes while its links sit in ordered buckets. */
+        if (self->guard_started == 0u && self->shared_holds != 0u && watch->used == 0u) {
+            self->guard_started = wf_guard_now();
         }
         if (watch->used < WF_WATCH_INLINE_LINKS) {
             link = &watch->links[watch->used];
@@ -2454,12 +3380,19 @@ static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head) 
         }
         link->watch = watch;
         link->count = count;
-        link->next = *head;
-        link->back = head;
-        if (*head != NULL) {
-            (*head)->back = &link->next;
+        link->test = NULL;
+        link->bucket_next = NULL;
+        link->bucket_back = NULL;
+        if (object != NULL) {
+            wf_bucket_insert(object, link, test, self);
+        } else {
+            link->next = *head;
+            link->back = head;
+            if (*head != NULL) {
+                (*head)->back = &link->next;
+            }
+            *head = link;
         }
-        *head = link;
         __atomic_store_n(count, __atomic_load_n(count, __ATOMIC_RELAXED) + 1u, __ATOMIC_RELAXED);
         watch->used += 1u;
         watch->state = WF_GUARD_REGISTERED;
@@ -2473,41 +3406,172 @@ static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head) 
 }
 
 static void wf_watch_link_off(wf_watch_link *link) {
-    *link->back = link->next;
-    if (link->next != NULL) {
-        link->next->back = link->back;
+    if (link->test != NULL) {
+        wf_bucket_remove(link);
+    } else {
+        *link->back = link->next;
+        if (link->next != NULL) {
+            link->next->back = link->back;
+        }
     }
     __atomic_store_n(link->count, __atomic_load_n(link->count, __ATOMIC_RELAXED) - 1u, __ATOMIC_RELAXED);
 }
 
-/* Wakes every watch on a unit's list, under the watch lock: takes each
- * watch's links off every list, its chunks onto `dead`, to give back once
- * the lock is released, and answers the contexts of parked watches, chained
- * through `next`, to make ready then. */
+/* Detach exactly one notification under wf_watch_lock. Its context's age
+ * stays live across retries; every link is removed, including other units. */
+static wf_context *wf_watch_wake_one_locked(wf_watch *watch, wf_watch_chunk **dead) {
+    wf_watch_chunk *chunk;
+    for (uint32_t index = 0u; index < wf_watch_inline_used(watch); ++index)
+        wf_watch_link_off(&watch->links[index]);
+    while ((chunk = watch->more) != NULL) {
+        for (uint32_t index = 0u; index < chunk->used; ++index)
+            wf_watch_link_off(&chunk->links[index]);
+        watch->more = chunk->next;
+        chunk->next = *dead;
+        *dead = chunk;
+    }
+    watch->used = 0u;
+    WF_GUARD_COUNT(WF_GUARD_COUNT_WOKEN);
+#if WF_GUARD_COUNTERS
+    watch->context->guard_retry = watch->context->guard_has_object;
+#endif
+#if WF_GUARD_TEST_HOOKS
+    wf__watch_seen(WF_WATCH_READY);
+#endif
+    if (watch->state == WF_GUARD_PARKED) {
+        watch->state = WF_GUARD_IDLE;
+        watch->context->next = NULL;
+        return watch->context;
+    }
+    watch->state = WF_GUARD_WOKEN;
+    return NULL;
+}
+
+/* The oldest watch on `shared` whose test holds in its state, whose key
+ * follows `after` (any when NULL) and whose statement began waiting no
+ * later than `cutoff`; each bucket's test is evaluated once. */
+static wf_watch_link *wf_wake_select(wf_shared *shared, const wf_context *after, uint64_t cutoff) {
+    wf_watch_link *oldest = NULL;
+    for (wf_watch_link *newest = shared->watching; newest != NULL; newest = newest->bucket_next) {
+        wf_watch_link *link = newest->next;
+        /* A bucket whose oldest candidate is no older than the best one so
+         * far cannot supply the answer, so its test need not run. */
+        for (;;) {
+            const wf_context *context = link->watch->context;
+            if (context->guard_started > cutoff) {
+                link = NULL;
+                break;
+            }
+            if (after == NULL || wf_guard_before(after, context)) break;
+            if (link == newest) {
+                link = NULL;
+                break;
+            }
+            link = link->next;
+        }
+        if (link == NULL
+            || (oldest != NULL && !wf_guard_before(link->watch->context, oldest->watch->context)))
+            continue;
+        if (wf_wake_holds(newest->test, shared)) oldest = link;
+    }
+    return oldest;
+}
+
+/* Whether a watch older than the threshold at `now` refuses newcomers. */
+static unsigned wf_wake_reserves(const wf_shared *shared, const wf_context *owner, uint64_t now) {
+    uint64_t started = owner->guard_started;
+    return started != 0u && now >= started && now - started > WF_GUARD_TURN_AGE_NS
+        && atomic_load_explicit(&shared->granted, memory_order_relaxed) == NULL;
+}
+
+/* Gives the object's notification to `link`'s watch: its context owns it
+ * until its retry releases the object. A context that already owns another
+ * object's notification is woken without it, and the next watch after it
+ * is given this one, so a multi-object retry keeps its first release
+ * obligation and no watch whose test holds loses this write. Both locks
+ * are held; answers the contexts to make ready. */
+static wf_context *wf_wake_notify_locked(wf_shared *shared, wf_watch_link *link, uint64_t cutoff,
+                                         unsigned rescan, wf_watch_chunk **dead, uint32_t *woken) {
+    wf_context *ready = NULL;
+    while (link != NULL) {
+        wf_watch *watch = link->watch;
+        wf_context *owner = watch->context;
+        int install = owner->shared_turn == NULL;
+        if (install) {
+            wf_shared_set_reservation(shared, owner);
+            owner->shared_turn = shared;
+            owner->guard_rescan = rescan;
+            owner->guard_cutoff = cutoff;
+            owner->guard_reserved = wf_wake_reserves(shared, owner, cutoff);
+#if WF_GUARD_COUNTERS
+            wf_guard_installed(owner);
+#endif
+        }
+        wf_context *parked = wf_watch_wake_one_locked(watch, dead);
+        if (woken != NULL) *woken += 1u;
+        if (parked != NULL) {
+            parked->next = ready;
+            ready = parked;
+        }
+        if (install) break;
+        link = wf_wake_select(shared, owner, cutoff);
+    }
+    return ready;
+}
+
+/* A sweep of `shared` after a write: the oldest watch whose test holds gets
+ * the notification, with the write's clock sample as the sweep's cutoff. */
+static wf_context *wf_wake_sweep_locked(wf_shared *shared, wf_watch_chunk **dead) {
+    uint32_t watched = __atomic_load_n(&shared->watched, __ATOMIC_RELAXED);
+    uint32_t woken = 0u;
+    wf_context *ready = NULL;
+    /* Every registered key was sampled before this lock was taken, so no
+     * cutoff is needed to select; the sample then bounds the sweep. */
+    wf_watch_link *oldest = watched != 0u ? wf_wake_select(shared, NULL, UINT64_MAX) : NULL;
+    if (oldest != NULL) {
+        uint64_t now = wf_guard_now();
+#if WF_GUARD_COUNTERS
+        if (wf_wake_reserves(shared, oldest->watch->context, now))
+            WF_GUARD_COUNT(WF_GUARD_COUNT_AGE_SELECTION);
+#endif
+        ready = wf_wake_notify_locked(shared, oldest, now, 0u, dead, &woken);
+    }
+#if WF_GUARD_COUNTERS
+    if (watched > woken) wf_guard_add(WF_GUARD_COUNT_WAKE_AVOIDED, watched - woken);
+#endif
+    return ready;
+}
+
+/* A write to `shared`: a sweep, or, while another context owns the object's
+ * notification, a rescan once its sweep ends when a watch whose test holds
+ * lies behind that sweep's cursor or past its cutoff; the untried watches
+ * between them will see this write when the notification reaches them. */
+static wf_context *wf_wake_written_locked(wf_shared *shared, wf_watch_chunk **dead) {
+    wf_context *owner = wf_shared_reservation(shared);
+    if (owner == NULL) return wf_wake_sweep_locked(shared, dead);
+    if (owner->guard_rescan) return NULL;
+    for (wf_watch_link *newest = shared->watching; newest != NULL; newest = newest->bucket_next) {
+        if ((wf_guard_before(owner, newest->next->watch->context)
+             && newest->watch->context->guard_started <= owner->guard_cutoff)
+            || !wf_wake_holds(newest->test, shared))
+            continue;
+        owner->guard_rescan = 1u;
+        break;
+    }
+    return NULL;
+}
+
+/* A table write's notifications, under the watch lock: wakes every watch
+ * on the table's list, which has no wake test, and answers the contexts of
+ * parked watches, chained through `next`, to make ready. */
 static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **dead) {
     wf_context *ready = NULL;
     while (*head != NULL) {
         wf_watch *watch = (*head)->watch;
-        uint32_t index;
-        wf_watch_chunk *chunk;
-        for (index = 0u; index < wf_watch_inline_used(watch); index++) {
-            wf_watch_link_off(&watch->links[index]);
-        }
-        while ((chunk = watch->more) != NULL) {
-            for (index = 0u; index < chunk->used; index++) {
-                wf_watch_link_off(&chunk->links[index]);
-            }
-            watch->more = chunk->next;
-            chunk->next = *dead;
-            *dead = chunk;
-        }
-        watch->used = 0u;
-        if (watch->state == WF_GUARD_PARKED) {
-            watch->state = WF_GUARD_IDLE;
-            watch->context->next = ready;
-            ready = watch->context;
-        } else {
-            watch->state = WF_GUARD_WOKEN;
+        wf_context *woken = wf_watch_wake_one_locked(watch, dead);
+        if (woken != NULL) {
+            woken->next = ready;
+            ready = woken;
         }
     }
     return ready;
@@ -2543,7 +3607,7 @@ void wf__watch_written(wf_watch_list *list) {
 }
 
 void wf__watch_unit(void *watch, wf_watch_list *list) {
-    wf_watch_on((wf_watch *)watch, &list->count, &list->links);
+    wf_watch_on((wf_watch *)watch, &list->count, &list->links, NULL, NULL);
 }
 
 int wf__watch_park(void *watch_frame, void *frame) {
@@ -2555,6 +3619,9 @@ int wf__watch_park(void *watch_frame, void *frame) {
     wf_spin_lock(&wf_watch_lock);
     self->watching = NULL;
     if (watch->state == WF_GUARD_WOKEN) {
+#if WF_GUARD_COUNTERS
+        self->guard_false_retry = 0u;
+#endif
         watch->state = WF_GUARD_IDLE;
         wf_spin_unlock(&wf_watch_lock);
         wf__watch_seen(WF_WATCH_EARLY);
@@ -2563,9 +3630,14 @@ int wf__watch_park(void *watch_frame, void *frame) {
     /* A watch registered on no unit waits for a write no statement makes,
      * and its statement does not complete, as one whose guard is false at
      * every point does not [SHARE-3]. */
+#if WF_GUARD_COUNTERS
+    if (self->guard_false_retry) WF_GUARD_COUNT(WF_GUARD_COUNT_SPURIOUS);
+    self->guard_false_retry = 0u;
+#endif
     watch->state = WF_GUARD_PARKED;
     self->resume = frame;
     wf_context_parked_away = 1;
+    wf_context_arm_wake(self);
     wf_spin_unlock(&wf_watch_lock);
     return 1;
 }
@@ -2576,7 +3648,8 @@ int wf__watch_park(void *watch_frame, void *frame) {
  * WF_SHARED_STATE_OFFSET.  `holders` counts the atomic statements holding
  * it: zero when it is free, the number of readers, or WF_SHARED_WRITER.
  * The entries take a read or a write request, but lowering makes only write
- * requests today, so the read path runs in no program (docs/todo.md).
+ * requests today, so the read path runs in no program (status board item
+ * coord-wfbl-03-17).
  * A statement that finds the object held spins for a bounded time, since a
  * holder's block cannot wait and so its holder is running; one that still
  * finds it held parks in `waiting`.  An unlock wakes the first parked
@@ -2586,45 +3659,30 @@ int wf__watch_park(void *watch_frame, void *frame) {
  * back to the head of the queue, and once WF_SHARED_HANDOFF unlocks have
  * woken it in vain the next one hands it the object, so a parked statement
  * is overtaken a bounded number of times [WAIT-2].  A statement that holds a
- * keyed table's entries when it takes the object cannot park, and may run on
- * the driver whose queue holds the context an unlock handed the object to,
- * so it borrows that hold and gives it back when it ends
- * (wf__shared_take); the context keeps the object, and
- * once it runs again it waits only for the borrower under way.  The watches
- * of guards that read the object sit on `watching`, `watched` of them (the
- * guard-watch section), until a statement that writes the object ends. */
-typedef struct wf_shared {
-    _Atomic uint64_t handles;
-    atomic_flag lock;
-    /* Set while a statement that cannot park borrows the hold an unlock
-     * handed a parked context, and once that context runs again and waits
-     * for the hold back, which ends the borrowing. */
-    _Atomic uint8_t borrowed;
-    _Atomic uint8_t claimed;
-    uint32_t watched;
-    _Atomic uint64_t holders;
-    wf_context *waiting_head;
-    wf_context *waiting_tail;
-    wf_watch_link *watching;
-    /* The parked context an unlock handed the object to, until it resumes
-     * and takes it. */
-    _Atomic(wf_context *) granted;
-    size_t pool_bytes;
-} wf_shared;
+ * keyed table's entries, or an earlier object, when it takes the object
+ * cannot park, and may run on the driver whose queue holds the context an
+ * unlock handed the object to, so it borrows that hold and gives it back
+ * when it ends (wf__shared_take); the context keeps the object, and once it
+ * runs again it waits only for the borrower under way.  Such a statement
+ * that misses the object queues a claim, which refuses every newcomer, and
+ * unlocks grant claims in turn with parked contexts' hand-offs, so it too
+ * is overtaken a bounded number of times.  The watches of guards that read
+ * the object sit on `watching`, `watched` of them (the guard-watch
+ * section), until a statement that writes the object ends. */
+
 _Static_assert(
     sizeof(wf_shared) <= WF_SHARED_STATE_OFFSET,
     "a shared object's header must end before its state"
+);
+_Static_assert(
+    _Alignof(wf_context) > 1u && _Alignof(wf_shared_take_claim) > 1u,
+    "a reservation's and a claim's addresses leave the arbiter's low bit clear"
 );
 #define WF_SHARED_WRITER UINT64_MAX
 /* How many times a statement that finds its object held looks again before
  * it parks: long enough for a block's compute, short against a park and a
  * wake. */
 #define WF_SHARED_SPINS 256u
-/* How many unlocks wake a parked statement to try again before the next one
- * hands it the object: one retry lets the common case keep the object with a
- * running context, and the bound keeps a statement from being overtaken
- * without end. */
-#define WF_SHARED_HANDOFF 2u
 
 /* What the object's test observes (bridge.h); a program links this, which
  * does nothing. */
@@ -2632,15 +3690,15 @@ __attribute__((weak)) void wf__shared_seen(unsigned moment) {
     (void)moment;
 }
 
-/* The runtime's concurrent maps, the keyed tables (keyed_table.c), number
- * their users by driver. */
+/* Map users are exclusive to physical executors, including while a displaced
+ * invocation keeps its keyed holds. Resumption migrates only after release. */
 _Static_assert(
-    WF_DRIVER_LIMIT <= WF_CMAP_MAX_USERS,
-    "every driver must number a user of a concurrent map"
+    WF_EXECUTOR_LIMIT <= WF_CMAP_MAX_USERS,
+    "every physical executor must number a user of a concurrent map"
 );
 
 unsigned wf__driver_index(void) {
-    return wf_driver_self != NULL ? wf_driver_self->index : 0u;
+    return wf_executor_index;
 }
 
 void *wf__runtime_take(uint64_t bytes) {
@@ -2655,12 +3713,58 @@ void wf__runtime_give(void *block, uint64_t bytes) {
     wf_pool_give(block, wf_pool_granted((size_t)bytes));
 }
 
+uint64_t wf__runtime_granted(uint64_t bytes) {
+    if (bytes > SIZE_MAX) {
+        wf_context_exhausted();
+    }
+    return (uint64_t)wf_pool_granted((size_t)bytes);
+}
+
 void wf__runtime_yield(void) {
     wf_prim_yield();
 }
 
 _Noreturn void wf__runtime_exhausted(void) {
     wf_context_exhausted();
+}
+
+/* Frozen storage uses the shared runtime's pool and handle-count protocol,
+ * without holders, guards or a lock. Publication to contexts/workers uses
+ * their ordinary release/acquire handoff; retaining an already live handle
+ * therefore needs only a relaxed increment. Every reader completes before
+ * its acq_rel decrement, and the last decrement acquires those completions. */
+typedef struct {
+    _Atomic uint64_t handles;
+    size_t pool_bytes;
+    _Alignas(max_align_t) unsigned char value[];
+} wf_frozen;
+
+static wf_frozen *wf_frozen_header(void *value) {
+    return (wf_frozen *)((unsigned char *)value - offsetof(wf_frozen, value));
+}
+
+void *wf__frozen_new(uint64_t value_bytes) {
+    size_t granted;
+    if (value_bytes > SIZE_MAX - sizeof(wf_frozen)) {
+        wf_context_exhausted();
+    }
+    wf_frozen *frozen = wf_pool_take(sizeof(wf_frozen) + (size_t)value_bytes, &granted);
+    atomic_init(&frozen->handles, 1u);
+    frozen->pool_bytes = granted;
+    return frozen->value;
+}
+
+void wf__frozen_share(void *value) {
+    atomic_fetch_add_explicit(&wf_frozen_header(value)->handles, 1u, memory_order_relaxed);
+}
+
+int wf__frozen_release(void *value) {
+    return atomic_fetch_sub_explicit(&wf_frozen_header(value)->handles, 1u, memory_order_acq_rel) == 1u;
+}
+
+void wf__frozen_free(void *value) {
+    wf_frozen *frozen = wf_frozen_header(value);
+    wf_pool_give(frozen, frozen->pool_bytes);
 }
 
 void *wf__shared_new(uint64_t state_bytes) {
@@ -2696,11 +3800,108 @@ void wf__shared_free(void *object) {
     wf_pool_give(shared, shared->pool_bytes);
 }
 
+/* A separately decided control verdict, not exposed mutable shared state.
+ * Allocation and aliases use the existing shared lifetime protocol, while
+ * read and claim never touch that header's lock or holders. */
+typedef struct {
+    union {
+        wf_shared shared;
+        unsigned char header[WF_SHARED_STATE_OFFSET];
+    };
+    _Atomic unsigned int state;
+} wf_decision_cell;
+_Static_assert(offsetof(wf_decision_cell, state) == WF_SHARED_STATE_OFFSET,
+               "decision cells retain the ordinary shared header");
+_Static_assert(UINT_MAX == UINT32_MAX && sizeof(unsigned int) == sizeof(uint32_t),
+               "decision cells require a 32-bit unsigned int word");
+_Static_assert(ATOMIC_INT_LOCK_FREE == 2,
+               "decision cells require a lock-free 32-bit atomic word");
+
+void *wf__decision_cell_new(void) {
+    wf_decision_cell *cell = wf__shared_new(sizeof(*cell) - WF_SHARED_STATE_OFFSET);
+    atomic_init(&cell->state, WF_DECISION_OPEN);
+    return cell;
+}
+
+uint32_t wf__decision_cell_read(void *object) {
+    wf_decision_cell *cell = object;
+    return atomic_load_explicit(&cell->state, memory_order_seq_cst);
+}
+
+static uint32_t wf_decision_claim(void *object, uint32_t winner) {
+    wf_decision_cell *cell = object;
+    unsigned int expected = WF_DECISION_OPEN;
+    /* Exactly one strong CAS operation: failure returns the absorbing
+     * winner, so there is no runtime retry loop. On an LL/SC target the
+     * compiler may retry exclusive stores inside this lock-free operation;
+     * this is not a bound on machine instructions or a wait-free promise.
+     * The assertion above refuses a target needing a locking fallback. */
+    if (atomic_compare_exchange_strong_explicit(&cell->state, &expected, winner,
+                                               memory_order_seq_cst,
+                                               memory_order_seq_cst)) {
+        return winner;
+    }
+    return expected;
+}
+
+uint32_t wf__claim_written(void *cell) {
+    return wf_decision_claim(cell, WF_DECISION_WRITTEN);
+}
+
+uint32_t wf__claim_killed(void *cell) {
+    return wf_decision_claim(cell, WF_DECISION_KILLED);
+}
+
 /* Whether a statement asking to write, or to read, may hold the object now.
  * Called under the object's lock or, as a hint, without it. */
 static int wf_shared_admits(wf_shared *shared, uint32_t write) {
     uint64_t holders = atomic_load_explicit(&shared->holders, memory_order_relaxed);
     return write != 0u ? holders == 0u : holders != WF_SHARED_WRITER;
+}
+
+/* A new statement waits for the aged guards this object woke to attempt it.
+ * Statements already holding objects are exempt, as is shared_take for
+ * table entries: a retry may need their earlier locks first. The common
+ * case adds only the protected fairness-slot read to ordinary admission. */
+static int wf_shared_has_turn(wf_shared *shared) {
+    wf_context *owner = wf_shared_reservation(shared);
+    return owner != NULL && owner->guard_reserved;
+}
+static int wf_shared_turn_refuses(wf_shared *shared, wf_context *self, int exempt) {
+    return !exempt && wf_shared_has_turn(shared)
+        && self->shared_turn != shared && self->shared_holds == 0u;
+}
+/* A waiting claim refuses every statement that parks, readers, the
+ * reservation's owner and the cancellation update included: each holds
+ * nothing a claim's owner needs, which already holds every earlier target,
+ * and parking leaves its driver unblocked (wf__shared_take). The claim check
+ * reads the same slot as the turn's. */
+static int wf_shared_admits_context(wf_shared *shared, uint32_t write, wf_context *self, int exempt) {
+    if (wf_shared_claims(shared) != NULL) {
+        return 0;
+    }
+    int refused = wf_shared_turn_refuses(shared, self, exempt);
+    if (refused) WF_GUARD_COUNT(WF_GUARD_COUNT_REFUSED);
+    return !refused && wf_shared_admits(shared, write);
+}
+
+/* Actual acquisition, including handed/borrowed holds. A reservation
+ * survives until false repark or block exit.
+ * Saved guard targets are always reacquired before evaluation. Host timeout
+ * or cancellation returns a host-call outcome, never abandons an atomic
+ * retry. A cancellation guard that succeeds releases its reservation on all
+ * block-exit edges. There is no asynchronous guard-abort API; adding one
+ * would require unlinking/handing on the reservation before frame disposal. */
+static void wf_shared_took_locked(wf_shared *shared, wf_context *self) {
+#if !WF_GUARD_COUNTERS
+    (void)shared;
+#endif
+    if (self != NULL) {
+        self->shared_holds += 1u;
+#if WF_GUARD_COUNTERS
+        if (self->shared_turn == shared) wf_guard_handoff_taken(self);
+#endif
+    }
 }
 
 /* Takes a hold for a statement asking to write, or to read, under the
@@ -2717,17 +3918,17 @@ static void wf_shared_hold_locked(wf_shared *shared, uint32_t write) {
 /* Parks the running context in the object's queue: at its head when an
  * unlock woke it and it missed again, at its tail otherwise.  Called under
  * the object's lock. */
-static void wf_shared_park_locked(wf_shared *shared, wf_context *self, uint32_t write) {
-    self->next = NULL;
+static void wf_shared_park_locked(wf_shared *shared, wf_context *self, uint32_t write, int exempt) {
     self->shared_write = write;
-    if (self->shared_woken != 0u && shared->waiting_head != NULL) {
-        self->next = shared->waiting_head;
-        shared->waiting_head = self;
-    } else if (shared->waiting_tail != NULL) {
+    self->shared_exempt = (uint32_t)exempt;
+    if (shared->waiting_tail != NULL) {
+        self->next = shared->waiting_tail->next;
         shared->waiting_tail->next = self;
-        shared->waiting_tail = self;
+        if (self->shared_woken == 0u) {
+            shared->waiting_tail = self;
+        }
     } else {
-        shared->waiting_head = self;
+        self->next = self;
         shared->waiting_tail = self;
     }
 }
@@ -2735,15 +3936,43 @@ static void wf_shared_park_locked(wf_shared *shared, wf_context *self, uint32_t 
 /* Wakes the first parked statement once the object is free: to try again,
  * or, once WF_SHARED_HANDOFF unlocks have woken it in vain, holding the
  * object.  Called under the object's lock; returns the context to make ready
- * once the lock is released. */
+ * once the lock is released. An ordinary newcomer advances between finite
+ * guard sweeps. A handed hold retains the existing claimed/borrowed protocol. */
 static wf_context *wf_shared_wake_locked(wf_shared *shared) {
-    wf_context *first = shared->waiting_head;
-    if (first == NULL) {
+    wf_context *first;
+    wf_context *before;
+    if (shared->waiting_tail == NULL) {
         return NULL;
     }
-    shared->waiting_head = first->next;
-    if (shared->waiting_head == NULL) {
+    /* While a reservation refuses newcomers, a newcomer at the head would
+     * only park again with the object free, and the owner parked behind it
+     * would wait for an unlock no one makes: wake the first parked context
+     * the reservation admits. */
+    before = shared->waiting_tail;
+    if (wf_shared_has_turn(shared)) {
+        wf_context *candidate = before->next;
+        for (;;) {
+            if (candidate->shared_turn == shared || candidate->shared_holds != 0u
+                || candidate->shared_exempt != 0u) {
+                break;
+            }
+            if (candidate == shared->waiting_tail) {
+                /* A live reservation cannot be borrowed by a newcomer.
+                 * The ordinary queue advances between notification sweeps. */
+                return NULL;
+            }
+            before = candidate;
+            candidate = candidate->next;
+        }
+    }
+    first = before->next;
+    if (first == before) {
         shared->waiting_tail = NULL;
+    } else {
+        before->next = first->next;
+        if (first == shared->waiting_tail) {
+            shared->waiting_tail = before;
+        }
     }
     first->next = NULL;
     if (first->shared_woken >= WF_SHARED_HANDOFF) {
@@ -2774,7 +4003,9 @@ static void wf_shared_spin(unsigned *spins) {
  * has parked the frame, which then suspends; the emitted code calls this
  * again when the frame resumes, and that call answers 0 once the context
  * holds the object when an unlock handed it the object. */
-int wf__shared_acquire(void *object, uint32_t write, void *frame) {
+/* `exempt`: the waiting cancellation-state update [PRE-2], which is no
+ * guarded statement and whose firing must not wait for guards it woke. */
+static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int exempt) {
     wf_shared *shared = (wf_shared *)object;
     wf_context *self = wf_context_current;
     unsigned spins = 0u;
@@ -2798,6 +4029,7 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
         atomic_store_explicit(&shared->claimed, 0u, memory_order_relaxed);
         atomic_store_explicit(&self->shared_granted, 0u, memory_order_relaxed);
         atomic_store_explicit(&shared->granted, NULL, memory_order_relaxed);
+        wf_shared_took_locked(shared, self);
         wf_spin_unlock(&shared->lock);
         self->shared_woken = 0u;
         return 0;
@@ -2808,13 +4040,26 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
         return 1;
     }
     for (;;) {
+        /* The optimistic hint reads holders only: checking the reservation
+         * here too would add two relaxed loads to an uncontended
+         * acquisition. The one authoritative admission check is under the
+         * object's lock. */
         if (wf_shared_admits(shared, write)) {
             wf_spin_lock(&shared->lock);
-            if (wf_shared_admits(shared, write)) {
+            if (wf_shared_admits_context(shared, write, self, exempt)) {
                 wf_shared_hold_locked(shared, write);
+                wf_shared_took_locked(shared, self);
                 self->shared_woken = 0u;
                 wf_spin_unlock(&shared->lock);
                 return 0;
+            }
+            if (wf_shared_turn_refuses(shared, self, exempt)) {
+                self->resume = frame;
+                wf_context_parked_away = 1;
+                wf_context_arm_wake(self);
+                wf_shared_park_locked(shared, self, write, exempt);
+                wf_spin_unlock(&shared->lock);
+                return 1;
             }
             wf_spin_unlock(&shared->lock);
         }
@@ -2825,17 +4070,31 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
         wf_prim_spin_hint();
     }
     wf_spin_lock(&shared->lock);
-    if (wf_shared_admits(shared, write)) {
+    if (wf_shared_admits_context(shared, write, self, exempt)) {
         wf_shared_hold_locked(shared, write);
+        wf_shared_took_locked(shared, self);
         self->shared_woken = 0u;
         wf_spin_unlock(&shared->lock);
         return 0;
     }
     self->resume = frame;
     wf_context_parked_away = 1;
-    wf_shared_park_locked(shared, self, write);
+    wf_context_arm_wake(self);
+    wf_shared_park_locked(shared, self, write, exempt);
     wf_spin_unlock(&shared->lock);
     return 1;
+}
+
+int wf__shared_acquire(void *object, uint32_t write, void *frame) {
+#if WF_GUARD_COUNTERS
+    wf_context *self = wf_context_current;
+    wf_guard_acquire_begin(self);
+    int parked = wf_shared_acquire_as(object, write, frame, 0);
+    if (!parked) wf_guard_acquire_end(self);
+    return parked;
+#else
+    return wf_shared_acquire_as(object, write, frame, 0);
+#endif
 }
 
 /* Whether a statement that cannot park may borrow the hold an unlock handed
@@ -2853,41 +4112,175 @@ static int wf_shared_lendable(wf_shared *shared, int exact) {
             == (granted->shared_write != 0u ? WF_SHARED_WRITER : 1u);
 }
 
+/* Lends the hold an unlock handed a parked context to the running
+ * statement, alone, until its unlock gives it back.  Under the object's
+ * lock, once wf_shared_lendable has answered exactly. */
+static void wf_shared_lend_locked(wf_shared *shared) {
+    wf__shared_seen(WF_SHARED_LENT);
+    atomic_store_explicit(&shared->borrowed, 1u, memory_order_relaxed);
+    atomic_store_explicit(&shared->holders, WF_SHARED_WRITER, memory_order_relaxed);
+}
+
+/* Queues a missed take's claim at the tail of the object's claims, behind
+ * every claim already waiting.  Under the object's lock. */
+#ifndef WF_SHARED_TAKE_TEST_NO_ESCALATION
+static void wf_shared_claim_locked(wf_shared *shared, wf_shared_take_claim *claim) {
+    wf_shared_take_claim *tail = wf_shared_claims(shared);
+    claim->next = tail != NULL ? tail->next : claim;
+    if (tail != NULL) {
+        tail->next = claim;
+    }
+    wf_shared_set_claims(shared, claim);
+}
+#endif
+
+/* Gives the oldest claim the free object, or, when `borrow`, the hold an
+ * unlock handed a parked context, which wf_shared_lendable has admitted
+ * exactly, and ends the parked contexts' turn.  Under the object's lock. */
+static void wf_shared_grant_locked(wf_shared *shared, int borrow) {
+    wf_shared_take_claim *tail = wf_shared_claims(shared);
+    wf_shared_take_claim *claim = tail->next;
+    if (borrow) {
+        wf_shared_lend_locked(shared);
+    } else {
+        wf_shared_hold_locked(shared, claim->write);
+    }
+    if (claim == tail) {
+        wf_shared_set_claims(shared, NULL);
+    } else {
+        tail->next = claim->next;
+    }
+    shared->take_turn = 0u;
+    /* The claim's owner may return and leave its record as soon as it sees
+     * this store; neither the giver nor the queue touches it again. */
+    atomic_store_explicit(&claim->granted, 1u, memory_order_release);
+}
+
+/* The last hold has ended, under the object's lock: the first parked context
+ * is woken to try again, or handed the object, as wf_shared_wake_locked
+ * decides, and the oldest claim is granted the object when that leaves it
+ * free.  Once an unlock has handed a parked context the object while claims
+ * waited, the next one grants the oldest claim without waking anyone, so
+ * neither parked contexts nor claims wait behind the other without bound.
+ * Returns the context to make ready once the lock is released. */
+static wf_context *wf_shared_free_locked(wf_shared *shared) {
+    if (wf_shared_claims(shared) != NULL && shared->take_turn != 0u) {
+        wf_shared_grant_locked(shared, 0);
+        return NULL;
+    }
+    wf_context *woken = wf_shared_wake_locked(shared);
+    if (wf_shared_claims(shared) != NULL) {
+        if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u) {
+            wf_shared_grant_locked(shared, 0);
+        } else {
+            shared->take_turn = 1u;
+        }
+    }
+    return woken;
+}
+
+#ifdef WF_SHARED_TAKE_WITNESS
+/* Private to the witness, which includes this source and defines it: each
+ * failed look of a take, outside the object's lock, with its live claim.
+ * Other builds have neither the hook nor its call. */
+static void wf_shared_take_witness_missed(void *object, wf_shared_take_claim *claim);
+#endif
+
+/* How many misses, each confirmed under the object's lock, a take makes
+ * before it queues its claim.  Provisionally one: a later claim would leave
+ * a take that the host preempts after a miss with no claim on the object,
+ * while any number of statements overtake it; no workload has compared a
+ * larger count. */
+#define WF_SHARED_TAKE_ESCALATE 1u
+
 /* [SHARE-2] The object of a statement that already holds a keyed table's
- * entries, which keeps its driver until it ends, so the statement spins
- * rather than parks.  Every holder of an object is a running
- * context whose block waits for nothing, but for a parked context an unlock
- * handed the object to, which may wait in this very driver's queue: this
- * statement borrows such a hold, alone, and its unlock gives it back. */
+ * entries or an earlier object, which keeps its driver until it ends, so
+ * the statement spins rather than parks.  Every holder of an object is a
+ * running context whose block waits for nothing, but for a parked context
+ * an unlock handed the object to, which may wait in this very driver's
+ * queue: this statement borrows such a hold, alone, and its unlock gives it
+ * back.
+ *
+ * A take that misses the object under its lock queues a claim, which keeps
+ * the statement's place: while claims wait no statement takes the object
+ * but through them, a newcomer that reads included, and the take waits for
+ * an unlock to grant its claim (wf_shared_free_locked) or, as the oldest
+ * claim, borrows a hold handed to a parked context no one borrows or has
+ * claimed.  A later claim never borrows ahead of the oldest, and the
+ * borrow takes the oldest claim's turn, never the parked context's, which
+ * keeps its hold.  Claims ignore a guard's reservation, as the take always
+ * has: the reserved retry may need an entry or object this statement holds.
+ *
+ * With q claims ahead of a take's and h statements holding, or handed, the
+ * object when it queues (a borrower and the context whose hold it borrows
+ * both count), at most h + 2q + 1 statements hold the object before it:
+ * the h, the q, and one hand-off to a parked context before each of the
+ * q + 1 claims.  This assumes, as every hold does, that holders and handed
+ * contexts get to run; no count bounds how long the host takes to run this
+ * statement up to its first look under the lock.  A claim's owner already
+ * holds every target before the object in the lock order, so claims form no
+ * cycle with the holds a later target waits for. */
 void wf__shared_take(void *object, uint32_t write) {
     wf_shared *shared = (wf_shared *)object;
+    wf_shared_take_claim claim = { .next = NULL, .reservation = NULL, .write = write, .granted = 0u };
+    int queued = 0;
+#ifndef WF_SHARED_TAKE_TEST_NO_ESCALATION
+    unsigned misses = 0u;
+#endif
     unsigned spins = 0u;
     for (;;) {
-        if (wf_shared_admits(shared, write) || wf_shared_lendable(shared, 0)) {
-            int held = 1;
+        /* Every look takes the lock until the claim is queued, so the first
+         * miss is a confirmed one; a queued claim then needs the lock only
+         * to borrow, which the hint says may be possible. */
+        if (!queued || wf_shared_lendable(shared, 0)) {
+            int held = 0;
             wf_spin_lock(&shared->lock);
-            if (wf_shared_lendable(shared, 1)) {
-                wf__shared_seen(WF_SHARED_LENT);
-                atomic_store_explicit(&shared->borrowed, 1u, memory_order_relaxed);
-                atomic_store_explicit(&shared->holders, WF_SHARED_WRITER, memory_order_relaxed);
-            } else if (wf_shared_admits(shared, write)) {
+            if (queued) {
+                if (atomic_load_explicit(&claim.granted, memory_order_relaxed) == 0u
+                    && wf_shared_claims(shared)->next == &claim && wf_shared_lendable(shared, 1)) {
+                    wf_shared_grant_locked(shared, 1);
+                    held = 1;
+                }
+            } else if (wf_shared_claims(shared) == NULL && wf_shared_lendable(shared, 1)) {
+                wf_shared_lend_locked(shared);
+                held = 1;
+            } else if (wf_shared_claims(shared) == NULL && wf_shared_admits(shared, write)) {
                 wf_shared_hold_locked(shared, write);
-            } else {
-                held = 0;
+                held = 1;
+            }
+#ifndef WF_SHARED_TAKE_TEST_NO_ESCALATION
+            else if (++misses >= WF_SHARED_TAKE_ESCALATE) {
+                wf_shared_claim_locked(shared, &claim);
+                queued = 1;
+            }
+#endif
+            if (held) {
+                wf_shared_took_locked(shared, wf_context_current);
             }
             wf_spin_unlock(&shared->lock);
             if (held) {
                 return;
             }
         }
+        if (atomic_load_explicit(&claim.granted, memory_order_acquire) != 0u) {
+            /* An unlock granted the hold; this statement counts it, which
+             * the giver cannot do for a running context. */
+            wf_spin_lock(&shared->lock);
+            wf_shared_took_locked(shared, wf_context_current);
+            wf_spin_unlock(&shared->lock);
+            return;
+        }
+#ifdef WF_SHARED_TAKE_WITNESS
+        wf_shared_take_witness_missed(object, &claim);
+#endif
         /* A holder runs its block to the end, but a host may preempt its
          * thread, so after a while this one gives up its processor. */
         wf_shared_spin(&spins);
     }
 }
 
-/* After a statement wrote the object, under the object's lock: wakes every
- * watch on the object's list, unless the statement's own guard was false,
+/* After a statement wrote the object, under the object's lock: notifies its
+ * watchers by their wake tests, unless the statement's own guard was false,
  * answering the contexts to make ready and adding chunks to `dead`. */
 static wf_context *wf_shared_written_locked(wf_shared *shared, wf_watch_chunk **dead) {
     wf_context *ready = NULL;
@@ -2897,16 +4290,63 @@ static wf_context *wf_shared_written_locked(wf_shared *shared, wf_watch_chunk **
     wf__watch_seen(WF_WATCH_WRITTEN);
     if (!wf_watch_quiet()) {
         wf_spin_lock(&wf_watch_lock);
-        ready = wf_watch_wake_locked(&shared->watching, dead);
+        ready = wf_wake_written_locked(shared, dead);
         wf_spin_unlock(&wf_watch_lock);
     }
     return ready;
 }
 
-/* Ends one hold under the object's lock and returns the contexts to make
- * ready: the first parked statement once the object is free, woken or handed
- * the object, and, after a write, every context watching for one. */
-static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, int wrote, wf_watch_chunk **dead) {
+/* Ends a reservation on a false/read-only retry by passing the original
+ * write's notification to the next watch whose test holds, by age and
+ * identity. A successful write starts a fresh sweep instead. Return
+ * whether writes accumulated during the old sweep require another one; every
+ * old-sweep watch goes first, even young watches, so repeated exempt writes
+ * cannot continually reset its cursor.
+ * Both shared->lock and wf_watch_lock protect selection and publication. */
+static unsigned wf_guard_release_locked(wf_shared *shared, int wrote,
+                                        wf_watch_chunk **dead, wf_context **ready) {
+    wf_context *self = wf_context_current;
+    wf_context *owner = wf_shared_reservation(shared);
+    if (owner == NULL || owner != self) return 0u;
+    wf_spin_lock(&wf_watch_lock);
+    unsigned rescan = self->guard_rescan;
+    wf_shared_set_reservation(shared, NULL);
+    self->shared_turn = NULL;
+    self->guard_rescan = 0u;
+    self->guard_reserved = 0u;
+    /* A successful write starts a fresh sweep once this returns. A false
+     * retry or a success that wrote nothing passes the notification to the
+     * next watch whose test holds inside the sweep's cutoff. */
+    if (!(wrote && !wf_watch_quiet())) {
+        wf_watch_link *next = wf_wake_select(shared, self, self->guard_cutoff);
+        if (next != NULL) {
+            *ready = wf_wake_notify_locked(shared, next, self->guard_cutoff, rescan, dead, NULL);
+            if (wf_shared_reservation(shared) != NULL) {
+#if WF_GUARD_COUNTERS
+                if (wf_watch_quiet()) WF_GUARD_COUNT(WF_GUARD_COUNT_FALSE_HANDOFF);
+#endif
+                rescan = 0u;
+            }
+        }
+    } else {
+        rescan = 0u;
+    }
+    wf_spin_unlock(&wf_watch_lock);
+    return rescan;
+}
+
+/* Once a sweep finishes, advance the ordinary acquisition queue before
+ * starting another one. Its existing failed-wake count eventually grants
+ * the hold; a grant suppresses new reservations until that context takes
+ * it. A live reservation admits only its owner and the lock-order/cancel
+ * exemptions, never a newcomer. Thus renewal cannot defeat [WAIT-2]. A
+ * free unlock also grants waiting claims, in turn with the queue's hand-offs
+ * and whatever the reservation, after the releaser's own notification has
+ * passed on and before its write's sweep: a grant is a hold like any other,
+ * consumes no notification, and its holder's unlock sweeps or marks a
+ * rescan as every writer's does. */
+static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write,
+                                            int wrote, wf_watch_chunk **dead) {
     wf_context *ready = NULL;
     wf_context *woken = NULL;
     if (write != 0u) {
@@ -2914,11 +4354,27 @@ static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, 
     } else {
         atomic_fetch_sub_explicit(&shared->holders, 1u, memory_order_relaxed);
     }
-    if (wrote) {
-        ready = wf_shared_written_locked(shared, dead);
+    unsigned rescan = wf_guard_release_locked(shared, wrote, dead, &ready);
+    if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u)
+        woken = wf_shared_free_locked(shared);
+    /* Cross-unit early notifications may also be in ready. A write by an
+     * exempt holder merely marks the live reservation's notification. */
+    wf_context *written = wrote ? wf_shared_written_locked(shared, dead) : NULL;
+    if (rescan) {
+        wf_spin_lock(&wf_watch_lock);
+#if WF_GUARD_COUNTERS
+        /* An executed deferred notification pass with work still registered,
+         * not each writer's request or each re-evaluation of the flag. */
+        if (shared->watching != NULL) WF_GUARD_COUNT(WF_GUARD_COUNT_RESCAN);
+#endif
+        written = wf_wake_written_locked(shared, dead);
+        wf_spin_unlock(&wf_watch_lock);
     }
-    if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u) {
-        woken = wf_shared_wake_locked(shared);
+    if (written != NULL) {
+        wf_context *tail = written;
+        while (tail->next != NULL) tail = tail->next;
+        tail->next = ready;
+        ready = written;
     }
     if (woken != NULL) {
         woken->next = ready;
@@ -2930,7 +4386,7 @@ static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, 
 /* Gives a borrowed hold back to the parked context it was handed to, and
  * returns, after a write, every context watching for one.  Called under the
  * object's lock. */
-static wf_context *wf_shared_give_back_locked(wf_shared *shared, uint32_t write, wf_watch_chunk **dead) {
+static wf_context *wf_shared_give_back_locked(wf_shared *shared, int wrote, wf_watch_chunk **dead) {
     wf_context *granted = atomic_load_explicit(&shared->granted, memory_order_relaxed);
     wf_context *ready = NULL;
     atomic_store_explicit(
@@ -2939,40 +4395,76 @@ static wf_context *wf_shared_give_back_locked(wf_shared *shared, uint32_t write,
         memory_order_relaxed
     );
     atomic_store_explicit(&shared->borrowed, 0u, memory_order_relaxed);
-    if (write != 0u) {
-        ready = wf_shared_written_locked(shared, dead);
+    unsigned rescan = wf_guard_release_locked(shared, wrote, dead, &ready);
+    wf_context *written = wrote ? wf_shared_written_locked(shared, dead) : NULL;
+    if (rescan) {
+        wf_spin_lock(&wf_watch_lock);
+#if WF_GUARD_COUNTERS
+        /* An executed deferred notification pass with work still registered,
+         * not each writer's request or each re-evaluation of the flag. */
+        if (shared->watching != NULL) WF_GUARD_COUNT(WF_GUARD_COUNT_RESCAN);
+#endif
+        written = wf_wake_written_locked(shared, dead);
+        wf_spin_unlock(&wf_watch_lock);
+    }
+    if (written != NULL) {
+        wf_context *tail = written;
+        while (tail->next != NULL) tail = tail->next;
+        tail->next = ready;
+        ready = written;
     }
     return ready;
 }
 
 /* While a hold is borrowed it is the only one, so the unlock that comes
- * then is the borrower's. */
-void wf__shared_unlock(void *object, uint32_t write) {
+ * then is the borrower's. `wrote` says whether the statement's block may
+ * have written the object; `write` is the hold's kind. */
+static void wf_shared_unlock_as(void *object, uint32_t write, int wrote) {
     wf_shared *shared = (wf_shared *)object;
     wf_context *ready;
     wf_watch_chunk *dead = NULL;
+    if (wf_context_current != NULL) wf_context_current->shared_holds -= 1u;
     wf_spin_lock(&shared->lock);
     if (atomic_load_explicit(&shared->borrowed, memory_order_relaxed) != 0u) {
-        ready = wf_shared_give_back_locked(shared, write, &dead);
+        ready = wf_shared_give_back_locked(shared, wrote, &dead);
     } else {
-        ready = wf_shared_end_hold_locked(shared, write, write != 0u, &dead);
+        ready = wf_shared_end_hold_locked(shared, write, wrote, &dead);
     }
     wf_spin_unlock(&shared->lock);
+    /* Keep the age until reservation transfer has used its sweep cursor.
+     * False releases preserve it; successful exit clears it after the last
+     * ordinary hold, including read-only holds and every block-exit edge. */
+    if (wf_context_current != NULL && wf_context_current->shared_holds == 0u
+        && !wf_watch_quiet()) {
+        wf_context_current->guard_started = 0u;
+#if WF_GUARD_COUNTERS
+        wf_context_current->guard_retry = 0u;
+#endif
+    }
     wf_watch_give_back(dead);
     wf_ready_all(ready);
 }
 
+void wf__shared_unlock(void *object, uint32_t write) {
+    wf_shared_unlock_as(object, write, write != 0u);
+}
+
+void wf__shared_unlock_unwritten(void *object, uint32_t write) {
+    wf_shared_unlock_as(object, write, 0);
+}
+
 /* A guard that read the object: registered while the statement holds the
  * object, which no writer can change before the hold ends. */
-void wf__watch_object(void *watch, void *object) {
+void wf__watch_object(void *watch, void *object, const void *test) {
     wf_shared *shared = (wf_shared *)object;
-    wf_watch_on((wf_watch *)watch, &shared->watched, &shared->watching);
+    wf_watch_on((wf_watch *)watch, &shared->watched, &shared->watching, shared,
+                (const wf_wake_test *)test);
 }
 
 /* A guard that read only the object registers the context's own watch; one
  * that also read a table has begun and registered a watch of its own, which
  * this one joins. */
-int wf__shared_watch(void *object, uint32_t write, void *frame) {
+int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test) {
     wf_shared *shared = (wf_shared *)object;
     wf_context *self = wf_context_current;
     wf_context *ready;
@@ -2986,8 +4478,9 @@ int wf__shared_watch(void *object, uint32_t write, void *frame) {
         watch = &self->shared_watch;
         wf__watch_begin(watch);
     }
-    wf_watch_on(watch, &shared->watched, &shared->watching);
+    wf_watch_on(watch, &shared->watched, &shared->watching, shared, (const wf_wake_test *)test);
     self->shared_woken = 0u;
+    self->shared_holds -= 1u;
     wf_spin_lock(&shared->lock);
     /* The guard wrote nothing, so no watcher has a change to see. */
     ready = wf_shared_end_hold_locked(shared, write, 0, &dead);
@@ -3006,16 +4499,18 @@ int wf__shared_watch(void *object, uint32_t write, void *frame) {
  * driver harvests it.
  *
  * The pass over the drivers is not one instant, so it is a double collect:
- * each driver's idleness is read before its counts, which its thread writes
- * and its seq_cst announcement of idleness publishes, and its host waits
- * before its ready count, since a host wait ends only after its context is
- * ready (`wf_context_host_wait_ended`), and the answer holds
- * only if no driver entered or left idleness and no steal ended or was under
- * way between the reads of `wf_drivers_changes` around the pass. Every slot of
+ * each driver's idleness is read before its counts, and its host waits before
+ * its ready count (`wf_context_host_wait_ended`). Active invocations are read
+ * first, including displaced computation; ingress stays counted until fully
+ * adopted. Transfers remain moving until RESERVED is acquired. The answer
+ * holds only if no invocation committed, no driver entered or left idleness
+ * and no steal, probe or borrow ended or was under way between the
+ * reads of `wf_drivers_changes` around the pass. Every slot of
  * the driver table is read, not only the counted ones, because a driver that
  * has just started may take contexts before the count includes it. */
 static int wf_contexts_stuck(const wf_driver *self) {
     uint64_t before = atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst);
+    if (atomic_load_explicit(&wf_active_invocations, memory_order_seq_cst) != 0u) return 0;
     unsigned index;
     for (index = 0; index < WF_DRIVER_LIMIT; index++) {
         wf_driver *other = atomic_load_explicit(&wf_drivers[index], memory_order_seq_cst);
@@ -3026,7 +4521,8 @@ static int wf_contexts_stuck(const wf_driver *self) {
             && atomic_load_explicit(&other->idle, memory_order_seq_cst) == 0u) {
             return 0;
         }
-        if (atomic_load_explicit(&other->host_waits, memory_order_seq_cst) != 0u
+        if (atomic_load_explicit(&other->ingress_count, memory_order_seq_cst) != 0u
+            || atomic_load_explicit(&other->host_waits, memory_order_seq_cst) != 0u
             || atomic_load_explicit(&other->run_count, memory_order_seq_cst) != 0u) {
             return 0;
         }
@@ -3042,6 +4538,19 @@ static int wf_contexts_stuck(const wf_driver *self) {
  * [PRE-2]. */
 #define WF_DEADLINE_RETRY_NS 1000000u
 
+/* Timer ownership covers sleeps and already-expired watched operations. A
+ * sleep reaching its clock is successful; a transfer that never dispatched
+ * must retain the zero-transfer deadline outcome through every service path. */
+static void wf_bridge_timer_result(wf_completion_record *record, int cancelled) {
+    int stopped = cancelled || record->request.kind != WF_FILE_SLEEP;
+    record->result.kind = record->request.kind;
+    record->result.value = stopped ? -1 : 0;
+    record->result.error_code = stopped ? wf_file_cancelled_error() : 0;
+    if (stopped)
+        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                              memory_order_release);
+}
+
 /* Ends the waits of every context on this driver whose deadline the monotonic
  * clock has reached [PRE-2]: a sleep completes; an operation polled for
  * readiness here completes with nothing transferred, since its transfer is
@@ -3049,46 +4558,179 @@ static int wf_contexts_stuck(const wf_driver *self) {
  * give up through the route that holds it, and completes there with its own
  * outcome or with a cancellation.  Returns nonzero when it made a context
  * ready. */
-static int wf_driver_expire(wf_driver *driver) {
-    int moved = 0;
-    uint64_t now;
-    if (driver->timer_count == 0) return 0;
-    now = wf_file_monotonic_ns();
-    while (driver->timer_count != 0 && driver->timers[0]->timer_at <= now) {
-        wf_context *context = driver->timers[0];
-        wf_completion_record *record = context->record;
-        wf_timer_remove(driver, context);
-        if (record == NULL) continue;
-        if (record->route == WF_COMPLETION_ROUTE_TIMER) {
-            record->result.kind = record->request.kind;
-            record->result.value = 0;
-            wf_completion_record_complete(record);
-            moved = 1;
-            continue;
-        }
-        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
-                              memory_order_release);
-        if (context->poll_events != 0) {
-            wf_context_unlink(&driver->polling, context);
-            driver->polling_count -= 1u;
-            context->poll_events = 0;
-            record->route = WF_COMPLETION_ROUTE_INLINE;
-            record->result.kind = record->request.kind;
-            record->result.value = -1;
-            record->result.error_code = wf_file_cancelled_error();
-            atomic_fetch_add_explicit(&wf_bridge_publications, 1, memory_order_relaxed);
-            wf_completion_record_publish(record);
-            context->record = NULL;
-            wf_context_ready(context);
-            wf_context_host_wait_ended(driver);
-            moved = 1;
-            continue;
-        }
-        if (wf_bridge_cancel(record)) {
-            wf_timer_insert(driver, context, now + WF_DEADLINE_RETRY_NS);
-        }
+static int wf_driver_expire_wait(wf_driver *driver, wf_context *context, uint64_t now,
+                                  int cancelled) {
+    wf_completion_record *record = context->record;
+    wf_timer_remove(driver, context); /* also unlinks its cancellation watch */
+    if (record == NULL || wf_bridge_record_state(record) == WF_COMPLETION_DONE) return 0;
+    if (cancelled) record->wait_cancelled = 1;
+    if (record->route == WF_COMPLETION_ROUTE_TIMER) {
+        wf_bridge_timer_result(record, cancelled);
+        wf_completion_record_complete(record);
+        return 1;
     }
+    atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                          memory_order_release);
+    if (context->poll_events != 0) {
+        wf_context_unlink(&driver->polling, context);
+        driver->polling_count -= 1u;
+        context->poll_events = 0;
+        record->route = WF_COMPLETION_ROUTE_INLINE;
+        record->result.kind = record->request.kind;
+        record->result.value = -1;
+        record->result.error_code = wf_file_cancelled_error();
+        atomic_fetch_add_explicit(&wf_bridge_publications, 1, memory_order_relaxed);
+        wf_completion_record_publish(record);
+        context->record = NULL;
+        wf_context_ready(context);
+        wf_context_host_wait_ended(driver);
+        return 1;
+    }
+    if (wf_bridge_cancel(record)) {
+        wf_timer_insert(driver, context, now + WF_DEADLINE_RETRY_NS);
+    }
+    return 0;
+}
+
+static int wf_driver_find_cancelled(wf_driver *driver) {
+    if (!atomic_load_explicit(&driver->cancel_pending, memory_order_acquire)) return 0;
+    if (!atomic_exchange_explicit(&driver->cancel_pending, 0u, memory_order_acquire))
+        return 0;
+    wf_context *context = driver->cancel_waits;
+    while (context != NULL) {
+        wf_context *next = context->cancel_next;
+        if (atomic_load_explicit(&context->cancel->fired, memory_order_acquire))
+            (void)wf_driver_expire_wait(driver, context, wf_file_monotonic_ns(), 1);
+        context = next;
+    }
+    return 1;
+}
+
+static int wf_driver_expire(wf_driver *driver) {
+    int moved = wf_driver_find_cancelled(driver);
+    if (driver->timer_count == 0) return moved;
+    uint64_t now = wf_file_monotonic_ns();
+    while (driver->timer_count != 0 && driver->timers[0]->timer_at <= now)
+        moved |= wf_driver_expire_wait(driver, driver->timers[0], now, 0);
     return moved;
+}
+
+/* D's service-only subset: no host execution, ring entry, cancellation
+ * syscall, engine lock, ready-queue lock or coroutine resume. A borrow must
+ * remain bounded, so it services sleeps and already-published records only.
+ * Full ring progress (including open classification and retry submission)
+ * belongs to SERVICE, including a replacement acquired from RESERVED.
+ *
+ * Scan at most one reap budget, retaining a cursor so pending records cannot
+ * hide terminal records forever. The heap and hash are touched only with
+ * the token. Removing a record costs its hash-chain walk and heap repair;
+ * the budget bounds records inspected, not wall time or list sizes. */
+static wf_context *wf_driver_service_only(wf_driver *driver, wf_driver *victim, uint64_t now) {
+    wf_context *ready = NULL;
+    wf_context **tail = &ready;
+    wf_context *context = victim->borrow_cursor != NULL
+        ? victim->borrow_cursor : victim->parked;
+    for (unsigned inspected = 0; context != NULL && inspected < WF_BRIDGE_REAP_BUDGET;
+         ++inspected) {
+        wf_context *next = context->next;
+        wf_completion_record *record = context->record;
+        int terminal = wf_bridge_record_state(record) == WF_COMPLETION_DONE;
+        int cancelled = 0;
+        int due = 0;
+        if (!terminal && record->route == WF_COMPLETION_ROUTE_TIMER) {
+            cancelled = context->cancel != NULL
+                && atomic_load_explicit(&context->cancel->fired, memory_order_acquire);
+            due = context->timer_slot != 0 && context->timer_slot != WF_CANCEL_ONLY
+                && context->timer_at <= now;
+        }
+        if (terminal || due || cancelled) {
+            if (terminal) atomic_fetch_add_explicit(
+                &wf_driver_stats[driver->index].borrowed_terminals, 1u, memory_order_relaxed);
+            else if (due && !cancelled && record->request.kind == WF_FILE_SLEEP)
+                atomic_fetch_add_explicit(
+                    &wf_driver_stats[driver->index].borrowed_sleeps, 1u, memory_order_relaxed);
+            wf_context_unpark(victim, context);
+            context->record = NULL;
+            if (!terminal) {
+                record->wait_cancelled = (unsigned)cancelled;
+                wf_bridge_timer_result(record, cancelled);
+                atomic_fetch_add_explicit(&wf_bridge_publications, 1u, memory_order_relaxed);
+                /* This suspended context is the only waiter. Notification
+                 * is its detached ready publication after releasing the token. */
+                wf_completion_record_publish(record);
+            }
+            *tail = context;
+            tail = &context->next;
+            wf_context_host_wait_ended(victim);
+        }
+        context = next;
+    }
+    victim->borrow_cursor = context != NULL ? context : victim->parked;
+    return ready;
+}
+
+/* Try each role at most once and service at most one. No waiting to borrow,
+ * and no coroutine or ready publication until the original token is back.
+ * The moving count covers detached contexts absent from both run queues. */
+static int wf_driver_assist(wf_driver *driver) {
+    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
+    for (unsigned tried = 0; tried < count; ++tried) {
+        unsigned index = driver->borrow_victim++ % count;
+        wf_driver *victim = atomic_load_explicit(&wf_drivers[index], memory_order_acquire);
+        uint64_t outside;
+        if (victim == NULL || victim == driver) continue;
+        atomic_fetch_add_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+        atomic_fetch_add_explicit(&wf_driver_stats[driver->index].borrow_attempts,
+            1u, memory_order_relaxed);
+        if (!wf_driver_try_borrow(victim, &outside)) {
+            atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+            continue;
+        }
+        atomic_fetch_add_explicit(&wf_driver_stats[driver->index].borrows,
+            1u, memory_order_relaxed);
+        wf_context *ready = wf_driver_service_only(driver, victim, wf_file_monotonic_ns());
+        wf_driver_release_borrow(victim, outside);
+        int moved = ready != NULL;
+        while (ready != NULL) {
+            wf_context *next = ready->next;
+            ready->driver = driver;
+            wf_run_push(driver, ready);
+            ready = next;
+        }
+        atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
+        atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+        return moved;
+    }
+    return 0;
+}
+
+/* A finite idle poll closes departure-after-scan: an owner can publish
+ * OUTSIDE after every peer has looked and gone to sleep, without paying a
+ * wake or a clock read on each resume. Even a scan finding no OUTSIDE role
+ * must keep this bound. It also notices newly published completions. There
+ * is also a deadline monitor, but idle peers get first chance to borrow.
+ * One driver retains its ordinary deadline-only service park. The interval is a service policy,
+ * not a latency guarantee, and its idle CPU cost needs CI measurement. */
+#define WF_DRIVER_ASSIST_WAIT_MS 1u
+static uint32_t wf_driver_wait_ms(const wf_driver *driver) {
+    uint32_t bound = wf_timer_wait_ms(driver);
+    if (atomic_load_explicit(&wf_driver_count, memory_order_acquire) > 1u
+        && bound > WF_DRIVER_ASSIST_WAIT_MS) return WF_DRIVER_ASSIST_WAIT_MS;
+    return bound;
+}
+
+/* Descriptor polling has no runtime-wake endpoint. A displaced invocation
+ * can commit even when this role has only descriptor waits, so cap that
+ * poll. Read active before ingress: observing the last invocation's decrement
+ * must also expose its prior commit, never an unbounded zero-work gap. */
+static int wf_driver_poll_wait_ms(const wf_driver *driver) {
+    unsigned active = atomic_load_explicit(&wf_active_invocations, memory_order_seq_cst);
+    if (atomic_load_explicit(&driver->ingress_count, memory_order_seq_cst)) return 0;
+    uint32_t bound = wf_driver_wait_ms(driver);
+    int timeout = driver->parked != NULL || active ? 1 : -1;
+    if (bound != UINT32_MAX && (timeout < 0 || bound < (uint32_t)timeout))
+        timeout = (int)(bound > (uint32_t)INT_MAX ? INT_MAX : bound);
+    return timeout;
 }
 
 /* How many contexts a driver resumes before it looks for host completions
@@ -3109,52 +4751,116 @@ static void wf_driver_reap(wf_driver *driver) {
     }
 }
 
+enum { WF_HAND_BACK_WAIT, WF_HAND_BACK_READY, WF_HAND_BACK_COMPLETE };
+
+static void wf_context_adopt(wf_driver *driver, wf_context *context) {
+    if (context->disposition_wake) {
+        wf_context_commit_wake(context);
+    } else if (context->disposition == WF_HAND_BACK_COMPLETE) {
+        if (context == &wf_context_root) {
+            atomic_store_explicit(&wf_context_root_done, 1u, memory_order_release);
+            wf_completion_notify_target(wf_driver_root.runtime);
+            if (atomic_load_explicit(&wf_executors[0].ready, memory_order_acquire))
+                wf_completion_notify_target(&wf_executors[0].wake);
+        } else wf_context_finish(context);
+    } else if (context->disposition == WF_HAND_BACK_WAIT) {
+        wf_context_adopt_wait(driver, context);
+    } else {
+        wf_context_ready(context);
+    }
+    /* Adoption can release the context or let a waker release it. */
+}
+
+static void wf_context_ingress(wf_driver *driver, wf_context *context) {
+    wf_spin_lock(&driver->ingress_lock);
+    context->ingress_next = NULL;
+    if (driver->ingress_tail) driver->ingress_tail->ingress_next = context;
+    else driver->ingress_head = context;
+    driver->ingress_tail = context;
+    atomic_fetch_add_explicit(&driver->ingress_count, 1u, memory_order_seq_cst);
+    wf_spin_unlock(&driver->ingress_lock);
+    /* Never access context after publication, even for attribution. */
+    atomic_fetch_add_explicit(&wf_driver_stats[driver->index].ingress_commits,
+        1u, memory_order_relaxed);
+    wf_completion_notify_target(driver->runtime);
+}
+
+static int wf_driver_adopt_ingress(wf_driver *driver) {
+    if (!atomic_load_explicit(&driver->ingress_count, memory_order_acquire)) return 0;
+    wf_spin_lock(&driver->ingress_lock);
+    wf_context *context = driver->ingress_head;
+    driver->ingress_head = driver->ingress_tail = NULL;
+    wf_spin_unlock(&driver->ingress_lock);
+    int adopted = context != NULL;
+    while (context) {
+        wf_context *next = context->ingress_next;
+        wf_context_adopt(driver, context);
+        atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
+        atomic_fetch_sub_explicit(&driver->ingress_count, 1u, memory_order_seq_cst);
+        context = next;
+    }
+    return adopted;
+}
+
+/* Returns zero only when this physical executor lost its role. */
+static int wf_context_run(wf_driver *driver, wf_context *next) {
+    void *frame = next->resume;
+    driver->runs_since_reap += 1u;
+    if (driver->runs_since_reap >= WF_DRIVER_REAP_RUNS) wf_driver_reap(driver);
+    wf_driver_end_search(driver, 1);
+    if (atomic_load_explicit(&driver->run_count, memory_order_relaxed) != 0u) {
+        wf_drivers_wake_one();
+    }
+    next->resume = NULL;
+    next->driver = driver;
+    next->passes = 0u;
+    wf_context_current = next;
+    wf_context_parked_away = 0;
+    atomic_fetch_add_explicit(&wf_active_invocations, 1u, memory_order_seq_cst);
+    uint64_t outside = wf_driver_leave_service(driver);
+    wf_context_outside = outside;
+    wf__coro_resume(frame);
+    wf_context_current = NULL;
+    if (!wf_context_parked_away && wf__coro_done(next->root)
+        && (next->shared_turn != NULL || next->shared_holds != 0u)) {
+        wf_bridge_fail("a context finished with a shared hold or a guard turn");
+    }
+    next->disposition_wake = (unsigned)wf_context_parked_away;
+    next->disposition = wf_context_parked_away ? WF_HAND_BACK_WAIT
+        : wf__coro_done(next->root) ? WF_HAND_BACK_COMPLETE
+        : next->record != NULL ? WF_HAND_BACK_WAIT : WF_HAND_BACK_READY;
+    int retained = wf_driver_return_service(driver, outside);
+    if (retained) wf_context_adopt(driver, next);
+    else wf_context_ingress(driver, next);
+    atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
+    atomic_fetch_sub_explicit(&wf_active_invocations, 1u, memory_order_seq_cst);
+    return retained;
+}
+
 /* Runs this driver's contexts: resumes the next ready context, and with none
  * ready, or after WF_DRIVER_REAP_RUNS resumptions, reaps completions and
  * polls for readiness; with none ready it then parks the thread until a
- * context is ready.  Driver 0 returns when the root's outermost frame has
- * finished, and every other driver when the program stops them. */
-static void wf_context_drive(wf_driver *driver) {
+ * context is ready. Returns zero on role loss, one on root completion or
+ * shutdown. Physical executor zero alone performs launcher cleanup. */
+static int wf_context_drive(wf_driver *driver) {
     for (;;) {
+        (void)wf_driver_adopt_ingress(driver);
         wf_context *next = wf_run_take(driver);
         if (next != NULL) {
-            void *frame = next->resume;
-            driver->runs_since_reap += 1u;
-            if (driver->runs_since_reap >= WF_DRIVER_REAP_RUNS) {
-                wf_driver_reap(driver);
-            }
-            wf_driver_end_search(driver, 1);
-            if (atomic_load_explicit(&driver->run_count, memory_order_relaxed) != 0u) {
-                wf_drivers_wake_one();
-            }
-            next->resume = NULL;
-            next->driver = driver;
-            next->passes = 0u;
-            wf_context_current = next;
-            wf_context_parked_away = 0;
-            wf__coro_resume(frame);
-            wf_context_current = NULL;
-            if (wf_context_parked_away) {
-                continue;
-            }
-            if (wf__coro_done(next->root)) {
-                if (next == &wf_context_root) {
-                    return;
-                }
-                wf_context_finish(next);
-            }
+            if (!wf_context_run(driver, next)) return 0;
             continue;
         }
+        if (atomic_load_explicit(&wf_context_root_done, memory_order_acquire)) return 1;
         if (driver != &wf_driver_root
             && atomic_load_explicit(&wf_drivers_stopping, memory_order_acquire) != 0u) {
-            return;
+            return 1;
         }
         driver->runs_since_reap = 0u;
         if (wf_driver_expire(driver) || wf_context_harvest(driver) || wf_bridge_progress()) {
             continue;
         }
         {
-            int stole = wf_driver_steal(driver);
+            int stole = wf_driver_steal(driver) || wf_driver_assist(driver);
             wf_driver_end_search(driver, stole);
             if (stole) {
                 continue;
@@ -3162,24 +4868,22 @@ static void wf_context_drive(wf_driver *driver) {
         }
         {
             uint64_t epoch = wf_completion_wake_epoch(driver->runtime);
-            if (wf_context_harvest(driver)
+            /* Recheck cancellation after capturing the wake epoch: a fire
+             * before the capture must be consumed before this thread sleeps. */
+            if (wf_driver_adopt_ingress(driver) || wf_driver_find_cancelled(driver) || wf_context_harvest(driver)
                 || atomic_load_explicit(&driver->run_count, memory_order_relaxed) != 0u) {
                 continue;
             }
             if (driver != &wf_driver_root
                 && atomic_load_explicit(&wf_drivers_stopping, memory_order_acquire) != 0u) {
-                return;
+                return 1;
             }
+            if (atomic_load_explicit(&wf_context_root_done, memory_order_acquire)) return 1;
             if (driver->polling != NULL) {
                 /* A record another thread completes is seen within a
                  * millisecond; with none pending the poll waits for a peer,
                  * and never past this driver's earliest deadline. */
-                uint32_t bound = wf_timer_wait_ms(driver);
-                int timeout = driver->parked != NULL ? 1 : -1;
-                if (bound != UINT32_MAX && (timeout < 0 || bound < (uint32_t)timeout)) {
-                    timeout = (int)(bound > (uint32_t)INT_MAX ? INT_MAX : bound);
-                }
-                (void)wf_context_poll(driver, timeout);
+                (void)wf_context_poll(driver, wf_driver_poll_wait_ms(driver));
                 continue;
             }
             /* Announced before the last look, so a driver that makes a
@@ -3188,14 +4892,29 @@ static void wf_context_drive(wf_driver *driver) {
             atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
             atomic_store_explicit(&driver->idle, 1u, memory_order_seq_cst);
             atomic_fetch_add_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
-            if (wf_contexts_stuck(driver)) {
+            if (wf_contexts_stuck(driver)
+                && !atomic_load_explicit(&wf_context_root_done, memory_order_acquire)) {
                 wf_bridge_fail(
                     "every context waits for a guard or for another context, and no host operation is outstanding"
                 );
             }
-            if (atomic_load_explicit(&driver->run_count, memory_order_seq_cst) == 0u
-                && !wf_driver_steal(driver)) {
-                wf_bridge_park(epoch, wf_timer_wait_ms(driver));
+            if (atomic_load_explicit(&driver->ingress_count, memory_order_seq_cst) == 0u
+                && atomic_load_explicit(&driver->run_count, memory_order_seq_cst) == 0u
+                && !wf_driver_steal(driver) && !wf_driver_assist(driver)) {
+                uint32_t bound = wf_driver_wait_ms(driver);
+#if !defined(_WIN32)
+                atomic_store_explicit(&driver->service_token,
+                    driver->departure | WF_DRIVER_PARKED, memory_order_release);
+                wf_driver_service = NULL;
+#endif
+                int ring_waited = wf_bridge_wait(epoch, bound);
+#if !defined(_WIN32)
+                /* PARKED cannot be borrowed; only this executor leaves it. */
+                atomic_store_explicit(&driver->service_token,
+                    driver->departure | WF_DRIVER_SERVICE, memory_order_relaxed);
+                wf_driver_service = driver;
+#endif
+                if (ring_waited) (void)wf_bridge_progress();
             }
             if (atomic_exchange_explicit(&driver->idle, 0u, memory_order_seq_cst) != 0u) {
                 atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
@@ -3205,47 +4924,227 @@ static void wf_context_drive(wf_driver *driver) {
     }
 }
 
-#if defined(__linux__)
-
 /* The floor's stack reservation, which a driver thread takes like the
  * entry's thread; a probe that links the bridge without the floor starts no
- * driver and links this default of the host's own size. */
+ * driver and links this default of the host's own size. COFF allows one
+ * weak default per symbol, and the scheduler's entry.c already supplies it
+ * on Windows, so only the ELF and Mach-O builds define it here. */
+#if defined(_WIN32)
+size_t wf__floor_stack_bytes(void);
+#else
 __attribute__((weak)) size_t wf__floor_stack_bytes(void) {
     return 0u;
 }
+#endif
 
-/* A driver thread other than the entry's: it runs on the floor's stack
- * reservation, attached to the floor like a compute worker, and drives the
- * contexts placed on it with its own ring until the program stops it. */
-static void wf_driver_main(void *argument) {
-    wf_driver *driver = (wf_driver *)argument;
-    wf_prim_floor_attach();
-    wf_driver_self = driver;
-    wf_bridge_thread_adapter = &driver->own_adapter;
-    wf_context_drive(driver);
-    wf_bridge_thread_adapter = NULL;
-    wf_driver_self = NULL;
-    atomic_store_explicit(&driver->exited, 1u, memory_order_release);
+/* Bounded deadline-only detector. It never executes a context or enters a
+ * host engine. OUTSIDE publishes a hint; PROBE validates the heap minimum
+ * after winning the exact token, since an intervening borrow can remove it.
+ * An idle logical driver gets first opportunity to borrow. */
+#define WF_HANDOFF_TAU_NS UINT64_C(1000000)
+#define WF_MONITOR_PERIOD_MS 1u
+static int wf_driver_deadline_due(uint64_t deadline, uint64_t now) {
+    return deadline != 0u && now > deadline && now - deadline > WF_HANDOFF_TAU_NS;
 }
 
-/* The drivers after the entry's, started the first time a context starts:
- * WF_DRIVERS of them in all, one per CPU the process may run on when it is
- * not written, and only where the host has a ring for each to wait in. A
- * driver that cannot be made leaves the program with the ones already
- * running. */
-static void wf_drivers_begin(void) {
+static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
+    uint64_t outside = atomic_load_explicit(&driver->service_token, memory_order_acquire);
+    if ((outside & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE
+        || !wf_driver_deadline_due(atomic_load_explicit(&driver->deadline_hint,
+            memory_order_relaxed), now)
+        || atomic_load_explicit(&wf_drivers_idle, memory_order_seq_cst)) return 0;
+    /* Reserve only an already floor-attached, parked executor. There is no
+     * thread creation, allocation or blocking engine lock in this path. */
+    if (atomic_flag_test_and_set_explicit(&wf_executor_lock, memory_order_acquire)) return 0;
+    wf_executor *spare = NULL;
+    for (unsigned i = 0; i < wf_executor_count; ++i) {
+        if (wf_executors[i].available) { spare = &wf_executors[i]; break; }
+    }
+    if (!spare) {
+        atomic_fetch_add_explicit(&wf_driver_stats[driver->index].reserve_misses,
+            1u, memory_order_relaxed);
+        wf_spin_unlock(&wf_executor_lock);
+        return 0;
+    }
+    atomic_fetch_add_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+    uint64_t probe = (outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_PROBE;
+    int claimed = atomic_compare_exchange_strong_explicit(&driver->service_token,
+        &outside, probe, memory_order_acquire, memory_order_relaxed);
+    if (claimed && driver->timer_count
+        && wf_driver_deadline_due(driver->timers[0]->timer_at, now)) {
+        uint64_t reserved = wf_driver_next_epoch(outside, spare->index) | WF_DRIVER_RESERVED;
+        spare->available = 0u;
+        spare->assignment = driver;
+        atomic_store_explicit(&driver->service_token, reserved, memory_order_release);
+        atomic_fetch_add_explicit(&wf_driver_stats[driver->index].reassignments,
+            1u, memory_order_relaxed);
+        wf_completion_notify_target(&spare->wake);
+        wf_spin_unlock(&wf_executor_lock);
+        /* The replacement drops moving only after acquiring SERVICE. */
+        return 1;
+    }
+    if (claimed) atomic_store_explicit(&driver->service_token, outside, memory_order_release);
+    atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
+    atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+    wf_spin_unlock(&wf_executor_lock);
+    return 0;
+}
+
+static uint32_t wf_monitor_scan(uint64_t now) {
+    uint32_t wait = WF_MONITOR_PERIOD_MS;
+    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
+    for (unsigned i = 0; i < count; ++i) {
+        wf_driver *driver = atomic_load_explicit(&wf_drivers[i], memory_order_acquire);
+        if (!driver) continue;
+        (void)wf_driver_reassign(driver, now);
+        if ((atomic_load_explicit(&driver->service_token, memory_order_acquire)
+                & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE) continue;
+        uint64_t deadline = atomic_load_explicit(&driver->deadline_hint, memory_order_relaxed);
+        if (deadline > now) {
+            uint64_t ms = (deadline - now - 1u) / UINT64_C(1000000) + 1u;
+            if (ms < wait) wait = (uint32_t)ms;
+        }
+    }
+    return wait;
+}
+
+static void wf_monitor_main(void *unused) {
+    (void)unused;
+    while (!atomic_load_explicit(&wf_monitor_stopping, memory_order_acquire)) {
+        uint64_t epoch = wf_completion_wake_epoch(&wf_monitor_wake);
+        uint32_t wait = wf_monitor_scan(wf_file_monotonic_ns());
+        if (!atomic_load_explicit(&wf_monitor_stopping, memory_order_acquire))
+            (void)wf_completion_park_if_unchanged(&wf_monitor_wake, epoch, wait);
+    }
+    atomic_store_explicit(&wf_monitor_exited, 1u, memory_order_release);
+}
+
+static void wf_executor_bind(wf_driver *driver) {
+    wf_driver_self = wf_driver_service = driver;
+#if defined(__linux__)
+    wf_bridge_thread_adapter = driver && driver != &wf_driver_root
+        ? &driver->own_adapter : NULL;
+#endif
+}
+
+static void wf_driver_acquire_reserved(wf_driver *driver) {
+    uint64_t reserved = atomic_load_explicit(&driver->service_token, memory_order_acquire);
+    if ((reserved & WF_DRIVER_PHASE_MASK) != WF_DRIVER_RESERVED
+        || ((reserved & WF_DRIVER_EXECUTOR_MASK) >> WF_DRIVER_EXECUTOR_SHIFT) != wf_executor_index
+        || !atomic_compare_exchange_strong_explicit(&driver->service_token, &reserved,
+            (reserved & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_SERVICE,
+            memory_order_acquire, memory_order_relaxed))
+        wf_bridge_fail("executor acquired another executor's reservation");
+    driver->departure = reserved & ~WF_DRIVER_PHASE_MASK;
+    wf_executor_bind(driver);
+    atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
+    atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+}
+
+/* A displaced launcher is also reusable, but only that physical thread may
+ * leave this loop for root destruction and global teardown. */
+static void wf_executor_loop(wf_executor *executor, wf_driver *initial) {
+    wf_executor_index = executor->index;
+    wf_driver *driver = initial;
+    if (driver) wf_executor_bind(driver);
+    for (;;) {
+        if (driver) {
+            if (wf_context_drive(driver)) {
+                atomic_store_explicit(&driver->service_token,
+                    driver->departure | WF_DRIVER_STOPPED, memory_order_release);
+            }
+            wf_executor_bind(NULL);
+            driver = NULL;
+        }
+        uint64_t epoch = wf_completion_wake_epoch(&executor->wake);
+        wf_spin_lock(&wf_executor_lock);
+        if (executor->assignment) {
+            driver = executor->assignment;
+            executor->assignment = NULL;
+            wf_spin_unlock(&wf_executor_lock);
+            wf_driver_acquire_reserved(driver);
+            continue;
+        }
+        if (atomic_load_explicit(&wf_drivers_stopping, memory_order_acquire)
+            || (executor->index == 0u
+                && atomic_load_explicit(&wf_context_root_done, memory_order_acquire))) {
+            executor->available = 0u;
+            wf_spin_unlock(&wf_executor_lock);
+            return;
+        }
+        executor->available = 1u;
+        /* Startup waits for this publication, after floor attachment and
+         * spare-pool admission. It does not assume thread creation is warm. */
+        atomic_store_explicit(&executor->ready, 1u, memory_order_release);
+        wf_spin_unlock(&wf_executor_lock);
+        (void)wf_completion_park_if_unchanged(&executor->wake, epoch, UINT32_MAX);
+    }
+}
+
+static void wf_executor_main(void *argument) {
+    wf_executor *executor = argument;
+    wf_prim_floor_attach();
+    /* Initial roles are installed before thread creation; later assignments
+     * use RESERVED and the pool lock. */
+    wf_driver *initial = executor->assignment;
+    executor->assignment = NULL;
+    wf_executor_loop(executor, initial);
+    atomic_store_explicit(&executor->exited, 1u, memory_order_release);
+}
+
+static void wf_executor_init(unsigned index, wf_driver *initial) {
+    wf_executor *executor = &wf_executors[index];
+    executor->index = index;
+    executor->assignment = initial;
+    if (wf_completion_runtime_init(&executor->wake) != 0)
+        wf_bridge_fail("cannot initialize a context executor wake");
+}
+
+static void wf_handoff_begin(void) {
+    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
+    wf_executor_count = count * 2u;
+    for (unsigned i = 0; i < count; ++i) {
+        unsigned index = 2u * i + 1u;
+        wf_executor_init(index, NULL);
+        if (wf_prim_thread_start(&wf_executors[index].thread, wf_executor_main,
+                &wf_executors[index], wf__floor_stack_bytes()) != 0)
+            wf_bridge_fail("cannot start a warm context executor");
+        while (!atomic_load_explicit(&wf_executors[index].ready, memory_order_acquire))
+            wf_prim_yield();
+    }
+    if (wf_completion_runtime_init(&wf_monitor_wake) != 0
+        || wf_prim_thread_start(&wf_monitor_thread, wf_monitor_main, NULL, 0u) != 0)
+        wf_bridge_fail("cannot start the driver deadline monitor");
+    wf_monitor_started = 1u;
+}
+
+#if defined(__linux__)
+
+static void wf_driver_select_count(void) {
     unsigned long written = 0;
     unsigned wanted = wf_prim_online_cpus();
-    unsigned index;
     if (wf__sched_setting("WF_DRIVERS", WF_DRIVER_LIMIT, &written) && written != 0u) {
         wanted = (unsigned)written;
     }
-    if (wanted == 0u || !wf_bridge_ring_ready()) {
+    if (!wf_bridge_ensure_ring())
+        wf_bridge_fail("the completion bridge could not initialize");
+    if (!wf_bridge_ring_ready()) {
         wanted = 1u;
+    } else if (wanted == 0u) {
+        wf_bridge_fail("cannot determine the available CPU count");
     }
     if (wanted > WF_DRIVER_LIMIT) {
         wanted = WF_DRIVER_LIMIT;
     }
+    wf_driver_selected_count = wanted;
+}
+
+/* The drivers after the entry's start only when the first context starts.
+ * The count was fixed before entry: resources that cannot supply that count
+ * stop the execution with a report instead of changing its Inputs value. */
+static void wf_drivers_begin(void) {
+    unsigned wanted = (unsigned)wf__context_driver_count();
+    unsigned index;
     for (index = 1u; index < wanted; index++) {
         size_t granted;
         wf_driver *driver = (wf_driver *)wf_pool_take(sizeof(*driver), &granted);
@@ -3253,9 +5152,12 @@ static void wf_drivers_begin(void) {
         driver->pool_bytes = granted;
         driver->index = index;
         atomic_flag_clear(&driver->run_lock);
+        atomic_flag_clear(&driver->ingress_lock);
+        driver->departure = (uint64_t)(2u * index) << WF_DRIVER_EXECUTOR_SHIFT;
+        atomic_store_explicit(&driver->service_token, driver->departure, memory_order_relaxed);
         if (wf_completion_runtime_init(&driver->own_runtime) != 0) {
             wf_pool_give(driver, granted);
-            break;
+            wf_bridge_fail("cannot initialize a selected driver wake");
         }
         driver->runtime = &driver->own_runtime;
         if (wf_linux_io_uring_init(
@@ -3266,7 +5168,7 @@ static void wf_drivers_begin(void) {
             ) != 0) {
             (void)wf_completion_runtime_destroy(&driver->own_runtime);
             wf_pool_give(driver, granted);
-            break;
+            wf_bridge_fail("cannot initialize a selected driver ring");
         }
         if (wf_completion_set_wake_callback(
                 &driver->own_runtime,
@@ -3276,76 +5178,101 @@ static void wf_drivers_begin(void) {
             (void)wf_linux_io_uring_destroy(&driver->own_adapter);
             (void)wf_completion_runtime_destroy(&driver->own_runtime);
             wf_pool_give(driver, granted);
-            break;
+            wf_bridge_fail("cannot initialize a selected driver ring wake");
         }
         wf_drivers[index] = driver;
-        if (wf_prim_thread_start(
-                &driver->thread,
-                wf_driver_main,
-                driver,
-                wf__floor_stack_bytes()
-            ) != 0) {
-            /* A running driver looking for a stop may already have read
-             * the published slot, so the driver is kept, idle with nothing
-             * counted, outside the count every other pass reads. */
-            atomic_store_explicit(&driver->idle, 1u, memory_order_seq_cst);
-            (void)wf_linux_io_uring_destroy(&driver->own_adapter);
-            (void)wf_completion_runtime_destroy(&driver->own_runtime);
-            break;
-        }
-        atomic_store_explicit(&wf_driver_count, index + 1u, memory_order_release);
+        wf_executor_init(2u * index, driver);
+        if (wf_prim_thread_start(&wf_executors[2u * index].thread, wf_executor_main,
+                &wf_executors[2u * index], wf__floor_stack_bytes()) != 0)
+            wf_bridge_fail("cannot start a context executor");
+        wf_driver_publish_started(driver);
     }
-}
-
-/* Stops every driver but the entry's once the root has finished, when no
- * context is left to run, and releases their rings only after every one has
- * stopped, since a running driver looks through the others for work. */
-static void wf_drivers_end(void) {
-    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
-    unsigned index;
-    atomic_store_explicit(&wf_drivers_stopping, 1u, memory_order_release);
-    for (index = 1u; index < count; index++) {
-        wf_driver *driver = wf_drivers[index];
-        while (atomic_load_explicit(&driver->exited, memory_order_acquire) == 0u) {
-            wf_completion_notify_target(driver->runtime);
-            wf_prim_yield();
-        }
-    }
-    atomic_store_explicit(&wf_driver_count, 1u, memory_order_seq_cst);
-    /* A helper thread may still be notifying the drivers after publishing
-     * the last record a finished context waited on; it read the count
-     * before the store above, so its notifications end before these
-     * drivers' wakes are released. */
-    while (atomic_load_explicit(&wf_drivers_notifying, memory_order_seq_cst) != 0u) {
-        wf_prim_yield();
-    }
-    for (index = 1u; index < count; index++) {
-        wf_driver *driver = wf_drivers[index];
-        (void)wf_linux_io_uring_destroy(&driver->own_adapter);
-        (void)wf_completion_runtime_destroy(&driver->own_runtime);
-        wf_drivers[index] = NULL;
-        wf_pool_give(driver, driver->pool_bytes);
-    }
+    wf_handoff_begin();
 }
 
 #else
 
-/* A host with no ring runs one driver. */
-static void wf_drivers_begin(void) {}
-static void wf_drivers_end(void) {}
+static void wf_driver_select_count(void) { wf_driver_selected_count = 1u; }
+
+/* A host with no ring has one logical role, but still needs a warm spare. */
+static void wf_drivers_begin(void) { wf_handoff_begin(); }
 
 #endif
 
+uint64_t wf__context_driver_count(void) {
+    wf__sched_once(&wf_driver_selection_once, wf_driver_select_count);
+    return wf_driver_selected_count;
+}
+
+/* After monitor shutdown and root completion, admission has ended. A root
+ * COMPLETE adoption publishes root_done before retiring its ingress count;
+ * keep service and all wake endpoints alive through that interval too. */
+static int wf_drivers_quiescent(void) {
+    if (atomic_load_explicit(&wf_active_invocations, memory_order_seq_cst)
+        || atomic_load_explicit(&wf_drivers_moving, memory_order_seq_cst)) return 0;
+    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
+    for (unsigned i = 0; i < count; ++i) {
+        wf_driver *driver = atomic_load_explicit(&wf_drivers[i], memory_order_acquire);
+        if (atomic_load_explicit(&driver->ingress_count, memory_order_seq_cst)) return 0;
+    }
+    return 1;
+}
+
+static void wf_drivers_end(void) {
+    /* Root completion follows structured joins, but a publisher can still
+     * be dropping its active count. No role/wake/storage dies before it. */
+    if (wf_monitor_started) {
+        atomic_store_explicit(&wf_monitor_stopping, 1u, memory_order_release);
+        wf_completion_notify_target(&wf_monitor_wake);
+        while (!atomic_load_explicit(&wf_monitor_exited, memory_order_acquire)) wf_prim_yield();
+    }
+    while (!wf_drivers_quiescent()) wf_prim_yield();
+    if (atomic_load_explicit(&wf_context_live, memory_order_acquire) != 0u)
+        wf_bridge_fail("the entry finished while contexts it started were running");
+    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
+    atomic_store_explicit(&wf_drivers_stopping, 1u, memory_order_release);
+    for (unsigned i = 0; i < count; ++i) {
+        wf_driver *driver = atomic_load_explicit(&wf_drivers[i], memory_order_acquire);
+        wf_completion_notify_target(driver->runtime);
+    }
+    for (unsigned i = 1u; i < wf_executor_count; ++i) {
+        wf_completion_notify_target(&wf_executors[i].wake);
+        while (!atomic_load_explicit(&wf_executors[i].exited, memory_order_acquire)) wf_prim_yield();
+    }
+    atomic_store_explicit(&wf_driver_count, 1u, memory_order_seq_cst);
+    while (atomic_load_explicit(&wf_drivers_notifying, memory_order_seq_cst)) wf_prim_yield();
+#if defined(__linux__)
+    for (unsigned i = 1u; i < count; ++i) {
+        wf_driver *driver = wf_drivers[i];
+        (void)wf_linux_io_uring_destroy(&driver->own_adapter);
+        (void)wf_completion_runtime_destroy(&driver->own_runtime);
+        wf_drivers[i] = NULL;
+        wf_pool_give(driver->timers, driver->timer_bytes);
+        wf_pool_give(driver, driver->pool_bytes);
+    }
+#endif
+    for (unsigned i = 0; i < wf_executor_count; ++i)
+        (void)wf_completion_runtime_destroy(&wf_executors[i].wake);
+    if (wf_monitor_started) (void)wf_completion_runtime_destroy(&wf_monitor_wake);
+}
+
 void wf__context_root_begin(void) {
-    if (wf_driver_self != NULL) {
+    if (wf_driver_self != NULL || atomic_load_explicit(&wf_driver_count, memory_order_acquire)) {
         wf_bridge_fail("the root context was begun twice");
     }
+    (void)wf__context_driver_count();
     wf_bridge_require();
     atomic_flag_clear(&wf_driver_root.run_lock);
+    atomic_flag_clear(&wf_driver_root.ingress_lock);
+    wf_executor_init(0u, NULL);
+    wf_executor_count = 1u;
+    atomic_store_explicit(&wf_executors[0].ready, 1u, memory_order_release);
     wf_driver_root.runtime = &wf_bridge_runtime;
     wf_drivers[0] = &wf_driver_root;
+    atomic_store_explicit(&wf_driver_stats_count, 1u, memory_order_release);
     atomic_store_explicit(&wf_driver_count, 1u, memory_order_release);
     wf_driver_self = &wf_driver_root;
+    wf_driver_service = &wf_driver_root;
     wf_context_root.driver = &wf_driver_root;
     wf_context_current = &wf_context_root;
 }
@@ -3358,11 +5285,12 @@ void wf__context_root_run(void *frame) {
     wf_context_root.root = frame;
     wf_context_root.resume = frame;
     wf_context_ready(&wf_context_root);
-    wf_context_drive(&wf_driver_root);
-    if (atomic_load_explicit(&wf_context_live, memory_order_acquire) != 0u) {
-        wf_bridge_fail("the entry finished while contexts it started were running");
-    }
+    wf_context_current = NULL;
+    wf_executor_loop(&wf_executors[0], &wf_driver_root);
     wf_drivers_end();
+#if WF_GUARD_COUNTERS
+    wf_guard_report();
+#endif
     wf_context_current = &wf_context_root;
     wf__coro_destroy(frame);
     wf_context_release_arena(&wf_context_root);
@@ -3503,8 +5431,7 @@ static void wf_bridge_join(wf_completion_record *record) {
                 wf_bridge_park(epoch, (uint32_t)left);
             }
         }
-        record->result.kind = record->request.kind;
-        record->result.value = 0;
+        wf_bridge_timer_result(record, 0);
         wf_completion_record_complete(record);
         return;
     }
@@ -3825,21 +5752,46 @@ static int wf_bridge_waits_for_readiness(const wf_completion_record *record) {
  * route for a socket operation that must not block this thread, then the
  * bounded adapter, and the engine here when none applies.  Every path ends in
  * a record the runtime owns, so there is nothing to answer. */
-static void wf_bridge_dispatch(wf_completion_record *record) {
-    int bounded = atomic_load_explicit(&record->deadline, memory_order_relaxed) != 0;
+static void wf_bridge_dispatch_bound(wf_completion_record *record, int bounded,
+                                     int readiness) {
     if (wf_bridge_file_request_is_empty(&record->request)) {
         wf_bridge_complete_empty(record);
+        return;
+    }
+    /* A deadline reached before dispatch has already ended the wait. No
+     * engine has produced an outcome yet, so submitting now could transfer
+     * bytes after the required zero-transfer DeadlinePassed outcome. Later
+     * deadline races still preserve an engine's completed transfer. */
+    uint64_t deadline = atomic_load_explicit(&record->deadline, memory_order_relaxed);
+    if (deadline != 0 && wf_file_monotonic_ns() >= deadline) {
+        /* Real watches publish their registration only after native unwind.
+         * Leave that wait intent pending for timer service rather than
+         * bypassing adoption with an inline terminal record. */
+        wf_context *self = wf_context_current;
+        if (self != NULL && self->cancel != NULL
+            && (void *)record == self->operation.bytes) {
+            record->route = WF_COMPLETION_ROUTE_TIMER;
+            return;
+        }
+        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                              memory_order_release);
+        record->route = WF_COMPLETION_ROUTE_INLINE;
+        record->result.kind = record->request.kind;
+        record->result.value = -1;
+        record->result.error_code = wf_file_cancelled_error();
+        wf_completion_record_complete(record);
         return;
     }
     if (wf_bridge_ring_offer(record)) {
         return;
     }
-    if (wf_bridge_waits_for_readiness(record)
-        || (bounded && wf_bridge_readiness_kind(record) && wf_file_readiness_supported())) {
+    if (readiness && (wf_bridge_waits_for_readiness(record)
+        || (bounded && wf_bridge_readiness_kind(record) && wf_file_readiness_supported()))) {
         record->route = WF_COMPLETION_ROUTE_READINESS;
         return;
     }
     if (bounded) {
+        if (!readiness && !wf_bridge_ensure_file()) wf__runtime_exhausted();
         /* An operation with a deadline [PRE-2] is never made on the driver
          * thread, which is the thread that has to end it: the helpers take
          * it, and the program keeps every later operation on them, as once
@@ -3855,12 +5807,57 @@ static void wf_bridge_dispatch(wf_completion_record *record) {
     wf_bridge_submit_file(record);
 }
 
-void wf__completion_file_read_submit(
-    int descriptor,
-    void *buffer,
-    uint64_t count,
-    void *record
-) {
+static void wf_bridge_dispatch(wf_completion_record *record) {
+    wf_bridge_dispatch_bound(record,
+        atomic_load_explicit(&record->deadline, memory_order_relaxed) != 0, 1);
+}
+
+/* Only a real watch reaches here. Save context-private intent, then read
+ * fired before dispatch. Driver-list registration waits for native unwind.
+ * Always return pending (2) after dispatch so context_wait clears an intent
+ * even when an immediate completion permits a fairness yield. */
+static int wf_bridge_dispatch_watched(wf_completion_record *record, void *opaque) {
+    wf_context *self = wf_context_current;
+    wf_driver *driver = wf_driver_self;
+    wf_cancel *source = opaque;
+    if (self == NULL || driver == NULL || (void *)record != self->operation.bytes)
+        wf_bridge_fail("a watched host operation was submitted outside its context");
+    self->cancel = source;
+    self->timer_at = atomic_load_explicit(&record->deadline, memory_order_relaxed);
+    if (atomic_load_explicit(&source->fired, memory_order_acquire)) {
+        self->cancel = NULL;
+        record->wait_cancelled = 1;
+        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                              memory_order_release);
+        if (record->request.kind == WF_FILE_STOP_NEXT) {
+            record->route = WF_COMPLETION_ROUTE_STOP;
+            wf__stop_next(record);
+        } else {
+            record->route = WF_COMPLETION_ROUTE_INLINE;
+            record->result.kind = record->request.kind;
+            record->result.value = -1;
+            record->result.error_code = wf_file_cancelled_error();
+            wf_completion_record_complete(record);
+        }
+        return 1;
+    }
+    /* A native ring wakes through its epoch endpoint. Without one, helpers
+     * provide the same wake and deadline cancellation path; a blocking
+     * readiness poll cannot be interrupted by the driver's condition wake. */
+    if (self->timer_at == 0)
+        atomic_store_explicit(&record->deadline, UINT64_MAX - 1u, memory_order_relaxed);
+    if (record->request.kind == WF_FILE_SLEEP) {
+        if (wf_file_monotonic_ns() >= self->timer_at)
+            wf_bridge_complete_empty(record);
+        else record->route = WF_COMPLETION_ROUTE_TIMER;
+    } else if (record->request.kind == WF_FILE_STOP_NEXT) {
+        record->route = WF_COMPLETION_ROUTE_STOP;
+        wf__stop_next(record);
+    } else wf_bridge_dispatch_bound(record, 1, 0);
+    return 2;
+}
+
+static wf_completion_record *wf_bridge_file_read_begin(int descriptor, void *buffer, uint64_t count, void *record) {
     wf_completion_record *held = wf_bridge_begin(record);
     if ((buffer == NULL && count != 0) || (uint64_t)(size_t)count != count) {
         wf_bridge_fail(
@@ -3871,7 +5868,16 @@ void wf__completion_file_read_submit(
     held->request.operation.read.descriptor = descriptor;
     held->request.operation.read.buffer = buffer;
     held->request.operation.read.count = (size_t)count;
+    return held;
+}
+
+void wf__completion_file_read_submit(int descriptor, void *buffer, uint64_t count, void *record) {
+    wf_completion_record *held = wf_bridge_file_read_begin(descriptor, buffer, count, record);
     wf_bridge_dispatch(held);
+}
+
+int wf__completion_file_read_watched_submit(int descriptor, void *buffer, uint64_t count, void *cancel, void *record) {
+    return wf_bridge_dispatch_watched(wf_bridge_file_read_begin(descriptor, buffer, count, record), cancel);
 }
 
 /* Publishes a refusal the host itself would have made, without asking it.
@@ -3934,12 +5940,7 @@ void wf__completion_file_pread_submit(
     wf_bridge_submit_file(held);
 }
 
-void wf__completion_file_write_submit(
-    int descriptor,
-    const void *buffer,
-    uint64_t count,
-    void *record
-) {
+static wf_completion_record *wf_bridge_file_write_begin(int descriptor, const void *buffer, uint64_t count, void *record) {
     wf_completion_record *held = wf_bridge_begin(record);
     if ((buffer == NULL && count != 0) || (uint64_t)(size_t)count != count) {
         wf_bridge_fail(
@@ -3956,7 +5957,16 @@ void wf__completion_file_write_submit(
     held->request.operation.write.descriptor = descriptor;
     held->request.operation.write.buffer = buffer;
     held->request.operation.write.count = (size_t)count;
+    return held;
+}
+
+void wf__completion_file_write_submit(int descriptor, const void *buffer, uint64_t count, void *record) {
+    wf_completion_record *held = wf_bridge_file_write_begin(descriptor, buffer, count, record);
     wf_bridge_dispatch(held);
+}
+
+int wf__completion_file_write_watched_submit(int descriptor, const void *buffer, uint64_t count, void *cancel, void *record) {
+    return wf_bridge_dispatch_watched(wf_bridge_file_write_begin(descriptor, buffer, count, record), cancel);
 }
 
 /* The one place an ABI the emitter emits per target reaches this unit.
@@ -4014,6 +6024,22 @@ void wf__completion_file_close_submit(
     held->request.kind = WF_FILE_CLOSE;
     held->request.operation.close.descriptor = descriptor;
     wf_bridge_dispatch(held);
+}
+
+int wf__completion_snapshot_finish_submit(void *owner, uint32_t abort_requested,
+                                         void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    if (owner == NULL || abort_requested > 1u) {
+        wf_bridge_fail("a snapshot completion has no owned job");
+    }
+    held->request.kind = WF_FILE_SNAPSHOT_FINISH;
+    held->request.operation.snapshot.owner = owner;
+    held->request.operation.snapshot.abort_requested = abort_requested;
+    /* A child can wait for output capacity. Its collector must run off the
+     * executor so other contexts continue, including the writer being served.
+     * No deadline is invented; finish and abort await confirmed termination. */
+    wf_bridge_dispatch_bound(held, 1, 0);
+    return wf__completion_pending(held) ? 2 : 1;
 }
 
 void wf__completion_file_append_submit(
@@ -4127,6 +6153,19 @@ void wf__completion_stop_next_submit(void *record) {
     wf__stop_next(held);
 }
 
+int wf__completion_sleep_watched_submit(uint64_t deadline, void *cancel, void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_SLEEP;
+    atomic_store_explicit(&held->deadline, deadline, memory_order_relaxed);
+    return wf_bridge_dispatch_watched(held, cancel);
+}
+
+int wf__completion_stop_next_watched_submit(void *cancel, void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_STOP_NEXT;
+    return wf_bridge_dispatch_watched(held, cancel);
+}
+
 void wf__completion_stop_close_submit(void *record) {
     wf_completion_record *held = wf_bridge_begin(record);
     held->request.kind = WF_FILE_STOP_CLOSE;
@@ -4173,10 +6212,7 @@ void wf__completion_socket_listen_submit(
     wf_bridge_dispatch(held);
 }
 
-void wf__completion_socket_accept_submit(
-    int listener,
-    void *record
-) {
+static wf_completion_record *wf_bridge_accept_begin(int listener, void *record) {
     wf_completion_record *held = wf_bridge_begin(record);
     if (listener < 0) {
         wf_bridge_fail(
@@ -4189,27 +6225,35 @@ void wf__completion_socket_accept_submit(
      * fits and the host reports back what it actually used. */
     held->request.operation.accept.peer_length =
         (unsigned)sizeof(held->request.operation.accept.peer.native);
-    wf_bridge_dispatch(held);
+    return held;
 }
 
-void wf__completion_socket_connect_submit(
-    uint64_t address_low,
-    uint64_t address_high,
-    uint32_t port_and_family,
-    void *record
-) {
+void wf__completion_socket_accept_submit(int listener, void *record) {
+    wf_bridge_dispatch(wf_bridge_accept_begin(listener, record));
+}
+
+int wf__completion_socket_accept_watched_submit(int listener, void *cancel, void *record) {
+    return wf_bridge_dispatch_watched(wf_bridge_accept_begin(listener, record), cancel);
+}
+
+static wf_completion_record *wf_bridge_socket_connect_begin(uint64_t address_low, uint64_t address_high, uint32_t port_and_family, void *record) {
     wf_completion_record *held = wf_bridge_begin(record);
     held->request.kind = WF_FILE_SOCKET_CONNECT;
     wf_bridge_socket_endpoint(held, address_low, address_high, port_and_family);
+    return held;
+}
+
+void wf__completion_socket_connect_submit(uint64_t address_low, uint64_t address_high, uint32_t port_and_family, void *record) {
+    wf_completion_record *held = wf_bridge_socket_connect_begin(address_low, address_high, port_and_family, record);
     wf_bridge_dispatch(held);
 }
 
-void wf__completion_socket_receive_submit(
-    int descriptor,
-    void *buffer,
-    uint64_t count,
-    void *record
-) {
+int wf__completion_socket_connect_watched_submit(uint64_t address_low, uint64_t address_high, uint32_t port_and_family, void *cancel, void *record) {
+    return wf_bridge_dispatch_watched(wf_bridge_socket_connect_begin(address_low, address_high, port_and_family, record), cancel);
+}
+
+static wf_completion_record *wf_bridge_receive_begin(int descriptor, void *buffer,
+                                                      uint64_t count, void *record) {
     wf_completion_record *held = wf_bridge_begin(record);
     if ((buffer == NULL && count != 0) || (uint64_t)(size_t)count != count) {
         wf_bridge_fail(
@@ -4220,6 +6264,18 @@ void wf__completion_socket_receive_submit(
     held->request.operation.receive.descriptor = descriptor;
     held->request.operation.receive.buffer = buffer;
     held->request.operation.receive.count = (size_t)count;
+    return held;
+}
+
+int wf__completion_socket_receive_watched_submit(int descriptor, void *buffer,
+                                                uint64_t count, void *cancel, void *record) {
+    return wf_bridge_dispatch_watched(
+        wf_bridge_receive_begin(descriptor, buffer, count, record), cancel);
+}
+
+void wf__completion_socket_receive_submit(int descriptor, void *buffer,
+                                          uint64_t count, void *record) {
+    wf_completion_record *held = wf_bridge_receive_begin(descriptor, buffer, count, record);
     /* With other contexts live and a ring to wait in, the receive goes to the
      * ring at once: the scheduler submits it with every other staged
      * operation in one entry, where a first attempt here costs a system call
@@ -4233,12 +6289,7 @@ void wf__completion_socket_receive_submit(
     wf_bridge_dispatch(held);
 }
 
-void wf__completion_socket_send_submit(
-    int descriptor,
-    const void *buffer,
-    uint64_t count,
-    void *record
-) {
+static wf_completion_record *wf_bridge_socket_send_begin(int descriptor, const void *buffer, uint64_t count, void *record) {
     wf_completion_record *held = wf_bridge_begin(record);
     if ((buffer == NULL && count != 0) || (uint64_t)(size_t)count != count) {
         wf_bridge_fail(
@@ -4249,10 +6300,19 @@ void wf__completion_socket_send_submit(
     held->request.operation.send.descriptor = descriptor;
     held->request.operation.send.buffer = buffer;
     held->request.operation.send.count = (size_t)count;
+    return held;
+}
+
+void wf__completion_socket_send_submit(int descriptor, const void *buffer, uint64_t count, void *record) {
+    wf_completion_record *held = wf_bridge_socket_send_begin(descriptor, buffer, count, record);
     if (wf_bridge_transfer_now(held)) {
         return;
     }
     wf_bridge_dispatch(held);
+}
+
+int wf__completion_socket_send_watched_submit(int descriptor, const void *buffer, uint64_t count, void *cancel, void *record) {
+    return wf_bridge_dispatch_watched(wf_bridge_socket_send_begin(descriptor, buffer, count, record), cancel);
 }
 
 void wf__completion_socket_shutdown_submit(
@@ -4271,6 +6331,26 @@ void wf__completion_socket_shutdown_submit(
     held->request.operation.shutdown.direction =
         (enum wf_socket_direction)direction;
     wf_bridge_dispatch(held);
+}
+
+int wf__completion_socket_local_address(
+    int descriptor,
+    uint64_t *address_low,
+    uint64_t *address_high,
+    uint32_t *port_and_family
+) {
+    wf_socket_address address;
+    int refusal;
+    if (address_low == NULL || address_high == NULL || port_and_family == NULL) {
+        wf_bridge_fail(
+            "a local-address query was given no place to publish its result"
+        );
+    }
+    refusal = wf_file_socket_local_address(descriptor, &address);
+    *address_low = address.words[0];
+    *address_high = address.words[1];
+    *port_and_family = address.port_and_family;
+    return refusal;
 }
 
 void wf__completion_directory_next_submit(
@@ -4387,12 +6467,20 @@ void wf__completion_next_deadline(uint64_t deadline) {
     wf_bridge_next_deadline = deadline;
 }
 
-int wf__completion_deadline_passed(const void *record) {
+static int wf_bridge_bound_ended(const void *record) {
     const wf_completion_record *held = (const wf_completion_record *)record;
     return atomic_load_explicit(&held->deadline, memory_order_acquire)
             == WF_COMPLETION_DEADLINE_FIRED
         && held->result.value < 0
         && wf_file_error_is_cancellation(held->result.error_code);
+}
+
+int wf__completion_deadline_passed(const void *record) {
+    return wf_bridge_bound_ended(record) && !((const wf_completion_record *)record)->wait_cancelled;
+}
+
+int wf__completion_cancelled(const void *record) {
+    return wf_bridge_bound_ended(record) && ((const wf_completion_record *)record)->wait_cancelled;
 }
 
 uint64_t wf__completion_monotonic_ns(void) {

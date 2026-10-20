@@ -1,0 +1,45 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Common {
+  scale: u64;
+  table: Box<Array<u64>>;
+}
+
+struct Holder {
+  cells: Box<Array<u64>>;
+  shared: Common;
+}
+
+fn fill(holder: &Holder) -> result: unit writes(holder) {
+  doc "Each iteration reads a sibling scalar field of the reference whose cells it writes at element i; that field is disjoint from the mapped root.";
+  let count = holder^.cells.inner.len;
+  for (i in 0_u64..count) {
+    let s = holder^.shared.scale;
+    set holder^.cells.inner[i] = i +wrap s;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Check every written cell and that the sibling field is unchanged; compiler tests check permission.";
+  let cells = box_array_filled::<u64>(count: 5_u64, value: 0_u64);
+  let table = box_array_filled::<u64>(count: 2_u64, value: 9_u64);
+  let shared = Common(scale: 10_u64, table: move table);
+  let holder = Holder(cells: move cells, shared: move shared);
+  fill(holder: &holder);
+  let written = holder.cells.inner.len;
+  if written != 5_u64 {
+    return exit_status(code: 3_u8);
+  }
+  for (i in 0_u64..written) {
+    let expected = i +wrap 10_u64;
+    if holder.cells.inner[i] != expected {
+      return exit_status(code: 1_u8);
+    }
+  }
+  if holder.shared.scale != 10_u64 {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

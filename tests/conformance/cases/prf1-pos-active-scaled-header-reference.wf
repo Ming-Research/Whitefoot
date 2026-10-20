@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn prf1_active_scaled_header(limit: u64) -> total: u64 pure contract {
+  requires limit <= 100_u64;
+} {
+  doc "The active arbitrary-iteration theorem P is sum <= 2*i, whose scaled coefficient keeps it outside ENT-3.S16. The target is 3*P. ENT-6 AUTO subtracts P at most twice; the residual is not an L0 image and its interval maximum is positive. Integer tightening only divides those candidates, so use 3 times sum_bound is required. The runtime limit bound admits the increment.";
+  let sum = 0_u64;
+  for (
+    i in 0_u64..limit,
+    invariant sum_bound: sum <= 2_u64 * i
+  ) {
+    invariant tripled_bound: 3_u64 * sum <= 6_u64 * i {
+      use 3 times sum_bound;
+    }
+    set sum = sum + 1_u64;
+  }
+  return sum;
+}
+
+fn main() -> status: ExitStatus pure {
+  let total = prf1_active_scaled_header(limit: 5_u64);
+  if total == 5_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

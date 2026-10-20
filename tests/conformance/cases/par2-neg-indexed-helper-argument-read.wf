@@ -1,0 +1,38 @@
+struct Filters {
+  cells: Box<Array<u8>>;
+  extra: u8;
+}
+
+fn mark(flags: &Filters, span: u64, bits: u8) -> result: unit writes(flags.cells) {
+  doc "Contributions depend on inputs and measures, never on partial flags.";
+  for (i in 0_u64..span) {
+    if i < flags^.cells.inner.len {
+      let old = flags^.cells.inner[i];
+      let next = ior(old, bits);
+      set flags^.cells.inner[i] = next;
+    }
+  }
+  return unit;
+}
+
+fn reduce() -> result: u8 pure {
+  doc "Rows contribute through a whole-root reference to a summarized helper.";
+  let cells = box_array_filled::<u8>(count: 4_u64, value: 16_u8);
+  let filters = Filters(cells: move cells, extra: 3_u8);
+  for (row in 0_u64..4_u64) {
+    mark(flags: &filters, span: 2_u64, bits: filters.extra);
+  }
+  if 3_u64 < filters.cells.inner.len {
+    if filters.cells.inner[3_u64] != 16_u8 {
+      return 0_u8;
+    }
+    return filters.cells.inner[0_u64];
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "A disjoint sibling argument passes EFF-5 but violates the binding-wide PAR-2 condition.";
+  let observed = reduce();
+  return std::process::exit_status(code: 0_u8);
+}

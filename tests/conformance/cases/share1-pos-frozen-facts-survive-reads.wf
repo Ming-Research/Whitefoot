@@ -1,0 +1,21 @@
+fn require_byte(value: u8) -> result: u8 pure contract {
+  requires value >= 1_u8;
+} {
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let root = frozen_new::<u8>(value: 7_u8);
+  let side = shared_new::<u8>(value: 0_u8);
+  let byte = 0_u8;
+  if root.inner >= 1_u8 {
+    let peer = frozen_share::<u8>(frozen: &root);
+    atomic state = &side {
+      set state^ = 1_u8;
+    }
+    if peer.inner == root.inner {
+      set byte = require_byte(value: root.inner);
+    }
+  }
+  return std::process::exit_status(code: byte);
+}

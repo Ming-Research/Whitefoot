@@ -1,0 +1,8 @@
+fn denied(h: Frozen<u8>) -> result: u8 pure {
+  let Frozen(inner: x) = move h;
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

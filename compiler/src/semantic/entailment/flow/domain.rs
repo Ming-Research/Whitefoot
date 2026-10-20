@@ -4,6 +4,14 @@
 
 use super::*;
 
+struct ProjectionEndpoint {
+    ty: CheckedType,
+    run: bool,
+    indexed: bool,
+    readonly: bool,
+    represented: bool,
+}
+
 impl Input<'_, '_> {
     /// CONST-2's total field selection substitutes the immutable initializer.
     /// Preserve that known scalar while reads still carry the constant's
@@ -92,25 +100,337 @@ impl Input<'_, '_> {
                 if place.readonly_field_term(self.context.nominals)
                     == Some(SubscriptedTerm::Represented) =>
             {
-                Some(ResolvedPlace::from_path(
-                    place.root.binding,
-                    place.place_path(),
-                ))
+                Some(place.proof_place())
             }
             _ => None,
         }
     }
 
+    /// Integer data must be terms at the written destination followed by
+    /// its projections [CALL-4, MSR-3, ENT-2]. Resolving a reference alias
+    /// to indexed storage does not add a subscript to its written spelling.
+    pub(super) fn set_integer_place_admitted(
+        &self,
+        target: &CheckedSetTarget,
+        projections: &[PlaceStep],
+    ) -> bool {
+        self.written_integer_place_admitted(target, false, projections)
+    }
+
+    pub(super) fn goal_integer_place_admitted(&self, admission: &GoalAdmission) -> bool {
+        let projections = admission
+            .projections
+            .iter()
+            .map(|projection| projection.place_step())
+            .collect::<Vec<_>>();
+        if let Some(target) = admission.written.as_deref() {
+            return self.written_integer_place_admitted(
+                target,
+                admission.root_is_range,
+                &projections,
+            );
+        }
+        let Some(ty) = admission.root_type else {
+            // This endpoint was already admitted. Any extension records its
+            // prior type, so an untyped default cannot hide a new subscript.
+            return projections.is_empty();
+        };
+        self.typed_integer_place_admitted(
+            ty,
+            admission.root_is_range,
+            false,
+            true,
+            false,
+            &projections,
+        )
+    }
+
+    fn written_integer_place_admitted(
+        &self,
+        target: &CheckedSetTarget,
+        root_is_range: bool,
+        projections: &[PlaceStep],
+    ) -> bool {
+        let (indexed, offsets, readonly) = match target {
+            CheckedSetTarget::Place(_) => (false, None, None),
+            CheckedSetTarget::Storage(place) => (
+                place
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))),
+                place.subscripted_term(),
+                place.readonly_field_term(self.context.nominals),
+            ),
+            CheckedSetTarget::RangeIndex(place) => (
+                true,
+                place.subscripted_term(),
+                place.readonly_field_term(self.context.nominals),
+            ),
+        };
+        self.typed_integer_place_admitted(
+            target.ty(),
+            root_is_range,
+            indexed,
+            !indexed || offsets == Some(SubscriptedTerm::Represented),
+            readonly == Some(SubscriptedTerm::Represented),
+            projections,
+        )
+    }
+
+    /// The written type and run kind survive proof-path alias resolution.
+    /// A Page/Range selects a run image; the next Index selects its element,
+    /// even when that element itself is an indexed container [ENT-2, REF-4].
+    fn typed_integer_place_admitted(
+        &self,
+        ty: CheckedType,
+        run: bool,
+        indexed: bool,
+        represented: bool,
+        base_readonly: bool,
+        projections: &[PlaceStep],
+    ) -> bool {
+        let Some(endpoint) = self.projection_endpoint(
+            ProjectionEndpoint {
+                ty,
+                run,
+                indexed,
+                readonly: base_readonly,
+                represented,
+            },
+            projections,
+        ) else {
+            return false;
+        };
+        endpoint.represented
+            && (!endpoint.indexed || (endpoint.readonly && fragment_type(endpoint.ty).is_some()))
+    }
+
+    pub(super) fn goal_expression_projection_type(
+        &self,
+        expression: &GoalExpression,
+        projection: GoalProjection,
+    ) -> Option<CheckedType> {
+        let GoalExpression::Datum(datum) = expression else {
+            return None;
+        };
+        let mut endpoint = ProjectionEndpoint {
+            ty: datum.ty(),
+            run: false,
+            indexed: false,
+            readonly: false,
+            represented: true,
+        };
+        if let Some(admission) = datum.admission() {
+            endpoint = self.goal_admission_projection_endpoint(
+                admission,
+                datum.ty(),
+                &admission.projections,
+            )?;
+        }
+        if endpoint.ty != datum.ty() {
+            return None;
+        }
+        self.projection_endpoint(endpoint, &[projection.place_step()])
+            .map(|endpoint| endpoint.ty)
+    }
+
+    fn goal_admission_projection_endpoint(
+        &self,
+        admission: &GoalAdmission,
+        default_type: CheckedType,
+        projections: &[GoalProjection],
+    ) -> Option<ProjectionEndpoint> {
+        let suffix = projections
+            .iter()
+            .map(|projection| projection.place_step())
+            .collect::<Vec<_>>();
+        self.projection_endpoint(
+            ProjectionEndpoint {
+                ty: admission
+                    .written
+                    .as_deref()
+                    .map(CheckedSetTarget::ty)
+                    .or(admission.root_type)
+                    .unwrap_or(default_type),
+                run: admission.root_is_range,
+                indexed: false,
+                readonly: false,
+                represented: true,
+            },
+            &suffix,
+        )
+    }
+
+    /// A measure's row is selected by its written container. Alias resolution
+    /// supplies its identity, but cannot recover that container's type.
+    pub(super) fn goal_measure_base_type(&self, datum: &GoalDatum) -> Option<(CheckedType, bool)> {
+        let admission = datum.admission()?;
+        if let Some((GoalProjection::Measure(_), prefix)) = admission.projections.split_last() {
+            let endpoint =
+                self.goal_admission_projection_endpoint(admission, datum.ty(), prefix)?;
+            return Some((endpoint.ty, endpoint.run));
+        }
+        if !admission.projections.is_empty() {
+            return None;
+        }
+        self.written_measure_base_type(admission.written.as_deref()?)
+            .map(|ty| (ty, false))
+    }
+
+    fn read_measure_base_type(
+        &self,
+        expression: &CheckedExpression,
+    ) -> Option<(CheckedType, bool)> {
+        let ty = match expression {
+            CheckedExpression::ReadStorage { root, .. } => {
+                let (CheckedPlaceStep::Measure(_), prefix) = root.path.split_last()? else {
+                    return None;
+                };
+                self.written_projection_type(self.written_root_type(root.root)?, prefix)?
+            }
+            CheckedExpression::RangeIndex { place, .. } => {
+                let (CheckedPlaceStep::Measure(_), prefix) = place.path.split_last()? else {
+                    return None;
+                };
+                self.written_projection_type(place.root.element_type, prefix)?
+            }
+            // A scalar holder may resolve to a measure, but its checked read
+            // retains only the scalar type, not the written container.
+            _ => return None,
+        };
+        Some((ty, false))
+    }
+
+    fn written_measure_base_type(&self, target: &CheckedSetTarget) -> Option<CheckedType> {
+        let (ty, steps) = match target {
+            CheckedSetTarget::Storage(root) => (self.written_root_type(root.root)?, &root.path),
+            CheckedSetTarget::RangeIndex(place) => (place.root.element_type, &place.path),
+            CheckedSetTarget::Place(_) => return None,
+        };
+        let (CheckedPlaceStep::Measure(_), prefix) = steps.split_last()? else {
+            return None;
+        };
+        self.written_projection_type(ty, prefix)
+    }
+
+    fn written_root_type(&self, root: PlaceRoot) -> Option<CheckedType> {
+        match root {
+            PlaceRoot::Binding(binding) => self.summary(binding)?.ty,
+            PlaceRoot::Constant(constant) => {
+                Some(self.context.constants.get(constant.0 as usize)?.ty)
+            }
+        }
+    }
+
+    /// Checked subscripts record the selected type, including whether the
+    /// written root was a range or a single reborrow of one [REF-4, TYPE-8].
+    fn written_projection_type(
+        &self,
+        mut ty: CheckedType,
+        steps: &[CheckedPlaceStep],
+    ) -> Option<CheckedType> {
+        for step in steps {
+            ty = match step {
+                CheckedPlaceStep::Subscript(index) => index.element_type,
+                CheckedPlaceStep::BoxReferent(_)
+                | CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. } => {
+                    self.owned_path_type(ty, &[step.place_step()])?
+                }
+                CheckedPlaceStep::Measure(_) => return None,
+            };
+        }
+        Some(ty)
+    }
+
+    fn projection_endpoint(
+        &self,
+        mut endpoint: ProjectionEndpoint,
+        projections: &[PlaceStep],
+    ) -> Option<ProjectionEndpoint> {
+        let represented = |offset: &CapturedValue| {
+            matches!(
+                offset.term,
+                CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Binding(_)
+            )
+        };
+        for step in projections {
+            endpoint.readonly = false;
+            match step {
+                PlaceStep::Index(offset) | PlaceStep::Page(offset) => {
+                    endpoint.indexed = true;
+                    endpoint.represented &= represented(offset);
+                    let segment =
+                        !endpoint.run && matches!(endpoint.ty, CheckedType::Segments { .. });
+                    if !endpoint.run {
+                        endpoint.ty = self.integer_projection_element_type(endpoint.ty)?;
+                    }
+                    endpoint.run = segment || matches!(step, PlaceStep::Page(_));
+                }
+                PlaceStep::Range(range) => {
+                    endpoint.represented &= represented(&range.start) && represented(&range.end);
+                    if !endpoint.run {
+                        endpoint.ty = self.integer_projection_element_type(endpoint.ty)?;
+                    }
+                    endpoint.run = true;
+                }
+                PlaceStep::Field(field) => {
+                    let CheckedType::Nominal(nominal) = endpoint.ty else {
+                        return None;
+                    };
+                    let CheckedNominalKind::Struct { fields } =
+                        &self.context.nominals.get(nominal.0 as usize)?.kind
+                    else {
+                        return None;
+                    };
+                    let field = fields.get(*field as usize)?;
+                    endpoint.ty = field.ty;
+                    endpoint.readonly = field.readonly;
+                    endpoint.run = false;
+                }
+                PlaceStep::Deref => {
+                    if let Some(next) = self.owned_path_type(endpoint.ty, &[*step]) {
+                        endpoint.ty = next;
+                        endpoint.run = false;
+                    }
+                    // Borrow images already carry their referent type.
+                }
+                PlaceStep::Payload { .. } => {
+                    endpoint.ty = self.owned_path_type(endpoint.ty, &[*step])?;
+                    endpoint.run = false;
+                }
+                // [OP-15, MSR-1] a measure is a readonly u64 field of the
+                // selected descriptor, so ENT-2(b) admits it below a
+                // subscript as it admits `table[i].len`.
+                PlaceStep::Measure(_) => {
+                    endpoint.ty = CheckedType::Integer(IntegerType::U64);
+                    endpoint.readonly = true;
+                    endpoint.run = false;
+                }
+                _ => return None,
+            }
+        }
+        Some(endpoint)
+    }
+
+    fn integer_projection_element_type(&self, ty: CheckedType) -> Option<CheckedType> {
+        match ty {
+            CheckedType::Segments { element } | CheckedType::Entries { element } => {
+                self.context.elements.get(element.index()).copied()
+            }
+            _ => element_type(ty, self.context.elements),
+        }
+    }
+
     /// [OWN-1] whether a value of this type is read without being consumed,
-    /// so a place of it is an ordinary goal datum. A type parameter standing
-    /// for itself answers false here: the flow state keeps no fact about a
-    /// value of a type it cannot see.
+    /// so a place of it is an ordinary goal datum. A symbolic parameter
+    /// contributes exactly the capability granted by its written bound.
     pub(super) fn is_copy(&self, ty: CheckedType) -> bool {
         crate::semantic::model::type_has_copy_capability(
             ty,
             self.context.nominals,
             self.context.elements,
-            &|_| Some(false),
+            &|parameter| Some(self.context.copy_type_parameters.contains(&parameter)),
         )
         .unwrap_or(false)
     }
@@ -137,7 +457,8 @@ impl Vocabulary {
         // A seeded closure costs about what the proof-free probe does over a
         // closed core and answers the same question directly; the probe stays
         // the cheaper test for a state with no closed part.
-        if !closure_is_seeded(state)
+        if state.exclusions.is_empty()
+            && !closure_is_seeded(state)
             && !contradiction_without_proofs(state, &self.terms, &self.goals)
         {
             return;
@@ -269,6 +590,11 @@ impl Vocabulary {
         state: &AffineFlowState,
     ) -> Option<AffineForm> {
         match self.terms.kind(term).clone() {
+            TermKind::Sum(left, right) => {
+                let left = self.affine_term_value(left, state)?;
+                let right = self.affine_term_value(right, state)?;
+                left.add(&right, &mut AffineCheckState::new()).ok()
+            }
             TermKind::Zero => Some(AffineForm::constant(0)),
             TermKind::Constant(value) => Some(AffineForm::constant(value)),
             TermKind::Place(place, _) if place.path.is_empty() => match place.root {
@@ -282,23 +608,19 @@ impl Vocabulary {
             TermKind::ConstParameter(..)
             | TermKind::Measure(..)
             | TermKind::TargetMeasure { .. }
-            | TermKind::EntryDatum {
-                measure: Some(_), ..
+            | TermKind::EntryDatum { .. }
+            | TermKind::MeasureDatum { .. }
+            | TermKind::CallDatum { .. } => Some(self.measure_atom(term, state)),
+            // [ENT-6] a tracked field place carries its current image as a
+            // measure does.
+            TermKind::Place(_, _) if self.is_tracked_field_place(term) => {
+                Some(self.measure_atom(term, state))
             }
-            | TermKind::MeasureDatum {
-                measure: Some(_), ..
-            }
-            | TermKind::CallDatum {
-                measure: Some(_), ..
-            } => Some(self.measure_atom(term, state)),
             TermKind::Place(_, _)
             | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
-            | TermKind::CommitValue { .. }
-            | TermKind::EntryDatum { .. }
-            | TermKind::MeasureDatum { .. }
-            | TermKind::CallDatum { .. } => None,
+            | TermKind::CommitValue { .. } => None,
         }
     }
 
@@ -323,6 +645,38 @@ impl Vocabulary {
             join_delta,
         });
         AffineForm::term(AffineTermId::from_index(index))
+    }
+
+    /// Discards every atom minted at or after `start`, with every record that
+    /// names one of them. The next atom minted reuses the first discarded
+    /// index, so a surviving record naming a discarded atom would silently
+    /// denote that unrelated new value; rolling back through this one entry
+    /// point prunes every atom-bearing table together.
+    ///
+    /// The L0 query cache needs no pruning: it memoizes its complete inputs,
+    /// the closed state and the candidate images, so it answers only a query
+    /// over exactly those images.
+    pub(super) fn discard_atoms_from(&mut self, start: usize) {
+        if self.affine_atoms.len() <= start {
+            return;
+        }
+        self.affine_atoms.truncate(start);
+        let kept = |term: AffineTermId| (term.index() as usize) < start;
+        let kept_all = |terms: &[AffineCoefficient]| terms.iter().all(|each| kept(each.term()));
+        self.product_atoms
+            .retain(|product, (left, right)| kept(*product) && kept(*left) && kept(*right));
+        self.handle_images.retain(|handle, image| kept(*handle) && kept_all(image.terms()));
+        self.power_atoms
+            .retain(|(amount, _), power| kept_all(amount.terms()) && kept_all(power.terms()));
+        self.unsigned_divisions.retain(|division| {
+            kept_all(division.quotient.terms())
+                && kept_all(division.dividend.terms())
+                && kept_all(division.divisor.terms())
+        });
+        self.invariant_targets.retain(|_, target| match target {
+            Ok(target) => kept_all(target.terms()),
+            Err(_) => true,
+        });
     }
 
     /// Folds every delta atom an earlier join minted back into the constant
@@ -364,6 +718,51 @@ impl Vocabulary {
         };
         Some(self.new_affine_atom(ty))
     }
+
+    /// [ENT-6] the power atom of one nonconstant shift-amount image at one
+    /// unsigned shift type of width K: the atom standing for `2^amount`,
+    /// minted on the first demand with the interval `[1, 2^(K - 1)]` and
+    /// returned to every later demand for the same image and type, so a left
+    /// shift of one and a right shift by that amount name one value. Only an
+    /// exact shift of that type whose `amount <= K - 1` obligation is proved
+    /// demands it, and the amount is one immutable value, so the interval
+    /// holds wherever the atom is named. A constant amount and a signed type
+    /// have no power atom.
+    pub(super) fn power_atom(
+        &mut self,
+        amount: &AffineForm,
+        ty: IntegerType,
+    ) -> Option<AffineForm> {
+        if amount.terms().is_empty() || ty.signed() {
+            return None;
+        }
+        let key = (amount.clone(), ty);
+        if let Some(power) = self.power_atoms.get(&key) {
+            return Some(power.clone());
+        }
+        let maximum = 1_i128 << (u32::from(ty.width()) - 1);
+        let power = self.new_affine_atom_with_interval(ty, 1, maximum, false);
+        self.power_atoms.insert(key, power.clone());
+        Some(power)
+    }
+
+    /// [ENT-6] the power divisor of one shift-amount image at a shift of
+    /// type `ty`: the constant `2^c` for a constant amount `c` the type's
+    /// width admits, the power atom otherwise.
+    pub(super) fn power_divisor(
+        &mut self,
+        amount: &AffineForm,
+        ty: IntegerType,
+    ) -> Option<AffineForm> {
+        if amount.terms().is_empty() {
+            let exponent = u32::try_from(amount.constant_value()).ok()?;
+            if exponent >= u32::from(ty.width()) {
+                return None;
+            }
+            return Some(AffineForm::constant(1_i128 << exponent));
+        }
+        self.power_atom(amount, ty)
+    }
 }
 
 impl Reasoning<'_, '_, '_> {
@@ -382,6 +781,21 @@ impl Reasoning<'_, '_, '_> {
             let value = self.vocabulary.new_affine_atom(ty);
             state.values.insert(binding, value);
         }
+    }
+
+    /// [ENT-6] a copy read of a tracked field place reads that place's
+    /// current image, minted on first demand; any other expression reads
+    /// none here.
+    pub(super) fn tracked_field_image(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &AffineFlowState,
+    ) -> Option<AffineForm> {
+        let term = self.read_operand(expression)?;
+        if !self.vocabulary.is_tracked_field_place(term) {
+            return None;
+        }
+        Some(self.vocabulary.measure_atom(term, state))
     }
 
     /// Reads an expression as a term or constant [ENT-2]; anything else is
@@ -412,17 +826,46 @@ impl Reasoning<'_, '_, '_> {
         }
         let fragment = fragment_type(expression.ty())?;
         let path = self.input.read_place_path(expression)?;
-        let kind = match path.path.as_slice() {
-            projections
-                if projections
-                    .iter()
-                    .all(|projection| matches!(projection, PlaceStep::Field(_))) =>
-            {
-                TermKind::Place(path, fragment)
-            }
-            _ => TermKind::Place(path, fragment),
-        };
-        Some(self.vocabulary.terms.intern(kind))
+        let measure_base = self.input.read_measure_base_type(expression);
+        self.place_operand(path, fragment, measure_base)
+    }
+
+    /// [ENT-2, MSR-2] scalar places formed by reads and instantiated
+    /// contracts use one term and the same descriptor standing bounds.
+    pub(super) fn place_operand(
+        &mut self,
+        path: ResolvedPlace,
+        fragment: IntegerType,
+        measure_base: Option<(CheckedType, bool)>,
+    ) -> Option<TermId> {
+        // [ENT-2, MSR-2] an exact scalar reference to a descriptor field
+        // retains that field's standing bounds as well as its term identity.
+        if fragment == IntegerType::U64
+            && let Some(PlaceStep::Measure(measure)) = path.path.last().copied()
+        {
+            let mut base = path.clone();
+            base.path.pop();
+            // Alias resolution fixes the measure's identity; only its
+            // standing bound needs the written container's type.
+            let Some((ty, run)) = measure_base else {
+                return Some(self.vocabulary.intern_measure(measure, &base));
+            };
+            return Some(self.place_measure_term(
+                measure,
+                base,
+                if run {
+                    MeasuredKind::Range
+                } else {
+                    measured_kind(ty)?
+                },
+                if run { None } else { type_constant(ty) },
+            ));
+        }
+        Some(
+            self.vocabulary
+                .terms
+                .intern(TermKind::Place(path, fragment)),
+        )
     }
 
     /// Files one [REF-4] formation's endpoint images under its start capture,
@@ -534,24 +977,40 @@ impl Reasoning<'_, '_, '_> {
         self.affine_pure_expression_form(expression, state)
     }
 
-    /// The operand value images of one admitted S7 unsigned division, read
-    /// where it was evaluated. A `set` commit reads both before its target
-    /// kill, since an operand naming that place has a new image afterwards.
+    /// The dividend and divisor images of one captured S7 division, read
+    /// where it was evaluated: a division's two operands, or a right shift's
+    /// value and the power divisor of its amount [ENT-6]. A `set` commit
+    /// reads them before its target kill, since an operand naming that place
+    /// has a new image afterwards.
     pub(super) fn unsigned_division_operand_forms(
         &mut self,
         value: &CheckedExpression,
         state: &mut AffineFlowState,
     ) -> Option<(AffineForm, AffineForm)> {
-        let CheckedExpression::IntegerOperation { arguments, .. } = value else {
+        let CheckedExpression::IntegerOperation {
+            operation,
+            operand_type,
+            arguments,
+            ..
+        } = value
+        else {
             return None;
         };
         let [dividend, divisor] = arguments.as_slice() else {
             return None;
         };
-        Some((
-            self.affine_pre_domain_form(dividend, state)?,
-            self.affine_pre_domain_form(divisor, state)?,
-        ))
+        let dividend = self.affine_pre_domain_form(dividend, state)?;
+        let divisor = self.affine_pre_domain_form(divisor, state)?;
+        match (operation, operand_type) {
+            (CheckedIntegerOperation::DivideExact, _) => Some((dividend, divisor)),
+            (CheckedIntegerOperation::ShiftRightExact, CheckedType::Integer(ty))
+                if !ty.signed() =>
+            {
+                let divisor = self.vocabulary.power_divisor(&divisor, *ty)?;
+                Some((dividend, divisor))
+            }
+            _ => None,
+        }
     }
 
     /// The atom a multiplication's operand contributes to the fold: the
@@ -623,10 +1082,15 @@ impl Reasoning<'_, '_, '_> {
                 value,
                 ..
             } => self.affine_pure_expression_form(value, state),
+            // [ENT-6] a field read of a value root or through a reference
+            // reads the tracked field place's current image.
+            CheckedExpression::Project { .. } | CheckedExpression::ProjectValue { .. } => {
+                self.tracked_field_image(expression, state)
+            }
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,
-                result: CheckedType::Integer(_),
+                result: CheckedType::Integer(result),
                 ..
             } => {
                 let [left, right] = arguments.as_slice() else {
@@ -653,12 +1117,31 @@ impl Reasoning<'_, '_, '_> {
                             None
                         }
                     }
+                    CheckedIntegerOperation::ShiftLeftExact => {
+                        self.shifted_one_image(*result, &left, &right)
+                    }
                     _ => None,
                 }
             }
             _ => None,
         };
         formed.or_else(|| self.vocabulary.affine_unknown_integer(expression.ty()))
+    }
+
+    /// [ENT-6] the image of an exact unsigned `ishl` whose value operand is
+    /// the constant one and whose amount image is not a constant: the power
+    /// atom of that amount, the divisor an `ishr` by the same amount reads
+    /// [ENT-3.S7]. Every other left shift has no listed image.
+    pub(super) fn shifted_one_image(
+        &mut self,
+        ty: IntegerType,
+        value: &AffineForm,
+        amount: &AffineForm,
+    ) -> Option<AffineForm> {
+        if ty.signed() || *value != AffineForm::constant(1) {
+            return None;
+        }
+        self.vocabulary.power_atom(amount, ty)
     }
 }
 
@@ -818,7 +1301,7 @@ impl Judging<'_, '_, '_> {
                         match folded[0].form.add(&delta, &mut AffineCheckState::new()) {
                             Ok(value) => value,
                             Err(_) => {
-                                self.vocabulary.affine_atoms.truncate(atom_start);
+                                self.vocabulary.discard_atoms_from(atom_start);
                                 self.vocabulary.new_affine_atom(ty)
                             }
                         }

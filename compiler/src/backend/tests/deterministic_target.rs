@@ -55,7 +55,7 @@ const CHUNKED_READ: &[u8] = include_bytes!("../../../../tests/programs/io_chunke
 const WRITE_PREFIX: &[u8] = include_bytes!("../../../../tests/programs/io_write_prefix.wf");
 
 /// `IoError`'s variants in declared order, each with whether it carries the
-/// native code and origin: every variant but `DeadlinePassed` does.
+/// native code and origin: every variant but `DeadlinePassed` and `Cancelled` does.
 fn io_error_classes() -> Vec<(&'static str, bool)> {
     let declaration = crate::library::RECORDS
         .iter()
@@ -775,7 +775,7 @@ pub(super) fn run_emitted_on_deterministic_host(
 /// An ordinary entry that explicitly closes both halves of its initial working
 /// directory, the write half first.
 const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   let closed = std::fs::close_directory(factory: &factory, directory: move cwd);
@@ -787,7 +787,7 @@ const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) 
 /// at all, so every row it uses is one both target columns share.
 const READS_ITS_ARGUMENTS: &[u8] =
     br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -814,7 +814,10 @@ const WRITES_THEN_RELEASES_BOTH: &[u8] =
   set bytes[2_u64] = 67_u8;
   let payload = &bytes[0_u64..3_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: entry_factory, output: out, source: payload, start: 0_u64, end: 3_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: entry_factory, output: out, source: payload, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: written) => {
       let narrowed = cvt.checked::<u64, u8>(written);
       match narrowed {
@@ -834,7 +837,7 @@ const WRITES_THEN_RELEASES_BOTH: &[u8] =
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "PRE-2 ordinary std::process::Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
-  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move cwd_write);
   let outcome = exercise(cwd: &cwd, out: &out, entry_factory: &entry_factory);
@@ -866,7 +869,7 @@ fn opens_one_file(named: &[(&str, &str)], default: &str) -> String {
 }}
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   let outcome = std::process::exit_status(code: 0_u8);
@@ -1329,14 +1332,17 @@ fn the_heap_resource_record_writer_stays_native_on_the_deterministic_target() {
     // on it; allocation is total in the source, so the record writer below is
     // the trusted base's own exhaustion path and not a source-visible arm.
     let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 65_u8);
   let ordinary_source = &bytes.inner[0_u64..1_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: accepted) => {
     }
     Err(error: problem) => {
@@ -1384,14 +1390,17 @@ pub(super) fn assert_zero_write_outcome() {
     );
     let source = format!(
         r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   std::fs::close_directory(factory: &factory, directory: move cwd);
   let bytes = array_filled::<u8, 2>(value: 119_u8);
   let window = &bytes[0_u64..2_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 2_u64, deadline: no_deadline) {{
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {{
     Ok(value: written) => {{
       let narrowed = cvt.checked::<u64, u8>(written);
       match narrowed {{

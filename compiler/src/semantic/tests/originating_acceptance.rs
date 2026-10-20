@@ -141,7 +141,10 @@ fn main() -> status: std::process::ExitStatus pure {
 fn unproved_prelude_endpoints_reject_under_fn8() {
     let source = br#"fn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) waits {
   let no_deadline = None<std::time::Instant>();
-  match std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: next) => {
     }
     Err(error: problem) => {
@@ -216,7 +219,7 @@ fn an_external_call_actual_needs_a_real_control_flow_fact() {
 }
 
 #[test]
-fn a_recursive_postcondition_cycle_cannot_publish_its_own_premise() {
+fn a_nonreturning_recursive_cycle_proves_partial_correctness() {
     let source = br#"fn first(value: i32) -> result: i32 pure contract {
   ensures result == value;
 } {
@@ -235,9 +238,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    rejects_as(source, SemanticRule::Fn9, |kind| {
-        matches!(kind, SemanticIssueKind::UndischargedPostcondition(_))
-    });
+    accepts(source);
 }
 
 #[test]

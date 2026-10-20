@@ -1,0 +1,21 @@
+fn probe(a: &Box<Array<u64>>) -> result: u64 reads(a) contract {
+  requires 0_u64 < a^.inner.len;
+  requires forall ok(j in 0_u64..a^.inner.len): a^.inner[j] < a^.inner.len;
+} {
+  let pc = 0_u64;
+  loop (
+    invariant slot: pc < a^.inner.len
+  ) {
+    set pc = a^.inner[a^.inner[pc]];
+    return pc;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let cells = box_array_filled::<u64>(count: 2_u64, value: 1_u64);
+  let got = probe(a: &cells);
+  if got != 1_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

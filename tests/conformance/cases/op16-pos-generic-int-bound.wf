@@ -1,0 +1,16 @@
+fn same<T: Int>(left: T, right: T) -> result: Bool pure {
+  return left == right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let equal = same::<u32>(left: 7_u32, right: 7_u32);
+  let unequal = same::<i8>(left: -1_i8, right: 1_i8);
+  if equal {
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if unequal {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

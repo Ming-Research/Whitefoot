@@ -40,7 +40,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 /// A named const is immutable and is read by subscript, measure member, field
-/// suffix, or `&` reference [CONST-2].
+/// suffix, `&` reference, or whole-value copy under v0.121 [CONST-2].
 ///
 /// Two v0.59 cases retire with their subjects. `let old = replace rows[..] =
 /// 5_u64;` was [SET-2]'s statement, which is gone: [SET-1] writes the place
@@ -993,9 +993,9 @@ fn main() -> status: std::process::ExitStatus pure {
   let values = slots_from_array::<u8, 2>(values: base);
   let inner = Inner(values: move values);
   let outer = Outer(inner: move inner, marker: 7_u8);
-  let held = &outer;
+  let observed = &outer;
   set outer.inner.values[1_u64] = 9_u8;
-  let seen = observe(value: held);
+  let seen = observe(value: observed);
   return std::process::exit_status(code: 0_u8);
 }
 "#,

@@ -1,0 +1,4 @@
+fn missing_write(error: &std::io::IoError, destination: &[u8]) -> result: Result<u64, std::io::DescriptionError> reads(error), reads(destination) {
+  doc "The empty window proves both bounds but the caller declares only a read of destination. Before the API exists lookup fails; with its declaration the intended failure is EFF-2 for the omitted write effect.";
+  return std::io::error_copy_description(error: error, destination: destination, start: 0_u64, end: 0_u64);
+}

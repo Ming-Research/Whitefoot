@@ -5,8 +5,8 @@ fn walk<const n: u64>(run: &Slots<u8, n>, at: u64) -> total: u64 reads(run) cont
   requires at <= run^.len;
 } {
   doc "A call that forwards the caller's own parameters in position and kind, as this one forwards n, preserves its instance key under FN-6.";
-  let held = run^.len;
-  let more = at < held;
+  let observed = run^.len;
+  let more = at < observed;
   if more {
   } else {
     return 0_u64;

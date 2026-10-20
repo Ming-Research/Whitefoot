@@ -1,0 +1,16 @@
+struct BoundFloat {
+  index: u32;
+  fraction: f64;
+}
+
+fn same<T: Eq>(left: T, right: T) -> result: Bool pure {
+  return left == right;
+}
+
+fn forward(value: BoundFloat) -> result: Bool pure {
+  return same::<BoundFloat>(left: value, right: value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,56 @@
+struct Module {
+  code: Box<Array<u8>>;
+  brtab: Box<Array<u64>>;
+  invariant same_length(m): m.code.inner.len == m.brtab.inner.len;
+  invariant(m): forall targets(k in 0_u64..m^.brtab.inner.len): m^.brtab.inner[k] < m^.code.inner.len;
+}
+
+fn follow(m: &Module, pc0: u64) -> result: u64 reads(m) contract {
+  requires pc0 < m^.brtab.inner.len;
+} {
+  let pc = pc0;
+  loop (
+    invariant slot: pc < m^.brtab.inner.len
+  ) {
+    let target = m^.brtab.inner[pc];
+    if pc == target {
+      return pc;
+    }
+    set pc = target;
+    continue;
+  }
+}
+
+fn dispatch(m: &Module, pc0: u64) -> result: u8 reads(m) contract {
+  requires pc0 < m^.brtab.inner.len;
+} {
+  let pc = pc0;
+  loop (
+    invariant slot: pc < m^.brtab.inner.len
+  ) {
+    let target = m^.brtab.inner[pc];
+    let op = m^.code.inner[target];
+    if op == 0_u8 {
+      return op;
+    }
+    set pc = target;
+    continue;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let code = box_array_filled::<u8>(count: 3_u64, value: 1_u8);
+  set code.inner[2_u64] = 0_u8;
+  let brtab = box_array_filled::<u64>(count: 3_u64, value: 2_u64);
+  set brtab.inner[0_u64] = 1_u64;
+  let m = Module(code: move code, brtab: move brtab);
+  let final_pc = follow(m: &m, pc0: 0_u64);
+  if final_pc != 2_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let got = dispatch(m: &m, pc0: 0_u64);
+  if got != 0_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

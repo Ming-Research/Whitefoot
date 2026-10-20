@@ -6,18 +6,32 @@
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
 //! Adding or rewording a repair means adding or updating a pair here or in
-//! its family module; the repairs still printed without one are listed in
-//! `docs/todo.md`.
+//! its family module. Constructor, ownership, placement and linear-exit
+//! repairs are pinned in `remaining_repairs`, including multi-module fields.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod cell_consumption;
+mod clause_requirements;
 mod collisions_and_killed_facts;
 mod content_moves;
+mod enum_routed_ensures;
+mod entry_formers;
+mod floats;
+mod interface_applications;
+mod postcondition_places;
+mod prelude_opaque;
+mod qualified_constants;
+mod recursive_effects;
+mod remaining_repairs;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
+mod writer_operations;
+mod writer_ownership;
+mod writer_references;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -49,6 +63,109 @@ struct RepairPair {
 }
 
 const REPAIRS: &[RepairPair] = &[
+    // [TYPE-9] an operand-supplied argument is refused at the complete call.
+    RepairPair {
+        name: "type9-neg-runtime-slots-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-runtime-slots-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-runtime-box-swap.wf"
+        )],
+    },
+    // [TYPE-9, FN-2] a generic instance is refused at its complete written targ.
+    RepairPair {
+        name: "type9-neg-generic-runtime-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-generic-runtime-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: this type argument would place `Slots<u64>` as the exchange of a `swap`; swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-generic-runtime-box-swap.wf"
+        )],
+    },
+    // [TYPE-9] a function-kind actual is refused at its inner written targ.
+    RepairPair {
+        name: "type9-neg-function-actual-runtime-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/type9-neg-function-actual-runtime-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: swap the owning `Box` values instead of their contents\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/type9-pos-function-actual-box-swap.wf"
+        )],
+    },
+    RepairPair {
+        name: "const2-neg-whole-nocopy-struct.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/const2-neg-whole-nocopy-struct.wf"),
+        rule: "OWN-1",
+        sentences: &[
+            "]: BareAffineUse\n",
+            "\n  mechanical_fix: read the const through a field, subscript or measure supported by its type, or take a `&` reference\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../tests/conformance/cases/const2-pos-nocopy-struct-field-read.wf"
+        )],
+    },
+    RepairPair {
+        name: "value-equality-float-field.wf",
+        rejected: br#"struct EqualityReading {
+  value: f64;
+}
+
+fn same(left: EqualityReading, right: EqualityReading) -> result: Bool pure {
+  return left == right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-1",
+        sentences: &[
+            "]: InvalidEqualityType\n",
+            "\n  mechanical_fix: operand type, field `value` has non-equality type `f64`; replace this comparison with an explicit comparison of the intended observable values using operations admitted for their types, or, if the data model permits it, change this part to an equality type [OP-16]\n",
+        ],
+        repaired: &[
+            br#"struct EqualityReading {
+  value: f64;
+}
+
+fn same(left: EqualityReading, right: EqualityReading) -> result: Bool pure {
+  return feq(left.value, right.value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"struct EqualityReading {
+  value: u64;
+}
+
+fn same(left: EqualityReading, right: EqualityReading) -> result: Bool pure {
+  return left == right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
     // -------------------------------------------------------------------
     // [FORM-7] a text item's one spelling and a `u8` character's range.
     // -------------------------------------------------------------------
@@ -1436,6 +1553,62 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
+        // [OP-4, FORM-2] a bound over a window inside an enum payload names the variant and its payload field, and the window's own measure follows by name.
+        name: "bounds-below-an-enum-payload-and-field.wf",
+        rejected: br#"struct Holder {
+  items: Slots<u64, 4>;
+  tag: u64;
+}
+
+fn get(h: &Option<Holder>, i: u64) -> result: u64 reads(h) {
+  match &h^ {
+    Some(value: v) => {
+      let x = v^.items[i];
+      return x;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < h^.Some.value.items.len\n",
+            "\n  mechanical_fix: `i < h^.Some.value.items.len` is not proved here: when facts that reach the access imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the access with `if i < h^.Some.value.items.len` where skipping it is the intended behavior\n",
+        ],
+        repaired: &[
+            br#"struct Holder {
+  items: Slots<u64, 4>;
+  tag: u64;
+}
+
+fn get(h: &Option<Holder>, i: u64) -> result: u64 reads(h) {
+  match &h^ {
+    Some(value: v) => {
+      if i < v^.items.len {
+        let x = v^.items[i];
+        return x;
+      }
+      return 0_u64;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
         name: "bounds-over-parameters.wf",
         rejected: br#"fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   return b^[i];
@@ -1752,7 +1925,7 @@ fn main() -> status: std::process::ExitStatus pure {
     },
     RepairPair {
         name: "empty-run-release-over-a-parameter.wf",
-        rejected: br#"fn release(window: Box<Slots<u8>>) -> result: unit pure {
+        rejected: br#"fn finish(window: Box<Slots<u8>>) -> result: unit pure {
   free_empty(window: move window);
   return unit;
 }
@@ -1764,9 +1937,9 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-14",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires window.inner.len == 0_u64;` to the `contract` of `release`, which each caller then establishes, or take every element out and consume it before this call, so that its zero length is established here\n",
+            "\n  mechanical_fix: add `requires window.inner.len == 0_u64;` to the `contract` of `finish`, which each caller then establishes, or take every element out and consume it before this call, so that its zero length is established here\n",
         ],
-        repaired: &[br#"fn release(window: Box<Slots<u8>>) -> result: unit pure contract {
+        repaired: &[br#"fn finish(window: Box<Slots<u8>>) -> result: unit pure contract {
   requires window.inner.len == 0_u64;
 } {
   free_empty(window: move window);
@@ -1808,26 +1981,26 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        name: "cap-field-in-reference-factor.wf",
-        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-cap-field-factor.wf"),
+        name: "count-field-through-box-content-factor.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/inv1-neg-box-content-field-factor.wf"
+        ),
         rule: "INV-1",
         sentences: &[
             "\n  reason: an affine factor selects a field or an element of a place\n",
             "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
         ],
-        repaired: &[br#"struct Bounds {
-  cap: u32;
+        repaired: &[br#"struct Counter {
+  count: u32;
 }
 
-fn inspect(limits: &Bounds) -> result: u32 reads(limits.cap) {
-  let capacity = limits^.cap;
-  invariant bounded: 0_u32 <= capacity;
-  return limits^.cap;
+fn inspect(made: Box<Counter>) -> result: u32 pure {
+  let count = made.inner.count;
+  invariant bounded: 0_u32 <= count;
+  return count;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let limits = Bounds(cap: 4_u32);
-  let capacity = inspect(limits: &limits);
   return std::process::exit_status(code: 0_u8);
 }
 "#],
@@ -1854,8 +2027,10 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        name: "measure-named-field-in-proof-source.wf",
-        rejected: include_bytes!("../../../tests/conformance/cases/prf1-neg-measure-named-field-factor.wf"),
+        name: "measure-named-field-through-box-content-in-proof-source.wf",
+        rejected: include_bytes!(
+            "../../../tests/conformance/cases/prf1-neg-box-content-field-factor.wf"
+        ),
         rule: "PRF-1",
         sentences: &[
             "\n  reason: an affine factor selects a field or an element of a place\n",
@@ -1865,14 +2040,14 @@ fn main() -> status: std::process::ExitStatus pure {
   len: u64;
 }
 
-fn combine(first: u64, second: u64, third: u64, limits: Bounds, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
-  requires first <= limits.len;
+fn combine(first: u64, second: u64, third: u64, limits: Box<Bounds>, first_limit: u64, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
+  requires first <= first_limit;
   requires second <= second_limit;
   requires third <= third_limit;
 } {
-  let length = limits.len;
-  invariant combined: first + second + third <= length + second_limit + third_limit {
-    use (first <= length);
+  let length = limits.inner.len;
+  invariant combined: length + first + second + third <= length + first_limit + second_limit + third_limit {
+    use (first <= first_limit);
     use (second <= second_limit);
     use (third <= third_limit);
   }
@@ -1880,8 +2055,9 @@ fn combine(first: u64, second: u64, third: u64, limits: Bounds, second_limit: u6
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let limits = Bounds(len: 4_u64);
-  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: limits, second_limit: 5_u64, third_limit: 6_u64);
+  let bounds = Bounds(len: 4_u64);
+  let limits = box_new::<Bounds>(value: bounds);
+  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: move limits, first_limit: 4_u64, second_limit: 5_u64, third_limit: 6_u64);
   return std::process::exit_status(code: answer);
 }
 "#],
@@ -2133,6 +2309,85 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // [OP-4, INV-1] a counted loop's header invariant read at its binder:
+    // the element need not exist at the empty run's entry or the last
+    // backedge, so the per-element fact moves to a range clause [RANGE-1].
+    RepairPair {
+        name: "loop-invariant-element-at-the-binder.wf",
+        rejected: br#"fn total(rows: &Slots<Slots<u8, 8>, 8>, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) {
+  let n = rows^.len;
+  let sum = 0_u64;
+  for (
+    i in 0_u64..n,
+    invariant fits: rows^[i].len <= 4_u64
+  ) {
+    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }
+  }
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  residual: i < rows^.len\n",
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `fits` reads the element at `i`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall fits(k in 0_u64..i): rows^[k].len <= 4_u64`; when the input guarantees it, require it of every element, `requires forall fits_all(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;`\n",
+        ],
+        repaired: &[
+            br#"fn total(rows: &Slots<Slots<u8, 8>, 8>, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) {
+  let n = rows^.len;
+  let sum = 0_u64;
+  for (
+    i in 0_u64..n,
+    invariant forall fits(k in 0_u64..i): rows^[k].len <= 4_u64
+  ) {
+    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }
+  }
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn total(rows: &Slots<Slots<u8, 8>, 8>, table: &Array<u64, 5>) -> result: u64 reads(rows), reads(table) contract {
+  requires forall fits_all(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;
+} {
+  let n = rows^.len;
+  let sum = 0_u64;
+  for (i in 0_u64..n) {
+    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }
+  }
+  return sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
     // -------------------------------------------------------------------
     // Repairs that no goal selects.
     // -------------------------------------------------------------------
@@ -2269,7 +2524,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2312,7 +2567,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2331,7 +2586,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2349,7 +2604,7 @@ alias Inputs = std::process::Inputs;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   let DirectoryRead() = move directory;
@@ -2367,7 +2622,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   close_directory(factory: &factory, directory: move directory);
@@ -2905,7 +3160,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "SHARE-2",
         sentences: &[
             "]: AtomicTargetNotShared\n",
-            "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`\n",
+            "\n  mechanical_fix: name a place of type `Shared<T>` or `SharedRead<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
   let plain = shared_new::<u8>(value: 0_u8);
@@ -3511,42 +3766,6 @@ fn main() -> status: ExitStatus pure {
 }
 "#],
     },
-    RepairPair {
-        name: "writable-len-field-counted-endpoint.wf",
-        rejected: br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let count = 0_u64;
-  for (i in 0_u64..spans[1_u64].len) {
-    set count = count +wrap 1_u64;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "ENT-2",
-        sentences: &[
-            "\n  mechanical_fix: bind the computed u64 value with one preceding ordinary let and use that term as the endpoint\n",
-        ],
-        repaired: &[br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let count = 0_u64;
-  let length = spans[1_u64].len;
-  for (i in 0_u64..length) {
-    set count = count +wrap 1_u64;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#],
-    },
 ];
 
 /// Every function a source declares, by the name its `fn` introduces.
@@ -3585,17 +3804,32 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
     for pair in REPAIRS
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
+        .chain(cell_consumption::CELL_CONSUMPTION)
         .chain(content_moves::CONTENT_MOVES)
+        .chain(prelude_opaque::PRELUDE_OPAQUE)
+        .chain(qualified_constants::QUALIFIED_CONSTANTS)
+        .chain(recursive_effects::RECURSIVE_EFFECTS)
+        .chain(remaining_repairs::REMAINING_REPAIRS)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(shared_maps::SHARED_MAPS)
+        .chain(floats::FLOATS)
+        .chain(interface_applications::INTERFACE_APPLICATIONS)
         .chain(selector_scope::SELECTOR_SCOPE)
+        .chain(enum_routed_ensures::ENUM_ROUTED_ENSURES)
+        .chain(entry_formers::ENTRY_FORMERS)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(clause_requirements::CLAUSE_REQUIREMENTS)
+        .chain(writer_operations::WRITER_OPERATIONS)
+        .chain(writer_ownership::WRITER_OWNERSHIP)
+        .chain(writer_references::WRITER_REFERENCES)
+        .chain(postcondition_places::POSTCONDITION_PLACES)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
             CompilerLimits::default(),
         )
         .expect_err(pair.name);
+        entry_formers::assert_span(pair, &failure);
         assert_eq!(
             failure.kind(),
             CompilationFailureKind::Source,
@@ -3608,6 +3842,37 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
             "{}: {failure}",
             pair.name
         );
+        // [TYPE-9] semantic tests pin the complete call or written targ
+        // span. Pin its rendered start here with the existing repair run.
+        let citation = match pair.name {
+            "type9-neg-runtime-slots-content-swap.wf" => {
+                Some(("  ", "swap(first: &small.inner, second: &large.inner)"))
+            }
+            "type9-neg-generic-runtime-content-swap.wf" => Some(("exchange::<", "Slots<u64>")),
+            "type9-neg-function-actual-runtime-content-swap.wf" => {
+                Some(("fn swap::<", "Slots<u64>"))
+            }
+            _ => None,
+        };
+        if let Some((prefix, cited)) = citation {
+            let source = std::str::from_utf8(pair.rejected).expect("source is text");
+            let start = source
+                .find(&format!("{prefix}{cited}"))
+                .expect("refused construct")
+                + prefix.len();
+            let before = &source[..start];
+            let line = before.bytes().filter(|byte| *byte == b'\n').count() as u64 + 1;
+            let column = before
+                .rsplit('\n')
+                .next()
+                .expect("source line")
+                .chars()
+                .count() as u64
+                + 1;
+            let location = failure.location().expect("source location");
+            assert_eq!(location.path(), pair.name);
+            assert_eq!((location.line(), location.column()), (line, column));
+        }
         let rendered = format!("{failure}\n");
         for sentence in pair.sentences {
             assert!(
@@ -3648,7 +3913,7 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);

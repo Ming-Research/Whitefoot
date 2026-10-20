@@ -1,0 +1,9 @@
+fn length() -> result: u64 pure {
+  let bytes = array_filled::<u8, 4>(value: 0_u8);
+  let count = move bytes.len;
+  return count;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

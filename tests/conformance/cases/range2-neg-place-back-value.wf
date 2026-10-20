@@ -1,0 +1,11 @@
+fn push_zero(xs: &Slots<u64, 1>) -> result: unit writes(xs) contract {
+  requires xs^.len == 0_u64;
+  ensures forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;
+} {
+  place_back(window: xs, value: 1_u64);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

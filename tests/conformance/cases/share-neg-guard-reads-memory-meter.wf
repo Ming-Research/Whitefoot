@@ -1,0 +1,25 @@
+struct Progress {
+  n: u64;
+}
+
+fn over(meter: &std::process::MemoryMeter, limit: u64) -> result: Bool reads(meter) {
+  doc "Reports whether the program heap exceeds limit, reading it through a meter of its own so the row only reads meter.";
+  let own = std::process::meter_share(meter: meter);
+  let kept = std::process::heap_in_use(meter: &own);
+  let exceeded = kept > limit;
+  return exceeded;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A guard that waits for a heap reading through a helper whose row only reads the meter reads a self-changing host handle.";
+  let std::process::Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let initial = Progress(n: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  atomic g = &state when over(meter: &meter, limit: 1048576_u64) {
+    set g^.n = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

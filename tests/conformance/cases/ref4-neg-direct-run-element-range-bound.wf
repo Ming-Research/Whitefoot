@@ -1,0 +1,11 @@
+fn invalid(rows: &Segments<Array<u64, 4>>, segment: u64, offset: u64) -> count: u64 reads(rows) contract {
+  requires segment < rows^.len;
+  requires offset < rows^[segment].len;
+} {
+  let part = &rows^[segment][offset][0_u64..5_u64];
+  return part^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

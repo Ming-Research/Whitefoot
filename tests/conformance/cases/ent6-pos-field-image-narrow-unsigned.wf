@@ -1,0 +1,34 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Gauge {
+  doc "One small reading.";
+  small: u8;
+}
+
+fn raise(gauge: &Gauge, step: u8) -> result: unit writes(gauge) contract {
+  requires gauge^.small + step <= 200_u8;
+} {
+  doc "Adds step to a u8 field. The u8 addition owes its own 255 ceiling, which the requirement's image of the field plus step discharges.";
+  let small = gauge^.small;
+  let next = small + step;
+  set gauge^.small = next;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Raises 50 by 100 after checking the room.";
+  let gauge = Gauge(small: 50_u8);
+  let kept = gauge.small;
+  if kept <= 100_u8 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  raise(gauge: &gauge, step: 100_u8);
+  let small = gauge.small;
+  if small == 150_u8 {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

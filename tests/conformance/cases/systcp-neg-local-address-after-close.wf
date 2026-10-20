@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias TcpConnection = std::net::TcpConnection;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias local_address = std::net::local_address;
+
+fn closed_end(factory: &HandleFactory, connection: TcpConnection) -> result: u8 writes(factory) waits {
+  doc "close_receive consumes the receiving half, so a later reference to it is a use of a dead binding and local_address can never reach a closed connection [OWN-1, PRE-2].";
+  let TcpConnection(receive: inbound, send: outbound) = move connection;
+  close_receive(factory: factory, receive: move inbound);
+  close_send(factory: factory, send: move outbound);
+  match local_address(receive: &inbound) {
+    Ok(value: own_end) => {
+      return 0_u8;
+    }
+    Err(error: problem) => {
+      return 1_u8;
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The rejection is in the helper above; this entry point does nothing.";
+  return exit_status(code: 0_u8);
+}

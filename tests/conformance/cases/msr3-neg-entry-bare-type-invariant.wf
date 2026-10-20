@@ -1,0 +1,9 @@
+struct Pair {
+  marker: u64;
+  value: u64;
+  invariant stays(pair): pair.value == entry(pair).value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

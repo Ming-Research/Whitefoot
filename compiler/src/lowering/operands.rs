@@ -71,7 +71,8 @@ macro_rules! terminator_operands {
                 .map($value)
                 .chain(drops.$iter().map(|drop| drop.$drop()))
                 .collect(),
-            IrTerminator::Match { scrutinee, .. } => vec![$value(scrutinee)],
+            IrTerminator::Match { scrutinee, .. }
+            | IrTerminator::IntegerMatch { scrutinee, .. } => vec![$value(scrutinee)],
             IrTerminator::Return { value, drops } => std::iter::once($value(value))
                 .chain(drops.$iter().map(|drop| drop.$drop()))
                 .collect(),
@@ -100,11 +101,15 @@ macro_rules! operation_operands {
             | IrOperation::ConstantAddress { .. }
             | IrOperation::Window
             | IrOperation::ContextJoin
+            | IrOperation::SnapshotAtomicBegin
+            | IrOperation::SnapshotAtomicEnd
             | IrOperation::SharedNew { .. }
+            | IrOperation::DecisionCellNew { .. }
             | IrOperation::TableEntrySlot { .. }
             | IrOperation::TableUnlockEntry { .. }
             | IrOperation::TableHoldRead { .. }
             | IrOperation::AtomicGroupTake { .. }
+            | IrOperation::AtomicGroupAcquire { .. }
             | IrOperation::AtomicGroupRelease { .. }
             | IrOperation::TableHoldWhole { .. }
             | IrOperation::TableHoldTake { .. }
@@ -118,7 +123,7 @@ macro_rules! operation_operands {
             | IrOperation::Integer { arguments, .. }
             | IrOperation::Float { arguments, .. }
             | IrOperation::Boolean { arguments, .. } => arguments.$iter().map($value).collect(),
-            IrOperation::EnumEquality { arguments, .. } => arguments.$iter().map($value).collect(),
+            IrOperation::ValueEquality { arguments, .. } => arguments.$iter().map($value).collect(),
             IrOperation::NumericConversion { value, .. }
             | IrOperation::Reinterpret { value, .. }
             | IrOperation::ArrayFill { value, .. }
@@ -132,10 +137,10 @@ macro_rules! operation_operands {
             | IrOperation::ContextAwait { start: value }
             | IrOperation::SharedState { object: value, .. }
             | IrOperation::SharedRetain { object: value, .. }
+            | IrOperation::DecisionCell { object: value, .. }
             | IrOperation::SharedAcquire { object: value }
-            | IrOperation::SharedWatch { object: value }
             | IrOperation::SharedTake { object: value }
-            | IrOperation::SharedUnlock { object: value }
+            | IrOperation::SharedUnlock { object: value, .. }
             | IrOperation::ConcurrentHashMapNew {
                 capacity: value, ..
             }
@@ -149,8 +154,14 @@ macro_rules! operation_operands {
                 position: value, ..
             }
             | IrOperation::KeySetNew { capacity: value }
-            | IrOperation::WatchObject { object: value, .. }
+            | IrOperation::KeySetBytes { set: value }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
+            // A wake test reads its state, field addresses and captured
+            // operands where the watch registers.
+            IrOperation::SharedWatch { object, test }
+            | IrOperation::WatchObject { object, test, .. } => std::iter::once($value(object))
+                .chain(test.$iter().flat_map(|test| test.values.$iter().map($value)))
+                .collect(),
             IrOperation::ConcurrentHashMapSwap { first, second } => {
                 vec![$value(first), $value(second)]
             }
@@ -172,6 +183,19 @@ macro_rules! operation_operands {
                 count,
                 set,
             } => vec![$value(table), $value(cursor), $value(count), $value(set)],
+            IrOperation::ConcurrentHashMapScanWithin {
+                table,
+                cursor,
+                count,
+                limit,
+                set,
+            } => vec![
+                $value(table),
+                $value(cursor),
+                $value(count),
+                $value(limit),
+                $value(set),
+            ],
             IrOperation::KeySetReadKey { set, index, out } => {
                 vec![$value(set), $value(index), $value(out)]
             }
@@ -236,6 +260,15 @@ macro_rules! operation_operands {
                 private,
                 ..
             } => vec![$value(slice), $value(offset), $value(private)],
+            IrOperation::IndexedBlocks { address } => vec![$value(address)],
+            IrOperation::IndexedBlock { blocks } => vec![$value(blocks)],
+            IrOperation::IndexedReference { original, roots } => std::iter::once($value(original))
+                .chain(
+                    roots
+                        .$iter()
+                        .map(|crate::ir::IrIndexedRootReference { block, .. }| $value(block)),
+                )
+                .collect(),
             IrOperation::SliceMeasure { slice } => vec![$value(slice)],
             IrOperation::SliceIndex { slice, offset, .. }
             | IrOperation::SliceAddress { slice, offset, .. } => {
@@ -256,6 +289,7 @@ macro_rules! operation_operands {
                 projection,
             } => match projection {
                 super::IrPlaceStep::Field { .. }
+                | super::IrPlaceStep::Measure { .. }
                 | super::IrPlaceStep::BoxReferent { .. }
                 | super::IrPlaceStep::EnumVariant { .. } => vec![$value(address)],
                 super::IrPlaceStep::RunElement { offset, .. }

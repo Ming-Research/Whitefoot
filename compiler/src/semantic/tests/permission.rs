@@ -31,6 +31,501 @@ use super::super::permission::{
 use super::super::places::ResolvedPlace;
 use super::{assert_rule_kind, with_semantics};
 
+/// Read/read footprints cannot reorder two control verdicts, including a
+/// helper whose signature carries the cell inside an aggregate. Before the
+/// boundary judgment these pairs were eligible once the new rows resolved.
+#[test]
+fn decision_cell_boundaries_keep_direct_and_wrapped_claims_in_order() {
+    let source = br#"struct VerdictHolder {
+  cell: DecisionCell;
+}
+
+fn wrapped(holder: &VerdictHolder) -> result: DecisionState reads(holder) {
+  return claim_written(cell: &holder^.cell);
+}
+
+fn decide(cell: &DecisionCell, holder: &VerdictHolder) -> result: unit reads(cell), reads(holder) {
+  let written = claim_written(cell: cell);
+  let killed = claim_killed(cell: cell);
+  let nested = wrapped(holder: holder);
+  return unit;
+}
+
+fn main() -> result: unit pure {
+  let cell = decision_cell_new();
+  let other = decision_cell_share(cell: &cell);
+  let holder = VerdictHolder(cell: move other);
+  return decide(cell: &cell, holder: &holder);
+}
+"#;
+    let table = permission_of(source);
+    for (first, second) in [
+        ("claim_written", "claim_killed"),
+        ("claim_killed", "wrapped"),
+    ] {
+        assert!(matches!(
+            denial(pair_of(&table, "decide", first, second), 3),
+            Denial::DecisionCell { .. }
+        ));
+    }
+}
+
+/// Only the function-kind argument's result carries a cell: the helper has
+/// no ordinary parameters and returns Bool. Without callable traversal, its
+/// pure, nonwaiting call and the independent call would have disjoint writes
+/// to their distinct let bindings and would incorrectly be eligible. The same
+/// helper with a cell-free factory must retain that overlap permission.
+#[test]
+fn decision_cell_boundaries_follow_function_kind_factory_results() {
+    let source = br#"fn factory_predicate<T: drop, fn make() -> result: T pure>() -> result: Bool pure {
+  let value = make();
+  return True();
+}
+
+fn byte_factory() -> result: u8 pure {
+  return 7_u8;
+}
+
+fn independent_flag() -> result: Bool pure {
+  return True();
+}
+
+fn cell_factory_pair() -> result: unit pure {
+  let first = factory_predicate::<DecisionCell, fn decision_cell_new>();
+  let second = independent_flag();
+  return unit;
+}
+
+fn plain_factory_pair() -> result: unit pure {
+  let first = factory_predicate::<u8, fn byte_factory>();
+  let second = independent_flag();
+  return unit;
+}
+
+fn main() -> result: unit pure {
+  cell_factory_pair();
+  plain_factory_pair();
+  return unit;
+}
+"#;
+    let table = permission_of(source);
+    let cell_pair = pair_of(
+        &table,
+        "cell_factory_pair",
+        "factory_predicate",
+        "independent_flag",
+    );
+    assert!(matches!(
+        denial(cell_pair, 3),
+        Denial::DecisionCell {
+            side: PairSide::First,
+            ..
+        }
+    ));
+    let plain_pair = pair_of(
+        &table,
+        "plain_factory_pair",
+        "factory_predicate",
+        "independent_flag",
+    );
+    assert!(plain_pair.verdict.is_eligible(), "{plain_pair:?}");
+}
+
+#[test]
+fn projected_operand_reads_keep_sibling_separation_and_prefix_conflicts() {
+    // PAR-1 records pairs with at least one call, so each write is a helper
+    // whose row names the place it writes.
+    let source = r#"struct Common {
+  scale: u64;
+  other: u64;
+}
+
+struct State {
+  one: u64;
+  shared: Common;
+}
+
+fn set_one(state: &State) -> result: unit writes(state.one) {
+  set state^.one = 0_u64;
+  return unit;
+}
+
+fn set_other(state: &State) -> result: unit writes(state.shared.other) {
+  set state^.shared.other = 0_u64;
+  return unit;
+}
+
+fn set_scale(state: &State) -> result: unit writes(state.shared.scale) {
+  set state^.shared.scale = 0_u64;
+  return unit;
+}
+
+fn set_shared(state: &State) -> result: unit writes(state.shared) {
+  set state^.shared.scale = 0_u64;
+  return unit;
+}
+
+fn set_all(state: &State) -> result: unit writes(state) {
+  set state^.one = 0_u64;
+  return unit;
+}
+
+fn inspect(state: &State) -> result: u64 writes(state) {
+  let s = state^.shared.scale;
+  set_one(state: state);
+  return s;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for (callee, permitted) in [
+        ("set_one", true),
+        ("set_other", true),
+        ("set_scale", false),
+        ("set_shared", false),
+        ("set_all", false),
+    ] {
+        let variant = source.replace(
+            "  set_one(state: state);\n  return s;",
+            &format!("  {callee}(state: state);\n  return s;"),
+        );
+        let table = permission_of(variant.as_bytes());
+        let pair = pair_of(&table, "inspect", "a let statement", callee);
+        if permitted {
+            assert!(pair.verdict.is_eligible(), "{callee}: {pair:?}");
+        } else {
+            assert!(
+                matches!(denial(pair, 1), Denial::Footprint { .. }),
+                "{callee}: {pair:?}"
+            );
+        }
+    }
+    let whole_read = source.replace(
+        "  let s = state^.shared.scale;\n  set_one(state: state);\n  return s;",
+        "  let s = state^;\n  set_one(state: state);\n  return s.one;",
+    );
+    let table = permission_of(whole_read.as_bytes());
+    let pair = pair_of(&table, "inspect", "a let statement", "set_one");
+    assert!(matches!(denial(pair, 1), Denial::Footprint { .. }));
+}
+
+#[test]
+fn a_set_member_carries_its_call_rhs_storage_effects() {
+    let source = br#"fn replace(cell: &Box<u64>) -> result: u64 writes(cell) {
+  let fresh = box_new::<u64>(value: 1_u64);
+  set cell^ = move fresh;
+  return 1_u64;
+}
+
+fn ignore(cell: &Box<u64>) -> result: unit pure {
+  return unit;
+}
+
+fn consume(value: Box<u64>) -> result: unit pure {
+  return unit;
+}
+
+fn pair() -> result: unit pure {
+  let p = box_new::<u64>(value: 0_u64);
+  let x = 0_u64;
+  set x = replace(cell: &p);
+  ignore(cell: &p);
+  consume(value: move p);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let table = permission_of(source);
+    let pair = pair_of(&table, "pair", "a set statement", "ignore");
+    assert!(pair.verdict.is_eligible(), "{pair:?}");
+    assert!(pair.first.call.is_none(), "Set remains a non-call member");
+    let release = pair
+        .first
+        .storage_effects
+        .conflict(
+            &super::super::places::UnprovedSeparations,
+            &pair.second.storage_effects,
+        )
+        .expect("the RHS writes an owner that the following call borrows");
+    assert_eq!(release.releasing, PairSide::First);
+    assert_eq!(release.released.place, release.borrowed.place);
+    let consume = &pair_of(&table, "pair", "ignore", "consume").second;
+    let borrow = pair
+        .first
+        .storage_effects
+        .conflict(
+            &super::super::places::UnprovedSeparations,
+            &consume.storage_effects,
+        )
+        .expect("the RHS borrows the owner that consume releases");
+    assert_eq!(borrow.releasing, PairSide::Second);
+    assert_eq!(borrow.released.place, borrow.borrowed.place);
+}
+
+#[test]
+fn conditional_call_permission_includes_the_condition_and_call() {
+    let source = br#"fn fill(v: &[u64]) -> result: unit writes(v) {
+  let n = v^.len;
+  for @items (i in 0_u64..n) {
+    set v^[i] = 7_u64;
+  }
+  return unit;
+}
+
+fn both(a: &[u64], b: &[u64], go: Bool) -> result: unit writes(a), writes(b) {
+  if go {
+    fill(v: a);
+  }
+  fill(v: b);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let table = permission_of(source);
+    let pair = pair_of(&table, "both", "a conditional call", "fill");
+    assert!(pair.verdict.is_eligible(), "{pair:?}");
+    assert!(pair.first.call.is_some());
+    run_of(&table, "both", &["a conditional call", "fill"]);
+
+    for target in ["go", "unrelated"] {
+        let source = std::str::from_utf8(source)
+            .unwrap()
+            .replace("  if go {", "  let unrelated = True();\n  if go {")
+            .replace("  fill(v: b);", &format!("  set {target} = False();"))
+            .replace("writes(a), writes(b)", "writes(a)");
+        let table = permission_of(source.as_bytes());
+        let pair = pair_of(&table, "both", "a conditional call", "a set statement");
+        if target == "go" {
+            let Denial::Footprint { kind, .. } = denial(pair, 1) else {
+                panic!("expected a condition read conflict, got {:?}", pair.verdict);
+            };
+            assert_eq!(kind.halves(), ("operand read", "write"));
+        } else {
+            assert!(pair.verdict.is_eligible(), "{pair:?}");
+        }
+    }
+}
+
+#[test]
+fn borrowed_conditional_dispatch_conflicts_with_a_write_to_its_guard() {
+    use super::super::permission::{PermissionSignature, analyze_permission};
+    use crate::semantic::{CheckedExpression, CheckedStatement};
+
+    let source = br#"fn write_flag(flag: &Bool) -> result: unit writes(flag) {
+  set flag^ = True();
+  return unit;
+}
+
+fn touch(out: &u64) -> result: unit writes(out) {
+  set out^ = 1_u64;
+  return unit;
+}
+
+fn both(flag: &Bool, other: &Bool, out: &u64) -> result: unit writes(flag), writes(out) {
+  let guard = &flag^;
+  write_flag(flag: flag);
+  if flag^ {
+    touch(out: out);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for independent in [false, true] {
+        let source = if independent {
+            std::str::from_utf8(source)
+                .unwrap()
+                .replace("write_flag(flag: flag);", "write_flag(flag: other);")
+                .replace(
+                    "writes(flag), writes(out)",
+                    "reads(flag), writes(other), writes(out)",
+                )
+        } else {
+            std::str::from_utf8(source).unwrap().to_owned()
+        };
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(mut checked) = outcome else {
+                panic!("permission fixture must check: {outcome:?}");
+            };
+            let functions = &mut checked.data.functions;
+            let function = functions.iter_mut().find(|f| f.name == "both").unwrap();
+            let body = function.body.as_mut().unwrap();
+            let CheckedStatement::Let { value: guard, .. } = &body[0] else {
+                panic!("guard reference formation");
+            };
+            assert!(matches!(guard, CheckedExpression::BorrowAddressed { .. }));
+            let guard = guard.clone();
+            let CheckedStatement::Match { scrutinee, .. } = &mut body[2] else {
+                panic!("if lowers to match");
+            };
+            // GRAM-6 admits only an own Bool condition. Exercise the borrowed
+            // checked-dispatch footprint without inventing invalid WF syntax.
+            *scrutinee = guard;
+            let signatures = functions
+                .iter()
+                .map(|function| PermissionSignature {
+                    name: function.name.clone(),
+                    decision_cell: false,
+                    parameter_declarations: function
+                        .parameters
+                        .iter()
+                        .map(|p| p.declaration)
+                        .collect(),
+                    parameter_modes: function.parameters.iter().map(|p| p.mode).collect(),
+                    parameter_releases: vec![false; function.parameters.len()],
+                    reads: function.declared_state_reads.clone(),
+                    writes: function.declared_state_writes.clone(),
+                })
+                .collect::<Vec<_>>();
+            let table = analyze_permission(functions, &signatures, &vec![true; functions.len()]);
+            let formation = pair_of(&table, "both", "a let statement", "write_flag");
+            assert!(formation.verdict.is_eligible(), "{formation:?}");
+            let pair = pair_of(&table, "both", "write_flag", "a conditional call");
+            if independent {
+                assert!(pair.verdict.is_eligible(), "{pair:?}");
+            } else {
+                let Denial::Footprint { kind, sides, .. } = denial(pair, 1) else {
+                    panic!("expected a dispatch read conflict, got {:?}", pair.verdict);
+                };
+                assert_eq!(kind.halves(), ("write", "operand read"));
+                assert_eq!(*sides, (PairSide::First, PairSide::Second));
+            }
+        });
+    }
+}
+
+#[test]
+fn conditional_call_separation_uses_the_state_before_the_condition() {
+    let source = br#"fn fill(v: &[u64]) -> result: unit writes(v) {
+  let n = v^.len;
+  if n > 0_u64 {
+    set v^[0_u64] = 1_u64;
+  }
+  return unit;
+}
+
+fn both(t: &[u64], m: u64, k: u64) -> result: unit writes(t) {
+  let n = t^.len;
+  if m <= n {
+    if k <= n {
+      let a = &t^[0_u64..m];
+      let b = &t^[k..n];
+      if m <= k {
+        fill(v: a);
+      }
+      fill(v: b);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let table = permission_of(source);
+    let pair = pair_of(&table, "both", "a conditional call", "fill");
+    assert!(
+        matches!(
+            pair.verdict,
+            PermissionVerdict::Denied(Denial::Footprint { .. })
+        ),
+        "{pair:?}"
+    );
+    // The same ranges are separable when their common endpoint is already
+    // known before dispatch. Retained evidence must name that exact pair.
+    let separated = String::from_utf8(source.to_vec())
+        .unwrap()
+        .replace("&t^[k..n]", "&t^[m..n]");
+    let table = permission_of_with_discharged_query(
+        separated.as_bytes(),
+        &[("both", RangeSeparationOrdering::LeftBeforeRight)],
+    );
+    assert!(
+        pair_of(&table, "both", "a conditional call", "fill")
+            .verdict
+            .is_eligible()
+    );
+}
+
+#[test]
+fn conditional_call_shape_rejects_a_noncopy_move() {
+    use crate::semantic::{CheckedExpression, CheckedStatement};
+    let source = r#"nocopy struct Payload {
+  value: u64;
+}
+
+fn consume(x: Payload) -> result: unit pure {
+  return unit;
+}
+
+fn both(go: Bool, payload: Payload) -> result: unit pure {
+  if go {
+    consume(x: move payload);
+  } else {
+    consume(x: move payload);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for copy in [false, true] {
+        let source = if copy {
+            source
+                .replace("nocopy struct", "struct")
+                .replace("move payload", "payload")
+        } else {
+            source.to_owned()
+        };
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("{outcome:?}");
+            };
+            let function = program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "both")
+                .unwrap();
+            let mut conditional = function.body.as_ref().unwrap()[0].clone();
+            let CheckedStatement::Match { arms, .. } = &mut conditional else {
+                panic!("if lowers to match");
+            };
+            // LIV-1 rejects a source join that moves on only one path. Remove
+            // one checked arm solely to isolate the speculation shape test.
+            arms[1].body.clear();
+            let CheckedStatement::Evaluate {
+                value: CheckedExpression::UserCall { arguments, .. },
+                ..
+            } = &arms[0].body[0]
+            else {
+                panic!("unit call");
+            };
+            assert!(
+                matches!(arguments[0], CheckedExpression::Binding { consume_root, .. } if consume_root != copy)
+            );
+            assert_eq!(
+                super::super::permission::conditional_call(&conditional).is_some(),
+                copy
+            );
+        });
+    }
+}
+
 #[test]
 fn a_condition_call_cannot_hide_an_arm_read_of_the_previous_result() {
     let source = br#"fn predicate(value: u64) -> result: Bool pure {
@@ -82,14 +577,15 @@ fn permission_of_with_discharged_query(
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("permission fixture must check: {outcome:?}");
         };
-        for function in &program.data.functions {
+        // Permission consumes ordinary analyses. The backing arena also
+        // retains symbolic hypotheses that publish no entailment summary.
+        for function in program.data.executable_functions() {
             super::entailment::validate_derivations(&function.entailment);
         }
         for &(expected_function, expected_ordering) in expected {
             let function = program
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .find(|function| function.name == expected_function)
                 .unwrap_or_else(|| panic!("no checked function named {expected_function}"));
             assert!(
@@ -2338,13 +2834,12 @@ fn rebound(v: &[u8], p: u64) -> result: u64 writes(v) contract {
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("permission fixture must check: {outcome:?}");
         };
-        for function in &program.data.functions {
+        for function in program.data.executable_functions() {
             super::entailment::validate_derivations(&function.entailment);
         }
         let function = program
             .data
-            .functions
-            .iter()
+            .executable_functions()
             .find(|function| function.name == "rebound")
             .expect("rebound is checked");
         let proofs = &function.entailment.permission_separations;
@@ -2530,7 +3025,7 @@ fn bound_await(body: &str) -> Option<u32> {
          fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure waits {{\n  \
          std::fs::close_directory(factory: &factory, directory: move directory);\n  return weight;\n}}\n\n\
          fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
-         let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;\n  \
+         let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;\n  \
          let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;\n  \
          std::fs::close_directory_write(factory: &handles, directory: move cwd_write);\n  \
          let factory = std::io::factory_share(factory: &handles);\n  \
@@ -2609,7 +3104,7 @@ fn a_bound_context_runs_on_through_a_compound_statement_that_names_nothing_it_ho
     // here, is no reason to wait when it names nothing the context holds.
     assert_eq!(
         bound_await(
-            "  let other = 5_u64;\n  let held = box_new::<u64>(value: 3_u64);\n  let inner = held.inner;\n  let total = bound +wrap inner;"
+            "  let other = 5_u64;\n  let observed = box_new::<u64>(value: 3_u64);\n  let inner = observed.inner;\n  let total = bound +wrap inner;"
         ),
         Some(4)
     );
@@ -2845,7 +3340,7 @@ fn a_bound_context_unused_in_its_block_is_joined_at_the_block_end() {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let factory = std::io::factory_share(factory: &handles);

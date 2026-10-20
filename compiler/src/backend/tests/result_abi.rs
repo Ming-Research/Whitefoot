@@ -93,6 +93,27 @@ fn sum(a: u32, b: u32) -> result: Result<u32, Overflow> pure {
   return a +checked b;
 }
 
+fn wide_result(value: u64) -> result: Result<u64, u64> pure {
+  if value == 0_u64 {
+    return Err<u64, u64>(error: 9000000000000000000_u64);
+  }
+  return Ok<u64, u64>(value: value);
+}
+
+fn tiny_result(value: u8) -> result: Result<u8, u8> pure {
+  if value == 0_u8 {
+    return Err<u8, u8>(error: 239_u8);
+  }
+  return Ok<u8, u8>(value: value);
+}
+
+fn empty_result(value: u8) -> result: Result<unit, unit> pure {
+  if value == 0_u8 {
+    return Err<unit, unit>(error: unit);
+  }
+  return Ok<unit, unit>(value: unit);
+}
+
 fn bytes(value: u8) -> result: Array<u8, 16> pure {
   return array_filled::<u8, 16>(value: value);
 }
@@ -170,6 +191,60 @@ fn main() -> status: std::process::ExitStatus pure {
       return std::process::exit_status(code: 17_u8);
     }
   }
+  match wide_result(value: 18446744073709551615_u64) {
+    Ok(value: wide) => {
+      if wide != 18446744073709551615_u64 {
+        return std::process::exit_status(code: 19_u8);
+      }
+    }
+    Err(error: wide_error) => {
+      return std::process::exit_status(code: 20_u8);
+    }
+  }
+  match wide_result(value: 0_u64) {
+    Ok(value: wide) => {
+      return std::process::exit_status(code: 21_u8);
+    }
+    Err(error: wide_error) => {
+      if wide_error != 9000000000000000000_u64 {
+        return std::process::exit_status(code: 22_u8);
+      }
+    }
+  }
+  match tiny_result(value: 251_u8) {
+    Ok(value: tiny) => {
+      if tiny != 251_u8 {
+        return std::process::exit_status(code: 23_u8);
+      }
+    }
+    Err(error: tiny_error) => {
+      return std::process::exit_status(code: 24_u8);
+    }
+  }
+  match tiny_result(value: 0_u8) {
+    Ok(value: tiny) => {
+      return std::process::exit_status(code: 25_u8);
+    }
+    Err(error: tiny_error) => {
+      if tiny_error != 239_u8 {
+        return std::process::exit_status(code: 26_u8);
+      }
+    }
+  }
+  match empty_result(value: 1_u8) {
+    Ok(value: nothing) => {
+    }
+    Err(error: nothing) => {
+      return std::process::exit_status(code: 27_u8);
+    }
+  }
+  match empty_result(value: 0_u8) {
+    Ok(value: nothing) => {
+      return std::process::exit_status(code: 28_u8);
+    }
+    Err(error: nothing) => {
+    }
+  }
   let filled = bytes(value: 3_u8);
   if filled[15_u64] != 3_u8 {
     return std::process::exit_status(code: 18_u8);
@@ -188,6 +263,9 @@ fn stored_results_return_in_registers_exactly_when_their_leaves_fit() {
         ("mixed", true),
         ("found", true),
         ("sum", true),
+        ("wide_result", true),
+        ("tiny_result", true),
+        ("empty_result", true),
         ("bytes", false),
         ("main", false),
     ];
@@ -260,6 +338,32 @@ fn stored_results_return_in_registers_exactly_when_their_leaves_fit() {
                 main.contains(&format!(" = call {ty} @wf_{name}(")),
                 "{name}: {main}"
             );
+        }
+        // The selected tag width changes bytes, not the three-leaf budget.
+        // These expectations come from ordinary aligned declaration-order
+        // products: [i8, u64, u64] is 24 bytes; three bytes are 3 bytes.
+        for (name, fields, size, align) in [
+            ("wide_result", "{ i8, i64, i64 }", 24, 8),
+            ("tiny_result", "{ i8, i8, i8 }", 3, 1),
+            ("empty_result", "{ i8, i8, i8 }", 3, 1),
+        ] {
+            let function = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == name)
+                .expect("narrow result fixture");
+            let ty = function.result();
+            assert_eq!(
+                expanded(&module, &llvm_type(program, ty).expect("result type")),
+                fields
+            );
+            let layout = crate::target::validate_static_storage(
+                crate::target::TargetLayout::host().expect("supported test target"),
+                program,
+                &crate::target::TargetStorageType::source(ty),
+            )
+            .expect("qualified narrow result");
+            assert_eq!((layout.size(), layout.align()), (size, align), "{name}");
         }
         assert!(!module.contains("alwaysinline"), "{module}");
     });
@@ -375,11 +479,29 @@ fn linked_definitions_return_their_declared_register_results() {
                 .into_string();
             assert_classification_matches_emitted_leaves(program, &module);
             let mut linked = Vec::new();
+            let mut waiting = Vec::new();
             for function in program.functions() {
                 let result = FunctionAbi::build(program, function)
                     .expect("callable ABI")
                     .result();
                 if !function.blocks().is_empty() || !matches!(result, ResultAbi::StoredValue(_)) {
+                    continue;
+                }
+                if function.waits() {
+                    // A waiting host entry constructs its result through a
+                    // destination whatever its ordinary ABI, so its linked
+                    // start and finish both take the result pointer first.
+                    for part in ["start", "finish"] {
+                        let symbol = format!(" @wf_{}.{part}(ptr %result, ", function.name());
+                        assert!(
+                            ORDINARY_VALUES_LLVM
+                                .lines()
+                                .any(|line| line.starts_with("define ") && line.contains(&symbol)),
+                            "{} has no {part} definition taking its result pointer",
+                            function.name()
+                        );
+                    }
+                    waiting.push(function.name().to_owned());
                     continue;
                 }
                 let declared = llvm_type(program, result.ty()).expect("result type");
@@ -405,12 +527,26 @@ fn linked_definitions_return_their_declared_register_results() {
                 );
                 linked.push(function.name().to_owned());
             }
-            // Both `Result<u64, Utf8Error>` and the resident reading's
-            // `Option<u64>` fit the register-result budget.
+            // The two Instant producers, the four cancellation constructors, whose
+            // results are one-field structs over a shared handle [PRE-2],
+            // `Result<u64, Utf8Error>` and the resident reading's `Option<u64>`
+            // fit the register-result budget.
             assert_eq!(
                 linked,
-                ["std.text.host_utf8_len", "std.process.resident_bytes"]
+                [
+                    "std.time.now",
+                    "std.time.instant_after",
+                    "std.time.cancel_source",
+                    "std.time.cancel_share",
+                    "std.time.cancel_watch",
+                    "std.time.cancel_never",
+                    "std.text.host_utf8_len",
+                    "std.process.resident_bytes",
+                ]
             );
+            // `sleep_until`'s `Result<unit, unit>` fits the budget too, and
+            // reaches its caller only through the waiting entry's destination.
+            assert_eq!(waiting, ["std.time.sleep_until"]);
         },
     );
 }

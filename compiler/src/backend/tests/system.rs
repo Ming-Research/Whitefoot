@@ -79,8 +79,12 @@ pub(super) fn with_ir_layout<R>(
         SemanticOutcome::Complete(checked) => checked,
         other => panic!("ordinary ABI test source must check: {other:?}"),
     };
-    let mut ir = lower_checked_with_layout(*checked, overlap, target)
-        .expect("checked program must lower for the selected target");
+    let mut ir = lower_checked_with_layout(*checked, overlap, target).unwrap_or_else(|failure| {
+        panic!(
+            "checked program must lower for the selected target: {failure:?}\n{}",
+            String::from_utf8_lossy(source)
+        )
+    });
     run(&mut ir)
 }
 
@@ -311,4 +315,79 @@ fn opaque_drop_has_no_implicit_native_close() {
     );
     assert!(!llvm.contains("call void @wf_std.fs.close_"));
     assert!(compile_and_run(&llvm).status.success());
+}
+
+/// Different checked instances keep their types and effects but call the one
+/// PRE-2 host definition, with the same two-pointer ordinary ABI.
+#[test]
+fn generic_host_instances_call_one_host_symbol() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/share-pos-map-release-reserve-read-handle.wf"
+    );
+    let llvm = super::emit(source);
+    let symbol = "@wf_std.process.release_map_reserve";
+    let calls = llvm
+        .lines()
+        .filter(|line| line.contains("call i64") && line.contains(symbol))
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2, "{llvm}");
+    for call in calls {
+        assert!(
+            call.contains("@wf_std.process.release_map_reserve(ptr "),
+            "{call}"
+        );
+        assert_eq!(call.matches("ptr ").count(), 2, "{call}");
+        assert!(!call.contains("$instance$"), "{call}");
+    }
+    assert_eq!(
+        llvm.lines()
+            .filter(|line| line.starts_with("declare i64 @wf_std.process.release_map_reserve("))
+            .count(),
+        1,
+        "{llvm}"
+    );
+    assert!(!llvm.contains("@wf_std.process.release_map_reserve$instance$"));
+    assert!(!llvm.contains("@wf_shared_map_release_reserve"));
+}
+
+/// The ordinary read-only prelude row must call the one-pointer runtime bridge.
+/// The prior compiler refuses the source's unknown key_set_bytes name; a row
+/// that silently omits its runtime call fails the ABI assertions.
+#[test]
+fn key_set_bytes_calls_the_retained_storage_bridge() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/share-pos-key-set-bytes-read.wf");
+    let llvm = super::emit(source);
+    assert!(llvm.contains("call i64 @wf__key_set_bytes(ptr "), "{llvm}");
+    assert_eq!(
+        llvm.lines()
+            .filter(|line| line.starts_with("declare i64 @wf__key_set_bytes(ptr)"))
+            .count(),
+        1,
+        "{llvm}"
+    );
+}
+
+/// The logical byte measure reads the store account without enlarging the
+/// physical KeySet ABI. Before the measure exists this source is refused;
+/// lowering it as the second declared field would load the store pointer as
+/// a number instead of invoking the retained-storage bridge.
+#[test]
+fn key_set_byte_measure_uses_the_runtime_account() {
+    let source = br#"fn retained(keys: &KeySet) -> result: u64 reads(keys) {
+  doc "Reads retained storage through the measure.";
+  return keys^.bytes;
+}
+
+fn observed(keys: KeySet) -> result: u64 pure {
+  doc "An owned descriptor reads the same retained storage account.";
+  return keys.bytes;
+}
+"#;
+    let llvm = super::emit(source);
+    assert_eq!(
+        llvm.matches("call i64 @wf__key_set_bytes(ptr ").count(),
+        2,
+        "{llvm}"
+    );
 }

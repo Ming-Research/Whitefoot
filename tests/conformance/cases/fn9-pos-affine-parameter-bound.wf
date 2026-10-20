@@ -1,0 +1,28 @@
+fn advance(base: u64, limit: u64) -> after: u64 pure contract {
+  requires base < 18446744073709551615_u64;
+  requires limit >= 1_u64;
+  ensures base <= after;
+  ensures after <= base + limit;
+} {
+  doc "An ordinary user function proves a result bound by one datum plus one parameter, which was outside FN-9's former one-datum fragment.";
+  let advanced = base + 1_u64;
+  return advanced;
+}
+
+fn account(before: u64, left: u64) -> remaining: u64 pure contract {
+  requires before < 18446744073709551615_u64;
+  requires left >= 1_u64;
+} {
+  let after = advance(base: before, limit: left);
+  let used = after - before;
+  set left = left - used;
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let remaining = account(before: 18446744073709551614_u64, left: 7_u64);
+  if remaining == 6_u64 {
+    return std::process::exit_status(code: 42_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

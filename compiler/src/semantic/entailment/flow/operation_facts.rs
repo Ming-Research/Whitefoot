@@ -12,7 +12,7 @@ use super::super::super::model::{CheckedIntegerOperation, IntegerType};
 
 /// One integer type's width, signedness and closed interval.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct Span {
+pub(crate) struct Span {
     width: u32,
     signed: bool,
     minimum: i128,
@@ -21,7 +21,7 @@ pub(super) struct Span {
 
 impl Span {
     /// A `width`-bit two's-complement or unsigned type, `width` in `1..=64`.
-    pub(super) const fn new(width: u32, signed: bool) -> Self {
+    pub(crate) const fn new(width: u32, signed: bool) -> Self {
         let (minimum, maximum) = if signed {
             (-(1_i128 << (width - 1)), (1_i128 << (width - 1)) - 1)
         } else {
@@ -35,12 +35,12 @@ impl Span {
         }
     }
 
-    pub(super) const fn of(ty: IntegerType) -> Self {
+    pub(crate) const fn of(ty: IntegerType) -> Self {
         Self::new(ty.width() as u32, ty.signed())
     }
 
     /// This type's own interval.
-    pub(super) const fn interval(self) -> Interval {
+    pub(crate) const fn interval(self) -> Interval {
         Interval::new(self.minimum, self.maximum)
     }
 
@@ -80,17 +80,17 @@ impl Span {
 
 /// One closed operand or result interval.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct Interval {
-    pub(super) low: i128,
-    pub(super) high: i128,
+pub(crate) struct Interval {
+    pub(crate) low: i128,
+    pub(crate) high: i128,
 }
 
 impl Interval {
-    pub(super) const fn new(low: i128, high: i128) -> Self {
+    pub(crate) const fn new(low: i128, high: i128) -> Self {
         Self { low, high }
     }
 
-    pub(super) const fn value(value: i128) -> Self {
+    pub(crate) const fn value(value: i128) -> Self {
         Self::new(value, value)
     }
 
@@ -116,7 +116,7 @@ impl Interval {
 /// One row of the [ENT-3.S7] table. `wrap` distinguishes a `.wrap` form's
 /// condition and single-value result from its exact row's.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Row {
+pub(crate) enum Row {
     Add { wrap: bool },
     Subtract { wrap: bool },
     Multiply { wrap: bool },
@@ -148,7 +148,7 @@ pub(super) enum Row {
 impl Row {
     /// The row of one integer-valued operation. Defined, checked and
     /// comparison rows produce no integer and have none.
-    pub(super) const fn of(operation: CheckedIntegerOperation) -> Option<Self> {
+    pub(crate) const fn of(operation: CheckedIntegerOperation) -> Option<Self> {
         use CheckedIntegerOperation as Operation;
         Some(match operation {
             Operation::AddWrap => Self::Add { wrap: true },
@@ -229,18 +229,18 @@ impl Row {
 /// `[low, high]`, where an absent side is unbounded. `r <= x` is
 /// `high: Some(0)`, `r < x` is `high: Some(-1)`, `x <= r` is `low: Some(0)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct OperandRelation {
-    pub(super) operand: usize,
-    pub(super) low: Option<i128>,
-    pub(super) high: Option<i128>,
+pub(crate) struct OperandRelation {
+    pub(crate) operand: usize,
+    pub(crate) low: Option<i128>,
+    pub(crate) high: Option<i128>,
 }
 
 /// What one row establishes.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) struct Facts {
+pub(crate) struct Facts {
     /// The result bounds, already limited to the result type.
-    pub(super) bounds: Option<Interval>,
-    pub(super) relations: Vec<OperandRelation>,
+    pub(crate) bounds: Option<Interval>,
+    pub(crate) relations: Vec<OperandRelation>,
 }
 
 /// [ENT-3.S7] the facts one row establishes over its operands' intervals.
@@ -250,7 +250,7 @@ pub(super) struct Facts {
 /// or rotation the second interval is the amount. `product` is the interval
 /// [ENT-6]'s interval-product rule proved when it discharged an exact
 /// multiplication's domain.
-pub(super) fn facts(
+pub(crate) fn facts(
     row: Row,
     operand: Span,
     result: Span,

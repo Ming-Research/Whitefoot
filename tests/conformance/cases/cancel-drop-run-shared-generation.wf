@@ -1,0 +1,47 @@
+struct Generation {
+  source: std::time::CancelSource;
+}
+
+fn generation_watch(generations: &Shared<Generation>) -> result: std::time::CancelWatch reads(generations) waits {
+  atomic current = &generations^ {
+    return std::time::cancel_watch(source: &current^.source);
+  }
+}
+
+fn fire(source: std::time::CancelSource) -> result: unit pure waits {
+  std::time::cancel_fire(source: &source);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let source = std::time::cancel_source();
+  let initial = Generation(source: move source);
+  let generations = shared_new::<Generation>(value: move initial);
+  let watch = generation_watch(generations: &generations);
+  let stop = std::time::cancel_state(watch: &watch);
+  let unfired = False();
+  atomic before = &stop {
+    set unfired = bnot(before^.fired);
+  }
+  let previous = std::time::cancel_source();
+  atomic current = &generations {
+    swap(first: &current^.source, second: &previous);
+  }
+  spawn fire(source: move previous);
+  let observed = False();
+  atomic after = &stop when after^.fired {
+    set observed = after^.fired;
+  }
+  let fresh_watch = generation_watch(generations: &generations);
+  let fresh_stop = std::time::cancel_state(watch: &fresh_watch);
+  let fresh = False();
+  atomic replacement = &fresh_stop {
+    set fresh = bnot(replacement^.fired);
+  }
+  let transitioned = band(unfired, observed);
+  let correct = band(transitioned, fresh);
+  if correct {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

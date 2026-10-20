@@ -19,12 +19,12 @@ use std::fmt::Write;
 
 use super::frames::{HANDLE, labels};
 use super::*;
-use crate::{IrRecord, IrRecordKind, IrShared};
+use crate::{IrRecord, IrRecordKind, IrShared, IrWakeTest};
 
 /// The frame storage of one record, by its kind.
 fn record_storage(kind: IrRecordKind) -> String {
     match kind {
-        IrRecordKind::AtomicGroup { count } => format!("[{count} x {{ ptr, ptr }}]"),
+        IrRecordKind::AtomicGroup { count } => format!("[{count} x {{ ptr, ptr, i32 }}]"),
         IrRecordKind::TableEntry => format!("[{} x i8]", crate::backend::TABLE_ENTRY_SIZE),
         IrRecordKind::TableHold => format!("[{} x i8]", crate::backend::TABLE_HOLD_SIZE),
         IrRecordKind::Entries => "{ ptr, i64, i64 }".to_owned(),
@@ -48,10 +48,12 @@ fn key_set_scratch_name(result: IrValueId) -> String {
 }
 
 /// The entry-block lines that reserve every record a function's statements
-/// keep, and the scratch place of each new key set, once per call.
+/// keep, the scratch place of each new key set and the storage of each wake
+/// test, once per call.
 pub(super) fn record_prelude(function: &IrFunction) -> String {
     let mut records = BTreeMap::new();
     let mut scratch = Vec::new();
+    let mut tests = Vec::new();
     for instruction in function
         .blocks()
         .iter()
@@ -70,6 +72,11 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
         {
             records.insert(record.index(), *record);
         }
+        if let IrOperation::SharedWatch { test: Some(_), .. }
+        | IrOperation::WatchObject { test: Some(_), .. } = operation
+        {
+            tests.push(*result);
+        }
         let record = match operation {
             IrOperation::TableLockEntry { record, .. }
             | IrOperation::TableEntrySlot { record, .. }
@@ -79,6 +86,7 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::TableHoldKeys { record, .. }
             | IrOperation::AtomicGroupTarget { record, .. }
             | IrOperation::AtomicGroupTake { record }
+            | IrOperation::AtomicGroupAcquire { record }
             | IrOperation::AtomicGroupRelease { record, .. }
             | IrOperation::TableHoldRead { record }
             | IrOperation::TableHoldWhole { record }
@@ -100,6 +108,21 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
         records.insert(record.index(), record);
     }
     let mut prelude = String::new();
+    for block in function.blocks() {
+        for instruction in block.instructions() {
+            if let IrInstruction::Define {
+                result,
+                operation: IrOperation::ConcurrentHashMapScanWithin { .. },
+                ..
+            } = instruction
+            {
+                prelude.push_str(&format!(
+                    "  %scan.needs.{} = alloca i32, align 4\n",
+                    result.index()
+                ));
+            }
+        }
+    }
     for record in records.values() {
         prelude.push_str(&format!(
             "  {} = alloca {}, align 8\n",
@@ -119,10 +142,29 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             key_set_scratch_name(result)
         ));
     }
+    for result in tests {
+        prelude.push_str(&super::wake::wake_test_storage(result));
+    }
     prelude
 }
 
 impl FunctionEmitter<'_, '_> {
+    pub(super) fn emit_snapshot_atomic(
+        &mut self,
+        result: IrValueId,
+        begin: bool,
+    ) -> Result<(), BackendFailure> {
+        if snapshot::required(self.program) {
+            self.emit_unit_call(result, if begin {
+                "wf_snapshot_atomic_begin"
+            } else {
+                "wf_snapshot_atomic_end"
+            }, "")
+        } else {
+            self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+        }
+    }
+
     pub(super) fn emit_atomic_group_target(
         &mut self,
         result: IrValueId,
@@ -130,6 +172,7 @@ impl FunctionEmitter<'_, '_> {
         index: u32,
         object: IrValueId,
         hold: Option<IrRecord>,
+        wrote: bool,
     ) -> Result<(), BackendFailure> {
         let IrRecordKind::AtomicGroup { count } = record.kind() else {
             return Err(BackendFailure::InvalidIr);
@@ -140,6 +183,14 @@ impl FunctionEmitter<'_, '_> {
         let bare = self.bare(result);
         let storage = record_storage(record.kind());
         writeln!(self.output,"  %{bare}.object = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 0\n  store ptr {}, ptr %{bare}.object, align 8\n  %{bare}.hold = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 1\n  store ptr {}, ptr %{bare}.hold, align 8",record_name(record),self.value_name(object),record_name(record),hold.map(record_name).unwrap_or_else(||"null".to_owned())).map_err(|_|BackendFailure::TextEmission)?;
+        // Whether the group's release gives the object up as written.
+        writeln!(
+            self.output,
+            "  %{bare}.wrote = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 2\n  store i32 {}, ptr %{bare}.wrote, align 8",
+            record_name(record),
+            u32::from(wrote)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
     pub(super) fn emit_atomic_group_call(
@@ -152,19 +203,21 @@ impl FunctionEmitter<'_, '_> {
         let IrRecordKind::AtomicGroup { count } = record.kind() else {
             return Err(BackendFailure::InvalidIr);
         };
-        if let Some(nominal) = nominal {
-            self.checked_entry(nominal)?;
-        }
+        let mut arguments = format!("ptr {}, i64 {count}", record_name(record));
         let name = if take {
             "wf__atomic_group_take"
         } else {
+            let tag_bytes = if let Some(nominal) = nominal {
+                self.entry_tag_width(nominal)?.div_ceil(8)
+            } else {
+                // An object-only group has no table entry tag to inspect.
+                0
+            };
+            write!(arguments, ", i64 0, i32 {tag_bytes}, i64 0")
+                .map_err(|_| BackendFailure::TextEmission)?;
             "wf__atomic_group_release"
         };
-        self.emit_unit_call(
-            result,
-            name,
-            &format!("ptr {}, i64 {count}", record_name(record)),
-        )
+        self.emit_unit_call(result, name, &arguments)
     }
     /// The state type of a shared-object nominal.
     fn shared_state(&self, nominal: IrNominalId) -> Result<IrType, BackendFailure> {
@@ -204,9 +257,9 @@ impl FunctionEmitter<'_, '_> {
     }
 
     /// A table's entry type, refused unless the runtime reads whether an
-    /// entry holds `Some` as it does: from the tag, the first `i32` of every
-    /// enum with a payload, which differs from `None`'s, 0, the tag of a slot
-    /// the runtime filled with zeros.
+    /// entry holds `Some` as it does: from a count-sized tag at offset zero,
+    /// which differs from `None`'s, 0, the tag of a slot the runtime filled
+    /// with zeros.
     fn checked_entry(&self, nominal: IrNominalId) -> Result<IrType, BackendFailure> {
         let entry = self.table_entry(nominal)?;
         let IrType::Nominal(option) = entry else {
@@ -224,6 +277,14 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         Ok(entry)
+    }
+
+    /// The runtime receives the same physical tag width as emitted storage.
+    fn entry_tag_width(&self, nominal: IrNominalId) -> Result<u8, BackendFailure> {
+        let IrType::Nominal(entry) = self.checked_entry(nominal)? else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        enum_tag_width(self.nominal(entry)?)
     }
 
     /// The bytes and the length of the range `key` names, as two named
@@ -287,8 +348,8 @@ impl FunctionEmitter<'_, '_> {
     }
 
     /// How many entries of the table hold `Some`; under the statement's
-    /// whole hold the runtime reads its entries' tags, an `i32` at offset 0
-    /// whose `None` is 0, so the count sees the statement's own writes.
+    /// whole hold the runtime reads its entries' count-sized tags at offset
+    /// zero, whose `None` is 0, so the count sees the statement's own writes.
     pub(super) fn emit_keyed_table_count(
         &mut self,
         result: IrValueId,
@@ -297,11 +358,11 @@ impl FunctionEmitter<'_, '_> {
         let Some(IrType::Nominal(nominal)) = self.value_type(table) else {
             return Err(BackendFailure::InvalidIr);
         };
-        self.checked_entry(nominal)?;
+        let tag_bytes = self.entry_tag_width(nominal)?.div_ceil(8);
         self.names(&["wf__keyed_table_count"]);
         writeln!(
             self.output,
-            "  {} = call i64 @wf__keyed_table_count(ptr {}, i64 0, i32 4, i64 0)",
+            "  {} = call i64 @wf__keyed_table_count(ptr {}, i64 0, i32 {tag_bytes}, i64 0)",
             self.value_name(result),
             self.value_name(table)
         )
@@ -323,16 +384,16 @@ impl FunctionEmitter<'_, '_> {
         ) else {
             return Err(BackendFailure::InvalidIr);
         };
-        self.checked_entry(nominal)?;
+        let tag_bytes = self.entry_tag_width(nominal)?.div_ceil(8);
         let arguments = format!(
-            "ptr {}, ptr {}, i64 0, i32 4, i64 0",
+            "ptr {}, ptr {}, i64 0, i32 {tag_bytes}, i64 0",
             self.value_name(first),
             self.value_name(second)
         );
         self.emit_unit_call(result, "wf__keyed_table_swap", &arguments)
     }
 
-    /// One step of a scan: the runtime reads each entry's tag, an `i32` at
+    /// One step of a scan: the runtime reads each entry's count-sized tag at
     /// offset 0 whose `None` is 0, so the step sees the statement's own
     /// writes, as a count does.
     pub(super) fn emit_keyed_table_scan(
@@ -346,14 +407,14 @@ impl FunctionEmitter<'_, '_> {
         let Some(IrType::Nominal(nominal)) = self.value_type(table) else {
             return Err(BackendFailure::InvalidIr);
         };
-        self.checked_entry(nominal)?;
+        let tag_bytes = self.entry_tag_width(nominal)?.div_ceil(8);
         if self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet)) {
             return Err(BackendFailure::InvalidIr);
         }
         self.names(&["wf__keyed_table_scan"]);
         writeln!(
             self.output,
-            "  {} = call i64 @wf__keyed_table_scan(ptr {}, i64 {}, i64 {}, ptr {}, i64 0, i32 4, i64 0)",
+            "  {} = call i64 @wf__keyed_table_scan(ptr {}, i64 {}, i64 {}, ptr {}, i64 0, i32 {tag_bytes}, i64 0)",
             self.value_name(result),
             self.value_name(table),
             self.value_name(cursor),
@@ -361,6 +422,63 @@ impl FunctionEmitter<'_, '_> {
             self.value_name(set),
         )
         .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Construct either ScanStep variant through the ordinary enum storage
+    /// path, including any handler words selected by match dispatch.
+    pub(super) fn emit_keyed_table_scan_within(
+        &mut self,
+        result: IrValueId,
+        operands: [IrValueId; 5],
+    ) -> Result<(), BackendFailure> {
+        let [table, cursor, count, limit, set] = operands;
+        let Some(IrType::Nominal(map_nominal)) = self.value_type(table) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let tag_bytes = self.entry_tag_width(map_nominal)?.div_ceil(8);
+        let Some(IrType::Nominal(nominal)) = self.value_type(result) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let IrNominalKind::Enum { variants } = self.nominal(nominal)?.kind() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        if variants.len() != 2
+            || variants.iter().enumerate().any(|(tag, variant)| {
+                variant.tag() != tag as u32
+                    || variant.fields().len() != 1
+                    || variant.fields()[0].ty() != (IrType::Integer { width: 64, signed: false })
+            })
+            || self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet))
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let payload = self.next_temporary()?;
+        let tag = self.next_temporary()?;
+        let is_next = self.next_temporary()?;
+        self.names(&["wf__keyed_table_scan_within"]);
+        writeln!(
+            self.output,
+            "  %{payload} = call i64 @wf__keyed_table_scan_within(ptr {}, i64 {}, i64 {}, i64 {}, ptr {}, ptr %scan.needs.{}, i64 0, i32 {tag_bytes}, i64 0)\n  %{tag} = load i32, ptr %scan.needs.{}\n  %{is_next} = icmp eq i32 %{tag}, 0",
+            self.value_name(table),
+            self.value_name(cursor),
+            self.value_name(count),
+            self.value_name(limit),
+            self.value_name(set),
+            result.index(),
+            result.index(),
+        )?;
+        let next = format!("scan.next.{}", result.index());
+        let needs = format!("scan.needs.block.{}", result.index());
+        let done = format!("scan.done.{}", result.index());
+        writeln!(self.output, "  br i1 %{is_next}, label %{next}, label %{needs}")?;
+        self.output.open_block(next);
+        self.construct_scalar_enum_at(result, 0, &format!("%{payload}"))?;
+        writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(needs);
+        self.construct_scalar_enum_at(result, 1, &format!("%{payload}"))?;
+        writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(done);
+        Ok(())
     }
 
     /// Empties a table: the runtime settles the statement's own entries,
@@ -374,11 +492,11 @@ impl FunctionEmitter<'_, '_> {
         let Some(IrType::Nominal(nominal)) = self.value_type(table) else {
             return Err(BackendFailure::InvalidIr);
         };
-        self.checked_entry(nominal)?;
+        let tag_bytes = self.entry_tag_width(nominal)?.div_ceil(8);
         let release = super::cleanup::drop_helper_symbol(self.nominal(nominal)?);
         self.names(&[release.as_str()]);
         let arguments = format!(
-            "ptr {}, i64 0, i32 4, i64 0, ptr @{release}",
+            "ptr {}, i64 0, i32 {tag_bytes}, i64 0, ptr @{release}",
             self.value_name(table)
         );
         self.emit_unit_call(result, "wf__keyed_table_clear", &arguments)
@@ -420,6 +538,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// Locks one key's entry, keeping the lock in its record and the slot's
     /// address in the record's word.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn emit_table_lock_entry(
         &mut self,
         result: IrValueId,
@@ -427,6 +546,7 @@ impl FunctionEmitter<'_, '_> {
         table: IrValueId,
         key: IrValueId,
         read: bool,
+        inserts: bool,
         stable_absence: bool,
     ) -> Result<(), BackendFailure> {
         if !self.names_table(table)? || record.kind() != IrRecordKind::TableEntry {
@@ -439,7 +559,7 @@ impl FunctionEmitter<'_, '_> {
             self.output,
             "  %{bare}.slot = call ptr @wf__table_lock_entry(ptr {table}, ptr %{bare}.key, i64 %{bare}.length, i32 {read}, ptr {record})\n  store ptr %{bare}.slot, ptr {word}",
             table = self.value_name(table),
-            read = if read {1 + 2 * u32::from(stable_absence)} else {0},
+            read = if read {1 + 2 * u32::from(stable_absence)} else if !inserts {4 + 2 * u32::from(stable_absence)} else {0},
             record = record_name(record),
             word = record_slot_name(record),
         )
@@ -475,7 +595,7 @@ impl FunctionEmitter<'_, '_> {
         nominal: IrNominalId,
         record: IrRecord,
     ) -> Result<(), BackendFailure> {
-        self.checked_entry(nominal)?;
+        let tag_ty = format!("i{}", self.entry_tag_width(nominal)?);
         if record.kind() != IrRecordKind::TableEntry {
             return Err(BackendFailure::InvalidIr);
         }
@@ -483,7 +603,7 @@ impl FunctionEmitter<'_, '_> {
         self.names(&["wf__table_unlock_entry"]);
         writeln!(
             self.output,
-            "  %{bare}.slot = load ptr, ptr {word}\n  %{bare}.tag = load i32, ptr %{bare}.slot\n  %{bare}.some = icmp ne i32 %{bare}.tag, 0\n  %{bare}.present = zext i1 %{bare}.some to i32\n  call void @wf__table_unlock_entry(ptr {record}, i32 %{bare}.present)",
+            "  %{bare}.slot = load ptr, ptr {word}\n  %{bare}.tag = load {tag_ty}, ptr %{bare}.slot\n  %{bare}.some = icmp ne {tag_ty} %{bare}.tag, 0\n  %{bare}.present = zext i1 %{bare}.some to i32\n  call void @wf__table_unlock_entry(ptr {record}, i32 %{bare}.present)",
             word = record_slot_name(record),
             record = record_name(record),
         )
@@ -592,7 +712,7 @@ impl FunctionEmitter<'_, '_> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
-    /// Gives up a hold: the runtime reads each entry's tag, an `i32` at
+    /// Gives up a hold: the runtime reads each entry's count-sized tag at
     /// offset 0 whose `None` is 0, to keep or remove it.
     pub(super) fn emit_table_hold_release(
         &mut self,
@@ -600,11 +720,11 @@ impl FunctionEmitter<'_, '_> {
         nominal: IrNominalId,
         record: IrRecord,
     ) -> Result<(), BackendFailure> {
-        self.checked_entry(nominal)?;
+        let tag_bytes = self.entry_tag_width(nominal)?.div_ceil(8);
         if record.kind() != IrRecordKind::TableHold {
             return Err(BackendFailure::InvalidIr);
         }
-        let arguments = format!("ptr {}, i64 0, i32 4, i64 0", record_name(record));
+        let arguments = format!("ptr {}, i64 0, i32 {tag_bytes}, i64 0", record_name(record));
         self.emit_unit_call(result, "wf__table_hold_release", &arguments)
     }
 
@@ -720,6 +840,25 @@ impl FunctionEmitter<'_, '_> {
         writeln!(
             self.output,
             "  {} = call i64 @wf__key_set_insert(ptr {}, ptr %{bare}.key, i64 %{bare}.length)",
+            self.value_name(result),
+            self.value_name(set),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Reads the set's retained heap bytes without changing its storage.
+    pub(super) fn emit_key_set_bytes(
+        &mut self,
+        result: IrValueId,
+        set: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet)) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.names(&["wf__key_set_bytes"]);
+        writeln!(
+            self.output,
+            "  {} = call i64 @wf__key_set_bytes(ptr {})",
             self.value_name(result),
             self.value_name(set),
         )
@@ -860,17 +999,93 @@ impl FunctionEmitter<'_, '_> {
         nominal: IrNominalId,
         object: IrValueId,
     ) -> Result<(), BackendFailure> {
-        if ty != IrType::Nominal(nominal) || self.value_type(object) != Some(ty) {
+        let Some(IrType::Nominal(source)) = self.value_type(object) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let frozen = matches!(
+            self.nominal(nominal)?.kind(),
+            IrNominalKind::Box {
+                release: crate::IrReleaseClass::Frozen,
+                ..
+            }
+        );
+        if ty != IrType::Nominal(nominal) {
             return Err(BackendFailure::InvalidIr);
         }
-        self.shared_state(nominal)?;
-        self.names(&["wf__shared_share"]);
+        let retain = if frozen {
+            if source != nominal {
+                return Err(BackendFailure::InvalidIr);
+            }
+            "wf__frozen_share"
+        } else {
+            if self.shared_state(source)? != self.shared_state(nominal)? {
+                return Err(BackendFailure::InvalidIr);
+            }
+            "wf__shared_share"
+        };
+        self.names(&[retain]);
         writeln!(
             self.output,
-            "  call void @wf__shared_share(ptr {object})\n  {} = getelementptr i8, ptr {object}, i64 0",
+            "  call void @{retain}(ptr {object})\n  {} = getelementptr i8, ptr {object}, i64 0",
             self.value_name(result),
             object = self.value_name(object),
         )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    pub(super) fn emit_decision_cell_new(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        nominal: IrNominalId,
+    ) -> Result<(), BackendFailure> {
+        if ty != IrType::Nominal(nominal) || self.nominal(nominal)?.name != "DecisionCell" {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.names(&["wf__decision_cell_new"]);
+        writeln!(
+            self.output,
+            "  {} = call ptr @wf__decision_cell_new()",
+            self.value_name(result),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    pub(super) fn emit_decision_cell(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        object: IrValueId,
+        winner: Option<u32>,
+    ) -> Result<(), BackendFailure> {
+        if !matches!(ty, IrType::Nominal(id) if self.nominal(id)?.name == "DecisionState")
+            || !matches!(self.value_type(object), Some(IrType::Nominal(id)) if self.nominal(id)?.name == "DecisionCell")
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let IrType::Nominal(state) = ty else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        // The runtime answers the state's ordinal as an i32; the enum's own tag
+        // may be narrower (target::enum_tag_width), so the answer is truncated.
+        let tag = super::enum_tag_type(self.nominal(state)?)?;
+        let entry = match winner {
+            None => "wf__decision_cell_read",
+            Some(1) => "wf__claim_written",
+            Some(2) => "wf__claim_killed",
+            _ => return Err(BackendFailure::InvalidIr),
+        };
+        self.names(&[entry]);
+        let result = self.value_name(result);
+        let object = self.value_name(object);
+        if tag == "i32" {
+            writeln!(self.output, "  {result} = call i32 @{entry}(ptr {object})")
+        } else {
+            writeln!(
+                self.output,
+                "  {result}.answer = call i32 @{entry}(ptr {object})\n  {result} = trunc i32 {result}.answer to {tag}"
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -887,6 +1102,7 @@ impl FunctionEmitter<'_, '_> {
         object: IrValueId,
         entry: &'static str,
         prefix: &str,
+        extra: &str,
     ) -> Result<(), BackendFailure> {
         if !matches!(self.value_type(object), Some(IrType::Nominal(nominal))
             if matches!(self.nominal(nominal)?.kind(), IrNominalKind::Shared { shape: IrShared::Object, .. }))
@@ -894,20 +1110,71 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         let retries = entry == "wf__shared_acquire";
+        let arguments = format!("ptr {}, i32 1, ptr {HANDLE}{extra}", self.value_name(object));
+        self.emit_parking_call(result, entry, &arguments, prefix, retries)
+    }
+
+    /// A statement's first group: the runtime answers as an acquire does,
+    /// 1 when it has parked the frame on the group's first object, holding
+    /// nothing, and the resumed frame asks again.
+    pub(super) fn emit_atomic_group_acquire(
+        &mut self,
+        result: IrValueId,
+        record: IrRecord,
+    ) -> Result<(), BackendFailure> {
+        let IrRecordKind::AtomicGroup { count } = record.kind() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let arguments = format!("ptr {}, i64 {count}, ptr {HANDLE}", record_name(record));
+        self.emit_parking_call(result, "wf__atomic_group_acquire", &arguments, "group", true)
+    }
+
+    /// A call of `entry` that answers 1 when it has parked the frame, which
+    /// then suspends, and 0 otherwise; the resumed frame calls again when
+    /// `retries`, and otherwise continues.
+    fn emit_parking_call(
+        &mut self,
+        result: IrValueId,
+        entry: &'static str,
+        arguments: &str,
+        prefix: &str,
+        retries: bool,
+    ) -> Result<(), BackendFailure> {
         let prefix = labels(prefix, result);
         self.names(&[entry, "llvm.coro.save"]);
+        let snapshot = snapshot::required(self.program);
+        let before = if snapshot && retries {
+            self.names(&["wf_snapshot_atomic_begin"]);
+            "  call void @wf_snapshot_atomic_begin()\n"
+        } else {
+            ""
+        };
+        let after = if snapshot && !retries {
+            // The native watch has released its single object before it
+            // returns either answer. Activation therefore occurs outside
+            // every hold and before a parked frame can move executors.
+            self.names(&["wf_snapshot_atomic_end"]);
+            "  call void @wf_snapshot_atomic_end()\n"
+        } else {
+            ""
+        };
         writeln!(
             self.output,
             "  br label %{prefix}.try\n\
-             {prefix}.try:\n  \
+             {prefix}.try:\n{before}  \
              %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
-             %{prefix}.parked = call i32 @{entry}(ptr {}, i32 1, ptr {HANDLE})\n  \
-             %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
+             %{prefix}.parked = call i32 @{entry}({arguments})\n  \
+             {after}%{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
-             {prefix}.suspend:",
-            self.value_name(object)
+             {prefix}.suspend:"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
+        if snapshot && retries {
+            // This attempt acquired nothing. Restore this executor's mask
+            // before suspension; the retry arms whichever executor resumes.
+            self.names(&["wf_snapshot_atomic_end"]);
+            writeln!(self.output, "  call void @wf_snapshot_atomic_end()")?;
+        }
         let resumed = if retries {
             format!("{prefix}.try")
         } else {
@@ -940,16 +1207,64 @@ impl FunctionEmitter<'_, '_> {
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
 
-    /// Gives up this context's hold on the object.
+    /// A guard's watch of its one object, registering the guard's wake test
+    /// when it has one ([`super::wake`]); the runtime evaluates it on the
+    /// state each later write leaves.
+    pub(super) fn emit_shared_watch(
+        &mut self,
+        result: IrValueId,
+        object: IrValueId,
+        test: Option<&IrWakeTest>,
+    ) -> Result<(), BackendFailure> {
+        let test = self.emit_wake_test(result, test)?;
+        self.emit_shared_wait(
+            result,
+            object,
+            "wf__shared_watch",
+            "watch",
+            &format!(", {test}"),
+        )
+    }
+
+    /// Watches one object in a guard's watch of several units, with the
+    /// guard's wake test for that object when it has one.
+    pub(super) fn emit_watch_object(
+        &mut self,
+        result: IrValueId,
+        record: IrRecord,
+        object: IrValueId,
+        test: Option<&IrWakeTest>,
+    ) -> Result<(), BackendFailure> {
+        if record.kind() != IrRecordKind::Watch {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let test = self.emit_wake_test(result, test)?;
+        let arguments = format!(
+            "ptr {}, ptr {}, {test}",
+            record_name(record),
+            self.value_name(object)
+        );
+        self.emit_unit_call(result, "wf__watch_object", &arguments)
+    }
+
+    /// Gives up this context's hold on the object; a statement that wrote no
+    /// part of its state releases it unwritten, which wakes no watch
+    /// [SHARE-3].
     pub(super) fn emit_shared_unlock(
         &mut self,
         result: IrValueId,
         object: IrValueId,
+        wrote: bool,
     ) -> Result<(), BackendFailure> {
-        self.names(&["wf__shared_unlock"]);
+        let entry = if wrote {
+            "wf__shared_unlock"
+        } else {
+            "wf__shared_unlock_unwritten"
+        };
+        self.names(&[entry]);
         writeln!(
             self.output,
-            "  call void @wf__shared_unlock(ptr {}, i32 1)",
+            "  call void @{entry}(ptr {}, i32 1)",
             self.value_name(object)
         )
         .map_err(|_| BackendFailure::TextEmission)?;

@@ -1,0 +1,15 @@
+fn segment_lengths(count: u64) -> length: u64 pure {
+  let lengths = box_array_filled::<u64>(count: count, value: 1_u64);
+  let segments = box_segments_filled::<i32>(lengths: &lengths.inner[0_u64..count], value: 0_i32);
+  set count = count +wrap 1_u64;
+  let length = 0_u64;
+  for (i in 0_u64..count) {
+    let segment = &segments.inner[i];
+    set length = segment^.len;
+  }
+  return length;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

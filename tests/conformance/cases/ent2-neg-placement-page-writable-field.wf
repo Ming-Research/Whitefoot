@@ -1,0 +1,17 @@
+struct Cell {
+  value: u8;
+}
+
+fn probe(cells: &Paged<Cell>) -> result: unit writes(cells) contract {
+  requires cells^.pages.len > 0_u64;
+  requires cells^.pages[0_u64].len > 0_u64;
+} {
+  set cells^.pages[0_u64][0_u64] = Cell(value: 1_u8);
+  let ref = &cells^.pages[0_u64][0_u64];
+  let value = ref^.value + 254_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

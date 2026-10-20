@@ -1,0 +1,28 @@
+enum Op {
+  BrTable(start: u32, count: u32);
+  Stop();
+}
+
+fn dispatch(code: &Box<Slots<Op>>, brtab: &Box<Slots<u32>>, index: u64) -> result: unit reads(code), reads(brtab) contract {
+  requires 0_u64 < code^.inner.len;
+  requires index <= 4294967295_u64;
+  requires forall table_span(j in 0_u64..code^.inner.len): code^.inner[j].BrTable.start + code^.inner[j].BrTable.count < brtab^.inner.len;
+} {
+  match code^.inner[0_u64] {
+    BrTable(start: startv, count: countv) => {
+      let count = cvt::<u32, u64>(countv^);
+      let pick = imax(index, count);
+      let base = cvt::<u32, u64>(startv^);
+      let at = base + pick;
+      let slot = brtab^.inner[at];
+      return unit;
+    }
+    Stop() => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

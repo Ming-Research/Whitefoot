@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn joined(left: u64, right: u64) -> total: u64 pure contract {
+  requires left <= 10_u64;
+  requires right <= 10_u64;
+  ensures total == left + right;
+} {
+  doc "A clause side adds one distinct bare parameter with coefficient one; v0.127 rejected this shape, while the v0.128 affine amendment admits it.";
+  let sum = left + right;
+  return sum;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The ordinary affine equality is proved by the function and its result executes correctly.";
+  let value = joined(left: 1_u64, right: 2_u64);
+  if value == 3_u64 {
+    return exit_status(code: 42_u8);
+  }
+  return exit_status(code: 1_u8);
+}

@@ -44,10 +44,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {}",
+                "  {} = load {}, ptr {}{}{}",
                 self.value_name(result),
                 emitted_type_1,
-                self.value_name(address)
+                self.value_name(address),
+                storage_alias::source_read(self.program, ty),
+                self.owner_alias.read(address)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)
@@ -65,7 +67,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let destination = self.value_name(address);
-        self.store_value_at(value, &destination)
+        self.store_source_value_at(value, &destination)
     }
 
     fn referent_is_stored(&self, referent: IrAddressed) -> Result<bool, BackendFailure> {
@@ -126,6 +128,53 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if target.waits() {
             return self.emit_waiting_call(result, ty, function, arguments);
         }
+        // Expose an exact primitive body in this activation so access facts
+        // apply to its writes, rather than promising all reads of a call
+        // disjoint (two empty owners can read the same static header).
+        if self.owner_alias.scopes().next().is_some()
+            && let [block] = target.blocks()
+            && block.parameters().is_empty()
+            && let [IrInstruction::Define {
+                result: returned,
+                ty: IrType::Unit,
+                operation:
+                    IrOperation::RunBoundary {
+                        row,
+                        run,
+                        value: Some(value),
+                    },
+            }] = block.instructions()
+            && row.places()
+            && let IrTerminator::Return {
+                value: actual_return,
+                drops,
+            } = block.terminator()
+            && actual_return == returned
+            && drops.is_empty()
+            && target.result() == ty
+            && target.parameters().len() == arguments.len()
+            && target
+                .parameters()
+                .iter()
+                .zip(arguments)
+                .all(|((_, formal), actual)| self.value_type(*actual) == Some(*formal))
+            && let Some(run_index) = target
+                .parameters()
+                .iter()
+                .position(|(formal, _)| formal == run)
+            && let Some(value_index) = target
+                .parameters()
+                .iter()
+                .position(|(formal, _)| formal == value)
+        {
+            return self.emit_run_boundary(
+                result,
+                ty,
+                *row,
+                arguments[run_index],
+                Some(arguments[value_index]),
+            );
+        }
         let abi = FunctionAbi::build(self.program, target)?;
         if abi.result().ty() != ty || abi.parameters().len() != arguments.len() {
             return Err(BackendFailure::InvalidIr);
@@ -136,17 +185,45 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let destination = self.value_place(result)?;
             rendered.push(format!("ptr {destination}"));
         }
-        for (argument, parameter) in arguments.iter().zip(abi.parameters()) {
+        // A call inside this function's recursive group names the callee's
+        // internal form and passes this activation's own environment record
+        // in place of the arguments it holds (compiler/recursive-environment).
+        let internal = self.internal_call(function, &self.callee_symbol(function, target.name()));
+        if internal.is_some() {
+            rendered.push(format!("ptr {}", call_entries::ENVIRONMENT));
+        }
+        let mut passed = Vec::with_capacity(arguments.len());
+        for (index, (argument, parameter)) in arguments.iter().zip(abi.parameters()).enumerate() {
             if self.value_type(*argument) != Some(parameter.ty()) {
                 return Err(BackendFailure::InvalidIr);
             }
+            if internal
+                .as_ref()
+                .is_some_and(|internal| !internal.order.contains(&index))
+            {
+                passed.push(None);
+                continue;
+            }
             if parameter.is_indirect() {
                 let address = self.value_place(*argument)?;
-                rendered.push(format!("ptr {address}"));
+                passed.push(Some(format!("ptr {address}")));
             } else {
                 let operand = self.value_name(*argument);
-                rendered.push(self.value_argument(*parameter, &operand)?);
+                passed.push(Some(self.value_argument(*parameter, &operand)?));
             }
+        }
+        // The internal form declares its parameters in its own order.
+        match &internal {
+            Some(internal) => {
+                for index in &internal.order {
+                    let argument = passed
+                        .get_mut(*index)
+                        .and_then(Option::take)
+                        .ok_or(BackendFailure::InvalidIr)?;
+                    rendered.push(argument);
+                }
+            }
+            None => rendered.extend(passed.into_iter().flatten()),
         }
         // A call that stays inside a budgeted component carries the caller's
         // remaining levels as the callee variant's trailing parameter, the way
@@ -155,12 +232,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if let Some(budget) = budget {
             rendered.push(format!("i64 {budget}"));
         }
+        let (callee, convention, attributes) = match &internal {
+            Some(internal) => (
+                internal.symbol.clone(),
+                internal.convention,
+                internal.attributes,
+            ),
+            None => (callee, "", ""),
+        };
         if stored_result {
             return {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  call void @{callee}({})",
+                    "  call {convention}void @{callee}({}){attributes}",
                     rendered.join(", ")
                 )
             }
@@ -172,7 +257,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output.symbol(callee.to_string());
                 writeln!(
                     self.output,
-                    "  {} = call {} @{callee}({})",
+                    "  {} = call {convention}{} @{callee}({}){attributes}",
                     self.value_name(result),
                     emitted_type_1,
                     rendered.join(", ")
@@ -244,37 +329,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.value_name(result),
             self.value_name(left)
         )
-        .map_err(|_| BackendFailure::TextEmission)
-    }
-
-    pub(super) fn emit_enum_equality(
-        &mut self,
-        result: IrValueId,
-        ty: IrType,
-        equal: bool,
-        operand_type: IrType,
-        arguments: [IrValueId; 2],
-    ) -> Result<(), BackendFailure> {
-        if ty != IrType::Bool
-            || !is_tag_only_type(self.program, operand_type)?
-            || arguments
-                .iter()
-                .any(|argument| self.value_type(*argument) != Some(operand_type))
-        {
-            return Err(BackendFailure::InvalidIr);
-        }
-        {
-            let emitted_type_2 = self.output.type_name(self.program, operand_type)?;
-            writeln!(
-                self.output,
-                "  {} = icmp {} {} {}, {}",
-                self.value_name(result),
-                if equal { "eq" } else { "ne" },
-                emitted_type_2,
-                self.value_name(arguments[0]),
-                self.value_name(arguments[1])
-            )
-        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
@@ -420,6 +474,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         inserts: Vec<(usize, Option<IrValueId>)>,
     ) -> Result<(), BackendFailure> {
         let aggregate_ty = self.output.type_name(self.program, ty)?;
+        let IrType::Nominal(nominal) = ty else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let tag_ty = enum_tag_type(self.nominal(nominal)?)?;
         let mut base = "zeroinitializer".to_owned();
         let total = inserts.len();
         for (ordinal, (index, value)) in inserts.into_iter().enumerate() {
@@ -448,7 +506,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 None => {
                     writeln!(
                         self.output,
-                        "  {output} = insertvalue {aggregate_ty} {base}, i32 {tag}, {index}"
+                        "  {output} = insertvalue {aggregate_ty} {base}, {tag_ty} {tag}, {index}"
                     )
                     .map_err(|_| BackendFailure::TextEmission)?;
                 }
