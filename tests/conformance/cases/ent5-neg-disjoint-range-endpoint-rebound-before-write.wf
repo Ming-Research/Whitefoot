@@ -14,7 +14,9 @@ fn probe(rows: &[Slots<u8, 8>], i: u64, j: u64, k: u64) -> result: u8 writes(row
   doc "ENT-5 and OWN-7: tail is formed from the endpoints i and j before j is rebound to i. Its captured end still covers row i, so the call writes row i and kills the length fact on row i; the later read needs that fact and fails OP-4. Judging the write with the rebound end would wrongly keep the fact.";
   let tail = &rows^[i..j];
   set j = i;
-  reset(part: tail);
+  if tail^.len >= 1_u64 {
+    reset(part: tail);
+  }
   let value = rows^[i][k];
   return value;
 }
