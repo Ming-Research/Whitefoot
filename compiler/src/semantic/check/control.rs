@@ -579,9 +579,7 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Give1,
                     node,
                     SemanticIssueKind::EmptyDeliverySet {
-                        mechanical_fix: format!(
-                            "no arm supplies a value to `{binding}`: drop `let {binding} =`, write the `{form}` as a statement, and delete the statements after it in this block, which no path reaches"
-                        ),
+                        mechanical_fix: super::repairs::empty_delivery_repair(&binding, form),
                         binding,
                     },
                 );
