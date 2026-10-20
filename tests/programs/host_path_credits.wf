@@ -1,0 +1,215 @@
+alias DirectoryRead = std::fs::DirectoryRead;
+alias HandleFactory = std::io::HandleFactory;
+alias HostPaths = std::fs::HostPaths;
+alias PathEncoding = std::fs::PathEncoding;
+
+const dot: Array<u8, 1> =[46_u8];
+
+fn exhausted(error: &std::io::IoError) -> refused: Bool reads(error) {
+  match error^ {
+    NotFound(code: c, origin: o) => {
+      return False();
+    }
+    PermissionDenied(code: c, origin: o) => {
+      return False();
+    }
+    AlreadyExists(code: c, origin: o) => {
+      return False();
+    }
+    NotDirectory(code: c, origin: o) => {
+      return False();
+    }
+    IsDirectory(code: c, origin: o) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: c, origin: o) => {
+      return False();
+    }
+    ReadOnly(code: c, origin: o) => {
+      return False();
+    }
+    ResourceBusy(code: c, origin: o) => {
+      return False();
+    }
+    InvalidInput(code: c, origin: o) => {
+      return False();
+    }
+    InvalidPath(code: c, origin: o) => {
+      return False();
+    }
+    Unsupported(code: c, origin: o) => {
+      return False();
+    }
+    TimedOut(code: c, origin: o) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return False();
+    }
+    Cancelled() => {
+      return False();
+    }
+    BrokenPipe(code: c, origin: o) => {
+      return False();
+    }
+    WriteZero(code: c, origin: o) => {
+      return False();
+    }
+    UnexpectedEnd(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionRefused(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionReset(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionAborted(code: c, origin: o) => {
+      return False();
+    }
+    NotConnected(code: c, origin: o) => {
+      return False();
+    }
+    AddressInUse(code: c, origin: o) => {
+      return False();
+    }
+    AddressUnavailable(code: c, origin: o) => {
+      return False();
+    }
+    ResourceExhausted(code: c, origin: o) => {
+      return True();
+    }
+    FileTooLarge(code: c, origin: o) => {
+      return False();
+    }
+    NoSpace(code: c, origin: o) => {
+      return False();
+    }
+    QuotaExceeded(code: c, origin: o) => {
+      return False();
+    }
+    CrossDevice(code: c, origin: o) => {
+      return False();
+    }
+    DeviceFailure(code: c, origin: o) => {
+      return False();
+    }
+    Other(code: c, origin: o) => {
+      return False();
+    }
+  }
+}
+
+fn read_refused(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) -> result: u8 reads(paths), reads(base), writes(factory) waits {
+  let encoding = PathEncoding::Utf8();
+  match std::fs::open_host_directory_read_bytes(factory: factory, paths: paths, base: base, path: &dot[0_u64..1_u64], start: 0_u64, end: 1_u64, encoding: encoding) {
+    Ok(value: opened) => {
+      std::fs::close_directory(factory: factory, directory: move opened);
+      return 1_u8;
+    }
+    Err(error: problem) => {
+      let matched = exhausted(error: &problem);
+      if matched {
+        return 0_u8;
+      }
+      return 2_u8;
+    }
+  }
+}
+
+fn pair_refused(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) -> result: u8 reads(paths), reads(base), writes(factory) waits {
+  let encoding = PathEncoding::Utf8();
+  match std::fs::open_host_directory_bytes(factory: factory, paths: paths, base: base, path: &dot[0_u64..1_u64], start: 0_u64, end: 1_u64, encoding: encoding) {
+    Ok(value: opened) => {
+      let std::fs::Directory(read: opened_read, write: opened_write) = move opened;
+      std::fs::close_directory(factory: factory, directory: move opened_read);
+      std::fs::close_directory_write(factory: factory, directory: move opened_write);
+      return 1_u8;
+    }
+    Err(error: problem) => {
+      let matched = exhausted(error: &problem);
+      if matched {
+        return 0_u8;
+      }
+      return 2_u8;
+    }
+  }
+}
+
+fn refused_pair_returns_its_credit(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) -> result: u8 reads(paths), reads(base), writes(factory) waits {
+  let encoding = PathEncoding::Utf8();
+  match std::fs::open_host_directory_read_bytes(factory: factory, paths: paths, base: base, path: &dot[0_u64..1_u64], start: 0_u64, end: 1_u64, encoding: encoding) {
+    Ok(value: first) => {
+      let outcome = 0_u8;
+      let pair = pair_refused(factory: factory, paths: paths, base: base);
+      if pair != 0_u8 {
+        set outcome = 10_u8;
+      }
+      if outcome == 0_u8 {
+        match std::fs::open_host_directory_read_bytes(factory: factory, paths: paths, base: base, path: &dot[0_u64..1_u64], start: 0_u64, end: 1_u64, encoding: encoding) {
+          Ok(value: second) => {
+            let single = read_refused(factory: factory, paths: paths, base: base);
+            if single != 0_u8 {
+              set outcome = 20_u8;
+            }
+            std::fs::close_directory(factory: factory, directory: move second);
+          }
+          Err(error: problem) => {
+            set outcome = 30_u8;
+          }
+        }
+      }
+      std::fs::close_directory(factory: factory, directory: move first);
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 31_u8;
+    }
+  }
+}
+
+fn open_pair_spends_two_credits(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) -> result: u8 reads(paths), reads(base), writes(factory) waits {
+  let encoding = PathEncoding::Utf8();
+  match std::fs::open_host_directory_bytes(factory: factory, paths: paths, base: base, path: &dot[0_u64..1_u64], start: 0_u64, end: 1_u64, encoding: encoding) {
+    Ok(value: opened) => {
+      let std::fs::Directory(read: opened_read, write: opened_write) = move opened;
+      let outcome = 0_u8;
+      let left = read_refused(factory: factory, paths: paths, base: base);
+      if left != 0_u8 {
+        set outcome = 40_u8;
+      }
+      std::fs::close_directory(factory: factory, directory: move opened_read);
+      std::fs::close_directory_write(factory: factory, directory: move opened_write);
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 41_u8;
+    }
+  }
+}
+
+fn exercise(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) -> result: u8 reads(paths), reads(base), writes(factory) waits {
+  let returned = refused_pair_returns_its_credit(factory: factory, paths: paths, base: base);
+  if returned != 0_u8 {
+    return returned;
+  }
+  let spent = open_pair_spends_two_credits(factory: factory, paths: paths, base: base);
+  return spent;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "Runs with exactly two handle credits, which the harness sets through the descriptor limit. Holding one credit, an open of both halves of a directory needing two is refused with ResourceExhausted, and the credit it took comes back, so one more open succeeds and a further one is refused. With two credits free, the open of both halves spends both, so a further open is refused. A wrong count exits 10, 20, 30, 31, 40 or 41 by the step that saw it, and an invocation without the authority exits 9.";
+  let std::process::Inputs(cwd: directory, handles: factory, host_paths: host_paths, ..) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  let outcome = 9_u8;
+  match move host_paths {
+    Some(value: paths) => {
+      set outcome = exercise(factory: &factory, paths: &paths, base: &reader);
+    }
+    None() => {
+    }
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  return std::process::exit_status(code: outcome);
+}

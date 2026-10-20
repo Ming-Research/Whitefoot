@@ -669,10 +669,12 @@ its evidence.
   HANDLE that NtCreateFile accepts as `RootDirectory`, and NTFS resolves no
   `..` below such a handle. A relative path is therefore normalized after the
   spelling `GetFinalPathNameByHandleW` reports for base at the open; when the
-  result is base or below it, the remainder is opened from base's handle, so
+  result begins with that spelling, code unit for code unit, and ends or
+  continues after a separator (base or below it, as spelled), the remainder is
+  opened from base's handle, so
   a rename of base or its parents, before or during the open, cannot redirect
-  it. Only a path that climbs above base (or a root-relative path) is opened
-  by its full spelling, which a concurrent rename of base between the
+  it. Only a path that climbs above base, spells it in another letter case, or
+  is root-relative is opened by its full spelling, which a concurrent rename of base between the
   spelling query and the open could redirect. This is the Win32 meaning of
   `..` (textual, after base's current spelling); no physical-parent lookup
   exists to preserve. A base with no DOS spelling (a volume mounted without a

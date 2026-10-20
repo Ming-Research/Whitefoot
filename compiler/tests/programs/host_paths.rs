@@ -24,6 +24,10 @@ const BYTES_PROGRAM: &str = "host_path_bytes.wf";
 const PATHS_PROGRAM: &str = "windows/host_paths.wf";
 #[cfg(windows)]
 const BYTES_PROGRAM: &str = "windows/host_path_bytes.wf";
+/// The credit total is the descriptor limit less 64 on a POSIX host and a
+/// fixed number on Windows, so only the POSIX run can set it.
+#[cfg(unix)]
+const CREDITS_PROGRAM: &str = "host_path_credits.wf";
 
 fn run(program: &CompiledProgram, directory: &Path, arguments: &[&OsStr], native: bool) -> Output {
     let mut command = Command::new(program.executable());
@@ -164,6 +168,81 @@ fn windows_forms(
     // A device path names no directory of a volume: InvalidPath, 14.
     let device = run(program, elsewhere, &[OsStr::new("\\\\.\\NUL")], native);
     assert_eq!(device.status.code(), Some(14), "route {native}: {device:?}");
+    windows_unc(program, elsewhere, native, data);
+    windows_links(program, fixture, elsewhere, native);
+}
+
+/// A UNC path, through the administrative share of the data directory's
+/// drive on this host.
+#[cfg(windows)]
+fn windows_unc(program: &CompiledProgram, elsewhere: &Path, native: bool, data: &Path) {
+    let spelled = data.to_str().expect("a textual fixture path");
+    let (drive, rooted) = spelled.split_at(2);
+    let share = format!("\\\\localhost\\{}${rooted}", &drive[..1]);
+    assert!(
+        Path::new(&share).is_dir(),
+        "the host reaches its own administrative share: {share}"
+    );
+    publishes(program, elsewhere, OsStr::new(&share), native, data);
+}
+
+/// The links a host-path lookup follows [PRE-2], as the last component and as
+/// a middle one: a junction, which needs no privilege, and a directory
+/// symbolic link, which needs the privilege the hosted runner's account holds.
+#[cfg(windows)]
+fn windows_links(program: &CompiledProgram, fixture: &Path, elsewhere: &Path, native: bool) {
+    let real = fixture.join("real");
+    let real_data = real.join("data");
+    std::fs::create_dir_all(&real_data).expect("create the linked tree");
+    let junction = |link: &Path, target: &Path| {
+        let made = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .expect("run mklink");
+        assert!(made.status.success(), "mklink /J {link:?}: {made:?}");
+    };
+    let symbolic = |link: &Path, target: &Path| {
+        std::os::windows::fs::symlink_dir(target, link)
+            .unwrap_or_else(|error| panic!("symlink {link:?}: {error}"));
+    };
+    let middle_junction = fixture.join("middle-junction");
+    junction(&middle_junction, &real);
+    publishes(
+        program,
+        elsewhere,
+        middle_junction.join("data").as_os_str(),
+        native,
+        &real_data,
+    );
+    let last_junction = fixture.join("last-junction");
+    junction(&last_junction, &real_data);
+    publishes(
+        program,
+        elsewhere,
+        last_junction.as_os_str(),
+        native,
+        &real_data,
+    );
+    let middle_symbolic = fixture.join("middle-symbolic");
+    symbolic(&middle_symbolic, &real);
+    publishes(
+        program,
+        elsewhere,
+        middle_symbolic.join("data").as_os_str(),
+        native,
+        &real_data,
+    );
+    let last_symbolic = fixture.join("last-symbolic");
+    symbolic(&last_symbolic, &real_data);
+    publishes(
+        program,
+        elsewhere,
+        last_symbolic.as_os_str(),
+        native,
+        &real_data,
+    );
 }
 
 /// A path's native bytes, as `NativeBytes` reads them on this host.
@@ -213,6 +292,31 @@ fn host_paths_from_bytes_open_in_both_encodings() {
             .expect("write the invalid path");
 
         let output = run(&program, fixture.path(), &[], native);
+        assert_eq!(output.status.code(), Some(0), "route {native}: {output:?}");
+    }
+}
+
+/// The runtime's handle credit total is the descriptor limit less 64, so a
+/// limit of 66 leaves two. The program counts them [PRE-2]: an open of both
+/// halves that is refused returns what it took, and one that succeeds spends
+/// two, which no result of the other tests would show with thousands free.
+#[cfg(unix)]
+#[test]
+fn an_open_of_both_halves_spends_two_credits_and_returns_them_when_refused() {
+    let program = build_program(&compile_program(CREDITS_PROGRAM));
+    for native in [true, false] {
+        let fixture = fixture_directory();
+        let mut command = Command::new("sh");
+        command
+            .current_dir(fixture.path())
+            .args(["-c", "ulimit -n 66 && exec \"$0\""])
+            .arg(program.executable())
+            .env_remove("WF_IO_NO_NATIVE_RING")
+            .env_remove("WF_REQUIRE_WINDOWS_IOCP");
+        if !native {
+            command.env("WF_IO_NO_NATIVE_RING", "1");
+        }
+        let output = run_command(&mut command);
         assert_eq!(output.status.code(), Some(0), "route {native}: {output:?}");
     }
 }
