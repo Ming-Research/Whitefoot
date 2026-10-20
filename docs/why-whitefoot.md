@@ -298,7 +298,7 @@ LBB0_2:
 	b.ne	LBB0_2
 ```
 
-Whitefoot's exclusive borrow `acc` emits `noalias`, and its shared borrow `addend` emits `readonly`, by construction, and the loop keeps everything in registers:
+Whitefoot's borrow parameters `acc` and `addend` both emit `noalias` by construction, and the shared borrow `addend` also emits `readonly`. The loop keeps everything in registers:
 
 ```
 _accumulate:                     ; Whitefoot, from the borrow modes
