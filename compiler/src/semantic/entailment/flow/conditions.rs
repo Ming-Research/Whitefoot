@@ -92,8 +92,15 @@ impl Judging<'_, '_, '_> {
             let negated = relation.negated();
             let relation = if truth { relation } else { &negated };
             super::super::work::condition_query();
+            // The comparison is an L0 fact at branch entry, so only the
+            // ordinary closed state may decide it; a pending view would fall
+            // back to origin transport and delete a test whose L0 fact later
+            // L0 readers still need.
             let result = self.reasoning().prove(
-                context,
+                ProofContext {
+                    origin_view: OriginView::Ordinary,
+                    ..context
+                },
                 ProofGoal::Ordering {
                     relation,
                     affine: None,

@@ -57,10 +57,16 @@ The comparison origin is judged in the closed L0 state rather than through
 MSR-4's affine steps, because S1 establishes it as an L0 fact and later L0
 consumers read it there; `op5-pos-redundant-comparison-not-l0` admits a test
 whose goal an affine certificate proves but whose comparison is not an L0
-fact. Whether the comparison origin should instead count as derivable when
-MSR-4 discharges it is an open choice for the owner: it would reject more
-tests, and its soundness depends on every reader of the lost L0 fact
-re-deriving it through MSR-4.
+fact, so its query reads the ordinary closed state only and never falls back
+to the origin-transport view that the goal origins use. Whether the comparison
+origin should instead count as derivable when MSR-4 discharges it is an open
+choice for the owner: it would reject more tests, and its soundness depends on
+every reader of the lost L0 fact re-deriving it through MSR-4.
+
+A condition with neither a goal origin nor a comparison origin, such as a
+user function's result, has no derivable truth: a vacuous "every fact is
+derivable" would decide it True and delete a test that decides nothing, so the
+judgment admits it (`op5-pos-redundant-no-origin`).
 
 In a contradictory state both truths follow by explosion and no reachable
 branch is selected, so the judgment admits the condition. [FN-1] still
