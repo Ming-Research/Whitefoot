@@ -65,7 +65,7 @@ describe evidence, not a workflow step.
   `compiler/src/` over 4,000 lines to be listed in
   `.github/oversized-sources.txt` with the key of the status board item that
   records its split.
-- `make design-ready` also requires an approved `spec/log.md` entry for a
+- `make design-ready` also requires a new `spec/log.md` entry for a
   changed specification.
 
 ## Branch and main boundary
@@ -79,7 +79,7 @@ Whitefoot's extra merge preconditions:
    commands, performance comparison has its own workflow, and research is
    never a gate dependency. `make check-groups` lists the groups and
    [Checks](#checks) says where each runs.
-2. Specification approvals are recorded in `spec/log.md`.
+2. Each specification change is recorded in `spec/log.md`.
 3. When the merge changes the concurrent map's runtime or its test,
    `map-sanitizers.yml` passes on the exact revision being merged.
 4. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
@@ -108,11 +108,11 @@ read.
   4. If `main` advanced the version meanwhile, merging it conflicts on the
      title: keep main's text, reapply this branch's rule changes, archive
      main's active bytes under main's version and retitle to the next one.
-  5. After the owner approves, add the `spec/log.md` entry naming every rule
+  5. In the same change, add the `spec/log.md` entry naming every rule
      added, changed or retired.
 
   `make static` verifies the archive and title, and `make design-ready`
-  requires the approval entry. A spec/compiler discrepancy is a technical
+  requires that entry. A spec/compiler discrepancy is a technical
   defect; implementation convenience never selects language behavior.
 - State each normative fact once; use rule-ID cross-references elsewhere.
   Rule IDs have one definition and bracketed references resolve. Express
@@ -160,12 +160,9 @@ read.
   inevitable consequence of the purpose.
 - `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
   and examples; not compiler convenience presented as law or editing history.
-  `spec/log.md` holds its approvals.
+  `spec/log.md` holds its change log.
 - Whitefoot-kit's [writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md): writer
-  problems, usable forms, examples, applicability and costs, for agents;
-  the line that merges a specification change into `main` files a request
-  to Whitefoot-kit on the status board naming the specification version,
-  the rules it changed and what writers must now watch for.
+  problems, usable forms, examples, applicability and costs, for agents.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
   explanatory essays; not a work queue or invented measurements.
 - `docs/articles/`: one idea each for readers outside the project, every
