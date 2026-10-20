@@ -420,7 +420,8 @@ became: the suite and baseline, a first experiment, loops and calls,
 recursion, threads and topology, in that order of dependence (the single
 decision pass moved to the backlog). The first experiment finished on
 2026-10-13 with 31 of 38 cells passing, 7 not applicable and none failing
-(item gran-par-s2; its measurement record is in Whitefoot#313, not yet merged).
+(item gran-par-s2; its measurement record is on the unmerged branch
+`claude/par-demand`).
 The three sub-questions it left open were settled later; see the rulings
 below.
 
