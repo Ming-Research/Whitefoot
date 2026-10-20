@@ -80,7 +80,10 @@ impl DeclarationInventory<'_> {
                 SemanticIssueKind::TextLengthMismatch {
                     declared_length,
                     byte_length,
-                    mechanical_fix: super::repairs::text_length_repair(byte_length, declared_length),
+                    mechanical_fix: super::repairs::text_length_repair(
+                        byte_length,
+                        declared_length,
+                    ),
                 },
             );
         }
