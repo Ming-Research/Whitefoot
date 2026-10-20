@@ -39,6 +39,8 @@ mod programs {
     #[cfg(unix)]
     mod ordinary_io;
     #[cfg(unix)]
+    mod package_fixtures;
+    #[cfg(unix)]
     mod parallel;
     #[cfg(unix)]
     mod raw_deflate;

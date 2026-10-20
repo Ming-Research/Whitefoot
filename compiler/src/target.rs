@@ -177,10 +177,9 @@ impl TargetLayout {
         self.data_layout
     }
 
-    /// The `probe-stack` value every generated function carries: the
-    /// ABI-mandated helper an Apple or Windows target already names from its
-    /// own C translation units, and the target-independent spelling — an
-    /// inline page walk — on the supported Linux targets.
+    /// The target's preferred `probe-stack` value. Darwin emission also
+    /// requires the selected native consumer's helper capability; an unknown
+    /// or unsupported helper uses inline page probing instead.
     ///
     /// A frame larger than the guard region must touch each page on its way
     /// down. Without that, the frame's first store can land past the guard in
@@ -189,6 +188,21 @@ impl TargetLayout {
     /// frame past the page threshold, so an ordinary frame pays nothing.
     pub(super) const fn stack_probe(self) -> &'static str {
         self.stack_probe
+    }
+
+    /// Complete attributes for every generated definition. The Darwin
+    /// fallback states the 4 KiB stride explicitly; other targets retain
+    /// their existing attributes independently of the Darwin capability.
+    pub(crate) fn stack_probe_attributes(self, darwin_helper: bool) -> &'static str {
+        match self.stack_probe() {
+            "__chkstk_darwin" if darwin_helper => "\"probe-stack\"=\"__chkstk_darwin\"",
+            "__chkstk_darwin" => {
+                "\"probe-stack\"=\"inline-asm\" \"stack-probe-size\"=\"4096\""
+            }
+            "__chkstk" => "\"probe-stack\"=\"__chkstk\"",
+            "inline-asm" => "\"probe-stack\"=\"inline-asm\"",
+            _ => unreachable!("the closed target records select a known stack probe"),
+        }
     }
 
     /// How many integer-class argument words the selected target's C calling
@@ -2450,6 +2464,42 @@ mod enum_tag_tests {
                     enum_tag_width(count, tag_only),
                     Err(TargetLayoutFailure::InvalidIr)
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod stack_probe_tests {
+    use super::TargetLayout;
+
+    #[test]
+    fn darwin_uses_the_helper_only_when_native_codegen_accepts_it() {
+        for triple in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
+            let target = TargetLayout::for_triple(triple).expect("supported Darwin target");
+            assert_eq!(
+                target.stack_probe_attributes(true),
+                "\"probe-stack\"=\"__chkstk_darwin\"",
+                "{triple} with a supported helper"
+            );
+            assert_eq!(
+                target.stack_probe_attributes(false),
+                "\"probe-stack\"=\"inline-asm\" \"stack-probe-size\"=\"4096\"",
+                "{triple} must retain 4 KiB page probing without the helper"
+            );
+        }
+    }
+
+    #[test]
+    fn non_darwin_attributes_do_not_depend_on_the_darwin_helper() {
+        for (triple, attributes) in [
+            ("aarch64-unknown-linux-gnu", "\"probe-stack\"=\"inline-asm\""),
+            ("x86_64-unknown-linux-gnu", "\"probe-stack\"=\"inline-asm\""),
+            ("x86_64-pc-windows-msvc", "\"probe-stack\"=\"__chkstk\""),
+        ] {
+            let target = TargetLayout::for_triple(triple).expect("supported non-Darwin target");
+            for helper in [false, true] {
+                assert_eq!(target.stack_probe_attributes(helper), attributes, "{triple}");
             }
         }
     }

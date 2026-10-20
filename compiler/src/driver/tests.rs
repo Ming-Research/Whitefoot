@@ -1083,7 +1083,7 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
             let (modules, selected) =
                 super::composition_inputs(&graph, &all_inputs, selection.module);
             let facts = *crate::toolchain::facts();
-            // Seed all three alternatives before the first ordinary lookup.
+            // Seed all four alternatives before the first ordinary lookup.
             // Omitting any fact from the production key makes that alternative
             // collide and incorrectly reports a cache hit on the first build.
             for foreign in [
@@ -1105,6 +1105,10 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
                     } else {
                         "i1"
                     },
+                    ..facts
+                },
+                crate::toolchain::ToolchainFacts {
+                    darwin_stack_probe_helper: !facts.darwin_stack_probe_helper,
                     ..facts
                 },
             ] {
