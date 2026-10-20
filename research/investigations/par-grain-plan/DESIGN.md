@@ -82,11 +82,11 @@ fall into five groups:
 1. **Prices that are wrong in both directions.** Static weights miss work
    that depends on data: a 1-byte and a 65,536-byte record get the same
    price, and loaded per-task costs never reach the split point
-   [coord-wfbl-03-27, coord-wfbl-03-29]. Runtime extents fix some loops and
+   [coord-wfbl-03-27, coord-wfbl-03-29, cancelled; its work is in stage 3]. Runtime extents fix some loops and
    break others [coord-wfbl-03-27]. Call grain can drop an expensive helper
    whose cost comes from its arguments and keep a cheap call that reaches
    offering recursion [coord-wfbl-03-59]. Lengths are lost through local
-   owners and writable references [coord-wfbl-03-28].
+   owners and writable references [coord-wfbl-03-28, cancelled].
 2. **A depth budget where the work is not where the depth is.** Unbalanced
    trees spend the budget above their heavy subtrees: apollo11's style runs
    at 1.14x on four workers, against about 3.7x with the budget off, while
@@ -95,14 +95,14 @@ fall into five groups:
 3. **Machinery paid where nothing is handed out.** Small split loops pay
    about 4.8 ns per call at four workers for a query and a splitter entry,
    ten times their work in the minimal case [coord-wfbl-03-54]; the earlier
-   all-site fix regressed one-worker code through placement [coord-wfbl-03-30].
+   all-site fix regressed one-worker code through placement [coord-wfbl-03-30, cancelled].
 4. **Execution costs the price does not see.** Idle spinning on SMT siblings
    [coord-wfbl-03-60], small allocations that get slower with more workers
    [coord-wfbl-03-55], serial setup and packing around parallel phases
    [coord-wfbl-03-22, coord-wfbl-03-25, coord-wfbl-03-31], worker chunks
    without alias facts [coord-wfbl-03-34].
 5. **No single place and no common yardstick.** The decisions are spread
-   across translation, a grain pass and the emitter [coord-wfbl-03-39], and
+   across translation, a grain pass and the emitter [coord-wfbl-03-39, cancelled; the pass is now backlog item gran-par-s6], and
    measurements have repeatedly been confounded by code placement and short
    CPU intervals [coord-wfbl-03-32, coord-wfbl-03-48]. No experiment has
    compared one policy across kernels, recursion, real programs and hosts at
@@ -116,7 +116,7 @@ admits.
 ## Possible overall directions
 
 **A. One static cost model, in one place.** Move every profitability
-decision into one pass after ordinary lowering [coord-wfbl-03-39], with one
+decision into one pass after ordinary lowering [coord-wfbl-03-39, cancelled; the pass is now backlog item gran-par-s6], with one
 cost model for calls, loops and recursion; improve the model where it is
 wrong (argument-dependent helper prices, per-task loaded costs, recursion
 priced by work rather than depth); let sites whose work is certainly small
@@ -193,9 +193,10 @@ bounded small site keeps no decision point and adds nothing. The par-demand
 investigation applies this from its rerun after 2026-10-10 onward.
 
 The record reads the ruling as this total, not as a sum over executions of
-the wider of the two for each execution. The per-execution sum is never
-smaller than this total, so the total is the stricter reading, and the one
-used for verdicts.
+the wider of the two for each execution, and uses this total for verdicts.
+The per-execution sum is a different reading, not a stricter one: it is
+larger when the decision points hold most of the sequential work, and smaller
+when most of that work lies outside them.
 
 **Argument as well as measurement.** No suite covers every program, so a
 direction must come with a bound on what it adds: the cost at a fork or
@@ -318,7 +319,7 @@ either direction, so it comes first.
 1. **The suite and its baseline** on today's main. Done when every
    workload above runs in one dispatchable job and the baseline table is
    recorded. Expected about two days of work plus 14900K time.
-2. **One decision pass** [coord-wfbl-03-39]: move call grain, split
+2. **One decision pass** [coord-wfbl-03-39, cancelled; the pass is now backlog item gran-par-s6]: move call grain, split
    selection and offer filtering into one pass after ordinary lowering,
    with byte-identical `--par` output for every maintained program. A
    refactor with no behavior change.
@@ -363,7 +364,7 @@ file's header says what it was given). This section compares the three:
 2. **What stays.** Permission and proof erasure, the sequential world, a
    loop at each range leaf, the Chase-Lev deques and join helping, and the
    ledger. The power-of-two allowance with its 16-chunks-per-lane cap goes.
-3. **One place decides**, after ordinary lowering [coord-wfbl-03-39].
+3. **One place decides**, after ordinary lowering [coord-wfbl-03-39, cancelled; the pass is now backlog item gran-par-s6].
 4. **Topology belongs to the direction.** Default to physical cores, keep
    SMT siblings parked, treat mixed core classes as unequal, and wake
    helpers on actual demand, which also addresses the hosted SMT result
@@ -418,7 +419,8 @@ with static prices only as advice ("choose B", translated). The stages
 became: the suite and baseline, a first experiment, loops and calls,
 recursion, threads and topology, in that order of dependence (the single
 decision pass moved to the backlog). The first experiment finished on
-2026-10-13 with 31 of 38 cells passing, 7 not applicable and none failing.
+2026-10-13 with 31 of 38 cells passing, 7 not applicable and none failing
+(item gran-par-s2; its measurement record is in Whitefoot#313, not yet merged).
 The three sub-questions it left open were settled later; see the rulings
 below.
 
@@ -435,8 +437,9 @@ is on its card, named below.
    when a real program shows it wrong.
 2. **Recursion** (card gran-par-recursion, option A, 2026-10-09): keep the cut
    and the sequential clone below it, as Fable proposed. A stolen task gets a
-   fresh depth budget. An idle worker refreshes the cut on demand, at most once
-   per lane per 50–100 µs, Fable's rate limit. Astra's removal of the depth
+   fresh depth budget. A worker that reaches the cut while another worker is asking
+   for work refreshes the cut, at most once per lane per 50–100 µs, Fable's
+   rate limit. Astra's removal of the depth
    budget is not adopted.
 3. **The first experiment** (card gran-par-first-experiment, option A,
    2026-10-09): both, in order. Astra's no-hand-out experiment first (is the
@@ -511,5 +514,5 @@ it cites; each row's source has the full measurement.
 - **Oct 9, conditional calls** (PR #289): capability only
   ([edit parallelism](../edit-parallelism/DESIGN.md)).
 - **Oct 9, small split loops**: query plus splitter cost 4.8 ns per call;
-  fix paused for this plan (the loop-split-grain investigation, on branch
+  fix, merged into stage 3 for this plan (the loop-split-grain investigation, on branch
   `claude/loop-split-grain`).
