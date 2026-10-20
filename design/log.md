@@ -5,14 +5,6 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
-
-Nodes: compiler/verification
-
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark ready and, once the gate on both platforms passes, tell the coordinator 'to merge'" (translated), on the card "approve the new decision in the design-tree node 'compiler verification' that the final gate step retries when the GitHub API errs?" (translated), whose first revision at head 3782dfbc2 listed retrying each failed query up to five times with doubling waits, listing again up to four times while an expected job has no entry, failing at once on a job that did not succeed, and the two refused alternatives; and then option A, "approve" (translated), on the card "may the final gate step skip cancelled jobs rather than count them as results?" (translated), at head a653fb527, which added that cancelled jobs are left out because they belong to a superseded or stopped run. The revision merged here differs from a653fb527 only by the merge of main.
-
-Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
-
 ## 2026-10-13 One compilation lists every non-exhaustive match
 
 Nodes: compiler/rejection-payloads
@@ -20,6 +12,14 @@ Nodes: compiler/rejection-payloads
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the decision that Whitefoot#444 (one compilation lists every non-exhaustive match) adds to the design tree?" (translated), shown at head commit 4cca9198f.
 
 Summary: A non-exhaustive match records its edit site and the same structural walk continues over the written arms and later functions, reporting the first established event with every recorded site, because ERR-2 promises site-enumerated edit lists and one site per compile costs an agent a round per match when adding a variant, instead of stopping at the first site. Missing arms contribute no path or guessed binding, pending sites fail before proof analysis or receipt publication, and a same-node rejection under an earlier-defined rule still wins under DIAG-1; re-running with masked matches or a second checker and narrowing ERR-2 to the first site are rejected.
+
+## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark ready and, once the gate on both platforms passes, tell the coordinator 'to merge'" (translated), on the card "approve the new decision in the design-tree node 'compiler verification' that the final gate step retries when the GitHub API errs?" (translated), whose first revision at head 3782dfbc2 listed retrying each failed query up to five times with doubling waits, listing again up to four times while an expected job has no entry, failing at once on a job that did not succeed, and the two refused alternatives; and then option A, "approve" (translated), on the card "may the final gate step skip cancelled jobs rather than count them as results?" (translated), at head a653fb527, which added that cancelled jobs are left out because they belong to a superseded or stopped run. The revision merged here differs from a653fb527 only by the merge of main.
+
+Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
 
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
