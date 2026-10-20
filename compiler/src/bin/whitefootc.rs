@@ -862,6 +862,7 @@ fn print_stack_ledger(llvm: &str) -> Result<Vec<String>, String> {
     let result = (|| {
         std::fs::write(&module, llvm)
             .map_err(|error| format!("cannot write the ledger module: {error}"))?;
+        #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
         let status = Command::new(clang_executable())
             .arg("-x")
             .arg("ir")
@@ -991,6 +992,7 @@ fn compile_executable(
                 if full_lto {
                     child.arg("-flto=full");
                 }
+                #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
                 let compiled = child
                     .arg("-c")
                     .arg(directory.join(relative_path))
@@ -1182,6 +1184,7 @@ fn link_cached_objects(
             .arg("-flto=thin")
             .arg(cache_argument);
     }
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let status = command
         .arg("-o")
         .arg(&partial)
@@ -1270,6 +1273,7 @@ fn cached_object<'text>(
         } else {
             Stdio::null()
         });
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let mut child = command
         .spawn()
         .map_err(|error| format!("cannot start {}: {error}", clang_executable()))?;
@@ -1296,6 +1300,7 @@ fn cached_object<'text>(
 
 /// The host compiler's identity: its path and its own version report.
 fn host_compiler_identity() -> Result<[u8; 32], String> {
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let version = Command::new(clang_executable())
         .arg("--version")
         .output()
@@ -1307,6 +1312,7 @@ fn host_compiler_identity() -> Result<[u8; 32], String> {
 }
 
 fn link(command: &mut Command, llvm: &str, output: &Path) -> Result<(), String> {
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let mut child = command
         .arg("-x")
         .arg("ir")

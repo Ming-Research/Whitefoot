@@ -112,6 +112,7 @@ fn coro_end_result(directory: &Path) -> &'static str {
     {
         return OLD;
     }
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let accepted = Command::new(clang_executable())
         .args([
             "-x",
@@ -136,6 +137,7 @@ fn coro_end_result(directory: &Path) -> &'static str {
 /// a two-function module with the convention and a `musttail` call between
 /// them is handed to the assembler `whitefootc` runs. Where it is refused,
 /// or no assembler can be run, the lowering uses the C convention.
+#[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
 fn preserve_none_supported(directory: &Path) -> bool {
     let probe = directory.join("preserve_none_probe.ll");
     if fs::write(
@@ -177,6 +179,7 @@ fn no_capture_attribute(directory: &Path) -> &'static str {
     {
         return OLD;
     }
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let accepted = Command::new(clang_executable())
         .args(["-x", "ir", "-c", "-o"])
         .arg(directory.join("captures_probe.o"))
@@ -203,6 +206,7 @@ mod tests {
         )
     }
 
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     fn verify(directory: &Path, name: &str, module: &str) -> io::Result<Output> {
         let input = directory.join(format!("{name}.ll"));
         fs::write(&input, module).expect("write verification module");
@@ -268,6 +272,7 @@ mod tests {
              ret i64 %result\n}\n",
         )
         .expect("write tail-call verification module");
+        #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
         let tail = Command::new(clang_executable())
             .args(["-x", "ir", "-c", "-o"])
             .arg(directory.0.join("tail.o"))

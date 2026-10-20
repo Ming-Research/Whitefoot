@@ -279,6 +279,7 @@ fn link(module: &str, directory: &Path) -> PathBuf {
     let needs_heap = whitefoot::module_requires_heap_runtime(module);
     let (_sources, objects) =
         append_runtime_objects(&mut command, directory, None, None, needs_heap);
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let linked = command
         .args(HOST_OPTIMIZATION_ARGUMENTS)
         // One link recipe: a case that reaches a libm entry point links here
