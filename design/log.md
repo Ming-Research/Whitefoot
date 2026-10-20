@@ -5,6 +5,13 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-13 Field- and dereference-subscript terms carry captured place and formal offset identities
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision added for how subscripts with a field or a dereference record their identity? (#454, head commit ef598ae35)" (translated).
+
+Summary: A subscript such as `table^[s^.k]`, `nodes^[n^.parent_slot]` or `nodes^[r^]` is identified by a captured place id (its root and field or dereference steps) or, in a contract, a formal offset id (a parameter-relative suffix), both interned in one compilation-owned table shared by the checker's parts. While its support is unchanged the id stands for the current value with its complete support; a write or rebinding of any support place degrades it to an immutable capture with no support. At a call the actual's path is joined to the formal's remaining suffix and interned again. Small copyable ids let parallel checking and contract substitution share one identity and support without conflating sibling fields, captured and later values, or formal and body names; refused were root-only identity (which cannot separate `n.a` from `n.b`), embedding the recursive path in every capture, and per-part identity and support tables.
 ## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
 
 Nodes: compiler/verification
@@ -13,13 +20,6 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
 
-## 2026-10-13 Field- and dereference-subscript terms carry captured place and formal offset identities
-
-Nodes: compiler/checker-facts
-
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision added for how subscripts with a field or a dereference record their identity? (#454, head commit ef598ae35)" (translated).
-
-Summary: A subscript such as `table^[s^.k]`, `nodes^[n^.parent_slot]` or `nodes^[r^]` is identified by a captured place id (its root and field or dereference steps) or, in a contract, a formal offset id (a parameter-relative suffix), both interned in one compilation-owned table shared by the checker's parts. While its support is unchanged the id stands for the current value with its complete support; a write or rebinding of any support place degrades it to an immutable capture with no support. At a call the actual's path is joined to the formal's remaining suffix and interned again. Small copyable ids let parallel checking and contract substitution share one identity and support without conflating sibling fields, captured and later values, or formal and body names; refused were root-only identity (which cannot separate `n.a` from `n.b`), embedding the recursive path in every capture, and per-part identity and support tables.
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
