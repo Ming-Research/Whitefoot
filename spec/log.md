@@ -1,15 +1,30 @@
 # Specification change log
 
-Newest first. One entry per owner-approved change of the active
-specification, `kernel-spec.md`: a `## <date> <title>` heading, `Rules:`
-naming every rule added, changed or retired, `Owner-approved:` identifying the
-owner's approval in the owner's words, and a concise `Summary:` of the change
-and its selection ground. The form is the design tree log's, with `Rules:` in
-place of `Nodes:`. The entry is written only after the owner approves, and
-`make design-ready` requires a new approved entry whenever the active
-specification changes; it cannot tell whether `Rules:` names every changed
-rule. Earlier versions are the released archives beside this
-file; git holds the rest of the history.
+Newest first. One entry per change of the active specification,
+`kernel-spec.md`: a `## <date> <title>` heading, `Rules:` naming every rule
+added, changed or retired, and a concise `Summary:` of the change and its
+selection ground. The form is the design tree log's, with `Rules:` in place of
+`Nodes:`. The entry is committed with the change, and `make design-ready`
+requires a new entry whenever the active specification changes; it cannot tell
+whether `Rules:` names every changed rule. Older entries also carry an
+`Owner-approved:` line, a field since retired. Earlier versions are the
+released archives beside this file; git holds the rest of the history.
+
+## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
+
+Rules: changed PROV-6, STOR-3, SHARE-1
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item. This amendment was written as v0.149 and renumbered to v0.151 because main reached v0.150 first.
+
+Summary: PROV-6 adds ConcurrentHashMap and KeySet to the types whose release performs an action, separates the type ownership closure (read by linearity, which keeps a constant-zero Array's element type) from the executable release graph (read by release and guaranteed tail calls, in which a constant-zero Array or window contributes no element edge), and judges a type parameter by its capability bounds. STOR-3 states that a KeySet returns its runtime-held storage on release and that a ConcurrentHashMap releases each held value before returning its storage, and routes every opaque type to these per-type actions; SHARE-1 points to STOR-3 instead of stating the map's value release itself. The rules that read these definitions, such as FN-10 and DIAG-2, keep their text and now resolve to the executable release graph. Selection ground: a guaranteed tail call holding a KeySet with a live reference to it was accepted on main although the backend returns the set's storage before the jump, leaving the reference dangling; the checker followed a release list that omitted the type.
+
+## 2026-10-13 v0.150: `match` branches on integer constant values
+
+Rules: added GRAM-12, ENT-3.S17; changed GRAM-4, GRAM-6, TYPE-6, DIAG-1, OWN-13, ERR-2, ENT-1, ENT-2, ENT-3, ENT-4, ENT-5, RANGE-2, RANGE-3
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Whitefoot#424's specification and design-tree change: match can branch on integer constant values, a value arm gives 'equals that value', `else` gives one 'not among these values' fact? (head commit e8393a057)" (translated); the direction was the owner's earlier choice to add integer-value match for the first release. The branch later merged main, which renumbered the amendment from v0.141 to v0.144 and joined two sentences of TYPE-6 and DIAG-1 with the range variant amendment's wording, keeping both. This amendment was renumbered from v0.144 to v0.150 because main reached v0.149 first.
+
+Summary: GRAM-4 lets an `arm` be an integer literal, a const IDENT or `else`, and GRAM-6 lets `match` take an integer scrutinee (Bool still takes `if`). The new GRAM-12 fixes the arm-value classes: each value has the scrutinee's type, values are pairwise distinct by mathematical value, `else` comes last, at least one value arm is present, the scrutinee is evaluated once, and the first equal arm or `else` is selected. TYPE-6 and DIAG-1 resolve value labels as consts and variant labels only after the scrutinee's class is known; OWN-13 copies an integer scrutinee and binds no payload; ERR-2 requires `else` for a partial integer match and refuses it when the values cover the type. ENT-1 through ENT-5 and the new ENT-3.S17 give a value arm `scrutinee == value` and `else` one exclusion-set fact with ordinary support, kills and joins, and RANGE-2 and RANGE-3 carry integer selections and exclusion sets into range path conditions, splitting an active exclusion into its complement intervals. Selection ground: Firn's command dispatch and interpreter decoders branch on integer codes, and the `if` chain they must write today grows the checker's work quadratically with the number of arms.
 
 ## 2026-10-13 v0.149: a postcondition's subscripts are judged at each selected return, and a formal offset is substituted on both sides of a call
 

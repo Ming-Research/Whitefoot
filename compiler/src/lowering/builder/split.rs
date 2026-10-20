@@ -294,6 +294,28 @@ impl<'program> IrBuilder<'program> {
         let Some(actualization) = permission.actualization else {
             return Ok(false);
         };
+        // IrIndexedRoot retains only struct-field projections. A payload
+        // root uses the complete ordinary CFG until indexed blocks carry
+        // enum projections as well; no source acceptance depends on a split.
+        if permission
+            .indexed
+            .iter()
+            .chain(self.indexed_roots.iter().map(|(family, _, _)| family))
+            .chain(&self.indexed_block_families)
+            .any(|family| {
+                family
+                    .root
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, crate::semantic::CheckedPlaceStep::Payload { .. }))
+            })
+        {
+            self.note(
+                node_path,
+                "declined: indexed private blocks require a struct-field root path",
+            );
+            return Ok(false);
+        }
         let accumulator = match actualization {
             LoopActualization::IndependentMap => None,
             LoopActualization::Reduction { accumulator, .. } => Some(accumulator),
@@ -1156,6 +1178,20 @@ impl<'program> IrBuilder<'program> {
                         targets,
                     }
                 }
+                IrTerminator::IntegerMatch {
+                    scrutinee,
+                    mut targets,
+                    default,
+                } => {
+                    for target in &mut targets {
+                        target.block = block(target.block);
+                    }
+                    IrTerminator::IntegerMatch {
+                        scrutinee,
+                        targets,
+                        default: default.map(block),
+                    }
+                }
                 IrTerminator::Return { value, drops } => IrTerminator::Jump {
                     target: continuation,
                     arguments: vec![value],
@@ -1794,6 +1830,13 @@ fn reachable_without(blocks: &[IrBlock], removed: usize, goal: usize) -> bool {
             IrTerminator::Match { targets, .. } => targets
                 .iter()
                 .map(|target| target.block().index())
+                .collect(),
+            IrTerminator::IntegerMatch {
+                targets, default, ..
+            } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .chain(default.iter().map(|target| target.index()))
                 .collect(),
             IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
         };

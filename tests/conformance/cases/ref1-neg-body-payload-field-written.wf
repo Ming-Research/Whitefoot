@@ -1,0 +1,17 @@
+fn overwrite_payload(cell: &Option<u64>) -> result: u64 writes(cell) {
+  doc "The primitive payload write leaves the runtime tag unchanged, but its overlapping support kills the current variant fact; selecting again requires a fresh match.";
+  match &cell^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: inner) => {
+      set inner^ = 41_u64;
+      let direct = cell^.Some.value;
+      return direct;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

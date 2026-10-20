@@ -15,9 +15,9 @@ use crate::semantic::goal::{
     CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalProjection, GoalTemplate,
 };
 use crate::semantic::postcondition::{
-    CheckedPostcondition, CheckedPostconditionSelector, CheckedRoutedRequirement,
-    NormalizedRelation, ParameterDenotation, PayloadRoute, PostconditionPlace,
-    PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
+    CheckedPostconditionSelector, CheckedRoutedRequirement, NormalizedRelation, ParameterDenotation,
+    PayloadRoute, PostconditionPlace, PostconditionPlaceRoot, RelationDatum, RelationTemplate,
+    RelationTerm,
 };
 use crate::FixedTerminal;
 
@@ -494,33 +494,6 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
         Ok(requirements)
-    }
-
-    /// [TYPE-11] each type invariant over the exit state of a reference
-    /// parameter whose row writes it, and over each result ordinal whose
-    /// declared type is the struct, as that callable's postcondition after
-    /// its written ones [FN-9], selecting every explicit return; then each
-    /// over a variant field of an own result ordinal of enum type, routed by
-    /// that variant field.
-    pub(super) fn type_invariant_postconditions(
-        &self,
-        context: FunctionContext<'_, '_>,
-        parameters: &[CheckedParameter],
-        body: &[CheckedStatement],
-    ) -> Result<Vec<CheckedPostcondition>, CheckStop> {
-        let mut postconditions = Vec::new();
-        for (invariant, subject, selector) in
-            self.type_invariant_postcondition_selectors(context.function)?
-        {
-            postconditions.push(self.types.build_checked_postcondition(
-                context,
-                parameters,
-                selector,
-                substitute_relation(&invariant.relation, subject),
-                body,
-            )?);
-        }
-        Ok(postconditions)
     }
 
     /// [TYPE-11] each type invariant a callable's boundary promises after its
