@@ -3188,6 +3188,52 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 .map_err(|_| BackendFailure::TextEmission)
             }
+            IrTerminator::IntegerMatch {
+                scrutinee,
+                targets,
+                default,
+            } => {
+                self.materialize_operands([*scrutinee])?;
+                let Some(IrType::Integer { width, signed }) = self.value_type(*scrutinee) else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                if !matches!(width, 8 | 16 | 32 | 64) {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                let default_label = default.map_or_else(|| invalid_tag_label(block), block_label);
+                writeln!(
+                    self.output,
+                    "  switch i{width} {}, label %{default_label} [",
+                    self.value_name(*scrutinee)
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                let mut seen = BTreeSet::new();
+                let (min, max) = if signed {
+                    (-(1_i128 << (width - 1)), (1_i128 << (width - 1)) - 1)
+                } else {
+                    (0, (1_i128 << width) - 1)
+                };
+                for target in targets {
+                    if target.value() < min || target.value() > max || !seen.insert(target.value())
+                    {
+                        return Err(BackendFailure::InvalidIr);
+                    }
+                    writeln!(
+                        self.output,
+                        "    i{width} {}, label %{}",
+                        target.value(),
+                        block_label(target.block())
+                    )
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                }
+                writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
+                if default.is_none() {
+                    // ERR-2 establishes complete type-domain coverage.
+                    self.output.open_block(default_label);
+                    writeln!(self.output, "  unreachable")?;
+                }
+                Ok(())
+            }
             IrTerminator::Match {
                 scrutinee,
                 enum_type,
@@ -3338,23 +3384,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if actual != Some(drop.ty()) {
             return Err(BackendFailure::InvalidIr);
         }
+        if !type_requires_cleanup(self.program, drop.ty())? {
+            return Ok(None);
+        }
         let reads_content = match drop.ty() {
-            IrType::Range { .. } | IrType::Run { .. } => false,
-            IrType::Array { .. } | IrType::Window { .. } => {
-                type_requires_cleanup(self.program, drop.ty())?
-            }
-            // [SHARE-1] a key set's release reads its store's pointer.
-            IrType::Buffer { .. } | IrType::KeySet => true,
+            // The shared classification above already established release
+            // work; the remaining distinction is how checked drops are split.
+            IrType::Array { .. }
+            | IrType::Window { .. }
+            | IrType::Buffer { .. }
+            | IrType::KeySet => true,
             IrType::Nominal(nominal) if !self.nominal(nominal)?.is_tag_only_enum() => {
                 match self.nominal(nominal)?.kind() {
                     // The checker supplied separate component records. The
                     // struct node must not recursively release them again.
                     IrNominalKind::Struct { .. } => false,
-                    IrNominalKind::Opaque => false,
-                    IrNominalKind::Shared { .. } => true,
-                    IrNominalKind::Enum { .. } | IrNominalKind::Box { .. } => {
-                        type_requires_cleanup(self.program, drop.ty())?
-                    }
+                    IrNominalKind::Enum { .. }
+                    | IrNominalKind::Box { .. }
+                    | IrNominalKind::Shared { .. } => true,
+                    IrNominalKind::Opaque => return Err(BackendFailure::InvalidIr),
                 }
             }
             _ => return Err(BackendFailure::InvalidIr),
