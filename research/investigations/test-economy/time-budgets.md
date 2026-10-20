@@ -905,7 +905,9 @@ s, is above the owner's 145 s.
 `performance-baseline-compiler` over the same runs: 87.2 to 121.4 s, the 8573C
 run 119.05 s. The cache in `compute-regression.yml` removes this build from a
 pull request run whose merge base was built on main with the same toolchain;
-a run that finds no cache still builds it under this budget.
+a run that finds no cache still builds it, and that cold build is report-only
+(`WHITEFOOT_BUDGET_REPORT_ONLY`), since the 115 s row is exceeded by a cold build
+(126.8 s and 127.0 s on the cache-miss runs of 10-20).
 
 ## Daily loop
 

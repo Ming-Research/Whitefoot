@@ -216,6 +216,23 @@ for platform in linux windows; do
     test "$status" -eq 1
 done
 
+# WHITEFOOT_BUDGET_REPORT_ONLY reports only the labels it names, on Linux too;
+# an unnamed label stays enforced, and so does a named label with no budget.
+WHITEFOOT_BUDGET_REPORT_ONLY=over WHITEFOOT_TIME_BUDGET_RECORD=$work/named-record \
+    perl "$work/run-host.pl" linux "$runner" over true > "$work/named.log" 2>&1
+grep -q '== OVER BUDGET: report-only: over took' "$work/named.log"
+grep -q '^  REPORT-ONLY: over took' "$work/named-record"
+perl "$runner" --budget-verdict "$work/named-record" > "$work/named-verdict.log" 2>&1
+status=0
+WHITEFOOT_BUDGET_REPORT_ONLY=other WHITEFOOT_TIME_BUDGET_RECORD=$work/unnamed-record \
+    perl "$work/run-host.pl" linux "$runner" over true > "$work/unnamed.log" 2>&1
+grep -q '^  ENFORCED: over took' "$work/unnamed-record"
+perl "$runner" --budget-verdict "$work/unnamed-record" > "$work/unnamed-verdict.log" 2>&1 || status=$?
+test "$status" -eq 1
+WHITEFOOT_BUDGET_REPORT_ONLY=nowhere WHITEFOOT_TIME_BUDGET_RECORD=$work/nowhere-record \
+    perl "$work/run-host.pl" linux "$runner" unlisted true > "$work/nowhere.log" 2>&1
+grep -q '^  ENFORCED: unlisted has no linux budget' "$work/nowhere-record"
+
 # Both Linux columns oppose the host's value, so selecting either Linux
 # column fails even when the macOS final verdict would still report success.
 for budget_host in macos windows; do

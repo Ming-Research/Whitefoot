@@ -237,6 +237,7 @@ sub budget_verdict {
     print "== TIME BUDGETS EXCEEDED ==\n$over",
         "Find what grew (the gate lists each job's ten largest gaps between cases)\n",
         "and make it cheaper, or revise the measured CPU budgets in .github/time-budgets.txt\n",
-        "with the owner's approval. macOS overruns are report-only.\n";
+        "with the owner's approval. macOS overruns and the stages named in\n",
+        "WHITEFOOT_BUDGET_REPORT_ONLY are report-only.\n";
     exit 1;
 }
