@@ -552,6 +552,107 @@ fn a_guard_capturing_an_external_reference_stays_unfiltered() {
     );
 }
 
+/// Helpers whose bodies the callback audit must refuse, each beside the
+/// `reply_ready` control of [`MULTI_STATEMENT_HELPERS`].
+const REFUSED_HELPERS: &str = r#"struct Pair {
+  a: u64;
+  b: u64;
+}
+
+fn repeated_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.written) {
+  let seen = progress^.written;
+  let total = 0_u64;
+  for (step in 0_u64..3_u64) {
+    set total = total +wrap seen;
+  }
+  return total >= sequence;
+}
+
+fn scratch_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.written) {
+  let scratch = box_slots_new::<u8>(capacity: 8_u64);
+  let room = scratch.inner.len;
+  let covered = progress^.written >= sequence;
+  return band(covered, room == 0_u64);
+}
+
+fn within_ready(progress: &Progress, limit: Pair) -> ready: Bool reads(progress.written) {
+  let bound = limit.a;
+  let covered = progress^.written >= bound;
+  return covered;
+}
+
+"#;
+
+/// Two guarded statements over one state: the first waits on `reply_ready`,
+/// which the audit admits, the second on `refused`, with `locals` in scope.
+/// Each statement registers one watch, so the pair shows that the refusal
+/// comes from the second guard's own helper and not from the surrounding
+/// program.
+fn control_and_refused_guard(refused: &str, locals: &str) -> String {
+    format!(
+        r#"{MULTI_STATEMENT_HELPERS}{REFUSED_HELPERS}fn main() -> status: std::process::ExitStatus pure waits {{
+  let clear = None<u64>();
+  let no = False();
+  let initial = Progress(written: 0_u64, unrelated: 0_u64, failure: clear, stopping: no);
+  let state = shared_new::<Progress>(value: initial);
+  let sequence = 19_u64;
+  {locals}
+  atomic p = &state when reply_ready(progress: p, sequence: sequence) {{
+    set p^.unrelated = 1_u64;
+  }}
+  atomic q = &state when {refused} {{
+    set q^.unrelated = 2_u64;
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+fn assert_refused_beside_control(refused: &str, locals: &str, why: &str) {
+    with_ir(
+        control_and_refused_guard(refused, locals).as_bytes(),
+        |program| {
+            let tests = watch_tests(program);
+            assert_eq!(tests.len(), 2, "{tests:?}");
+            assert!(
+                tests[0]
+                    .as_ref()
+                    .is_some_and(|test| test.callback.is_some()),
+                "the control guard registers a callback: {tests:?}"
+            );
+            assert!(tests[1].is_none(), "{why}: {tests:?}");
+        },
+    );
+}
+
+#[test]
+fn a_helper_with_a_loop_registers_no_filter() {
+    assert_refused_beside_control(
+        "repeated_ready(progress: q, sequence: sequence)",
+        "",
+        "a loop has no bounded cost under the writer's hold",
+    );
+}
+
+#[test]
+fn a_helper_that_allocates_registers_no_filter() {
+    assert_refused_beside_control(
+        "scratch_ready(progress: q, sequence: sequence)",
+        "",
+        "a callback allocates nothing under the writer's hold",
+    );
+}
+
+#[test]
+fn a_guard_capturing_a_struct_local_registers_no_filter() {
+    assert_refused_beside_control(
+        "within_ready(progress: q, limit: pair)",
+        "let pair = Pair(a: 19_u64, b: 4_u64);",
+        "only scalar locals are captured at registration",
+    );
+}
+
 #[test]
 fn a_multi_statement_guard_reads_boxed_storage_length_from_the_written_state() {
     let source = br#"struct Logged {

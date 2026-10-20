@@ -4,7 +4,7 @@
 //! which a guard's reservation can refuse
 //! (compiler/waiting-contexts/state-locks).
 
-use super::{compile, emitted_function};
+use super::{compile, emit_lowered, emitted_function};
 
 fn guarded(guard: &str, block: &str) -> String {
     format!(
@@ -262,6 +262,76 @@ fn main() -> status: std::process::ExitStatus pure waits {
         main.matches("store [8 x i8]").count(),
         1,
         "the callback has only its header, no comparison atoms: {main}"
+    );
+}
+
+#[test]
+fn a_callback_over_an_overlapping_helper_calls_the_sequential_clone() {
+    // `overlapped_ready` has two pure sibling calls, which an overlap build
+    // offers to the scheduler. A writer running the guard under its hold must
+    // not enter the scheduler, so the adapter calls the guard thunk's
+    // sequential clone, which reaches the helper's sequential clone.
+    let source = br#"struct Progress {
+  written: u64;
+  unrelated: u64;
+}
+
+fn weight(value: u64) -> result: u64 pure {
+  return value +wrap 1_u64;
+}
+
+fn overlapped_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.written) {
+  let current = progress^.written;
+  let left = weight(value: current);
+  let right = weight(value: sequence);
+  return left >= right;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = Progress(written: 0_u64, unrelated: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  let sequence = 19_u64;
+  atomic progress = &state when overlapped_ready(progress: progress, sequence: sequence) {
+    set progress^.unrelated = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = emit_lowered(source, crate::OverlapLowering::On);
+    assert!(
+        emitted_function(&llvm, "overlapped_ready").contains("@wf__par_"),
+        "the helper offers its first call to the scheduler: {llvm}"
+    );
+    let main = emitted_function(&llvm, "main");
+    let adapter_symbol = main
+        .lines()
+        .find_map(|line| {
+            let (_, rest) = line.split_once("store ptr @")?;
+            let (symbol, _) = rest.split_once(", ptr ")?;
+            symbol.ends_with(".wake_filter").then_some(symbol)
+        })
+        .expect("registration stores a pointer to the generated C ABI adapter");
+    let thunk_symbol = adapter_symbol
+        .strip_suffix(".wake_filter")
+        .expect("adapter suffix");
+    let thunk = thunk_symbol.strip_prefix("wf_").expect("source symbol");
+    let adapter = emitted_function(
+        &llvm,
+        adapter_symbol.strip_prefix("wf_").expect("source symbol"),
+    );
+    let clone = format!("@wf__par_seq_{thunk}(");
+    assert!(
+        adapter.contains(&clone),
+        "the adapter calls the clone: {adapter}"
+    );
+    assert!(
+        !adapter.contains(&format!("@{thunk_symbol}(")),
+        "the adapter never calls the overlapping original: {adapter}"
+    );
+    assert!(
+        llvm.lines()
+            .any(|line| line.starts_with("define") && line.contains(&clone)),
+        "the clone is defined: {llvm}"
     );
 }
 
