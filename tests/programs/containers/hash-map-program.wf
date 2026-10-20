@@ -417,7 +417,9 @@ fn hash_map_test_scan_reset(seen: &HashMapScanSeen) -> result: unit writes(seen)
   return unit;
 }
 
-fn hash_map_test_scan_finish(map: &HashMap<u64, u64, 1024>, cursor: u64, limit: u64, seen: &HashMapScanSeen) -> result: unit reads(map), writes(seen) {
+fn hash_map_test_scan_finish(map: &HashMap<u64, u64, 1024>, cursor: u64, limit: u64, seen: &HashMapScanSeen) -> result: unit reads(map), writes(seen) contract {
+  requires limit > 0_u64;
+} {
   doc "Continues a pass from the given cursor until it reports completion, and records a failure if it does not complete within 4096 calls.";
   let current = cursor;
   for @steps (step in 0_u64..4096_u64) {
@@ -455,7 +457,7 @@ fn hash_map_test_scan_remove(map: &HashMap<u64, u64, 1024>, key: u64, env: &Hash
 }
 
 fn hash_map_test_scan() -> result: u64 pure {
-  doc "Resumable scan: a pass over an unchanged map reports every pair exactly once; a pass with removals, insertions, a rehash and growth between calls reports every pair that stays; a map emptied between calls still finishes; any cursor value, including one beyond the bucket count, is accepted and finishes; insertions into buckets already passed, which grow the map, lose no pair that stays; and a limit of one bucket still reports a whole chain of colliding keys.";
+  doc "Resumable scan: a pass over an unchanged map reports every pair exactly once; a pass with removals, insertions and a rehash between calls reports every pair that stays; a map emptied between calls still finishes; any cursor value, including one beyond the bucket count, is accepted and finishes; insertions into buckets already passed, which grow the map, lose no pair that stays; and a limit of one bucket still reports a whole chain of colliding keys.";
   let hits = array_filled::<u64, 512>(value: 0_u64);
   let seen = HashMapScanSeen(hits: hits, total: 0_u64, failures: 0_u64);
   let false_value = False();

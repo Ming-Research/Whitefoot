@@ -51,10 +51,10 @@ removes as often as it inserts does not grow. `hash_map_reserve` raises
 capacity in place, is a no-op at or below current capacity and refuses requests
 above the ceiling; `hash_map_rehash` rebuilds the chain heads. `hash_map_scan`
 resumes from a cursor and visits the chains of at most `limit` home buckets per
-call: zero starts a pass and ends it, a pair present throughout a pass is lent
-at least once whatever happens between calls, and a pair may be lent again. The
-last chain is never cut, so a call can lend more than `limit` pairs. Capacity
-refusal is not an allocation-failure outcome.
+call, `limit` at least one: zero starts a pass and ends it, a pair present
+throughout a pass is lent at least once whatever happens between calls, and a
+pair may be lent again. The last chain is never cut, so a call can lend more
+than `limit` pairs. Capacity refusal is not an allocation-failure outcome.
 
 `hash_map_lookup` and `hash_map_each` borrow stored pairs for callbacks.
 `hash_map_edit` permits its callback to change the value while reading the key,

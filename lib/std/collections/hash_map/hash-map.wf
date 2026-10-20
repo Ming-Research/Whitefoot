@@ -134,7 +134,7 @@ fn hash_map_thread(links: &Box<Slots<u64>>, start: u64, end: u64, spare: u64) ->
 fn hash_map_new<K, V, const ceiling: u64>(capacity: u64) -> result: HashMap<K, V, ceiling> pure contract {
   requires capacity <= ceiling;
 } {
-  doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Capacity counts the slots that can hold pairs; a separate power-of-two array of chain heads, rebuilt whenever capacity grows, puts each key in the chain of its home bucket. A stored pair stays in its slot while it stays in the map, but no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite chain bounds hold even when they are inconsistent, provided callbacks return.";
+  doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Capacity counts the slots that can hold pairs; a separate power-of-two array of chain heads, rebuilt when growth changes the bucket count or on rehash, puts each key in the chain of its home bucket. A stored pair stays in its slot while it stays in the map, but no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite chain bounds hold even when they are inconsistent, provided callbacks return.";
   let cells = box_slots_new::<HashMapSlot<K, V>>(capacity: capacity);
   hash_map_extend::<K, V, ceiling>(cells: &cells, target: capacity);
   let links = box_slots_new::<u64>(capacity: capacity);
@@ -500,14 +500,13 @@ fn hash_map_pair_consume<interface HashMapConsume<K, V, E>>(pair: HashMapPair<K,
   return unit;
 }
 
-fn hash_map_scan<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, cursor: u64, limit: u64, env: &E) -> result: u64 reads(map), writes(env) {
-  doc "Resumable scan. The cursor is a position in the mixed hash space: zero starts a pass, any value is accepted, and the returned cursor continues it, with zero meaning the pass is complete. The call lends to visit every pair of up to limit consecutive home buckets, each bucket's whole chain, in hash-position order, then returns the position after the last bucket. Empty buckets count toward the limit, so a call can report no pair and still advance. The last chain is never cut, so one call can exceed limit pairs when many keys share a home bucket; the limit is a hint for work, not a cap on pairs. Between calls the map may change in any way: every pair present from the start of a pass to its completion is lent at least once, a pair can be lent again after the bucket count changes, and a pair inserted or removed during the pass may or may not be lent. A limit of zero returns the cursor unchanged.";
+fn hash_map_scan<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, cursor: u64, limit: u64, env: &E) -> result: u64 reads(map), writes(env) contract {
+  requires limit > 0_u64;
+} {
+  doc "Resumable scan. The cursor is a position in the mixed hash space: zero starts a pass, any value is accepted, and the returned cursor continues it, with zero meaning the pass is complete. The call lends to visit every pair of up to limit consecutive home buckets, each bucket's whole chain, in hash-position order, then returns the position after the last bucket. Empty buckets count toward the limit, so a call can report no pair and still advance. The last chain is never cut, so one call can exceed limit pairs when many keys share a home bucket; the limit is a hint for work, not a cap on pairs. Between calls the map may change in any way: every pair present from the start of a pass to its completion is lent at least once, a pair can be lent again after the bucket count changes, and a pair inserted or removed during the pass may or may not be lent. The limit is at least one, so every call that does not finish the pass advances it.";
   let buckets = map^.heads.inner.len;
   if buckets == 0_u64 {
     return 0_u64;
-  }
-  if limit == 0_u64 {
-    return cursor;
   }
   let shift = map^.shift;
   let current = ishr.wrap(cursor, shift);
