@@ -65,6 +65,7 @@ if ($budget_record ne '') {
 my $budget_file = $ENV{WHITEFOOT_TIME_BUDGET_FILE} // dirname(__FILE__) . '/time-budgets.txt';
 my %hosts = (linux => 'linux', darwin => 'macos', MSWin32 => 'windows', msys => 'windows', cygwin => 'windows');
 my $host = $hosts{$^O} // $^O;
+my %report_only = map { $_ => 1 } grep { length } split /,/, $ENV{WHITEFOOT_BUDGET_REPORT_ONLY} // '';
 my $limit = $ENV{WHITEFOOT_CHECK_TIMEOUT} // 1800;
 $limit =~ /^\d+$/ && $limit > 0 or die "WHITEFOOT_CHECK_TIMEOUT must be positive seconds\n";
 my $started = clock_gettime(CLOCK_MONOTONIC);
@@ -135,7 +136,8 @@ check_budget($label, $elapsed) if !defined $cancelled;
 exit $code;
 
 # Linux budgets select an exact CPU model's class; unknown models use the
-# slowest class. macOS overruns are report-only, while missing budgets and
+# slowest class. macOS overruns are report-only, and so are the labels named in
+# WHITEFOOT_BUDGET_REPORT_ONLY (comma-separated); missing budgets and other
 # Linux/Windows overruns are enforced. The command's own exit status never
 # changes: CI appends typed entries to WHITEFOOT_TIME_BUDGET_RECORD and checks
 # enforcing entries after every stage has run. Without a record, print only.
@@ -154,7 +156,7 @@ sub check_budget {
         $verdict = sprintf "%s has no %s budget in %s", $label, $host, $budget_file;
     } elsif ($elapsed > $budget) {
         $verdict = sprintf "%s took %.1f s, over its %d s %s budget", $label, $elapsed, $budget, $host;
-        $kind = 'REPORT-ONLY' if $host eq 'macos';
+        $kind = 'REPORT-ONLY' if $host eq 'macos' || $report_only{$label};
     } else {
         printf "== BUDGET %s: %.1f s of %d s (%s) ==\n", $label, $elapsed, $budget, $host;
         return;
