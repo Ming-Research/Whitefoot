@@ -112,18 +112,7 @@ neither applies, the source is rejected—never repaired with an executable proo
 fallback.
 
 The proof cost is source explicitness. Consider the relation that bounds a
-running byte sum (a loop fragment, not a complete program; `weights` is a `&[u8]` parameter):
-
-```
-for (
-  i in 0_u64..count,
-  invariant per_byte: sum <= 255_u32 * i
-) {
-  let w = weights^[i];
-  let wide = cvt::<u8, u32>(w);
-  set sum = sum + wide;
-}
-```
+running byte sum: a counted loop whose header carries `invariant per_byte: sum <= 255_u32 * i`. This example is written for this essay and has no committed source file, so its loop body is described rather than listed.
 
 The header states what must hold at every reachable iteration. AUTO subtracts
 the one published affine premise `per_byte`; DIRECT then proves the residual
@@ -250,15 +239,17 @@ Rust has no channel for this. An optimizer facing a Rust call inlines it or prov
 
 The committed experiment isolates that boundary. A pure mixing function compiles into its own object file, so the caller's compiler never sees the body:
 
+Historical listing, abridged from `research/experiments/effect-attrs-channel/kernel.wf`. It uses the retired `imul.wrap<i64>` and `iadd.wrap<i64>` spellings, which the current compiler does not accept; the current spec writes `*wrap` and `+wrap`:
+
 ```
-fn mix(x: own i64) -> mixed: own i64 pure {
-  let a: own i64 = x *wrap 2862933555777941757_i64;
-  let b: own i64 = a +wrap 3037000493_i64;
+fn mix (x: own i64) -> own i64 pure {
+  let a: own i64 = imul.wrap<i64>(x, 2862933555777941757_i64);
+  let b: own i64 = iadd.wrap<i64>(a, 3037000493_i64);
   ...
 }
-
-// caller: loop accumulating mix(k) with a loop-invariant argument
 ```
+
+The caller loops, accumulating `mix(k)` with a loop-invariant argument.
 
 Without the declared effects (control build), the caller does what every C and Rust compiler must do, two billion real calls:
 
@@ -441,24 +432,9 @@ unreachable; the current seeded catalog has not yet established that claim.
 
 There is one legal spelling per construct and one legal byte-level formatting, covering indentation, spacing, and blank lines. The toolchain rejects non-canonical input; it never reformats. Flat integer infix has no precedence or nesting; composition uses `let`. There are no comments; documentation lives in a structured `doc` field. `if` handles `Bool`, `match` handles enums, and the iteration forms are `loop` and one ascending half-open `for`. Arithmetic semantics are explicit at each site:
 
-```
-fn clamp_hundred(value: own u64) -> result: own u64 pure contract {
-  ensures result <= 100_u64;
-} {
-  return imin(value, 100_u64);
-}
-```
+The example is a helper, `clamp_hundred`, whose contract promises `result <= 100_u64` at each normal return; its body returns the smaller of its argument and 100. This example is written for this essay and has no committed source file, so it is described rather than listed.
 
-The helper owns and proves that normal-result promise. Its caller consumes the
-verified relation directly:
-
-```
-let wrapped = a +wrap b;
-let bounded = clamp_hundred(value: a);
-let exact = bounded + 1_u64;
-let checked = a +checked b;
-let saturated = a +sat b;
-```
+The helper owns and proves that normal-result promise. Its caller consumes the verified relation directly: a bare `+` on the clamped result and on another `u64` is accepted without a restated bound, while `+wrap`, `+checked` and `+sat` need no proof at all.
 
 The wrapping, checked, and saturating forms are total value operations. The
 bare exact addition has one matching static domain obligation. FN-9 proves
