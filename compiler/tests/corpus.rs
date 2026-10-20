@@ -56,8 +56,6 @@ mod programs {
     pub(crate) mod support;
     #[cfg(unix)]
     mod text;
-    #[cfg(unix)]
-    mod tmp_fixture_variants;
     #[cfg(windows)]
     mod windows;
     // These traversal fixtures require POSIX byte names and mode-bit denial.

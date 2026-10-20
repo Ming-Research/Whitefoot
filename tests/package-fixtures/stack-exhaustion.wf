@@ -1,7 +1,10 @@
-fn read_pad(values: &Array<u64, 7168>, index: u64) -> result: u64 reads(values) contract {
-  requires index < 7168_u64;
-} {
-  return values^[index];
+fn pad_sum(values: &Array<u64, 7168>) -> result: u64 reads(values) {
+  let total = 0_u64;
+  for (index in 0_u64..7168_u64) {
+    let item = values^[index];
+    set total = total +wrap item;
+  }
+  return total;
 }
 
 fn spine(depth: u64, v: u64, i: u8) -> result: u64 pure {
@@ -10,11 +13,11 @@ fn spine(depth: u64, v: u64, i: u8) -> result: u64 pure {
   set pad[wide] = depth;
   let done = depth == 0_u64;
   if done {
-    return read_pad(values: &pad, index: wide);
+    return pad_sum(values: &pad);
   }
   let below = depth -wrap 1_u64;
   let a = spine(depth: below, v: v, i: i);
-  let b = read_pad(values: &pad, index: wide);
+  let b = pad_sum(values: &pad);
   return a +wrap b;
 }
 
