@@ -1,0 +1,10 @@
+fn bounded(base: u64, limit: u64) -> after: u64 pure contract {
+  ensures after <= base + 2_u64 * limit;
+} {
+  doc "The new extra parameter has coefficient one; multiplying it by two remains outside FN-9 even though this body's returned base would satisfy the inequality.";
+  return base;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

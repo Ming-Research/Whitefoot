@@ -175,7 +175,7 @@ impl FunctionAbi {
 /// floating leaf on x86-64 goes through the x87 stack instead (see
 /// `RETURN_FLOATING_LEAVES` in target layout). The count
 /// therefore follows the leaves of [`super::emitter::llvm_type`], not bytes:
-/// `Result<u32, Overflow>`, `{ i32, i32, i1 }`, uses three registers, and
+/// `Result<u32, Overflow>`, `{ i8, i32, i1 }`, uses three registers, and
 /// the 32-byte opaque representation `{ i128, i128 }` needs four words and
 /// keeps its destination. The admitted targets share the smaller x86-64
 /// budget, so the ABI and the linked definitions are the same on every

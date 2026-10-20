@@ -24,7 +24,7 @@ impl Reasoning<'_, '_, '_> {
             return;
         };
         for available in prepared.postconditions.iter().cloned() {
-            if available.variant.is_some()
+            if available.routed()
                 || available
                     .relation
                     .operands
@@ -71,6 +71,11 @@ impl Reasoning<'_, '_, '_> {
                 proof,
                 &self.vocabulary.derivations,
             );
+            self.vocabulary.establish_postcondition_affine(
+                &instantiated.relation,
+                proof,
+                &mut state.affine,
+            );
         }
     }
 }
@@ -83,16 +88,81 @@ impl Judging<'_, '_, '_> {
         state: &mut FactState,
         event: Option<FlowEventId>,
     ) {
+        if let Some((expression, values)) = &facts.integer {
+            let event = event.expect("integer selection has an S17 event");
+            match arm.selection {
+                CheckedMatchSelection::Integer(value) => {
+                    let literal = match expression.ty() {
+                        CheckedType::Integer(ty) => CheckedValue::Integer {
+                            ty,
+                            bits: (value as u64) & (u64::MAX >> (64 - ty.width())),
+                        },
+                        ty => CheckedValue::NumericIdentity {
+                            ty,
+                            one: value == 1,
+                        },
+                    };
+                    let equality = GoalExpression::Operation {
+                        row: GoalOperation::Integer {
+                            operation: CheckedIntegerOperation::Equal,
+                            operand_type: expression.ty(),
+                        },
+                        type_arguments: Vec::new(),
+                        const_arguments: Vec::new(),
+                        result: CheckedType::Bool,
+                        arguments: vec![
+                            expression.clone(),
+                            GoalExpression::Datum(GoalDatum::Literal(literal)),
+                        ],
+                    };
+                    let complete = self.reasoning().expand_goal_expression(&equality, state);
+                    for expression in [equality, complete] {
+                        // S17 has the same root comparison projection as S1:
+                        // recording only the opaque sign would leave bounds
+                        // obligations without the selected term's equality.
+                        self.establish_body_goal(expression, state, event);
+                    }
+                }
+                CheckedMatchSelection::Else => {
+                    let projection = self.reasoning().exclusion_projection(expression);
+                    let expression = self.reasoning().intern_goal_expression(expression.clone());
+                    let proof =
+                        self.vocabulary
+                            .derivations
+                            .intern(DerivationNode::IntegerExclusion {
+                                detail: Box::new(ExclusionProof {
+                                    projection,
+                                    expression,
+                                    values: std::sync::Arc::clone(values),
+                                    conclusion: ExclusionConclusion::Set,
+                                    event: Some(event),
+                                    parents: Vec::new(),
+                                }),
+                            });
+                    state.establish_exclusion(Exclusion::from_view(
+                        expression,
+                        std::sync::Arc::clone(values),
+                        projection,
+                        proof,
+                        &self.vocabulary.goals,
+                    ));
+                }
+                CheckedMatchSelection::Variant(_) => {
+                    unreachable!("integer selection checked before flow")
+                }
+            }
+            return;
+        }
         if let Some(relation) = &facts.comparison {
             // Bool arms: tag 1 is `True()`, tag 0 is `False()`; the False
             // arm takes the exact negation [ENT-3].
-            if arm.tag == 1 {
+            if arm.selection == CheckedMatchSelection::Variant(1) {
                 state.establish(
                     relation,
                     &mut self.vocabulary.derivations,
                     event.expect("comparison arm has an S1 proof event"),
                 );
-            } else if arm.tag == 0 {
+            } else if arm.selection == CheckedMatchSelection::Variant(0) {
                 state.establish(
                     &relation.negated(),
                     &mut self.vocabulary.derivations,
@@ -101,10 +171,11 @@ impl Judging<'_, '_, '_> {
             }
         }
         for goal in &facts.goals {
-            if arm.tag == 1 {
+            if arm.selection == CheckedMatchSelection::Variant(1) {
                 state.establish_goal(
                     *goal,
                     GoalSign::Positive,
+                    &self.vocabulary.goals,
                     &mut self.vocabulary.derivations,
                     event.expect("goal arm has an S1 proof event"),
                 );
@@ -116,10 +187,11 @@ impl Judging<'_, '_, '_> {
                     event.expect("goal arm has an S1 proof event"),
                 );
                 self.record_boolean_decomposition(*goal, GoalSign::Positive, state);
-            } else if arm.tag == 0 {
+            } else if arm.selection == CheckedMatchSelection::Variant(0) {
                 state.establish_goal(
                     *goal,
                     GoalSign::Negative,
+                    &self.vocabulary.goals,
                     &mut self.vocabulary.derivations,
                     event.expect("goal arm has an S1 proof event"),
                 );
@@ -250,6 +322,7 @@ impl Analyzer<'_, '_> {
         // right-hand side; both are judged at this point, then the commit
         // kill applies.
         let target_reached = self.judge_set_target(target, state);
+        let destination = set_target_place(target);
         let mut result = self.capture_result(node_path, value, state);
         let affine_value = self
             .reasoning()
@@ -321,14 +394,16 @@ impl Analyzer<'_, '_> {
             self.vocabulary
                 .proof_event(FlowEventKind::PostconditionReceiverWrite, Some(node_path))
         });
-        if let Some(result) = &mut result {
+        if !result.is_empty() {
             let live = self.reasoning().event_live_bounds(state, &target_kills);
             let separations = EventSeparations {
                 ledger: &state.separations,
                 live: &live,
             };
-            self.reasoning()
-                .apply_kills_one(&separations, &mut result.facts, &target_kills);
+            for result in &mut result {
+                self.reasoning()
+                    .apply_kills_one(&separations, &mut result.facts, &target_kills);
+            }
         }
         if let Some(target_event) = target_event {
             self.apply_kills_each(state, &target_kills, |_, _| target_event);
@@ -344,6 +419,7 @@ impl Analyzer<'_, '_> {
             self.reasoning().establish_measure_datums(
                 node_path,
                 destination,
+                Some((target, &[])),
                 carry,
                 &mut state.facts,
             );
@@ -371,6 +447,7 @@ impl Analyzer<'_, '_> {
             self.reasoning().establish_construct_placements(
                 node_path,
                 &base,
+                Some(target),
                 &constructed,
                 &mut state.facts,
             );
@@ -385,17 +462,46 @@ impl Analyzer<'_, '_> {
         // target's own kills the events every substitution must survive.
         if commit_reached
             && let Some(prepared) = prepared.as_ref()
-            && let CheckedSetTarget::Place(place) = target
+            && let Some(mut place) = destination
         {
-            let destinations = vec![Some((
-                place.binding,
-                place
-                    .fields
-                    .iter()
-                    .map(|field| GoalProjection::Field(*field))
-                    .collect::<Vec<_>>(),
-                place.ty,
-            ))];
+            // [SET-1, ENT-2] this place captured its offsets before the RHS.
+            // A write of an offset binding ends that spelling as a name for
+            // the captured value, just as it does for a pre-existing reference.
+            // Keep the evaluation capture so publication cannot reach a later
+            // access through the binding's new value.
+            let bindings = place.spelled_indices().collect::<Vec<_>>();
+            let mut identity_preserved = true;
+            for (capture, binding) in bindings {
+                if prepared.kills.iter().any(|event| {
+                    self.input.affine_event_kills_binding(
+                        &prepared.entry_separations(&state.separations),
+                        binding,
+                        event,
+                    )
+                }) || target_kills.iter().any(|event| {
+                    self.input
+                        .affine_event_kills_binding(&state.separations, binding, event)
+                }) {
+                    // A direct page selection can already have discarded its
+                    // occurrence in favor of current spelling. That spelling
+                    // cannot name the old value after this write, and minting
+                    // a replacement capture would assert an invented identity.
+                    if !matches!(capture, CaptureId::Source(_) | CaptureId::LoopHeader { .. }) {
+                        identity_preserved = false;
+                        break;
+                    }
+                    place.supersede_binding(binding);
+                }
+            }
+            let destinations = vec![identity_preserved.then(|| {
+                (
+                    target.binding(),
+                    ResultDestination::SetTarget {
+                        target: target.clone(),
+                        place,
+                    },
+                )
+            })];
             self.reasoning().establish_result_list_destinations(
                 node_path,
                 &destinations,
@@ -428,6 +534,15 @@ impl Analyzer<'_, '_> {
             {
                 committed_affine = Some(value.clone());
                 state.affine.values.insert(place.binding, value);
+            } else if let Some(term) = self.vocabulary.commit_target_term(target)
+                && self.vocabulary.is_tracked_field_place(term)
+                && let Some(value) = affine_value
+            {
+                // [ENT-6, SET-1] a commit to a tracked field place makes
+                // it denote the committed value's image, after the target
+                // kill above removed its former image.
+                committed_affine = Some(value.clone());
+                state.affine.measure_atoms.get_mut().insert(term, value);
             }
             // The scaled quotient image binds the committed value to the
             // dividend image read before the kill [ENT-3.S7].
@@ -455,7 +570,7 @@ impl Analyzer<'_, '_> {
             }
         }
         if commit_reached
-            && let Some(result) = result
+            && !result.is_empty()
             && let CheckedSetTarget::Place(place) = target
             && place.fields.is_empty()
             && !is_holder(place.binding)
@@ -525,7 +640,7 @@ impl Analyzer<'_, '_> {
                 let judgment = self.expression_effects(value, state);
                 self.reasoning()
                     .finish_result(value, &judgment, &mut result, state);
-                if let Some(result) = result {
+                if !result.is_empty() {
                     state.results.insert(*binding, result);
                 }
                 self.declare(*binding);
@@ -582,6 +697,7 @@ impl Analyzer<'_, '_> {
                     self.reasoning().establish_construct_placements(
                         node_path,
                         &base,
+                        None,
                         &constructed,
                         &mut state.facts,
                     );
@@ -691,7 +807,10 @@ impl Analyzer<'_, '_> {
                     {
                         state.affine.values.insert(*binding, value);
                     }
-                    destinations.push(Some((*binding, Vec::new(), *ty)));
+                    destinations.push(Some((
+                        *binding,
+                        ResultDestination::Place(PlaceRoot::Binding(*binding), Vec::new()),
+                    )));
                 }
                 if judgment.reached {
                     for (ordinal, carry) in &taken {
@@ -702,6 +821,7 @@ impl Analyzer<'_, '_> {
                         self.reasoning().establish_measure_datums(
                             node_path,
                             destination,
+                            None,
                             carry,
                             &mut state.facts,
                         );
@@ -735,18 +855,21 @@ impl Analyzer<'_, '_> {
                 // [TYPE-11] the error edge returns, leaving any atomic block.
                 self.judge_atomic_exit(node_path, state);
                 // [FN-9] and it is a selected return of every unrouted
-                // clause, judged over the state that edge leaves with.
+                // clause, judged over the state that edge leaves with, and of
+                // every route over the `Err` field, judged in the operand's
+                // own context for that field.
+                self.judge_postcondition_places(node_path, state, std::slice::from_ref(&result));
                 self.judging().judge_postcondition_return(
                     node_path,
                     state,
                     None,
                     judgment.reached,
-                    &[],
+                    std::slice::from_ref(&result),
                 );
                 self.declare(*binding);
-                if let Some(result) = result {
+                if let Some(success) = result.iter().find(|result| result.success) {
                     self.reasoning()
-                        .select_result(node_path, &result, *binding, state);
+                        .select_result(node_path, success, *binding, state);
                 }
                 if self.input.affine_binding_type(*binding).is_some()
                     && let Some(value) = self.vocabulary.affine_unknown_integer(*ok_type)
@@ -770,6 +893,24 @@ impl Analyzer<'_, '_> {
                 true
             }
             CheckedStatement::Proof(proof) => {
+                // Range premises join the later range problem, but they still
+                // make this a written certificate for PRF-1's AUTO judgment.
+                let certificate_written = !proof.uses.is_empty();
+                let ordinary_proof;
+                let proof = if proof
+                    .uses
+                    .iter()
+                    .any(|step| matches!(step.source, CheckedProofUseSource::Range(_)))
+                {
+                    let mut filtered = proof.clone();
+                    filtered
+                        .uses
+                        .retain(|step| !matches!(step.source, CheckedProofUseSource::Range(_)));
+                    ordinary_proof = filtered;
+                    &ordinary_proof
+                } else {
+                    proof
+                };
                 self.judge_affine_relation_subscripts(&proof.target, state);
                 for written_use in &proof.uses {
                     if let CheckedProofUseSource::Relation(relation) = &written_use.source {
@@ -812,6 +953,9 @@ impl Analyzer<'_, '_> {
                     .uses
                     .iter()
                     .map(|written_use| match &written_use.source {
+                        CheckedProofUseSource::Range(_) => {
+                            unreachable!("range premises were filtered")
+                        }
                         CheckedProofUseSource::Named(declaration) => self
                             .vocabulary
                             .invariant_targets
@@ -856,7 +1000,9 @@ impl Analyzer<'_, '_> {
                             .and_then(|formed| formed.as_ref().ok())
                             .zip(state.affine.published_invariants.get(declaration))
                             .is_some_and(|(declared, published)| declared == published),
-                        CheckedProofUseSource::Relation(_) => false,
+                        CheckedProofUseSource::Relation(_) | CheckedProofUseSource::Range(_) => {
+                            false
+                        }
                     })
                     .collect::<Vec<_>>();
                 let named_premises = proof
@@ -884,7 +1030,7 @@ impl Analyzer<'_, '_> {
                 // disposition. [PRF-1] instead judges a written certificate's
                 // redundancy by AUTO alone: Step 6 may prove a target without
                 // making its explicitly written certificate redundant.
-                let (target_right, partner_right) = if proof.uses.is_empty() {
+                let (target_right, partner_right) = if !certificate_written {
                     (
                         self.reasoning()
                             .checked_affine_right_term(&proof.target.right),
@@ -895,7 +1041,7 @@ impl Analyzer<'_, '_> {
                     (None, None)
                 };
                 let target_goal = |inequality, right| {
-                    if proof.uses.is_empty() {
+                    if !certificate_written {
                         ProofGoal::Affine { inequality, right }
                     } else {
                         ProofGoal::AutomaticAffine { inequality }
@@ -919,12 +1065,12 @@ impl Analyzer<'_, '_> {
                             .disposition
                             == ProofDisposition::Proved
                     }));
-                let redundant = !proof.uses.is_empty() && target_proved;
+                let redundant = certificate_written && target_proved;
                 // [MSR-4] a blockless target no step discharged is refuted
                 // when the entering context derives the negation of one of
                 // its bounds.
                 let target_refuted =
-                    proof.uses.is_empty() && !target_proved && target_failure.is_none() && {
+                    !certificate_written && !target_proved && target_failure.is_none() && {
                         let mut members = vec![(target.clone(), target_right, partner_right)];
                         if partner_written {
                             members.push((partner.clone(), partner_right, target_right));
@@ -1020,8 +1166,10 @@ impl Analyzer<'_, '_> {
                     target_refuted,
                 };
 
+                // A participating function may defer this target. Publication
+                // follows its own proof point; acceptance still owes the record.
                 if let Some(target) = target
-                    && check.discharged()
+                    && (check.discharged() || self.input.range_participant)
                 {
                     for inequality in std::iter::once(target.clone()).chain(partner) {
                         state.affine.facts.push(ActiveAffineFact {
@@ -1047,7 +1195,7 @@ impl Analyzer<'_, '_> {
                         .collect(),
                     source_ordinal,
                     name: proof.name.clone(),
-                    certificate_written: !proof.uses.is_empty(),
+                    certificate_written,
                     check,
                 });
                 true
@@ -1111,6 +1259,7 @@ impl Analyzer<'_, '_> {
 
                 // [TYPE-11] a return inside an atomic block leaves it.
                 self.judge_atomic_exit(node_path, state);
+                self.judge_postcondition_places(node_path, state, &results);
                 self.judging().judge_postcondition_return(
                     node_path,
                     state,
@@ -1126,6 +1275,14 @@ impl Analyzer<'_, '_> {
                 value,
                 drops: _,
             } => {
+                // [GIVE-1, MSR-3] a value carrier mints its placements before
+                // the give's own kills, as the initializer of a `let` does.
+                let carrier = self
+                    .frames
+                    .gives
+                    .last()
+                    .is_some_and(|frame| value_carrier(frame.result_mode, frame.result_type, value))
+                    .then(|| self.reasoning().mint_value_carrier(node_path, value, state));
                 let mut result = self.capture_result(node_path, value, state);
                 let judgment = self.expression_effects(value, state);
                 self.reasoning()
@@ -1157,21 +1314,29 @@ impl Analyzer<'_, '_> {
                     } else {
                         None
                     };
-                    let delivery = Some({
-                        self.value_delivery_image(
-                            value,
-                            state,
-                            DeliveryImageContext {
-                                statement: node_path,
-                                receiver_binding: binding,
-                                receiver_type: result_type,
-                                scope_depth,
-                                loop_depth,
-                            },
-                        )
+                    let delivery = Some(if judgment.reached {
+                        let context = DeliveryImageContext {
+                            statement: node_path,
+                            receiver_binding: binding,
+                            receiver_type: result_type,
+                            scope_depth,
+                            loop_depth,
+                        };
+                        match &carrier {
+                            Some(carrier) => self.value_carrier_delivery_image(
+                                value,
+                                state,
+                                context,
+                                carrier,
+                                judgment.prepared_call.as_ref(),
+                            ),
+                            None => self.value_delivery_image(value, state, context),
+                        }
+                    } else {
+                        ProofFlowState::default()
                     });
                     let mut exit = state.clone();
-                    if let Some(result) = result {
+                    if !result.is_empty() {
                         exit.results.insert(binding, result);
                     }
                     self.exit_scopes_to(&mut exit, scope_depth);
@@ -1214,6 +1379,9 @@ impl Analyzer<'_, '_> {
                 {
                     let _ = self.expression_effects(key, state);
                 }
+                let _ = self
+                    .judging()
+                    .judge_atomic_target_separations(node_path, state);
                 let outer_scope_depth = self.frames.scopes.len();
                 self.frames
                     .scopes
@@ -1280,7 +1448,7 @@ impl Analyzer<'_, '_> {
                         let held = CheckedMatchArm {
                             node_path: node_path.clone(),
                             label: "atomic guard".to_owned(),
-                            tag: 1,
+                            selection: CheckedMatchSelection::Variant(1),
                             binders: Vec::new(),
                             covered: Vec::new(),
                             body: Vec::new(),
@@ -1380,32 +1548,38 @@ impl Analyzer<'_, '_> {
             }
             CheckedStatement::Match {
                 scrutinee,
-                enum_type,
+                match_type,
                 arms,
                 ..
             } => {
                 // [MSR-3] the payload placement is minted before the `match`
                 // consumes its scrutinee, because the datums it forms are the
                 // measures the payload had immediately before that consume.
-                let payload = self
-                    .reasoning()
-                    .mint_payload_placements(scrutinee, *enum_type, state);
+                let payload = match match_type {
+                    CheckedMatchType::Enum(enum_type) => self
+                        .reasoning()
+                        .mint_payload_placements(scrutinee, *enum_type, state),
+                    CheckedMatchType::Integer(_) => Vec::new(),
+                };
                 let mut result = expression_node_path(scrutinee)
                     .cloned()
-                    .and_then(|site| self.capture_result(&site, scrutinee, state));
+                    .map(|site| self.capture_result(&site, scrutinee, state))
+                    .unwrap_or_default();
                 let judgment = self.expression_effects(scrutinee, state);
                 self.reasoning()
                     .finish_result(scrutinee, &judgment, &mut result, state);
                 let facts = if judgment.reached {
                     self.reasoning()
-                        .arm_facts(scrutinee, *enum_type, &state.facts)
+                        .match_arm_facts(scrutinee, *match_type, arms, &state.facts)
                 } else {
                     ArmFacts::default()
                 };
                 let mut exits = Vec::new();
                 for arm in arms {
-                    let payload = payload.iter().find(|payload| payload.tag == arm.tag);
-                    exits.extend(self.walk_arm(arm, state, &facts, payload, result.as_ref()));
+                    let payload = payload.iter().find(|payload| {
+                        arm.selection == CheckedMatchSelection::Variant(payload.tag)
+                    });
+                    exits.extend(self.walk_arm(arm, state, &facts, payload, &result));
                 }
                 if exits.is_empty() {
                     false
@@ -1418,24 +1592,28 @@ impl Analyzer<'_, '_> {
                 node_path,
                 binding,
                 result_type,
+                result_mode,
                 scrutinee,
-                enum_type,
+                match_type,
                 arms,
                 ..
             } => {
                 // [MSR-3] the payload placement is minted before the `match`
                 // consumes its scrutinee, because the datums it forms are the
                 // measures the payload had immediately before that consume.
-                let payload = self
-                    .reasoning()
-                    .mint_payload_placements(scrutinee, *enum_type, state);
+                let payload = match match_type {
+                    CheckedMatchType::Enum(enum_type) => self
+                        .reasoning()
+                        .mint_payload_placements(scrutinee, *enum_type, state),
+                    CheckedMatchType::Integer(_) => Vec::new(),
+                };
                 let mut result = self.capture_result(node_path, scrutinee, state);
                 let judgment = self.expression_effects(scrutinee, state);
                 self.reasoning()
                     .finish_result(scrutinee, &judgment, &mut result, state);
                 let facts = if judgment.reached {
                     self.reasoning()
-                        .arm_facts(scrutinee, *enum_type, &state.facts)
+                        .match_arm_facts(scrutinee, *match_type, arms, &state.facts)
                 } else {
                     ArmFacts::default()
                 };
@@ -1445,6 +1623,7 @@ impl Analyzer<'_, '_> {
                     node_path: node_path.clone(),
                     binding: *binding,
                     result_type: *result_type,
+                    result_mode: *result_mode,
                     gives: Vec::new(),
                     give_goal_origins: Vec::new(),
                     delivery_images: Vec::new(),
@@ -1453,8 +1632,10 @@ impl Analyzer<'_, '_> {
                 for arm in arms {
                     // Every delivering path leaves by `give`; an arm's
                     // fall-through state contributes nothing [GIVE-1].
-                    let payload = payload.iter().find(|payload| payload.tag == arm.tag);
-                    let _ = self.walk_arm(arm, state, &facts, payload, result.as_ref());
+                    let payload = payload.iter().find(|payload| {
+                        arm.selection == CheckedMatchSelection::Variant(payload.tag)
+                    });
+                    let _ = self.walk_arm(arm, state, &facts, payload, &result);
                 }
                 let frame = self
                     .frames
@@ -1678,6 +1859,7 @@ impl Analyzer<'_, '_> {
                         },
                         element: false,
                         source: node_path.clone(),
+                        relocation: false,
                         narrowed: None,
                     }]);
                     kills.set_bindings.insert(*binder);
@@ -1774,7 +1956,7 @@ impl Analyzer<'_, '_> {
                     invariants,
                     &base,
                     &batches,
-                    Some(*binder),
+                    Some((*binder, lower)),
                 );
                 let step_batch = batches.iter().all(|batch| {
                     batch
@@ -1860,15 +2042,23 @@ impl Analyzer<'_, '_> {
         entry: &ProofFlowState,
         facts: &ArmFacts,
         payload: Option<&PayloadPlacement>,
-        result: Option<&ResultEvidence>,
+        results: &[ResultEvidence],
     ) -> Vec<FlowEdge> {
         let mut state = entry.clone();
         let mut frontier = Vec::new();
         self.frames.branches.push(arm.label.clone());
-        let s1_event = (!facts.goals.is_empty() || facts.comparison.is_some()).then(|| {
-            self.vocabulary
-                .proof_event(FlowEventKind::S1, facts.node_path.as_ref())
-        });
+        let s1_event =
+            (!facts.goals.is_empty() || facts.comparison.is_some() || facts.integer.is_some())
+                .then(|| {
+                    self.vocabulary.proof_event(
+                        if facts.integer.is_some() {
+                            FlowEventKind::S17
+                        } else {
+                            FlowEventKind::S1
+                        },
+                        facts.node_path.as_ref(),
+                    )
+                });
         self.judging()
             .establish_arm_entry(arm, facts, &mut state.facts, s1_event);
         // [MSR-3] the payload placement's second half: on the arm whose
@@ -1883,20 +2073,28 @@ impl Analyzer<'_, '_> {
                 self.reasoning().establish_measure_datums(
                     &binder.node_path,
                     destination,
+                    None,
                     carry,
                     &mut state.facts,
                 );
             }
         }
-        if let Some(result) = result
-            && arm.tag == result.success_tag
-            && let Some(binder) = arm
-                .binders
-                .iter()
-                .find(|binder| binder.field == 0 && binder.mode == CheckedMode::Own)
-        {
-            self.reasoning()
-                .select_result(&binder.node_path, result, binder.binding, &mut state);
+        // [ENT-5] the arm for a route's variant selects that route's
+        // context onto the own binder of the routed field.
+        for result in results {
+            if arm.selection != CheckedMatchSelection::Variant(result.route.tag) {
+                continue;
+            }
+            if let Some(binder) = arm.binders.iter().find(|binder| {
+                binder.field == result.route.field && binder.mode == CheckedMode::Own
+            }) {
+                self.reasoning().select_result(
+                    &binder.node_path,
+                    result,
+                    binder.binding,
+                    &mut state,
+                );
+            }
         }
         self.frames
             .scopes
@@ -1988,4 +2186,22 @@ impl Analyzer<'_, '_> {
                 .establish(&relation, &mut self.vocabulary.derivations, formation);
         }
     }
+}
+
+/// [GIVE-1] whether a `give` delivers as a value carrier [ENT-5]: an own
+/// delivery whose type is no fragment integer. Only a nominal, a storage
+/// shape or a key set has tracked places or measures below it [ENT-2]; the
+/// image of any other such type relates no receiver term and is never formed.
+fn value_carrier(mode: CheckedMode, ty: CheckedType, value: &CheckedExpression) -> bool {
+    mode == CheckedMode::Own
+        && value.ty() == ty
+        && matches!(
+            ty,
+            CheckedType::Nominal(_)
+                | CheckedType::Array { .. }
+                | CheckedType::Buffer { .. }
+                | CheckedType::Window { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::KeySet
+        )
 }

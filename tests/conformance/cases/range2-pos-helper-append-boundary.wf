@@ -1,0 +1,71 @@
+struct Block {
+  entry_slot: u32;
+}
+
+enum Flow {
+  Open(block: u32);
+}
+
+enum LayoutError {
+  TooLarge();
+}
+
+struct Context {
+  order: Box<Paged<Flow>>;
+  targets: Box<Slots<Block>>;
+  invariant(c): forall inverse(k in 0_u64..c^.order.inner.len): c^.order.inner[k].Open.block < c^.targets.inner.len, c^.targets.inner[c^.order.inner[k].Open.block].entry_slot == k;
+}
+
+fn push_item<T: drop>(cell: &Box<Slots<T>>, value: T, ceiling: u64) -> pushed: Bool writes(cell) contract {
+  requires ceiling <= 1073741824_u64;
+  ensures cell^.inner.len >= entry(cell)^.inner.len;
+  ensures cell^.inner.len <= entry(cell)^.inner.len + 1_u64;
+  ensures forall preserved(k in 0_u64..entry(cell)^.inner.len): cell^.inner[k] unchanged;
+} {
+  let length = cell^.inner.len;
+  if length >= ceiling {
+    return False();
+  }
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    invariant below_ceiling: length < ceiling;
+    invariant full: capacity <= length;
+    let room = ceiling - capacity;
+    if capacity < room {
+      if capacity == 0_u64 {
+        grow(cell: cell, capacity: 4_u64);
+      } else {
+        let doubled = capacity + capacity;
+        grow(cell: cell, capacity: doubled);
+      }
+    } else {
+      grow(cell: cell, capacity: ceiling);
+    }
+  }
+  place_back(window: &cell^.inner, value: move value);
+  return True();
+}
+
+fn push_or_fail<T: drop>(cell: &Box<Slots<T>>, value: T) -> result: Result<unit, LayoutError> writes(cell) contract {
+  ensures cell^.inner.len >= entry(cell)^.inner.len;
+  ensures cell^.inner.len <= entry(cell)^.inner.len + 1_u64;
+  ensures forall preserved(k in 0_u64..entry(cell)^.inner.len): cell^.inner[k] unchanged;
+} {
+  let pushed = push_item::<T>(cell: cell, value: move value, ceiling: 1073741824_u64);
+  if pushed {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let failure = LayoutError::TooLarge();
+  return Err<unit, LayoutError>(error: failure);
+}
+
+fn append_target(c: &Context, value: Block) -> result: Result<unit, LayoutError> writes(c.targets) contract {
+  requires forall existing(k in 0_u64..c^.order.inner.len): c^.order.inner[k].Open.block < c^.targets.inner.len;
+} {
+  let pushed = propagate push_or_fail::<Block>(cell: &c^.targets, value: value);
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

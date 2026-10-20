@@ -1,21 +1,28 @@
 mod acceptance;
 mod behavior;
 mod cleanup;
+mod contract_reads;
 mod control;
+mod decision_cell;
+mod effect_repairs;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
+mod frozen;
 mod generics;
+mod held;
 mod inventory;
 mod linearity;
+mod lock_ledger_sources;
 mod nominal_instances;
 mod nominals;
 mod obligations;
 pub(crate) mod publication;
 mod range_clauses;
+mod range_type_invariants;
 mod receipts;
 mod references;
-mod repairs;
+pub(in crate::semantic) mod repairs;
 mod requires;
 mod schedule;
 mod spawn;
@@ -27,7 +34,10 @@ mod type_regions;
 mod types;
 
 pub(crate) use receipts::ProofReceipts;
-pub(crate) use repairs::{header_invariant_scope_repair, postcondition_selector_repair};
+pub(crate) use repairs::{
+    executable_caller_repair, executable_runner_repair, header_invariant_scope_repair,
+    postcondition_selector_repair,
+};
 
 use std::collections::{HashMap, HashSet};
 
@@ -51,15 +61,15 @@ use super::model::{
     NominalId, ValueInitializerKind, evaluate_const_operation,
 };
 use super::permission::{PermissionSignature, analyze_permission, plan_permission_separations};
-use super::permission_ledger::{LedgerSource, render_ledger};
+use super::permission_ledger::{LedgerSource, prepare_storage_ledger, render_ledger};
 use super::places::ResolvedPlace;
-use super::postcondition::CheckedPostconditionSelector;
+use super::postcondition::{CheckedPostcondition, CheckedPostconditionSelector};
 use super::tree::TreeView;
 use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
 use generics::{GenericParameter, GenericSubstitution};
 use inventory::InventoryView;
-use references::ReferenceInfo;
+use references::{ReferenceInfo, ReferenceSelection};
 
 /// The syntax tree, as the permission ledger's citations reach it.
 struct PermissionLedgerSource<'view, 'unit> {
@@ -138,9 +148,14 @@ struct FunctionSignature {
     result_list: Option<NominalId>,
     effects_node: NodeId,
     declared_effects: EffectSet,
+    /// Proof-only reads compared with other arguments at calls [EFF-5].
+    /// Kept outside the row, reference invalidation and fact-kill inputs.
+    contract_reads: Option<Vec<contract_reads::ContractReadPath>>,
     /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
     /// whose calls are admitted only in the body of another waiting function.
     waits: bool,
+    /// Normalized reference parameter ordinals of the ordinary held contract.
+    held_parameters: Vec<usize>,
     /// A callable hypothesis used only while checking generic source spelling.
     /// Concrete calls always select a verified source function instead.
     formal_parameter: Option<generics::GenericParameterKey>,
@@ -254,6 +269,8 @@ struct LocalBinding {
     /// Compiler-updated counted binders are readable source bindings but are
     /// never writer-controlled storage [SET-1, OWN-11].
     compiler_updated: bool,
+    /// SHARE-2 authority of this atomic state root; aliases retain the root.
+    read_only_state: bool,
     /// [REF-1] what this binding names when it is a reference variable: its
     /// path set, its kind, and its [REF-2] validity. `None` is storage of its
     /// own.
@@ -264,11 +281,19 @@ struct LocalBinding {
     /// was the loan apparatus's way of stating what [REF-2] now states
     /// directly as a validity fact.
     reference: Option<ReferenceInfo>,
-    /// [REF-2, ENT-3.S15] the borrowed-match refinement occurrences this
-    /// binding witnesses. The occurrence identity is immutable even when a
+    /// A set target's newly selected payload storage and later storage
+    /// selections while its RHS is checked, excluding trailing inline fields.
+    /// It uses the same REF-2 validity and preservation rules as a reference.
+    commit_target: Option<ReferenceInfo>,
+    /// [REF-2, ENT-3.S15] the match refinement occurrences rooted at this
+    /// binding. The occurrence identity is immutable even when a
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
+    /// [SHARE-2] on an atomic statement's binding, the places its handle was
+    /// read from, which every write and move checked in the statement marks
+    /// when it may overlap one of them. Every copy of this state shares it.
+    handle_watch: Option<std::rc::Rc<references::HandleWatch>>,
     /// [EFF-1] whether this binding is a parameter holding the value its call
     /// passed on every path to here. An index names a row's index parameter
     /// only while it does, since a row evaluates that parameter once at the
@@ -280,6 +305,8 @@ struct LocalBinding {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RefinementWitness {
     origin: NodePath,
+    /// The selected target, distinct from the possible storage supports.
+    selection: ReferenceSelection,
     place: ResolvedPlace,
     variant: u32,
     valid: bool,
@@ -287,7 +314,10 @@ struct RefinementWitness {
 
 impl RefinementWitness {
     fn same_occurrence(&self, other: &Self) -> bool {
-        self.origin == other.origin && self.place == other.place && self.variant == other.variant
+        self.origin == other.origin
+            && self.selection == other.selection
+            && self.place == other.place
+            && self.variant == other.variant
     }
 }
 
@@ -348,12 +378,11 @@ impl LocalBinding {
             }
     }
 
-    /// A loop header is checked once rather than materialized by `join_from`.
-    /// Its reference validity has a separate finite equation, but every
-    /// non-reference refinement witness must therefore still agree exactly
-    /// with the backedge as it did before loop-header widening.
+    /// Loop-header reference validity uses its finite equations, and variant
+    /// witnesses use the same structural retry's entry/backedge meet. Their
+    /// flow validity is therefore excluded from this structural comparison.
     fn loop_agrees_with(&self, other: &Self) -> bool {
-        self.agrees_with(other) && self.refinement_witnesses == other.refinement_witnesses
+        self.agrees_with(other)
     }
 }
 
@@ -439,11 +468,15 @@ impl TypedExpression {
 #[derive(Clone, Debug)]
 struct EffectPath {
     path: super::model::CheckedStatePath,
+    inside_payload: bool,
 }
 
 impl From<super::model::CheckedStatePath> for EffectPath {
     fn from(path: super::model::CheckedStatePath) -> Self {
-        Self { path }
+        Self {
+            path,
+            inside_payload: false,
+        }
     }
 }
 
@@ -451,6 +484,8 @@ impl From<super::model::CheckedStatePath> for EffectPath {
 struct EffectSet {
     reads: Vec<super::model::CheckedStatePath>,
     writes: Vec<super::model::CheckedStatePath>,
+    /// Roots written without a resolved enum payload step (before row truncation).
+    variant_writes: Vec<DeclarationId>,
     /// [EFF-3] whether the boundary this set describes allocates. It is not
     /// a row category [EFF-1, STOR-8]; it is the checked-program metadata
     /// [EFF-3]'s deduplication and reordering licence reads.
@@ -461,25 +496,42 @@ impl EffectSet {
     const NONE: Self = Self {
         reads: Vec::new(),
         writes: Vec::new(),
+        variant_writes: Vec::new(),
         allocates: false,
     };
     fn union(mut self, other: Self) -> Self {
         for path in other.reads {
-            self.add_read(path);
+            Self::add_path(&mut self.reads, path.into());
         }
         for path in other.writes {
-            self.add_write(path);
+            Self::add_path(&mut self.writes, path.into());
         }
+        for root in other.variant_writes {
+            if !self.variant_writes.contains(&root) {
+                self.variant_writes.push(root);
+            }
+        }
+        self.variant_writes.sort_unstable();
         self.allocates |= other.allocates;
         self
     }
 
     fn add_read(&mut self, path: impl Into<EffectPath>) {
-        Self::add_path(&mut self.reads, path.into());
+        let path = path.into();
+        Self::add_path(&mut self.reads, path);
     }
 
     fn add_write(&mut self, path: impl Into<EffectPath>) {
-        Self::add_path(&mut self.writes, path.into());
+        let path = path.into();
+        self.add_projected_write(path);
+    }
+
+    fn add_projected_write(&mut self, path: EffectPath) {
+        if !path.inside_payload && !self.variant_writes.contains(&path.path.root) {
+            self.variant_writes.push(path.path.root);
+            self.variant_writes.sort_unstable();
+        }
+        Self::add_path(&mut self.writes, path);
     }
 
     fn add_path(paths: &mut Vec<super::model::CheckedStatePath>, contribution: EffectPath) {
@@ -502,11 +554,15 @@ enum PreludeType {
     Overflow,
     DivError,
     NarrowError,
+    ScanStep,
+    DecisionState,
 }
 
 /// Source declarations and syntax shared read-only by preflight and body checking.
 struct DeclarationInventory<'unit> {
     resolved: &'unit ResolvedSyntaxUnit,
+    /// Lazily indexed source lines for non-normative lock-ledger locations.
+    ledger_line_starts: lock_ledger_sources::SourceLines,
     /// [STOR-8, GRAM-2] whether this compilation unit wrote `program
     /// no_heap;`.
     ///
@@ -570,6 +626,7 @@ struct TypeContext<'unit> {
     behavior: behavior::BehaviorInventory,
     /// [TYPE-11] each struct's formed type invariants, in declaration order.
     type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
+    range_type_invariants: HashMap<NominalId, Vec<super::range_facts::CheckedRangeClause>>,
     /// [EFF-2] the paths each checked body writes, by function. A row may
     /// declare a wider path than any of these; a repair that offers to
     /// narrow a row reads them to know what the narrowed row still covers
@@ -578,12 +635,16 @@ struct TypeContext<'unit> {
     /// [EFF-2] the row each checked body exhibits, rendered as a writer
     /// declares it, which such a repair offers word for word.
     exhibited_rows: HashMap<FunctionId, String>,
+    /// Diagnostic replay is entered only after an ordinary EFF-2 rejection.
+    effect_repairs: effect_repairs::RepairMode,
 }
 
 /// Scratch of one structural body attempt. Only finite loop summaries survive
 /// a reference-summary retry; the completed attempt publishes its own facts.
 #[derive(Default)]
 struct BodyChecker {
+    /// Allocated and populated only by an EFF-2 rejection replay.
+    repair_calls: Option<Vec<effect_repairs::EffectCall>>,
     /// [LIV-2] the target places of the `set` commit whose right-hand side is
     /// being checked, and whether that right-hand side has read each out.
     /// Empty everywhere else: `check_commit` installs it around exactly that
@@ -611,6 +672,11 @@ struct BodyChecker {
     /// retries, and a new member restarts the walk, as a new loop-header
     /// summary path does.
     loop_superseded_bindings: HashMap<super::model::CheckedLoopId, HashSet<BindingId>>,
+    /// [ENT-3.S15, ENT-5] enclosing match occurrences whose variant fact
+    /// does not survive every executable backedge of this loop. Each newly
+    /// recorded occurrence restarts the existing structural walk; header
+    /// formation applies the kills before checking any iteration's body.
+    loop_invalidated_refinements: HashMap<super::model::CheckedLoopId, Vec<RefinementWitness>>,
     /// [EFF-1] the index and range-endpoint captures that read a parameter
     /// while it held its call value on every path to their formation, which
     /// name the row's index parameter whatever later writes and joins do.
@@ -623,6 +689,13 @@ struct BodyChecker {
     /// checked: inside one, a waiting call or another atomic statement is
     /// refused.
     atomic_depth: u32,
+    /// Current atomic target origins and protection obligations before framing.
+    held_atomic_roots: Vec<BindingId>,
+    held_calls: Vec<(NodeId, Vec<ResolvedPlace>)>,
+    held_writes: Vec<(NodeId, ResolvedPlace)>,
+    checked_held_calls: Vec<super::model::CheckedHeldCall>,
+    held_atomic_node: Option<crate::NodePath>,
+    held_guard: bool,
     table_set_borrow: Option<NodeId>,
     /// [RANGE-1] the range clauses of the function being checked, published
     /// with its finished body. Every retry starts empty.
@@ -637,6 +710,10 @@ struct BodyChecker {
     /// [ENT-2] the rebound reference parameters and `atomic` binders, whose
     /// own binding roots the path they name; no exact path starts at one.
     rebound_anchors: HashSet<BindingId>,
+    /// [ENT-2] each range alias, `let q = r;` with neither variable rebound,
+    /// to the variable its places are identified through: the source's own
+    /// entry when the source is itself a range alias, else the source.
+    range_alias_sources: HashMap<BindingId, BindingId>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -666,6 +743,17 @@ struct AnalysisState {
     /// instance's analysis rather than analyzing its body [FN-2]. Such a
     /// summary is already settled and is not finalized again.
     renamed_summaries: Vec<bool>,
+    /// During symbolic validation only: each generic declaration's canonical
+    /// symbolic instance with its renaming class, and the const parameters'
+    /// written types the class reads [FN-2].
+    symbolic_canonical: HashMap<DeclarationId, (FunctionId, generics::RenamingClass)>,
+    symbolic_const_types: HashMap<DeclarationId, super::model::IntegerType>,
+    symbolic_type_bounds: HashMap<DeclarationId, generics::GenericBound>,
+    /// During symbolic validation only: the positions, among its postcondition
+    /// selectors, of the clauses each checked canonical instance admits as
+    /// schema summaries. An instance taking that instance's outcomes admits
+    /// the same positions, so the two postcondition lists align.
+    symbolic_admitted: HashMap<FunctionId, Vec<usize>>,
     /// The receipt key of each function analyzed afresh, recorded once its
     /// analysis is accepted.
     receipt_keys: Vec<(usize, Vec<u8>)>,
@@ -740,8 +828,80 @@ fn check_semantics_with(
     reject_entailment: bool,
     receipts: Option<&dyn receipts::ProofReceipts>,
 ) -> SemanticOutcome {
-    let result = DeclarationInventory::new(resolved).and_then(|declarations| {
+    let result = check_semantics_attempt(
+        resolved,
+        reject_entailment,
+        receipts,
+        effect_repairs::RepairMode::Ordinary,
+    );
+    let result = match result {
+        Err(CheckStop::Issue(mut issue))
+            if issue.rule == SemanticRule::Eff2
+                && matches!(
+                    issue.kind,
+                    SemanticIssueKind::EffectMismatch {
+                        expected_row: None,
+                        ..
+                    }
+                ) =>
+        {
+            // A replay may encounter another failure while completing the view.
+            // In that case keep the established rejection, without an unvalidated row.
+            match check_semantics_attempt(
+                resolved,
+                reject_entailment,
+                None,
+                effect_repairs::RepairMode::Capture(HashMap::new()),
+            ) {
+                Err(CheckStop::Issue(repaired)) if repaired.rule == SemanticRule::Eff2 => {
+                    Err(CheckStop::Issue(repaired))
+                }
+                _ => {
+                    if let SemanticIssueKind::EffectMismatch {
+                        expected_row,
+                        mechanical_fix,
+                        ..
+                    } = &mut issue.kind
+                    {
+                        *expected_row = None;
+                        *mechanical_fix = None;
+                    }
+                    Err(CheckStop::Issue(issue))
+                }
+            }
+        }
+        result => result,
+    };
+    match result {
+        Ok(data) => SemanticOutcome::Complete(Box::new(CheckedProgram { data })),
+        Err(CheckStop::Issue(issue)) => SemanticOutcome::SourceIssue { issue: *issue },
+        Err(CheckStop::Resolution(issue)) => SemanticOutcome::ResolutionIssue { issue: *issue },
+        Err(CheckStop::Unsupported(unsupported)) => SemanticOutcome::Unsupported { unsupported },
+        Err(CheckStop::Compiler(failure)) => SemanticOutcome::CompilerFailure { failure },
+        // A loop-summary change is consumed by its body-attempt driver;
+        // reaching the program boundary means the driver failed its contract.
+        Err(CheckStop::ReferenceSummaryChanged) => SemanticOutcome::CompilerFailure {
+            failure: SemanticCompilerFailure::InvalidResolution,
+        },
+        Err(CheckStop::PostconditionPrerequisiteUnavailable) => SemanticOutcome::CompilerFailure {
+            failure: SemanticCompilerFailure::InvalidResolution,
+        },
+    }
+}
+
+/// The same semantic path, with private diagnostic replay inputs. A replay
+/// publishes no authority; validation disables receipts and substitutes all
+/// proposed component rows before any call is checked.
+fn check_semantics_attempt(
+    resolved: &ResolvedSyntaxUnit,
+    reject_entailment: bool,
+    receipts: Option<&dyn receipts::ProofReceipts>,
+    repair_mode: effect_repairs::RepairMode,
+) -> Result<CheckedProgramData, CheckStop> {
+    DeclarationInventory::new(resolved).and_then(|declarations| {
+        declarations.check_entry_positions()?;
         let mut types = TypeContext::new(&declarations);
+        types.effect_repairs = repair_mode;
         if !resolved.postconditions().is_empty() {
             let mut body = BodyChecker::default();
             let mut analysis = AnalysisState::default();
@@ -771,22 +931,7 @@ fn check_semantics_with(
         );
         let result = checker.check_program(&CheckContext::default());
         checker.analysis.finish_musttail_checks(result)
-    });
-    match result {
-        Ok(data) => SemanticOutcome::Complete(Box::new(CheckedProgram { data })),
-        Err(CheckStop::Issue(issue)) => SemanticOutcome::SourceIssue { issue: *issue },
-        Err(CheckStop::Resolution(issue)) => SemanticOutcome::ResolutionIssue { issue: *issue },
-        Err(CheckStop::Unsupported(unsupported)) => SemanticOutcome::Unsupported { unsupported },
-        Err(CheckStop::Compiler(failure)) => SemanticOutcome::CompilerFailure { failure },
-        // A loop-summary change is consumed by its body-attempt driver;
-        // reaching the program boundary means the driver failed its contract.
-        Err(CheckStop::ReferenceSummaryChanged) => SemanticOutcome::CompilerFailure {
-            failure: SemanticCompilerFailure::InvalidResolution,
-        },
-        Err(CheckStop::PostconditionPrerequisiteUnavailable) => SemanticOutcome::CompilerFailure {
-            failure: SemanticCompilerFailure::InvalidResolution,
-        },
-    }
+    })
 }
 
 impl<'unit> DeclarationInventory<'unit> {
@@ -805,6 +950,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let no_heap = Checker::declares_no_heap(&tree)?;
         Ok(Self {
             resolved,
+            ledger_line_starts: Default::default(),
             tree,
             no_heap,
         })
@@ -1146,7 +1292,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         self.collect_type_invariants(check_context)?;
         self.judge_constant_invariants(&items)?;
         self.admit_postcondition_selectors(check_context)?;
-        self.validate_generic_templates(check_context)?;
+        self.collect_contract_reads(check_context)?;
+        // A symbolic range capability or ceiling cannot hide a definite
+        // ordinary error in the concrete functions checked below.
+        let generic_range_stop = self.validate_generic_templates(check_context)?;
         if self.types.signatures.iter().any(|signature| {
             self.types.view.contains_function(signature.id) && signature.formal_parameter.is_some()
         }) {
@@ -1187,7 +1336,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // Phase B reads only the completed inventory. Kill-relevant [EFF-2]
         // projections are indexed by dense function identity [ENT-5]; later
         // program-level goal summaries extend this same complete context.
-        let callees = self.types.entailment_callees()?;
+        let callees = self.types.entailment_callees(&function_inventory)?;
         self.install_call_requirements(check_context, &mut function_inventory)?;
         self.types
             .form_obligation_records(&mut function_inventory)?;
@@ -1198,6 +1347,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .map(|signature| {
                 Ok(PermissionSignature {
                     name: signature.name.clone(),
+                    decision_cell: self.types.decision_cell_boundary(signature.id)?,
                     parameter_declarations: signature
                         .parameters
                         .iter()
@@ -1230,6 +1380,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let optimistic_batch = function_inventory.iter().any(|checked| {
             ordinary[checked.function.id.0 as usize]
                 && (!checked.function.postconditions.is_empty()
+                    || !checked.function.range_facts.postconditions.is_empty()
                     || Checker::statements_contain_value_if(
                         checked.function.body.as_deref().unwrap_or_default(),
                     ))
@@ -1243,10 +1394,23 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             true,
             None,
         )?;
-        let baseline_functions = function_inventory
-            .iter()
-            .map(|checked| &checked.function)
+        let mut functions = function_inventory
+            .into_iter()
+            .map(|checked| checked.function)
             .collect::<Vec<_>>();
+        for function in &mut functions {
+            function.body_disposition = function.entailment.body_disposition;
+        }
+        let baseline_functions = functions.iter().collect::<Vec<_>>();
+        let ranges = super::range_judgment::judge_program(
+            &baseline_functions,
+            &self.types.nominals,
+            &self.types.elements,
+            &ordinary,
+            &self.types.checked_constants,
+            super::range_judgment::JudgmentScope::Concrete,
+            self.types.declarations.resolved,
+        );
         if self.reject_entailment {
             let mut rejections = Vec::new();
             let mut rejected = vec![false; baseline_functions.len()];
@@ -1261,7 +1425,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 }
                 match self
                     .types
-                    .entailment_rejection(function)
+                    .entailment_rejection_after_range(
+                        function,
+                        &ranges[index].discharged,
+                        &ranges[index].inconclusive,
+                    )
                     .map_err(|stop| self.types.attribute_to_request(function.id, stop))
                 {
                     Ok(()) => {}
@@ -1278,9 +1446,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     Err(stop) => return Err(stop),
                 }
             }
-            // Every accepted fresh analysis is kept, whether or not another
-            // function's rejection fails this check [MOD-8].
-            self.record_receipts(&baseline_functions, &rejected);
+            // An accepted component's fresh analyses are kept even when
+            // another component fails this check [MOD-8].
+            for (index, judged) in ranges.iter().enumerate() {
+                rejected[index] |= !judged.issues.is_empty();
+            }
+            self.record_receipts(&baseline_functions, &rejected, &postcondition_schedule);
             rejections.sort_by(|left, right| {
                 left.0
                     .components()
@@ -1292,11 +1463,24 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 return Err(CheckStop::Issue(issue));
             }
         }
+        if let Some(stop) = generic_range_stop {
+            return Err(stop);
+        }
+        if self.reject_entailment
+            && let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
+                matches!(
+                    issue,
+                    super::range_judgment::RangeIssue::Unsupported { .. }
+                        | super::range_judgment::RangeIssue::Undischarged {
+                            capacity: Some(_),
+                            ..
+                        }
+                )
+            })
+        {
+            return Err(self.range_issue(issue));
+        }
         drop(baseline_functions);
-        let mut functions = function_inventory
-            .into_iter()
-            .map(|checked| checked.function)
-            .collect::<Vec<_>>();
         if optimistic_batch {
             for (index, function) in functions.iter_mut().enumerate() {
                 // A receipt's analysis retains no derivation to prune.
@@ -1304,9 +1488,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     finalize_function_entailment(&mut function.entailment);
                 }
             }
-        }
-        for function in &mut functions {
-            function.body_disposition = function.entailment.body_disposition;
         }
 
         let executable_nominals = self.types.view.nominals.clone();
@@ -1323,10 +1504,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // and exact value image retained on that program; no permission rule
         // repeats a local invariant or changes source acceptance.
         // [RANGE-3, RANGE-5] range facts are judged over the completed
-        // program: every callee's range clauses are formed, and no ordinary
-        // obligation consumes a range fact. A certificate that holds is
+        // program: every callee's range clauses are formed, and each deferred
+        // ordinary record has been proved at its own site. A certificate that holds is
         // retained for the counted permission judgment below.
-        let ranges = super::range_judgment::judge_program(&functions, &ordinary);
         for id in &executable_functions {
             if let Some(issue) = ranges[id.0 as usize].issues.first() {
                 return Err(self.range_issue(issue));
@@ -1335,7 +1515,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         for (function, judged) in functions.iter_mut().zip(ranges) {
             function.range_facts.certified = judged.certified;
         }
-        let permission = analyze_permission(&functions, &permission_signatures, &ordinary);
+        let mut permission = analyze_permission(&functions, &permission_signatures, &ordinary);
+        prepare_storage_ledger(
+            &mut permission,
+            &PermissionLedgerSource {
+                tree: &self.types.declarations.tree,
+            },
+        )?;
         // [WAIT-2] each started waiting `let` is joined where the table found
         // its binding's first use; lowering reads the plan from the function.
         for (function, permissions) in functions.iter_mut().zip(&permission.functions) {
@@ -1367,6 +1553,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         } else {
             Vec::new()
         };
+
+        let lock_ledger_sources = self
+            .types
+            .declarations
+            .lock_ledger_sources(&functions, &executable_functions);
 
         Ok(CheckedProgramData {
             nominals: self.types.nominals.clone(),
@@ -1410,6 +1601,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             generic_requirements: self.analysis.generic_requirements.clone(),
             permission,
             permission_ledger,
+            lock_ledger_sources,
         })
     }
 
@@ -1632,7 +1824,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 && !signature.substitution.is_symbolic(),
             ..*check_context
         };
-        let mut body = BodyChecker::default();
+        let mut body = BodyChecker {
+            repair_calls: self.types.effect_repairs.is_capture().then(Vec::new),
+            ..BodyChecker::default()
+        };
         let queries = self.analysis.contract_queries.len();
         let tail_rejections = self.analysis.musttail_rejections.len();
         loop {
@@ -1653,11 +1848,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             match outcome {
                 Err(CheckStop::ReferenceSummaryChanged) => {
                     body = BodyChecker {
+                        repair_calls: self.types.effect_repairs.is_capture().then(Vec::new),
                         loop_reference_summaries: std::mem::take(
                             &mut body.loop_reference_summaries,
                         ),
                         loop_superseded_bindings: std::mem::take(
                             &mut body.loop_superseded_bindings,
+                        ),
+                        loop_invalidated_refinements: std::mem::take(
+                            &mut body.loop_invalidated_refinements,
                         ),
                         ..BodyChecker::default()
                     };
@@ -1683,6 +1882,29 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .and_then(crate::DeclarationRecord::module),
             ..*check_context
         };
+        // [FN-2] a generic body is checked once, at its own symbolic
+        // instance. Another symbolic instance that only renames that
+        // instance's parameters forms its contract, which its callers read,
+        // and takes the checked canonical instance's outcomes for its body.
+        let summary_source = self
+            .analysis
+            .symbolic_canonical
+            .get(&signature.declaration)
+            .filter(|(canonical, class)| {
+                *canonical != signature.id
+                    && self.analysis.symbolic_admitted.contains_key(canonical)
+                    && generics::symbolic_renaming_class(
+                        signature,
+                        &self.analysis.symbolic_const_types,
+                    )
+                    .as_ref()
+                        == Some(class)
+                    && generics::renames_canonical_parameters(
+                        signature,
+                        &self.analysis.symbolic_type_bounds,
+                    )
+            })
+            .map(|(canonical, _)| *canonical);
         self.check_musttail_callees(FunctionContext {
             check_context,
             function: signature,
@@ -1767,10 +1989,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         } else {
             (Vec::new(), Vec::new())
         };
-        for requirement in self.implicit_type_invariant_requirements(check_context, signature)? {
+        for requirement in self.implicit_type_invariant_requirements(signature)? {
             requirements.push(requirement);
             requirement_places.push(Vec::new());
         }
+        let routed_requirements = self.routed_type_invariant_requirements(signature)?;
 
         let mut postcondition_selectors = if unsupplied_window_row {
             Vec::new()
@@ -1787,14 +2010,16 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             &postcondition_selectors,
             &parameter_bindings,
         )?;
+        self.append_range_type_invariant_contracts(signature, &parameters)?;
         postcondition_selectors = self
             .types
             .declarations
             .relation_postcondition_selectors(postcondition_selectors)?;
         let mut postcondition_relations = Vec::with_capacity(postcondition_selectors.len());
+        let mut postcondition_places = Vec::with_capacity(postcondition_selectors.len());
         for selector in &postcondition_selectors {
             let mut postcondition_bindings = parameter_bindings.clone();
-            postcondition_relations.push(self.check_postcondition_clause(
+            let (relation, places) = self.check_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -1802,7 +2027,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 selector,
                 &mut postcondition_bindings,
                 &mut counters,
-            )?);
+            )?;
+            postcondition_relations.push(relation);
+            postcondition_places.push(places);
         }
         self.types
             .declarations
@@ -1813,11 +2040,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             )?;
 
         bindings = parameter_bindings;
-        let statements = self
-            .types
-            .declarations
-            .tree
-            .children_with(signature.node, Production::Stmt)?;
+        let statements = if summary_source.is_some() {
+            Vec::new()
+        } else {
+            self.types
+                .declarations
+                .tree
+                .children_with(signature.node, Production::Stmt)?
+        };
         let mut checked = self.check_block(
             FunctionContext {
                 check_context,
@@ -1834,14 +2064,42 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         if !self.body.deferred_loop_reference_uses.is_empty() {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
-        self.check_spawned_callees_wait(signature)?;
+        // [WAIT-3] the canonical instance's body check recorded the waiting
+        // calls of these same source spawns.
+        if summary_source.is_none() {
+            self.check_spawned_callees_wait(signature)?;
+        }
         // A function-kind formal and a pending interface declaration
         // [MOD-8] are body-less leaves: their written boundary is what their
         // callers use, and nothing is checked below it.
-        let declaration_only = self.types.declarations.tree.is_body_less(signature.node)?;
+        let declaration_only = summary_source.is_some()
+            || self.types.declarations.tree.is_body_less(signature.node)?;
         if declaration_only {
             checked.can_continue = false;
             checked.effects = signature.declared_effects.clone();
+        }
+        // [PRE-1] the build supplies release's ordinary `return unit`
+        // definition. Derive its leaving-edge releases here, exactly as for
+        // a source function, so component paths and release graphs reach
+        // every consumer before lowering [STOR-3, DIAG-2].
+        let supplied_release = declaration_only
+            && signature.name == "release"
+            && self
+                .types
+                .declarations
+                .tree
+                .is_prelude_node(signature.node)?;
+        if supplied_release {
+            checked.statements.push(CheckedStatement::Return {
+                node_path: self.types.declarations.tree.path(signature.node)?.clone(),
+                value: CheckedExpression::Constant(CheckedValue::Unit),
+                drops: self.types.live_affine_drops(
+                    check_context,
+                    &bindings,
+                    &HashSet::new(),
+                    signature.node,
+                )?,
+            });
         }
         if checked.can_continue {
             return Err(CheckStop::source_issue(SemanticIssue {
@@ -1864,10 +2122,38 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             self.types
                 .exhibited_writes
                 .insert(signature.id, exhibited.writes.clone());
-            let row = self
+            if let effect_repairs::RepairMode::Capture(bodies) = &mut self.types.effect_repairs {
+                bodies.insert(
+                    signature.id,
+                    effect_repairs::RepairBody {
+                        direct: exhibited.clone(),
+                        calls: self.body.repair_calls.take().unwrap_or_default(),
+                    },
+                );
+            }
+            // This optional diagnostic cache supplies KillingCall companions.
+            // Rendering cannot turn an accepted body into a compiler failure;
+            // EFF-2 mismatch reporting below renders its required payload strictly.
+            if let Ok(row) = self
                 .types
-                .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)?;
-            self.types.exhibited_rows.insert(signature.id, row);
+                .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)
+            {
+                self.types.exhibited_rows.insert(signature.id, row);
+            }
+        } else if let Some(source) = summary_source {
+            // The renamed body writes what the canonical body writes: both
+            // root their paths at the declaration's own parameters.
+            if let Some(writes) = self.types.exhibited_writes.get(&source).cloned() {
+                self.types.exhibited_writes.insert(signature.id, writes);
+            }
+            if let effect_repairs::RepairMode::Capture(bodies) = &mut self.types.effect_repairs
+                && let Some(effects) = bodies.get(&source).cloned()
+            {
+                bodies.insert(signature.id, effects);
+            }
+            if let Some(row) = self.types.exhibited_rows.get(&source).cloned() {
+                self.types.exhibited_rows.insert(signature.id, row);
+            }
         }
         self.types.validate_release_graphs(&checked.statements)?;
         // [EFF-1] the row has exactly two categories, and [STOR-8] gives
@@ -1879,7 +2165,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         //
         // Each category is judged by [EFF-2]'s own two-way covering relation
         // rather than by set equality.
-        if !Checker::effect_row_matches(&signature.declared_effects, &exhibited) {
+        if self.types.effect_repairs.checks_row(signature.declaration)
+            && !Checker::effect_row_matches(&signature.declared_effects, &exhibited)
+        {
             let suggested = Checker::suggested_effect_row(&exhibited);
             let (missing, extra) = self.types.effect_row_difference(
                 &exhibited,
@@ -1887,55 +2175,59 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 &signature.declared_effects,
                 signature,
             )?;
-            // [EFF-2] the repair is the suggested row itself: a row EFF-1 and
-            // EFF-2 admit for this body and no call refuses against itself.
-            let expected_row = self.types.render_effect_row(&suggested, signature)?;
+            // An acyclic repair keeps origin/main's exact text. Recursive
+            // rows are withheld until the rejection-only replay validates them.
+            // If source graph classification is unavailable, replay is conservative.
+            let recursive = self.types.effect_repairs.is_ordinary()
+                && self
+                    .requires_recursive_row_repair(signature)
+                    .unwrap_or(true);
+            let (expected_row, mechanical_fix) = if recursive {
+                (None, None)
+            } else {
+                let expected = self.types.render_effect_row(&suggested, signature)?;
+                let fix = format!(
+                    "declare the row as `{expected}`, which covers every access the body makes and no other"
+                );
+                (Some(expected), Some(fix))
+            };
             return self.types.declarations.issue_node(
                 SemanticRule::Eff2,
                 signature.effects_node,
                 SemanticIssueKind::EffectMismatch {
-                    mechanical_fix: format!(
-                        "declare the row as `{expected_row}`, which covers every access the body makes and no other"
-                    ),
+                    mechanical_fix,
                     expected_row,
-                    found_row: self.types.render_effect_row(&signature.declared_effects, signature)?,
+                    found_row: self
+                        .types
+                        .render_effect_row(&signature.declared_effects, signature)?,
                     missing,
                     extra,
                 },
             );
         }
+        // [TYPE-11, FN-2] generated promises follow the written clauses in
+        // both concrete and symbolic instances. A known invariant struct
+        // supplies its ordinary integer relations even while another type
+        // remains symbolic. Schema admission and renamed-instance reuse
+        // must retain those clauses with the written ones, so FN-4's actual
+        // premises have the FN-9 summaries a bound call requires.
+        for (invariant, subject, selector) in
+            self.type_invariant_postcondition_selectors(signature)?
+        {
+            postcondition_selectors.push(selector);
+            postcondition_relations.push(type_invariants::substitute_relation(
+                &invariant.relation,
+                subject,
+            ));
+            postcondition_places.push(Vec::new());
+        }
         let postconditions = if signature.substitution.is_concrete(&self.types.elements) {
-            let mut postconditions = postcondition_selectors
-                .into_iter()
-                .zip(postcondition_relations)
-                .map(|(selector, relation)| {
-                    self.types.build_checked_postcondition(
-                        FunctionContext {
-                            check_context,
-                            function: signature,
-                        },
-                        &parameters,
-                        selector,
-                        relation,
-                        &checked.statements,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            postconditions.extend(self.type_invariant_postconditions(
-                FunctionContext {
-                    check_context,
-                    function: signature,
-                },
-                &parameters,
-                &checked.statements,
-            )?);
-            postconditions
-        } else {
             postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
-                .map(|(selector, relation)| {
-                    self.types.build_checked_schema_postcondition(
+                .zip(postcondition_places)
+                .map(|((selector, relation), places)| {
+                    let mut postcondition = self.types.build_checked_postcondition(
                         FunctionContext {
                             check_context,
                             function: signature,
@@ -1944,12 +2236,57 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         selector,
                         relation,
                         &checked.statements,
-                    )
+                    )?;
+                    postcondition.places = places;
+                    Ok::<_, CheckStop>(postcondition)
                 })
                 .collect::<Result<Vec<_>, _>>()?
+        } else {
+            let source_admitted = summary_source
+                .and_then(|source| self.analysis.symbolic_admitted.get(&source))
+                .cloned();
+            let mut admitted = Vec::new();
+            let mut postconditions = Vec::new();
+            for (position, ((selector, relation), places)) in postcondition_selectors
                 .into_iter()
-                .flatten()
-                .collect()
+                .zip(postcondition_relations)
+                .zip(postcondition_places)
+                .enumerate()
+            {
+                if source_admitted
+                    .as_ref()
+                    .is_some_and(|positions| !positions.contains(&position))
+                {
+                    continue;
+                }
+                if let Some(postcondition) = self.types.build_checked_schema_postcondition(
+                    FunctionContext {
+                        check_context,
+                        function: signature,
+                    },
+                    &parameters,
+                    selector,
+                    relation,
+                    &checked.statements,
+                )? {
+                    admitted.push(position);
+                    postconditions.push(CheckedPostcondition {
+                        places,
+                        ..postcondition
+                    });
+                }
+            }
+            if self
+                .analysis
+                .symbolic_canonical
+                .get(&signature.declaration)
+                .is_some_and(|(canonical, _)| *canonical == signature.id)
+            {
+                self.analysis
+                    .symbolic_admitted
+                    .insert(signature.id, admitted);
+            }
+            postconditions
         };
         let prelude_element = if signature.name == "paged_page_len"
             && self
@@ -1974,6 +2311,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let function = CheckedFunction {
             prelude_element,
             formal_hypothesis: signature.formal_parameter.is_some(),
+            summary_source,
             id: signature.id,
             declaration: signature.declaration,
             module: self
@@ -1999,10 +2337,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             // its own allocation here.
             allocates: exhibited.allocates,
             requirements,
+            held_parameters: signature.checked_held_parameters()?,
+            held_calls: std::mem::take(&mut self.body.checked_held_calls),
             requirement_places,
+            routed_requirements,
             postconditions,
             range_facts: std::mem::take(&mut self.body.range_facts),
-            body: (!declaration_only).then_some(checked.statements),
+            body: (!declaration_only || supplied_release).then_some(checked.statements),
             reference_origins: std::mem::take(&mut self.body.reference_origins),
             body_disposition: super::model::CheckedBodyDisposition::Inhabited,
             call_separations: {
@@ -2064,6 +2405,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             live: true,
             loop_depth: 0,
             compiler_updated: false,
+            read_only_state: false,
             // [REF-1] a reference parameter arrives naming the caller's path
             // by substitution [EFF-5]; inside this body the parameter name is
             // that path, so its set anchors at itself and every resolution
@@ -2078,100 +2420,11 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     ResolvedPlace::binding(binding),
                 )
             }),
+            commit_target: None,
             refinement_witnesses: Vec::new(),
+            handle_watch: None,
             call_value: true,
         })
-    }
-
-    /// Checks every source-generic body once with symbolic arguments, even when
-    /// no concrete instantiation is reachable from the executable program.
-    /// The ordinary entailment engine is the only acceptance path: generic
-    /// bodies do not receive a separate proof language or an assertion-based
-    /// exception.
-    fn validate_generic_body_entailment(
-        &mut self,
-        functions: &mut [CheckedFunctionInventory],
-        canonical: &[(usize, DeclarationId)],
-        callees: &[EntailmentCallee],
-    ) -> Result<(), CheckStop> {
-        let optimistic_batch = functions.iter().any(|checked| {
-            !checked.function.postconditions.is_empty()
-                || Checker::statements_contain_value_if(
-                    checked.function.body.as_deref().unwrap_or_default(),
-                )
-        });
-        // Only the canonical instances are judged below, and a judged body
-        // reads another function's analysis solely through the postcondition
-        // summaries of its callees. The other bodies of this symbolic
-        // view — every nongeneric function among them — are analyzed
-        // again by the concrete phase, so analyzing them here would repeat
-        // that whole cost for a result nothing reads.
-        let analyzed = Checker::generic_validation_scope(functions, canonical)?;
-        let mut judged = vec![false; functions.len()];
-        for (index, _) in canonical {
-            judged[*index] = true;
-        }
-        self.analyze_function_inventory(
-            functions,
-            callees,
-            optimistic_batch,
-            Some(&analyzed),
-            false,
-            Some(&judged),
-        )?;
-        if optimistic_batch {
-            for (index, (checked, analyzed)) in functions.iter_mut().zip(&analyzed).enumerate() {
-                if *analyzed && !self.analysis.renamed_summaries[index] {
-                    finalize_function_entailment(&mut checked.function.entailment);
-                }
-            }
-        }
-        if !self.reject_entailment {
-            return Ok(());
-        }
-        for (index, declaration) in canonical {
-            let checked = functions
-                .get(*index)
-                .filter(|checked| checked.function.declaration == *declaration)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            self.types.entailment_rejection(&checked.function)?;
-        }
-        Ok(())
-    }
-    /// The functions whose bodies symbolic validation must analyze: the
-    /// canonical instances and everything their calls reach, by the same
-    /// call-graph shape the postcondition schedule is built from.
-    ///
-    /// The set is closed under callees, so a strongly connected component is
-    /// either wholly inside it or wholly outside, and every summary an
-    /// analyzed body can consume is published by an analyzed component.
-    fn generic_validation_scope(
-        functions: &[CheckedFunctionInventory],
-        canonical: &[(usize, DeclarationId)],
-    ) -> Result<Vec<bool>, CheckStop> {
-        let mut analyzed = vec![false; functions.len()];
-        let mut pending = canonical
-            .iter()
-            .map(|(index, _)| *index)
-            .collect::<Vec<_>>();
-        let mut calls = Vec::new();
-        while let Some(index) = pending.pop() {
-            let slot = analyzed
-                .get_mut(index)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            if std::mem::replace(slot, true) {
-                continue;
-            }
-            let function = &functions[index].function;
-            calls.clear();
-            collect_statement_calls(
-                function.id,
-                function.body.as_deref().unwrap_or_default(),
-                &mut calls,
-            );
-            pending.extend(calls.iter().map(|call| call.callee.0 as usize));
-        }
-        Ok(analyzed)
     }
 
     fn install_call_requirements(
@@ -2181,7 +2434,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     ) -> Result<(), CheckStop> {
         let requirements = functions
             .iter()
-            .map(|checked| checked.function.requirements.clone())
+            .map(|checked| {
+                (
+                    checked.function.requirements.clone(),
+                    checked.function.routed_requirements.clone(),
+                )
+            })
             .collect::<Vec<_>>();
         for checked in functions {
             if !self.types.view.contains_function(checked.function.id) {
@@ -2198,7 +2456,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
         statements: &mut [CheckedStatement],
-        requirements: &[Vec<CheckedRequirement>],
+        requirements: &[CalleeRequirements],
     ) -> Result<(), CheckStop> {
         for statement in statements {
             match statement {
@@ -2306,7 +2564,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
         expression: &mut CheckedExpression,
-        requirements: &[Vec<CheckedRequirement>],
+        requirements: &[CalleeRequirements],
     ) -> Result<(), CheckStop> {
         match expression {
             CheckedExpression::UserCall {
@@ -2317,9 +2575,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 goal_regions,
                 formal_contract,
                 requirements: call_requirements,
+                routed_requirements: call_routed_requirements,
                 ..
             } => {
-                for argument in arguments {
+                for argument in arguments.iter_mut() {
                     self.install_expression_call_requirements(
                         check_context,
                         argument,
@@ -2335,11 +2594,16 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 if let Some(effects) = formal_effects {
                     effects.allocates = signature.declared_effects.allocates;
                 }
+                let (callee_requirements, callee_routed) = requirements
+                    .get(function.0 as usize)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                // [TYPE-11] the routed requirements are the selected actual's
+                // own: a formal's parameter types equal its actual's, so the
+                // two carry the same ones.
+                call_routed_requirements.clone_from(callee_routed);
                 let boundary = match formal_contract {
                     Some(boundary) => boundary.requirements.as_slice(),
-                    None => requirements
-                        .get(function.0 as usize)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    None => callee_requirements.as_slice(),
                 };
                 *call_requirements = boundary
                     .iter()
@@ -2361,7 +2625,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             CheckedExpression::IntegerOperation { arguments, .. }
             | CheckedExpression::FloatOperation { arguments, .. }
             | CheckedExpression::BooleanOperation { arguments, .. }
-            | CheckedExpression::EnumEquality { arguments, .. }
+            | CheckedExpression::ValueEquality { arguments, .. }
             | CheckedExpression::ConstructStruct {
                 fields: arguments, ..
             }
@@ -2436,13 +2700,21 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 self.install_expression_call_requirements(check_context, start, requirements)?;
                 self.install_expression_call_requirements(check_context, end, requirements)?;
             }
+            CheckedExpression::RangeMeasure { root, .. } => {
+                if let Some(formation) = root.formation.as_deref_mut() {
+                    self.install_expression_call_requirements(
+                        check_context,
+                        formation,
+                        requirements,
+                    )?;
+                }
+            }
             CheckedExpression::Constant(_)
             | CheckedExpression::NamedConstant { .. }
             | CheckedExpression::Binding { .. }
             | CheckedExpression::ArrayMeasure { .. }
             | CheckedExpression::BufferMeasure { .. }
             | CheckedExpression::ContainerMeasure { .. }
-            | CheckedExpression::RangeMeasure { .. }
             | CheckedExpression::BorrowAddressed { .. }
             | CheckedExpression::DerefAddressed { .. }
             | CheckedExpression::Project { .. } => {}
@@ -2497,7 +2769,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     // over is the value that argument names here.
                     let projection = match projection {
                         GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
-                            Checker::goal_argument_offset(arguments.get(*ordinal as usize))?,
+                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
+                        ),
+                        GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
+                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
                         ),
                         other => *other,
                     };
@@ -2514,10 +2789,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 declaration,
                 projections,
                 ty,
+                admission,
             }) => Ok(GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration: *declaration,
                 projections: projections.clone(),
                 ty: self.instantiate_goal_type(check_context, *ty, signature, regions)?,
+                admission: admission.clone(),
             })),
             GoalExpression::Datum(GoalDatum::Literal(value)) => {
                 Ok(GoalExpression::Datum(GoalDatum::Literal(
@@ -2563,33 +2840,26 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     /// The offset one actual supplies to a formal-valued subscript [MSR-1].
     ///
     /// [ENT-2] decides a place's identity by its canonical spelling, so an
-    /// argument that names a literal, a named or generic const, or a live
-    /// binding supplies exactly that, and an argument that names none of
-    /// them supplies the unknown offset, which no admitted family separates
-    /// -- the conservative reading in both directions [OWN-7].
+    /// argument [`super::goal::actual_offset`] names supplies exactly that,
+    /// and an argument it names no offset for supplies the unknown offset,
+    /// which no admitted family separates -- the conservative reading in
+    /// both directions [OWN-7].
     fn goal_argument_offset(
+        &self,
         argument: Option<&GoalExpression>,
     ) -> Result<super::places::CapturedValue, CheckStop> {
-        use super::places::{CapturedTerm, CapturedValue};
-        let unknown = CapturedValue::unknown();
-        let Some(GoalExpression::Datum(datum)) = argument else {
-            return Ok(unknown);
+        let named = |declaration| {
+            let constant = self
+                .types
+                .constant(*self.types.constants.get(&declaration)?);
+            match constant.ok()?.value {
+                CheckedValue::Integer { bits, .. } => Some(bits),
+                _ => None,
+            }
         };
-        Ok(match datum {
-            GoalDatum::Literal(CheckedValue::Integer { bits, .. }) => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Literal(*bits))
-            }
-            GoalDatum::Literal(CheckedValue::ConstGeneric { declaration, .. }) => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Const(*declaration))
-            }
-            GoalDatum::Place {
-                root, projections, ..
-            } if projections.is_empty() => {
-                CapturedValue::new(unknown.capture, CapturedTerm::Binding(*root))
-            }
-            _ => return Ok(unknown),
-        }
-        .goal_identity())
+        Ok(argument
+            .and_then(|argument| super::goal::actual_offset(argument, &named))
+            .unwrap_or_else(super::places::CapturedValue::unknown))
     }
 
     fn instantiate_goal_operation(
@@ -2661,10 +2931,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 )?,
             },
             GoalOperation::Boolean(operation) => GoalOperation::Boolean(operation),
-            GoalOperation::EnumEquality {
+            GoalOperation::ValueEquality {
                 equal,
                 operand_type,
-            } => GoalOperation::EnumEquality {
+            } => GoalOperation::ValueEquality {
                 equal,
                 operand_type: self.instantiate_goal_type(
                     check_context,
@@ -3053,20 +3323,29 @@ impl<'unit> TypeContext<'unit> {
     /// source-schema entailment. Function identity must be a true vector
     /// index; silently skipping a malformed identity would make masks observe
     /// a different program from the baseline.
-    fn entailment_callees(&self) -> Result<Vec<EntailmentCallee>, CheckStop> {
+    fn entailment_callees(
+        &self,
+        functions: &[CheckedFunctionInventory],
+    ) -> Result<Vec<EntailmentCallee>, CheckStop> {
         let mut callees = Vec::with_capacity(self.signatures.len());
         for (index, signature) in self.signatures.iter().enumerate() {
             if signature.id.0 as usize != index {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
-            callees.push(EntailmentCallee::from_signature(
+            let mut callee = EntailmentCallee::from_signature(
                 signature
                     .parameters
                     .iter()
                     .map(|parameter| (parameter.declaration, parameter.mode, parameter.ty)),
                 &signature.declared_effects.writes,
                 self.exhibited_writes.get(&signature.id).map(Vec::as_slice),
-            ));
+            );
+            callee.relocation = matches!(signature.name.as_str(), "grow" | "grow_paged")
+                && self.declarations.tree.is_prelude_node(signature.node)?;
+            callees.push(callee);
+        }
+        for (callee, checked) in callees.iter_mut().zip(functions) {
+            callee.range_boundary = checked.function.range_facts.has_boundary();
         }
         Ok(callees)
     }
@@ -3120,9 +3399,14 @@ impl<'unit> TypeContext<'unit> {
                 checked.function.body.as_deref().unwrap_or_default(),
                 &mut calls,
             );
-            for call in &calls {
-                let callee = call.callee.0 as usize;
-                let Some(callee_callers) = callers.get_mut(callee) else {
+            // [FN-2] a contract-only renamed instance allocates when the
+            // canonical body it stands for does.
+            for callee in calls
+                .iter()
+                .map(|call| call.callee)
+                .chain(checked.function.summary_source)
+            {
+                let Some(callee_callers) = callers.get_mut(callee.0 as usize) else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
                 callee_callers.push(index);
@@ -3258,124 +3542,6 @@ impl<'unit> TypeContext<'unit> {
         } else {
             entries.join(", ")
         })
-    }
-    /// One `effect_path` in its written spelling [EFF-1]: the parameter's own
-    /// name followed by the suffixes that produced it. An internal `Deref`
-    /// step selects a Box's `.inner`; references add no row wrapper.
-    ///
-    /// The walk carries the selected type only as far as it can name a step:
-    /// a field name needs its containing struct and a payload field needs its
-    /// containing enum. A step the checked program cannot name renders as its
-    /// ordinal, which is honest rather than invented.
-    fn render_effect_path(
-        &self,
-        path: &super::model::CheckedStatePath,
-        signature: &FunctionSignature,
-    ) -> Result<String, CheckStop> {
-        let parameter = signature
-            .parameters
-            .iter()
-            .find(|parameter| parameter.declaration == path.root);
-        let (mut rendered, mut ty) = match parameter {
-            Some(parameter) => (parameter.name.clone(), Some(parameter.ty)),
-            None => (self.declarations.declaration_spelling(path.root)?, None),
-        };
-        for step in &path.steps {
-            match step {
-                super::model::CheckedEffectStep::Field(field) => {
-                    let selected = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Struct { fields } => fields
-                                .get(*field as usize)
-                                .map(|declared| (declared.name.clone(), declared.ty)),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    match selected {
-                        Some((name, field_type)) => {
-                            rendered.push('.');
-                            rendered.push_str(&name);
-                            ty = Some(field_type);
-                        }
-                        None => {
-                            rendered.push_str(&format!(".{field}"));
-                            ty = None;
-                        }
-                    }
-                }
-                // The internal content step retains the referent type so
-                // fields below `.inner` keep their source names [TYPE-9].
-                super::model::CheckedEffectStep::Deref => {
-                    rendered.push_str(".inner");
-                    ty = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Box { referent, .. } => Some(referent),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                }
-                super::model::CheckedEffectStep::Payload { variant, field } => {
-                    let selected = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Enum { variants } => {
-                                variants.get(*variant as usize).and_then(|declared| {
-                                    declared.fields.get(*field as usize).map(|payload| {
-                                        (declared.name.clone(), payload.name.clone(), payload.ty)
-                                    })
-                                })
-                            }
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    match selected {
-                        Some((variant_name, field_name, payload_type)) => {
-                            rendered.push_str(&format!(".{variant_name}.{field_name}"));
-                            ty = Some(payload_type);
-                        }
-                        None => {
-                            rendered.push_str(&format!(".{variant}.{field}"));
-                            ty = None;
-                        }
-                    }
-                }
-                super::model::CheckedEffectStep::Page(index) => {
-                    rendered.push_str(&format!(
-                        ".pages[{}]",
-                        self.declarations.declaration_spelling(*index)?
-                    ));
-                    ty = None;
-                }
-                super::model::CheckedEffectStep::Index(index) => {
-                    rendered.push_str(&format!(
-                        "[{}]",
-                        self.declarations.declaration_spelling(*index)?
-                    ));
-                    ty = None;
-                }
-                super::model::CheckedEffectStep::Range { start, end } => {
-                    rendered.push_str(&format!(
-                        "[{}..{}]",
-                        self.declarations.declaration_spelling(*start)?,
-                        self.declarations.declaration_spelling(*end)?
-                    ));
-                    ty = None;
-                }
-                super::model::CheckedEffectStep::Part(part) => {
-                    rendered.push('.');
-                    rendered.push_str(part.spelling());
-                    ty = None;
-                }
-                super::model::CheckedEffectStep::Measure(measure) => {
-                    rendered.push('.');
-                    rendered.push_str(measure.spelling());
-                    ty = None;
-                }
-            }
-        }
-        Ok(rendered)
     }
     /// The declared row's two [EFF-2] failures, each named by the entry the
     /// writer adds or deletes.
@@ -3795,11 +3961,20 @@ impl<'unit> TypeContext<'unit> {
             derived_consts: Default::default(),
             behavior: Default::default(),
             type_invariants: Default::default(),
+            range_type_invariants: Default::default(),
             exhibited_writes: Default::default(),
             exhibited_rows: Default::default(),
+            effect_repairs: effect_repairs::RepairMode::Ordinary,
             functions_by_declaration: Default::default(),
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),
         }
     }
 }
+
+/// One callee's requirement templates: its written and type-invariant
+/// requirements, and its routed type-invariant requirements [FN-8, TYPE-11].
+type CalleeRequirements = (
+    Vec<CheckedRequirement>,
+    Vec<super::postcondition::CheckedRoutedRequirement>,
+);

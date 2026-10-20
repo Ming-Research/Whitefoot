@@ -1,0 +1,19 @@
+fn exchange<T: drop>(first: &T, second: &T) -> result: unit writes(first), writes(second) {
+  doc "TYPE-9: the canonical exchanging parameter keeps its identity across symbolic instances.";
+  swap(first: first, second: second);
+  return unit;
+}
+
+fn caller<U: copy>(first: &U, second: &U) -> result: unit writes(first), writes(second) {
+  doc "FN-2: this unused body reaches a renamed symbolic exchange instance with a different bound.";
+  exchange::<U>(first: first, second: second);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "TYPE-9: renamed symbolic discovery cannot move the refusal away from the complete written targ Slots<u64>.";
+  let small = box_slots_new::<u64>(capacity: 1_u64);
+  let large = box_slots_new::<u64>(capacity: 64_u64);
+  exchange::<Slots<u64>>(first: &small.inner, second: &large.inner);
+  return std::process::exit_status(code: 0_u8);
+}

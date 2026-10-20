@@ -1,0 +1,164 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias MemoryMeter = std::process::MemoryMeter;
+alias exit_status = std::process::exit_status;
+
+fn low_byte(v: u64) -> result: u8 pure {
+  doc "Return the low byte of an integer.";
+  let low = iand(v, 255_u64);
+  match cvt.checked::<u64, u8>(low) {
+    Ok(value: byte) => {
+      return byte;
+    }
+    Err(error: problem) => {
+      return 0_u8;
+    }
+  }
+}
+
+fn spell(destination: &[u8], value: u64) -> result: unit writes(destination) {
+  doc "Write a key as eight low-to-high bytes.";
+  let cursor = 0_u64;
+  let rest = value;
+  loop @octets {
+    if cursor >= 8_u64 {
+      break @octets;
+    }
+    let room = destination^.len;
+    if cursor < room {
+      let byte = low_byte(v: rest);
+      set destination^[cursor] = byte;
+    }
+    set rest = irotr(rest, 8_u32);
+    set cursor = cursor +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn released(store: &Shared<ConcurrentHashMap<u64>>, meter: &MemoryMeter) -> code: u8 reads(store), writes(meter) {
+  doc "Compare released reserve bytes with the decrease in heap holding.";
+  let before = std::process::heap_in_use(meter: meter);
+  let freed = std::process::release_map_reserve::<u64>(map: store, meter: meter);
+  let after = std::process::heap_in_use(meter: meter);
+  let again = std::process::release_map_reserve::<u64>(map: store, meter: meter);
+  if freed == 0_u64 {
+    return 1_u8;
+  }
+  if after > before {
+    return 2_u8;
+  }
+  let fallen = before -wrap after;
+  if fallen != freed {
+    return 3_u8;
+  }
+  if again != 0_u64 {
+    return 4_u8;
+  }
+  return 0_u8;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Exercise reserve release at several map sizes while retaining entries.";
+  let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let name = array_filled::<u8, 8>(value: 0_u8);
+  let small = shared_map_new::<u64>(capacity: 0_u64);
+  let small_next = 0_u64;
+  loop @small_churn {
+    if small_next == 20000_u64 {
+      break @small_churn;
+    }
+    let key = &name[0_u64..8_u64];
+    spell(destination: key, value: small_next);
+    atomic t = &small {
+      set t^[key] = Some<u64>(value: small_next);
+    }
+    if small_next >= 4_u64 {
+      let old = small_next -wrap 4_u64;
+      spell(destination: key, value: old);
+      atomic t = &small {
+        set t^[key] = None<u64>();
+      }
+    }
+    set small_next = small_next +wrap 1_u64;
+  }
+  let small_code = released(store: &small, meter: &meter);
+  if small_code != 0_u8 {
+    let small_exit = small_code +wrap 10_u8;
+    return exit_status(code: small_exit);
+  }
+  let small_count = 0_u64;
+  atomic t = &small {
+    set small_count = map_count::<u64>(map: t);
+  }
+  if small_count != 4_u64 {
+    return exit_status(code: 15_u8);
+  }
+  let medium = shared_map_new::<u64>(capacity: 0_u64);
+  let medium_next = 0_u64;
+  loop @medium_churn {
+    if medium_next == 200000_u64 {
+      break @medium_churn;
+    }
+    let key = &name[0_u64..8_u64];
+    spell(destination: key, value: medium_next);
+    atomic t = &medium {
+      set t^[key] = Some<u64>(value: medium_next);
+    }
+    if medium_next >= 2000_u64 {
+      let old = medium_next -wrap 2000_u64;
+      spell(destination: key, value: old);
+      atomic t = &medium {
+        set t^[key] = None<u64>();
+      }
+    }
+    set medium_next = medium_next +wrap 1_u64;
+  }
+  let medium_code = released(store: &medium, meter: &meter);
+  if medium_code != 0_u8 {
+    let medium_exit = medium_code +wrap 20_u8;
+    return exit_status(code: medium_exit);
+  }
+  let medium_count = 0_u64;
+  atomic t = &medium {
+    set medium_count = map_count::<u64>(map: t);
+  }
+  if medium_count != 2000_u64 {
+    return exit_status(code: 25_u8);
+  }
+  let large = shared_map_new::<u64>(capacity: 0_u64);
+  let large_next = 0_u64;
+  loop @large_churn {
+    if large_next == 400000_u64 {
+      break @large_churn;
+    }
+    let key = &name[0_u64..8_u64];
+    spell(destination: key, value: large_next);
+    atomic t = &large {
+      set t^[key] = Some<u64>(value: large_next);
+    }
+    if large_next >= 40000_u64 {
+      let old = large_next -wrap 40000_u64;
+      spell(destination: key, value: old);
+      atomic t = &large {
+        set t^[key] = None<u64>();
+      }
+    }
+    set large_next = large_next +wrap 1_u64;
+  }
+  let large_code = released(store: &large, meter: &meter);
+  if large_code != 0_u8 {
+    let large_exit = large_code +wrap 30_u8;
+    return exit_status(code: large_exit);
+  }
+  let large_count = 0_u64;
+  atomic t = &large {
+    set large_count = map_count::<u64>(map: t);
+  }
+  if large_count != 40000_u64 {
+    return exit_status(code: 35_u8);
+  }
+  return exit_status(code: 0_u8);
+}

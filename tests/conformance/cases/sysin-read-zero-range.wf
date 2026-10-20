@@ -6,7 +6,7 @@ alias read_next = std::io::read_next;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "The ordinary read_next implementation returns Ok(start) without transfer for an empty range. The following nonempty read still observes the first arranged byte.";
-  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -21,7 +21,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let outcome = 0_u8;
   let window = &chunk[0_u64..4_u64];
   let no_deadline = None<std::time::Instant>();
-  match read_next(factory: &entry_factory, input: &input, destination: window, start: 2_u64, end: 2_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = read_next(factory: &entry_factory, input: &input, destination: window, start: 2_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: endpoint) => {
       let unmoved = endpoint == 2_u64;
       if unmoved {
@@ -41,7 +44,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     }
   }
   if outcome == 0_u8 {
-    match read_next(factory: &entry_factory, input: &input, destination: window, start: 0_u64, end: 4_u64, deadline: no_deadline) {
+    let wait_cancel_2 = std::time::cancel_never();
+    let wait_outcome_2 = read_next(factory: &entry_factory, input: &input, destination: window, start: 0_u64, end: 4_u64, deadline: no_deadline, cancel: &wait_cancel_2);
+    std::time::close_cancel_watch(watch: move wait_cancel_2);
+    match wait_outcome_2 {
       Ok(value: endpoint) => {
       }
       Err(error: read_stop_25) => {

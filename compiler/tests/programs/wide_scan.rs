@@ -67,7 +67,10 @@ fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream,
       break @publish;
     }
     let no_deadline = None<std::time::Instant>();
-    match std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: accepted) => {
         set sent = accepted;
       }
@@ -81,7 +84,7 @@ fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream,
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "Runs three equivalence byte walks, publishes their recorded positions, then runs one argument-selected boundary walk with a typed exhaustion status.";
-  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &factory, directory: move unused_cwd);

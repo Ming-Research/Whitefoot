@@ -255,6 +255,47 @@ before these criteria were written; their results below are the same runs.
    unchanged design; the serial composition phase of the `style_oracle`
    check fell from 10.7 s to about 6 s in samples.
 
+10. **Summary-read symbolic scope.** Symbolic validation analyzes the
+   postcondition components of the canonical generic instances and,
+   transitively, only the callee components that contain a postcondition,
+   the only components whose analysis a caller reads [FN-9]; before, it
+   analyzed every component the canonical instances reach. In Halo-wf
+   `9915000`'s `pkg::vm` check on main `ce57c9ddd`, the checker's work
+   counters (`WHITEFOOT_CHECK_WORK`, one GitHub-hosted run) attribute 344 of
+   the 1227 function analyses to work no caller reads: 254 symbolic analyses
+   of nongeneric functions without a postcondition, analyzed again in the
+   concrete phase, and 90 repeated symbolic instances of generic functions
+   without one. Those runs hold about 36% of the evaluated L0 pairs, 40% of
+   the interning calls and 43% of the joins. Written before the timing: the
+   candidate is kept if Halo's `pkg::vm` check then performs fewer analyses
+   with the same verdict, the gate passes, the LLVM of Halo's `test` entry is
+   byte-identical, and on the i9-14900K (interleaved runs of the base, a twin
+   of the base and the head, ten each after one warm-up, `taskset -c 2-15`)
+   the head's median wall time is below both the base's and the twin's
+   minimum; it is rejected otherwise, because the removed analyses run
+   concurrently with one another beside a serial symbolic type check that
+   may hide their cost.
+
+11. **Contract-only renamed instances.** A non-canonical symbolic instance
+   whose arguments are distinct symbolic parameters of the kinds, const
+   types, type bounds and interface members of its declaration's canonical
+   instance forms only its contract,
+   admits the schema clauses the canonical instance admits, and takes the
+   canonical instance's outcomes; an edge to the canonical instance in the
+   postcondition schedule orders it after that instance or into its
+   component. A per-function timer on a GitHub-hosted run (Halo-wf `9915000`,
+   `pkg::vm`, candidate 10's head) found 8,537 such body checks taking
+   10.4 s of the 10.9 s spent checking bodies, against 0.1 s for the 137
+   canonical instances: each interpreter helper is instantiated at the
+   symbolic parameters of about 85 generic callers. Written before the
+   timing: the candidate is kept if the gate passes, Halo's `pkg::vm` check
+   keeps its verdict, the LLVM of Halo's `test` entry is byte-identical, a
+   verification run that also checks and analyzes every such instance finds
+   its admitted clauses and outcomes identical to the copied ones, and on the
+   i9-14900K (interleaved runs of candidate 10's head as the base, a twin of
+   it and this head, ten each after a warm-up, `taskset -c 2-15`) the head's
+   median wall time is below both the base's and the twin's minimum.
+
 Rejected alternatives:
 
 - Per-function concurrency first: the critical path is one function, not
@@ -358,15 +399,58 @@ branch's gives the algorithmic gain alone: 3.4x for both entries and 2.0x for
 `pkg::style`; concurrency then adds 1.5x and 2.2x to the entries and little
 to a module check whose critical path is one module.
 
+Candidate 10 was measured against its base, main `fe5589ec5`, on Halo-wf
+`9915000`'s `pkg::vm` check. Both compilers accept, and the LLVM of Halo's
+`test` entry is byte-identical (GitHub-hosted runner). The work counters fall
+from 1227 function analyses to 912, from 3895 joins to 2771, from 2.21 to
+1.78 million evaluated L0 pairs and from 8.89 to 7.01 million interning calls,
+less than the 36% of pairs predicted, because the estimate took each generic
+declaration's first symbolic run as its canonical instance. On the i9-14900K
+(native Ubuntu, performance cores at 5.0 GHz, `taskset -c 2-15`, the `gate`
+profile, ten interleaved runs each after one warm-up):
+
+| Compiler | median wall | range | peak RSS |
+|---|---:|---:|---:|
+| base `fe5589ec5` | 8.84 s | 8.78–8.90 s | 1.54–1.56 GB |
+| twin of the base | 8.86 s | 8.79–8.91 s | 1.54–1.57 GB |
+| candidate 10 | 8.61 s | 8.53–8.75 s | 1.46–1.49 GB |
+
+The head's median lies below both the base's and the twin's minimum, so the
+candidate is kept by its prior criterion; the gain, 2.6%, is much smaller
+than the share of proof work removed, because the analyses run concurrently
+beside the serial symbolic type check that dominates the module-verdict
+thread.
+
+Candidate 11 was measured against candidate 10's head `e8471e19`. Both
+compilers accept Halo's `pkg::vm`, and the LLVM of Halo's `test` entry is
+byte-identical to main `fe5589ec5`'s, whose emission took 72.8 s against 44.8 s
+with both candidates (one GitHub-hosted run each). The function analyses fall to
+577 from main's 1227. A verification patch that also checked and analyzed every
+contract-only instance found its admitted clauses equal to the canonical
+instance's in all 8,364 comparisons, and its body disposition kind and the
+discharge status of every invariant and postcondition proof equal to the
+copied ones in all 6,810 analyses of instances in the analysis scope. That
+patch predates the bound and interface-member conditions, which only narrow
+the instances it covered. On the
+i9-14900K, under candidate 10's conditions:
+
+| Compiler | median wall | range | peak RSS |
+|---|---:|---:|---:|
+| candidate 10 `e8471e19` | 8.61 s | 8.57–8.64 s | 1.46–1.49 GB |
+| twin of it | 8.62 s | 8.58–8.71 s | 1.46–1.49 GB |
+| candidate 11 | 3.76 s | 3.74–3.82 s | 0.54–0.57 GB |
+
+The candidate is kept by its prior criterion: Halo's module check is 2.3x
+faster than candidate 10 and 2.35x faster than main.
+
 ## Remaining costs
 
-- **Symbolic validation on Halo's critical path.** In `pkg::vm` the
-  module-verdict thread now spends about 44% of its samples in generic
-  validation (28% type-checking the symbolic view, 14% discovering and
-  instantiating its signatures), against 25% for the concrete type check and
-  10% reading declarations; the symbolic view checks every function body,
-  nongeneric ones included. About 30% of that thread's samples are in the C
-  library's allocator and copying.
+- **Symbolic validation on Halo's critical path.** Before candidate 11, the
+  `pkg::vm` module-verdict thread spent 57% of its samples in the symbolic
+  view's body checks and 1% in the concrete view's (a per-thread sample split
+  on a GitHub-hosted runner, Halo-wf `9915000`, main `fe5589ec5`), almost all
+  of it in the renamed instances candidate 11 no longer checks. What remains
+  of the check after it has not been profiled.
 
 - **Edge insertion of constant terms.** In `pkg::style`, now the slowest
   module, 46% of samples are edge insertion during pre-kill materialization.

@@ -68,6 +68,52 @@ use super::system::with_ir;
 use super::{compile, compile_and_run, compile_rejection, emitted_function};
 use crate::target::{TargetLayout, TargetLayoutFailure, validate_program};
 
+/// The conformance fixtures own execution; this checks that whole-const
+/// lowering uses the static as a snapshot source, never as its destination.
+#[test]
+fn whole_constant_copies_load_from_static_storage() {
+    use crate::{IrInstruction, IrOperation};
+
+    for case in [
+        "const2-pos-whole-array-copy-patch",
+        "const2-pos-whole-struct-copy",
+    ] {
+        let source = super::system::corpus_source(case);
+        with_ir(&source, |program| {
+            let mut copies = 0;
+            for function in program.functions() {
+                let plan = crate::backend::storage::FunctionStoragePlan::build(program, function)
+                    .expect("constant-copy storage plan");
+                let definitions: Vec<_> = function
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                    .filter_map(|instruction| match instruction {
+                        IrInstruction::Define {
+                            result, operation, ..
+                        } => Some((*result, operation)),
+                        _ => None,
+                    })
+                    .collect();
+                for (result, operation) in &definitions {
+                    let IrOperation::Load { address, referent } = operation else {
+                        continue;
+                    };
+                    if definitions.iter().any(|(value, operation)| {
+                        value == address && matches!(operation, IrOperation::ConstantAddress { .. })
+                    }) {
+                        let slot = plan.slot(*result).expect("aggregate copy has storage");
+                        assert_eq!(function.value_type(*result), Some(referent.ty()));
+                        assert_ne!(plan.destination(slot), Some(*address));
+                        copies += 1;
+                    }
+                }
+            }
+            assert_eq!(copies, 1, "{case}: one whole-static snapshot");
+        });
+    }
+}
+
 #[test]
 fn structural_copy_aggregates_keep_independent_storage_after_generic_substitution() {
     let source = br#"struct Pair {
@@ -740,8 +786,8 @@ fn relay(values: Array<Record, 1>) -> result: Array<Record, 1> pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 17_u64);
-  let held = make(owner: move owner, tag: 17_u64);
-  let returned = relay(values: move held);
+  let observed_state = make(owner: move owner, tag: 17_u64);
+  let returned = relay(values: move observed_state);
   let tag = returned[0_u64].tag;
   if tag != 17_u64 {
     return std::process::exit_status(code: 1_u8);
@@ -1076,7 +1122,7 @@ fn a_long_loop_over_a_dynamically_indexed_run_keeps_the_frame_bounded() {
   let total = 0_u64;
   for @outer (
     batch in 0_u64..25000_u64,
-    invariant held: built.len >= 8_u64
+    invariant observed_state: built.len >= 8_u64
   ) {
     for @inner (
       cursor in 0_u64..8_u64,
@@ -1185,7 +1231,10 @@ fn main() -> status: std::process::ExitStatus pure {
         .next()
         .expect("element store")
         .strip_prefix(&store_text)
-        .expect("element address operand");
+        .expect("element address operand")
+        .split(", !tbaa !")
+        .next()
+        .expect("element address before optional metadata");
     let prepared = main
         .find(&format!("{address} = getelementptr "))
         .expect("the complete element address is prepared once");
@@ -1494,10 +1543,11 @@ fn main() -> status: std::process::ExitStatus pure {
     let module = retain_calls(&compile(source))
         .replace("@wf__heap_take(", "@wf_test_allocate(")
         .replace("@wf__heap_give(", "@wf_test_release(");
-    let observer = super::owned_places::allocation_observer(3, 0);
+    // STOR-1: the capacity-zero array now allocates nothing.
+    let observer = super::owned_places::allocation_observer(2, 0);
     let output = super::compile_link_and_run(&module, Some(&observer), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    assert_eq!(output.stdout, b"A1;A2;A3;F3;F2;F1;", "{output:?}");
+    assert_eq!(output.stdout, b"A1;A2;F2;F1;", "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 

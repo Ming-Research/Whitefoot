@@ -1,0 +1,37 @@
+struct Block {
+  entry_slot: u32;
+}
+
+enum Flow {
+  Open(block: u32);
+}
+
+struct EntrySequence {
+  payloads: Box<Paged<Flow>>;
+}
+
+struct Context {
+  sequence: EntrySequence;
+  targets: Box<Slots<Block>>;
+  invariant(c): forall inverse(k in 0_u64..c^.sequence.payloads.inner.len) when c^.sequence.payloads.inner[k].Open.block < c^.targets.inner.len: c^.targets.inner[c^.sequence.payloads.inner[k].Open.block].entry_slot == k;
+}
+
+fn sequence_reserve(sequence: &EntrySequence, capacity: u64) -> result: unit writes(sequence.payloads) contract {
+  requires capacity >= sequence^.payloads.inner.cap;
+  ensures sequence^.payloads.inner.len == entry(sequence)^.payloads.inner.len;
+  ensures forall preserved(k in 0_u64..sequence^.payloads.inner.len): sequence^.payloads.inner[k] == entry(sequence)^.payloads.inner[k];
+} {
+  grow_paged(cell: &sequence^.payloads, capacity: capacity);
+  return unit;
+}
+
+fn reserve_owner(c: &Context, capacity: u64) -> result: unit writes(c.sequence.payloads) contract {
+  requires capacity >= c^.sequence.payloads.inner.cap;
+} {
+  sequence_reserve(sequence: &c^.sequence, capacity: capacity);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

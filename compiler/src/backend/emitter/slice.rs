@@ -36,8 +36,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let partial = self.next_temporary()?;
         writeln!(
             self.output,
-            "  %{pointer} = getelementptr inbounds {block_type}, ptr {address}, i64 0, i32 1, i64 0\n  %{length_address} = getelementptr inbounds {block_type}, ptr {address}, i32 0, i32 0\n  %{length} = load i64, ptr %{length_address}\n  %{partial} = insertvalue {descriptor_type} zeroinitializer, ptr %{pointer}, 0\n  {} = insertvalue {descriptor_type} %{partial}, i64 %{length}, 1",
+            "  %{pointer} = getelementptr inbounds {block_type}, ptr {address}, i64 0, i32 1, i64 0\n  %{length_address} = getelementptr inbounds {block_type}, ptr {address}, i32 0, i32 0\n  %{length} = load i64, ptr %{length_address}{alias}\n  %{partial} = insertvalue {descriptor_type} zeroinitializer, ptr %{pointer}, 0\n  {} = insertvalue {descriptor_type} %{partial}, i64 %{length}, 1",
             self.value_name(result),
+            alias = storage_alias::Role::ArrayLen.attachment(),
         )
         .map_err(|_| BackendFailure::TextEmission)
     }
@@ -171,8 +172,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let llvm = self.output.type_name(self.program, ty)?;
             return writeln!(
                 self.output,
-                "  {} = load {llvm}, ptr %{address}",
-                self.value_name(result)
+                "  {} = load {llvm}, ptr %{address}{}",
+                self.value_name(result),
+                storage_alias::source_read(self.program, ty)
             )
             .map_err(|_| BackendFailure::TextEmission);
         }
@@ -206,10 +208,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         writeln!(
             self.output,
-            "  %{pointer} = extractvalue {descriptor_type} {}, 0\n  %{element_pointer} = getelementptr inbounds {element_type}, ptr %{pointer}, i64 {}\n  {} = load {element_type}, ptr %{element_pointer}",
+            "  %{pointer} = extractvalue {descriptor_type} {}, 0\n  %{element_pointer} = getelementptr inbounds {element_type}, ptr %{pointer}, i64 {}\n  {} = load {element_type}, ptr %{element_pointer}{}",
             self.value_name(slice),
             self.element_address_index(ty, &self.value_name(offset))?,
             self.value_name(result),
+            storage_alias::source_read(self.program, ty),
         )
         .map_err(|_| BackendFailure::TextEmission)
     }
@@ -230,7 +233,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 .element(element)
                 .ok_or(BackendFailure::InvalidIr)?;
             let address = self.run_reference_pointer(slice, index, element)?;
-            return self.store_value_at(value, &format!("%{address}"));
+            return self.store_source_value_at(value, &format!("%{address}"));
         }
         let Some(slice_type @ IrType::Range { element }) = self.value_type(slice) else {
             return Err(BackendFailure::InvalidIr);
@@ -263,7 +266,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             )?,
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        self.store_value_at(value, &format!("%{element_pointer}"))
+        self.store_source_value_at(value, &format!("%{element_pointer}"))
     }
 
     pub(super) fn emit_slice_descriptor(

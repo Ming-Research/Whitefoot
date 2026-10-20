@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Block {
+  entry_slot: u64;
+  normal_y: i64;
+}
+
+fn scatter(order: &[u64], targets: &[Block]) -> result: unit writes(order), writes(targets) contract {
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < targets^.len: targets^[order^[k]].entry_slot == k;
+} {
+  doc "Copies the first entry over the second before the loop, so the inverse stated at entry no longer describes order.";
+  if 1_u64 < order^.len {
+    let first = order^[0_u64];
+    set order^[1_u64] = first;
+  }
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let at = order^[k];
+    if at < targets^.len {
+      set targets^[at].normal_y = 0_i64;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

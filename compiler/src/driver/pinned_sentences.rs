@@ -208,6 +208,45 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     // -------------------------------------------------------------------
+    // [MOD-5] a qualified const written where a value stands: cited at the
+    // path itself with the alias that names it [DIAG-1], and in an atom
+    // position kept as [GRAM-9]'s forbidden call start with the same repair.
+    // The alias alternative is carried out by the conformance case
+    // `mod4-pos-const-alias-in-set-and-let`, which needs a second module.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "qualified-const-in-a-set.wf",
+        source: br#"fn main() -> status: std::process::ExitStatus pure {
+  let holder = Holder(value: 0_u32, other: 0_u32);
+  set holder.value = pkg::qualified_source::marker;
+  set holder.other = 1_u32;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "MOD-5",
+        sentences: &[
+            "qualified-const-in-a-set.wf:3:22: error[MOD-5]: UnexpectedToken\n",
+            "\n  marker:                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  expected: [\"::\", \"(\"]\n  found: \"pkg::qualified_source::marker\"\n  mechanical_fix: a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `marker` here, add `alias marker = pkg::qualified_source::marker;` to this record's alias header and write `marker` in place of `pkg::qualified_source::marker` [MOD-4]; a const of this record's own module is written `marker` with no alias\n",
+        ],
+    },
+    Probe {
+        name: "qualified-const-as-an-argument.wf",
+        source: br#"fn take(value: u32) -> result: u32 pure {
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let taken = take(value: pkg::qualified_source::marker);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-9",
+        sentences: &[
+            "qualified-const-as-an-argument.wf:6:27: error[GRAM-9]: UnexpectedToken\n",
+            "\n  found: \"pkg::\"\n  mechanical_fix: a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `marker` here, add `alias marker = pkg::qualified_source::marker;` to this record's alias header and write `marker` in place of `pkg::qualified_source::marker` [MOD-4]; a const of this record's own module is written `marker` with no alias\n",
+        ],
+    },
+    // -------------------------------------------------------------------
     // [MSR-3] and [CALL-6]: the two judgments the fact machinery adds.
     // -------------------------------------------------------------------
     Probe {
@@ -331,7 +370,9 @@ fn main() -> status: std::process::ExitStatus pure {
   let wide = payload.len;
   let view = &header[0_u64..4_u64];
   let no_deadline = None<std::time::Instant>();
-  let sent = std::io::write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide, deadline: no_deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let sent = std::io::write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
@@ -380,6 +421,48 @@ fn main() -> status: std::process::ExitStatus pure {
         sentences: &[
             "]: TypeMismatch\n",
             "\n  expected: 1 written generic argument\n  found: no explicit argument list\n",
+        ],
+    },
+    // -------------------------------------------------------------------
+    // [CONST-1] a const argument against its const parameter's type: each
+    // IDENT term declares exactly that type, and the value lies in its range.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "const-argument-outside-parameter-range.wf",
+        source: br#"fn get<const n: u8>() -> r: u8 pure {
+  return n;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let v = get::<300>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "CONST-1",
+        sentences: &[
+            "]: ConstArgumentOutOfRange\n",
+            "\n  parameter_type: u8\n  value: 300\n",
+        ],
+    },
+    Probe {
+        name: "const-argument-term-of-another-type.wf",
+        source: br#"fn get<const n: u64>() -> r: u64 pure {
+  return n;
+}
+
+fn next<const m: u8>() -> r: u64 pure {
+  return get::<m + 1>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let v = next::<3>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "CONST-1",
+        sentences: &[
+            "]: TypeMismatch\n",
+            "\n  expected: u64\n  found: u8\n",
         ],
     },
     // -------------------------------------------------------------------
@@ -959,7 +1042,7 @@ fn main() -> status: std::process::ExitStatus pure {
     Probe {
         name: "match-scrutinee-is-not-an-enum.wf",
         source: br#"fn main() -> status: std::process::ExitStatus pure {
-  let value = 1_u64;
+  let value = 1.0_f32;
   match value {
     Ok(value: inner) => {
     }
@@ -970,7 +1053,117 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "TYPE-5",
         sentences: &[
             "]: TypeMismatch\n",
-            "\n  expected: an enum scrutinee, whose variants the arms match\n  found: u64\n",
+            "\n  expected: an integer or enum scrutinee, whose values or variants the arms match\n  found: f32\n",
+        ],
+    },
+    // Integer match diagnostics are reached through ordinary source programs,
+    // including the complete-type coverage boundary rather than only sparse
+    // command dispatch.
+    Probe {
+        name: "integer-match-variant-header.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-variant-label.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-variant-header.wf:7:5: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: an integer scrutinee requires one integer literal, named const, or `else`\n",
+            "\n  mechanical_fix: replace the variant header with one constant of the scrutinee's integer type\n",
+        ],
+    },
+    Probe {
+        name: "enum-match-integer-header.wf",
+        source: br#"enum Marker {
+  Mark();
+}
+
+fn selected(value: Marker) -> result: unit pure {
+  match value {
+    0_u64 => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-12",
+        sentences: &[
+            "enum-match-integer-header.wf:7:5: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: an enum scrutinee requires a variant TYPEID and payload binders\n",
+            "\n  mechanical_fix: write a variant header belonging to the scrutinee's enum\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-wrong-label-type.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-literal-label-type.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-wrong-label-type.wf:3:5: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: the arm value must have exact integer type u64\n",
+            "\n  mechanical_fix: write an integer literal or named const of type u64\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-runtime-label.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-nonconst-label.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-runtime-label.wf:4:5: error[GRAM-12]: UnresolvedUse\n",
+            "\n  mechanical_fix: write one in-scope named const of the scrutinee's exact integer type, or an integer literal of that type\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-else-before-value.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-else-not-final.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-else-before-value.wf:3:5: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: an integer match has at most one `else`, in its final arm\n",
+            "\n  mechanical_fix: keep one `else` arm and move it after every value arm\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-else-without-value.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-else-only.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-else-without-value.wf:2:3: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: an integer match has at least one value arm\n",
+            "\n  mechanical_fix: add a literal or named-const value arm\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-duplicate-value.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-duplicate-const-value.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-duplicate-value.wf:10:5: error[GRAM-12]: DuplicateIntegerMatchValue\n",
+            "\n  value: 7\n",
+            "\n  earlier: ",
+            "\n  mechanical_fix: remove the later arm or give it a distinct integer value\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-needs-else.wf",
+        source: include_bytes!("../../../tests/conformance/cases/err2-neg-integer-missing-else.wf"),
+        rule: "ERR-2",
+        sentences: &[
+            "integer-match-needs-else.wf:2:3: error[ERR-2]: InvalidIntegerMatchCoverage\n",
+            "\n  integer_type: u8\n",
+            "\n  domain: all 256 mathematical values\n",
+            "\n  mechanical_fix: add one final `else => { ... }` arm to cover every other value\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-complete-with-else.wf",
+        source: include_bytes!("../../../tests/conformance/cases/err2-neg-integer-complete-with-else.wf"),
+        rule: "ERR-2",
+        sentences: &[
+            "integer-match-complete-with-else.wf:2:3: error[ERR-2]: InvalidIntegerMatchCoverage\n",
+            "\n  integer_type: u8\n",
+            "\n  domain: all 256 mathematical values\n",
+            "\n  mechanical_fix: remove the unnecessary `else` arm\n",
         ],
     },
     Probe {
@@ -1022,7 +1215,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let bytes = array_filled::<u8, 1>(value: 3_u8);
+  let bytes = array_filled::<u8, 1>(value: 10_u8);
   let raw = bytes[0_u64];
   let s = cvt::<u8, u32>(raw);
   let r = need(x: s);
@@ -1030,11 +1223,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
         rule: "FN-8",
-        // The actual is read from a buffer element rather than written as a
-        // literal: a conversion of a known constant is now discharged by the
-        // affine route, which reaches a call goal that projects to no L0
-        // relation, so a literal actual would prove the requirement and print
-        // no diagnostic. The pinned sentence is unchanged.
+        // PRE-1's filled fact and RANGE-2's exact integer conversions now
+        // prove this element's value. At the strict upper boundary, the
+        // converted actual still fails the requirement and pins its spelling.
         sentences: &["\n  instantiated_goal: cvt::<u32, u64>(s) < 10_u64\n"],
     },
     Probe {
@@ -1081,7 +1272,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let data = array_filled::<u8, 4>(value: 0_u8);
+  let data = array_filled::<u8, 4>(value: 10_u8);
   let r = need(x: data[0_u64]);
   return std::process::exit_status(code: 0_u8);
 }
@@ -1476,7 +1667,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "would prove it, and their rows, which write `context^` and `context^.blocks.inner`, removed them: where `bump` and `clear_all` leave `context^.blocks.inner.len` unchanged, state `context^.blocks.inner.len` unchanged in each one's `ensures`; or guard",
+            "would prove it, and their rows, which write `context^` and `context^.blocks.inner`, removed them: where `bump` and `clear_all` leave `context^.blocks.inner.len` unchanged, state equality of the entry and exit values of `context^.blocks.inner.len` in each one's `ensures`; or guard",
         ],
     },
     // -------------------------------------------------------------------
@@ -1511,7 +1702,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "held before the calls to `bump` at line 13 and to `bump` at line 14 would prove it, and their rows, which write `context^`, removed them: where `bump` leaves `context^.blocks.inner.len` unchanged, declare its row as `writes(context.width)`, the paths its body accesses, or state `context^.blocks.inner.len` unchanged in its `ensures`; or guard",
+            "held before the calls to `bump` at line 13 and to `bump` at line 14 would prove it, and their rows, which write `context^`, removed them: where `bump` leaves `context^.blocks.inner.len` unchanged, declare its row as `writes(context.width)`, the paths its body accesses, or state equality of the entry and exit values of `context^.blocks.inner.len` in its `ensures`; or guard",
         ],
     },
 ];

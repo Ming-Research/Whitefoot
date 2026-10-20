@@ -1,0 +1,14 @@
+struct Registry {
+  root: Frozen<u8>;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let root = frozen_new::<u8>(value: 7_u8);
+  let state = Registry(root: move root);
+  let dataset = shared_new::<Registry>(value: move state);
+  let byte = 0_u8;
+  atomic registry = &dataset when registry^.root.inner == 7_u8 {
+    set byte = registry^.root.inner;
+  }
+  return std::process::exit_status(code: byte);
+}

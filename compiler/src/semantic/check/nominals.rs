@@ -6,7 +6,7 @@ use crate::{BuiltinPreludeId, SemanticCompilerFailure, UnsupportedSemanticFeatur
 
 use super::super::model::{
     CheckedConst, CheckedConstructor, CheckedField, CheckedNominal, CheckedNominalKind,
-    CheckedType, CheckedVariant, NominalId,
+    CheckedType, CheckedVariant, IntegerType, NominalId,
 };
 use super::{CheckStop, Checker, PreludeType};
 
@@ -225,6 +225,7 @@ impl<'unit> TypeContext<'unit> {
             linear: false,
             // [PRE-1] `opaque nocopy struct Box<T>`.
             nocopy: true,
+            type_invariant: false,
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);
@@ -263,6 +264,7 @@ impl<'unit> TypeContext<'unit> {
             kind: CheckedNominalKind::Struct { fields },
             linear: false,
             nocopy: false,
+            type_invariant: false,
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);
@@ -281,6 +283,8 @@ impl<'unit> TypeContext<'unit> {
         self.intern_prelude_nominal(PreludeType::Overflow)?;
         self.intern_prelude_nominal(PreludeType::DivError)?;
         self.intern_prelude_nominal(PreludeType::NarrowError)?;
+        self.intern_prelude_nominal(PreludeType::ScanStep)?;
+        self.intern_prelude_nominal(PreludeType::DecisionState)?;
         Ok(())
     }
     pub(super) fn intern_prelude_nominal(
@@ -372,6 +376,47 @@ impl<'unit> TypeContext<'unit> {
                     },
                 ],
             ),
+            PreludeType::DecisionState => (
+                "DecisionState".to_owned(),
+                [
+                    ("Open", BuiltinPreludeId::OPEN, 0),
+                    ("Written", BuiltinPreludeId::WRITTEN, 1),
+                    ("Killed", BuiltinPreludeId::KILLED, 2),
+                ]
+                .into_iter()
+                .map(|(name, constructor, tag)| CheckedVariant {
+                    name: name.to_owned(),
+                    constructor: CheckedConstructor::Prelude(constructor),
+                    tag,
+                    fields: Vec::new(),
+                })
+                .collect(),
+            ),
+            PreludeType::ScanStep => (
+                "ScanStep".to_owned(),
+                vec![
+                    CheckedVariant {
+                        name: "Next".to_owned(),
+                        constructor: CheckedConstructor::Prelude(BuiltinPreludeId::NEXT),
+                        tag: 0,
+                        fields: vec![CheckedField {
+                            name: "next".to_owned(),
+                            ty: CheckedType::Integer(IntegerType::U64),
+                            readonly: false,
+                        }],
+                    },
+                    CheckedVariant {
+                        name: "Needs".to_owned(),
+                        constructor: CheckedConstructor::Prelude(BuiltinPreludeId::NEEDS),
+                        tag: 1,
+                        fields: vec![CheckedField {
+                            name: "bytes".to_owned(),
+                            ty: CheckedType::Integer(IntegerType::U64),
+                            readonly: false,
+                        }],
+                    },
+                ],
+            ),
             PreludeType::NarrowError => (
                 "NarrowError".to_owned(),
                 vec![CheckedVariant {
@@ -388,6 +433,7 @@ impl<'unit> TypeContext<'unit> {
             kind: CheckedNominalKind::Enum { variants },
             linear: false,
             nocopy: false,
+            type_invariant: false,
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);

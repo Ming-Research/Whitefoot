@@ -21,6 +21,10 @@ use super::affine::{AffineForm, AffineInequality};
 use super::term::{MeasureBound, TermId, TermKind, TermTable, ZERO, type_range};
 use crate::NodePath;
 
+#[path = "state_exclusions.rs"]
+mod exclusions;
+pub(crate) use exclusions::{Exclusion, ExclusionConclusion, ExclusionProof};
+
 /// One normalized source relation over interned terms.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Relation {
@@ -224,6 +228,7 @@ pub(crate) enum FlowEventKind {
     S13,
     /// [ENT-3.S16] a proved header or local invariant's exact L0 conclusion.
     S16,
+    S17,
     /// [MSR-3] one entry datum minted at body entry, per parameter measure a
     /// declared relation names.
     Entry,
@@ -314,6 +319,9 @@ pub(crate) struct PostconditionCallSubstitution {
 /// Parent IDs always precede their child in the arena.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum DerivationNode {
+    IntegerExclusion {
+        detail: Box<ExclusionProof>,
+    },
     LetOrigin {
         binding: BindingId,
         value: GoalId,
@@ -501,7 +509,7 @@ pub(crate) enum DerivationNode {
         detail: Box<IndexSeparationDetail>,
     },
     /// One finite truth-table introduction for an already-interned Boolean
-    /// parent (`band`, `bor`, or `bnot`).
+    /// parent (`band`, `bor`, `bnot`, or a struct value equality).
     BooleanIntroduction {
         goal: GoalId,
         sign: GoalSign,
@@ -795,6 +803,7 @@ impl DerivationNode {
             }
             Self::OriginEquality { detail } => detail.origins.iter().copied().for_each(visit),
             Self::OriginProjection { parent, .. } => visit(*parent),
+            Self::IntegerExclusion { detail } => detail.parents.iter().copied().for_each(visit),
             Self::LetOrigin { .. } => {}
             Self::TransportedHeaderRelation { detail } => detail.parents().for_each(visit),
             Self::UnsignedDivisionProduct {
@@ -911,6 +920,7 @@ impl DerivationNode {
             Self::OriginTransport { origins, .. } => 1 + origins.len(),
             Self::OriginEquality { detail } => detail.origins.len(),
             Self::OriginProjection { .. } => 1,
+            Self::IntegerExclusion { detail } => detail.parents.len(),
             Self::LetOrigin { .. } => 0,
             Self::TransportedHeaderRelation { detail } => detail.parents().count(),
             Self::UnsignedDivisionProduct { .. }
@@ -976,6 +986,7 @@ impl DerivationNode {
 
     fn rank(&self) -> u8 {
         match self {
+            Self::IntegerExclusion { .. } => 51,
             Self::LetOrigin { .. } => 47,
             Self::OriginTransport { .. } => 48,
             Self::OriginEquality { .. } => 49,
@@ -1400,51 +1411,6 @@ impl DerivationLedger {
         self.implicit_only[id.0 as usize]
     }
 
-    /// Whether a closed L0 proof depends on one established relation rather
-    /// than only on the universal implicit type/reflexive inventory. Delivery
-    /// transports writer-visible facts and their closure; it does not create
-    /// roots merely because every fresh integer term has implicit bounds.
-    pub(crate) fn depends_on_explicit_relation(
-        &self,
-        id: DerivationId,
-        memo: &mut HashMap<DerivationId, bool>,
-    ) -> bool {
-        if let Some(depends) = memo.get(&id) {
-            return *depends;
-        }
-        let node = &self.nodes[id.0 as usize];
-        let mut depends = matches!(
-            node,
-            DerivationNode::SourceBound { .. }
-                | DerivationNode::SourceDistinct { .. }
-                | DerivationNode::OperationFact { .. }
-                | DerivationNode::PostconditionCall { .. }
-                | DerivationNode::PostconditionDirectResult { .. }
-                | DerivationNode::PostconditionDirectReceiver { .. }
-                | DerivationNode::PostconditionGive { .. }
-                | DerivationNode::PostconditionDeliveryJoin { .. }
-        );
-        depends |= matches!(
-            node,
-            DerivationNode::AffineConsequence {
-                premises,
-                ..
-            } if !premises.is_empty()
-        );
-        if !depends
-            && !matches!(
-                node,
-                DerivationNode::ImplicitBound { .. } | DerivationNode::SourceGoal { .. }
-            )
-        {
-            node.for_each_parent(|parent| {
-                depends |= self.depends_on_explicit_relation(parent, memo);
-            });
-        }
-        memo.insert(id, depends);
-        depends
-    }
-
     fn better(&self, candidate: DerivationId, current: DerivationId) -> bool {
         let candidate_depth = self.depth(candidate);
         let current_depth = self.depth(current);
@@ -1606,6 +1572,7 @@ impl DerivationLedger {
     }
 
     fn measure(&self) -> DerivationMetrics {
+        let mut exclusion_value_sets = HashSet::new();
         let mut metrics = DerivationMetrics::default();
         for root in &self.roots {
             match &self.nodes[root.node.0 as usize] {
@@ -1641,6 +1608,15 @@ impl DerivationLedger {
                 .nodes
                 .iter()
                 .map(|node| match node {
+                    DerivationNode::IntegerExclusion { detail } => {
+                        size_of::<ExclusionProof>()
+                            + detail.parents.capacity() * size_of::<DerivationId>()
+                            + if exclusion_value_sets.insert(detail.values.as_ptr()) {
+                                size_of_val(detail.values.as_ref())
+                            } else {
+                                0
+                            }
+                    }
                     DerivationNode::OriginTransport { origins, .. } => {
                         size_of_val(origins.as_ref())
                     }
@@ -1796,6 +1772,7 @@ fn compare_node_ties(left: &DerivationNode, right: &DerivationNode) -> std::cmp:
 
 fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.tie_component(index),
         DerivationNode::LetOrigin {
             binding,
             value,
@@ -2075,6 +2052,7 @@ fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
 
 fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.event,
         DerivationNode::LetOrigin { event, .. } => Some(*event),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
@@ -2100,6 +2078,7 @@ fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
 
 fn node_event_mut(node: &mut DerivationNode) -> Option<&mut FlowEventId> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.event.as_mut(),
         DerivationNode::LetOrigin { event, .. } => Some(event),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
@@ -2165,6 +2144,11 @@ fn remap_node(node: &mut DerivationNode, remap: &[Option<DerivationId>]) {
             }
         }
         DerivationNode::OriginProjection { parent, .. } => remap_id(parent, remap),
+        DerivationNode::IntegerExclusion { detail } => {
+            for parent in &mut detail.parents {
+                remap_id(parent, remap);
+            }
+        }
         DerivationNode::LetOrigin { .. } => {}
         DerivationNode::TransportedHeaderRelation { detail } => {
             for input in &mut detail.inputs {
@@ -2321,7 +2305,9 @@ pub(crate) struct OriginEquality {
 /// Derived data attached to one exact typed expression.
 #[derive(Clone, Debug)]
 struct GoalRecord {
+    canonical: GoalId,
     expression: GoalExpression,
+    struct_equality_fields: Option<(bool, Vec<GoalId>)>,
     projection: Option<Relation>,
     normalization: Option<GoalNormalization>,
     support: Vec<GoalSupport>,
@@ -2330,7 +2316,9 @@ struct GoalRecord {
 /// Per-function interning table for [ENT-2]'s finite goal universe.
 #[derive(Default)]
 pub(crate) struct GoalTable {
+    pub(crate) integer_comparisons: WordHashMap<GoalId, (GoalExpression, i128, GoalSign)>,
     ids: HashMap<GoalExpression, GoalId>,
+    views: WordHashMap<GoalId, Vec<GoalId>>,
     records: Vec<GoalRecord>,
     revision: usize,
 }
@@ -2343,7 +2331,14 @@ impl GoalTable {
         normalization: Option<GoalNormalization>,
         support: Vec<GoalSupport>,
     ) -> GoalId {
-        if let Some(id) = self.ids.get(&expression).copied() {
+        let canonical = self.ids.get(&expression).copied();
+        if let Some(id) = canonical.and_then(|canonical| {
+            self.views[&canonical].iter().copied().find(|id| {
+                self.records[id.0 as usize]
+                    .expression
+                    .same_admission_view(&expression)
+            })
+        }) {
             let record = &mut self.records[id.0 as usize];
             if (record.projection.is_none() && projection.is_some())
                 || (record.normalization.is_none() && normalization.is_some())
@@ -2370,9 +2365,13 @@ impl GoalTable {
             u32::try_from(self.records.len())
                 .expect("ENT goal inventory exceeds the u32 identity space"),
         );
-        self.ids.insert(expression.clone(), id);
+        let canonical = canonical.unwrap_or(id);
+        self.ids.entry(expression.clone()).or_insert(canonical);
+        self.views.entry(canonical).or_default().push(id);
         self.records.push(GoalRecord {
+            canonical,
             expression,
+            struct_equality_fields: None,
             projection,
             normalization,
             support,
@@ -2382,6 +2381,46 @@ impl GoalTable {
             .checked_add(1)
             .expect("goal revision fits usize");
         id
+    }
+
+    pub(crate) fn set_struct_equality_fields(
+        &mut self,
+        goal: GoalId,
+        equal: bool,
+        fields: Vec<GoalId>,
+    ) {
+        let record = &mut self.records[goal.0 as usize];
+        if let Some(existing) = &record.struct_equality_fields {
+            debug_assert_eq!(existing, &(equal, fields));
+        } else {
+            record.struct_equality_fields = Some((equal, fields));
+            self.revision = self
+                .revision
+                .checked_add(1)
+                .expect("goal revision fits usize");
+        }
+    }
+
+    /// [ENT-4] Equality requires all positive fields; inequality requires
+    /// one negative field. An empty struct is therefore always equal.
+    pub(crate) fn struct_reconstruction(
+        &self,
+        goal: GoalId,
+        sign: GoalSign,
+    ) -> Option<(bool, GoalSign, &[GoalId])> {
+        let (equal, fields) = self.records[goal.0 as usize]
+            .struct_equality_fields
+            .as_ref()?;
+        let all = *equal == (sign == GoalSign::Positive);
+        Some((
+            all,
+            if all {
+                GoalSign::Positive
+            } else {
+                GoalSign::Negative
+            },
+            fields,
+        ))
     }
 
     /// Includes metadata supplied to an existing goal, not only new identities.
@@ -2394,7 +2433,18 @@ impl GoalTable {
     }
 
     pub(crate) fn id(&self, expression: &GoalExpression) -> Option<GoalId> {
-        self.ids.get(expression).copied()
+        let canonical = self.ids.get(expression)?;
+        self.views[canonical].iter().copied().find(|id| {
+            self.records[id.0 as usize]
+                .expression
+                .same_admission_view(expression)
+        })
+    }
+
+    /// [ENT-2] opaque identity ignores the written admission view, whose
+    /// numeric projection and normalization stay on its own record.
+    pub(crate) fn canonical(&self, goal: GoalId) -> GoalId {
+        self.records[goal.0 as usize].canonical
     }
 
     pub(crate) fn projection(&self, id: GoalId) -> Option<&Relation> {
@@ -2758,19 +2808,25 @@ impl BoundStore {
     /// every slotted term and the stride has room, otherwise by re-laying the
     /// store out over its live terms and these two.
     fn slots_for(&mut self, left: TermId, right: TermId) {
-        let mut missing = [left, right]
-            .into_iter()
-            .filter(|term| self.slot(*term).is_none())
-            .collect::<Vec<_>>();
+        let mut missing = [left, right];
+        let mut count = 0;
+        if self.slot(left).is_none() {
+            missing[count] = left;
+            count += 1;
+        }
+        if right != left && self.slot(right).is_none() {
+            missing[count] = right;
+            count += 1;
+        }
+        let missing = &mut missing[..count];
         missing.sort_unstable();
-        missing.dedup();
         let Some(first) = missing.first() else {
             return;
         };
         if self.terms.last().is_none_or(|last| last < first)
             && self.terms.len() + missing.len() <= self.stride
         {
-            for term in missing {
+            for &term in missing.iter() {
                 let index = term.0 as usize;
                 if index >= self.slots.len() {
                     self.slots.resize(index + 1, NO_SLOT);
@@ -3007,6 +3063,7 @@ pub(crate) struct KilledCell {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FactState {
+    pub(crate) exclusions: Vec<Exclusion>,
     /// What part of the bound matrix is already closed. Only a state closed
     /// over the current term universe may answer a query without closing
     /// again; a closed core lets the next closure start from its fresh part.
@@ -3052,6 +3109,10 @@ pub(crate) struct FactState {
     /// Live exact signed whole-goal facts [ENT-2..ENT-4].
     pub(crate) opaque: WordHashSet<(GoalId, GoalSign)>,
     pub(crate) opaque_proofs: WordHashMap<(GoalId, GoalSign), DerivationId>,
+    /// [ENT-3, ENT-5] actual source admission views of each canonical sign.
+    /// Each view retains its own proof; a join keeps only views proved on
+    /// every contributing path. Canonical opaque truth needs no common view.
+    pub(crate) opaque_sources: WordHashMap<(GoalId, GoalSign), WordHashMap<GoalId, DerivationId>>,
     /// Still-valid admitted ordinary-let definitions and their introductions.
     pub(crate) goal_origins: HashMap<BindingId, GoalOrigin>,
     /// Bool value initializers with two or more distinct live source goals.
@@ -3068,6 +3129,7 @@ impl Default for FactState {
 impl FactState {
     pub(crate) fn new() -> Self {
         Self {
+            exclusions: Vec::new(),
             closure: ClosureRecord::Unknown,
             ordinary_closure: ClosureRecord::Unknown,
             closed_view: std::cell::RefCell::new(None),
@@ -3082,6 +3144,7 @@ impl FactState {
             origins: HashMap::default(),
             opaque: HashSet::default(),
             opaque_proofs: HashMap::default(),
+            opaque_sources: HashMap::default(),
             goal_origins: HashMap::default(),
             ambiguous_goal_origins: HashSet::default(),
         }
@@ -3352,20 +3415,22 @@ impl FactState {
         &mut self,
         goal: GoalId,
         sign: GoalSign,
+        goals: &GoalTable,
         ledger: &mut DerivationLedger,
         event: FlowEventId,
     ) {
-        let _ = self.establish_goal_with_proof(goal, sign, ledger, event);
+        let _ = self.establish_goal_with_proof(goal, sign, goals, ledger, event);
     }
 
     pub(crate) fn establish_goal_with_proof(
         &mut self,
         goal: GoalId,
         sign: GoalSign,
+        goals: &GoalTable,
         ledger: &mut DerivationLedger,
         event: FlowEventId,
     ) -> DerivationId {
-        let fact = (goal, sign);
+        let fact = (goals.canonical(goal), sign);
         // A signed goal decides no bound or disequality, so the closed view
         // stays a seed of the next closure.
         self.keep_view_as_seed(None);
@@ -3374,6 +3439,15 @@ impl FactState {
             && (self.opaque.insert(fact) || ledger.better(proof, self.opaque_proofs[&fact]))
         {
             self.opaque_proofs.insert(fact, proof);
+        }
+        if !self.all_derivable {
+            let sources = self.opaque_sources.entry(fact).or_default();
+            if sources
+                .get(&goal)
+                .is_none_or(|held| ledger.better(proof, *held))
+            {
+                sources.insert(goal, proof);
+            }
         }
         proof
     }
@@ -3384,10 +3458,12 @@ impl FactState {
         goal: GoalId,
         sign: GoalSign,
         proof: DerivationId,
+        goals: &GoalTable,
     ) {
         self.keep_view_as_seed(None);
-        if !self.all_derivable && self.opaque.insert((goal, sign)) {
-            self.opaque_proofs.insert((goal, sign), proof);
+        let fact = (goals.canonical(goal), sign);
+        if !self.all_derivable && self.opaque.insert(fact) {
+            self.opaque_proofs.insert(fact, proof);
         }
     }
 
@@ -3793,17 +3869,29 @@ impl FactState {
         }
     }
 
-    /// Removes signed facts and ordinary-let origin expansions whose exact
-    /// goal support is invalidated by one ENT-5 event. The L0 matrix and its
-    /// closure record are unchanged: goal contradictions are recomputed by
-    /// every closure.
+    /// Removes signed facts, exclusions and ordinary-let origin expansions
+    /// whose exact goal support is invalidated by one ENT-5 event. Removing
+    /// an exclusion or an admission view also discards cached L0 closure:
+    /// that view may have strengthened an endpoint using the removed set.
     pub(crate) fn kill_goals(&mut self, mut killed: impl FnMut(GoalId) -> bool) {
         if self.all_derivable {
             return;
         }
         self.keep_view_as_seed(None);
+        let previous_exclusions = self.exclusions.len();
+        self.exclusions.retain(|fact| !killed(fact.expression));
+        let mut removed_exclusion = self.exclusions.len() != previous_exclusions;
+        for fact in &mut self.exclusions {
+            let previous_views = fact.views.len();
+            fact.views.retain(|view| !killed(view.expression));
+            removed_exclusion |= fact.views.len() != previous_views;
+        }
+        if removed_exclusion {
+            self.forget_closed_view();
+        }
         self.opaque.retain(|(goal, _)| !killed(*goal));
         self.opaque_proofs.retain(|(goal, _), _| !killed(*goal));
+        self.opaque_sources.retain(|(goal, _), _| !killed(*goal));
         self.goal_origins.retain(|_, origin| !killed(origin.goal));
     }
 }
@@ -3811,7 +3899,8 @@ impl FactState {
 /// One offset disequality, with endpoint reversal negating its offset.
 /// Stored arithmetic follows the saturating i128 convention of difference
 /// bounds, including reversal at MIN. This is not an unbounded integer
-/// representation; the source-folding limit is tracked in docs/todo.md.
+/// representation; the source-folding limit is tracked in status board item
+/// lm-bl-i128-constants.
 pub(crate) type DistinctKey = (TermId, TermId, i128);
 
 pub(crate) fn distinct_key(left: TermId, right: TermId, difference: i128) -> DistinctKey {
@@ -3841,6 +3930,7 @@ fn compose_transitive_bounds(first: i128, second: i128) -> i128 {
 /// live facts and the implicit facts of every registered term.
 #[derive(Clone)]
 pub(crate) struct ClosedState {
+    exclusions: Vec<Exclusion>,
     all_derivable: bool,
     contradiction: Option<DerivationId>,
     /// Closed bounds and their proofs, indexed by the dense term identities
@@ -4008,12 +4098,102 @@ impl ImplicitStructure {
         self.zero[term.0 as usize].1.map(|(bound, _)| bound)
     }
 
+    fn cluster(&mut self, terms: &TermTable, term: TermId) -> Option<Rc<DormantCluster>> {
+        let component = self.find(term);
+        if let Some(cluster) = self.clusters.get(&component) {
+            return Some(Rc::clone(cluster));
+        }
+        let members = self.members.get(&component)?;
+        let cluster = Rc::new(dormant_cluster(terms, members));
+        self.clusters.insert(component, Rc::clone(&cluster));
+        Some(cluster)
+    }
+
+    fn closed_zero_bound(&mut self, terms: &TermTable, term: TermId, upward: bool) -> Option<i128> {
+        if term == ZERO {
+            return Some(0);
+        }
+        if let Some(cluster) = self.cluster(terms, term) {
+            let position = cluster
+                .members
+                .binary_search(&term)
+                .expect("a term is a member of its implicit cluster");
+            return if upward {
+                cluster.cell(position, 0)
+            } else {
+                cluster.cell(0, position)
+            }
+            .map(|(bound, _)| bound);
+        }
+        if upward {
+            self.upper(term)
+        } else {
+            self.lower(term)
+        }
+    }
+
+    fn value(&mut self, terms: &TermTable, left: TermId, right: TermId) -> Option<i128> {
+        if left == right {
+            return Some(0);
+        }
+        if left != ZERO && right != ZERO && self.find(left) == self.find(right) {
+            let cluster = self
+                .cluster(terms, left)
+                .expect("distinct component members have an implicit cluster");
+            let from = cluster
+                .members
+                .binary_search(&left)
+                .expect("the left term belongs to its implicit cluster");
+            let to = cluster
+                .members
+                .binary_search(&right)
+                .expect("the right term belongs to its implicit cluster");
+            return cluster.cell(from, to).map(|(bound, _)| bound);
+        }
+        self.closed_zero_bound(terms, left, true)
+            .zip(self.closed_zero_bound(terms, right, false))
+            .map(|(upper, lower)| compose_transitive_bounds(upper, lower))
+    }
+
     /// Whether `left - right <= bound` between two nonzero terms is tighter
     /// than the path through zero.
     fn tighter_than_zero(&self, left: TermId, right: TermId, bound: i128) -> bool {
         self.upper(left)
             .zip(self.lower(right))
             .is_none_or(|(upper, lower)| bound < compose_transitive_bounds(upper, lower))
+    }
+}
+
+/// Exact ENT-4 derivability from ENT-2 implicit facts alone. The term table's
+/// cached component closures answer each query without preparing a reading
+/// for every registered term or constructing proof nodes.
+/// The implicit inventory must be consistent; delivery establishes this by
+/// closing its source state and handling contradiction before querying.
+pub(crate) fn implicit_derives(terms: &TermTable, relation: &Relation) -> bool {
+    let mut structure = implicit_structure(terms);
+    let mut derives_bound = |left, right, bound| {
+        structure
+            .value(terms, left, right)
+            .is_some_and(|held| held <= bound)
+    };
+    match *relation {
+        Relation::Bound { left, right, bound } => derives_bound(left, right, bound),
+        Relation::Equal {
+            left,
+            right,
+            difference,
+        } => {
+            derives_bound(left, right, difference)
+                && derives_bound(right, left, difference.saturating_neg())
+        }
+        Relation::Distinct {
+            left,
+            right,
+            difference,
+        } => {
+            derives_bound(left, right, difference.saturating_sub(1))
+                || derives_bound(right, left, difference.saturating_neg().saturating_sub(1))
+        }
     }
 }
 
@@ -4488,6 +4668,9 @@ impl ClosedState {
             } => {
                 self.distinct
                     .contains(&distinct_key(*left, *right, *difference))
+                    || self
+                        .exclusion_membership(*left, *right, *difference)
+                        .is_some()
                     || self.derives_bound(*left, *right, difference.saturating_sub(1))
                     || self.derives_bound(
                         *right,
@@ -4542,14 +4725,17 @@ impl ClosedState {
         goals: &GoalTable,
         visiting: &mut WordHashSet<(GoalId, GoalSign)>,
     ) -> bool {
-        if self.all_derivable || self.opaque.contains(&(goal, sign)) {
+        if self.all_derivable || self.opaque.contains(&(goals.canonical(goal), sign)) {
             return true;
         }
         let projected = goals.projection(goal).is_some_and(|relation| match sign {
             GoalSign::Positive => self.derives(relation),
             GoalSign::Negative => self.derives(&relation.negated()),
         });
-        if projected || self.derives_normalized_goal(goal, sign, goals) {
+        if projected
+            || self.exclusion_goal(goal, sign, goals).is_some()
+            || self.derives_normalized_goal(goal, sign, goals)
+        {
             return true;
         }
         if literal_goal_sign(goals.expression(goal)).is_some_and(|truth| truth == sign) {
@@ -4558,55 +4744,78 @@ impl ClosedState {
         if !visiting.insert((goal, sign)) {
             return false;
         }
-        let result = match goals.expression(goal) {
-            GoalExpression::Operation {
-                row: GoalOperation::Boolean(operation),
-                arguments,
-                ..
-            } => {
-                let child =
-                    |argument: &GoalExpression,
-                     child_sign: GoalSign,
-                     visiting: &mut WordHashSet<(GoalId, GoalSign)>| {
-                        goals.id(argument).is_some_and(|child| {
-                            self.derives_goal_inner(child, child_sign, goals, visiting)
-                        })
-                    };
-                match (operation, sign) {
-                    (CheckedBooleanOperation::And, GoalSign::Positive) => arguments
-                        .iter()
-                        .all(|argument| child(argument, GoalSign::Positive, visiting)),
-                    (CheckedBooleanOperation::And, GoalSign::Negative) => arguments
-                        .iter()
-                        .any(|argument| child(argument, GoalSign::Negative, visiting)),
-                    (CheckedBooleanOperation::Or, GoalSign::Positive) => arguments
-                        .iter()
-                        .any(|argument| child(argument, GoalSign::Positive, visiting)),
-                    (CheckedBooleanOperation::Or, GoalSign::Negative) => arguments
-                        .iter()
-                        .all(|argument| child(argument, GoalSign::Negative, visiting)),
-                    (CheckedBooleanOperation::Not, GoalSign::Positive) => arguments
-                        .first()
-                        .is_some_and(|argument| child(argument, GoalSign::Negative, visiting)),
-                    (CheckedBooleanOperation::Not, GoalSign::Negative) => arguments
-                        .first()
-                        .is_some_and(|argument| child(argument, GoalSign::Positive, visiting)),
-                    (CheckedBooleanOperation::ExclusiveOr, _) => false,
-                }
+        let result = if let Some((all, child_sign, fields)) =
+            goals.struct_reconstruction(goal, sign)
+        {
+            if all {
+                fields
+                    .iter()
+                    .all(|child| self.derives_goal_inner(*child, child_sign, goals, visiting))
+            } else {
+                fields
+                    .iter()
+                    .any(|child| self.derives_goal_inner(*child, child_sign, goals, visiting))
             }
-            GoalExpression::Datum(_) | GoalExpression::Operation { .. } => false,
+        } else {
+            match goals.expression(goal) {
+                GoalExpression::Operation {
+                    row: GoalOperation::Boolean(operation),
+                    arguments,
+                    ..
+                } => {
+                    let child =
+                        |argument: &GoalExpression,
+                         child_sign: GoalSign,
+                         visiting: &mut WordHashSet<(GoalId, GoalSign)>| {
+                            goals.id(argument).is_some_and(|child| {
+                                self.derives_goal_inner(child, child_sign, goals, visiting)
+                            })
+                        };
+                    match (operation, sign) {
+                        (CheckedBooleanOperation::And, GoalSign::Positive) => arguments
+                            .iter()
+                            .all(|argument| child(argument, GoalSign::Positive, visiting)),
+                        (CheckedBooleanOperation::And, GoalSign::Negative) => arguments
+                            .iter()
+                            .any(|argument| child(argument, GoalSign::Negative, visiting)),
+                        (CheckedBooleanOperation::Or, GoalSign::Positive) => arguments
+                            .iter()
+                            .any(|argument| child(argument, GoalSign::Positive, visiting)),
+                        (CheckedBooleanOperation::Or, GoalSign::Negative) => arguments
+                            .iter()
+                            .all(|argument| child(argument, GoalSign::Negative, visiting)),
+                        (CheckedBooleanOperation::Not, GoalSign::Positive) => arguments
+                            .first()
+                            .is_some_and(|argument| child(argument, GoalSign::Negative, visiting)),
+                        (CheckedBooleanOperation::Not, GoalSign::Negative) => arguments
+                            .first()
+                            .is_some_and(|argument| child(argument, GoalSign::Positive, visiting)),
+                        (CheckedBooleanOperation::ExclusiveOr, _) => false,
+                    }
+                }
+                GoalExpression::Datum(_) | GoalExpression::Operation { .. } => false,
+            }
         };
         visiting.remove(&(goal, sign));
         result
     }
 
-    pub(crate) fn holds_opaque(&self, goal: GoalId, sign: GoalSign) -> bool {
-        !self.all_derivable && self.opaque.contains(&(goal, sign))
+    pub(crate) fn holds_opaque(&self, goal: GoalId, sign: GoalSign, goals: &GoalTable) -> bool {
+        !self.all_derivable && self.opaque.contains(&(goals.canonical(goal), sign))
     }
 
-    pub(crate) fn opaque_proof(&self, goal: GoalId, sign: GoalSign) -> Option<DerivationId> {
+    pub(crate) fn opaque_proof(
+        &self,
+        goal: GoalId,
+        sign: GoalSign,
+        goals: &GoalTable,
+    ) -> Option<DerivationId> {
         (!self.all_derivable)
-            .then(|| self.opaque_proofs.get(&(goal, sign)).copied())
+            .then(|| {
+                self.opaque_proofs
+                    .get(&(goals.canonical(goal), sign))
+                    .copied()
+            })
             .flatten()
     }
 
@@ -4658,7 +4867,8 @@ impl ClosedState {
                 difference,
             } => {
                 let forward = self.bound_proof(*left, *right, *difference, ledger)?;
-                let reverse = self.bound_proof(*right, *left, difference.saturating_neg(), ledger)?;
+                let reverse =
+                    self.bound_proof(*right, *left, difference.saturating_neg(), ledger)?;
                 Some(ledger.intern(DerivationNode::Equality {
                     left: *left,
                     right: *right,
@@ -4672,7 +4882,10 @@ impl ClosedState {
                 difference,
             } => {
                 let pair = distinct_key(*left, *right, *difference);
-                let mut best = self.distinct_proofs.get(&pair).copied();
+                let mut best =
+                    self.distinct_proofs.get(&pair).copied().or_else(|| {
+                        self.exclusion_relation_proof(*left, *right, *difference, ledger)
+                    });
                 for (from, to, gap) in [
                     (*left, *right, difference.saturating_sub(1)),
                     (*right, *left, difference.saturating_neg().saturating_sub(1)),
@@ -4781,7 +4994,8 @@ impl ClosedState {
             return self.contradiction;
         }
         let direct = self
-            .opaque_proof(goal, sign)
+            .opaque_proof(goal, sign, goals)
+            .or_else(|| self.exclusion_goal_proof(goal, sign, goals, ledger))
             .or_else(|| self.goal_projection_proof(goal, sign, goals, ledger))
             .or_else(|| self.normalization_proof(goal, sign, goals, ledger));
         if direct.is_some() {
@@ -4793,79 +5007,108 @@ impl ClosedState {
         if !visiting.insert((goal, sign)) {
             return None;
         }
-        let proof = match goals.expression(goal) {
-            GoalExpression::Operation {
-                row: GoalOperation::Boolean(operation),
-                arguments,
-                ..
-            } => {
-                let child_proof =
-                    |argument: &GoalExpression,
-                     child_sign: GoalSign,
-                     visiting: &mut WordHashSet<(GoalId, GoalSign)>,
-                     ledger: &mut DerivationLedger| {
-                        let child = goals.id(argument)?;
-                        self.goal_proof_inner(child, child_sign, goals, ledger, visiting)
-                    };
-                let all = |child_sign: GoalSign,
-                           visiting: &mut WordHashSet<(GoalId, GoalSign)>,
-                           ledger: &mut DerivationLedger| {
-                    arguments
-                        .iter()
-                        .map(|argument| child_proof(argument, child_sign, visiting, ledger))
-                        .collect::<Option<Vec<_>>>()
-                };
-                let any = |child_sign: GoalSign,
-                           visiting: &mut WordHashSet<(GoalId, GoalSign)>,
-                           ledger: &mut DerivationLedger| {
-                    let mut best = None;
-                    for argument in arguments {
-                        let Some(candidate) = child_proof(argument, child_sign, visiting, ledger)
-                        else {
-                            continue;
-                        };
-                        if best.is_none_or(|current| ledger.better(candidate, current)) {
-                            best = Some(candidate);
-                        }
+        let proof = if let Some((all, child_sign, fields)) = goals.struct_reconstruction(goal, sign)
+        {
+            let parents = if all {
+                fields
+                    .iter()
+                    .map(|child| self.goal_proof_inner(*child, child_sign, goals, ledger, visiting))
+                    .collect::<Option<Vec<_>>>()
+            } else {
+                let mut best = None;
+                for child in fields {
+                    if let Some(candidate) =
+                        self.goal_proof_inner(*child, child_sign, goals, ledger, visiting)
+                        && best.is_none_or(|current| ledger.better(candidate, current))
+                    {
+                        best = Some(candidate);
                     }
-                    best.map(|parent| vec![parent])
-                };
-                let parents = match (operation, sign) {
-                    (CheckedBooleanOperation::And, GoalSign::Positive) => {
-                        all(GoalSign::Positive, visiting, ledger)
-                    }
-                    (CheckedBooleanOperation::And, GoalSign::Negative) => {
-                        any(GoalSign::Negative, visiting, ledger)
-                    }
-                    (CheckedBooleanOperation::Or, GoalSign::Positive) => {
-                        any(GoalSign::Positive, visiting, ledger)
-                    }
-                    (CheckedBooleanOperation::Or, GoalSign::Negative) => {
-                        all(GoalSign::Negative, visiting, ledger)
-                    }
-                    (CheckedBooleanOperation::Not, GoalSign::Positive) => arguments
-                        .first()
-                        .and_then(|argument| {
-                            child_proof(argument, GoalSign::Negative, visiting, ledger)
-                        })
-                        .map(|parent| vec![parent]),
-                    (CheckedBooleanOperation::Not, GoalSign::Negative) => arguments
-                        .first()
-                        .and_then(|argument| {
-                            child_proof(argument, GoalSign::Positive, visiting, ledger)
-                        })
-                        .map(|parent| vec![parent]),
-                    (CheckedBooleanOperation::ExclusiveOr, _) => None,
-                };
-                parents.map(|parents| {
-                    ledger.intern(DerivationNode::BooleanIntroduction {
-                        goal,
-                        sign,
-                        parents,
-                    })
+                }
+                best.map(|parent| vec![parent])
+            };
+            parents.map(|parents| {
+                ledger.intern(DerivationNode::BooleanIntroduction {
+                    goal,
+                    sign,
+                    parents,
                 })
+            })
+        } else {
+            match goals.expression(goal) {
+                GoalExpression::Operation {
+                    row: GoalOperation::Boolean(operation),
+                    arguments,
+                    ..
+                } => {
+                    let child_proof =
+                        |argument: &GoalExpression,
+                         child_sign: GoalSign,
+                         visiting: &mut WordHashSet<(GoalId, GoalSign)>,
+                         ledger: &mut DerivationLedger| {
+                            let child = goals.id(argument)?;
+                            self.goal_proof_inner(child, child_sign, goals, ledger, visiting)
+                        };
+                    let all = |child_sign: GoalSign,
+                               visiting: &mut WordHashSet<(GoalId, GoalSign)>,
+                               ledger: &mut DerivationLedger| {
+                        arguments
+                            .iter()
+                            .map(|argument| child_proof(argument, child_sign, visiting, ledger))
+                            .collect::<Option<Vec<_>>>()
+                    };
+                    let any = |child_sign: GoalSign,
+                               visiting: &mut WordHashSet<(GoalId, GoalSign)>,
+                               ledger: &mut DerivationLedger| {
+                        let mut best = None;
+                        for argument in arguments {
+                            let Some(candidate) =
+                                child_proof(argument, child_sign, visiting, ledger)
+                            else {
+                                continue;
+                            };
+                            if best.is_none_or(|current| ledger.better(candidate, current)) {
+                                best = Some(candidate);
+                            }
+                        }
+                        best.map(|parent| vec![parent])
+                    };
+                    let parents = match (operation, sign) {
+                        (CheckedBooleanOperation::And, GoalSign::Positive) => {
+                            all(GoalSign::Positive, visiting, ledger)
+                        }
+                        (CheckedBooleanOperation::And, GoalSign::Negative) => {
+                            any(GoalSign::Negative, visiting, ledger)
+                        }
+                        (CheckedBooleanOperation::Or, GoalSign::Positive) => {
+                            any(GoalSign::Positive, visiting, ledger)
+                        }
+                        (CheckedBooleanOperation::Or, GoalSign::Negative) => {
+                            all(GoalSign::Negative, visiting, ledger)
+                        }
+                        (CheckedBooleanOperation::Not, GoalSign::Positive) => arguments
+                            .first()
+                            .and_then(|argument| {
+                                child_proof(argument, GoalSign::Negative, visiting, ledger)
+                            })
+                            .map(|parent| vec![parent]),
+                        (CheckedBooleanOperation::Not, GoalSign::Negative) => arguments
+                            .first()
+                            .and_then(|argument| {
+                                child_proof(argument, GoalSign::Positive, visiting, ledger)
+                            })
+                            .map(|parent| vec![parent]),
+                        (CheckedBooleanOperation::ExclusiveOr, _) => None,
+                    };
+                    parents.map(|parents| {
+                        ledger.intern(DerivationNode::BooleanIntroduction {
+                            goal,
+                            sign,
+                            parents,
+                        })
+                    })
+                }
+                GoalExpression::Datum(_) | GoalExpression::Operation { .. } => None,
             }
-            GoalExpression::Datum(_) | GoalExpression::Operation { .. } => None,
         };
         visiting.remove(&(goal, sign));
         proof
@@ -4959,6 +5202,22 @@ fn for_each_implicit_bound(
     emit(id, id, 0, ImplicitBoundKind::Reflexive);
     match terms.kind(id) {
         TermKind::Zero => {}
+        TermKind::Sum(left, right) => {
+            let (left_upper, left_lower) = implicit_zero_bounds(terms, *left);
+            let (right_upper, right_lower) = implicit_zero_bounds(terms, *right);
+            if let Some(upper) = left_upper
+                .zip(right_upper)
+                .and_then(|((a, _), (b, _))| a.checked_add(b))
+            {
+                emit(id, ZERO, upper, ImplicitBoundKind::TypeMaximum);
+            }
+            if let Some(lower) = left_lower
+                .zip(right_lower)
+                .and_then(|((a, _), (b, _))| a.checked_add(b))
+            {
+                emit(ZERO, id, lower, ImplicitBoundKind::TypeMinimum);
+            }
+        }
         TermKind::Constant(value) => {
             emit(id, ZERO, *value, ImplicitBoundKind::Constant);
             emit(ZERO, id, -value, ImplicitBoundKind::Constant);
@@ -5074,6 +5333,10 @@ pub(crate) fn contradiction_without_proofs(
         super::work::probe(0, 0);
         return true;
     }
+    assert!(
+        state.exclusions.is_empty(),
+        "exclusion states require the complete proof-producing closure"
+    );
     let universe = closure_universe(state, terms, goals, None);
     if let Some(EdgeClosure {
         dense, distinct, ..
@@ -5249,6 +5512,7 @@ fn goal_contradiction_without_proofs(
     goals: &GoalTable,
 ) -> bool {
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: false,
         contradiction: None,
         matrix,
@@ -5285,7 +5549,7 @@ fn close_with_excluded_term(
     ledger: &mut DerivationLedger,
     excluded: Option<TermId>,
 ) -> ClosedState {
-    let closed = close_with_row_pruning::<true, false>(state, terms, goals, ledger, excluded);
+    let closed = exclusions::close_with_exclusions(state, terms, goals, ledger, excluded);
     super::work::closure(closed.matrix.dimension, closed.matrix.live);
     closed
 }
@@ -5302,6 +5566,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
 ) -> ClosedState {
     if state.all_derivable {
         return ClosedState {
+            exclusions: Vec::new(),
             all_derivable: true,
             contradiction: state.contradiction,
             matrix: DenseClosureBounds::new(0),
@@ -5338,6 +5603,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::Closed);
         let mut closed = ClosedState {
+            exclusions: Vec::new(),
             all_derivable: false,
             contradiction: None,
             matrix: DenseClosureBounds::values_from_store(term_count, &state.bounds, &universe),
@@ -5576,6 +5842,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         }
     }
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense_bounds,
@@ -6052,6 +6319,7 @@ fn close_by_edge_insertion(
         }
     }
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense,
@@ -6175,6 +6443,7 @@ fn close_from_view_seed(
         }
     }
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense,
@@ -6357,9 +6626,9 @@ fn closure_middle_terms(
     }
 
     let mut pending_goals = state
-        .opaque
-        .iter()
-        .map(|(goal, _)| *goal)
+        .opaque_sources
+        .values()
+        .flat_map(|views| views.keys().copied())
         .collect::<Vec<_>>();
     let mut visited_goals = HashSet::new();
     while let Some(goal) = pending_goals.pop() {
@@ -7001,7 +7270,9 @@ pub(crate) fn materialize_closure_before_kill(
     // A closed record covers the relations only: a signed goal can still
     // meet its opposite sign, whose contradiction the snapshot must promote.
     if state.all_derivable
-        || (state.closure.is_closed_over(terms.ids().count()) && state.opaque.is_empty())
+        || (state.closure.is_closed_over(terms.ids().count())
+            && state.opaque.is_empty()
+            && state.exclusions.is_empty())
     {
         return;
     }
@@ -7010,7 +7281,11 @@ pub(crate) fn materialize_closure_before_kill(
     // from those bounds cannot create a new survivor-to-survivor conclusion,
     // and every later query recreates the same implicit bounds. Origins are
     // transfer metadata rather than independently derivable facts.
-    if state.bounds.is_empty() && state.distinct.is_empty() && state.opaque.is_empty() {
+    if state.bounds.is_empty()
+        && state.distinct.is_empty()
+        && state.opaque.is_empty()
+        && state.exclusions.is_empty()
+    {
         return;
     }
     let event = ledger.event(FlowEventKind::Snapshot, None);
@@ -7144,11 +7419,36 @@ fn materialize_closure(
         });
         opaque_proofs.insert((goal, sign), proof);
     }
+    let mut opaque_sources = WordHashMap::default();
+    let mut source_keys = state.opaque_sources.keys().copied().collect::<Vec<_>>();
+    source_keys.sort_unstable();
+    for fact in source_keys {
+        if !closed.opaque.contains(&fact) {
+            continue;
+        }
+        let source_views = &state.opaque_sources[&fact];
+        let mut source_goals = source_views.keys().copied().collect::<Vec<_>>();
+        source_goals.sort_unstable();
+        let sources = source_goals
+            .into_iter()
+            .map(|goal| {
+                let proof = ledger.intern(DerivationNode::MaterializedGoal {
+                    goal,
+                    sign: fact.1,
+                    event,
+                    parent: source_views[&goal],
+                });
+                (goal, proof)
+            })
+            .collect();
+        opaque_sources.insert(fact, sources);
+    }
     let distinct_candidates = distinct_proofs
         .iter()
         .map(|(pair, proof)| (*pair, Candidates::One(*proof)))
         .collect();
     let mut materialized = FactState {
+        exclusions: state.exclusions.clone(),
         closure: ClosureRecord::closed(terms.ids().count()),
         ordinary_closure: ClosureRecord::closed(terms.ids().count()),
         closed_view: std::cell::RefCell::new(None),
@@ -7164,6 +7464,7 @@ fn materialize_closure(
         origins: state.origins.clone(),
         opaque: closed.opaque.clone(),
         opaque_proofs,
+        opaque_sources,
         goal_origins: state.goal_origins.clone(),
         ambiguous_goal_origins: state.ambiguous_goal_origins.clone(),
     };
@@ -7401,6 +7702,7 @@ fn join_at_once(
         .flat_map(|left| rows.iter().map(move |right| (*left, *right)))
         .collect::<Vec<_>>();
     let pairs_evaluated = pairs.len();
+    let implicit = close(&FactState::new(), terms, goals, ledger);
     for (left, right) in pairs {
         let pair = (left, right);
         let Some(bound) = first.value(left, right) else {
@@ -7409,20 +7711,47 @@ fn join_at_once(
         let stored = first.matrix.lookup(left, right).map(|(_, proof)| proof);
         let mut weakest = bound;
         let mut same_proof = stored.is_some();
-        let held = rest_indices.iter().all(|index| {
-            closed[*index].value(left, right).is_some_and(|other| {
+        let implicit_bound = implicit.value(left, right);
+        let mut implicit_hit = implicit_bound == Some(bound);
+        // Preserve the existing independently live shared selection. A
+        // temporary consequence may instead use the exact implicit proof.
+        let preserve_shared = contributing.len() == closed.len()
+            && stored.is_some_and(|proof| {
+                !ledger.implicit_only(proof)
+                    && matches!(
+                        ledger.nodes[proof.0 as usize],
+                        DerivationNode::SourceBound { left: l, right: r, bound: b, .. }
+                            | DerivationNode::JoinBound { left: l, right: r, bound: b, .. }
+                            | DerivationNode::MaterializedBound { left: l, right: r, bound: b, .. }
+                            if (l, r, b) == (left, right, bound)
+                    )
+            });
+        let mut held = true;
+        if implicit_hit && !preserve_shared {
+            same_proof = false;
+        } else {
+            for index in rest_indices {
+                let Some(other) = closed[*index].value(left, right) else {
+                    held = false;
+                    break;
+                };
                 same_proof &= other == bound
                     && closed[*index]
                         .matrix
                         .lookup(left, right)
                         .map(|(_, proof)| proof)
                         == stored;
-                if other > weakest {
-                    weakest = other;
+                weakest = weakest.max(other);
+                implicit_hit |= implicit_bound == Some(other);
+                // Every predecessor derives the implicit bound. Once one
+                // contributes that exact value, none can weaken it further.
+                // An early stop does not establish that all proofs match.
+                if implicit_hit && !(preserve_shared && same_proof) {
+                    same_proof = false;
+                    break;
                 }
-                true
-            })
-        });
+            }
+        }
         if held {
             // A temporary transitive/strengthened proof may still mention a
             // middle that the next kill removes. Even when all incoming
@@ -7441,6 +7770,13 @@ fn join_at_once(
                     ))
             {
                 bounds.store_single(left, right, bound, shared);
+                continue;
+            }
+            if implicit_hit {
+                let (bound, proof) = implicit
+                    .cell(left, right, ledger)
+                    .expect("an implicit value has an implicit proof");
+                bounds.store_single(left, right, bound, proof);
                 continue;
             }
             let mut parents = Vec::with_capacity(states.len());
@@ -7484,6 +7820,20 @@ fn join_at_once(
                 .filter(move |key| key.2 == 0 || states[*index].distinct.contains(key))
         })
         .collect::<Vec<_>>();
+    // One membership query per retained numeric view supplies the zero
+    // offset candidate; unrelated members of the set are never enumerated.
+    for &index in &contributing {
+        for fact in &closed[index].exclusions {
+            for view in &fact.views {
+                if let Some((term, offset)) = view.projection
+                    && zero_distinct_candidate(terms, term, ZERO)
+                    && fact.values.binary_search(&offset).is_ok()
+                {
+                    distinct_keys.push(distinct_key(term, ZERO, 0));
+                }
+            }
+        }
+    }
     distinct_keys.sort_unstable();
     distinct_keys.dedup();
     distinct_keys.retain(|pair| {
@@ -7626,7 +7976,7 @@ fn join_at_once(
                     | DerivationNode::BooleanLiteral { goal: g, sign: s }
                     | DerivationNode::JoinGoal { goal: g, sign: s, .. }
                     | DerivationNode::MaterializedGoal { goal: g, sign: s, .. }
-                    if (g, s) == (goal, sign)
+                    if (goals.canonical(g), s) == (goal, sign)
             );
             if independently_live
                 && rest_indices
@@ -7662,6 +8012,70 @@ fn join_at_once(
     }
     let contributing_states: Vec<&FactState> =
         contributing.iter().map(|index| &states[*index]).collect();
+    // [ENT-3] a numeric source view needs a proof with that same written
+    // admission on every live predecessor; exact opaque identity is broader.
+    let mut opaque_sources = WordHashMap::default();
+    let mut source_keys = opaque.iter().copied().collect::<Vec<_>>();
+    source_keys.sort_unstable();
+    for fact in &source_keys {
+        let Some(first_sources) = contributing_states[0].opaque_sources.get(fact) else {
+            continue;
+        };
+        let mut common = WordHashMap::default();
+        let mut source_goals = first_sources.keys().copied().collect::<Vec<_>>();
+        source_goals.sort_unstable();
+        for goal in source_goals {
+            if !contributing_states.iter().all(|state| {
+                state
+                    .opaque_sources
+                    .get(fact)
+                    .is_some_and(|views| views.contains_key(&goal))
+            }) {
+                continue;
+            }
+            let shared = first_sources[&goal];
+            if contributing.len() == closed.len()
+                && contributing_states
+                    .iter()
+                    .all(|state| state.opaque_sources[fact][&goal] == shared)
+                && matches!(
+                    ledger.nodes[shared.0 as usize],
+                    DerivationNode::SourceGoal { goal: held, sign, .. }
+                        | DerivationNode::JoinGoal { goal: held, sign, .. }
+                        | DerivationNode::MaterializedGoal { goal: held, sign, .. }
+                        if held == goal && sign == fact.1
+                )
+            {
+                common.insert(goal, shared);
+                continue;
+            }
+            let parents = states
+                .iter()
+                .enumerate()
+                .map(|(ordinal, state)| JoinParent {
+                    ordinal: u32::try_from(ordinal)
+                        .expect("ENT join predecessor ordinal exceeds the u32 identity space"),
+                    parent: if closed[ordinal].contradictory() {
+                        closed[ordinal]
+                            .contradiction
+                            .expect("contradictory predecessor proof")
+                    } else {
+                        state.opaque_sources[fact][&goal]
+                    },
+                })
+                .collect();
+            let proof = ledger.intern(DerivationNode::JoinGoal {
+                goal,
+                sign: fact.1,
+                event,
+                parents,
+            });
+            common.insert(goal, proof);
+        }
+        if !common.is_empty() {
+            opaque_sources.insert(*fact, common);
+        }
+    }
     let mut origins = contributing_states[0].origins.clone();
     let mut goal_origins = contributing_states[0].goal_origins.clone();
     let mut ambiguous_goal_origins = contributing_states[0].ambiguous_goal_origins.clone();
@@ -7690,6 +8104,7 @@ fn join_at_once(
         .chain(distinct_proofs.values().copied())
         .any(|proof| ledger.depends_on_postcondition_call(proof));
     FactState {
+        exclusions: exclusions::join_exclusions(states, &closed, &contributing, ledger, event),
         closure: ClosureRecord::closed(terms.ids().count()),
         ordinary_closure: ClosureRecord::closed(terms.ids().count()),
         closed_view: std::cell::RefCell::new(None),
@@ -7705,6 +8120,7 @@ fn join_at_once(
         origins,
         opaque,
         opaque_proofs,
+        opaque_sources,
         goal_origins,
         ambiguous_goal_origins,
     }
@@ -7875,6 +8291,154 @@ pub(crate) mod tests {
         }
     }
 
+    fn integer_goal_views() -> (GoalExpression, GoalExpression) {
+        use super::super::super::goal::{GoalAdmission, GoalDatum};
+        use super::super::super::model::{
+            CheckedConst, CheckedContainerRoot, CheckedElement, CheckedExpression,
+            CheckedIntegerOperation, CheckedPlaceStep, CheckedPlaceSubscript, CheckedSetTarget,
+            CheckedTargetDomainObligation, CheckedType,
+        };
+        use super::super::super::places::{CaptureId, CapturedTerm, PlaceRoot};
+
+        let ty = CheckedType::Integer(IntegerType::U8);
+        let captured = CapturedValue::new(CaptureId::ValueDetermined, CapturedTerm::Literal(0));
+        let written = CheckedSetTarget::Storage(CheckedContainerRoot {
+            root: PlaceRoot::Binding(BindingId(0)),
+            path: vec![CheckedPlaceStep::Subscript(Box::new(
+                CheckedPlaceSubscript {
+                    base_type: CheckedType::Array {
+                        element: CheckedElement(0),
+                        length: CheckedConst::Value(1),
+                    },
+                    element_type: ty,
+                    offset: CheckedExpression::Constant(CheckedValue::Integer {
+                        ty: IntegerType::U64,
+                        bits: 0,
+                    }),
+                    obligation: NodePath {
+                        components: vec![0],
+                    },
+                    target_domain: CheckedTargetDomainObligation::ElementAddress,
+                    captured,
+                },
+            ))],
+            ty,
+            proof_base: None,
+        });
+        let expression = |admission| GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::LessEqual,
+                operand_type: ty,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![
+                GoalExpression::Datum(GoalDatum::Place {
+                    root: BindingId(0),
+                    projections: vec![GoalProjection::Subscript(captured)],
+                    ty,
+                    admission,
+                }),
+                GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                    ty: IntegerType::U8,
+                    bits: 1,
+                })),
+            ],
+        };
+        (
+            expression(GoalAdmission::default()),
+            expression(GoalAdmission::written(written)),
+        )
+    }
+
+    #[test]
+    fn goal_admission_views_share_only_opaque_identity_in_both_intern_orders() {
+        for indexed_first in [false, true] {
+            let (plain, indexed) = integer_goal_views();
+            assert_eq!(plain, indexed);
+            let mut goals = GoalTable::default();
+            let relation = Relation::Bound {
+                left: TermId(1),
+                right: ZERO,
+                bound: 1,
+            };
+            let normalization = GoalNormalization::conjunction(vec![Some(relation.clone())]);
+            let indexed_id =
+                indexed_first.then(|| goals.intern(indexed.clone(), None, None, vec![]));
+            let plain_id = goals.intern(
+                plain.clone(),
+                Some(relation.clone()),
+                Some(normalization.clone()),
+                vec![],
+            );
+            let indexed_id =
+                indexed_id.unwrap_or_else(|| goals.intern(indexed.clone(), None, None, vec![]));
+            assert_ne!(plain_id, indexed_id);
+            assert_eq!(goals.canonical(plain_id), goals.canonical(indexed_id));
+            assert_eq!(goals.id(&plain), Some(plain_id));
+            assert_eq!(goals.id(&indexed), Some(indexed_id));
+            assert_eq!(goals.projection(plain_id), Some(&relation));
+            assert_eq!(goals.normalization(plain_id), Some(&normalization));
+            assert!(goals.projection(indexed_id).is_none());
+            assert!(goals.normalization(indexed_id).is_none());
+            assert_eq!(goals.intern(indexed, None, None, vec![]), indexed_id);
+            assert_eq!(
+                goals.intern(plain, Some(relation), Some(normalization), vec![]),
+                plain_id
+            );
+        }
+    }
+
+    #[test]
+    fn joined_opaque_aliases_require_a_common_proved_numeric_source_view() {
+        let (plain, indexed) = integer_goal_views();
+        let mut terms = TermTable::new();
+        let term = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(0)),
+            IntegerType::U8,
+        ));
+        let relation = Relation::Bound {
+            left: term,
+            right: ZERO,
+            bound: 1,
+        };
+        let mut goals = GoalTable::default();
+        let indexed = goals.intern(indexed, None, None, vec![]);
+        let plain = goals.intern(plain, Some(relation.clone()), None, vec![]);
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut left = FactState::new();
+        left.establish_goal(plain, GoalSign::Positive, &goals, &mut ledger, event);
+        left.establish(&relation, &mut ledger, event);
+        let mut right = FactState::new();
+        right.establish_goal(indexed, GoalSign::Positive, &goals, &mut ledger, event);
+        let joined = join(&[left.clone(), right.clone()], &terms, &goals, &mut ledger);
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert!(closed.holds_opaque(plain, GoalSign::Positive, &goals));
+        assert!(closed.holds_opaque(indexed, GoalSign::Positive, &goals));
+        assert!(!closed.derives(&relation));
+        assert!(joined.opaque_sources.is_empty());
+
+        let right_event = ledger.event(FlowEventKind::S1, None);
+        right.establish_goal(plain, GoalSign::Positive, &goals, &mut ledger, right_event);
+        let joined = join(&[left, right], &terms, &goals, &mut ledger);
+        let sources = &joined.opaque_sources[&(goals.canonical(plain), GoalSign::Positive)];
+        assert_eq!(sources.len(), 1);
+        let proof = sources[&plain];
+        assert!(
+            matches!(ledger.nodes[proof.0 as usize], DerivationNode::JoinGoal { goal, .. } if goal == plain)
+        );
+        let materialized = materialize_closure_at(&joined, &terms, &goals, &mut ledger, event);
+        assert!(
+            materialized.opaque_sources[&(goals.canonical(plain), GoalSign::Positive)]
+                .contains_key(&plain)
+        );
+        let mut killed = materialized;
+        killed.kill_goals(|goal| goal == goals.canonical(plain));
+        assert!(killed.opaque_sources.is_empty());
+    }
+
     // These are storage-domain checks, not a choice of source integer limits.
     // Before the repair, MIN with reversed endpoints panics in distinct_key.
     #[test]
@@ -7924,7 +8488,10 @@ pub(crate) mod tests {
                     &terms,
                     &mut NoProofs,
                 );
-                assert_eq!(result.dense.get(left, right).map(|cell| cell.0), Some(strict));
+                assert_eq!(
+                    result.dense.get(left, right).map(|cell| cell.0),
+                    Some(strict)
+                );
             }
         }
     }
@@ -8559,6 +9126,328 @@ pub(crate) mod tests {
         assert!(closed.derives_bound(second, first, 0));
         assert!(closed.derives_bound(parameter, ZERO, u64::MAX.into()));
         assert!(closed.derives_bound(ZERO, parameter, 0));
+    }
+
+    #[test]
+    fn implicit_join_bounds_have_quadratic_parent_references() {
+        for count in [8_u32, 16, 32] {
+            let mut terms = TermTable::new();
+            let values = (0..count)
+                .map(|binding| {
+                    terms.intern(TermKind::Place(
+                        super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                        IntegerType::U64,
+                    ))
+                })
+                .collect::<Vec<_>>();
+            let goals = GoalTable::default();
+            let mut ledger = DerivationLedger::default();
+            let incoming = values
+                .iter()
+                .enumerate()
+                .map(|(ordinal, value)| {
+                    let source = ledger.event(FlowEventKind::S5, None);
+                    let mut state = FactState::new();
+                    state.establish(
+                        &Relation::Equal {
+                            left: *value,
+                            right: ZERO,
+                            difference: i128::try_from(ordinal + 1).unwrap(),
+                        },
+                        &mut ledger,
+                        source,
+                    );
+                    state
+                })
+                .collect::<Vec<_>>();
+            let mut reference_ledger = ledger.clone();
+            let joined = join(&incoming, &terms, &goals, &mut ledger);
+            let parent_references = ledger
+                .nodes
+                .iter()
+                .map(DerivationNode::parent_count)
+                .sum::<usize>();
+            let width = values.len() + 1;
+            assert!(
+                parent_references <= 4 * width * width,
+                "{count} predecessors retained {parent_references} parent references"
+            );
+            // The old join attaches all K predecessors to nearly every
+            // union-row pair, exceeding this bound already at K = 8.
+            let reference = reference_join(&incoming, &terms, &goals, &mut reference_ledger);
+            assert_flow_states_agree(
+                &[joined, reference],
+                &terms,
+                &goals,
+                &mut [ledger, reference_ledger],
+            );
+        }
+    }
+
+    #[test]
+    fn correlated_join_bounds_keep_every_parent_and_a_neutral_contradiction() {
+        let mut terms = TermTable::new();
+        let [left, right] = [0, 1].map(|binding| {
+            terms.intern(TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                IntegerType::U64,
+            ))
+        });
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let assert_correlated = |joined: &FactState, ledger: &DerivationLedger, count: usize| {
+            for (left, right) in [(left, right), (right, left)] {
+                let (bound, proof) = joined.bounds.get(left, right).expect("correlated equality");
+                assert_eq!(bound, 0);
+                let DerivationNode::JoinBound { parents, .. } = &ledger.nodes[proof.0 as usize]
+                else {
+                    panic!("an equality stronger than implicit bounds retains a join boundary");
+                };
+                assert_eq!(parents.len(), count);
+                assert_eq!(
+                    parents.last().unwrap().ordinal,
+                    u32::try_from(count - 1).unwrap()
+                );
+                assert!(!ledger.implicit_only(proof));
+            }
+        };
+        let mut incoming = (1..=8)
+            .map(|value| {
+                let source = ledger.event(FlowEventKind::S5, None);
+                let mut state = FactState::new();
+                for term in [left, right] {
+                    state.establish(
+                        &Relation::Equal {
+                            left: term,
+                            right: ZERO,
+                            difference: value,
+                        },
+                        &mut ledger,
+                        source,
+                    );
+                }
+                state
+            })
+            .collect::<Vec<_>>();
+        let mut reference_ledger = ledger.clone();
+        let joined = join(&incoming, &terms, &goals, &mut ledger);
+        assert_correlated(&joined, &ledger, incoming.len());
+        let reference = reference_join(&incoming, &terms, &goals, &mut reference_ledger);
+        assert_flow_states_agree(
+            &[joined, reference],
+            &terms,
+            &goals,
+            &mut [ledger.clone(), reference_ledger],
+        );
+
+        let source = ledger.event(FlowEventKind::S1, None);
+        let mut contradiction = FactState::new();
+        contradiction.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: ZERO,
+                bound: -1,
+            },
+            &mut ledger,
+            source,
+        );
+        incoming.push(contradiction);
+        let mut reference_ledger = ledger.clone();
+        let joined = join(&incoming, &terms, &goals, &mut ledger);
+        assert_correlated(&joined, &ledger, incoming.len());
+        let reference = reference_join(&incoming, &terms, &goals, &mut reference_ledger);
+        assert_flow_states_agree(
+            &[joined, reference],
+            &terms,
+            &goals,
+            &mut [ledger, reference_ledger],
+        );
+    }
+
+    #[test]
+    fn an_implicit_component_bound_stops_at_the_first_middle_or_last_input() {
+        let mut terms = TermTable::new();
+        let place = super::super::term::ResolvedPlace::binding(BindingId(0));
+        let length = terms.intern(TermKind::Measure(CheckedMeasure::Length, place.clone()));
+        let capacity = terms.intern(TermKind::Measure(CheckedMeasure::Capacity, place));
+        terms.set_measure_bound(capacity, MeasureBound::Constant(5));
+        let goals = GoalTable::default();
+        for implicit_input in [0, 2, 4] {
+            let mut ledger = DerivationLedger::default();
+            let incoming = (0..5)
+                .map(|ordinal| {
+                    let mut state = FactState::new();
+                    if ordinal != implicit_input {
+                        let source = ledger.event(FlowEventKind::S16, None);
+                        state.establish(
+                            &Relation::Bound {
+                                left: length,
+                                right: capacity,
+                                bound: -1,
+                            },
+                            &mut ledger,
+                            source,
+                        );
+                    }
+                    state
+                })
+                .collect::<Vec<_>>();
+            let mut reference_ledger = ledger.clone();
+            let joined = join(&incoming, &terms, &goals, &mut ledger);
+            let (bound, proof) = joined
+                .bounds
+                .get(length, capacity)
+                .expect("the active predecessors supply both component rows");
+            assert_eq!(bound, 0);
+            assert!(ledger.implicit_only(proof));
+            // The exact standing ordering is zero; the two loose u64 type
+            // bounds through zero would miss the shortcut.
+            let reference = reference_join(&incoming, &terms, &goals, &mut reference_ledger);
+            assert_flow_states_agree(
+                &[joined, reference],
+                &terms,
+                &goals,
+                &mut [ledger, reference_ledger],
+            );
+        }
+    }
+
+    #[test]
+    fn a_shared_explicit_bound_equal_to_the_implicit_value_keeps_its_identity() {
+        let mut terms = TermTable::new();
+        let [left, right] = [0, 1].map(|binding| {
+            terms.intern(TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                IntegerType::U8,
+            ))
+        });
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let source = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        state.establish(
+            &Relation::Bound {
+                left,
+                right,
+                bound: 255,
+            },
+            &mut ledger,
+            source,
+        );
+        let (_, proof) = state.bounds.get(left, right).unwrap();
+        // The disequality admits both endpoints independently of the bound
+        // equal to their implicit path, keeping the depth-zero source selected.
+        state.establish(
+            &Relation::Distinct {
+                left,
+                right,
+                difference: 0,
+            },
+            &mut ledger,
+            source,
+        );
+        let joined = join(&[state.clone(), state], &terms, &goals, &mut ledger);
+        assert_eq!(joined.bounds.get(left, right), Some((255, proof)));
+        assert!(!ledger.implicit_only(proof));
+        assert!(matches!(
+            ledger.nodes[proof.0 as usize],
+            DerivationNode::SourceBound { .. }
+        ));
+    }
+
+    fn assert_implicit_queries_match_complete_closure(terms: &TermTable) {
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let closed = with_every_term(|| close(&FactState::new(), terms, &goals, &mut ledger));
+        for left in terms.ids() {
+            for right in terms.ids() {
+                let exact = closed.value(left, right).unwrap();
+                for bound in [exact.saturating_sub(1), exact, exact.saturating_add(1)] {
+                    for relation in [
+                        Relation::Bound { left, right, bound },
+                        Relation::Equal {
+                            left,
+                            right,
+                            difference: bound,
+                        },
+                        Relation::Distinct {
+                            left,
+                            right,
+                            difference: bound,
+                        },
+                    ] {
+                        assert_eq!(
+                            implicit_derives(terms, &relation),
+                            closed.derives(&relation),
+                            "implicit query differs from complete closure: {relation:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn implicit_queries_include_components_and_invalidate_changed_measure_bounds() {
+        let mut terms = TermTable::new();
+        let parameter = terms.intern(TermKind::ConstParameter(
+            DeclarationId::from_index(0).expect("zero declaration identity exists"),
+            IntegerType::U8,
+        ));
+        let place = super::super::term::ResolvedPlace::binding(BindingId(0));
+        let length = terms.intern(TermKind::Measure(CheckedMeasure::Length, place.clone()));
+        let capacity = terms.intern(TermKind::Measure(CheckedMeasure::Capacity, place));
+        terms.set_measure_bound(capacity, MeasureBound::Equal(parameter));
+        let other = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(1)),
+            IntegerType::U64,
+        ));
+        let bounded = Relation::Bound {
+            left: capacity,
+            right: other,
+            bound: 255,
+        };
+        assert!(implicit_derives(&terms, &bounded));
+        assert!(!implicit_derives(
+            &terms,
+            &Relation::Bound {
+                left: capacity,
+                right: other,
+                bound: 254,
+            }
+        ));
+        assert!(implicit_derives(
+            &terms,
+            &Relation::Bound {
+                left: length,
+                right: capacity,
+                bound: 0,
+            }
+        ));
+        assert_implicit_queries_match_complete_closure(&terms);
+
+        let constant = terms.intern(TermKind::Constant(7));
+        assert!(implicit_derives(
+            &terms,
+            &Relation::Equal {
+                left: constant,
+                right: ZERO,
+                difference: 7,
+            }
+        ));
+        assert_implicit_queries_match_complete_closure(&terms);
+
+        terms.set_measure_bound(capacity, MeasureBound::Constant(300));
+        assert!(!implicit_derives(&terms, &bounded));
+        assert!(implicit_derives(
+            &terms,
+            &Relation::Equal {
+                left: capacity,
+                right: ZERO,
+                difference: 300,
+            }
+        ));
+        assert_implicit_queries_match_complete_closure(&terms);
     }
 
     /// A predecessor contradictory only through call-dependent facts is
@@ -9732,6 +10621,55 @@ pub(crate) mod tests {
         );
     }
 
+    /// Both absent endpoints are sorted before append or relayout; equal
+    /// endpoints occupy one slot, and existing cells retain their proofs.
+    #[test]
+    fn a_bound_store_registers_both_missing_slots_in_term_order() {
+        let mut store = BoundStore::default();
+        store.store_single(TermId(4), TermId(4), 0, DerivationId(1));
+        store.store_single(TermId(9), TermId(7), 2, DerivationId(2));
+        assert_eq!(store.terms, vec![TermId(4), TermId(7), TermId(9)]);
+        store.store_single(TermId(10), TermId(10), 0, DerivationId(3));
+        assert_eq!(
+            store.terms,
+            vec![TermId(4), TermId(7), TermId(9), TermId(10)]
+        );
+        // One missing endpoint, then neither missing, preserve existing slots.
+        store.store_single(TermId(9), TermId(12), -3, DerivationId(4));
+        store.store_single(TermId(9), TermId(7), 1, DerivationId(5));
+        let expected = vec![
+            (TermId(4), TermId(4), 0, DerivationId(1)),
+            (TermId(9), TermId(7), 1, DerivationId(5)),
+            (TermId(9), TermId(12), -3, DerivationId(4)),
+            (TermId(10), TermId(10), 0, DerivationId(3)),
+        ];
+        assert_eq!(store.cells().collect::<Vec<_>>(), expected);
+        let copy = store.clone();
+        // Two smaller missing endpoints force relayout instead of append.
+        store.store_single(TermId(3), TermId(1), -2, DerivationId(6));
+        assert_eq!(
+            store.terms,
+            vec![
+                TermId(1),
+                TermId(3),
+                TermId(4),
+                TermId(7),
+                TermId(9),
+                TermId(10),
+                TermId(12)
+            ]
+        );
+        let mut relaid = vec![(TermId(3), TermId(1), -2, DerivationId(6))];
+        relaid.extend(expected.iter().copied());
+        assert_eq!(store.cells().collect::<Vec<_>>(), relaid);
+        assert_eq!(copy.cells().collect::<Vec<_>>(), expected);
+        assert_eq!(store.live, expected.len() + 1);
+        assert_eq!(store.get(TermId(7), TermId(9)), None);
+        for (left, right, bound, proof) in relaid {
+            assert_eq!(store.get(left, right), Some((bound, proof)));
+        }
+    }
+
     /// A remembered closed view is reused only for unchanged content: a new
     /// relation clears it, and the next closure sees the relation.
     #[test]
@@ -10143,6 +11081,7 @@ pub(crate) mod tests {
                     root: BindingId(101),
                     projections: Vec::new(),
                     ty: super::super::super::model::CheckedType::Bool,
+                    admission: Default::default(),
                 }),
                 None,
                 None,
@@ -10235,6 +11174,7 @@ pub(crate) mod tests {
                             } else {
                                 GoalSign::Positive
                             },
+                            &goals,
                             ledger,
                             event,
                         ),

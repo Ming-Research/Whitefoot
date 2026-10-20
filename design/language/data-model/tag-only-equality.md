@@ -1,7 +1,0 @@
-Decision: Tag-only equality and inequality are a distinct enum-domain operation family over two values of one exact nominal tag-only enum, comparing declared-variant identity directly, because direct nominal tag equality preserves representation freedom and one-domain naming, while the alternatives each exposed representation, duplicated a per-type ordinal convention, or exploded into thousands of match arms, instead of enum-to-integer conversion, a per-type source mapper, structural pair matching, or a widened integer comparison.
-
-Rejected:
-- A conversion from a tag-only discriminant to an integer with integer comparison: rejected because it exposes the tag representation, invites integer operations and ordering, and adds a broader conversion proof surface.
-- A per-type pure source mapper to integer codes with a separately reviewed injectivity guard: rejected because it duplicates a per-type ordinal convention and needs an external guard that exhaustiveness alone cannot discharge.
-- Exhaustive nested matches over every ordered pair of variants: rejected because the repeated identity test would have needed a projected 6,952 source-level variant-pair arms.
-- Widening integer equality to accept tag-only enums: rejected because the integer prefix would then cover unrelated numeric and nominal domains and existing invalid source would become the rule's design center.

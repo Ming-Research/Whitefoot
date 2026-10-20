@@ -1,0 +1,13 @@
+fn replace(cell: &Box<Slots<u64>>) -> result: unit writes(cell) contract {
+  requires cell^.inner.len == 1_u64;
+  ensures forall preserved(k in 0_u64..entry(cell)^.inner.len): cell^.inner[k] unchanged;
+} {
+  let replacement = box_slots_new::<u64>(capacity: 1_u64);
+  place_back(window: &replacement.inner, value: 9_u64);
+  set cell^ = move replacement;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

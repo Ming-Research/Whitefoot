@@ -34,8 +34,8 @@ fn main() -> status: ExitStatus pure {
   ) {
     set built^[at] = at;
   }
-  let held = workspace.len;
-  if held == 8_u64 {
+  let observed = workspace.len;
+  if observed == 8_u64 {
   } else {
     return exit_status(code: 4_u8);
   }

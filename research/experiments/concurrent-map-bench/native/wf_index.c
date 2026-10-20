@@ -13,6 +13,8 @@
 #define WF_CMAP_GIVE(block, bytes) free(block)
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
+/* This standalone throughput harness has no MemoryMeter. */
+#define WF_CMAP_HEAP_CHANGE(delta) ((void)(delta))
 #include "concurrent_map.c"
 
 #include "cmap.h"

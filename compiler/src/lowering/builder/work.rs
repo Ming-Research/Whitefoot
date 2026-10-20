@@ -315,7 +315,9 @@ impl<'ir> Environment<'ir> {
                 parameter == value
                     && matches!(
                         ty,
-                        IrType::Buffer { .. } | IrType::Range { .. } | IrType::Run { .. }
+                        IrType::Address(IrAddressed::Buffer { .. })
+                            | IrType::Range { .. }
+                            | IrType::Run { .. }
                     )
             }),
             Work::BoxArrayLength(value) => {

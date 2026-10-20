@@ -45,8 +45,8 @@ struct InterfaceRequirement {
 struct InterfaceEnsures {
     clause: NodePath,
     ordinal: u32,
-    variant: Option<crate::BuiltinPreludeId>,
-    field: Option<crate::BuiltinPreludeId>,
+    variant: Option<crate::ResolvedTarget>,
+    field: Option<u32>,
     result_type: CheckedType,
     expression: ExpandedClauseExpression,
     relation_ordinal: u32,
@@ -227,6 +227,7 @@ impl<'unit> Checker<'_, 'unit> {
             )
             .collect();
         Ok(CheckedCallContract {
+            held_parameters: formal.checked_held_parameters()?,
             requirements: formal_contracts
                 .requires
                 .into_iter()
@@ -256,7 +257,7 @@ impl<'unit> Checker<'_, 'unit> {
                 requires: Vec::new(),
                 ensures: Vec::new(),
             };
-            self.append_type_invariant_contracts(check_context, signature, &mut contracts)?;
+            self.append_type_invariant_contracts(signature, &mut contracts)?;
             return Ok(contracts);
         };
         let mut bindings = HashMap::new();
@@ -353,7 +354,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let mut relations = Vec::with_capacity(selectors.len());
         for (relation_ordinal, selector) in selectors.iter().enumerate() {
-            let relation = self.check_postcondition_clause(
+            let (relation, _) = self.check_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -363,7 +364,7 @@ impl<'unit> Checker<'_, 'unit> {
                 &mut counters,
             )?;
             relations.push(relation.clone());
-            let mut expression = self.expand_postcondition_clause(
+            let (mut expression, _) = self.expand_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -377,7 +378,7 @@ impl<'unit> Checker<'_, 'unit> {
                 clause: selector.block.clone(),
                 ordinal: selector.ordinal,
                 variant: selector.variant,
-                field: selector.field.as_ref().map(|field| field.declaration),
+                field: selector.field.as_ref().map(|field| field.index),
                 result_type: selector.result_type,
                 expression,
                 relation_ordinal: u32::try_from(relation_ordinal)
@@ -390,7 +391,7 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .check_published_relation_consistency(signature, &selectors, &relations)?;
         let mut contracts = InterfaceContracts { requires, ensures };
-        self.append_type_invariant_contracts(check_context, signature, &mut contracts)?;
+        self.append_type_invariant_contracts(signature, &mut contracts)?;
         Ok(contracts)
     }
 
@@ -400,11 +401,10 @@ impl<'unit> Checker<'_, 'unit> {
     /// compares them like written clauses.
     fn append_type_invariant_contracts(
         &mut self,
-        check_context: &CheckContext<'_>,
         signature: &FunctionSignature,
         contracts: &mut InterfaceContracts,
     ) -> Result<(), CheckStop> {
-        for requirement in self.implicit_type_invariant_requirements(check_context, signature)? {
+        for requirement in self.implicit_type_invariant_requirements(signature)? {
             contracts.requires.push(InterfaceRequirement {
                 clause: requirement.clause,
                 template: requirement.template,
@@ -415,7 +415,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut relation_ordinal = u32::try_from(contracts.ensures.len())
             .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
         for (invariant, subject, selector) in
-            self.type_invariant_postcondition_selectors(check_context, signature)?
+            self.type_invariant_postcondition_selectors(signature)?
         {
             contracts.ensures.push(InterfaceEnsures {
                 clause: invariant.clause.clone(),
@@ -448,13 +448,24 @@ fn contract_query_discharged(proof: &FunctionEntailment) -> bool {
 /// unrouted actual clause holds on every normal return, including an Ok route;
 /// a routed clause holds only on that exact result ordinal and route.
 fn ensures_available_on_route(published: &InterfaceEnsures, promised: &InterfaceEnsures) -> bool {
-    match (published.variant, promised.variant) {
-        (None, _) => true,
-        (Some(_), None) => false,
-        (Some(published_variant), Some(promised_variant)) => {
+    match (
+        published.selector.is_routed(),
+        promised.selector.is_routed(),
+    ) {
+        (false, _) => true,
+        (true, false) => false,
+        (true, true) => {
             published.ordinal == promised.ordinal
-                && published_variant == promised_variant
-                && published.field == promised.field
+                && match (published.selector.route, promised.selector.route) {
+                    // A generated type invariant and a written promise name
+                    // the same concrete field even though only the written
+                    // clause retains resolver-owned selector metadata.
+                    (Some(actual), Some(formal)) => actual == formal,
+                    (None, None) => {
+                        published.variant == promised.variant && published.field == promised.field
+                    }
+                    _ => false,
+                }
         }
     }
 }
@@ -480,7 +491,7 @@ fn contract_postcondition_variables(
                     mode: result.mode,
                     // A routed ordinal's datum is the Ok payload, not the
                     // whole Result value declared at that ordinal [FN-9].
-                    ty: if selector.variant.is_some()
+                    ty: if selector.selector.is_routed()
                         && usize::try_from(selector.ordinal).ok() == Some(ordinal)
                     {
                         selector.result_type
@@ -535,6 +546,7 @@ fn expanded_contract_goal(
             declaration: *declaration,
             projections: projections.clone(),
             ty: *ty,
+            admission: Default::default(),
         }),
         ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, .. }) => {
             GoalExpression::Datum(GoalDatum::Literal(value.clone()))
@@ -627,6 +639,7 @@ impl<'unit> DeclarationInventory<'unit> {
         }
         Ok(CheckedFunction {
             formal_hypothesis: true,
+            summary_source: None,
             prelude_element: None,
             id: signature.id,
             declaration: signature.declaration,
@@ -645,7 +658,10 @@ impl<'unit> DeclarationInventory<'unit> {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements,
+            held_parameters: signature.checked_held_parameters()?,
+            held_calls: Vec::new(),
             requirement_places,
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
@@ -743,7 +759,7 @@ impl<'unit> TypeContext<'unit> {
     }
     /// Runs `query` in the declaration-only proof context of one contract
     /// hypothesis: no callee, contract query or verified summary is visible.
-    fn with_contract_context<ResultValue>(
+    pub(in crate::semantic::check) fn with_contract_context<ResultValue>(
         &self,
         function: &CheckedFunction,
         query: impl FnOnce(&EntailmentContext<'_>) -> ResultValue,
@@ -755,17 +771,20 @@ impl<'unit> TypeContext<'unit> {
             .collect::<Vec<_>>();
         let elements = &self.elements;
         let const_parameter_types = self.const_generic_types().collect();
+        let copy_type_parameters = self.copy_type_parameters();
         let context = EntailmentContext {
             declarations: self.declarations.resolved.declarations(),
             callees: &[],
             constants: &self.checked_constants,
             constant_ids: &self.constants,
             const_parameter_types: &const_parameter_types,
+            copy_type_parameters: &copy_type_parameters,
             nominals: &self.nominals,
             elements,
             contract_queries: &[],
             verified_postconditions: &[],
             verified_postcondition_proofs: &[],
+            component_postconditions: &[],
             binding_names: &binding_names,
         };
         query(&context)

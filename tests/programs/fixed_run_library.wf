@@ -51,8 +51,8 @@ fn try_place<T: drop, const n: u64>(window: &Ring<T, n>, value: T) -> unplaced: 
   ensures window^.len >= entry(window)^.len;
 } {
   doc "Appends one value, handing it back when the window is full; the fullness test is the length against the written capacity, and the standing identity len + (cap - len) = cap turns it into place_back's requirement [MSR-2].";
-  let held = window^.len;
-  let fits = held < n;
+  let observed = window^.len;
+  let fits = observed < n;
   if fits {
     place_back(window: window, value: move value);
     return None<T>();
@@ -65,8 +65,8 @@ fn try_take<T: drop, const n: u64>(window: &Ring<T, n>) -> taken: Option<T> writ
   ensures window^.len + 1_u64 >= entry(window)^.len;
 } {
   doc "Removes one value from the end, or reports that the window is empty.";
-  let held = window^.len;
-  let any = held > 0_u64;
+  let observed = window^.len;
+  let any = observed > 0_u64;
   if any {
     let one = take_back(window: window);
     return Some<T>(value: move one);

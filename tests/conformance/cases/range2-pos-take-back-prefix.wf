@@ -1,0 +1,12 @@
+fn shrink(xs: &Slots<u64, 4>) -> result: unit writes(xs) contract {
+  requires 0_u64 < xs^.len;
+  requires forall before(k in 0_u64..xs^.len): xs^[k] == 0_u64;
+  ensures forall after(k in 0_u64..xs^.len): xs^[k] == 0_u64;
+} {
+  let removed = take_back(window: xs);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

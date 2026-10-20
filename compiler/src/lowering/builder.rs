@@ -6,7 +6,10 @@ mod atomic;
 mod buffers;
 mod call_grain;
 mod contexts;
+mod indexed;
+mod lock_ledger;
 mod loops;
+mod parameters;
 mod prelude;
 pub(crate) use prelude::layout_ceiling;
 mod probe;
@@ -16,17 +19,18 @@ mod runs;
 mod split;
 mod storage;
 mod targets;
+mod wake;
 mod work;
 
 use crate::CheckedProgram;
 use crate::NodePath;
 use crate::semantic::CheckedSetTarget;
-use crate::semantic::permission::CallStorageEffects;
+use crate::semantic::permission::PermissionSite;
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedDrop, CheckedEffectStep, CheckedExpression,
-    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedParameter,
-    CheckedProgramData, CheckedProjectedDrop, CheckedShared, CheckedStatement, CheckedValue,
-    FunctionPermissions, MeasureCell, MeasuredKind,
+    CheckedMatchArm, CheckedMatchSelection, CheckedMatchType, CheckedMeasure, CheckedMode,
+    CheckedNominalKind, CheckedParameter, CheckedProgramData, CheckedProjectedDrop, CheckedShared,
+    CheckedStatement, CheckedValue, FunctionPermissions, MeasureCell, MeasuredKind,
 };
 
 use super::*;
@@ -163,11 +167,25 @@ pub(crate) fn lower_checked_from(
         .variants
         .iter()
         .map(|variant| {
-            checked.data.functions[variant.source.0 as usize]
-                .symbol
-                .clone()
+            let function = &checked.data.functions[variant.source.0 as usize];
+            if function.body.is_none() && function.symbol == "std.snapshot.capture_export" {
+                let map = function
+                    .parameters
+                    .get(1)
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                let IrType::Nominal(id) = lower_type(types, map.ty)? else {
+                    return Err(LoweringFailure::InvalidCheckedProgram);
+                };
+                Ok(format!(
+                    "{}.typed.{}",
+                    function.symbol,
+                    nominals[id.index()].link_name()
+                ))
+            } else {
+                Ok(function.symbol.clone())
+            }
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, LoweringFailure>>()?;
     let mut functions = physical
         .variants
         .iter()
@@ -183,6 +201,7 @@ pub(crate) fn lower_checked_from(
                 constants: &constants,
                 function_results: &function_results,
                 synthesis: &synthesis,
+                lock_ledger_sources: &checked.data.lock_ledger_sources,
             };
             lower_function(
                 function,
@@ -198,6 +217,12 @@ pub(crate) fn lower_checked_from(
     let loop_candidate_constructions = synthesis.borrow().candidate_constructions;
     let (synthesized, mut actualization) = synthesis.into_inner().finish()?;
     functions.extend(synthesized);
+    // Once every body and cleanup is complete, remove unobserved forwarding
+    // before work estimates and backend storage planning see the graph.
+    // This changes neither source signatures nor instruction definitions.
+    for function in &mut functions {
+        parameters::prune_block_parameters(function, 0, &[])?;
+    }
     let weights = split::assign_weights(&mut functions);
     if call_grain == CallGrain::WorkUnit {
         call_grain::prune(&mut functions, &weights, &mut actualization);
@@ -242,6 +267,7 @@ struct LoweringContext<'program> {
     /// Every physical function's declared IR result, indexed by its IR ordinal.
     function_results: &'program [IrType],
     synthesis: &'program SynthesisCell,
+    lock_ledger_sources: &'program HashMap<NodePath, String>,
 }
 
 fn lower_scalar_constant(value: &CheckedValue) -> Result<IrConstant, LoweringFailure> {
@@ -439,6 +465,21 @@ fn lower_function<'program>(
     permissions: Option<&'program FunctionPermissions>,
     overlap: OverlapLowering,
 ) -> Result<IrFunction, LoweringFailure> {
+    // Held calls share their caller's native executor preparation and deferred
+    // activation. Keep both their ordinary forwarding bodies and atomic owners
+    // on that executor, including conditional calls and nested counted loops.
+    // The checked inventory includes calls through function-kind formals; this
+    // chooses a sequential actualization without changing PAR permission.
+    let overlap = if overlap == OverlapLowering::On
+        && (!function.held_parameters.is_empty() || !function.held_calls.is_empty())
+    {
+        context.synthesis.borrow_mut().note_narrowing(format!(
+            "PAR actualization  {symbol}  narrowed: held contracts retain the caller's native executor"
+        ));
+        OverlapLowering::Off
+    } else {
+        overlap
+    };
     // One of the compiler-owned [PRE-1] records: declared body-less exactly
     // like a host function, but with no trusted-base object behind it, so the
     // compiler emits the body here. Only a program that called the row
@@ -470,6 +511,11 @@ fn lower_function<'program>(
         overlap,
         symbol,
     )?;
+    if overlap == OverlapLowering::On {
+        builder.places = Some(std::rc::Rc::new(
+            crate::semantic::CheckedPlaceMap::for_function(function),
+        ));
+    }
     builder
         .context_starts
         .clone_from(&function.waiting.context_starts);
@@ -482,13 +528,34 @@ fn lower_function<'program>(
     for parameter in &function.parameters {
         let ty = lower_parameter_type(context.erasure, parameter, context.nominals)?;
         let value = builder.new_parameter(ty)?;
-        if parameter.mode == CheckedMode::Reference
+        // Every reference kind, ranges and runs included, keeps the fact that
+        // its declared effects never write through it [CALL-1, REF-4].
+        if parameter.mode.is_reference()
             && !function
                 .declared_state_writes
                 .iter()
                 .any(|path| path.root == parameter.declaration)
         {
             builder.readonly_reference_parameters.push(value);
+        }
+        // A bare effect root covers every descendant [EFF-1]. Retain this
+        // stronger fact separately from readonly: a range or measure-only
+        // row need not cover every physical descriptor access used to lower it.
+        if parameter.mode == CheckedMode::Reference {
+            if function
+                .declared_state_reads
+                .iter()
+                .any(|path| path.root == parameter.declaration && path.steps.is_empty())
+            {
+                builder.whole_read_reference_parameters.push(value);
+            }
+            if function
+                .declared_state_writes
+                .iter()
+                .any(|path| path.root == parameter.declaration && path.steps.is_empty())
+            {
+                builder.whole_write_reference_parameters.push(value);
+            }
         }
         if parameter.mode == CheckedMode::Reference
             && function
@@ -638,19 +705,15 @@ fn lower_parameter_type(
 /// The representation a borrow-mode value carries.
 ///
 /// A borrow addresses the owner's storage, including a Box's pointer slot.
-/// Ordinary opaque values use the same address path. The buffer/view ABI
-/// retains its descriptor representation for every callable body [REF-1].
+/// Ordinary opaque values and runtime-capacity descriptor headers use the
+/// same address path. Range and Run references retain their dedicated
+/// nonowning descriptor representations [REF-1, REF-4, TYPE-9].
 fn lower_borrow_mode_type(
     mode: CheckedMode,
     ty: IrType,
     nominals: &[IrNominal],
 ) -> Result<IrType, LoweringFailure> {
-    if mode == CheckedMode::Own
-        || matches!(
-            ty,
-            IrType::Buffer { .. } | IrType::Range { .. } | IrType::Run { .. }
-        )
-    {
+    if mode == CheckedMode::Own || matches!(ty, IrType::Range { .. } | IrType::Run { .. }) {
         return Ok(ty);
     }
     let Some(referent) = IrAddressed::of(ty) else {
@@ -691,6 +754,8 @@ struct IrBuilder<'program> {
     bindings: HashMap<BindingId, IrValueId>,
     parameters: Vec<(IrValueId, IrType)>,
     readonly_reference_parameters: Vec<IrValueId>,
+    whole_read_reference_parameters: Vec<IrValueId>,
+    whole_write_reference_parameters: Vec<IrValueId>,
     box_keeping_reference_parameters: Vec<IrValueId>,
     source_calls: Vec<IrSourceCall>,
     values: Vec<IrType>,
@@ -713,6 +778,10 @@ struct IrBuilder<'program> {
     /// identity every written call position has, so this is how a permitted
     /// group is found in the IR.
     call_results: HashMap<NodePath, (IrBlockId, IrValueId)>,
+    /// Permission sites preceded by an implicit context await in this body.
+    /// An await may suspend without changing the IR block, so these sites
+    /// must start a fresh compute window even when their calls do not wait.
+    awaited_sites: HashSet<NodePath>,
     /// The permission table of the source function this body belongs to: the
     /// [PAR-1] groups its statements may overlap and the [PAR-2] verdict of
     /// each of its counted loops.
@@ -743,12 +812,19 @@ struct IrBuilder<'program> {
     /// [SHARE-2] the atomic statements whose blocks enclose the statement
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
+    /// Source citations and developer lines recorded by atomic lowering.
+    lock_ledger_sources: &'program HashMap<NodePath, String>,
+    lock_ledger: Vec<String>,
     /// Atomic entry roots whose completed statements permit concurrent readers.
     readonly_atomic_roots: std::collections::HashSet<BindingId>,
     /// Executing split contexts, including enclosing chunks' permissions.
     capture_write_contexts: Vec<split::CaptureWriteContext<'program>>,
     /// Indexed families, their current ranges, and source/private storage modes.
     indexed_roots: Vec<(crate::semantic::IndexedReduction, IrValueId, IrValueId)>,
+    indexed_blocks: Vec<indexed::BlockBinding>,
+    /// The checker's resolved origins, shared by this body and its chunks.
+    places: Option<std::rc::Rc<crate::semantic::CheckedPlaceMap>>,
+    indexed_block_families: Vec<crate::semantic::IndexedReduction>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -782,6 +858,7 @@ impl<'program> IrBuilder<'program> {
             constants,
             function_results,
             synthesis,
+            lock_ledger_sources,
         } = context;
         let mut builder = Self {
             target,
@@ -793,6 +870,8 @@ impl<'program> IrBuilder<'program> {
             bindings: HashMap::new(),
             parameters: Vec::new(),
             readonly_reference_parameters: Vec::new(),
+            whole_read_reference_parameters: Vec::new(),
+            whole_write_reference_parameters: Vec::new(),
             box_keeping_reference_parameters: Vec::new(),
             source_calls: Vec::new(),
             values: Vec::new(),
@@ -805,6 +884,7 @@ impl<'program> IrBuilder<'program> {
             addressed_bindings,
             function_results,
             call_results: HashMap::new(),
+            awaited_sites: HashSet::new(),
             permissions,
             overlap,
             synthesis,
@@ -813,9 +893,14 @@ impl<'program> IrBuilder<'program> {
             context_awaits: Vec::new(),
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
+            lock_ledger_sources,
+            lock_ledger: Vec::new(),
             readonly_atomic_roots: std::collections::HashSet::new(),
             capture_write_contexts: Vec::new(),
             indexed_roots: Vec::new(),
+            indexed_blocks: Vec::new(),
+            places: None,
+            indexed_block_families: Vec::new(),
             records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
@@ -842,6 +927,7 @@ impl<'program> IrBuilder<'program> {
             constants: self.constants,
             function_results: self.function_results,
             synthesis: self.synthesis,
+            lock_ledger_sources: self.lock_ledger_sources,
         }
     }
 
@@ -866,9 +952,12 @@ impl<'program> IrBuilder<'program> {
             name,
             parameters: self.parameters,
             readonly_reference_parameters: self.readonly_reference_parameters,
+            whole_read_reference_parameters: self.whole_read_reference_parameters,
+            whole_write_reference_parameters: self.whole_write_reference_parameters,
             box_keeping_reference_parameters: self.box_keeping_reference_parameters,
             source_signature: None,
             source_calls: self.source_calls,
+            lock_ledger: self.lock_ledger,
             result: self.result,
             values: self.values,
             blocks: self
@@ -967,21 +1056,31 @@ impl<'program> IrBuilder<'program> {
     ///
     /// The judgment is the checker's; this only narrows it to what the emitted
     /// shape can carry, and every narrowing drops members rather than adding
-    /// any. A group is a contiguous part of a permitted chain, kept only while
+    /// any. A group keeps the calls within a contiguous part of a permitted
+    /// chain. Non-call statements stay on the owning thread at their original
+    /// instruction positions; those between group calls execute after earlier
+    /// hand-outs and before the source-last call and join. A trailing non-call
+    /// does not move that join. The group is kept only while
     ///
-    /// - each site's `let` or expression statement lowered to exactly one
-    ///   recorded call definition, so a chain member whose statement lowered
-    ///   to something else (a `propagate`, or a discarded result's release,
-    ///   for instance) ends the group;
+    /// - each call site lowered to exactly one recorded call definition, so a
+    ///   call member whose statement lowered to something else (a `propagate`,
+    ///   or a discarded result's release, for instance) ends the group;
     /// - every member's definition is in one block, so the handed-out call
     ///   and its join sit on one straight-line edge; and
+    /// - no site after the first call has an implicit context await before
+    ///   it. Such a site ends the group before the await and may start
+    ///   another afterward: an await can suspend in the same IR block, moving
+    ///   the context away from the compute offers' owning lane. Other waiting
+    ///   calls are already refused by permission; and
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
     ///   and the join, where the value does not exist yet; and
-    /// - no member releases a place that overlaps a place another member
+    /// - no call member releases a place that overlaps a place a later site
     ///   borrows at entry or loads through during argument formation. These
-    ///   places come from the checker; a conflict ends the group before the
-    ///   new member's argument formation, after earlier members have joined.
+    ///   sites include non-call statements, and the same check applies with
+    ///   release and borrow reversed. These places and pair-local separation
+    ///   answers come from the checker; a conflict ends the group before the
+    ///   new site's argument formation, after earlier members have joined.
     ///   The new member can start another group, and disjoint written Box
     ///   references remain eligible together.
     ///
@@ -997,7 +1096,7 @@ impl<'program> IrBuilder<'program> {
         };
         let mut overlaps = Vec::new();
         let mut claimed = HashSet::new();
-        let finish = |members: &mut Vec<(IrValueId, &CallStorageEffects)>,
+        let finish = |members: &mut Vec<(IrValueId, &PermissionSite)>,
                       claimed: &mut HashSet<IrValueId>,
                       overlaps: &mut Vec<IrOverlap>| {
             let members = std::mem::take(members);
@@ -1020,41 +1119,61 @@ impl<'program> IrBuilder<'program> {
             let mut members = Vec::new();
             let mut home = None;
             for site in sites {
+                if self.awaited_sites.contains(&site.statement) {
+                    finish(&mut members, &mut claimed, &mut overlaps);
+                    home = None;
+                }
                 // [PAR-1] judges every adjacent statement pair, so a run's
-                // members include statements that are not calls. The hand-out
-                // lowering has no form for one, so a non-call member ends the
-                // group here. A later contiguous part can start another
-                // group, but no group bridges this intervening statement.
-                let Some(call) = &site.call else {
+                // members include statements that are not calls. They add no
+                // hand-out: their instructions remain in source position
+                // inside the window. Keep the pending calls across them,
+                // subject to the await and storage boundaries; the next call
+                // still has to land in the group's block.
+                let value = if let Some(call) = &site.call {
+                    let Some((block, value)) = self.call_results.get(call).copied() else {
+                        finish(&mut members, &mut claimed, &mut overlaps);
+                        home = None;
+                        continue;
+                    };
+                    if claimed.contains(&value) {
+                        finish(&mut members, &mut claimed, &mut overlaps);
+                        home = None;
+                        continue;
+                    }
+                    if home.is_some_and(|previous| previous != block) {
+                        finish(&mut members, &mut claimed, &mut overlaps);
+                    }
+                    home = Some(block);
+                    Some(value)
+                } else {
+                    None
+                };
+                let conflict = members.iter().find_map(|(_, previous)| {
+                    let pair = permissions.storage_pairs.iter().find(|pair| {
+                        pair.first == previous.statement && pair.second == site.statement
+                    });
+                    match pair {
+                        Some(pair) if pair.conflict.is_none() => None,
+                        Some(pair) => Some(pair.ledger.clone()),
+                        // Every call/later-site pair is recorded. If a
+                        // new producer omits one, it cannot authorize overlap.
+                        None => Some(format!(
+                            "PAR actualization  {}  pair({}, {})  narrowed: unavailable pair-local storage evidence",
+                            self.function_name, previous.callee_name, site.callee_name,
+                        )),
+                    }
+                });
+                if let Some(line) = conflict {
+                    self.synthesis.borrow_mut().note_narrowing(line);
                     finish(&mut members, &mut claimed, &mut overlaps);
-                    home = None;
+                }
+                let Some(value) = value else {
                     continue;
                 };
-                let Some((block, value)) = self.call_results.get(call).copied() else {
-                    finish(&mut members, &mut claimed, &mut overlaps);
-                    home = None;
-                    continue;
-                };
-                if claimed.contains(&value) {
-                    finish(&mut members, &mut claimed, &mut overlaps);
-                    home = None;
-                    continue;
-                }
-                if home.is_some_and(|previous| previous != block) {
-                    finish(&mut members, &mut claimed, &mut overlaps);
-                }
-                home = Some(block);
-                let effects = &site.storage_effects;
-                if members
-                    .iter()
-                    .any(|(_, previous)| effects.conflicts(previous))
-                {
-                    finish(&mut members, &mut claimed, &mut overlaps);
-                }
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
-                members.push((value, effects));
+                members.push((value, site));
                 if addressed {
                     // This member must be the group's last, so it ends it.
                     finish(&mut members, &mut claimed, &mut overlaps);
@@ -1146,8 +1265,9 @@ impl<'program> IrBuilder<'program> {
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
         let condition = self.expression(conditional.scrutinee)?;
         let mut values = vec![condition];
-        for argument in arguments {
-            values.push(self.expression(argument)?);
+        for (position, argument) in arguments.iter().enumerate() {
+            let value = self.expression(argument)?;
+            values.push(self.indexed_call_argument(conditional.site, position, value)?);
         }
         let mut guard = Self::new(
             self.context(),
@@ -1222,7 +1342,11 @@ impl<'program> IrBuilder<'program> {
             if self.current.is_none() {
                 return Err(LoweringFailure::InvalidCheckedProgram);
             }
+            let pending = self.pending_contexts.len();
             self.await_contexts_before(outer_pending, index)?;
+            if self.pending_contexts.len() < pending {
+                self.note_awaited_site(statement);
+            }
             // [SHARE-3] inside an atomic block, the units the statement
             // reaches are taken before it runs.
             if !self.atomics.is_empty() {
@@ -1363,7 +1487,8 @@ impl<'program> IrBuilder<'program> {
                 // would lie between a hand-out and its join, so this call is
                 // not recorded: its unavailable result ends any group through
                 // it. Admitting it as a group's last member, as an addressed
-                // binding is, remains a deferred opportunity (docs/todo.md).
+                // binding is, remains a deferred opportunity (status board
+                // item coord-wfbl-03-36).
                 CheckedStatement::DropExpression {
                     value: expression,
                     drops,
@@ -1506,12 +1631,14 @@ impl<'program> IrBuilder<'program> {
                     })?;
                 }
                 CheckedStatement::Atomic {
+                    node_path,
                     targets,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => self.lower_atomic(
+                    node_path,
                     targets,
                     guard.as_deref(),
                     body,
@@ -1520,14 +1647,15 @@ impl<'program> IrBuilder<'program> {
                 )?,
                 CheckedStatement::Match {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     continues,
+                    ..
                 } => {
                     if !self.lower_conditional_call(statement)? {
                         self.lower_match(
                             scrutinee,
-                            *enum_type,
+                            *match_type,
                             arms,
                             *continues,
                             None,
@@ -1541,7 +1669,7 @@ impl<'program> IrBuilder<'program> {
                     result_mode,
                     result_range_element,
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     continues,
                     ..
@@ -1579,7 +1707,7 @@ impl<'program> IrBuilder<'program> {
                     };
                     self.lower_match(
                         scrutinee,
-                        *enum_type,
+                        *match_type,
                         arms,
                         *continues,
                         Some((*binding, result)),
@@ -1594,7 +1722,7 @@ impl<'program> IrBuilder<'program> {
         // [WAIT-3] a context no later statement of its block used is joined
         // at the block's end, before the block's releases and its successor.
         if self.current.is_some() {
-            self.await_contexts_before(outer_pending, usize::MAX)?;
+            self.await_contexts_at_block_end(outer_pending)?;
         }
         self.pending_contexts.truncate(outer_pending);
         Ok(())
@@ -1604,7 +1732,7 @@ impl<'program> IrBuilder<'program> {
     fn lower_match(
         &mut self,
         scrutinee: &CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: &[CheckedMatchArm],
         continues: bool,
         value_binding: Option<(BindingId, IrType)>,
@@ -1627,7 +1755,7 @@ impl<'program> IrBuilder<'program> {
         self.lower_match_from_value(
             scrutinee,
             borrowed_address,
-            enum_type,
+            match_type,
             arms,
             continues,
             value_binding,
@@ -1641,7 +1769,7 @@ impl<'program> IrBuilder<'program> {
         &mut self,
         scrutinee: IrValueId,
         borrowed_address: Option<IrValueId>,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: &[CheckedMatchArm],
         continues: bool,
         value_binding: Option<(BindingId, IrType)>,
@@ -1672,18 +1800,46 @@ impl<'program> IrBuilder<'program> {
         for _ in arms {
             arm_blocks.push(self.new_block(&[])?.0);
         }
-        self.terminate(IrTerminator::Match {
-            scrutinee,
-            enum_type: crate::lowering::lower_enum_type(self.erasure, enum_type)?,
-            targets: arms
-                .iter()
-                .zip(&arm_blocks)
-                .map(|(arm, block)| IrMatchTarget {
-                    tag: arm.tag,
-                    block: *block,
-                })
-                .collect(),
-        })?;
+        let terminator = match match_type {
+            CheckedMatchType::Enum(enum_type) => IrTerminator::Match {
+                scrutinee,
+                enum_type: crate::lowering::lower_enum_type(self.erasure, enum_type)?,
+                targets: arms
+                    .iter()
+                    .zip(&arm_blocks)
+                    .map(|(arm, block)| {
+                        let CheckedMatchSelection::Variant(tag) = arm.selection else {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        };
+                        Ok(IrMatchTarget { tag, block: *block })
+                    })
+                    .collect::<Result<_, _>>()?,
+            },
+            CheckedMatchType::Integer(_) => {
+                let mut targets = Vec::with_capacity(arms.len());
+                let mut default = None;
+                for (arm, block) in arms.iter().zip(&arm_blocks) {
+                    match arm.selection {
+                        CheckedMatchSelection::Integer(value) => {
+                            targets.push(IrIntegerMatchTarget {
+                                value,
+                                block: *block,
+                            });
+                        }
+                        CheckedMatchSelection::Else => default = Some(*block),
+                        CheckedMatchSelection::Variant(_) => {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        }
+                    }
+                }
+                IrTerminator::IntegerMatch {
+                    scrutinee,
+                    targets,
+                    default,
+                }
+            }
+        };
+        self.terminate(terminator)?;
         for (arm, block) in arms.iter().zip(arm_blocks) {
             self.current = Some(block);
             self.bindings = base_bindings.clone();
@@ -1692,7 +1848,7 @@ impl<'program> IrBuilder<'program> {
             // fields it names: the match is the point at which the scrutinee
             // ceases to exist.
             if !arm.covered.is_empty() {
-                let CheckedEnumType::Nominal(nominal) = enum_type else {
+                let CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) = match_type else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
                 let nominal = self.erased(nominal)?;
@@ -1707,7 +1863,10 @@ impl<'program> IrBuilder<'program> {
                         IrOperation::ProjectVariant {
                             aggregate: scrutinee,
                             nominal,
-                            variant: arm.tag,
+                            variant: match arm.selection {
+                                CheckedMatchSelection::Variant(tag) => tag,
+                                _ => return Err(LoweringFailure::InvalidCheckedProgram),
+                            },
                             field: *field,
                         },
                     )?;
@@ -1716,7 +1875,7 @@ impl<'program> IrBuilder<'program> {
                 self.append_drops(releases)?;
             }
             for binder in &arm.binders {
-                let CheckedEnumType::Nominal(nominal) = enum_type else {
+                let CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) = match_type else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
                 let nominal = self.erased(nominal)?;
@@ -1727,7 +1886,10 @@ impl<'program> IrBuilder<'program> {
                         IrOperation::ProjectVariant {
                             aggregate: scrutinee,
                             nominal,
-                            variant: arm.tag,
+                            variant: match arm.selection {
+                                CheckedMatchSelection::Variant(tag) => tag,
+                                _ => return Err(LoweringFailure::InvalidCheckedProgram),
+                            },
                             field: binder.field,
                         },
                     )?
@@ -1741,7 +1903,10 @@ impl<'program> IrBuilder<'program> {
                             address,
                             projection: IrPlaceStep::EnumVariant {
                                 nominal,
-                                variant: arm.tag,
+                                variant: match arm.selection {
+                                    CheckedMatchSelection::Variant(tag) => tag,
+                                    _ => return Err(LoweringFailure::InvalidCheckedProgram),
+                                },
                                 field: binder.field,
                             },
                         },
@@ -1856,7 +2021,26 @@ impl<'program> IrBuilder<'program> {
                 let constant = lower_scalar_constant(value)?;
                 self.define(ty, IrOperation::Constant(constant))
             }
-            CheckedExpression::NamedConstant { value, .. } => {
+            CheckedExpression::NamedConstant {
+                constant, value, ..
+            } => {
+                if matches!(
+                    value,
+                    CheckedValue::Array { .. } | CheckedValue::Struct { .. }
+                ) {
+                    // [CONST-2, OWN-1] load a value snapshot from the static,
+                    // so stores to its destination never target the static.
+                    let address = self.lower_place_address_access(
+                        &crate::semantic::CheckedContainerRoot {
+                            root: crate::semantic::CheckedPlaceRoot::Constant(*constant),
+                            path: Vec::new(),
+                            ty: value.ty(),
+                            proof_base: None,
+                        },
+                        false,
+                    )?;
+                    return self.load_storage_value(address);
+                }
                 let ty = lower_type(self.erasure, value.ty())?;
                 let constant = lower_scalar_constant(value)?;
                 self.define(ty, IrOperation::Constant(constant))
@@ -1875,7 +2059,11 @@ impl<'program> IrBuilder<'program> {
                 let source_arguments = arguments.iter().map(lower_source_argument).collect();
                 let arguments = arguments
                     .iter()
-                    .map(|argument| self.expression(argument))
+                    .enumerate()
+                    .map(|(position, argument)| {
+                        let value = self.expression(argument)?;
+                        self.indexed_call_argument(call, position, value)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 // The definition takes the callee's declared IR result, which
                 // carries the result mode: a borrow-returning callee delivers
@@ -1987,7 +2175,7 @@ impl<'program> IrBuilder<'program> {
                     },
                 )
             }
-            CheckedExpression::EnumEquality {
+            CheckedExpression::ValueEquality {
                 equal,
                 operand_type,
                 arguments,
@@ -2000,7 +2188,7 @@ impl<'program> IrBuilder<'program> {
                 let right = self.expression(right)?;
                 self.define(
                     IrType::Bool,
-                    IrOperation::EnumEquality {
+                    IrOperation::ValueEquality {
                         equal: *equal,
                         operand_type: lower_type(self.erasure, *operand_type)?,
                         arguments: [left, right],
@@ -2111,7 +2299,7 @@ impl<'program> IrBuilder<'program> {
                 self.lower_range_element_measure(*measure, place)
             }
             CheckedExpression::ReadStorage { root, .. } => {
-                let address = self.lower_place_address(root)?;
+                let address = self.lower_place_address_access(root, false)?;
                 self.load_storage_value(address)
             }
             CheckedExpression::BufferIndex {
@@ -2295,7 +2483,7 @@ impl<'program> IrBuilder<'program> {
                         ty: *ty,
                         proof_base: None,
                     };
-                    let address = self.lower_place_address(&root)?;
+                    let address = self.lower_place_address_access(&root, false)?;
                     return self.load_storage_value(address);
                 }
                 let root = self.binding_value(*binding)?;

@@ -315,6 +315,11 @@ impl<'a> PhysicalTypes<'a> {
                     element: self.element(element)?,
                 });
             }
+            CheckedType::Entries { element } => {
+                return Ok(IrType::Entries {
+                    element: self.element(element)?,
+                });
+            }
             CheckedType::Array { element, length } => {
                 return Ok(IrType::Array {
                     element: self.element(element)?,

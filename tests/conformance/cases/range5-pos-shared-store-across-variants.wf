@@ -1,0 +1,62 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Block {
+  entry_slot: u32;
+  normal_y: i32;
+}
+
+enum Flow {
+  Open(block: u32);
+  Close(block: u32);
+  Child(context: u32);
+  Float(context: u32);
+}
+
+fn translate_owner_suffix(order: &[Flow], targets: &[Block], first: u64, delta: i32, children: &[Block]) -> result: unit reads(order), writes(targets), writes(children) contract {
+  requires forall inv(k in first..order^.len) when order^[k].Open.block < targets^.len: targets^[order^[k].Open.block].entry_slot == k;
+  requires forall inv_close(k in first..order^.len) when order^[k].Close.block < targets^.len: targets^[order^[k].Close.block].entry_slot == k;
+  requires forall inv_child(k in first..order^.len) when order^[k].Child.context < children^.len: children^[order^[k].Child.context].entry_slot == k;
+  requires forall inv_float(k in first..order^.len) when order^[k].Float.context < children^.len: children^[order^[k].Float.context].entry_slot == k;
+} {
+  doc "Each variant moves the block its payload names; the Child and Float payloads index one store, and read congruence on that store's entry_slot excludes a collision across the two variants.";
+  let count = order^.len;
+  for (
+    k in first..count,
+    apart(i, j) {
+    }
+  ) {
+    let item = order^[k];
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < targets^.len {
+          set targets^[at].normal_y = targets^[at].normal_y +sat delta;
+        }
+      }
+      Close(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < targets^.len {
+          set targets^[at].normal_y = targets^[at].normal_y +sat delta;
+        }
+      }
+      Child(context: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < children^.len {
+          set children^[at].normal_y = children^[at].normal_y +sat delta;
+        }
+      }
+      Float(context: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < children^.len {
+          set children^[at].normal_y = children^[at].normal_y +sat delta;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

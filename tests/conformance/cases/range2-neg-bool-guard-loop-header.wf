@@ -1,0 +1,28 @@
+struct Node {
+  live: Bool;
+  slot: u64;
+}
+
+fn need_zero(slot: u64) -> result: unit pure contract {
+  requires slot == 0_u64;
+} {
+  return unit;
+}
+
+fn inspect(nodes: &Slots<Node, 1>) -> result: unit writes(nodes) contract {
+  requires nodes^.len == 1_u64;
+  requires forall observed(k in 0_u64..nodes^.len) when nodes^[k].live is True: nodes^[k].slot == 0_u64;
+} {
+  loop {
+    if nodes^[0_u64].live {
+      let slot = nodes^[0_u64].slot;
+      need_zero(slot: slot);
+    }
+    set nodes^[0_u64].live = True();
+    continue;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

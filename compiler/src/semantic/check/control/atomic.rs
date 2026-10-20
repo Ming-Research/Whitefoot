@@ -1,13 +1,18 @@
 //! Atomic targets and their ordinary reference, effect and scope judgments [SHARE-2].
 use super::super::super::model::{
-    BindingId, CheckedArrayRoot, CheckedExpression, CheckedMode, CheckedNominalKind,
-    CheckedRangeSource, CheckedSetTarget, CheckedShared, CheckedStatePath, CheckedStatement,
+    BindingId, CheckedArrayRoot, CheckedCallSeparation, CheckedCallSeparationPositions,
+    CheckedExpression, CheckedMode, CheckedNominalKind, CheckedRangeSource,
+    CheckedSeparationOccasion, CheckedSetTarget, CheckedShared, CheckedStatePath, CheckedStatement,
     CheckedTarget, CheckedTargetKind, CheckedType, IntegerType, expression_children,
 };
-use super::super::super::places::{CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace};
+use super::super::super::places::{
+    CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations,
+    places_overlap,
+};
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
-use super::super::references::{ReferenceInfo, ReferenceKind};
-use super::super::{CheckStop, Checker, EffectSet, LocalBinding};
+use super::super::references::{HandleWatch, ReferenceInfo, ReferenceKind};
+use super::super::types::SelectedPlaceType;
+use super::super::{CheckStop, Checker, EffectSet, LocalBinding, TypedExpression};
 use super::{ControlCounters, ControlScope, StatementResult};
 use crate::semantic::check::FunctionContext;
 use crate::syntax::NodeId;
@@ -16,16 +21,36 @@ use crate::{
     SemanticCompilerFailure, SemanticIssueKind, SemanticRule,
 };
 use std::collections::{HashMap, HashSet};
-pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`";
+use std::rc::Rc;
+pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>` or `SharedRead<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`";
 pub(in crate::semantic::check) const SHARE2_KEY_WITHOUT_MOVE: &str = "name the key set without `move`: the statement reads it when it begins and the binding over it stays valid while the set is not written";
 pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement, such as `keys` or, through a reference to one, `keys^`";
 pub(in crate::semantic::check) const SHARE2_KEY_BEFORE_THE_STATEMENT: &str = "read handles and keys before the statement: copy a handle held in a state out with `shared_share` in an earlier atomic statement, and compute a key that comes from a state into a local the same way; a statement reads its handles and keys when it begins, before it holds any state";
 pub(in crate::semantic::check) const SHARE2_WAIT_OUTSIDE_THE_BLOCK: &str = "move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome";
 pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "name both handles as targets of one statement, `atomic outer = &first, inner = &second { … }`, or end the outer statement before starting the inner one";
 pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block";
+pub(in crate::semantic::check) const SHARE2_WAIT_FOR_THE_TIME_OUTSIDE_THE_GUARD: &str = "wait for the time outside the guard: call `std::time::sleep_until` with the deadline before the statement, or spawn a context that sleeps until the deadline and then fires a cancellation source, and give the statement a target on that source's `cancel_state` whose `fired` the guard reads";
+pub(in crate::semantic::check) const SHARE2_HOLD_A_HANDLE_ONCE: &str = "hold a handle whole once, or name its entries with entry and key-set targets";
+pub(in crate::semantic::check) const SHARE2_PROVE_THE_HANDLE_PLACES_APART: &str = "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own";
 pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the target, or the whole statement when no target is used; a statement holds what its targets name, so a target nothing uses holds a state or entries for nothing";
 struct IndexHeader {
     atom: Option<NodeId>,
+}
+/// [SHARE-2] whether a position pair of two targets' handle places holds one
+/// value on every execution. The statement reads every index atom when it
+/// begins, and no atom writes [GRAM-5], so two reads of one binding among its
+/// targets read one value, as two equal literals do; the occurrence that
+/// distinguishes them elsewhere, in `CapturedValue::provably_same`, names
+/// no write between them here.
+fn one_value_where_the_statement_begins(position: &CheckedCallSeparationPositions) -> bool {
+    let CheckedCallSeparationPositions::Indices(left, right) = position else {
+        return false;
+    };
+    left.provably_same(*right)
+        || matches!(
+            (left.term, right.term),
+            (CapturedTerm::Binding(first), CapturedTerm::Binding(second)) if first == second
+        )
 }
 impl Checker<'_, '_> {
     pub(super) fn check_atomic(
@@ -81,6 +106,7 @@ impl Checker<'_, '_> {
         let mut effects = EffectSet::NONE;
         let mut targets: Vec<CheckedTarget> = Vec::new();
         let mut handles: Vec<Vec<ResolvedPlace>> = Vec::new();
+        let mut watches: Vec<Option<Rc<HandleWatch>>> = Vec::new();
         let mut statement_roots = Vec::new();
         for (place, declaration) in places.iter().zip(&declarations) {
             let suffixes = self
@@ -88,12 +114,35 @@ impl Checker<'_, '_> {
                 .declarations
                 .tree
                 .children_with(*place, Production::Psuffix)?;
-            let atom = suffixes
+            let last_offset = suffixes
                 .last()
                 .map(|last| self.types.declarations.tree.subscript_offset(*last))
                 .transpose()?
                 .flatten();
-            let header = IndexHeader { atom };
+            // [SHARE-2, OP-4] a written last subscript applies to the place
+            // its base selects, typed from declared types alone. It is the
+            // target's own index step only when that place is one handle
+            // place; on any other base, an `Array<Shared<T>, n>` or the run a
+            // range reference `&[Shared<T>]` names among them, it is an
+            // ordinary subscript within the handle place, such as
+            // `&shards^[slot]`.
+            let atom = match (last_offset, suffixes.split_last()) {
+                (Some(offset), Some((_, base))) => {
+                    let shape = self.selected_place_shape(
+                        context,
+                        *place,
+                        base,
+                        &block_bindings,
+                        LexicalUseRole::PlaceBase,
+                    )?;
+                    let on_handle = match shape {
+                        Some(shape) if !shape.run => self.shared_handle_type(shape.ty)?.is_some(),
+                        _ => false,
+                    };
+                    on_handle.then_some(offset)
+                }
+                _ => None,
+            };
             let borrow = if atom.is_some() {
                 Self::check_place_borrow_prefix
             } else {
@@ -108,6 +157,7 @@ impl Checker<'_, '_> {
                 &block_bindings,
                 scope.loops.len(),
             )?;
+            let header = IndexHeader { atom };
             let paths = target
                 .reference
                 .as_ref()
@@ -116,19 +166,7 @@ impl Checker<'_, '_> {
             if paths.iter().any(|p| matches!(p.root, PlaceRoot::Binding(root) if targets.iter().any(|t| t.binding == root))) || target.effects.reads.iter().any(|p| statement_roots.contains(&p.root)) {
                 return self.types.declarations.issue_node(SemanticRule::Share2, *place, SemanticIssueKind::AtomicKeyReadsTheState { mechanical_fix: SHARE2_KEY_BEFORE_THE_STATEMENT });
             }
-            let state = match (target.mode, target.expression.ty()) {
-                (CheckedMode::Reference, CheckedType::Nominal(nominal)) => {
-                    match self.types.nominal(nominal)?.kind {
-                        CheckedNominalKind::Shared {
-                            state,
-                            shape: CheckedShared::Object,
-                        } => Some(state),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            let Some(state) = state else {
+            let Some((state, read_only)) = self.shared_handle_state(&target)? else {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
                     *place,
@@ -140,43 +178,74 @@ impl Checker<'_, '_> {
                     },
                 );
             };
+            // [SHARE-2, OWN-7] two overlapping handle places each have an
+            // index step. A pair that overlaps only unless its positions
+            // differ, such as `&shards^[i]` beside `&shards^[j]`, is the fixed
+            // families' question where the statement begins. A pair whose
+            // every differing position holds one value there, such as
+            // `&shards^[i]` beside `&shards^[i]`, is one handle place, which
+            // no proof separates.
             for (prior, prior_target) in handles.iter().zip(&targets) {
-                if (atom.is_none()
-                    || matches!(
+                if atom.is_some()
+                    && !matches!(
                         prior_target.kind,
                         CheckedTargetKind::Object | CheckedTargetKind::MapWhole
-                    ))
-                    && prior.iter().any(|a| {
-                        paths.iter().any(|b| {
-                            super::super::super::places::places_overlap(
-                                &super::super::super::places::UnprovedSeparations,
-                                a,
-                                b,
-                            )
-                        })
-                    })
+                    )
                 {
-                    return self.types.declarations.issue_node(SemanticRule::Share2, *place, SemanticIssueKind::AtomicTargetNotShared { found: "a whole target beside another target on an overlapping handle place".to_owned(), mechanical_fix: "hold a handle whole once, or name its entries with entry and key-set targets" });
+                    continue;
+                }
+                for a in prior {
+                    for b in &paths {
+                        if !places_overlap(&UnprovedSeparations, a, b) {
+                            continue;
+                        }
+                        let Some((positions, window)) = Checker::separable_by_position(a, b)
+                            .filter(|(positions, _)| {
+                                !positions.iter().all(one_value_where_the_statement_begins)
+                            })
+                        else {
+                            return self.types.declarations.issue_node(
+                                SemanticRule::Share2,
+                                *place,
+                                SemanticIssueKind::AtomicTargetNotShared {
+                                    found: "a whole target beside another target on an overlapping handle place".to_owned(),
+                                    mechanical_fix: SHARE2_HOLD_A_HANDLE_ONCE,
+                                },
+                            );
+                        };
+                        self.body.call_separations.push(CheckedCallSeparation {
+                            site: node_path.clone(),
+                            occasion: CheckedSeparationOccasion::AtomicTargets(
+                                self.types.declarations.tree.path(*place)?.clone(),
+                            ),
+                            reference_use: None,
+                            held_use: None,
+                            positions,
+                            window,
+                            left_spelling: self.types.render_resolved_place(a, &block_bindings)?,
+                            right_spelling: self.types.render_resolved_place(b, &block_bindings)?,
+                            one_argument: false,
+                            contract_indices: Vec::new(),
+                        });
+                    }
                 }
             }
-            let borrowed = match paths.as_slice() {
-                [p] => match p.root {
-                    PlaceRoot::Binding(root) => bindings.values().any(|l| {
-                        l.binding == root
-                            && l.mode.is_reference()
-                            && function
-                                .parameters
-                                .iter()
-                                .any(|p| p.declaration == l.declaration)
-                            && !function
-                                .declared_effects
-                                .writes
-                                .iter()
-                                .any(|p| p.root == l.declaration)
-                    }),
-                    PlaceRoot::Constant(_) => false,
-                },
-                _ => false,
+            // [SHARE-1, SHARE-2] a handle place that only the statement's own
+            // guard and block can reach keeps the object live while they leave
+            // it alone. Every such place is rooted at a binding: storage of
+            // this activation, or, through a reference parameter, of a caller
+            // that waits in this call. No other context reaches either, since
+            // a spawn takes values alone [WAIT-3] and a state, which every
+            // context reaches, is never a handle place, the statement reading
+            // its handles before it holds a state and no atomic statement
+            // enclosing another.
+            let rooted = paths
+                .iter()
+                .all(|path| matches!(path.root, PlaceRoot::Binding(_)));
+            let watch = if rooted && !paths.is_empty() {
+                Some(Rc::new(HandleWatch::new(paths.clone())))
+            } else {
+                None
             };
             effects = effects.union(target.effects.clone());
             for p in &paths {
@@ -199,6 +268,12 @@ impl Checker<'_, '_> {
                 referent,
                 scope.loops.len(),
             )?;
+            let local = block_bindings
+                .get_mut(&declaration.id())
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            local.read_only_state = read_only;
+            local.handle_watch.clone_from(&watch);
+            watches.push(watch);
             if let Some(reference) = block_bindings
                 .get_mut(&declaration.id())
                 .and_then(|l| l.reference.as_mut())
@@ -215,17 +290,39 @@ impl Checker<'_, '_> {
                 self.body
                     .record_reference_origins(binding, &reference.paths);
             }
+            if let CheckedType::Nominal(nominal) = state
+                && let Some(clauses) = self.types.range_type_invariants.get(&nominal)
+            {
+                self.body
+                    .range_facts
+                    .atomics
+                    .entry(node_path.clone())
+                    .or_default()
+                    .extend(clauses.iter().map(|clause| {
+                        clause.with_subject(
+                            crate::semantic::range_facts::CheckedRangeRoot::Binding(binding),
+                            true,
+                        )
+                    }));
+            }
             let invariants = self.atomic_invariants(state, binding);
             targets.push(CheckedTarget {
                 lock_order: self.types.atomic_type_order(state)?,
                 node_path: self.types.declarations.tree.path(*place)?.clone(),
+                ledger_name: declaration.spelling().to_owned(),
+                ledger_state: self.types.checked_type_name(state)?,
+                ledger_site: self
+                    .types
+                    .declarations
+                    .lock_ledger_site(declaration.origin().coordinate()),
                 binding,
                 handle: Box::new(target.expression),
-                borrowed,
+                kept_by_place: false,
                 state,
                 kind,
                 referent,
                 reads: false,
+                inserts: true,
                 invariants,
             });
             handles.push(paths);
@@ -250,11 +347,40 @@ impl Checker<'_, '_> {
             self.body
                 .record_reference_origins(target.binding, &reference.paths);
         }
+        // Each target's aliases as the header relates them: a body that
+        // rebinds a target's reference leaves the writes it made through the
+        // target's root that target's writes.
+        let header_aliases = targets
+            .iter()
+            .map(|target| {
+                targets_alias_declarations(&declarations, &block_bindings, target.binding)
+            })
+            .collect::<Vec<_>>();
         self.body.atomic_depth += 1;
+        self.body.held_atomic_roots = targets.iter().map(|target| target.binding).collect();
+        self.body.held_atomic_node = Some(node_path.clone());
+        let held_call_start = self.body.held_calls.len();
+        let held_write_start = self.body.held_writes.len();
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
+        self.body.held_atomic_roots.clear();
+        self.body.held_atomic_node = None;
         let (mut guard, mut checked) = checked?;
-        for (target, place) in targets.iter_mut().zip(&places) {
+        let held_calls = self.body.held_calls[held_call_start..].to_vec();
+        let held_writes = self.body.held_writes[held_write_start..].to_vec();
+        self.check_held_protection(&held_writes, &block_bindings, &held_calls)?;
+        self.body.held_calls.truncate(held_call_start);
+        self.body.held_writes.truncate(held_write_start);
+        for (((target, place), aliases), watch) in targets
+            .iter_mut()
+            .zip(&places)
+            .zip(&header_aliases)
+            .zip(&watches)
+        {
+            // No event the guard and block were checked with may have
+            // written, moved or released the handle place, on any path
+            // through them.
+            target.kept_by_place = watch.as_ref().is_some_and(|watch| !watch.disturbed());
             if !guard
                 .as_ref()
                 .is_some_and(|g| expression_mentions(&g.0, target.binding))
@@ -272,19 +398,29 @@ impl Checker<'_, '_> {
                     },
                 );
             }
-            let aliases =
-                targets_alias_declarations(&declarations, &block_bindings, target.binding);
             target.reads = !checked
                 .effects
                 .writes
                 .iter()
                 .chain(guard.iter().flat_map(|g| g.1.writes.iter()))
                 .any(|p| aliases.contains(&p.root));
+            // Resolved writes retain payload containment before effect rows
+            // truncate dynamic selectors. Unknown/whole writes are variant writes.
+            if matches!(target.kind, CheckedTargetKind::MapEntry(_)) {
+                target.inserts = checked
+                    .effects
+                    .variant_writes
+                    .iter()
+                    .chain(guard.iter().flat_map(|g| g.1.variant_writes.iter()))
+                    .any(|root| aliases.contains(root));
+            }
         }
         let held = |path: &CheckedStatePath| statement_roots.contains(&path.root);
         for set in std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|g| &mut g.1)) {
             set.reads.retain(|p| !held(p));
             set.writes.retain(|p| !held(p));
+            set.variant_writes
+                .retain(|root| !statement_roots.contains(root));
         }
         if let Some(g) = &guard {
             effects = effects.union(g.1.clone());
@@ -330,6 +466,44 @@ impl Checker<'_, '_> {
             loop_transfers: checked.loop_transfers,
         })
     }
+    /// The state type of the handle place a borrow names, and whether the
+    /// handle is a `SharedRead`, when the place has type `Shared<T>` or
+    /// `SharedRead<T>` [SHARE-1].
+    fn shared_handle_state(
+        &self,
+        borrow: &TypedExpression,
+    ) -> Result<Option<(CheckedType, bool)>, CheckStop> {
+        if borrow.mode != CheckedMode::Reference {
+            return Ok(None);
+        }
+        self.shared_handle_type(borrow.expression.ty())
+    }
+    /// The state type and `SharedRead`-ness of a handle type `Shared<T>` or
+    /// `SharedRead<T>` [SHARE-1], and `None` for any other type.
+    fn shared_handle_type(
+        &self,
+        ty: CheckedType,
+    ) -> Result<Option<(CheckedType, bool)>, CheckStop> {
+        let CheckedType::Nominal(nominal) = ty else {
+            return Ok(None);
+        };
+        if self.types.is_decision_cell(nominal)? {
+            return Ok(None);
+        }
+        let CheckedNominalKind::Shared {
+            state,
+            shape: CheckedShared::Object,
+        } = self.types.nominal(nominal)?.kind
+        else {
+            return Ok(None);
+        };
+        let read_only = self.types.source_nominal_instances[nominal.0 as usize]
+            .as_ref()
+            .is_some_and(|(template, _)| {
+                self.types.nominal_templates[*template].name == "SharedRead"
+            });
+        Ok(Some((state, read_only)))
+    }
     fn bind_atomic_reference(
         &mut self,
         counters: &mut ControlCounters<'_>,
@@ -357,8 +531,11 @@ impl Checker<'_, '_> {
                 live: true,
                 loop_depth,
                 compiler_updated: false,
+                read_only_state: false,
                 reference: Some(reference),
+                commit_target: None,
                 refinement_witnesses: Vec::new(),
+                handle_watch: None,
                 call_value: false,
             },
         );
@@ -575,8 +752,38 @@ impl Checker<'_, '_> {
             .first_child_with(node, Production::Expr)?
         {
             Some(expression_node) => {
+                self.body.held_guard = true;
                 let condition =
-                    self.check_condition(context, expression_node, bindings, scope.loops.len())?;
+                    self.check_condition(context, expression_node, bindings, scope.loops.len());
+                self.body.held_guard = false;
+                let condition = condition?;
+                if self.guard_has_decision_cell(&condition.expression)? {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Share2,
+                        expression_node,
+                        SemanticIssueKind::AtomicGuardDecisionCell {
+                            mechanical_fix: "read or claim the decision cell in the atomic body; use ordinary shared state for a waiting guard dependency",
+                        },
+                    );
+                }
+                if let Some((call, handle)) =
+                    self.guard_self_changing_part(&condition.expression)?
+                {
+                    let call = self
+                        .types
+                        .declarations
+                        .tree
+                        .node_with_path(&call)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Share2,
+                        call,
+                        SemanticIssueKind::AtomicGuardReadsSelfChanging {
+                            handle,
+                            mechanical_fix: SHARE2_WAIT_FOR_THE_TIME_OUTSIDE_THE_GUARD,
+                        },
+                    );
+                }
                 if self.guard_writes(&condition.expression) {
                     return self.types.declarations.issue_node(
                         SemanticRule::Share2,
@@ -597,6 +804,58 @@ impl Checker<'_, '_> {
             .children_with(node, Production::Stmt)?;
         let block = self.check_block(context, &statements, bindings, counters, scope)?;
         Ok((guard, block))
+    }
+
+    /// [SHARE-2, PRE-2] the call of a guard whose row reads or writes a path
+    /// whose type is or has a self-changing host handle part, with that part.
+    /// A guard's `expr` holds at most one call, whose arguments are atoms
+    /// [GRAM-5, GRAM-9], so the walk finds at most that call and the site is
+    /// unique. A row path is rooted at one of the
+    /// callee's reference parameters, so its type is the one the caller's
+    /// projected path has [EFF-5]; a formal's row is rebased to the selected
+    /// callee's parameters [FN-4].
+    fn guard_self_changing_part(
+        &self,
+        expression: &CheckedExpression,
+    ) -> Result<Option<(crate::NodePath, String)>, CheckStop> {
+        for child in expression_children(expression) {
+            if let Some(found) = self.guard_self_changing_part(child)? {
+                return Ok(Some(found));
+            }
+        }
+        let CheckedExpression::UserCall {
+            function,
+            formal_effects,
+            call,
+            ..
+        } = expression
+        else {
+            return Ok(None);
+        };
+        let signature = self
+            .types
+            .signatures
+            .get(function.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let paths: Vec<&CheckedStatePath> = match formal_effects {
+            Some(effects) => effects.reads.iter().chain(&effects.writes).collect(),
+            None => signature
+                .declared_effects
+                .reads
+                .iter()
+                .chain(&signature.declared_effects.writes)
+                .collect(),
+        };
+        for path in paths {
+            let ty = match self.types.effect_path_selected(path, signature)? {
+                SelectedPlaceType::Value(ty) | SelectedPlaceType::Range(ty) => ty,
+                SelectedPlaceType::UnresolvedWindowElement => continue,
+            };
+            if let Some(handle) = self.types.first_self_changing_part(ty)? {
+                return Ok(Some((call.clone(), handle)));
+            }
+        }
+        Ok(None)
     }
 
     /// [SHARE-2, PAR-1] whether a guard's footprint writes a path: a call in
@@ -638,6 +897,20 @@ impl Checker<'_, '_> {
         expression_children(expression)
             .into_iter()
             .any(|child| self.guard_writes(child))
+    }
+
+    fn guard_has_decision_cell(&self, expression: &CheckedExpression) -> Result<bool, CheckStop> {
+        if let CheckedExpression::UserCall { function, .. } = expression
+            && self.types.decision_cell_boundary(*function)?
+        {
+            return Ok(true);
+        }
+        for child in expression_children(expression) {
+            if self.guard_has_decision_cell(child)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

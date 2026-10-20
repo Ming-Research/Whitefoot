@@ -14,11 +14,11 @@ use super::super::entailment::affine::{AffineCheckState, AffineInequality};
 use super::super::entailment::{
     CallGoalDisposition, CallGoalEvidence, CallGoalOutcome, CountedAtomicDerivation,
     CountedCaptureSide, CountedDerivationSet, CountedProofPoint, CountedRootAtom, DerivationId,
-    DerivationNode, DerivationRootKind, FlowEvent, FlowEventId, FlowEventKind, FunctionEntailment,
-    GoalId, GoalSign, ImplicitBoundKind, JoinParent, MeasureBound, ObligationFamily,
-    ObligationOutcome, PlaceRoot, PostconditionCallDetail, PostconditionDeliveryJoinDetail,
-    PostconditionDisposition, RangeSeparationOrdering, Relation, SourceAffineFactRef, TermId,
-    TermKind, TransportedHeaderRelation, ZERO, type_range,
+    DerivationNode, DerivationRootKind, ExclusionConclusion, FlowEvent, FlowEventId, FlowEventKind,
+    FunctionEntailment, GoalId, GoalSign, ImplicitBoundKind, JoinParent, MeasureBound,
+    ObligationFamily, ObligationOutcome, PlaceRoot, PostconditionCallDetail,
+    PostconditionDeliveryJoinDetail, PostconditionDisposition, RangeSeparationOrdering, Relation,
+    SourceAffineFactRef, TermId, TermKind, TransportedHeaderRelation, ZERO, type_range,
 };
 use super::super::goal::{GoalDatum, GoalExpression, GoalOperation};
 use super::super::model::{
@@ -203,6 +203,10 @@ fn accepted_discharge_flags(source: &[u8], function: &str) -> Vec<bool> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum DerivationConclusion {
+    Exclusion {
+        expression: GoalId,
+        values: Vec<i128>,
+    },
     Origin,
     Relation(Relation),
     Goal {
@@ -257,6 +261,20 @@ fn relation_has_bare_binding(
     })
 }
 
+/// Whether a term is a tracked place or measure rooted at `binding`: the
+/// receiver terms a value carrier's delivery relates [ENT-5].
+fn term_rooted_at(
+    summary: &FunctionEntailment,
+    term: TermId,
+    binding: super::super::BindingId,
+) -> bool {
+    matches!(
+        retained_term(summary, term),
+        TermKind::Place(place, _) | TermKind::Measure(_, place)
+            if place.root == PlaceRoot::Binding(binding)
+    )
+}
+
 fn retained_conclusion(
     conclusions: &[DerivationConclusion],
     id: DerivationId,
@@ -304,6 +322,7 @@ fn retained_event(summary: &FunctionEntailment, id: FlowEventId) -> &FlowEvent {
 
 fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.event,
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
         | DerivationNode::SourceGoal { event, .. }
@@ -431,6 +450,7 @@ fn assert_source_event(summary: &FunctionEntailment, id: FlowEventId, used: &mut
             | FlowEventKind::S11
             | FlowEventKind::S13
             | FlowEventKind::S16
+            | FlowEventKind::S17
     ));
 }
 
@@ -489,8 +509,21 @@ fn assert_join_parents(
     }
 }
 
-fn term_integer_range(kind: &TermKind) -> Option<(i128, i128)> {
+fn term_integer_range(summary: &FunctionEntailment, kind: &TermKind) -> Option<(i128, i128)> {
     match kind {
+        TermKind::Sum(left, right) => {
+            let range = |term| match retained_term(summary, term) {
+                TermKind::Zero => Some((0, 0)),
+                TermKind::Constant(value) => Some((*value, *value)),
+                kind => term_integer_range(summary, kind),
+            };
+            let (left_minimum, left_maximum) = range(*left)?;
+            let (right_minimum, right_maximum) = range(*right)?;
+            Some((
+                left_minimum.checked_add(right_minimum)?,
+                left_maximum.checked_add(right_maximum)?,
+            ))
+        }
         TermKind::Place(_, ty) | TermKind::ConstParameter(_, ty) => Some(type_range(*ty)),
         TermKind::Measure(..)
         | TermKind::TargetMeasure { .. }
@@ -817,6 +850,7 @@ fn retained_origin_expansion(
                 root,
                 projections,
                 ty,
+                ..
             }) => {
                 let Some(definition) = definitions.get(root) else {
                     return expression.clone();
@@ -903,6 +937,179 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
         depths.push(depth);
 
         let conclusion = match node {
+            DerivationNode::IntegerExclusion { detail } => {
+                assert!(
+                    detail.values.windows(2).all(|pair| pair[0] < pair[1]),
+                    "exclusions are canonical sets"
+                );
+                assert!(
+                    summary
+                        .inventory
+                        .goals
+                        .get(detail.expression.0 as usize)
+                        .is_some()
+                );
+                if let Some(event) = detail.event {
+                    used_events[event.0 as usize] = true;
+                    match retained_event(summary, event).kind {
+                        FlowEventKind::S17 => assert!(detail.parents.is_empty()),
+                        FlowEventKind::Join => {
+                            assert!(!detail.parents.is_empty());
+                            for parent in &detail.parents {
+                                match retained_conclusion(&conclusions, *parent) {
+                                    DerivationConclusion::Exclusion { expression, values } => {
+                                        assert_eq!(
+                                            summary.inventory.goals[expression.0 as usize]
+                                                .expression,
+                                            summary.inventory.goals[detail.expression.0 as usize]
+                                                .expression
+                                        );
+                                        if detail.projection.is_some() {
+                                            let DerivationNode::IntegerExclusion {
+                                                detail: incoming,
+                                            } = &summary.derivations.nodes[parent.0 as usize]
+                                            else {
+                                                panic!("view join keeps source-view proof");
+                                            };
+                                            assert_eq!(incoming.expression, detail.expression);
+                                            assert_eq!(incoming.projection, detail.projection);
+                                        }
+                                        assert_eq!(values.as_slice(), detail.values.as_ref());
+                                    }
+                                    DerivationConclusion::Contradiction => {}
+                                    other => {
+                                        panic!("exclusion join needs that exact set: {other:?}")
+                                    }
+                                }
+                            }
+                        }
+                        other => panic!("unexpected exclusion establishment event: {other:?}"),
+                    }
+                    assert_eq!(detail.conclusion, ExclusionConclusion::Set);
+                } else {
+                    let (parent, origins) = detail
+                        .parents
+                        .split_first()
+                        .expect("exclusion query has a source");
+                    let DerivationConclusion::Exclusion { expression, values } =
+                        retained_conclusion(&conclusions, *parent)
+                    else {
+                        panic!("exclusion query needs an excluded set");
+                    };
+                    assert_eq!(values.as_slice(), detail.values.as_ref());
+                    if matches!(detail.conclusion, ExclusionConclusion::Set) {
+                        for origin in origins {
+                            assert_eq!(
+                                retained_conclusion(&conclusions, *origin),
+                                &DerivationConclusion::Origin
+                            );
+                        }
+                        assert_eq!(
+                            retained_origin_expansion(summary, *expression, origins),
+                            retained_origin_expansion(summary, detail.expression, origins)
+                        );
+                    } else {
+                        assert!(origins.is_empty());
+                        assert_eq!(
+                            summary.inventory.goals[expression.0 as usize].expression,
+                            summary.inventory.goals[detail.expression.0 as usize].expression
+                        );
+                    }
+                }
+                match &detail.conclusion {
+                    ExclusionConclusion::Set => DerivationConclusion::Exclusion {
+                        expression: detail.expression,
+                        values: detail.values.to_vec(),
+                    },
+                    ExclusionConclusion::Relation(relation) => {
+                        let Relation::Distinct {
+                            left,
+                            right,
+                            difference,
+                        } = relation
+                        else {
+                            panic!("membership proves a disequality");
+                        };
+                        assert_relation_terms_resolve(summary, relation);
+                        let (term, offset) = detail
+                            .projection
+                            .expect("membership has an admitted term view");
+                        let constant = if *left == term && *right == ZERO {
+                            *difference + offset
+                        } else {
+                            assert_eq!((*left, *right), (ZERO, term));
+                            -*difference + offset
+                        };
+                        assert!(detail.values.binary_search(&constant).is_ok());
+                        DerivationConclusion::Relation(relation.clone())
+                    }
+                    ExclusionConclusion::Goal(goal, sign) => {
+                        let GoalExpression::Operation {
+                            row: GoalOperation::Integer { operation, .. },
+                            arguments,
+                            ..
+                        } = &summary.inventory.goals[goal.0 as usize].expression
+                        else {
+                            panic!("membership goal is an integer comparison");
+                        };
+                        assert!(matches!(
+                            (operation, sign),
+                            (CheckedIntegerOperation::Equal, GoalSign::Negative)
+                                | (CheckedIntegerOperation::NotEqual, GoalSign::Positive)
+                        ));
+                        let [left, right] = arguments.as_slice() else {
+                            panic!("comparison has two operands");
+                        };
+                        let expression =
+                            &summary.inventory.goals[detail.expression.0 as usize].expression;
+                        let constant = if left == expression {
+                            right
+                        } else {
+                            assert_eq!(right, expression);
+                            left
+                        };
+                        let value = match constant {
+                            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                                ty,
+                                bits,
+                            })) => super::super::entailment::integer_value(*ty, *bits),
+                            GoalExpression::Datum(GoalDatum::Literal(
+                                CheckedValue::NumericIdentity { one, .. },
+                            )) => i128::from(*one),
+                            // A named constant's evaluated term supplies the independent value.
+                            _ => {
+                                let projection = summary.inventory.goals[goal.0 as usize]
+                                    .projection
+                                    .as_ref()
+                                    .expect("named integer constant comparison has a projection");
+                                let (Relation::Distinct { difference, .. }
+                                | Relation::Equal { difference, .. }) = projection
+                                else {
+                                    panic!("equality comparison projection");
+                                };
+                                if left == expression {
+                                    *difference
+                                } else {
+                                    -*difference
+                                }
+                            }
+                        };
+                        assert!(detail.values.binary_search(&value).is_ok());
+                        DerivationConclusion::Goal {
+                            goal: *goal,
+                            sign: *sign,
+                        }
+                    }
+                    ExclusionConclusion::Contradiction => {
+                        let (term, constant) = detail
+                            .projection
+                            .expect("constant exclusion has projection");
+                        assert_eq!(term, ZERO);
+                        assert!(detail.values.binary_search(&constant).is_ok());
+                        DerivationConclusion::Contradiction
+                    }
+                }
+            }
             DerivationNode::LetOrigin { value, event, .. } => {
                 assert!(summary.inventory.goals.get(value.0 as usize).is_some());
                 let retained = retained_event(summary, *event);
@@ -1153,13 +1360,13 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     },
                     ImplicitBoundKind::TypeMaximum => {
                         assert_eq!(*right, ZERO);
-                        let (_, maximum) = term_integer_range(left_kind)
+                        let (_, maximum) = term_integer_range(summary, left_kind)
                             .expect("type maximum requires an integer-like term");
                         assert_eq!(*bound, maximum);
                     }
                     ImplicitBoundKind::TypeMinimum => {
                         assert_eq!(*left, ZERO);
-                        let (minimum, _) = term_integer_range(right_kind)
+                        let (minimum, _) = term_integer_range(summary, right_kind)
                             .expect("type minimum requires an integer-like term");
                         assert_eq!(*bound, -minimum);
                     }
@@ -1570,7 +1777,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 let right = &detail.right;
                 let parent = detail.parent;
                 let term_for = |captured: &crate::semantic::places::CapturedValue| {
-                    use crate::semantic::places::CapturedTerm;
+                    use crate::semantic::places::{CaptureId, CapturedTerm};
                     summary
                         .inventory
                         .terms
@@ -1587,7 +1794,16 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                                 term,
                                 TermKind::IndexCapture { capture } if *capture == captured.capture
                             ),
-                            CapturedTerm::Opaque => false,
+                            // An erased contract position has no source datum:
+                            // its call-entry capture term is the identity the
+                            // caller's instantiated image was equated with.
+                            CapturedTerm::Opaque => {
+                                matches!(captured.capture, CaptureId::ContractRead { .. })
+                                    && matches!(
+                                        term,
+                                        TermKind::IndexCapture { capture } if *capture == captured.capture
+                                    )
+                            }
                         })
                         .map(|term| TermId(u32::try_from(term).expect("term index fits u32")))
                         .expect("an indexed-separation capture has a retained datum term")
@@ -2111,53 +2327,62 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 else {
                     panic!("a reachable give relation has one exact source relation");
                 };
-                // The receiver replaced exactly the carrier term: the given
-                // atom, or the evaluated value whose equality to the carrier
-                // closed into the edge state [ENT-5].
-                assert!(matches!(
-                    retained_term(summary, *carrier),
-                    TermKind::Place(..) | TermKind::CommitValue { .. }
-                ));
-                assert!(source.terms().contains(carrier));
-                assert!(!relation_has_bare_binding(summary, source, *receiver));
-                assert!(!relation.terms().contains(carrier));
-                assert!(relation_has_bare_binding(summary, relation, *receiver));
-                if let Relation::Distinct {
-                    left,
-                    right,
-                    difference,
-                } = source
-                {
-                    let receiver_term = relation.terms().into_iter().find(|term| matches!(
-                        retained_term(summary, *term),
-                        TermKind::Place(place, _) if place.root == PlaceRoot::Binding(*receiver)
-                            && place.path.is_empty()
-                    )).expect("the delivered relation contains its receiver");
-                    let replace = |term| {
-                        if term == *carrier {
-                            receiver_term
+                if term_rooted_at(summary, *carrier, *receiver) {
+                    // A value carrier's receiver stands for its fresh carrier,
+                    // so its Give node substitutes nothing: the relation names
+                    // the same terms as its source, its carrier among them
+                    // [ENT-5].
+                    assert_eq!(source.terms(), relation.terms());
+                    assert!(relation.terms().contains(carrier));
+                } else {
+                    // The receiver replaced exactly the carrier term: the given
+                    // atom, or the evaluated value whose equality to the carrier
+                    // closed into the edge state [ENT-5].
+                    assert!(matches!(
+                        retained_term(summary, *carrier),
+                        TermKind::Place(..) | TermKind::CommitValue { .. }
+                    ));
+                    assert!(source.terms().contains(carrier));
+                    assert!(!relation_has_bare_binding(summary, source, *receiver));
+                    assert!(!relation.terms().contains(carrier));
+                    assert!(relation_has_bare_binding(summary, relation, *receiver));
+                    if let Relation::Distinct {
+                        left,
+                        right,
+                        difference,
+                    } = source
+                    {
+                        let receiver_term = relation.terms().into_iter().find(|term| matches!(
+                            retained_term(summary, *term),
+                            TermKind::Place(place, _) if place.root == PlaceRoot::Binding(*receiver)
+                                && place.path.is_empty()
+                        )).expect("the delivered relation contains its receiver");
+                        let replace = |term| {
+                            if term == *carrier {
+                                receiver_term
+                            } else {
+                                term
+                            }
+                        };
+                        let (left, right) = (replace(*left), replace(*right));
+                        let expected = if left <= right {
+                            Relation::Distinct {
+                                left,
+                                right,
+                                difference: *difference,
+                            }
                         } else {
-                            term
-                        }
-                    };
-                    let (left, right) = (replace(*left), replace(*right));
-                    let expected = if left <= right {
-                        Relation::Distinct {
-                            left,
-                            right,
-                            difference: *difference,
-                        }
-                    } else {
-                        Relation::Distinct {
-                            left: right,
-                            right: left,
-                            difference: -*difference,
-                        }
-                    };
-                    assert_eq!(
-                        relation, &expected,
-                        "delivery preserves the excluded offset"
-                    );
+                            Relation::Distinct {
+                                left: right,
+                                right: left,
+                                difference: -*difference,
+                            }
+                        };
+                        assert_eq!(
+                            relation, &expected,
+                            "delivery preserves the excluded offset"
+                        );
+                    }
                 }
                 let retained = retained_event(summary, *event);
                 used_events[event.0 as usize] = true;
@@ -2227,13 +2452,23 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     parents,
                 } = detail.as_ref();
                 assert_relation_terms_resolve(summary, relation);
-                assert!(relation_has_bare_binding(summary, relation, *receiver));
+                // The receiving binding itself for an integer carrier, a
+                // place or measure below it for a value carrier [ENT-5].
+                assert!(
+                    relation
+                        .terms()
+                        .into_iter()
+                        .any(|term| term_rooted_at(summary, term, *receiver))
+                );
                 assert!(!parents.is_empty());
                 let mut prior_edge: Option<&crate::NodePath> = None;
                 for (ordinal, parent) in parents.iter().enumerate() {
                     assert_eq!(parent.ordinal as usize, ordinal);
                     match retained_conclusion(&conclusions, parent.parent) {
                         DerivationConclusion::Contradiction => {}
+                        DerivationConclusion::Exclusion { .. } => {
+                            panic!("delivery join parent cannot be a whole exclusion set")
+                        }
                         DerivationConclusion::Relation(edge_relation) => {
                             let DerivationNode::PostconditionGive {
                                 statement: edge, ..
@@ -2390,10 +2625,12 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 // ranged EFF-5 pairs now share CallSeparation at a call.
                 match outcome.family {
                     ObligationFamily::Bounds => assert_eq!(outcome.conjunct, 0),
-                    // Separation for a call, exchange or reference preservation
-                    // is one occurrence, without a conjunct of its own.
+                    // Separation for a call, exchange, atomic target pair or
+                    // reference preservation is one occurrence, without a
+                    // conjunct of its own.
                     ObligationFamily::CallSeparation(_)
                     | ObligationFamily::ExchangeSeparation(_)
+                    | ObligationFamily::AtomicTargetSeparation(_)
                     | ObligationFamily::ReferencePreservation(_) => {
                         assert_eq!(outcome.conjunct, 0)
                     }
@@ -2433,6 +2670,9 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         .as_ref()
                         .expect("an affine-only bounds obligation retains its canonical goal");
                     match conclusion {
+                        DerivationConclusion::Exclusion { .. } => {
+                            panic!("an affine-only bounds root cannot be a whole exclusion set")
+                        }
                         DerivationConclusion::Goal {
                             goal,
                             sign: GoalSign::Positive,
@@ -2467,6 +2707,9 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     };
                     retained_term(summary, requested.right);
                     match conclusion {
+                        DerivationConclusion::Exclusion { .. } => {
+                            panic!("a bounds obligation root cannot be a whole exclusion set")
+                        }
                         DerivationConclusion::Relation(relation) => {
                             let left = requested
                                 .left
@@ -2588,6 +2831,9 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 assert!(!outcome.node_path.components().is_empty());
                 assert!(!outcome.requires_clause.components().is_empty());
                 match conclusion {
+                    DerivationConclusion::Exclusion { .. } => {
+                        panic!("a discharged call root cannot be a whole exclusion set")
+                    }
                     DerivationConclusion::Goal {
                         goal,
                         sign: GoalSign::Positive,
@@ -3182,7 +3428,11 @@ fn invariant_l0_equality_retains_both_source_bounds() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(bounds.len(), 2, "the contradiction needs both equality bounds");
+    assert_eq!(
+        bounds.len(),
+        2,
+        "the contradiction needs both equality bounds"
+    );
     let (left, right, bound, event) = bounds[0];
     assert_eq!(bounds[1], (right, left, -bound, event));
 }
@@ -3817,7 +4067,11 @@ fn offset_disequality_derivations_retain_and_validate_their_offsets() {
             "fn retain_bound(value: {ty}) -> result: unit pure contract {{\n  requires value < {limit};\n}} {{\n  return unit;\n}}\n\n"
         );
         assert_eq!(source.matches(target).count(), 1);
-        consumer + &source.replace(target, &format!("retain_bound(value: cursor);\n    {target}"))
+        consumer
+            + &source.replace(
+                target,
+                &format!("retain_bound(value: cursor);\n    {target}"),
+            )
     }
     let source = with_retained_bound(
         include_str!("../../../../tests/conformance/cases/ent4-pos-offset-join.wf"),
@@ -3874,7 +4128,10 @@ fn offset_disequality_derivations_retain_and_validate_their_offsets() {
         "4_u64",
         "invariant tightened: cursor <= 3_u64;",
     );
-    validate_derivations(&accepted_entailment(delivery_source.as_bytes(), "avoid_four"));
+    validate_derivations(&accepted_entailment(
+        delivery_source.as_bytes(),
+        "avoid_four",
+    ));
     let delivery = accepted_entailment(delivery_source.as_bytes(), "probe");
     validate_derivations(&delivery);
     for join in [false, true] {
@@ -5696,23 +5953,317 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
-/// A computed give forms no delivery image. A bare outer atom given under
+/// A length reaches its upper bound only through its capacity: the implicit
+/// component joins the length to the closed capacity 255. Equal explicit
+/// witnesses before give must not create a redundant delivery root, and the
+/// receiving invariant still sees the closed fact through that component.
+#[test]
+fn delivery_implicit_omission_uses_the_closed_const_capacity_component() {
+    let source = br#"fn probe(values: &Slots<u8, 255>, x: u64, a: Bool, b: Bool) -> result: u64 reads(values.len) {
+  let picked = if a {
+    let length = values^.len;
+    let d = x;
+    if b {
+      invariant one: values^.len <= d + 255_u64;
+    } else {
+      invariant two: values^.len <= d + 255_u64;
+    }
+    give d;
+  } else {
+    return x;
+  }
+  invariant received: values^.len <= picked + 255_u64;
+  return picked;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    let received = summary
+        .source_proofs
+        .iter()
+        .find(|proof| proof.name == "received")
+        .expect("the receiver has its own invariant judgment");
+    assert!(
+        received.check.discharged(),
+        "implicit omission preserves the receiving judgment: {received:?}"
+    );
+    assert!(
+        summary.derivations.nodes.iter().all(|node| {
+            let relation = match node {
+                DerivationNode::PostconditionGive { relation, .. } => relation.as_ref(),
+                DerivationNode::PostconditionDeliveryJoin { detail } => &detail.relation,
+                _ => return true,
+            };
+            !matches!(
+                relation,
+                Relation::Bound { left, bound: 255, .. }
+                    if matches!(retained_term(&summary, *left), TermKind::Measure(CheckedMeasure::Length, _))
+            )
+        }),
+        "the length's implicit upper bound through its capacity needs no delivery root"
+    );
+}
+
+/// S16 directly establishes the carrier's exact type upper bound. Its source
+/// proof wins the implicit witness before give, without an intervening join.
+#[test]
+fn delivery_implicit_omission_does_not_need_a_prior_join() {
+    let source = br#"fn probe(x: u8, side: Bool) -> result: u8 pure {
+  let picked = if side {
+    let d = x;
+    invariant upper: d <= 255_u8;
+    give d;
+  } else {
+    return x;
+  }
+  invariant received: picked <= 255_u8;
+  return picked;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    for name in ["upper", "received"] {
+        let proof = summary
+            .source_proofs
+            .iter()
+            .find(|proof| proof.name == name)
+            .expect("each written invariant has its own judgment");
+        assert!(proof.check.discharged(), "{name}: {proof:?}");
+    }
+    assert!(summary.derivations.nodes.iter().any(|node| matches!(
+        node,
+        DerivationNode::PostconditionDeliveryJoin { detail }
+            if matches!(detail.relation, Relation::Bound { bound: 0, .. })
+    )));
+    assert!(
+        summary.derivations.nodes.iter().all(|node| {
+            let relation = match node {
+                DerivationNode::PostconditionGive { relation, .. } => relation.as_ref(),
+                DerivationNode::PostconditionDeliveryJoin { detail } => &detail.relation,
+                _ => return true,
+            };
+            !matches!(
+                relation,
+                Relation::Bound {
+                    right: ZERO,
+                    bound: 255,
+                    ..
+                }
+            )
+        }),
+        "the directly established type bound needs no delivery root"
+    );
+}
+
+fn computed_grid_delivery(expression: &str) -> String {
+    format!(
+        "fn pick_line(lines: &Box<Slots<u64, 8>>, flag: Bool) -> result: u64 reads(lines) {{
+  let count = lines^.inner.len;
+  if count == 0_u64 {{
+    return 0_u64;
+  }}
+  let line_at = if flag {{
+    give {expression};
+  }} else {{
+    give 0_u64;
+  }}
+  let line = lines^.inner[line_at];
+  return line;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+}
+
+/// The nonzero edge tightens the unsigned count to at least one. S7's
+/// subtraction offset reaches the new receiver before the two gives join.
+#[test]
+fn computed_give_delivers_the_grid_index_bound() {
+    let source = computed_grid_delivery("count - 1_u64");
+    let summary = accepted_entailment(source.as_bytes(), "pick_line");
+    validate_derivations(&summary);
+    assert!(summary.derivations.nodes.iter().any(|node| matches!(
+        node,
+        DerivationNode::PostconditionDeliveryJoin { detail }
+            if matches!(detail.relation, Relation::Bound { bound: -1, .. })
+    )));
+}
+
+/// S7 need not establish an operation image in a contradictory state. Its
+/// give edge must nevertheless stay neutral when the delivery images join,
+/// exactly as spelling the computation with an ordinary let does.
+#[test]
+fn a_computed_give_on_a_contradictory_edge_is_neutral_at_the_join() {
+    for delivery in [
+        "    give value + 0_i32;",
+        "    let copied = value + 0_i32;\n    give copied;",
+    ] {
+        let source = format!(
+            "fn pick(value: i32) -> result: i32 pure contract {{
+  requires value < 8_i32;
+  ensures result < 8_i32;
+}} {{
+  let picked = if value >= 8_i32 {{
+{delivery}
+  }} else {{
+    give value;
+  }}
+  return picked;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        validate_derivations(&accepted_entailment(source.as_bytes(), "pick"));
+    }
+}
+
+#[test]
+fn a_give_at_the_length_does_not_deliver_a_strict_index_bound() {
+    let source = computed_grid_delivery("count");
+    assert_rule_kind(source.as_bytes(), SemanticRule::Op4, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { residual, .. }
+            if residual == "line_at < lines^.inner.len")
+    });
+}
+
+/// Each expression uses the same S5/S7 image as an ordinary let. The wrap
+/// spelling here is exact over the guarded interval, so S7 relates it too.
+#[test]
+fn computed_give_reuses_let_sources_before_leaving_its_operand_scope() {
+    for expression in [
+        "local + 1_u64",
+        "local - 1_u64",
+        "local * 2_u64",
+        "cvt::<u32, u64>(narrow_value)",
+        "local +wrap 0_u64",
+    ] {
+        let source = format!(
+            "fn pick(value: u64, flag: Bool) -> result: u64 pure contract {{
+  requires value >= 1_u64;
+  requires value <= 3_u64;
+  ensures result < 7_u64;
+}} {{
+  let picked = if flag {{
+    let local = value;
+    let narrow_value = cvt::<u64, u32>(local);
+    give {expression};
+  }} else {{
+    give 0_u64;
+  }}
+  return picked;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        validate_derivations(&accepted_entailment(source.as_bytes(), "pick"));
+    }
+}
+
+/// Only the relation to the live count can bound an index into the range
+/// formed afterwards. Writing that operand must kill the relation; the
+/// receiver still denotes its old computed value.
+#[test]
+fn writing_a_computed_carriers_operand_kills_its_index_relation() {
+    for write in ["", "  set count = 0_u64;\n"] {
+        let source = format!(
+            "fn pick_line(lines: &[u64], count: u64, flag: Bool) -> result: u64 reads(lines) contract {{
+  requires count <= lines^.len;
+}} {{
+  if count == 0_u64 {{
+    return 0_u64;
+  }}
+  let line_at = if flag {{
+    give count - 1_u64;
+  }} else {{
+    give 0_u64;
+  }}
+{write}  let prefix = &lines^[0_u64..count];
+  let line = prefix^[line_at];
+  return line;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        if write.is_empty() {
+            validate_derivations(&accepted_entailment(source.as_bytes(), "pick_line"));
+        } else {
+            assert_rule_kind(source.as_bytes(), SemanticRule::Op4, |kind| {
+                matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { residual, .. }
+                    if residual == "line_at < prefix^.len")
+            });
+        }
+    }
+}
+
+/// A wrapping conversion has no S5 equality. Wrapping addition whose
+/// mathematical interval leaves the type has no S7 bounds or offsets.
+#[test]
+fn computed_gives_without_a_let_image_form_no_delivery_image() {
+    for expression in ["cvt.wrap::<i64, i32>(wide)", "value +wrap 1_i32"] {
+        let source = format!(
+            "fn pick(value: i32, wide: i64, flag: Bool) -> result: i32 pure {{
+  let picked = if flag {{
+    give {expression};
+  }} else {{
+    give {expression};
+  }}
+  return picked;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        let summary = accepted_entailment(source.as_bytes(), "pick");
+        validate_derivations(&summary);
+        assert!(summary.derivations.nodes.iter().all(|node| !matches!(
+            node,
+            DerivationNode::PostconditionGive { .. }
+                | DerivationNode::PostconditionDeliveryJoin { .. }
+        )));
+    }
+}
+
+/// A call result forms no delivery image. A bare outer atom given under
 /// branch-local support delivers only its carrier equality: since v0.79 each
 /// `give value;` edge delivers `picked = value` [ENT-5], which both edges
 /// hold, while `picked != limit` names a `limit` whose scope the edge leaves.
-/// Before v0.79 the carrier equality did not exist and `scoped` delivered
-/// nothing, which this test asserted together with `computed`.
 #[test]
-fn nonbare_carriers_create_no_delivery_and_branch_local_support_leaves_only_the_carrier_equality() {
-    let source = br#"fn computed(value: i32, narrow: Bool) -> result: i32 pure {
+fn calls_create_no_delivery_and_branch_local_support_leaves_only_the_carrier_equality() {
+    let source = br#"fn identity(value: i32) -> result: i32 pure {
+  return value;
+}
+
+fn computed(value: i32, narrow: Bool) -> result: i32 pure {
   let picked = if narrow {
     if value < 8_i32 {
-      give value +wrap 0_i32;
+      give identity(value: value);
     } else {
       return value;
     }
   } else if value < 128_i32 {
-    give value +wrap 0_i32;
+    give identity(value: value);
   } else {
     return value;
   }
@@ -5934,6 +6485,233 @@ fn main() -> status: std::process::ExitStatus pure {
         })
         .collect::<Vec<_>>();
     assert_eq!(joins, vec![vec![0, 1]]);
+}
+
+fn unmentioned_aggregate_measure_delivery_source(fields: usize, read_after_give: bool) -> String {
+    let declarations = (0..fields)
+        .map(|field| format!("  field{field}: Box<Slots<u8>>;\n"))
+        .collect::<String>();
+    let allocations = (0..fields)
+        .map(|field| format!("  let field{field} = box_slots_new::<u8>(capacity: 4_u64);\n"))
+        .collect::<String>();
+    let arguments = (0..fields)
+        .map(|field| format!("field{field}: move field{field}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let first_read = if read_after_give {
+        "    let first_length = chosen.field0.inner.len;\n"
+    } else {
+        ""
+    };
+    format!(
+        "struct Bundle {{\n{declarations}}}\n
+enum Envelope {{
+  Left(value: Bundle);
+  Right(value: Bundle);
+}}
+
+fn make(flag: Bool) -> made: Envelope pure {{
+{allocations}  let bundle = Bundle({arguments});
+  if flag {{
+    return Envelope::Left(value: move bundle);
+  }} else {{
+    return Envelope::Right(value: move bundle);
+  }}
+}}
+
+fn driver(flag: Bool) -> result: unit pure {{
+  for @items (i in 0_u64..2_u64) {{
+    let chosen = match make(flag: flag) {{
+      Left(value: held_value) => {{
+        give move held_value;
+      }}
+      Right(value: held_value) => {{
+        give move held_value;
+      }}
+    }}
+{first_read}    release::<Bundle>(value: move chosen);
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+}
+
+#[test]
+fn aggregate_give_does_not_register_unmentioned_measured_descendants() {
+    // Each extra field used to mint source measures and immutable datums in
+    // the driver despite no read naming it. Comparing the complete inventory
+    // observes that source of closure-row growth without a timing threshold.
+    let counts = [1, 8].map(|fields| {
+        let source = unmentioned_aggregate_measure_delivery_source(fields, false);
+        let summary = accepted_entailment(source.as_bytes(), "driver");
+        validate_derivations(&summary);
+        assert!(
+            summary.inventory.terms.iter().all(|term| !matches!(
+                term,
+                TermKind::Measure(..) | TermKind::MeasureDatum { measure: Some(_), .. }
+            )),
+            "{fields} untouched fields must register neither measures nor placement datums"
+        );
+        summary.inventory.terms.len()
+    });
+    assert_eq!(
+        counts[0], counts[1],
+        "unused aggregate fields must not enlarge the driver's term universe"
+    );
+}
+
+#[test]
+fn an_aggregate_descendant_can_be_first_measured_after_give() {
+    let source = unmentioned_aggregate_measure_delivery_source(8, true);
+    let summary = accepted_entailment(source.as_bytes(), "driver");
+    validate_derivations(&summary);
+    let first_path = vec![PlaceStep::Field(0), PlaceStep::Deref];
+    assert!(summary.inventory.terms.iter().any(|term| matches!(
+        term,
+        TermKind::Measure(CheckedMeasure::Length, place) if place.path == first_path
+    )));
+    assert!(
+        summary.inventory.terms.iter().all(|term| match term {
+            TermKind::Measure(_, place) => place.path == first_path,
+            TermKind::MeasureDatum { measure: Some(_), .. } => false,
+            _ => true,
+        }),
+        "a later first read forms its own descendant's measures without transporting untouched ones"
+    );
+}
+
+#[test]
+fn aggregate_give_preserves_a_family_when_length_or_only_capacity_was_read() {
+    // The capacity variant names only cap in the source; ordinary measure
+    // reading can also register its standing family. It protects transport
+    // after that read, rather than a capacity-only interned vocabulary.
+    for capacity_only in [false, true] {
+        let (result, before, after) = if capacity_only {
+            (
+                "unit",
+                "  let limit = bundle.tracked.inner.cap;\n  if limit < 4_u64 {\n  } else {\n    return unit;\n  }\n",
+                "  need_small(limit: chosen.tracked.inner.cap);\n  return unit;\n",
+            )
+        } else {
+            (
+                "u8",
+                "  let length = bundle.tracked.inner.len;\n  if length == 0_u64 {\n    return 0_u8;\n  }\n",
+                "  let value = chosen.tracked.inner[0_u64];\n  return value;\n",
+            )
+        };
+        let source = format!(
+            "struct Bundle {{
+  tracked: Box<Slots<u8>>;
+  untouched: Box<Slots<u8>>;
+}}
+
+fn need_small(limit: u64) -> result: unit pure contract {{
+  requires limit < 4_u64;
+}} {{
+  return unit;
+}}
+
+fn probe(bundle: Bundle, flag: Bool) -> result: {result} pure {{
+{before}  let chosen = if flag {{
+    give move bundle;
+  }} else {{
+    give move bundle;
+  }}
+{after}}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        );
+        let summary = accepted_entailment(source.as_bytes(), "probe");
+        validate_derivations(&summary);
+        if capacity_only {
+            assert_eq!(summary.call_goals.len(), 1);
+            assert_eq!(
+                summary.call_goals[0].disposition,
+                CallGoalDisposition::Discharged,
+                "a capacity-only source read must carry its bound across give"
+            );
+        } else {
+            let bounds = summary
+                .obligations
+                .iter()
+                .filter(|outcome| outcome.family == ObligationFamily::Bounds)
+                .collect::<Vec<_>>();
+            assert_eq!(bounds.len(), 1);
+            assert!(
+                bounds[0].discharged,
+                "the source's nonempty bound survives give"
+            );
+        }
+        let tracked_path = vec![PlaceStep::Field(0), PlaceStep::Deref];
+        for measure in [
+            CheckedMeasure::Length,
+            CheckedMeasure::Capacity,
+            CheckedMeasure::Head,
+        ] {
+            assert!(
+                summary.inventory.terms.iter().any(|term| matches!(
+                    term,
+                    TermKind::MeasureDatum { path, measure: Some(actual), .. }
+                        if *path == tracked_path && *actual == measure
+                )),
+                "a mentioned source retains the whole measure family: {measure:?}"
+            );
+        }
+        assert!(
+            summary.inventory.terms.iter().all(|term| match term {
+                TermKind::Measure(_, place) => place.path == tracked_path,
+                TermKind::MeasureDatum { path, measure: Some(_), .. } => *path == tracked_path,
+                _ => true,
+            }),
+            "tracking one descendant must not register its untouched sibling"
+        );
+    }
+}
+
+#[test]
+fn a_copied_generic_array_give_preserves_a_later_length_equality() {
+    // No source measure is read before give. The array is copied, so its
+    // source remains available and a later read must still relate it to the
+    // receiver. The symbolic length expression prevents a concrete type
+    // constant from proving the equality without that transport.
+    let source = br#"fn need_equal(left: u64, right: u64) -> result: unit pure contract {
+  requires left == right;
+} {
+  return unit;
+}
+
+fn probe<const n: u64>(original: Array<u8, n + 1>, flag: Bool) -> result: unit pure {
+  let chosen = if flag {
+    give original;
+  } else {
+    give original;
+  }
+  need_equal(left: original.len, right: chosen.len);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    let [goal] = summary.call_goals.as_slice() else {
+        panic!("the copied array has exactly one later length-equality requirement");
+    };
+    assert_eq!(
+        goal.disposition,
+        CallGoalDisposition::Discharged,
+        "a later length read of the copied source must equal the give receiver's length"
+    );
 }
 
 #[test]
@@ -9263,7 +10041,7 @@ fn range_contract_source(contract: &str, body: &str) -> String {
 fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64], deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     let outcomes = obligations(source.as_bytes(), "publish");
     let [endpoint_index] = outcomes.as_slice() else {
@@ -9281,7 +10059,7 @@ fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
 fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     let outcomes = call_goals(source.as_bytes(), "publish");
     assert_eq!(outcomes.len(), 2);
@@ -9308,7 +10086,7 @@ fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
 fn ordinary_source_relations_discharge_both_signature_ranges() {
     let source = range_contract_source(
         " contract {\n  requires start <= end;\n  requires end <= source^.len;\n}",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -9355,7 +10133,7 @@ fn ordinary_source_relations_discharge_both_signature_ranges() {
 fn indexed_guards_discharge_structurally_identical_signature_ranges() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let capacity = source^.len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64], deadline: no_deadline);\n    }\n  }\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let capacity = source^.len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let wait_cancel_1 = std::time::cancel_never();\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n      std::time::close_cancel_watch(watch: move wait_cancel_1);\n    }\n  }\n",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -9400,7 +10178,7 @@ fn indexed_guards_discharge_structurally_identical_signature_ranges() {
 fn a_nonterm_endpoint_is_never_replaced_by_the_zero_term() {
     let source = range_contract_source(
         "",
-        "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64], deadline: no_deadline);\n",
+        "  let no_deadline = None<std::time::Instant>();\n  let wait_cancel_1 = std::time::cancel_never();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64], deadline: no_deadline, cancel: &wait_cancel_1);\n  std::time::close_cancel_watch(watch: move wait_cancel_1);\n",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -9428,7 +10206,10 @@ fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
   let enough = 3_u64 <= source_length;
   if enough {
     let no_deadline = None<std::time::Instant>();
-    match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: next) => {
         let sample = table[next];
       }
@@ -9444,7 +10225,10 @@ fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
   let enough = 4_u64 <= source_length;
   if enough {
     let no_deadline = None<std::time::Instant>();
-    match std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 4_u64, deadline: no_deadline) {
+    let wait_cancel_2 = std::time::cancel_never();
+    let wait_outcome_2 = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 4_u64, deadline: no_deadline, cancel: &wait_cancel_2);
+    std::time::close_cancel_watch(watch: move wait_cancel_2);
+    match wait_outcome_2 {
       Ok(value: next) => {
         let sample = table[next];
       }
@@ -9566,7 +10350,9 @@ fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, so
   requires 3_u64 <= capacity;
 } {
   let no_deadline = None<std::time::Instant>();
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
   match outcome {
     Ok(value: written) => {
       let sample = table[written];
@@ -9582,7 +10368,9 @@ fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sour
   requires limit <= capacity;
 } {
   let no_deadline = None<std::time::Instant>();
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: limit, deadline: no_deadline);
+  let wait_cancel_2 = std::time::cancel_never();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: limit, deadline: no_deadline, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
   set limit = 9_u64;
   match outcome {
     Ok(value: written) => {
@@ -12120,4 +12908,320 @@ fn main() -> status: std::process::ExitStatus pure {
                 && mechanical_fix.contains("guard the access with `if offset < b.len`")
         )
     });
+}
+
+#[test]
+fn indexed_writable_defined_guard_proves_exact_domain_without_integer_place() {
+    let source = br#"struct Cell {
+  len: u8;
+}
+
+fn probe(cells: &Array<Cell, 1>) -> result: unit reads(cells) {
+  if cells^[0_u64].len +defined 254_u8 {
+    let value = cells^[0_u64].len + 254_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "probe");
+    let domain = summary
+        .derivations
+        .nodes
+        .iter()
+        .find_map(|node| match node {
+            DerivationNode::IntegerDomain {
+                goal: Some(goal),
+                parents,
+            } if matches!(
+                &summary.inventory.goals[goal.0 as usize].expression,
+                GoalExpression::Operation {
+                    row: GoalOperation::Integer {
+                        operation: CheckedIntegerOperation::AddDefined,
+                        ..
+                    },
+                    ..
+                }
+            ) =>
+            {
+                Some(parents)
+            }
+            _ => None,
+        })
+        .expect("the addition retains its exact domain goal");
+    assert_eq!(domain.len(), 1);
+    assert!(matches!(
+        summary.derivations.nodes[domain[0].0 as usize],
+        DerivationNode::SourceGoal {
+            sign: GoalSign::Positive,
+            ..
+        }
+    ));
+    assert!(!summary.inventory.terms.iter().any(|term| matches!(term,
+        TermKind::Place(place, IntegerType::U8)
+            if place.path.iter().any(|step| matches!(step, PlaceStep::Index(_)))
+                && matches!(place.path.last(), Some(PlaceStep::Field(_))))));
+}
+
+#[test]
+fn integer_match_value_arm_projects_its_equality_into_index_bounds() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/ent3-pos-integer-arm-index.wf");
+    let summary = accepted_entailment(source, "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.obligations.len(), 1);
+    assert!(summary.obligations[0].discharged);
+    let root = obligation_root(&summary, 0);
+    assert_root_contains(
+        &summary,
+        root,
+        |node| {
+            matches!(node,
+                DerivationNode::SourceBound {
+                    relation: Relation::Equal { difference: 1, .. }, event, ..
+                } if retained_event(&summary, *event).kind == FlowEventKind::S17
+            )
+        },
+        "the selected integer's exact equality projected at arm entry",
+    );
+    assert!(
+        !root_contains(&summary, root, |node| matches!(
+            node,
+            DerivationNode::L0Contradiction { .. }
+                | DerivationNode::GoalContradiction { .. }
+                | DerivationNode::JoinContradiction { .. }
+                | DerivationNode::MaterializedContradiction { .. }
+        )),
+        "the reachable value arm must discharge its bound without contradiction"
+    );
+}
+
+#[test]
+fn integer_match_selection_proofs_replay_and_origin_transport_keeps_one_source_set() {
+    let direct =
+        include_bytes!("../../../../tests/conformance/cases/ent3-pos-integer-else-exclusions.wf");
+    let summary = accepted_entailment(direct, "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.call_goals.len(), 2);
+    assert!(
+        summary
+            .call_goals
+            .iter()
+            .all(|goal| goal.disposition == CallGoalDisposition::Discharged)
+    );
+    assert_eq!(summary.derivations.nodes.iter().filter(|node| matches!(node,
+        DerivationNode::IntegerExclusion { detail } if detail.event.is_some_and(|event| retained_event(&summary, event).kind == FlowEventKind::S17)
+    )).count(), 1);
+
+    let computed =
+        include_bytes!("../../../../tests/conformance/cases/gram12-pos-temporary-scrutinee-run.wf");
+    let summary = accepted_entailment(computed, "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.call_goals.len(), 2);
+    assert!(
+        summary
+            .call_goals
+            .iter()
+            .all(|goal| goal.disposition == CallGoalDisposition::Discharged)
+    );
+}
+
+#[test]
+fn integer_match_exclusion_is_not_transported_through_a_killed_origin() {
+    let source = br#"fn not_three(value: u64) -> result: unit pure contract {
+  requires value != 3_u64;
+} {
+  return unit;
+}
+
+fn selected(value: u64) -> result: unit pure {
+  let computed = value +wrap 1_u64;
+  match computed {
+    3_u64 => {
+      return unit;
+    }
+    else => {
+      set value = 2_u64;
+      let replaced = value +wrap 1_u64;
+      not_three(value: replaced);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("writing the origin operand must prevent exclusion transport: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8);
+        assert!(matches!(
+            issue.kind(),
+            SemanticIssueKind::UndischargedCallRequirement(_)
+        ));
+    });
+}
+
+#[test]
+fn signed_integer_match_arm_facts_use_the_type_width_twos_complement_value() {
+    let source = br#"fn minus_one(value: i8) -> result: unit pure contract {
+  requires value == -1_i8;
+} {
+  return unit;
+}
+
+fn selected(value: i8) -> result: unit pure {
+  match value {
+    -1_i8 => {
+      minus_one(value: value);
+    }
+    else => {
+      return unit;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.call_goals.len(), 1);
+    assert_eq!(
+        summary.call_goals[0].disposition,
+        CallGoalDisposition::Discharged
+    );
+    assert!(
+        !summary.derivations.nodes.iter().any(|node| matches!(
+            node,
+            DerivationNode::L0Contradiction { .. } | DerivationNode::GoalContradiction { .. }
+        )),
+        "a reachable signed arm proves its equality without contradiction"
+    );
+}
+
+#[test]
+fn integer_exclusion_origin_views_are_discarded_before_a_write() {
+    let source = br#"fn not_three(value: u64) -> result: unit pure contract {
+  requires value != 3_u64;
+} {
+  return unit;
+}
+
+fn selected(value: u64) -> result: unit pure {
+  match value +wrap 1_u64 {
+    3_u64 => {
+      return unit;
+    }
+    else => {
+      let copied = value +wrap 1_u64;
+      not_three(value: copied);
+      set value = 0_u64;
+      not_three(value: copied);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let goals = call_goals(source, "selected");
+    assert_eq!(goals.len(), 2);
+    assert_eq!(goals[0].disposition, CallGoalDisposition::Discharged);
+    assert_eq!(
+        goals[1].disposition,
+        CallGoalDisposition::Unproved,
+        "the first query's exclusion view cannot survive as a new flow source"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("OT's query-local view must not publish a fact before a write: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8);
+    });
+}
+
+#[test]
+fn a_long_integer_dispatch_walk_retains_one_whole_exclusion_source() {
+    let mut source = String::from(
+        r#"fn excluded(value: u64) -> result: unit pure contract {
+  requires value != 129_u64;
+} {
+  return unit;
+}
+
+fn selected(value: u64) -> result: unit pure {
+  match value {
+"#,
+    );
+    for value in 0..130 {
+        source.push_str(&format!(
+            "    {value}_u64 => {{\n      return unit;\n    }}\n"
+        ));
+    }
+    source.push_str(
+        r#"    else => {
+      excluded(value: value);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let summary = accepted_entailment(source.as_bytes(), "selected");
+    validate_derivations(&summary);
+    assert_eq!(summary.call_goals.len(), 1);
+    assert_eq!(
+        summary.call_goals[0].disposition,
+        CallGoalDisposition::Discharged
+    );
+    let sets = summary
+        .derivations
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            DerivationNode::IntegerExclusion { detail }
+                if detail.event.is_some_and(|event| {
+                    retained_event(&summary, event).kind == FlowEventKind::S17
+                }) =>
+            {
+                Some(detail)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sets.len(), 1, "one match establishes one whole else set");
+    assert_eq!(sets[0].conclusion, ExclusionConclusion::Set);
+    assert_eq!(sets[0].values.as_ref(), &(0..130).collect::<Vec<i128>>());
+    assert!(sets[0].parents.is_empty());
+    assert!(
+        summary.derivations.nodes.iter().all(|node| !matches!(node,
+            DerivationNode::SourceDistinct { event, .. }
+                if retained_event(&summary, *event).kind == FlowEventKind::S17
+        )),
+        "a direct per-label source must not replace or accompany the exclusion source"
+    );
+    assert!(
+        summary.derivations.nodes.iter().any(|node| matches!(node,
+            DerivationNode::IntegerExclusion { detail }
+                if detail.event.is_none()
+                    && matches!(detail.conclusion, ExclusionConclusion::Goal(_, _)
+                        | ExclusionConclusion::Relation(Relation::Distinct { .. }))
+        )),
+        "the required inequality is queried from the shared set"
+    );
 }

@@ -6,8 +6,8 @@
 use crate::source::PreludeSource;
 
 pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
-    // [PRE-1] writes the four storage shapes first, then the cell. [TYPE-2]
-    // makes each of the five an opaque struct
+    // [PRE-1] writes the five storage shapes first, then the cell. [TYPE-2]
+    // makes each of the six an opaque struct
     // with a constructor entry that exists to be refused, and [TYPE-9] keeps
     // their element storage compiler-owned: a declaration can state neither
     // the elements nor the omitted-capacity form, so what the body carries is
@@ -95,6 +95,21 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
+    (
+        "prelude/SharedRead.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct SharedRead<T: drop> {
+}
+"#,
+    ),
+    (
+        "prelude/Frozen.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct Frozen<T: drop> {
+  readonly inner: T;
+}
+"#,
+    ),
     // A keyed table [SHARE-1]: its entries are reached only through the entry
     // bindings of an atomic statement, so it declares no field; `V: drop`
     // because releasing a table drops every value its entries hold.
@@ -106,12 +121,13 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     // A key set [SHARE-1] and the entries an entry binding names over one
-    // [SHARE-2]: each declares its one measure, `len` [MSR-1].
+    // [SHARE-2]: their readonly fields declare the measures [MSR-1].
     (
         "prelude/KeySet.wf",
         PreludeSource::Opaque,
         r#"opaque nocopy struct KeySet {
   readonly len: u64;
+  readonly bytes: u64;
 }
 "#,
     ),
@@ -120,6 +136,13 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Opaque,
         r#"opaque nocopy struct Entries<V: drop> {
   readonly len: u64;
+}
+"#,
+    ),
+    (
+        "prelude/DecisionCell.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct DecisionCell {
 }
 "#,
     ),
@@ -134,6 +157,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Function,
         r#"fn array_filled<T: copy, const n: u64>(value: T) -> result: Array<T, n> pure contract {
   ensures result.len == n;
+  ensures forall filled(k in 0_u64..result.len): result[k] == value;
 };
 "#,
     ),
@@ -357,6 +381,30 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/shared_read.wf",
+        PreludeSource::Function,
+        r#"fn shared_read<T: drop>(shared: &Shared<T>) -> result: SharedRead<T> reads(shared);
+"#,
+    ),
+    (
+        "prelude/shared_read_share.wf",
+        PreludeSource::Function,
+        r#"fn shared_read_share<T: drop>(shared: &SharedRead<T>) -> result: SharedRead<T> reads(shared);
+"#,
+    ),
+    (
+        "prelude/frozen_new.wf",
+        PreludeSource::Function,
+        r#"fn frozen_new<T: drop>(value: T) -> result: Frozen<T> pure;
+"#,
+    ),
+    (
+        "prelude/frozen_share.wf",
+        PreludeSource::Function,
+        r#"fn frozen_share<T: drop>(frozen: &Frozen<T>) -> result: Frozen<T> reads(frozen);
+"#,
+    ),
+    (
         "prelude/map_count.wf",
         PreludeSource::Function,
         r#"fn map_count<V: drop>(map: &ConcurrentHashMap<V>) -> count: u64 reads(map);
@@ -367,6 +415,16 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Function,
         r#"fn map_scan<V: drop>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64, keys: &KeySet) -> next: u64 reads(map), writes(keys) contract {
   ensures keys^.len >= entry(keys)^.len;
+};
+"#,
+    ),
+    (
+        "prelude/map_scan_within.wf",
+        PreludeSource::Function,
+        r#"fn map_scan_within<V: drop>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64, limit: u64, keys: &KeySet) -> result: ScanStep reads(map), writes(keys) contract {
+  ensures keys^.len >= entry(keys)^.len;
+  ensures entry(keys^.bytes) <= keys^.bytes;
+  ensures keys^.bytes <= entry(keys^.bytes) + limit;
 };
 "#,
     ),
@@ -395,6 +453,14 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/key_set_bytes.wf",
+        PreludeSource::Function,
+        r#"fn key_set_bytes(keys: &KeySet) -> bytes: u64 reads(keys) contract {
+  ensures bytes == keys^.bytes;
+};
+"#,
+    ),
+    (
         "prelude/key_set_read_key.wf",
         PreludeSource::Function,
         r#"fn key_set_read_key(keys: &KeySet, index: u64, out: &[u8]) -> length: u64 reads(keys), writes(out) contract {
@@ -408,6 +474,42 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         r#"fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
+"#,
+    ),
+    (
+        "prelude/release.wf",
+        PreludeSource::Function,
+        r#"fn release<T: drop>(value: T) -> result: unit pure;
+"#,
+    ),
+    (
+        "prelude/decision_cell_new.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_new() -> result: DecisionCell pure;
+"#,
+    ),
+    (
+        "prelude/decision_cell_share.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_share(cell: &DecisionCell) -> result: DecisionCell reads(cell);
+"#,
+    ),
+    (
+        "prelude/decision_cell_read.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_read(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/claim_written.wf",
+        PreludeSource::Function,
+        r#"fn claim_written(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/claim_killed.wf",
+        PreludeSource::Function,
+        r#"fn claim_killed(cell: &DecisionCell) -> result: DecisionState reads(cell);
 "#,
     ),
 ];
@@ -469,12 +571,22 @@ mod tests {
         signatures.sort_unstable();
         // [PRE-1] keeps no host record: the host signatures are the standard
         // library's [PRE-2], which this unit names none of. Of the
-        // compiler-owned rows only the key set's three functions [SHARE-1]
-        // take no type parameter, so each is one ordinary checked function;
-        // every other row is generic, and [FN-2] gives it a checked function
-        // only per concrete instance, of which this unit, calling none of
-        // them, has none.
-        let ungeneric = ["key_set_insert", "key_set_new", "key_set_read_key"];
+        // compiler-owned rows the key set's four functions [SHARE-1] and
+        // the decision cell's five functions [PRE-1] take no type parameter,
+        // so each is one ordinary checked function; every other row is
+        // generic, and [FN-2] gives it a checked function only per concrete
+        // instance, of which this unit, calling none of them, has none.
+        let ungeneric = [
+            "claim_killed",
+            "claim_written",
+            "decision_cell_new",
+            "decision_cell_read",
+            "decision_cell_share",
+            "key_set_bytes",
+            "key_set_insert",
+            "key_set_new",
+            "key_set_read_key",
+        ];
         assert_eq!(signatures, ungeneric);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
             assert_eq!(

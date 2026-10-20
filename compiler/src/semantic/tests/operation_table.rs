@@ -269,9 +269,7 @@ const BOOLEAN_SPELLINGS: [(&str, usize); 4] = [("band", 2), ("bor", 2), ("bxor",
 /// construction functions [OP-13], which are ordinary records and not
 /// operation-table rows, and allocation is total so no source predicate
 /// decides it [STOR-8].
-const UNMODELLED_ROW_SPELLINGS: [&str; 8] = [
-    "eeq",
-    "ene",
+const UNMODELLED_ROW_SPELLINGS: [&str; 6] = [
     "cvt",
     "cvt.checked",
     "cvt.defined",
@@ -487,13 +485,23 @@ fn the_domain_column_decides_which_operand_types_are_accepted() {
     for operation in INTEGER_OPERATIONS {
         let spelling = integer_spelling(operation);
         let row = row_of(&rows, spelling);
-        domains.insert(row.domain.as_str());
+        // Equal/NotEqual here model only the integer path of OP-16;
+        // structural domains are checked by the value-equality suite.
+        let equality = matches!(
+            operation,
+            CheckedIntegerOperation::Equal | CheckedIntegerOperation::NotEqual
+        );
+        if equality {
+            assert_eq!(row.domain, "one equality type T [OP-16]");
+        } else {
+            domains.insert(row.domain.as_str());
+        }
         let accepted: Vec<IntegerType> = ALL_INTEGER_TYPES
             .into_iter()
             .filter(|integer| operation.accepts_operand_type(CheckedType::Integer(*integer)))
             .collect();
         let expected: Vec<IntegerType> = match row.domain.as_str() {
-            "all int T" => ALL_INTEGER_TYPES.to_vec(),
+            "all int T" | "one equality type T [OP-16]" => ALL_INTEGER_TYPES.to_vec(),
             "signed int T" => ALL_INTEGER_TYPES
                 .into_iter()
                 .filter(|integer| integer.signed())
@@ -553,7 +561,7 @@ fn measure_rows() -> Vec<MeasureRow> {
             .split('|')
             .map(str::trim)
             .collect::<Vec<_>>(),
-        vec!["measured type", "len", "cap", "head"],
+        vec!["measured type", "len", "cap", "head", "bytes"],
         "the first row of a wf-measures fence is its column schema"
     );
     lines
@@ -564,7 +572,7 @@ fn measure_rows() -> Vec<MeasureRow> {
                 .split('|')
                 .map(|cell| cell.trim().to_owned())
                 .collect::<Vec<_>>();
-            assert_eq!(cells.len(), 4, "a wf-measures row has exactly four cells");
+            assert_eq!(cells.len(), 5, "a wf-measures row has exactly five cells");
             let measured = cells.remove(0);
             MeasureRow { measured, cells }
         })
@@ -610,9 +618,9 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         CheckedMeasure::Length,
         CheckedMeasure::Capacity,
         CheckedMeasure::Head,
+        CheckedMeasure::Bytes,
     ];
-    // [MSR-1]: exactly two cell classes are *bounded*: the one cell the two
-    // `Ring` rows share, and a `KeySet`'s `len`.
+    // [MSR-1]: Ring head and KeySet len and bytes are bounded cells.
     let mut bounded = 0_usize;
     for (row, (measured, name)) in rows.iter().zip(expected) {
         for (cell, measure) in row.cells.iter().zip(measures) {
@@ -661,12 +669,14 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
                     bounded += 1;
                     assert_eq!(
                         written,
-                        if measured == MeasuredKind::KeySet {
+                        if measure == CheckedMeasure::Bytes {
+                            "retained heap bytes"
+                        } else if measured == MeasuredKind::KeySet {
                             "keys"
                         } else {
                             "window origin"
                         },
-                        "the bounded cell classes are a Ring's window origin and a key set's keys"
+                        "the bounded cells name a Ring origin, key count, or retained heap bytes"
                     );
                 }
                 MeasureCell::Absent => assert_eq!(
@@ -679,7 +689,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         }
     }
     assert_eq!(
-        bounded, 3,
-        "the two Ring rows share one bounded cell, a key set's len is the other, and nothing else is bounded"
+        bounded, 4,
+        "the two Ring rows and the KeySet len and bytes cells are bounded"
     );
 }

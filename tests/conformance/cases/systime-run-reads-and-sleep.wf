@@ -4,7 +4,7 @@ alias Instant = std::time::Instant;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   std::fs::close_directory(factory: &handles, directory: move cwd);
@@ -15,7 +15,16 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     return exit_status(code: 1_u8);
   }
   let deadline = std::time::instant_after(instant: second, nanoseconds: 20000000_u64);
-  std::time::sleep_until(deadline: deadline);
+  let wait_cancel_1 = std::time::cancel_never();
+  let sleep_outcome = std::time::sleep_until(deadline: deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match sleep_outcome {
+    Ok(value: done) => {
+    }
+    Err(error: cancelled) => {
+      return exit_status(code: 4_u8);
+    }
+  }
   let later = std::time::now(clock: &clock);
   let reached = std::time::instant_reached(deadline: deadline, instant: later);
   if reached {

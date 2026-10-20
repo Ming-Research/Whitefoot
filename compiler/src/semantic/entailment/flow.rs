@@ -35,7 +35,7 @@ mod goals;
 mod invariants;
 mod judge;
 mod loop_summary;
-mod operation_facts;
+pub(crate) mod operation_facts;
 mod origin_transport;
 mod postconditions;
 mod prover;
@@ -67,8 +67,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::super::goal::{
-    CheckedRequirement, ConcreteGoal, EvaluatedValueOccurrence, GoalDatum, GoalExpression,
-    GoalOperation, GoalProjection,
+    CheckedRequirement, ConcreteGoal, EvaluatedValueOccurrence, GoalAdmission, GoalDatum,
+    GoalExpression, GoalOperation, GoalProjection,
 };
 use super::super::model::expression_children;
 use super::super::model::{
@@ -76,10 +76,10 @@ use super::super::model::{
     CheckedArrayRoot, CheckedBooleanOperation, CheckedConst, CheckedConstructor,
     CheckedContainerRoot, CheckedConversionMode, CheckedExpression, CheckedFloatOperation,
     CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedLoopInvariant, CheckedMatchArm,
-    CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType, CheckedPlaceStep,
-    CheckedProofMultiplicity, CheckedProofUseSource, CheckedRangeSource, CheckedSetTarget,
-    CheckedStatement, CheckedType, CheckedValue, FloatType, IntegerType, MeasureCell, MeasuredKind,
-    SubscriptedTerm,
+    CheckedMatchSelection, CheckedMatchType, CheckedMeasure, CheckedMode, CheckedNominalKind,
+    CheckedNumericType, CheckedPlaceStep, CheckedProofMultiplicity, CheckedProofUseSource,
+    CheckedRangeSource, CheckedSetTarget, CheckedStatement, CheckedType, CheckedValue, FloatType,
+    IntegerType, MeasureCell, MeasuredKind, SubscriptedTerm,
 };
 use super::super::permission::{PermissionSeparationProof, PermissionSeparationQuery};
 use super::super::places::{
@@ -93,20 +93,20 @@ use super::super::postcondition::{
 };
 use super::affine::{
     AffineCheckError, AffineCheckLimit, AffineCheckState, AffineCoefficient, AffineForm,
-    AffineInequality, AffineTermId, MAX_CERTIFICATE_PREMISES, ScaledAffinePremise,
-    integer_tightenings, interval_maximum, interval_proves, sum_explicit_inequalities,
+    AffineInequality, AffineInequalityView, AffineResidualScratch, AffineSumScratch, AffineTermId,
+    MAX_CERTIFICATE_PREMISES, ScaledAffinePremise, interval_maximum, interval_proves,
     sum_explicit_scaled_inequalities,
 };
 use super::polynomial::{CertificatePolynomial, PolynomialError};
 use super::state::{
     AffinePremiseUse, ClosedState, CountedRootAtom, DerivationId, DerivationInventory,
-    DerivationLedger, DerivationNode, DerivationRootKind, FactState, FlowEventId, FlowEventKind,
-    GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
-    IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
-    RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
-    contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
-    materialize_counted_preheader_at,
+    DerivationLedger, DerivationNode, DerivationRootKind, Exclusion, ExclusionConclusion,
+    ExclusionProof, FactState, FlowEventId, FlowEventKind, GoalId, GoalNormalization, GoalSign,
+    GoalSupport, GoalTable, IndexCaptureSubstitution, IndexSeparationDetail, JoinParent,
+    KilledCell, PostconditionCallSubstitution, RangeSeparationDetail, RangeSeparationOrdering,
+    Relation, SourceAffineFactRef, SourceLoopInvariantRef, WordHashMap, close,
+    close_excluding_term, closure_is_seeded, contradiction_without_proofs, join_at,
+    materialize_closure_at, materialize_closure_before_kill, materialize_counted_preheader_at,
 };
 use super::term::{
     CountedCaptureSide, MeasureBound, MeasurePlacement, PlaceRoot, TermId, TermKind, TermTable,
@@ -132,6 +132,8 @@ enum KillEvent {
     Write {
         place: ResolvedPlace,
         element: bool,
+        /// [ENT-5] a canonical grow call preserves logical length and elements.
+        relocation: bool,
         source: crate::NodePath,
         /// For a callee's declared write, the places the same call would
         /// write if the row declared only what the body writes [EFF-2];
@@ -158,6 +160,8 @@ enum KillEvent {
     EntryImageHolderWrite {
         place: ResolvedPlace,
         element: bool,
+        /// [ENT-5] a canonical grow call preserves logical length and elements.
+        relocation: bool,
         source: crate::NodePath,
         narrowed: Narrowed,
     },
@@ -241,6 +245,7 @@ struct FlowEdge {
 /// context [ENT-5].
 #[derive(Default)]
 struct ArmFacts {
+    integer: Option<(GoalExpression, std::sync::Arc<[i128]>)>,
     node_path: Option<crate::NodePath>,
     comparison: Option<Relation>,
     goals: Vec<GoalId>,
@@ -262,6 +267,9 @@ struct GiveFrame {
     node_path: crate::NodePath,
     binding: BindingId,
     result_type: CheckedType,
+    /// The binder's derived mode [GIVE-1]: only an own delivery carries a
+    /// value carrier's relations [ENT-5].
+    result_mode: CheckedMode,
     gives: Vec<ProofFlowState>,
     give_goal_origins: Vec<Option<GoalId>>,
     delivery_images: Vec<ProofFlowState>,
@@ -273,7 +281,7 @@ struct DeliveryEdgeContext<'a> {
     statement: &'a crate::NodePath,
     receiver_binding: BindingId,
     /// The carrier term c whose relations the edge substitutes [ENT-5]: a
-    /// bare atom itself, or the given value of a literal or named const.
+    /// bare atom itself, or the given value of an admitted expression.
     carrier: TermId,
     receiver: TermId,
     event: FlowEventId,
@@ -284,9 +292,9 @@ struct DeliveryEdgeContext<'a> {
 enum DeliveryCarrier {
     /// A direct non-consuming bare atom's place term, its own carrier term.
     Atom(TermId),
-    /// A typed integer literal or integer-typed named const, delivered
-    /// through the give's evaluated value.
-    Constant,
+    /// A literal, named const or computed integer, bound through the same
+    /// ENT-3 sources as a let to the give's evaluated value.
+    Evaluated,
 }
 
 /// One bare-atom give edge's carrier equality `x = d` [ENT-5], sourced from
@@ -314,6 +322,9 @@ struct DeliveryJoinContext<'a> {
     statement: &'a crate::NodePath,
     receiver_binding: BindingId,
     receiver: TermId,
+    /// The receiver terms of the same value carrier already joined, whose
+    /// pairs with this one that join has already delivered [ENT-5].
+    earlier: &'a [TermId],
     event: FlowEventId,
 }
 
@@ -321,7 +332,7 @@ struct DeliveryJoinContext<'a> {
 #[derive(Clone, Debug, Default)]
 struct ProofFlowState {
     facts: FactState,
-    results: BTreeMap<BindingId, ResultEvidence>,
+    results: BTreeMap<BindingId, Vec<ResultEvidence>>,
     /// Proof-carrying [OWN-7] separations available on this edge. Captured
     /// positions are immutable, but a proof about them is available only
     /// where the judgment that established it dominates this state.
@@ -557,7 +568,7 @@ enum ProofGoal<'a> {
     },
     /// PRF-1 admits written relation premises and judges certificate
     /// redundancy through AUTO alone. Neither query may borrow MSR-4's
-    /// Step 6 route, which a blockless INV-1 target may use.
+    /// Step 6 or Step 7 route, which a blockless INV-1 target may use.
     AutomaticAffine { inequality: &'a AffineInequality },
     Signed {
         expression: &'a GoalExpression,
@@ -602,6 +613,24 @@ struct FixedAffineBoundBridge<'a> {
     target: &'a AffineInequality,
     middle: TermId,
     left_to_middle_bound: i128,
+}
+
+/// Which of MSR-4's affine steps answer one affine target.
+#[derive(Clone, Copy)]
+enum AffineDisposition {
+    /// A PRF-1 query: AUTO alone.
+    AutoOnly,
+    /// A target submitted to MSR-4's complete disposition, whose Step 6
+    /// bridges to `right` when the source normalization retained one.
+    Complete { right: Option<TermId> },
+}
+
+/// The step that proves an affine target the fixed bounded-relation routes
+/// submit: AUTO, or MSR-4's Step 7 quotient bound.
+#[derive(Clone, Copy)]
+enum AffineStep {
+    Auto,
+    QuotientBound,
 }
 
 #[derive(Clone)]
@@ -673,8 +702,10 @@ struct ActiveAffineFact {
     evidence: AffineFactEvidence,
 }
 
-/// Captured values of one admitted unsigned division. These identities are
-/// immutable, like product atoms: a replacement binding gets a fresh image.
+/// Captured values of one admitted unsigned division, or of one unsigned
+/// exact right shift read as the division by its power divisor [ENT-3.S7].
+/// These identities are immutable, like product atoms: a replacement binding
+/// gets a fresh image.
 #[derive(Clone, Debug)]
 struct CapturedUnsignedDivision {
     quotient: AffineForm,
@@ -745,6 +776,14 @@ struct AffineL0Entry {
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
     by_terms: WordHashMap<Box<[AffineCoefficient]>, usize>,
+    postings: std::cell::OnceCell<AffineL0Postings>,
+}
+
+/// Target-independent support metadata for one complete, immutable index.
+#[derive(Default)]
+struct AffineL0Postings {
+    by_atom: WordHashMap<AffineTermId, Vec<usize>>,
+    by_support: WordHashMap<Box<[AffineTermId]>, Vec<usize>>,
 }
 
 /// One function-local query memo, including the full ordered value images.
@@ -785,6 +824,10 @@ struct AffineDirectQuery<'a> {
     closed: &'a ClosedState,
     intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
     measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
+    residual: AffineResidualScratch,
+    direct_metric: super::work::AffineMetric,
+    /// Entries whose strongest-interval feasibility is false or unknown.
+    final_interval_exceptions: Option<Vec<usize>>,
 }
 
 impl<'a> AffineDirectQuery<'a> {
@@ -799,8 +842,40 @@ impl<'a> AffineDirectQuery<'a> {
             closed,
             intervals: WordHashMap::default(),
             measures: None,
+            residual: AffineResidualScratch::default(),
+            direct_metric: super::work::AffineMetric::DirectOther,
+            final_interval_exceptions: None,
         }
     }
+}
+
+/// One numeric disposition retains AUTO preparation through its bridge targets.
+/// The borrows freeze binding images and premise order for this session. Atoms
+/// are immutable on this call path; it neither rolls back nor replaces them.
+/// Interior-mutable measure images are checked through the prepared index.
+struct AffineAutoQuery<'a> {
+    values: &'a AffineFlowState,
+    assumptions: &'a [ActiveAffineFact],
+    prepared: Option<PreparedAffineAuto>,
+}
+
+impl<'a> AffineAutoQuery<'a> {
+    fn new(values: &'a AffineFlowState, assumptions: &'a [ActiveAffineFact]) -> Self {
+        Self {
+            values,
+            assumptions,
+            prepared: None,
+        }
+    }
+}
+
+struct PreparedAffineAuto {
+    closed: Rc<ClosedState>,
+    l0: Rc<LazyAffineL0Index>,
+    intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
+    measures: Option<WordHashMap<AffineTermId, Vec<TermId>>>,
+    residual: AffineResidualScratch,
+    final_interval_exceptions: Option<Vec<usize>>,
 }
 
 struct AutomaticAffinePremise {
@@ -975,9 +1050,17 @@ struct ExpressionJudgment {
 #[derive(Clone, Debug)]
 struct AvailablePostcondition {
     relation: RelationTemplate,
-    variant: Option<crate::BuiltinPreludeId>,
-    field: Option<crate::BuiltinPreludeId>,
+    /// The variant field a routed relation is restricted to [FN-9, TYPE-11].
+    route: Option<super::super::postcondition::PayloadRoute>,
     authority: super::RelationProvenance,
+}
+
+impl AvailablePostcondition {
+    /// Whether the relation is restricted to one variant field of its
+    /// result, a written variant-field route or a generated one.
+    const fn routed(&self) -> bool {
+        self.route.is_some()
+    }
 }
 
 /// [MSR-3] one payload placement's datums, held between the mint before the
@@ -1003,6 +1086,13 @@ enum ResultDestination {
     /// destructuring binder, with the path it names. A datum below the
     /// result is this place projected by the datum's projection.
     Place(PlaceRoot, Vec<GoalProjection>),
+    /// An ordinary set retains its written target for ENT-2 admission and
+    /// its evaluated proof place, with RHS-written offsets superseded, for
+    /// term identity.
+    SetTarget {
+        target: CheckedSetTarget,
+        place: ResolvedPlace,
+    },
     /// The private payload root of the returned value's conditional success
     /// context [ENT-5], typed by the success payload.
     PayloadRoot(CheckedType),
@@ -1112,6 +1202,68 @@ pub(super) fn analyze(
     entailment
 }
 
+/// Diagnostic-only comparison with the already expanded requirements. No
+/// facts are established and no acceptance judgment reads this vocabulary.
+pub(crate) fn matching_requirement(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    outcome: &ObligationOutcome,
+) -> Option<crate::NodePath> {
+    fn normalized(
+        left: &TermKind,
+        right: &TermKind,
+        bound: i128,
+    ) -> Option<(TermKind, TermKind, i128)> {
+        let split = |term: &TermKind| match term {
+            TermKind::Constant(value) => Some((TermKind::Zero, *value)),
+            // Dense term IDs belong to their own vocabulary. These compound
+            // terms cannot be compared across the diagnostic copy by ID.
+            TermKind::Sum(..) | TermKind::TargetMeasure { .. } => None,
+            term => Some((term.clone(), 0)),
+        };
+        let (left, left_constant) = split(left)?;
+        let (right, right_constant) = split(right)?;
+        Some((
+            left,
+            right,
+            bound.checked_sub(left_constant)?.checked_add(right_constant)?,
+        ))
+    }
+
+    let [request] = outcome.components.as_slice() else {
+        return None;
+    };
+    if request.distinct {
+        return None;
+    }
+    let terms = &function.entailment.inventory.terms;
+    let wanted = normalized(
+        terms.get(request.left?.0 as usize)?,
+        terms.get(request.right.0 as usize)?,
+        request.bound,
+    )?;
+    let mut analyzer = Analyzer::new(context, function);
+    analyzer.input.collect_bindings();
+    function.requirements.iter().find_map(|requirement| {
+        // An implicit type invariant is not a clause the writer can move.
+        if requirement.subject.is_some() {
+            return None;
+        }
+        let goal = analyzer.input.body_requirement_goal(requirement)?;
+        let Relation::Bound { left, right, bound } =
+            analyzer.reasoning().goal_projection(&goal)?
+        else {
+            return None;
+        };
+        let candidate = normalized(
+            analyzer.vocabulary.terms.kind(left),
+            analyzer.vocabulary.terms.kind(right),
+            bound,
+        )?;
+        (candidate == wanted).then(|| requirement.clause.clone())
+    })
+}
+
 /// Builds one optimistic per-function FN-9 proof batch without pruning or
 /// remapping its derivation ledger. The checker calls [`finish`] after the
 /// component publication decision.
@@ -1189,6 +1341,7 @@ fn analyze_candidate_inner(
     let run = run(function, context);
     let mut entailment = FunctionEntailment {
         body_disposition: run.body_disposition,
+        operation_intervals: run.operation_intervals,
         obligations: run.obligations,
         call_goals: run.call_goals,
         contract_goals: Vec::new(),
@@ -1209,6 +1362,7 @@ fn analyze_candidate_inner(
 }
 
 struct AnalysisRun {
+    operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     body_disposition: super::super::model::CheckedBodyDisposition,
     obligations: Vec<ObligationOutcome>,
     call_goals: Vec<CallGoalOutcome>,
@@ -1239,6 +1393,9 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
     // datum per measure of a parameter any declared relation names, equal to
     // that measure at body entry.
     analyzer.reasoning().establish_entry_datums(&mut state);
+    // [FN-9] and the entry datums each postcondition place's subscripts
+    // are judged over at its selected returns.
+    analyzer.establish_place_entry_datums(&mut state);
     analyzer
         .frames
         .scopes
@@ -1261,6 +1418,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
             .reasoning()
             .establish_requirement_affine_images(requirement, ordinal, &mut state);
     }
+    analyzer.establish_routed_requirements(&mut state);
     let body_disposition = {
         let closed = close(
             &state.facts,
@@ -1303,6 +1461,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         goals: analyzer.vocabulary.goals.into_inventory(),
     };
     AnalysisRun {
+        operation_intervals: analyzer.output.operation_intervals,
         body_disposition,
         obligations: analyzer.output.obligations,
         call_goals: analyzer.output.call_goals,
@@ -1324,6 +1483,11 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
             input: Input {
                 context,
                 function,
+                range_participant: super::super::range_judgment::takes_part(function, |callee| {
+                    context
+                        .callee(callee)
+                        .is_some_and(|callee| callee.range_boundary)
+                }),
                 places: PlaceMap::default(),
                 entry_images: Vec::new(),
                 postcondition_entry_images: Vec::new(),
@@ -1340,6 +1504,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 handle_images: HashMap::new(),
                 invariant_targets: HashMap::new(),
                 unsigned_divisions: Vec::new(),
+                power_atoms: HashMap::new(),
                 encountered_counted: 0,
                 completed_counted_roots: 0,
                 s12_roots: 0,
@@ -1350,6 +1515,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 loop_induction_roots: 0,
             },
             output: Output {
+                operation_intervals: BTreeMap::new(),
                 obligations: Vec::new(),
                 call_goals: Vec::new(),
                 counted_derivations: Vec::new(),
@@ -1710,6 +1876,7 @@ struct Analyzer<'check, 'unit> {
 struct Input<'check, 'unit> {
     context: &'check EntailmentContext<'unit>,
     function: &'check CheckedFunction,
+    range_participant: bool,
     /// [REF-1] place resolution for this function.
     places: PlaceMap,
     entry_images: Vec<EntryImageRecord>,
@@ -1761,6 +1928,13 @@ struct Vocabulary {
     /// Source-establishment order is the specified tie-break for matching
     /// a product against more than one captured division.
     unsigned_divisions: Vec<CapturedUnsignedDivision>,
+    /// [ENT-6] the one power atom, standing for `2^s`, of each nonconstant
+    /// shift-amount image `s` and unsigned shift type this function has
+    /// demanded. Keys and values are immutable value identities, so like
+    /// `product_atoms` this needs no kill and no join: a left shift of one and
+    /// a right shift by the same amount image at one type name the same atom
+    /// wherever either occurs.
+    power_atoms: HashMap<(AffineForm, IntegerType), AffineForm>,
     encountered_counted: u32,
     completed_counted_roots: u32,
     s12_roots: u32,
@@ -1774,6 +1948,7 @@ struct Vocabulary {
 /// What the analysis publishes: every judgment's outcome, the retained
 /// derivation sets, and which separation questions have been asked.
 struct Output {
+    operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     obligations: Vec<ObligationOutcome>,
     call_goals: Vec<CallGoalOutcome>,
     counted_derivations: Vec<CountedDerivationSet>,
@@ -1987,15 +2162,18 @@ mod indexed_goal_kill_tests {
             constants: &[],
             constant_ids: &constant_ids,
             const_parameter_types: &const_parameter_types,
+            copy_type_parameters: &[],
             nominals: &[],
             elements: &[],
             contract_queries: &[],
             verified_postconditions: &[],
             verified_postcondition_proofs: &[],
+            component_postconditions: &[],
             binding_names: &[],
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            summary_source: None,
             prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
@@ -2010,7 +2188,10 @@ mod indexed_goal_kill_tests {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
+            held_parameters: Vec::new(),
+            held_calls: Vec::new(),
             requirement_places: Vec::new(),
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
@@ -2043,6 +2224,7 @@ mod indexed_goal_kill_tests {
                 root: BindingId(0),
                 projections: projections.clone(),
                 ty: CheckedType::Bool,
+                admission: Default::default(),
             }),
             None,
             None,
@@ -2063,6 +2245,7 @@ mod indexed_goal_kill_tests {
                         place: ResolvedPlace::binding(binding),
                         element: false,
                         source: source.clone(),
+                        relocation: false,
                         narrowed: None,
                     },
                     KillEvent::Consume { binding, source },
@@ -2076,6 +2259,7 @@ mod indexed_goal_kill_tests {
                     facts.establish_goal(
                         goal,
                         sign,
+                        &analyzer.vocabulary.goals,
                         &mut analyzer.vocabulary.derivations,
                         established,
                     );
@@ -2102,6 +2286,7 @@ mod indexed_goal_kill_tests {
                 facts.establish_goal(
                     goal,
                     sign,
+                    &analyzer.vocabulary.goals,
                     &mut analyzer.vocabulary.derivations,
                     established,
                 );
@@ -2199,9 +2384,11 @@ mod range_argument_kill_tests {
 
     fn view_source() -> CheckedRangeSource {
         CheckedRangeSource::Range(CheckedRangeRoot {
+            formation: None,
             binding: VIEW,
             element: CheckedElement(0),
             element_type: CheckedType::Integer(IntegerType::U64),
+            proof_base: None,
         })
     }
 
@@ -2219,15 +2406,18 @@ mod range_argument_kill_tests {
             constants: &[],
             constant_ids: &constant_ids,
             const_parameter_types: &const_parameter_types,
+            copy_type_parameters: &[],
             nominals: &[],
             elements: &[],
             contract_queries: &[],
             verified_postconditions: &[],
             verified_postcondition_proofs: &[],
+            component_postconditions: &[],
             binding_names: &[],
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            summary_source: None,
             prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
@@ -2242,7 +2432,10 @@ mod range_argument_kill_tests {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
+            held_parameters: Vec::new(),
+            held_calls: Vec::new(),
             requirement_places: Vec::new(),
+            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
@@ -2258,6 +2451,47 @@ mod range_argument_kill_tests {
         let mut analyzer = Analyzer::new(&context, &function);
         analyzer.input.places = PlaceMap::for_function(&function);
         check(&mut analyzer)
+    }
+
+    /// [ENT-2, MSR-2] a scalar read through a measure reference uses the
+    /// direct measure's word support: another word or an element preserves
+    /// it, and its word or its containing owner kills it.
+    #[test]
+    fn a_measure_reference_term_has_descriptor_word_kills() {
+        with_analyzer(Vec::new(), |analyzer| {
+            let selected = place(vec![PlaceStep::Measure(CheckedMeasure::Length)]);
+            let term = analyzer
+                .vocabulary
+                .terms
+                .intern(TermKind::Place(selected, IntegerType::U64));
+            let direct = analyzer
+                .vocabulary
+                .terms
+                .intern(TermKind::Measure(CheckedMeasure::Length, place(Vec::new())));
+            assert_eq!(term, direct);
+            let separations = SeparationLedger::default();
+            for (path, killed) in [
+                (vec![PlaceStep::Measure(CheckedMeasure::Length)], true),
+                (vec![PlaceStep::Measure(CheckedMeasure::Capacity)], false),
+                (vec![PlaceStep::Measure(CheckedMeasure::Head)], false),
+                (vec![PlaceStep::Index(literal(30, 0))], false),
+                (vec![], true),
+            ] {
+                let event = KillEvent::Write {
+                    element: matches!(path.last(), Some(PlaceStep::Index(_))),
+                    place: place(path),
+                    relocation: false,
+                    source: crate::NodePath { components: vec![] },
+                    narrowed: None,
+                };
+                assert_eq!(
+                    analyzer
+                        .reasoning()
+                        .event_kills_term(&separations, term, &event),
+                    killed
+                );
+            }
+        });
     }
 
     /// [OWN-7, REF-4] a range formation's endpoint images are filed only
@@ -2420,8 +2654,8 @@ mod goal_origin_kill_tests {
 #[cfg(test)]
 mod affine_pair_tests {
     use super::{
-        AffineCheckState, AffineInequality, AffineTermId, AutomaticAffinePremise,
-        first_two_premise_candidate, interval_proves,
+        AffineCheckState, AffineInequality, AffineInequalityView, AffineTermId,
+        AutomaticAffinePremise, first_two_premise_candidate, interval_proves,
     };
 
     fn inequality(terms: &[(u32, i128)], upper: i128) -> AffineInequality {
@@ -2456,7 +2690,7 @@ mod affine_pair_tests {
     /// checker does.
     fn interval_closes_after(
         target: &AffineInequality,
-    ) -> impl FnMut(&AffineInequality, &mut AffineCheckState) -> Option<()> {
+    ) -> impl FnMut(AffineInequalityView<'_>, &mut AffineCheckState) -> Option<()> {
         move |sum, check| {
             let residual = AffineInequality::residual_after(target, sum, check).ok()?;
             interval_closes_without_atoms(&residual, check)

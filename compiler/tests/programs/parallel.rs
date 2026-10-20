@@ -1,6 +1,8 @@
 //! Program results and host-visible parallel behavior. Compiler permissions,
 //! private IR and controlled worker observations live in backend tests.
 
+use std::process::Output;
+
 use super::support::{
     build_program, build_program_from_fragments, compile_program, compile_program_with_overlap,
 };
@@ -403,9 +405,12 @@ fn layout_preserves_both_results_without_benchmark_repetition() {
 /// [SHARE-1, SHARE-3] sixteen contexts adding to one counter, and producers
 /// and consumers passing values through one guarded queue, reach the sums
 /// every order of their atomic statements gives, on one driver and on four.
-/// Four drivers run the contexts on four threads, so an atomic statement that
-/// did not hold its object alone would lose increments or deliver a value
-/// twice; the program names the first wrong sum in its status.
+/// On Linux four drivers run the contexts on four threads, so an atomic
+/// statement that did not hold its object alone would lose increments or
+/// deliver a value twice; a host without a kernel completion ring runs one
+/// driver whatever `WF_DRIVERS` asks [PRE-2], so there both settings check
+/// only the one-driver orders. The program names the first wrong sum in its
+/// status.
 #[test]
 fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
     let program = build_program(&compile_program("shared_objects.wf"));
@@ -419,6 +424,19 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
             );
         }
     }
+}
+
+/// [SHARE-1, SHARE-2] sixteen contexts hold the only handles to one counter
+/// and add to it through statements that count no handle of their own, since
+/// no block writes or moves the handle place it was read from. Each context
+/// releases its handle while the others' statements run, and every statement
+/// makes and releases another object, which can reuse a released object's
+/// storage. The counter must live until its last handle is released: an
+/// earlier release loses increments to those objects or faults, and the
+/// program's status names a wrong highest count.
+#[test]
+fn shared_objects_outlive_statements_while_other_contexts_release_handles() {
+    run_on_one_driver_and_on_four("shared_handle_release.wf", 3);
 }
 
 /// Runs one program on one driver and on four, `rounds` times each, and
@@ -465,6 +483,26 @@ fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("shared_maps.wf", 3);
 }
 
+/// Four contexts cover every logging/timing combination. Only the three
+/// held writers advance metadata, while all four preserve their entry updates
+/// and publish a sequence exactly on held writes. This checks the program's
+/// results; lock timing itself is not observable from these final counts.
+#[test]
+fn conditional_metadata_keeps_only_held_commits_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("lock_on_use.wf", 3);
+}
+
+/// A value read under a read-only whole-map hold must not lock its cell:
+/// that hold's release only opens the map gate. The old lowering left the
+/// first read's cell locked and the second read spun forever, so the shared
+/// program harness's deadline fails this case even with one context/driver.
+#[test]
+fn whole_map_value_reads_release_before_the_next_statement() {
+    let program = build_program(&compile_program("map_value_reads.wf"));
+    let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
 /// [SHARE-3] guards that read entries of a map: four pairs pass values
 /// through one entry each, a sender waiting for its entry to be empty and a
 /// taker for it to hold a value, and two contexts wait on a guard reading an
@@ -489,6 +527,18 @@ fn a_map_swapped_whole_keeps_its_identity_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_resets.wf", 2);
 }
 
+/// [SHARE-1, SHARE-2] a shared map whose values are unit serves as a set of
+/// byte-string keys: four contexts mark, unmark and test their own rows, then
+/// a count, a scan and a clear see exactly the marked keys, on one driver and
+/// on four. The entry's presence tag of `Option<unit>` is the only state the
+/// runtime keeps, so a tag read at the wrong offset, width or empty value
+/// would report a wrong membership (status 1 or 5), count (2), scan length
+/// (3), scanned keys (4) or clear (6, 7).
+#[test]
+fn a_map_of_unit_values_holds_a_set_of_keys_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("unit_set.wf", 2);
+}
+
 /// [SHARE-3] statements whose blocks meet several objects in opposite
 /// orders, and a statement that reaches a unit only on one path, end and
 /// keep every count on one driver and on four: each statement takes the
@@ -499,6 +549,122 @@ fn objects_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_lock_order.wf", 2);
 }
 
+/// The computation of one statement in `meta_commit_overlap.wf` and
+/// `meta_commit_held.wf`, in nanoseconds: both programs run until the
+/// monotonic clock has advanced this far, whatever the host's load. It is
+/// two hundred milliseconds so that a start delay of the second context on a
+/// loaded hosted runner stays a fraction of it; the criterion below tolerates
+/// one of up to 100 ms.
+const META_COMMIT_COMPUTATION: u64 = 200_000_000;
+
+/// The rounds the overlap case may use, each running the overlapping program
+/// and then its control.
+const META_COMMIT_ROUNDS: usize = 5;
+
+/// The driver count [PRE-2] gives both programs under `WF_DRIVERS=2`: two on
+/// Linux, whose kernel completion ring every CI Linux host provides, and one
+/// on a host without that ring, macOS and Windows among them, where the
+/// runtime runs every context on one driver whatever `WF_DRIVERS` asks
+/// (`wf_driver_select_count` in `compiler/src/backend/completion/bridge.c`).
+/// A Linux host without io_uring fails the cases below at this count, which
+/// names the reason, instead of passing with the overlap unchecked.
+const META_COMMIT_DRIVERS: u64 = if cfg!(target_os = "linux") { 2 } else { 1 };
+
+/// The nanoseconds and the driver count a meta-commit program printed, as
+/// the two lines of its standard output.
+fn meta_commit_output(output: &Output) -> (u64, u64) {
+    let text = std::str::from_utf8(&output.stdout).expect("decimal output");
+    let body = text
+        .strip_suffix('\n')
+        .expect("the driver line ends in a newline");
+    let (elapsed, drivers) = body
+        .split_once('\n')
+        .expect("a duration line and then a driver line");
+    (
+        elapsed.parse().expect("a decimal duration"),
+        drivers.parse().expect("a decimal driver count"),
+    )
+}
+
+/// [SHARE-1, SHARE-2, SHARE-3] two atomic statements that name different keys
+/// of one shared map and the same Meta object, and reach Meta only after a
+/// computation, compute at the same time on two drivers and exclude one
+/// another only at the commit to Meta (compiler/waiting-contexts/state-locks,
+/// which takes a shared object at its first use in the block). The program
+/// also fails a log whose sequence numbers are not 0 and 1 in log order, a
+/// replayed log that differs from the final table (statuses 1 to 3), and a
+/// run shorter than one computation (status 5), which a skipped computation
+/// would give.
+///
+/// The duration is judged against the control `meta_commit_held.wf` measured
+/// in the same test, never against a fixed bound, because a loaded hosted
+/// runner can delay the start of the second context by a time that only the
+/// load decides. With computation C, a run that overlaps takes C plus that
+/// delay and a run that excludes takes at least 2C plus it, and the delay
+/// moves both alike. Each round runs the overlapping program and then the
+/// control, and the case passes once the best overlapping run of the rounds
+/// so far (1) is shorter than 1.8 C, which no serialized run reaches because
+/// it takes at least 2 C, and (2) is shorter than the best control run by
+/// more than C / 2, half of the difference C an overlap leaves. A repeat
+/// cannot hide a lock held through the computation: every run of it takes at
+/// least 2 C and fails (1). The control takes its sequence number from Meta
+/// before its computation, so Meta is held through it, and every control run
+/// must take at least 1.8 C (the program's own status 4 floor); on two drivers
+/// this shows that the criterion separates the two lock timings.
+///
+/// The duration is judged only where the programs report two drivers. One
+/// driver runs a context until it suspends, and a statement's block never
+/// suspends, so there the two statements run one after the other whatever
+/// their locks and the duration says nothing about lock timing; the case
+/// then checks both programs' states in one round and the driver count.
+#[test]
+fn statements_on_different_keys_compute_together_and_meet_only_at_the_meta_commit() {
+    let overlap = build_program(&compile_program("meta_commit_overlap.wf"));
+    let held = build_program(&compile_program("meta_commit_held.wf"));
+    let mut overlap_best = u64::MAX;
+    let mut held_best = u64::MAX;
+    let mut rounds = Vec::new();
+    for _ in 0..META_COMMIT_ROUNDS {
+        let output = overlap.run_with_settings(None, &[("WF_DRIVERS", "2")]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "meta_commit_overlap.wf: {output:?}"
+        );
+        let (overlap_elapsed, overlap_drivers) = meta_commit_output(&output);
+        assert_eq!(
+            overlap_drivers, META_COMMIT_DRIVERS,
+            "meta_commit_overlap.wf driver count: {output:?}"
+        );
+        let output = held.run_with_settings(None, &[("WF_DRIVERS", "2")]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "meta_commit_held.wf: {output:?}"
+        );
+        let (held_elapsed, held_drivers) = meta_commit_output(&output);
+        assert_eq!(
+            held_drivers, META_COMMIT_DRIVERS,
+            "meta_commit_held.wf driver count: {output:?}"
+        );
+        if META_COMMIT_DRIVERS < 2 {
+            return;
+        }
+        rounds.push((overlap_elapsed, held_elapsed));
+        overlap_best = overlap_best.min(overlap_elapsed);
+        held_best = held_best.min(held_elapsed);
+        let cannot_be_serialized = overlap_best < META_COMMIT_COMPUTATION * 9 / 5;
+        let beats_the_control = overlap_best + META_COMMIT_COMPUTATION / 2 < held_best;
+        if cannot_be_serialized && beats_the_control {
+            return;
+        }
+    }
+    panic!(
+        "no best overlapping run was under 1.8 computations and more than half a \
+         computation under the best control run; (overlap, control) ns per round: {rounds:?}"
+    );
+}
+
 /// Requested overlap must preserve the histogram and signed-extrema oracle.
 /// This is the unmodified runtime policy and its sequential twin. The backend
 /// indexed split test separately forces and observes the private-buffer path.
@@ -507,6 +673,7 @@ fn indexed_histogram_and_extrema_preserve_sequential_results() {
     for path in [
         "parallel/indexed_reductions.wf",
         "parallel/indexed_marks_fields.wf",
+        "parallel/indexed_calls.wf",
     ] {
         let plain = build_program(&compile_program(path));
         let reference = plain.run_with_workers(Some("1"));
@@ -520,4 +687,10 @@ fn indexed_histogram_and_extrema_preserve_sequential_results() {
             assert!(output.stderr.is_empty(), "{workers}: {output:?}");
         }
     }
+}
+
+/// GET-like payload updates keep every increment on hits and never insert misses.
+#[test]
+fn map_payload_updates_preserve_absence_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("map_payload_updates.wf", 2);
 }

@@ -1,7 +1,8 @@
 //! Type-directed place suffixes [GRAM-5, TYPE-7].
 //!
-//! The postfix `^` selects the referent of `&T` or `&[T]`. A Box instead
-//! exposes its content through the ordinary field `inner` [TYPE-9]. Resolving
+//! The postfix `^` selects the referent of `&T`, or the run named by `&[T]`
+//! or `&Run<T>`; a run admits only an index, range step or `len` measure.
+//! A Box exposes its content through the ordinary field `inner` [TYPE-9]. Resolving
 //! a reference step substitutes the path that reference names; every
 //! [OWN-7] judgment reads that same resolved place [REF-1].
 
@@ -20,9 +21,9 @@ use super::super::super::model::{
     CheckedOwnedTakeCleanup, CheckedPlaceStep, CheckedType, IntegerType,
 };
 use super::super::super::places::{
-    CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
+    CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, WindowPart,
 };
-use super::super::references::{OWN1_ROOTED_CONSUME, WIN3_NO_TAKE};
+use super::super::references::{OWN1_ROOTED_CONSUME, ReferenceSelection, WIN3_NO_TAKE};
 
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
@@ -33,9 +34,17 @@ use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 /// observations before asking for a storage member.
 #[derive(Clone, Copy)]
 pub(in crate::semantic::check) enum PlaceMember {
+    /// A readonly field the prelude declares [TYPE-2, OP-15].
+    Measure(CheckedMeasure),
     Field {
         nominal: super::super::super::model::NominalId,
         index: u32,
+        ty: CheckedType,
+    },
+    Payload {
+        nominal: super::super::super::model::NominalId,
+        variant: u32,
+        field: u32,
         ty: CheckedType,
     },
     BoxContent {
@@ -47,13 +56,25 @@ pub(in crate::semantic::check) enum PlaceMember {
 impl PlaceMember {
     pub(in crate::semantic::check) fn ty(self) -> CheckedType {
         match self {
-            Self::Field { ty, .. } | Self::BoxContent { ty, .. } => ty,
+            Self::Field { ty, .. } | Self::Payload { ty, .. } | Self::BoxContent { ty, .. } => ty,
+            Self::Measure(_) => CheckedType::Integer(IntegerType::U64),
         }
     }
 
     pub(in crate::semantic::check) fn storage_step(self) -> CheckedPlaceStep {
         match self {
             Self::Field { index, .. } => CheckedPlaceStep::Field(index),
+            Self::Payload {
+                nominal,
+                variant,
+                field,
+                ..
+            } => CheckedPlaceStep::Payload {
+                nominal,
+                variant,
+                field,
+            },
+            Self::Measure(measure) => CheckedPlaceStep::Measure(measure),
             Self::BoxContent { nominal, .. } => CheckedPlaceStep::BoxReferent(nominal),
         }
     }
@@ -80,10 +101,10 @@ pub(super) struct ElaboratedPlace {
     /// always the last written suffix and the place it is read over is the
     /// one this record otherwise describes.
     pub(super) measure: Option<super::super::super::model::CheckedMeasure>,
-    /// Whether the written path starts with `^` on a `&[T]` range reference
-    /// [REF-4]. [MSR-1] gives `&[T]` its own row, whose one cell is the
-    /// range's element count, and the referent type the deref selects is the
-    /// element type, so the row cannot be recovered from that type.
+    /// Whether the written path starts with `^` on a range reference
+    /// [REF-4, TYPE-7]. [MSR-1] gives that run its own row, whose one cell is
+    /// the range's element count. This record carries the element type, so
+    /// the row cannot be recovered from that type.
     pub(super) range_referent: bool,
 }
 
@@ -120,6 +141,25 @@ impl<'unit> Checker<'_, 'unit> {
         self.check_elaborated_place_use(check_context, use_node, node, bindings, options, place)
     }
 
+    /// Whether a written place selects an element: a subscript or range step.
+    fn place_has_element_step(&self, node: NodeId) -> Result<bool, CheckStop> {
+        use crate::syntax::views::PlaceSuffix;
+        for suffix in self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?
+        {
+            if matches!(
+                self.types.declarations.tree.place_suffix(suffix)?,
+                PlaceSuffix::Index { .. } | PlaceSuffix::Range { .. }
+            ) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn check_elaborated_place_use(
         &mut self,
@@ -130,7 +170,48 @@ impl<'unit> Checker<'_, 'unit> {
         options: PlaceUseOptions,
         place: ElaboratedPlace,
     ) -> Result<TypedExpression, CheckStop> {
+        // [MSR-1] measures select copy u64 values, rather than the measured
+        // container. [DIAG-1] gives their moves and all other copy moves to
+        // [OWN-1] before [SHARE-1] considers a frozen-content consume.
+        // [TYPE-7] range referents have already been restricted to their
+        // admitted projections during place formation.
+        let copy = place.measure.is_some() || self.types.is_copy_type(check_context, place.ty)?;
+        if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
+            return self.types.declarations.issue_node(
+                SemanticRule::Own1,
+                use_node,
+                self.ownership_issue(
+                    check_context,
+                    node,
+                    if place.measure.is_some() {
+                        CheckedType::Integer(IntegerType::U64)
+                    } else {
+                        place.ty
+                    },
+                    true,
+                    None,
+                    None,
+                )?,
+            );
+        }
         for member in &place.resolved.members {
+            // [DIAG-1] a move through `^` is OWN-1's and an element take
+            // WIN-3's; SHARE-1 owns the remaining explicit non-copy consumes.
+            if options.explicit_move
+                && !copy
+                && !self.types.declarations.tree.place_has_dereference(node)?
+                && !self.place_has_element_step(node)?
+                && self
+                    .types
+                    .frozen_member_on_resolved_path(check_context, member, bindings)?
+                    .is_some()
+            {
+                return self.frozen_consume_issue(node);
+            }
+            if options.explicit_move {
+                self.types
+                    .reject_shared_read_write(node, member, bindings)?;
+            }
             self.check_commit_place_live(member, use_node, false)?;
         }
         // [OP-15, MSR-1] a measure is a read-only `own u64` member of the
@@ -160,9 +241,11 @@ impl<'unit> Checker<'_, 'unit> {
                     expression: CheckedExpression::RangeMeasure {
                         measure,
                         root: super::super::super::model::CheckedRangeRoot {
+                            formation: None,
                             binding,
                             element,
                             element_type: place.ty,
+                            proof_base,
                         },
                     },
                     mode: CheckedMode::Own,
@@ -205,22 +288,6 @@ impl<'unit> Checker<'_, 'unit> {
                     .collect(),
             });
         }
-        // [TYPE-8] `&[T]` is a reference kind and not a type, so `p^`
-        // of a range reference denotes the run it names and never a value of
-        // its own: the admitted readers are its one measure above and one
-        // subscript [MSR-1, OP-4], both of which resolve before this point.
-        if place.range_referent {
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
-                use_node,
-                SemanticIssueKind::type_mismatch(
-                    "a value place",
-                    "the run a range reference names, which is read by `p^[i]` or \
-                     `p^.len` [REF-4, MSR-1]",
-                ),
-            );
-        }
-        let copy = self.types.is_copy_type(check_context, place.ty)?;
         let read_out = !copy
             && options.explicit_move
             && self.body.take_commit_read_out(&place.resolved.identity);
@@ -240,6 +307,37 @@ impl<'unit> Checker<'_, 'unit> {
                             mechanical_fix: OWN1_ROOTED_CONSUME,
                         },
                     );
+                }
+                // [OWN-1, WIN-3] an own-root payload consume requires the
+                // active variant's residual release judgment. The owned-take
+                // path and cleanup currently cover structs and Box shells
+                // only, so this judgment is incomplete for enum payloads.
+                // Keep element takes outside this compiler capability stop.
+                if place
+                    .resolved
+                    .identity
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, PlaceStep::Payload { .. }))
+                    && place.resolved.identity.path.iter().all(|step| {
+                        matches!(
+                            step,
+                            PlaceStep::Field(_) | PlaceStep::Deref | PlaceStep::Payload { .. }
+                        )
+                    })
+                {
+                    self.types.reject_runtime_content_move(
+                        check_context,
+                        use_node,
+                        place.declaration,
+                        place.ty,
+                        &place.resolved.identity.path,
+                        bindings,
+                    )?;
+                    return self
+                        .types
+                        .declarations
+                        .unsupported(UnsupportedSemanticFeature::CompositeValues, use_node);
                 }
                 // [TYPE-9, WIN-3] an owned path through Box content consumes
                 // its complete root. Keep the selected value separate from
@@ -284,20 +382,25 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Own1,
                     use_node,
-                    SemanticIssueKind::BareAffineUse {
-                        mechanical_fix: "write `move p` for the affine place",
-                    },
+                    self.ownership_issue(
+                        check_context,
+                        node,
+                        place.ty,
+                        false,
+                        None,
+                        if self
+                            .types
+                            .declarations
+                            .tree
+                            .place_has_dereference(node)?
+                        {
+                            Some(OWN1_ROOTED_CONSUME.to_owned())
+                        } else {
+                            None
+                        },
+                    )?,
                 );
             }
-        }
-        if copy && options.explicit_move && Checker::judges_class_spelling(check_context) {
-            return self.types.declarations.issue_node(
-                SemanticRule::Own1,
-                use_node,
-                SemanticIssueKind::MoveOfCopy {
-                    mechanical_fix: "use the copy place without `move`",
-                },
-            );
         }
         let mut effects = EffectSet::NONE;
         for member in &place.resolved.members {
@@ -364,6 +467,101 @@ impl<'unit> Checker<'_, 'unit> {
         )
     }
 
+    /// [INV-1, ENT-6] the read one written affine factor denotes when it is a
+    /// tracked field place: its base names a live binding, followed by `^`
+    /// exactly when that binding is a `&T` reference and then by one or more
+    /// field selections, and its proof path is that root with field
+    /// selections alone, ending at an integer field. `None` for every other
+    /// place, which the caller judges by its own rows.
+    pub(in crate::semantic::check) fn tracked_field_factor(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        root_role: LexicalUseRole,
+    ) -> Result<Option<(DeclarationId, CheckedExpression)>, CheckStop> {
+        use crate::syntax::views::PlaceSuffix;
+        let suffixes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?;
+        let Some(&first) = suffixes.first() else {
+            return Ok(None);
+        };
+        let dereferenced = matches!(
+            self.types.declarations.tree.place_suffix(first)?,
+            PlaceSuffix::Dereference
+        );
+        let fields = if dereferenced {
+            &suffixes[1..]
+        } else {
+            suffixes.as_slice()
+        };
+        if fields.is_empty() {
+            return Ok(None);
+        }
+        for suffix in fields {
+            if !matches!(
+                self.types.declarations.tree.place_suffix(*suffix)?,
+                PlaceSuffix::Member(_)
+            ) {
+                return Ok(None);
+            }
+        }
+        let pbase = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Pbase)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+            return Ok(None);
+        }
+        let usage = self
+            .types
+            .declarations
+            .use_at(check_context, pbase, root_role)?;
+        let ResolvedTarget::Source {
+            declaration,
+            class: DeclarationClass::Value,
+        } = usage.target()
+        else {
+            return Ok(None);
+        };
+        // The written `^` follows the root exactly when the root is a `&T`
+        // reference; any other spelling is no tracked field place, and the
+        // caller's own rows judge it.
+        let Some(root) = bindings.get(&declaration) else {
+            return Ok(None);
+        };
+        if !root.live || dereferenced != (root.mode == CheckedMode::Reference) {
+            return Ok(None);
+        }
+        let place = self.elaborate_place_prefix(
+            check_context,
+            node,
+            node,
+            &suffixes,
+            bindings,
+            root_role,
+        )?;
+        let identity = &place.resolved.identity;
+        if !matches!(place.ty, CheckedType::Integer(_))
+            || place.measure.is_some()
+            || place.range_referent
+            || !matches!(identity.root, PlaceRoot::Binding(_))
+            || identity.path.is_empty()
+            || !identity
+                .path
+                .iter()
+                .all(|step| matches!(step, PlaceStep::Field(_)))
+        {
+            return Ok(None);
+        }
+        Ok(Some((declaration, place.expression)))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn elaborate_place_prefix(
         &mut self,
@@ -380,7 +578,16 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(node, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+        // [MSR-3] projects an entry former through the same typed suffix
+        // walk as a bare parameter. Its contract admission is checked by
+        // check_entry_formers; it introduces no executable place form.
+        let projected_entry = check_context.active_postcondition.is_some()
+            && self
+                .types
+                .declarations
+                .tree
+                .has_fixed(pbase, crate::FixedTerminal::Entry)?;
+        if !self.types.declarations.tree.children(pbase)?.is_empty() && !projected_entry {
             return self
                 .types
                 .declarations
@@ -540,10 +747,14 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Type7,
                     suffix,
                     SemanticIssueKind::MissingDereference {
-                        mechanical_fix: "write `p^`",
+                        mechanical_fix: "write `p^`".to_owned(),
                     },
                 );
             }
+            let payload = matches!(
+                self.types.declarations.tree.place_suffix(suffix)?,
+                crate::syntax::views::PlaceSuffix::Member(member) if member.variant.is_some()
+            );
             let name = self
                 .types
                 .declarations
@@ -552,7 +763,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .to_owned();
             // [TYPE-10] the selected type determines whether a spelling is
             // a measure, a window part, or an ordinary source field.
-            if let Some(measure) = super::super::types::measure_named(&name) {
+            if !payload && let Some(measure) = super::super::types::measure_named(&name) {
                 // [OP-14, PRE-1] at a boxed argument a compiler-owned row's
                 // measure place instantiates as `window.inner`: the shape
                 // parameter W admits `Box<Slots<T>>` and `Box<Ring<T>>`, and
@@ -605,16 +816,22 @@ impl<'unit> Checker<'_, 'unit> {
                     continue;
                 }
             }
-            self.types.declarations.reject_window_part(
-                suffix,
-                &name,
-                place.ty,
-                place.range_referent,
-            )?;
+            if !payload {
+                self.types.declarations.reject_window_part(
+                    suffix,
+                    &name,
+                    place.ty,
+                    place.range_referent,
+                )?;
+            }
             let member = self
                 .types
                 .elaborate_place_member(check_context, suffix, place.ty)?;
             place.expression = match member {
+                PlaceMember::Measure(measure) => {
+                    place.measure = Some(measure);
+                    continue;
+                }
                 PlaceMember::BoxContent { nominal, ty } => {
                     place.resolved.append_step(PlaceStep::Deref);
                     CheckedExpression::BoxDeref {
@@ -622,6 +839,42 @@ impl<'unit> Checker<'_, 'unit> {
                         nominal,
                         referent: ty,
                         value: Box::new(place.expression),
+                    }
+                }
+                PlaceMember::Payload {
+                    nominal,
+                    variant,
+                    field,
+                    ty,
+                } => {
+                    self.require_payload_variant(
+                        suffix,
+                        variant,
+                        &place.expression,
+                        &place.resolved.identity,
+                        &place.resolved.members,
+                        bindings,
+                    )?;
+                    let (binding, mut path, proof_base) = self
+                        .types
+                        .declarations
+                        .explicit_container_path(&place.expression, carrier)?;
+                    path.push(CheckedPlaceStep::Payload {
+                        nominal,
+                        variant,
+                        field,
+                    });
+                    place
+                        .resolved
+                        .append_step(PlaceStep::Payload { variant, field });
+                    CheckedExpression::ReadStorage {
+                        carrier: self.types.declarations.tree.path(carrier)?.clone(),
+                        root: CheckedContainerRoot {
+                            root: PlaceRoot::Binding(binding),
+                            path,
+                            ty,
+                            proof_base,
+                        },
                     }
                 }
                 PlaceMember::Field { nominal, index, ty } => {
@@ -638,6 +891,109 @@ impl<'unit> Checker<'_, 'unit> {
             place.ty = member.ty();
         }
         Ok(place)
+    }
+
+    pub(in crate::semantic::check) fn payload_selection_identity(
+        &self,
+        expression: &CheckedExpression,
+        places: &[ResolvedPlace],
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<ReferenceSelection, CheckStop> {
+        // A singleton already carries its exact selected-target identity,
+        // including any loop descendant token and captured selectors.
+        if let [place] = places {
+            return Ok(ReferenceSelection::Exact(place.clone()));
+        }
+        let written = if let CheckedExpression::RangeIndex { place, .. } = expression {
+            ResolvedPlace {
+                root: PlaceRoot::Binding(place.root.binding),
+                path: place.place_path(),
+                atomic_aliases: Vec::new(),
+            }
+        } else if let Some(named) = super::super::super::places::named_place(expression) {
+            let mut path = named.steps;
+            path.extend(named.suffix);
+            ResolvedPlace {
+                root: named.root,
+                path,
+                atomic_aliases: Vec::new(),
+            }
+        } else {
+            let (binding, path, _) = self
+                .types
+                .declarations
+                .explicit_container_path(expression, node)?;
+            ResolvedPlace {
+                root: PlaceRoot::Binding(binding),
+                path: path.iter().map(CheckedPlaceStep::place_step).collect(),
+                atomic_aliases: Vec::new(),
+            }
+        };
+        if let PlaceRoot::Binding(binding) = written.root
+            && let Some(reference) = bindings
+                .values()
+                .find(|local| local.binding == binding)
+                .and_then(|local| local.reference.as_ref())
+        {
+            let mut selection = reference
+                .selection
+                .clone()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            for step in written.path {
+                selection.extend(step);
+            }
+            return Ok(selection);
+        }
+        Err(SemanticCompilerFailure::InvalidResolution.into())
+    }
+
+    /// [REF-1, ENT-3.S15] a new payload selection needs a current arm
+    /// witness for every possible enum the written prefix can name.
+    pub(in crate::semantic::check) fn require_payload_variant(
+        &self,
+        suffix: NodeId,
+        variant: u32,
+        expression: &CheckedExpression,
+        written: &ResolvedPlace,
+        places: &[ResolvedPlace],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        let selection = self.payload_selection_identity(expression, places, suffix, bindings)?;
+        let witnesses = bindings
+            .values()
+            .flat_map(|local| &local.refinement_witnesses)
+            .collect::<Vec<_>>();
+        let established = witnesses.iter().any(|witness| {
+            witness.valid
+                && witness.variant == variant
+                && witness.selection.same_target(&selection)
+                && places.iter().all(|place| {
+                    witnesses.iter().any(|support| {
+                        support.valid
+                            && support.origin == witness.origin
+                            && support.variant == variant
+                            && support.selection == witness.selection
+                            && support.place.root == place.root
+                            && support.place.contains(place)
+                            && place.contains(&support.place)
+                    })
+                })
+        });
+        if !established {
+            return self.types.declarations.issue_node(
+                SemanticRule::Ref1,
+                suffix,
+                SemanticIssueKind::UnestablishedPayloadVariant {
+                    place: self.types.render_resolved_place(written, bindings)?,
+                    variant: self.types.declarations
+                        .deferred_use_at(suffix, DeferredUseRole::PayloadVariant)?
+                        .spelling().to_owned(),
+                    mechanical_fix: "match the enum again and select the payload inside its variant arm before any overlapping write",
+                },
+            );
+        }
+        Ok(())
     }
 
     /// [TYPE-7] `place^` denotes the referent of a reference, and
@@ -661,9 +1017,13 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::MissingDereference {
                     mechanical_fix:
                         "a Box's content is its field inner [TYPE-9]; an owned place is named \
-                         as itself",
+                         as itself"
+                            .to_owned(),
                 },
             );
+        }
+        if inner.mode.is_range() {
+            self.types.declarations.check_range_referent(pbase)?;
         }
         let local = bindings
             .get(&inner.declaration)
@@ -708,10 +1068,82 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
+    /// [TYPE-7] type range-referent steps before the narrower expression
+    /// shapes of contracts and proofs can attribute their use to another rule.
+    pub(in crate::semantic::check) fn check_range_referent_places(
+        &self,
+        check_context: &CheckContext<'_>,
+        expression: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        for place in self
+            .declarations
+            .tree
+            .descendants_with(expression, Production::Place)?
+        {
+            let suffixes = self
+                .declarations
+                .tree
+                .children_with(place, Production::Psuffix)?;
+            let Some(0) = self.declarations.tree.reference_step(&suffixes)? else {
+                continue;
+            };
+            // [REF-3] result selectors cannot denote references.
+            if self
+                .declarations
+                .postcondition_selector_spelling(check_context, place)?
+                .is_some()
+            {
+                continue;
+            }
+            let base = self
+                .declarations
+                .tree
+                .first_child_with(place, Production::Pbase)?
+                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            let usage = self.declarations.use_at_roles(
+                check_context,
+                base,
+                &[
+                    LexicalUseRole::PlaceBase,
+                    LexicalUseRole::InvariantValue,
+                    LexicalUseRole::ProofValue,
+                ],
+            )?;
+            if let ResolvedTarget::Source {
+                declaration,
+                class: DeclarationClass::Value,
+            } = usage.target()
+                && bindings
+                    .get(&declaration)
+                    .is_some_and(|local| local.mode.is_range())
+            {
+                self.declarations.check_range_referent(suffixes[0])?;
+            }
+        }
+        Ok(())
+    }
+
     /// Resolve the type transition without choosing a diagnostic. A write
     /// judges readonly members before ordinary member validity; other uses
     /// judge validity first. Both consume this same type-directed selection.
-    fn place_member(&self, ty: CheckedType, name: &str) -> Result<Option<PlaceMember>, CheckStop> {
+    pub(in crate::semantic::check) fn place_member(
+        &self,
+        ty: CheckedType,
+        name: &str,
+    ) -> Result<Option<PlaceMember>, CheckStop> {
+        // [PRE-1, TYPE-2, OP-15] measures on these value types are declared
+        // fields. Range and run-selection lengths carry no declaration and
+        // are handled only by the observation judgment [REF-4, MSR-1].
+        if let Some(measure) = super::super::types::measure_named(name)
+            && let Some(measured) = super::super::expressions::flat_storage::measured_kind_of(ty)
+            && !matches!(
+                measure.cell(measured),
+                super::super::super::model::MeasureCell::Absent
+            )
+        {
+            return Ok(Some(PlaceMember::Measure(measure)));
+        }
         let CheckedType::Nominal(nominal) = ty else {
             return Ok(None);
         };
@@ -758,7 +1190,7 @@ impl<'unit> TypeContext<'unit> {
                     .parent(suffix)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
+                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself".to_owned(),
                 },
             );
         }
@@ -771,6 +1203,50 @@ impl<'unit> TypeContext<'unit> {
             .declarations
             .deferred_use_at(suffix, DeferredUseRole::ProjectedField)?
             .spelling();
+        if let crate::syntax::views::PlaceSuffix::Member(member) =
+            self.declarations.tree.place_suffix(suffix)?
+            && member.variant.is_some()
+        {
+            let variant_name = self
+                .declarations
+                .deferred_use_at(suffix, DeferredUseRole::PayloadVariant)?
+                .spelling();
+            if let CheckedType::Nominal(nominal) = ty
+                && let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind
+                && let Some(variant) = variants.iter().find(|variant| variant.name == variant_name)
+                && let Some((field, selected)) = variant
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.name == name)
+            {
+                self.reject_inaccessible_variant(check_context, nominal, variant_name, suffix)?;
+                self.reject_inaccessible_field(
+                    check_context,
+                    nominal,
+                    Some(variant.tag as usize),
+                    field,
+                    name,
+                    suffix,
+                )?;
+                return Ok(PlaceMember::Payload {
+                    nominal,
+                    variant: variant.tag,
+                    field: u32::try_from(field)
+                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                    ty: selected.ty,
+                });
+            }
+            return self.declarations.issue_node(
+                SemanticRule::Type5,
+                suffix,
+                SemanticIssueKind::type_mismatch(
+                    "a declared enum variant and its declared payload field",
+                    format!("{}.{variant_name}.{name}", self.checked_type_name(ty)?),
+                ),
+            );
+        }
+
         if name == "pages"
             && matches!(
                 ty,
@@ -809,6 +1285,7 @@ impl<'unit> TypeContext<'unit> {
             .reject_window_part(suffix, name, ty, false)?;
         let member = self.place_member(ty, name)?;
         match member {
+            Some(PlaceMember::Measure(_) | PlaceMember::Payload { .. }) => {}
             Some(PlaceMember::BoxContent { .. }) => {
                 if name != "inner" {
                     return self.declarations.issue_node(
@@ -896,15 +1373,9 @@ impl<'unit> TypeContext<'unit> {
         if range {
             return Ok(ty);
         }
-        Ok(match ty {
-            Some(
-                CheckedType::Array { element, .. }
-                | CheckedType::Window { element, .. }
-                | CheckedType::Buffer { element }
-                | CheckedType::Segments { element },
-            ) => Some(self.element_type(element)?),
-            _ => None,
-        })
+        ty.map(|ty| self.container_element_type(ty))
+            .transpose()
+            .map(Option::flatten)
     }
     /// The selected type of a resolved target. A descendant summary keeps
     /// its referent type even though its containing anchor has another type.
@@ -988,6 +1459,56 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok((!range).then_some(ty))
     }
+    /// [TYPE-9] runtime-capacity content cannot leave the Box that owns its
+    /// allocation. Keep this selected-type judgment before any owned-take
+    /// capability stop, using the same repair for every typed owner path.
+    fn reject_runtime_content_move(
+        &self,
+        check_context: &CheckContext<'_>,
+        use_node: NodeId,
+        declaration: DeclarationId,
+        referent: CheckedType,
+        resolved_path: &[PlaceStep],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        if matches!(
+            referent,
+            CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::Window { capacity: None, .. }
+        ) {
+            // The last content step selects the runtime-capacity value;
+            // its prefix is the Box that can move or be released [TYPE-9].
+            let (PlaceStep::Deref, cell_path) = resolved_path
+                .split_last()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            else {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            };
+            let local = bindings
+                .get(&declaration)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let mut cell = ResolvedPlace::binding(local.binding);
+            cell.path = cell_path.to_vec();
+            let cell = self.render_resolved_place(&cell, bindings)?;
+            let window = matches!(referent, CheckedType::Window { .. });
+            let droppable = self
+                .linear_release_obligation(check_context, referent)?
+                .is_none();
+            return self.declarations.issue_node(
+                SemanticRule::Type9,
+                use_node,
+                SemanticIssueKind::InvalidRestrictedTypePlacement {
+                    spelling: self.checked_type_name(referent)?,
+                    mechanical_fix: super::super::repairs::runtime_content_move(
+                        &cell, window, droppable,
+                    ),
+                },
+            );
+        }
+        Ok(())
+    }
+
     /// [TYPE-9, WIN-3] `let n = move b.inner;`.
     ///
     /// [TYPE-9]: "`let n = move b.inner;` consumes the `Box`, yields its
@@ -1014,38 +1535,14 @@ impl<'unit> TypeContext<'unit> {
             .get(&declaration)
             .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if matches!(
+        self.reject_runtime_content_move(
+            check_context,
+            use_node,
+            declaration,
             referent,
-            CheckedType::Buffer { .. }
-                | CheckedType::Segments { .. }
-                | CheckedType::Window { capacity: None, .. }
-        ) {
-            // The last content step selects the runtime-capacity value;
-            // its prefix is the Box that can move or be released [TYPE-9].
-            let (PlaceStep::Deref, cell_path) = resolved_path
-                .split_last()
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            else {
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            };
-            let mut cell = ResolvedPlace::binding(local.binding);
-            cell.path = cell_path.to_vec();
-            let cell = self.render_resolved_place(&cell, bindings)?;
-            let window = matches!(referent, CheckedType::Window { .. });
-            let droppable = self
-                .linear_release_obligation(check_context, referent)?
-                .is_none();
-            return self.declarations.issue_node(
-                SemanticRule::Type9,
-                use_node,
-                SemanticIssueKind::InvalidRestrictedTypePlacement {
-                    spelling: self.checked_type_name(referent)?,
-                    mechanical_fix: super::super::repairs::runtime_content_move(
-                        &cell, window, droppable,
-                    ),
-                },
-            );
-        }
+            resolved_path,
+            bindings,
+        )?;
         let path = self.checked_owned_take_path(local.ty, resolved_path)?;
         let mut cleanup = Vec::new();
         for action in self.owned_take_cleanup(check_context, local.ty, &path)? {
@@ -1255,6 +1752,28 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(())
     }
+    /// Read authority belongs to the resolved atomic root, not an alias's type.
+    pub(in crate::semantic::check) fn reject_shared_read_write(
+        &self,
+        target: NodeId,
+        path: &ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        if bindings
+            .values()
+            .any(|local| local.read_only_state && path.root == PlaceRoot::Binding(local.binding))
+        {
+            return self.declarations.issue_node(
+                SemanticRule::Share2,
+                target,
+                SemanticIssueKind::ReadonlyWriteTarget {
+                    spelling: "SharedRead state".to_owned(),
+                    mechanical_fix: "read this state without writing or consuming it; to update an ordinary shared object, use a target of a mutable Shared handle if one is available; fire cancellation through cancel_fire outside the atomic statement",
+                },
+            );
+        }
+        Ok(())
+    }
     /// [TYPE-2] applies the readonly provenance carried by one resolved path
     /// to either a direct write through a reference or a written-reference
     /// call argument.
@@ -1265,6 +1784,7 @@ impl<'unit> TypeContext<'unit> {
         path: &ResolvedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
+        self.reject_shared_read_write(target, path, bindings)?;
         let Some(spelling) =
             self.readonly_member_on_resolved_path(check_context, path, bindings)?
         else {
@@ -1279,7 +1799,7 @@ impl<'unit> TypeContext<'unit> {
             },
         )
     }
-    /// The first readonly declaration member crossed by one resolved origin
+    /// [TYPE-2, REF-1] the first readonly declaration member crossed by one resolved origin
     /// path. Every reference alias retains this path, while its referent type
     /// alone cannot say which declaration field supplied it.
     pub(in crate::semantic::check) fn readonly_member_on_resolved_path(
@@ -1288,12 +1808,106 @@ impl<'unit> TypeContext<'unit> {
         path: &ResolvedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<String>, CheckStop> {
+        self.readonly_path_member(check_context, path, bindings, false)
+    }
+
+    pub(in crate::semantic::check) fn frozen_member_on_resolved_path(
+        &self,
+        check_context: &CheckContext<'_>,
+        path: &ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<Option<String>, CheckStop> {
+        self.readonly_path_member(check_context, path, bindings, true)
+    }
+
+    /// [SHARE-2] whether a table subscript selects `Entries<V>`, a run of
+    /// entries, given the step that follows it: a `KeySet` offset selects the
+    /// run and the next step subscripts it, while a key offset selects the
+    /// one `Option` entry and the next step is its payload. The step after
+    /// the subscript is the only place a resolved path records which.
+    fn table_selects_entries(next: Option<&PlaceStep>) -> bool {
+        matches!(next, Some(PlaceStep::Index(_)))
+    }
+    /// [SHARE-2] the `Option` entry type of a table's subscript.
+    fn table_entry_of(&self, ty: Option<CheckedType>) -> Result<Option<CheckedType>, CheckStop> {
+        let Some(CheckedType::Nominal(nominal)) = ty else {
+            return Ok(None);
+        };
+        Ok(match &self.nominal(nominal)?.kind {
+            CheckedNominalKind::Shared {
+                shape: crate::semantic::CheckedShared::Map { entry },
+                ..
+            } => Some(*entry),
+            _ => None,
+        })
+    }
+    /// [SHARE-2, REF-1] indexed atomic roots already carry the selected
+    /// Option/Entries type. Their original self-rooted index is an identity
+    /// prefix, not a second element selection: the number of leading steps
+    /// of `path` that select nothing below the root's own type.
+    fn atomic_index_prefix(
+        &self,
+        local: &LocalBinding,
+        path: &ResolvedPlace,
+    ) -> Result<usize, CheckStop> {
+        let record = self
+            .declarations
+            .resolved
+            .declaration(local.declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if record.role() != crate::DeclarationRole::AtomicBinder
+            || !matches!(path.path.first(), Some(PlaceStep::Index(_)))
+        {
+            return Ok(0);
+        }
+        let node = self
+            .declarations
+            .tree
+            .node_with_path(record.origin().node())
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let ordinal = self
+            .declarations
+            .declarations_at(node, crate::DeclarationRole::AtomicBinder)?
+            .iter()
+            .position(|candidate| candidate.id() == local.declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let targets = self
+            .declarations
+            .tree
+            .children_with(node, Production::Place)?;
+        let target = *targets
+            .get(ordinal)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let suffixes = self
+            .declarations
+            .tree
+            .children_with(target, Production::Psuffix)?;
+        let subscripted = suffixes
+            .last()
+            .map(|suffix| self.declarations.tree.subscript_offset(*suffix))
+            .transpose()?
+            .flatten()
+            .is_some();
+        Ok(usize::from(subscripted))
+    }
+
+    fn readonly_path_member(
+        &self,
+        check_context: &CheckContext<'_>,
+        path: &ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        frozen_only: bool,
+    ) -> Result<Option<String>, CheckStop> {
         #[derive(Clone, Copy)]
         enum PathType {
             Value(CheckedType),
             Range(CheckedType),
+            // [SHARE-2, REF-1] a map selector names either its Option entry
+            // or Entries; the next resolved step determines the projection.
+            MapSelection(CheckedType),
         }
 
+        let mut prefix = 0;
         let mut ty = match path.root {
             PlaceRoot::Binding(binding) => {
                 let Some(local) = bindings.values().find(|local| local.binding == binding) else {
@@ -1302,6 +1916,7 @@ impl<'unit> TypeContext<'unit> {
                     // header validity equation. It has no live type here.
                     return Ok(None);
                 };
+                prefix = self.atomic_index_prefix(local, path)?;
                 if local.mode.is_range() {
                     PathType::Range(local.ty)
                 } else {
@@ -1312,10 +1927,34 @@ impl<'unit> TypeContext<'unit> {
                 PathType::Value(self.constant(constant)?.declared_type)
             }
         };
-        for step in &path.path {
+        for step in &path.path[prefix..] {
+            if let PathType::MapSelection(entry) = ty {
+                ty = match step {
+                    PlaceStep::Payload { .. } | PlaceStep::Index(_) => {
+                        if Self::table_selects_entries(Some(step)) {
+                            PathType::Range(entry)
+                        } else {
+                            PathType::Value(entry)
+                        }
+                    }
+                    // Entries.len is readonly; a checked Option entry cannot
+                    // have a measure selection [SHARE-2, OP-15].
+                    PlaceStep::Measure(_) | PlaceStep::Descendant(_) => ty,
+                    PlaceStep::Field(_)
+                    | PlaceStep::Deref
+                    | PlaceStep::Range(_)
+                    | PlaceStep::Page(_)
+                    | PlaceStep::Part(_) => {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    }
+                };
+            }
             match *step {
                 PlaceStep::Descendant(target) => {
-                    if target.readonly {
+                    if target.frozen_content {
+                        return Ok(Some("a descendant of Frozen.inner".to_owned()));
+                    }
+                    if target.readonly && !frozen_only {
                         return Ok(Some("a readonly descendant path".to_owned()));
                     }
                     ty = if target.range {
@@ -1326,88 +1965,122 @@ impl<'unit> TypeContext<'unit> {
                 }
                 PlaceStep::Field(index) => {
                     let PathType::Value(current) = ty else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedType::Nominal(nominal) = current else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let field = fields
                         .get(index as usize)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    if self.field_withholds_writes(check_context, nominal, field) {
+                    if !frozen_only && self.field_withholds_writes(check_context, nominal, field) {
                         return Ok(Some(field.name.clone()));
                     }
                     ty = PathType::Value(field.ty);
                 }
                 PlaceStep::Deref => {
                     let PathType::Value(current) = ty else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedType::Nominal(nominal) = current else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind
                     else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
+                    if self.is_frozen_type(current)? {
+                        return Ok(Some("Frozen.inner".to_owned()));
+                    }
                     ty = PathType::Value(referent);
                 }
                 PlaceStep::Payload { variant, field } => {
                     let PathType::Value(current) = ty else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedType::Nominal(nominal) = current else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
-                        return Ok(None);
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     let field = variants
                         .get(variant as usize)
                         .and_then(|variant| variant.fields.get(field as usize))
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    if self.field_withholds_writes(check_context, nominal, field) {
+                    if !frozen_only && self.field_withholds_writes(check_context, nominal, field) {
                         return Ok(Some(field.name.clone()));
                     }
                     ty = PathType::Value(field.ty);
                 }
-                // [TYPE-9] a segment and the run of every element are runs
-                // of T, as a range step's referent is.
-                PlaceStep::Index(_) | PlaceStep::Range(_)
-                    if matches!(ty, PathType::Value(CheckedType::Segments { .. })) =>
-                {
-                    let PathType::Value(CheckedType::Segments { element }) = ty else {
-                        return Ok(None);
+                PlaceStep::Index(_)
+                | PlaceStep::Range(_)
+                | PlaceStep::Page(_)
+                | PlaceStep::Part(_) => {
+                    // [TYPE-9, SHARE-2, REF-4] one exhaustive shape walk
+                    // preserves readonly provenance below every element and
+                    // map-entry projection; a new checked shape needs a case.
+                    let (element, run) = match ty {
+                        PathType::Range(element) => (element, false),
+                        PathType::MapSelection(_) => {
+                            return Err(SemanticCompilerFailure::InvalidResolution.into());
+                        }
+                        PathType::Value(current) => match current {
+                            CheckedType::Array { element, .. }
+                            | CheckedType::Window { element, .. }
+                            | CheckedType::Buffer { element }
+                            | CheckedType::Entries { element } => {
+                                (self.element_type(element)?, false)
+                            }
+                            CheckedType::Segments { element } => {
+                                (self.element_type(element)?, true)
+                            }
+                            CheckedType::Nominal(nominal) => match &self.nominal(nominal)?.kind {
+                                CheckedNominalKind::Shared {
+                                    shape: crate::semantic::CheckedShared::Map { entry },
+                                    ..
+                                } if matches!(step, PlaceStep::Index(_)) => {
+                                    ty = PathType::MapSelection(*entry);
+                                    continue;
+                                }
+                                CheckedNominalKind::Struct { .. }
+                                | CheckedNominalKind::Enum { .. }
+                                | CheckedNominalKind::Box { .. }
+                                | CheckedNominalKind::Opaque
+                                | CheckedNominalKind::Shared { .. } => {
+                                    return Err(SemanticCompilerFailure::InvalidResolution.into());
+                                }
+                            },
+                            CheckedType::Unit
+                            | CheckedType::Bool
+                            | CheckedType::Integer(_)
+                            | CheckedType::Float(_)
+                            | CheckedType::Generic(_)
+                            | CheckedType::GenericInt(_)
+                            | CheckedType::GenericFloat(_)
+                            | CheckedType::KeySet => {
+                                return Err(SemanticCompilerFailure::InvalidResolution.into());
+                            }
+                        },
                     };
-                    ty = PathType::Range(self.element_type(element)?);
+                    ty = if run
+                        || matches!(
+                            step,
+                            PlaceStep::Range(_)
+                                | PlaceStep::Page(_)
+                                | PlaceStep::Part(WindowPart::Filled | WindowPart::Free)
+                        ) {
+                        PathType::Range(element)
+                    } else {
+                        PathType::Value(element)
+                    };
                 }
-                PlaceStep::Index(_) => {
-                    ty = PathType::Value(match ty {
-                        PathType::Range(element) => element,
-                        PathType::Value(current) => match current {
-                            CheckedType::Array { element, .. }
-                            | CheckedType::Window { element, .. } => self.element_type(element)?,
-                            CheckedType::Buffer { element } => self.element_type(element)?,
-                            _ => return Ok(None),
-                        },
-                    });
+                PlaceStep::Measure(measure) => {
+                    return Ok((!frozen_only).then(|| measure.spelling().to_owned()));
                 }
-                PlaceStep::Range(_) | PlaceStep::Page(_) => {
-                    ty = PathType::Range(match ty {
-                        PathType::Range(element) => element,
-                        PathType::Value(current) => match current {
-                            CheckedType::Array { element, .. }
-                            | CheckedType::Window { element, .. } => self.element_type(element)?,
-                            CheckedType::Buffer { element } => self.element_type(element)?,
-                            _ => return Ok(None),
-                        },
-                    });
-                }
-                PlaceStep::Measure(measure) => return Ok(Some(measure.spelling().to_owned())),
-                PlaceStep::Part(_) => return Ok(None),
             }
         }
         Ok(None)
@@ -1428,18 +2101,23 @@ impl<'unit> TypeContext<'unit> {
     /// This is the one renderer every checker payload naming a resolved place
     /// uses — the [EFF-5] substituted paths, the [OP-12] target and the
     /// [REF-2] preservation pairs — so none of them shows a checker-internal
-    /// binding number or field ordinal.
+    /// binding number or field ordinal. The selected type is kept through
+    /// every step, a window part included [WIN-2], so a field or payload step
+    /// whose type is lost is an internal resolution failure and never an
+    /// ordinal in a repair.
     pub(in crate::semantic::check) fn render_resolved_place(
         &self,
         place: &ResolvedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<String, CheckStop> {
         let mut range = false;
+        let mut prefix = 0;
         let (mut rendered, mut ty) = match place.root {
             PlaceRoot::Binding(binding) => {
                 match bindings.values().find(|local| local.binding == binding) {
                     Some(local) => {
                         let name = self.declarations.declaration_spelling(local.declaration)?;
+                        prefix = self.atomic_index_prefix(local, place)?;
                         range = local.mode.is_range();
                         if local.mode.is_reference() {
                             (format!("{name}^"), Some(local.ty))
@@ -1455,7 +2133,7 @@ impl<'unit> TypeContext<'unit> {
                 (constant.name.clone(), Some(constant.declared_type))
             }
         };
-        for step in &place.path {
+        for (position, step) in place.path.iter().enumerate() {
             match *step {
                 PlaceStep::Descendant(target) => {
                     rendered.push_str(".**");
@@ -1463,26 +2141,18 @@ impl<'unit> TypeContext<'unit> {
                     range = target.range;
                 }
                 PlaceStep::Field(field) => {
-                    let selected = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Struct { fields } => fields
-                                .get(field as usize)
-                                .map(|declared| (declared.name.clone(), declared.ty)),
-                            _ => None,
-                        },
-                        _ => None,
+                    let Some(CheckedType::Nominal(nominal)) = ty else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
-                    match selected {
-                        Some((name, field_type)) => {
-                            rendered.push('.');
-                            rendered.push_str(&name);
-                            ty = Some(field_type);
-                        }
-                        None => {
-                            rendered.push_str(&format!(".{field}"));
-                            ty = None;
-                        }
-                    }
+                    let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let declared = fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push('.');
+                    rendered.push_str(&declared.name);
+                    ty = Some(declared.ty);
                 }
                 PlaceStep::Deref => match ty.map(|ty| self.box_content(ty)).transpose()? {
                     Some(Some(referent)) => {
@@ -1491,33 +2161,34 @@ impl<'unit> TypeContext<'unit> {
                     }
                     _ => {
                         rendered = format!("{rendered}^");
-                        ty = None;
+                        // A borrow keeps its referent's type; a shared
+                        // object's `^` reaches its state [SHARE-1].
+                        if let Some(CheckedType::Nominal(nominal)) = ty
+                            && let CheckedNominalKind::Shared {
+                                state,
+                                shape: crate::semantic::CheckedShared::Object,
+                            } = self.nominal(nominal)?.kind
+                        {
+                            ty = Some(state);
+                        }
                     }
                 },
                 PlaceStep::Payload { variant, field } => {
-                    let selected = match ty {
-                        Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Enum { variants } => {
-                                variants.get(variant as usize).and_then(|declared| {
-                                    declared.fields.get(field as usize).map(|payload| {
-                                        (declared.name.clone(), payload.name.clone(), payload.ty)
-                                    })
-                                })
-                            }
-                            _ => None,
-                        },
-                        _ => None,
+                    let Some(CheckedType::Nominal(nominal)) = ty else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
-                    match selected {
-                        Some((variant_name, field_name, payload_type)) => {
-                            rendered.push_str(&format!(".{variant_name}.{field_name}"));
-                            ty = Some(payload_type);
-                        }
-                        None => {
-                            rendered.push_str(&format!(".{variant}.{field}"));
-                            ty = None;
-                        }
-                    }
+                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let declared = variants
+                        .get(variant as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let payload = declared
+                        .fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push_str(&format!(".{}.{}", declared.name, payload.name));
+                    ty = Some(payload.ty);
                 }
                 PlaceStep::Page(offset) => {
                     rendered.push_str(&format!(
@@ -1528,14 +2199,27 @@ impl<'unit> TypeContext<'unit> {
                     range = true;
                 }
                 PlaceStep::Index(offset) => {
+                    // [SHARE-2] an indexed atomic binder's own subscript is
+                    // not in the writer's spelling of the binder.
+                    if position < prefix {
+                        continue;
+                    }
                     rendered.push_str(&format!(
                         "[{}]",
                         self.declarations.render_captured_offset(offset, bindings)?
                     ));
                     // [TYPE-9] a segment is a run of T.
                     let segment = !range && matches!(ty, Some(CheckedType::Segments { .. }));
-                    ty = self.selected_element(ty, range)?;
-                    range = segment;
+                    match self.table_entry_of(ty)? {
+                        Some(entry) if !range => {
+                            ty = Some(entry);
+                            range = Self::table_selects_entries(place.path.get(position + 1));
+                        }
+                        _ => {
+                            ty = self.selected_element(ty, range)?;
+                            range = segment;
+                        }
+                    }
                 }
                 PlaceStep::Range(_)
                     if !range && matches!(ty, Some(CheckedType::Segments { .. })) =>
@@ -1558,7 +2242,8 @@ impl<'unit> TypeContext<'unit> {
                 PlaceStep::Part(part) => {
                     rendered.push('.');
                     rendered.push_str(part.spelling());
-                    ty = None;
+                    ty = self.selected_element(ty, range)?;
+                    range = matches!(part, WindowPart::Filled | WindowPart::Free);
                 }
                 PlaceStep::Measure(measure) => {
                     rendered.push('.');
@@ -1585,6 +2270,14 @@ impl<'unit> TypeContext<'unit> {
         mut ty: CheckedType,
     ) -> Result<(), CheckStop> {
         for &suffix in suffixes {
+            if matches!(
+                self.declarations.tree.place_suffix(suffix)?,
+                crate::syntax::views::PlaceSuffix::Member(member) if member.variant.is_some()
+            ) {
+                // Payload selection and its readonly provenance belong to
+                // the ordinary typed place walk, not measure-name routing.
+                return Ok(());
+            }
             if self.declarations.tree.subscript_offset(suffix)?.is_some() {
                 // [MSR-2] a write at an element position reaches that
                 // element's own storage; the offset carries no member name.
@@ -1622,6 +2315,18 @@ impl<'unit> TypeContext<'unit> {
             let Some(member) = self.place_member(ty, &name)? else {
                 return Ok(());
             };
+            if let PlaceMember::BoxContent { nominal, .. } = member
+                && self.is_frozen_type(CheckedType::Nominal(nominal))?
+            {
+                return self.declarations.issue_node(
+                    SemanticRule::Type2,
+                    target,
+                    SemanticIssueKind::ReadonlyWriteTarget {
+                        spelling: "Frozen.inner".to_owned(),
+                        mechanical_fix: Checker::READONLY_WRITE_TARGET_FIX,
+                    },
+                );
+            }
             if let PlaceMember::Field { nominal, index, .. } = member {
                 let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -1644,6 +2349,47 @@ impl<'unit> TypeContext<'unit> {
 }
 
 impl<'unit> DeclarationInventory<'unit> {
+    /// [TYPE-7] a range referent is a run, admitted only as the base of an
+    /// element subscript, a range step or its `len` measure. Inspect the
+    /// complete written place even when a caller elaborates only a prefix.
+    pub(in crate::semantic::check) fn check_range_referent(
+        &self,
+        caret: NodeId,
+    ) -> Result<(), CheckStop> {
+        use crate::syntax::views::PlaceSuffix;
+        let place = self
+            .tree
+            .parent(caret)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let suffixes = self.tree.children_with(place, Production::Psuffix)?;
+        let position = suffixes
+            .iter()
+            .position(|suffix| *suffix == caret)
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let rest = &suffixes[position + 1..];
+        if let Some(&next) = rest.first() {
+            match self.tree.place_suffix(next)? {
+                PlaceSuffix::Index { .. } | PlaceSuffix::Range { .. } => return Ok(()),
+                // [MSR-1] the run's one measure ends the place.
+                PlaceSuffix::Member(_)
+                    if rest.len() == 1
+                        && self.trailing_measure_member(rest)?
+                            == Some(CheckedMeasure::Length) =>
+                {
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        self.issue_node(
+            SemanticRule::Type7,
+            place,
+            SemanticIssueKind::RangeReferentUse {
+                mechanical_fix: "write `let q = r;` to alias the reference, `&r^[i]` to borrow one element, or `&r^[a..b]` to borrow a subrange",
+            },
+        )
+    }
+
     /// The measure a written `psuffix` run ends with [OP-15, MSR-1], if any.
     ///
     /// [MSR-1] gives a measure no storage below itself, so only the last
@@ -1661,6 +2407,9 @@ impl<'unit> DeclarationInventory<'unit> {
         else {
             return Ok(None);
         };
+        if member.variant.is_some() {
+            return Ok(None);
+        }
         let name = std::str::from_utf8(self.tree.token_bytes(member.field)?)
             .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?;
         Ok(super::super::types::measure_named(name))

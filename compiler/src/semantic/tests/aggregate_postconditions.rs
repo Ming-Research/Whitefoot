@@ -151,12 +151,12 @@ fn an_enum_payload_step_below_an_unrouted_result_is_no_datum() {
 }
 
 struct Slot {
-  held: Held;
+  observed: Held;
   serial: u64;
 }
 
 fn pass_slot(slot: Slot) -> result: Slot pure contract {
-  ensures result.held.Full.count == 3_u64;
+  ensures result.observed.Full.count == 3_u64;
 } {
   return move slot;
 }
@@ -187,14 +187,14 @@ fn hold<T>(item: T) -> result: Holder<T> pure contract {
   ensures result.serial == 0_u64;
   ensures result.item.count == 0_u64;
 } {
-  let held = Holder<T>(item: move item, serial: 0_u64);
-  return move held;
+  let observed = Holder<T>(item: move item, serial: 0_u64);
+  return move observed;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let counter = Counter(count: 0_u64);
-  let held = hold::<Counter>(item: counter);
-  let code = cvt.wrap::<u64, u8>(held.serial);
+  let observed = hold::<Counter>(item: counter);
+  let code = cvt.wrap::<u64, u8>(observed.serial);
   return std::process::exit_status(code: code);
 }
 "#;
@@ -360,6 +360,47 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     assert_complete(rebind);
+}
+
+#[test]
+fn a_constructed_field_carry_judges_its_complete_written_destination() {
+    let source = |placement: &str| {
+        format!(
+            "struct Cell {{
+  value: u8;
+}}
+
+struct Envelope {{
+  cell: Cell;
+}}
+
+fn probe(cells: &Array<Envelope, 1>) -> result: unit writes(cells) {{
+  let cell = Cell(value: 1_u8);
+  {placement}
+  let value = ref^.cell.value + 254_u8;
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    // [ENT-2, MSR-3] the constructor's `.cell` step precedes the carried
+    // `.value` suffix. Only the unsubscripted written destination admits it,
+    // even though both reference reads resolve to the same indexed storage.
+    let indexed = source(
+        "set cells^[0_u64] = Envelope(cell: cell);\n  let ref = &cells^[0_u64];",
+    );
+    assert_rule_kind(indexed.as_bytes(), SemanticRule::Op2, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::UndischargedIntegerDomainObligation { .. }
+        )
+    });
+    let reference = source("let ref = &cells^[0_u64];\n  set ref^ = Envelope(cell: cell);");
+    assert_complete(reference.as_bytes());
 }
 
 #[test]
@@ -663,7 +704,9 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         none_route,
         SemanticRule::Fn9,
-        SemanticIssueKind::invalid_postcondition_selector(),
+        SemanticIssueKind::InvalidPostconditionFields {
+            required_fields: Vec::new(),
+        },
     );
 
     let unproved = br#"fn find(limit: u64) -> result: Option<u64> pure contract {

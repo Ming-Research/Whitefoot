@@ -1,0 +1,111 @@
+fn add_one(p: &Array<u64, 1>) -> result: unit writes(p) {
+  doc "Add one to the sole cell.";
+  set p^[0_u64] = p^[0_u64] +wrap 1_u64;
+  return unit;
+}
+
+fn calls() -> result: u64 pure {
+  doc "Two aliases contribute to one call-updated family.";
+  let cells = array_filled::<u64, 1>(value: 1_u64);
+  let first = &cells;
+  let second = first;
+  for (i in 0_u64..16_u64) {
+    add_one(p: first);
+    add_one(p: second);
+  }
+  return cells[0_u64];
+}
+
+fn direct() -> result: u64 pure {
+  doc "Two direct aliases contribute to one dense family.";
+  let cells = array_filled::<u64, 1>(value: 1_u64);
+  let first = &cells;
+  let second = first;
+  for (i in 0_u64..16_u64) {
+    set first^[0_u64] = first^[0_u64] +wrap 1_u64;
+    set second^[0_u64] = first^[0_u64] +wrap 1_u64;
+  }
+  return cells[0_u64];
+}
+
+struct Cell {
+  sum: u64;
+  product: u64;
+}
+
+struct Holder {
+  cells: Array<Cell, 1>;
+}
+
+fn add_field(p: &Holder) -> result: unit writes(p.cells) {
+  doc "Update a field through an ancestor of an aliased array.";
+  set p^.cells[0_u64].sum = p^.cells[0_u64].sum +wrap 1_u64;
+  return unit;
+}
+
+fn fields() -> result: u64 pure {
+  doc "Call and direct sibling families through aliases share one root block.";
+  let seed = Cell(sum: 1_u64, product: 1_u64);
+  let values = array_filled::<Cell, 1>(value: seed);
+  let owner = Holder(cells: values);
+  let first = &owner;
+  let second = &owner.cells;
+  for (i in 0_u64..16_u64) {
+    add_field(p: first);
+    set second^[0_u64].product = second^[0_u64].product *wrap 2_u64;
+  }
+  return owner.cells[0_u64].sum +wrap owner.cells[0_u64].product;
+}
+
+fn fields_reversed() -> result: u64 pure {
+  doc "Call and direct sibling families through aliases share one root block.";
+  let seed = Cell(sum: 1_u64, product: 1_u64);
+  let values = array_filled::<Cell, 1>(value: seed);
+  let owner = Holder(cells: values);
+  let first = &owner;
+  let second = &owner.cells;
+  for (i in 0_u64..16_u64) {
+    set second^[0_u64].product = second^[0_u64].product *wrap 2_u64;
+    add_field(p: first);
+  }
+  return owner.cells[0_u64].sum +wrap owner.cells[0_u64].product;
+}
+
+fn mixed() -> result: u64 pure {
+  doc "A direct update and an ancestor helper reach the same family.";
+  let seed = Cell(sum: 1_u64, product: 1_u64);
+  let values = array_filled::<Cell, 1>(value: seed);
+  let owner = Holder(cells: values);
+  let first = &owner;
+  let second = &owner.cells;
+  for (i in 0_u64..16_u64) {
+    set second^[0_u64].sum = second^[0_u64].sum +wrap 1_u64;
+    add_field(p: first);
+  }
+  return owner.cells[0_u64].sum;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Compatible aliases preserve sequential results in both storage layouts.";
+  let called = calls();
+  let updated = direct();
+  let projected = fields();
+  let reversed = fields_reversed();
+  let combined = mixed();
+  if combined != 33_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if called != 33_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if updated != 33_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if reversed != 65553_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if projected != 65553_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

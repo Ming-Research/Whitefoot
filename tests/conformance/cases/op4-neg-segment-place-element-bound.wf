@@ -1,0 +1,11 @@
+fn invalid(values: &Segments<u64>, slot: u64) -> result: u64 reads(values) contract {
+  requires 0_u64 < values^.len;
+} {
+  doc "The selected segment count bound does not discharge its element bound.";
+  return values^[0_u64][slot];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The preceding function is rejected at its invalid run-place use.";
+  return std::process::exit_status(code: 0_u8);
+}

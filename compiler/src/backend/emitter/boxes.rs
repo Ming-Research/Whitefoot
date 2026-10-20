@@ -13,12 +13,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if ty != IrType::Nominal(nominal) {
             return Err(BackendFailure::InvalidIr);
         }
-        let IrNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind() else {
+        let IrNominalKind::Box { referent, release } = self.nominal(nominal)?.kind() else {
             return Err(BackendFailure::InvalidIr);
         };
         if self.value_type(value) != Some(*referent) {
             return Err(BackendFailure::InvalidIr);
         }
+        let allocator = if *release == crate::IrReleaseClass::Frozen {
+            "wf__frozen_new"
+        } else {
+            "wf__heap_take"
+        };
         let referent_type = self.output.type_name(self.program, *referent)?;
         let nonnull = self.next_temporary()?;
         let oom = format!("box.new.oom.v{}", result.ordinal());
@@ -31,10 +36,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emission_argument_1 = self.value_name(result);
 
             {
-                self.output.symbol("wf__heap_take");
+                self.output.symbol(allocator);
                 write!(
                     self.output,
-                    "  {emission_argument_0} = call ptr @wf__heap_take(i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64))\n  %{nonnull} = icmp ne ptr {emission_argument_1}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  {emission_argument_0} = call ptr @{allocator}(i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64))\n  %{nonnull} = icmp ne ptr {emission_argument_1}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -68,19 +73,23 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if ty != *referent || self.value_type(value) != Some(IrType::Nominal(nominal)) {
             return Err(BackendFailure::InvalidIr);
         }
+        if *release == crate::IrReleaseClass::Frozen {
+            return Err(BackendFailure::InvalidIr);
+        }
         let release = *release;
         if self.is_memory_only(ty)? {
-            // A memory-only referent moves out by memmove before the cell
-            // is released (compiler/payload-enum-layout).
+            // A memory-only referent moves out through copy_storage before
+            // the cell is released (compiler/payload-enum-layout).
             self.copy_into_result(result, ty, &self.value_name(value))?;
         } else {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {}",
+                "  {} = load {}, ptr {}{}",
                 self.value_name(result),
                 emitted_type_1,
-                self.value_name(value)
+                self.value_name(value),
+                storage_alias::source_read(self.program, ty)
             )
             .map_err(|_| BackendFailure::TextEmission)?;
         }
@@ -119,10 +128,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emitted_type_1 = self.output.type_name(self.program, ty)?;
             writeln!(
                 self.output,
-                "  {} = load {}, ptr {}",
+                "  {} = load {}, ptr {}{}",
                 self.value_name(result),
                 emitted_type_1,
-                self.value_name(value)
+                self.value_name(value),
+                storage_alias::source_read(self.program, ty)
             )
         }
         .map_err(|_| BackendFailure::TextEmission)

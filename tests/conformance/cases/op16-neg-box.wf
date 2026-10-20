@@ -1,0 +1,7 @@
+fn compare(left: Box<u32>, right: Box<u32>) -> result: Bool pure {
+  return left == right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

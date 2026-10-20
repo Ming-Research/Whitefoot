@@ -64,3 +64,4 @@ m3/submissions/reference/whitefoot/*
 !m3/submissions/reference/whitefoot/*.wf
 !m3/submissions/reference/whitefoot/*.ll
 !m3/submissions/reference/whitefoot/*.md
+/.mcp.json

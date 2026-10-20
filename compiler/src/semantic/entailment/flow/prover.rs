@@ -2,8 +2,10 @@
 //! its routes: the L0 closure, the fixed affine and interval rules, the
 //! integer-domain and separation proofs, and the measure terms they read.
 
+use super::super::work::{self, AffineMetric as Metric};
 use super::*;
-use std::cell::Ref;
+
+mod final_l0;
 
 impl Vocabulary {
     pub(super) fn intern_measure(
@@ -77,12 +79,32 @@ impl Vocabulary {
     pub(super) fn measure_term_root(&self, term: TermId) -> Option<BindingId> {
         let root = match self.terms.kind(term) {
             TermKind::Measure(_, place) => place.root,
+            TermKind::Place(place, _) if self.is_tracked_field_place(term) => place.root,
             _ => return None,
         };
         match root {
             PlaceRoot::Binding(binding) => Some(binding),
             PlaceRoot::Constant(_) => None,
         }
+    }
+
+    /// [ENT-6] whether one term is a tracked field place: a tracked integer
+    /// place whose proof path is one binding root, held by value or read
+    /// through its `&T` reference, followed by one or more field selections
+    /// and nothing else. Such a place carries a current image exactly as a
+    /// measure does: minted on first demand, replaced by a [SET-1] commit to
+    /// it, removed by every [ENT-5] event that kills the term, a scope exit
+    /// of its root included, and retained by a join only when identical.
+    pub(super) fn is_tracked_field_place(&self, term: TermId) -> bool {
+        let TermKind::Place(place, _) = self.terms.kind(term) else {
+            return false;
+        };
+        matches!(place.root, PlaceRoot::Binding(_))
+            && !place.path.is_empty()
+            && place
+                .path
+                .iter()
+                .all(|step| matches!(step, PlaceStep::Field(_)))
     }
 
     /// The image this program point holds for one measure or const-generic term.
@@ -134,7 +156,11 @@ impl Vocabulary {
         // Sharing the image path cannot give a signed parameter the unsigned
         // nonnegativity bound or widen a narrower parameter's range.
         let ty = match self.terms.kind(anchor) {
-            TermKind::ConstParameter(_, ty) => *ty,
+            TermKind::ConstParameter(_, ty)
+            | TermKind::Place(_, ty)
+            | TermKind::CallDatum { ty, .. }
+            | TermKind::EntryDatum { ty, .. }
+            | TermKind::MeasureDatum { ty, .. } => *ty,
             _ => IntegerType::U64,
         };
         let atom = self.new_affine_atom(ty);
@@ -162,7 +188,9 @@ impl Vocabulary {
         if state.measure_atoms.borrow().contains_key(&datum) {
             return;
         }
-        let atom = self.measure_atom(live, state);
+        let atom = self
+            .affine_term_value(live, state)
+            .unwrap_or_else(|| self.measure_atom(live, state));
         // A constant image is still the exact immutable value this datum
         // captures. Retaining it is what carries an affine exact measure
         // across the transfer that kills the live place.
@@ -191,19 +219,11 @@ impl Vocabulary {
                 self.terms.kind(id),
                 TermKind::Measure(..)
                     | TermKind::TargetMeasure { .. }
-                    | TermKind::CallDatum {
-                        measure: Some(_),
-                        ..
-                    }
-                    | TermKind::EntryDatum {
-                        measure: Some(_),
-                        ..
-                    }
-                    | TermKind::MeasureDatum {
-                        measure: Some(_),
-                        ..
-                    }
-            ) {
+                    | TermKind::CallDatum { .. }
+                    | TermKind::EntryDatum { .. }
+                    | TermKind::MeasureDatum { .. }
+            ) || self.is_tracked_field_place(id)
+            {
                 self.measure_terms_seen.push(id);
             }
         }
@@ -245,13 +265,14 @@ impl Vocabulary {
     }
 
     /// Queries the strongest closed L0 image with exactly this affine vector.
-    pub(super) fn affine_l0_proof(
+    pub(super) fn affine_l0_proof<'a>(
         &mut self,
-        inequality: &AffineInequality,
+        inequality: impl Into<AffineInequalityView<'a>>,
         index: &LazyAffineL0Index,
         closed: &ClosedState,
         check: &mut AffineCheckState,
     ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        let inequality = inequality.into();
         let Some(entry) = index.entry(inequality.terms(), closed, check) else {
             return Ok(None);
         };
@@ -292,9 +313,12 @@ impl Reasoning<'_, '_, '_> {
             CheckedMeasure::Capacity,
             CheckedMeasure::Head,
             CheckedMeasure::Pages,
+            CheckedMeasure::Bytes,
         ] {
             let cell = cell_measure.cell(measured);
-            if cell_measure == CheckedMeasure::Pages && cell == MeasureCell::Absent {
+            if matches!(cell_measure, CheckedMeasure::Pages | CheckedMeasure::Bytes)
+                && cell == MeasureCell::Absent
+            {
                 continue;
             }
             let term = self.vocabulary.intern_measure(cell_measure, &path);
@@ -479,10 +503,10 @@ impl Reasoning<'_, '_, '_> {
     fn prove_prepared(&mut self, context: ProofContext<'_>, goal: ProofGoal<'_>) -> ProofResult {
         match goal {
             ProofGoal::Affine { inequality, right } => {
-                self.prove_affine(context, inequality, right)
+                self.prove_affine(context, inequality, AffineDisposition::Complete { right })
             }
             ProofGoal::AutomaticAffine { inequality } => {
-                self.prove_affine(context, inequality, None)
+                self.prove_affine(context, inequality, AffineDisposition::AutoOnly)
             }
             ProofGoal::Signed { expression, affine } => {
                 self.prove_signed(context, expression, affine)
@@ -500,11 +524,13 @@ impl Reasoning<'_, '_, '_> {
         }
     }
 
+    /// One affine target, answered by AUTO alone for a PRF-1 query and by
+    /// MSR-4's complete disposition, through Step 7, otherwise.
     pub(super) fn prove_affine(
         &mut self,
         context: ProofContext<'_>,
         inequality: &AffineInequality,
-        right: Option<TermId>,
+        disposition: AffineDisposition,
     ) -> ProofResult {
         let closed = context.close(
             &self.vocabulary.terms,
@@ -519,7 +545,16 @@ impl Reasoning<'_, '_, '_> {
                 product_interval: None,
             };
         }
-        let Some(proof) = self.numeric_affine_proof(inequality, right, context) else {
+        let proof = match disposition {
+            AffineDisposition::Complete { right } => {
+                self.numeric_affine_proof(inequality, right, context)
+            }
+            AffineDisposition::AutoOnly => {
+                let assumptions = affine_facts(context.affine);
+                self.affine_target_proof(inequality, &assumptions, context)
+            }
+        };
+        let Some(proof) = proof else {
             return ProofResult {
                 disposition: ProofDisposition::Unknown,
                 route: None,
@@ -576,8 +611,8 @@ impl Reasoning<'_, '_, '_> {
                 },
                 ..
             }
-        ) && closed.holds_opaque(goal, GoalSign::Negative)
-            && !closed.holds_opaque(goal, GoalSign::Positive)
+        ) && closed.holds_opaque(goal, GoalSign::Negative, &self.vocabulary.goals)
+            && !closed.holds_opaque(goal, GoalSign::Positive, &self.vocabulary.goals)
         {
             return ProofResult {
                 disposition: ProofDisposition::Refuted,
@@ -592,7 +627,7 @@ impl Reasoning<'_, '_, '_> {
             };
         }
 
-        let positive_opaque = closed.holds_opaque(goal, GoalSign::Positive);
+        let positive_opaque = closed.holds_opaque(goal, GoalSign::Positive, &self.vocabulary.goals);
         let positive_projection = self
             .vocabulary
             .goals
@@ -624,7 +659,7 @@ impl Reasoning<'_, '_, '_> {
             };
         }
 
-        let negative_opaque = closed.holds_opaque(goal, GoalSign::Negative);
+        let negative_opaque = closed.holds_opaque(goal, GoalSign::Negative, &self.vocabulary.goals);
         let negative_projection = self
             .vocabulary
             .goals
@@ -904,118 +939,158 @@ impl Reasoning<'_, '_, '_> {
         // definition DAG into a tree.
         memo.insert((goal, sign), None);
 
-        let proof = match expression {
-            GoalExpression::Operation {
-                row:
-                    GoalOperation::NumericConversion {
-                        mode: CheckedConversionMode::Defined,
-                        ..
-                    },
-                ..
-            } if sign == GoalSign::Positive => {
-                self.conversion_goal_bound_proof(context, expression, goal)
-            }
-            GoalExpression::Operation {
-                row: GoalOperation::Boolean(operation),
-                arguments,
-                ..
-            } => {
-                let child_sign = match (operation, sign) {
-                    (CheckedBooleanOperation::And, GoalSign::Positive)
-                    | (CheckedBooleanOperation::Or, GoalSign::Positive) => GoalSign::Positive,
-                    (CheckedBooleanOperation::And, GoalSign::Negative)
-                    | (CheckedBooleanOperation::Or, GoalSign::Negative) => GoalSign::Negative,
-                    (CheckedBooleanOperation::Not, GoalSign::Positive) => GoalSign::Negative,
-                    (CheckedBooleanOperation::Not, GoalSign::Negative) => GoalSign::Positive,
-                    (CheckedBooleanOperation::ExclusiveOr, _) => {
-                        return None;
-                    }
-                };
-                let requires_all = matches!(
-                    (operation, sign),
-                    (CheckedBooleanOperation::And, GoalSign::Positive)
-                        | (CheckedBooleanOperation::Or, GoalSign::Negative)
-                        | (CheckedBooleanOperation::Not, _)
-                );
-                let parents = if requires_all {
-                    let mut parents = Vec::with_capacity(arguments.len());
-                    let mut complete = true;
-                    for argument in arguments {
-                        let Some(parent) = self
-                            .signed_goal_affine_proof(context, argument, child_sign, closed, memo)
-                        else {
-                            complete = false;
-                            break;
-                        };
+        let proof = if let Some((all, child_sign, fields)) =
+            self.vocabulary.goals.struct_reconstruction(goal, sign)
+        {
+            let fields = fields.to_vec();
+            let mut parents = Vec::new();
+            let mut complete = true;
+            for field in fields {
+                let expression = self.vocabulary.goals.expression(field).clone();
+                match self.signed_goal_affine_proof(context, &expression, child_sign, closed, memo)
+                {
+                    Some(parent) => {
                         parents.push(parent);
-                    }
-                    complete.then_some(parents)
-                } else {
-                    let mut best = None;
-                    for argument in arguments {
-                        let Some(candidate) = self
-                            .signed_goal_affine_proof(context, argument, child_sign, closed, memo)
-                        else {
-                            continue;
-                        };
-                        // Existential Boolean introductions use the first
-                        // successful child in source order. Later witnesses
-                        // cannot change acceptance, only diagnostics.
-                        if best.is_none() {
-                            best = Some(candidate);
+                        if !all {
+                            break;
                         }
                     }
-                    best.map(|parent| vec![parent])
-                };
-                parents.map(|parents| {
-                    self.vocabulary
-                        .derivations
-                        .intern(DerivationNode::BooleanIntroduction {
-                            goal,
-                            sign,
-                            parents,
-                        })
-                })
-            }
-            GoalExpression::Operation { .. } => {
-                self.affine_signed_goal_leaf_proof(context, expression, goal, sign)
-            }
-            GoalExpression::Datum(GoalDatum::Place {
-                root,
-                projections,
-                ty,
-            }) if context.origin_view == OriginView::Prepared => context
-                .facts
-                .goal_origins
-                .get(root)
-                .copied()
-                .and_then(|origin| {
-                    let mut definition = self.vocabulary.goals.expression(origin.goal).clone();
-                    for projection in projections {
-                        let result = self
-                            .input
-                            .goal_projection_type(definition.ty(), *projection)?;
-                        definition = definition.with_projection(*projection, result)?;
+                    None if all => {
+                        complete = false;
+                        break;
                     }
-                    if definition.ty() != *ty {
-                        return None;
-                    }
-                    let from = self.intern_goal_expression(definition.clone());
-                    let parent =
-                        self.signed_goal_affine_proof(context, &definition, sign, closed, memo)?;
-                    Some(
+                    None => {}
+                }
+            }
+            (complete && (all || !parents.is_empty())).then(|| {
+                self.vocabulary
+                    .derivations
+                    .intern(DerivationNode::BooleanIntroduction {
+                        goal,
+                        sign,
+                        parents,
+                    })
+            })
+        } else {
+            match expression {
+                GoalExpression::Operation {
+                    row:
+                        GoalOperation::NumericConversion {
+                            mode: CheckedConversionMode::Defined,
+                            ..
+                        },
+                    ..
+                } if sign == GoalSign::Positive => {
+                    self.conversion_goal_bound_proof(context, expression, goal)
+                }
+                GoalExpression::Operation {
+                    row: GoalOperation::Boolean(operation),
+                    arguments,
+                    ..
+                } => {
+                    let child_sign = match (operation, sign) {
+                        (CheckedBooleanOperation::And, GoalSign::Positive)
+                        | (CheckedBooleanOperation::Or, GoalSign::Positive) => GoalSign::Positive,
+                        (CheckedBooleanOperation::And, GoalSign::Negative)
+                        | (CheckedBooleanOperation::Or, GoalSign::Negative) => GoalSign::Negative,
+                        (CheckedBooleanOperation::Not, GoalSign::Positive) => GoalSign::Negative,
+                        (CheckedBooleanOperation::Not, GoalSign::Negative) => GoalSign::Positive,
+                        (CheckedBooleanOperation::ExclusiveOr, _) => {
+                            return None;
+                        }
+                    };
+                    let requires_all = matches!(
+                        (operation, sign),
+                        (CheckedBooleanOperation::And, GoalSign::Positive)
+                            | (CheckedBooleanOperation::Or, GoalSign::Negative)
+                            | (CheckedBooleanOperation::Not, _)
+                    );
+                    let parents = if requires_all {
+                        let mut parents = Vec::with_capacity(arguments.len());
+                        let mut complete = true;
+                        for argument in arguments {
+                            let Some(parent) = self.signed_goal_affine_proof(
+                                context, argument, child_sign, closed, memo,
+                            ) else {
+                                complete = false;
+                                break;
+                            };
+                            parents.push(parent);
+                        }
+                        complete.then_some(parents)
+                    } else {
+                        let mut best = None;
+                        for argument in arguments {
+                            let Some(candidate) = self.signed_goal_affine_proof(
+                                context, argument, child_sign, closed, memo,
+                            ) else {
+                                continue;
+                            };
+                            // Existential Boolean introductions use the first
+                            // successful child in source order. Later witnesses
+                            // cannot change acceptance, only diagnostics.
+                            if best.is_none() {
+                                best = Some(candidate);
+                            }
+                        }
+                        best.map(|parent| vec![parent])
+                    };
+                    parents.map(|parents| {
                         self.vocabulary
                             .derivations
-                            .intern(DerivationNode::OriginTransport {
-                                from,
+                            .intern(DerivationNode::BooleanIntroduction {
                                 goal,
                                 sign,
-                                parent,
-                                origins: Box::new([origin.proof]),
-                            }),
-                    )
-                }),
-            GoalExpression::Datum(_) => None,
+                                parents,
+                            })
+                    })
+                }
+                GoalExpression::Operation { .. } => {
+                    self.affine_signed_goal_leaf_proof(context, expression, goal, sign)
+                }
+                GoalExpression::Datum(GoalDatum::Place {
+                    root,
+                    projections,
+                    ty,
+                    ..
+                }) if context.origin_view == OriginView::Prepared => context
+                    .facts
+                    .goal_origins
+                    .get(root)
+                    .copied()
+                    .and_then(|origin| {
+                        let mut definition = self.vocabulary.goals.expression(origin.goal).clone();
+                        for projection in projections {
+                            let result = self
+                                .input
+                                .goal_expression_projection_type(&definition, *projection)?;
+                            definition = definition.with_projection(*projection, result)?;
+                        }
+                        if definition.ty() != *ty {
+                            return None;
+                        }
+                        let from = self.intern_goal_expression(definition.clone());
+                        let parent = self.signed_goal_affine_proof(
+                            context,
+                            &definition,
+                            sign,
+                            closed,
+                            memo,
+                        )?;
+                        Some(
+                            self.vocabulary
+                                .derivations
+                                .intern(DerivationNode::OriginTransport {
+                                    from,
+                                    goal,
+                                    sign,
+                                    parent,
+                                    origins: Box::new([origin.proof]),
+                                }),
+                        )
+                    }),
+                GoalExpression::Datum(_) => None,
+            }
         };
         memo.insert((goal, sign), proof);
         proof
@@ -1131,15 +1206,19 @@ impl Reasoning<'_, '_, '_> {
             };
         }
         if let Some(canonical) = canonical {
-            if closed.holds_opaque(canonical, GoalSign::Positive) {
+            if closed.holds_opaque(canonical, GoalSign::Positive, &self.vocabulary.goals) {
                 return ProofResult {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::FiniteGoal),
-                    derivation: closed.opaque_proof(canonical, GoalSign::Positive),
+                    derivation: closed.opaque_proof(
+                        canonical,
+                        GoalSign::Positive,
+                        &self.vocabulary.goals,
+                    ),
                     product_interval: None,
                 };
             }
-            if closed.holds_opaque(canonical, GoalSign::Negative) {
+            if closed.holds_opaque(canonical, GoalSign::Negative, &self.vocabulary.goals) {
                 return ProofResult {
                     disposition: ProofDisposition::Refuted,
                     route: Some(ProofRoute::FiniteGoal),
@@ -1175,56 +1254,19 @@ impl Reasoning<'_, '_, '_> {
             }
         }
 
-        if let Some(target) = goal.direct_affine {
-            let assumptions = affine_facts(context.affine);
-            if let Some(proof) = self.affine_target_proof(target, &assumptions, context) {
-                let parent =
-                    self.vocabulary
-                        .derivations
-                        .intern(DerivationNode::AffineConsequence {
-                            relation: relation.clone().map(Box::new),
-                            premises: proof.premises.into_boxed_slice(),
-                            parents: proof.parents,
-                        });
-                let derivation =
-                    self.vocabulary
-                        .goal_numeric_derivation(canonical, relation.as_ref(), parent);
-                return ProofResult {
-                    disposition: ProofDisposition::Proved,
-                    route: Some(ProofRoute::Affine),
-                    derivation: Some(derivation),
-                    product_interval: None,
-                };
-            }
+        if let Some(result) = self.bounded_relation_affine_step(
+            AffineStep::Auto,
+            goal,
+            canonical,
+            relation.as_ref(),
+            context,
+        ) {
+            return result;
         }
 
         if let Some(request) = goal.request
             && let Some(left) = request.left
-        {
-            if let Some(derivation) = goal.fixed_affine_bridge.and_then(|bridge| {
-                self.fixed_affine_bound_derivation(
-                    bridge,
-                    left,
-                    request.right,
-                    request.bound,
-                    context.affine,
-                    context.facts,
-                )
-            }) {
-                let derivation = self.vocabulary.goal_numeric_derivation(
-                    canonical,
-                    relation.as_ref(),
-                    derivation,
-                );
-                return ProofResult {
-                    disposition: ProofDisposition::Proved,
-                    route: Some(ProofRoute::Affine),
-                    derivation: Some(derivation),
-                    product_interval: None,
-                };
-            }
-
-            if let Some(derivation) = goal.affine_left.and_then(|affine_left| {
+            && let Some(derivation) = goal.affine_left.and_then(|affine_left| {
                 self.affine_bound_via_l0_right(
                     affine_left,
                     left,
@@ -1233,19 +1275,27 @@ impl Reasoning<'_, '_, '_> {
                     context.affine,
                     context.facts,
                 )
-            }) {
-                let derivation = self.vocabulary.goal_numeric_derivation(
-                    canonical,
-                    relation.as_ref(),
-                    derivation,
-                );
-                return ProofResult {
-                    disposition: ProofDisposition::Proved,
-                    route: Some(ProofRoute::Affine),
-                    derivation: Some(derivation),
-                    product_interval: None,
-                };
-            }
+            })
+        {
+            let derivation =
+                self.vocabulary
+                    .goal_numeric_derivation(canonical, relation.as_ref(), derivation);
+            return ProofResult {
+                disposition: ProofDisposition::Proved,
+                route: Some(ProofRoute::Affine),
+                derivation: Some(derivation),
+                product_interval: None,
+            };
+        }
+
+        if let Some(result) = self.bounded_relation_affine_step(
+            AffineStep::QuotientBound,
+            goal,
+            canonical,
+            relation.as_ref(),
+            context,
+        ) {
+            return result;
         }
 
         ProofResult {
@@ -1254,6 +1304,54 @@ impl Reasoning<'_, '_, '_> {
             derivation: None,
             product_interval: None,
         }
+    }
+
+    /// One affine step over each proposition a bounded-relation consumer
+    /// submitted: the relation's own target, then a fixed array's
+    /// `offset <= N - 1` composed with its length bridge.
+    fn bounded_relation_affine_step(
+        &mut self,
+        step: AffineStep,
+        goal: BoundedRelationGoal<'_>,
+        canonical: Option<GoalId>,
+        relation: Option<&Relation>,
+        context: ProofContext<'_>,
+    ) -> Option<ProofResult> {
+        let derivation = if let Some(target) = goal.direct_affine
+            && let Some(proof) = self.affine_step_proof(step, target, context)
+        {
+            self.vocabulary
+                .derivations
+                .intern(DerivationNode::AffineConsequence {
+                    relation: relation.cloned().map(Box::new),
+                    premises: proof.premises.into_boxed_slice(),
+                    parents: proof.parents,
+                })
+        } else if let Some(request) = goal.request
+            && let Some(left) = request.left
+            && let Some(bridge) = goal.fixed_affine_bridge
+        {
+            self.fixed_affine_bound_derivation(
+                bridge,
+                left,
+                request.right,
+                request.bound,
+                context.affine,
+                context.facts,
+                step,
+            )?
+        } else {
+            return None;
+        };
+        let derivation = self
+            .vocabulary
+            .goal_numeric_derivation(canonical, relation, derivation);
+        Some(ProofResult {
+            disposition: ProofDisposition::Proved,
+            route: Some(ProofRoute::Affine),
+            derivation: Some(derivation),
+            product_interval: None,
+        })
     }
 
     /// Interns one measure term over a place spelled in the compact
@@ -1294,8 +1392,12 @@ impl Reasoning<'_, '_, '_> {
         facts: &FactState,
     ) -> Option<DerivationId> {
         let assumptions = affine_facts(affine);
-        let proof =
-            self.affine_target_proof(target, &assumptions, ProofContext::new(facts, affine))?;
+        let proof = self.affine_target_proof_observed(
+            target,
+            &assumptions,
+            ProofContext::new(facts, affine),
+            Metric::AutoCallsBridge,
+        )?;
         Some(
             self.vocabulary
                 .derivations
@@ -1307,6 +1409,8 @@ impl Reasoning<'_, '_, '_> {
         )
     }
 
+    /// The fixed first step `bridge.target` composed with the closed bound
+    /// from its middle term to `right`. `step` proves the first step.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn fixed_affine_bound_derivation(
         &mut self,
@@ -1316,6 +1420,7 @@ impl Reasoning<'_, '_, '_> {
         requested: i128,
         affine: &AffineFlowState,
         facts: &FactState,
+        step: AffineStep,
     ) -> Option<DerivationId> {
         let remaining = requested.checked_sub(bridge.left_to_middle_bound)?;
         let first_relation = Relation::Bound {
@@ -1323,8 +1428,16 @@ impl Reasoning<'_, '_, '_> {
             right: bridge.middle,
             bound: bridge.left_to_middle_bound,
         };
-        let first =
-            self.affine_consequence_derivation(bridge.target, Some(first_relation), affine, facts)?;
+        let proof =
+            self.affine_step_proof(step, bridge.target, ProofContext::new(facts, affine))?;
+        let first = self
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::AffineConsequence {
+                relation: Some(Box::new(first_relation)),
+                premises: proof.premises.into_boxed_slice(),
+                parents: proof.parents,
+            });
         let closed = close(
             facts,
             &self.vocabulary.terms,
@@ -1411,6 +1524,7 @@ impl Reasoning<'_, '_, '_> {
     /// it fails, Step 6 subtracts exactly one closed `m-r <= c` image and
     /// submits exactly that residual to AUTO. The normalization supplies r;
     /// a normalized coefficient vector never chooses a new right operand.
+    /// Step 7 then reads a quotient's upper bound from its captured division.
     pub(super) fn numeric_affine_proof(
         &mut self,
         target: &AffineInequality,
@@ -1418,10 +1532,95 @@ impl Reasoning<'_, '_, '_> {
         context: ProofContext<'_>,
     ) -> Option<AffineConsequenceProof> {
         let assumptions = affine_facts(context.affine);
-        if let Some(proof) = self.affine_target_proof(target, &assumptions, context) {
+        let mut auto = AffineAutoQuery::new(context.affine, &assumptions);
+        work::affine_metric(Metric::AutoCallsInitial);
+        if let Some(proof) =
+            self.prepared_affine_target_proof(target, context.facts, context.closed, &mut auto)
+        {
             return Some(proof);
         }
-        let right = right?;
+        if let Some(right) = right
+            && let Some(proof) = self.affine_right_bridge_proof(target, right, context, &mut auto)
+        {
+            return Some(proof);
+        }
+        self.quotient_bound_proof(target, context)
+    }
+
+    /// [MSR-4] step 7, the quotient bound. A target `q <= k` over the
+    /// quotient image of a captured division [ENT-3.S7], whose dividend `a`
+    /// and divisor `d >= 1` satisfy `d * q <= a`, holds when
+    /// `a <= (k + 1) * d - 1`. The constant `k` keeps that one target affine,
+    /// and it goes to AUTO as written: no product term, premise or
+    /// certificate step is formed, and nothing about the division is
+    /// published. Each division binds a fresh quotient atom, so at most one
+    /// captured division matches; the proof also cites that division's
+    /// quotient-by-dividend fact.
+    pub(super) fn quotient_bound_proof(
+        &mut self,
+        target: &AffineInequality,
+        context: ProofContext<'_>,
+    ) -> Option<AffineConsequenceProof> {
+        let [quotient] = target.terms() else {
+            return None;
+        };
+        if quotient.coefficient() != 1 {
+            return None;
+        }
+        let division = self
+            .vocabulary
+            .unsigned_divisions
+            .iter()
+            .find(|division| division.quotient.unit_term() == Some(quotient.term()))?
+            .clone();
+        let mut check = AffineCheckState::new();
+        let multiple = target.upper().checked_add(1)?;
+        let scaled_divisor = division.divisor.scale(multiple, &mut check).ok()?;
+        let rewritten = AffineInequality::from_bounded_forms(
+            &division.dividend,
+            &scaled_divisor,
+            -1,
+            &mut check,
+        )
+        .ok()?;
+        let assumptions = affine_facts(context.affine);
+        let mut proof = self.affine_target_proof(&rewritten, &assumptions, context)?;
+        proof.parents.push(division.parent);
+        proof.parents.sort_unstable_by_key(|parent| parent.0);
+        proof.parents.dedup();
+        Some(proof)
+    }
+
+    /// The affine proof of `target` by one step of a bounded-relation route.
+    fn affine_step_proof(
+        &mut self,
+        step: AffineStep,
+        target: &AffineInequality,
+        context: ProofContext<'_>,
+    ) -> Option<AffineConsequenceProof> {
+        match step {
+            AffineStep::Auto => {
+                let assumptions = affine_facts(context.affine);
+                self.affine_target_proof_observed(
+                    target,
+                    &assumptions,
+                    context,
+                    Metric::AutoCallsInitial,
+                )
+            }
+            AffineStep::QuotientBound => self.quotient_bound_proof(target, context),
+        }
+    }
+
+    /// [MSR-4] step 6, the affine-left / L0-right bridge over every live
+    /// measure term, measure datum and imaged own integer binding.
+    fn affine_right_bridge_proof(
+        &mut self,
+        target: &AffineInequality,
+        right: TermId,
+        context: ProofContext<'_>,
+        auto: &mut AffineAutoQuery<'_>,
+    ) -> Option<AffineConsequenceProof> {
         let right_value = self.vocabulary.affine_term_value(right, context.affine)?;
         let candidates = self.affine_right_bridge_candidates(context.affine);
         let closed = context.close(
@@ -1445,9 +1644,10 @@ impl Reasoning<'_, '_, '_> {
             let Ok(residual) = AffineInequality::residual_after(target, &image, &mut check) else {
                 continue;
             };
-            let Some(mut proof) = self.affine_target_proof(&residual, &assumptions, context) else {
-                continue;
-            };
+            work::affine_metric(Metric::AutoCallsBridge);
+            let proof =
+                self.prepared_affine_target_proof(&residual, context.facts, context.closed, auto);
+            let Some(mut proof) = proof else { continue };
             let Some(bridge) = closed.bound_proof(
                 candidate.term,
                 right,
@@ -1548,6 +1748,11 @@ impl Reasoning<'_, '_, '_> {
                     .intern(TermKind::Constant(i128::from(value))),
             ),
             CapturedTerm::Const(declaration) => Some(self.const_parameter_term(declaration)),
+            CapturedTerm::Opaque if matches!(value.capture, CaptureId::ContractRead { .. }) => {
+                self.vocabulary.terms.interned(&TermKind::IndexCapture {
+                    capture: value.capture,
+                })
+            }
             // A superseded binding's capture still names the value its
             // formation read, which is the immutable term the capture minted.
             CapturedTerm::Binding(_) | CapturedTerm::Superseded(_)
@@ -2015,9 +2220,9 @@ impl Reasoning<'_, '_, '_> {
         }
 
         if let Some(canonical) = goal.canonical {
-            if closed.holds_opaque(canonical, GoalSign::Positive) {
+            if closed.holds_opaque(canonical, GoalSign::Positive, &self.vocabulary.goals) {
                 let parent = closed
-                    .opaque_proof(canonical, GoalSign::Positive)
+                    .opaque_proof(canonical, GoalSign::Positive, &self.vocabulary.goals)
                     .expect("an opaque goal fact retains its proof");
                 let derivation =
                     self.vocabulary
@@ -2033,7 +2238,7 @@ impl Reasoning<'_, '_, '_> {
                     product_interval: None,
                 };
             }
-            if closed.holds_opaque(canonical, GoalSign::Negative) {
+            if closed.holds_opaque(canonical, GoalSign::Negative, &self.vocabulary.goals) {
                 return ProofResult {
                     disposition: ProofDisposition::Refuted,
                     route: Some(ProofRoute::FiniteGoal),
@@ -2685,12 +2890,25 @@ impl Reasoning<'_, '_, '_> {
                 value,
                 ..
             } => self.affine_pre_domain_form(value, state),
+            // [ENT-6] a field read of a value root or through a reference
+            // reads the tracked field place's current image.
+            CheckedExpression::Project { .. } | CheckedExpression::ProjectValue { .. } => {
+                self.tracked_field_image(expression, state)
+            }
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,
-                result: CheckedType::Integer(_),
+                result: CheckedType::Integer(result),
                 ..
             } => match operation {
+                CheckedIntegerOperation::ShiftLeftExact => {
+                    let [value, amount] = arguments.as_slice() else {
+                        return None;
+                    };
+                    let value = self.affine_pre_domain_form(value, state)?;
+                    let amount = self.affine_pre_domain_form(amount, state)?;
+                    self.shifted_one_image(*result, &value, &amount)
+                }
                 CheckedIntegerOperation::AddExact | CheckedIntegerOperation::AddDefined => {
                     let [left, right] = arguments.as_slice() else {
                         return None;
@@ -2849,6 +3067,9 @@ impl Reasoning<'_, '_, '_> {
                 CheckedAffineExpressionKind::Measure(measure) => {
                     out.push(self.checked_measure_term(measure)?);
                 }
+                CheckedAffineExpressionKind::Field(field) => {
+                    out.push(self.read_operand(field)?);
+                }
                 CheckedAffineExpressionKind::ConstGeneric { declaration, .. } => {
                     out.push(self.const_parameter_term(*declaration));
                 }
@@ -2898,6 +3119,12 @@ impl Reasoning<'_, '_, '_> {
             }
             candidates.push(AffineL0Candidate { term, value });
         }
+        let sums = self.vocabulary.terms.sum_ids().collect::<Vec<_>>();
+        for term in sums {
+            if let Some(value) = self.vocabulary.affine_term_value(term, values) {
+                candidates.push(AffineL0Candidate { term, value });
+            }
+        }
         let mut bindings = values.values.keys().copied().collect::<Vec<_>>();
         bindings.sort_by_key(|binding| binding.0);
         for binding in bindings {
@@ -2916,20 +3143,13 @@ impl Reasoning<'_, '_, '_> {
         candidates
     }
 
-    pub(super) fn affine_interval_proof(
+    /// Selects the existing strongest endpoints and their unchanged witnesses.
+    /// This preparation constructs no derivation or affine conclusion.
+    fn prepare_affine_intervals(
         &mut self,
-        inequality: &AffineInequality,
+        coefficients: &[AffineCoefficient],
         query: &mut AffineDirectQuery<'_>,
-        check: &mut AffineCheckState,
-    ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
-        let mut requested = inequality
-            .terms()
-            .iter()
-            .map(|coefficient| coefficient.term())
-            .collect::<Vec<_>>();
-        requested.sort_unstable();
-        requested.dedup();
-
+    ) -> Result<(), AffineCheckError> {
         if query.measures.is_none() {
             query.measures = Some(self.vocabulary.measure_terms_by_atom(query.values));
         }
@@ -2937,10 +3157,15 @@ impl Reasoning<'_, '_, '_> {
             .measures
             .as_ref()
             .expect("measure index prepared above");
-        for atom_id in requested {
+        // Canonical inequality coefficients already have strictly ordered,
+        // unique atom identities, exactly the former sorted/deduplicated list.
+        for coefficient in coefficients {
+            let atom_id = coefficient.term();
             if query.intervals.contains_key(&atom_id) {
+                work::affine_metric(Metric::IntervalWarmProbes);
                 continue;
             }
+            work::affine_metric(Metric::IntervalConstructionProbes);
             let atom = *self
                 .vocabulary
                 .affine_atoms
@@ -2994,6 +3219,19 @@ impl Reasoning<'_, '_, '_> {
             query.intervals.insert(atom_id, interval);
         }
 
+        Ok(())
+    }
+
+    pub(super) fn affine_interval_proof<'a>(
+        &mut self,
+        inequality: impl Into<AffineInequalityView<'a>>,
+        query: &mut AffineDirectQuery<'_>,
+        check: &mut AffineCheckState,
+    ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        let inequality = inequality.into();
+
+        self.prepare_affine_intervals(inequality.terms(), query)?;
+
         if query.closed.contradictory() {
             return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
         }
@@ -3034,12 +3272,14 @@ impl Reasoning<'_, '_, '_> {
         Ok(Some(parents))
     }
 
-    pub(super) fn affine_residual_proof(
+    pub(super) fn affine_residual_proof<'a>(
         &mut self,
-        inequality: &AffineInequality,
+        inequality: impl Into<AffineInequalityView<'a>>,
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
+        work::affine_metric(query.direct_metric);
+        let inequality = inequality.into();
         if query.closed.contradictory() {
             return Ok(query.closed.contradiction_proof().map(|proof| vec![proof]));
         }
@@ -3063,60 +3303,23 @@ impl Reasoning<'_, '_, '_> {
     /// exactly as fixed by the specification. Each tightening is formed on its
     /// own: an unrepresentable one is skipped and removes neither the other
     /// tightening nor the untightened candidate.
-    pub(super) fn affine_candidate_residual_proof(
+    pub(super) fn affine_candidate_residual_proof<'a>(
         &mut self,
         target: &AffineInequality,
-        candidate: &AffineInequality,
+        candidate: impl Into<AffineInequalityView<'a>>,
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Option<Vec<DerivationId>> {
-        let tightenings = integer_tightenings(candidate, target, check);
-        for accumulated in std::iter::once(candidate).chain(tightenings.iter()) {
-            let Ok(residual) = AffineInequality::residual_after(target, accumulated, check) else {
-                continue;
-            };
-            if let Ok(Some(parents)) = self.affine_residual_proof(&residual, query, check) {
-                return Some(parents);
-            }
-        }
-        None
-    }
-
-    /// Exhausts one coefficient-one L0 premise followed by the direct
-    /// L0/interval residual rule. The L0 index contains one strongest entry
-    /// per coefficient vector, so strengthening ordinary facts can only make
-    /// a residual easier and never removes an earlier witness.
-    pub(super) fn affine_l0_then_direct_proof(
-        &mut self,
-        target: &AffineInequality,
-        query: &mut AffineDirectQuery<'_>,
-        check: &mut AffineCheckState,
-    ) -> Option<Vec<DerivationId>> {
-        super::super::work::affine_final_family_start();
-        let l0 = query.l0;
-        let mut ordinal = 0;
-        while let Some(entry) = l0.ordered_entry(ordinal, query.closed, check) {
-            ordinal += 1;
-            let Some(mut parents) =
-                self.affine_candidate_residual_proof(target, &entry.inequality, query, check)
-            else {
-                continue;
-            };
-            let Some(parent) = query.closed.bound_proof(
-                entry.left,
-                entry.right,
-                entry.bound,
-                &mut self.vocabulary.derivations,
-            ) else {
-                continue;
-            };
-            parents.push(parent);
-            parents.sort_unstable_by_key(|parent| parent.0);
-            parents.dedup();
-            return Some(parents);
-        }
-        super::super::work::affine_final_family_exhausted();
-        None
+        // Move storage out while DIRECT mutates the rest of the query; put it
+        // back even after failure so later candidates retain its capacity.
+        let mut scratch = std::mem::take(&mut query.residual);
+        let proof = scratch.prove(target, candidate.into(), check, |residual, check| {
+            self.affine_residual_proof(residual, query, check)
+                .ok()
+                .flatten()
+        });
+        query.residual = scratch;
+        proof
     }
 
     /// Reuse the demanded index entries only for exactly the same closed
@@ -3156,21 +3359,98 @@ impl Reasoning<'_, '_, '_> {
         assumptions: &[ActiveAffineFact],
         context: ProofContext<'_>,
     ) -> Option<AffineConsequenceProof> {
-        let values = context.affine;
-        let mut check = AffineCheckState::new();
+        self.affine_target_proof_observed(target, assumptions, context, Metric::AutoCallsOther)
+    }
+
+    fn affine_target_proof_observed(
+        &mut self,
+        target: &AffineInequality,
+        assumptions: &[ActiveAffineFact],
+        context: ProofContext<'_>,
+        origin: Metric,
+    ) -> Option<AffineConsequenceProof> {
+        work::affine_metric(origin);
         let (closed, l0) = self.affine_query_view(context);
-        let mut query = AffineDirectQuery::new(&l0, values, &closed);
-        if let Ok(Some(parents)) = self.affine_residual_proof(target, &mut query, &mut check) {
-            return Some(AffineConsequenceProof {
-                premises: Vec::new(),
-                parents,
+        let mut query = AffineDirectQuery::new(&l0, context.affine, &closed);
+        self.evaluate_affine_target(target, assumptions, &mut query)
+            .ok()
+            .flatten()
+    }
+
+    /// Revalidate shared preparation before every target. Forming a
+    /// bridge candidate can mint a measure image through interior mutation.
+    /// The retained index identity covers exact ordered candidates, including
+    /// every unit measure image that interval substitution can read. Constants
+    /// omitted from that index cannot name an interval atom. Candidate formation
+    /// also interns every binding term used by intervals, with the same type
+    /// filter, before closing facts; measure_terms_by_atom therefore introduces
+    /// no further image or term on this path. Binding images and premises are
+    /// frozen by the session's borrows, and no AUTO/bridge path replaces atoms.
+    fn prepared_affine_target_proof(
+        &mut self,
+        target: &AffineInequality,
+        facts: &FactState,
+        closed: Option<&ProofClosure>,
+        auto: &mut AffineAutoQuery<'_>,
+    ) -> Option<AffineConsequenceProof> {
+        // Origin transport has already selected these facts at the numeric
+        // disposition; affine_query_view only reads affine inputs and close().
+        let mut context = ProofContext::new(facts, auto.values);
+        context.closed = closed;
+        let (closed, l0) = self.affine_query_view(context);
+        if !auto.prepared.as_ref().is_some_and(|prepared| {
+            Rc::ptr_eq(&prepared.closed, &closed) && Rc::ptr_eq(&prepared.l0, &l0)
+        }) {
+            auto.prepared = Some(PreparedAffineAuto {
+                closed: Rc::clone(&closed),
+                l0: Rc::clone(&l0),
+                intervals: WordHashMap::default(),
+                measures: None,
+                residual: AffineResidualScratch::default(),
+                final_interval_exceptions: None,
             });
         }
-        let automatic = automatic_affine_premises(assumptions, &mut check).ok()?;
+        let prepared = auto.prepared.as_mut().expect("prepared above");
+        let mut query = AffineDirectQuery {
+            l0: &l0,
+            values: auto.values,
+            closed: &closed,
+            intervals: std::mem::take(&mut prepared.intervals),
+            measures: prepared.measures.take(),
+            residual: std::mem::take(&mut prepared.residual),
+            direct_metric: Metric::DirectOther,
+            final_interval_exceptions: prepared.final_interval_exceptions.take(),
+        };
+        let result = self.evaluate_affine_target(target, auto.assumptions, &mut query);
+        prepared.intervals = query.intervals;
+        prepared.measures = query.measures;
+        prepared.residual = query.residual;
+        prepared.final_interval_exceptions = query.final_interval_exceptions;
+        result.ok().flatten()
+    }
+
+    /// A fresh arithmetic state for every target; only complete AUTO
+    /// exhaustion returns Ok(None). No answer is memoized.
+    fn evaluate_affine_target(
+        &mut self,
+        target: &AffineInequality,
+        assumptions: &[ActiveAffineFact],
+        query: &mut AffineDirectQuery<'_>,
+    ) -> Result<Option<AffineConsequenceProof>, AffineCheckError> {
+        query.direct_metric = Metric::DirectInitial;
+        let mut check = AffineCheckState::new();
+        if let Ok(Some(parents)) = self.affine_residual_proof(target, query, &mut check) {
+            return Ok(Some(AffineConsequenceProof {
+                premises: Vec::new(),
+                parents,
+            }));
+        }
+        let automatic = automatic_affine_premises(assumptions, &mut check)?;
 
         // Preserve the complete coefficient-one single-premise route. Every
         // premise is tried independently; an arithmetic error in one candidate
         // cannot suppress a later source or value-image fact.
+        query.direct_metric = Metric::DirectSingle;
         for (index, assumption) in automatic.iter().enumerate() {
             // A candidate that cannot participate in an i128 residual grants
             // no authority, but it must not hide a later independently
@@ -3178,14 +3458,14 @@ impl Reasoning<'_, '_, '_> {
             if let Some(parents) = self.affine_candidate_residual_proof(
                 target,
                 &assumption.inequality,
-                &mut query,
+                query,
                 &mut check,
             ) {
-                return Some(affine_consequence_from_residual(
+                return Ok(Some(affine_consequence_from_residual(
                     &[(index, 1)],
                     &automatic,
                     parents,
-                ));
+                )));
             }
         }
 
@@ -3193,9 +3473,10 @@ impl Reasoning<'_, '_, '_> {
         // pairs, including one premise used twice. There is no greedy state,
         // backtracking cutoff, or cumulative work budget: fact order changes
         // only which successful derivation is retained, never acceptance.
+        query.direct_metric = Metric::DirectPair;
         if let Some((first, second, parents)) =
             first_two_premise_candidate(&automatic, &mut check, |sum, check| {
-                self.affine_candidate_residual_proof(target, sum, &mut query, check)
+                self.affine_candidate_residual_proof(target, sum, query, check)
             })
         {
             let selected = if first == second {
@@ -3203,9 +3484,9 @@ impl Reasoning<'_, '_, '_> {
             } else {
                 vec![(first, 1), (second, 1)]
             };
-            return Some(affine_consequence_from_residual(
+            return Ok(Some(affine_consequence_from_residual(
                 &selected, &automatic, parents,
-            ));
+            )));
         }
 
         // Ordinary L0 relations remain outside the affine premise set. This
@@ -3213,11 +3494,12 @@ impl Reasoning<'_, '_, '_> {
         // strongest indexed L0 image once, then run the ordinary DIRECT check
         // on the residual. DIRECT may itself close an exact L0 image, but the
         // route never publishes or recursively saturates either relation.
-        self.affine_l0_then_direct_proof(target, &mut query, &mut check)
+        Ok(self
+            .affine_l0_then_direct_proof(target, query, &mut check)
             .map(|parents| AffineConsequenceProof {
                 premises: Vec::new(),
                 parents,
-            })
+            }))
     }
 }
 
@@ -3232,226 +3514,21 @@ impl Reasoning<'_, '_, '_> {
 pub(super) fn first_two_premise_candidate<T>(
     premises: &[AutomaticAffinePremise],
     check: &mut AffineCheckState,
-    mut prove: impl FnMut(&AffineInequality, &mut AffineCheckState) -> Option<T>,
+    mut prove: impl FnMut(AffineInequalityView<'_>, &mut AffineCheckState) -> Option<T>,
 ) -> Option<(usize, usize, T)> {
+    let mut scratch = AffineSumScratch::default();
     for first in 0..premises.len() {
         for second in first..premises.len() {
-            let pair = [
-                premises[first].inequality.clone(),
-                premises[second].inequality.clone(),
-            ];
-            let Ok(sum) = sum_explicit_inequalities(&pair, check) else {
+            let pair = [&premises[first].inequality, &premises[second].inequality];
+            let Ok(sum) = scratch.sum(&pair, check) else {
                 continue;
             };
-            if let Some(proof) = prove(&sum, check) {
+            if let Some(proof) = prove(sum, check) {
                 return Some((first, second, proof));
             }
         }
     }
     None
-}
-
-impl LazyAffineL0Index {
-    fn new(candidates: Vec<AffineL0Candidate>) -> Self {
-        let mut by_image: WordHashMap<Vec<(AffineTermId, i128)>, Vec<usize>> =
-            WordHashMap::default();
-        for (ordinal, candidate) in candidates.iter().enumerate() {
-            let key = candidate
-                .value
-                .terms()
-                .iter()
-                .map(|term| (term.term(), term.coefficient()))
-                .collect::<Vec<_>>();
-            by_image.entry(key).or_default().push(ordinal);
-        }
-        Self {
-            candidates,
-            by_image,
-            exact: RefCell::default(),
-            complete: RefCell::default(),
-        }
-    }
-
-    /// Only pairs with left coefficients - right coefficients == requested
-    /// can contribute. Grouping ignores constants, but the original checked
-    /// constructor still decides representability and the shifted bound.
-    /// Visit matching pairs in original left/right order, replacing strictly
-    /// stronger bounds only, so endpoints and equal-bound ties are identical.
-    fn entry(
-        &self,
-        terms: &[AffineCoefficient],
-        closed: &ClosedState,
-        check: &mut AffineCheckState,
-    ) -> Option<Ref<'_, AffineL0Entry>> {
-        if self.complete.borrow().is_some() {
-            return self.complete_entry(terms);
-        }
-        if let Ok(entry) = Ref::filter_map(self.exact.borrow(), |exact| exact.get(terms)) {
-            return Ref::filter_map(entry, Option::as_ref).ok();
-        }
-        // Cached absence counts as one cold demand too. Promote before the
-        // Nth scan, bounding the total lazy left scans by N * (N - 1).
-        if self.exact.borrow().len() + 1 >= self.candidates.len() {
-            super::super::work::affine_cold_demand(0);
-            self.promote(closed, check);
-            return self.complete_entry(terms);
-        }
-        super::super::work::affine_cold_demand(self.candidates.len());
-        let mut selected: Option<AffineL0Entry> = None;
-        let mut right_key = Vec::new();
-        for left in &self.candidates {
-            if !affine_l0_right_key(left.value.terms(), terms, &mut right_key) {
-                continue;
-            }
-            let Some(rights) = self.by_image.get(&right_key) else {
-                continue;
-            };
-            for &right in rights {
-                let right = &self.candidates[right];
-                let Some(bound) = closed.tight_bound(left.term, right.term) else {
-                    continue;
-                };
-                let Ok(inequality) =
-                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
-                else {
-                    continue;
-                };
-                if selected
-                    .as_ref()
-                    .is_none_or(|old| inequality.upper() < old.inequality.upper())
-                {
-                    selected = Some(AffineL0Entry {
-                        inequality,
-                        left: left.term,
-                        right: right.term,
-                        bound,
-                    });
-                }
-            }
-        }
-        // None is also memoized: repeating an absent DIRECT vector should
-        // not repeat the candidate search on an unchanged state.
-        self.exact.borrow_mut().insert(terms.into(), selected);
-        self.exact_entry(terms)
-    }
-
-    fn exact_entry(&self, terms: &[AffineCoefficient]) -> Option<Ref<'_, AffineL0Entry>> {
-        Ref::filter_map(self.exact.borrow(), |exact| {
-            exact.get(terms).and_then(Option::as_ref)
-        })
-        .ok()
-    }
-
-    fn complete_entry(&self, terms: &[AffineCoefficient]) -> Option<Ref<'_, AffineL0Entry>> {
-        Ref::filter_map(self.complete.borrow(), |complete| {
-            let index = complete.as_ref()?;
-            index
-                .by_terms
-                .get(terms)
-                .map(|&ordinal| &index.entries[ordinal])
-        })
-        .ok()
-    }
-
-    /// Build once per residency in original pair order. Prior exact demands
-    /// cannot seed this order: a vector's strongest witness may appear after
-    /// its first occurrence, and equal bounds keep the earlier witness.
-    fn promote(&self, closed: &ClosedState, check: &mut AffineCheckState) {
-        if self.complete.borrow().is_some() {
-            return;
-        }
-        let mut index = AffineL0Index::default();
-        for left in &self.candidates {
-            for right in &self.candidates {
-                let Some(bound) = closed.tight_bound(left.term, right.term) else {
-                    continue;
-                };
-                let Ok(inequality) =
-                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
-                else {
-                    continue;
-                };
-                let ordinal = *index
-                    .by_terms
-                    .entry(inequality.terms().into())
-                    .or_insert(index.entries.len());
-                let entry = AffineL0Entry {
-                    inequality,
-                    left: left.term,
-                    right: right.term,
-                    bound,
-                };
-                if ordinal == index.entries.len() {
-                    index.entries.push(entry);
-                } else if entry.inequality.upper() < index.entries[ordinal].inequality.upper() {
-                    index.entries[ordinal] = entry;
-                }
-            }
-        }
-        *self.complete.borrow_mut() = Some(index);
-        self.exact.borrow_mut().clear();
-        super::super::work::affine_promotion();
-    }
-
-    /// Entering the final AUTO family promotes even if its first member
-    /// succeeds. Enumeration and all residual lookups then borrow the complete
-    /// map, including negative answers, without rescanning left candidates.
-    fn ordered_entry(
-        &self,
-        ordinal: usize,
-        closed: &ClosedState,
-        check: &mut AffineCheckState,
-    ) -> Option<Ref<'_, AffineL0Entry>> {
-        self.promote(closed, check);
-        Ref::filter_map(self.complete.borrow(), |complete| {
-            complete.as_ref()?.entries.get(ordinal)
-        })
-        .ok()
-    }
-}
-
-/// Solve right = left - requested in coefficient space only. This is a
-/// lookup key, not an affine derivation: checked_sub accepts MIN - MIN = 0,
-/// whereas negating requested first would lose a representable right image.
-/// An out-of-range result cannot equal any candidate's i128 coefficient.
-/// The actual pair always passes the original affine constructor afterwards,
-/// including its stricter intermediate-overflow and formation-limit checks.
-fn affine_l0_right_key(
-    left: &[AffineCoefficient],
-    requested: &[AffineCoefficient],
-    result: &mut Vec<(AffineTermId, i128)>,
-) -> bool {
-    result.clear();
-    let (mut l, mut r) = (0, 0);
-    while l < left.len() || r < requested.len() {
-        let term = match (left.get(l), requested.get(r)) {
-            (Some(a), Some(b)) => a.term().min(b.term()),
-            (Some(a), None) => a.term(),
-            (None, Some(b)) => b.term(),
-            (None, None) => break,
-        };
-        let a = if left.get(l).is_some_and(|a| a.term() == term) {
-            let coefficient = left[l].coefficient();
-            l += 1;
-            coefficient
-        } else {
-            0
-        };
-        let b = if requested.get(r).is_some_and(|b| b.term() == term) {
-            let coefficient = requested[r].coefficient();
-            r += 1;
-            coefficient
-        } else {
-            0
-        };
-        let Some(coefficient) = a.checked_sub(b) else {
-            return false;
-        };
-        if coefficient != 0 {
-            result.push((term, coefficient));
-        }
-    }
-    true
 }
 
 /// Builds the goal-query index for ordinary difference bounds.

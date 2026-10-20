@@ -1,0 +1,523 @@
+fn mark(flags: &Box<Array<u64>>, at: u64, bits: u64) -> result: unit writes(flags) {
+  doc "The helper reads the root length and contributes to a colliding cell.";
+  if at < flags^.inner.len {
+    let old = flags^.inner[at];
+    let next = ior(old, bits);
+    set flags^.inner[at] = next;
+  }
+  return unit;
+}
+
+fn mark_slots(flags: &Box<Slots<u64>>, at: u64, bits: u64) -> result: unit writes(flags) {
+  doc "Both original measures must survive private root construction.";
+  if flags^.inner.cap == 16_u64 {
+    if at < flags^.inner.len {
+      set flags^.inner[at] = ior(flags^.inner[at], bits);
+    }
+  }
+  return unit;
+}
+
+fn mark_even(flags: &Box<Array<u64>>, at: u64) -> result: unit writes(flags) {
+  doc "An even constant must be distinguished from its odd sentinel.";
+  if at < flags^.inner.len {
+    set flags^.inner[at] = 42_u64;
+  }
+  return unit;
+}
+
+fn mark_odd(flags: &Box<Array<u64>>, at: u64) -> result: unit writes(flags) {
+  doc "An odd constant must be distinguished from its even sentinel.";
+  if at < flags^.inner.len {
+    set flags^.inner[at] = 43_u64;
+  }
+  return unit;
+}
+
+fn mark_false(flags: &Box<Array<Bool>>, at: u64) -> result: unit writes(flags) {
+  doc "False marks require a true private sentinel.";
+  if at < flags^.inner.len {
+    set flags^.inner[at] = False();
+  }
+  return unit;
+}
+
+fn call_histogram() -> result: Bool pure {
+  doc "A direct contribution and a helper contribution share one family.";
+  let cells = box_array_filled::<u64>(count: 8_u64, value: 256_u64);
+  for (row in 0_u64..262144_u64) {
+    let bucket = row % 5_u64;
+    let quarter = row / 65536_u64;
+    let bits = 1_u64;
+    if quarter == 1_u64 {
+      set bits = 2_u64;
+    } else if quarter == 2_u64 {
+      set bits = 4_u64;
+    } else if quarter == 3_u64 {
+      set bits = 8_u64;
+    }
+    mark(flags: &cells, at: bucket, bits: bits);
+    if bucket < cells.inner.len {
+      set cells.inner[bucket] = ior(cells.inner[bucket], 16_u64);
+    }
+  }
+  if cells.inner.len != 8_u64 {
+    return False();
+  }
+  for (cell in 0_u64..8_u64) {
+    let expected = 256_u64;
+    if cell < 5_u64 {
+      set expected = 287_u64;
+    }
+    if cells.inner[cell] != expected {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn slots_histogram() -> result: Bool pure {
+  doc "The private Slots root retains a capacity greater than its initialized length.";
+  let cells = box_slots_new::<u64>(capacity: 16_u64);
+  for @fill (
+    slot in 0_u64..8_u64,
+    invariant grown: cells.inner.len == slot
+  ) {
+    place_back(window: &cells.inner, value: 256_u64);
+  }
+  for (row in 0_u64..262144_u64) {
+    let bucket = row % 5_u64;
+    let quarter = row / 65536_u64;
+    let bits = 1_u64;
+    if quarter == 1_u64 {
+      set bits = 2_u64;
+    } else if quarter == 2_u64 {
+      set bits = 4_u64;
+    } else if quarter == 3_u64 {
+      set bits = 8_u64;
+    }
+    mark_slots(flags: &cells, at: bucket, bits: bits);
+  }
+  if cells.inner.len != 8_u64 {
+    return False();
+  }
+  if cells.inner.cap != 16_u64 {
+    return False();
+  }
+  for (cell in 0_u64..8_u64) {
+    let expected = 256_u64;
+    if cell < 5_u64 {
+      set expected = 271_u64;
+    }
+    if cells.inner[cell] != expected {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn call_marks() -> result: Bool pure {
+  doc "Even, odd and Boolean marks preserve untouched destination cells.";
+  let even_cells = box_array_filled::<u64>(count: 8_u64, value: 99_u64);
+  let odd_cells = box_array_filled::<u64>(count: 8_u64, value: 99_u64);
+  let true_seed = True();
+  let bool_cells = box_array_filled::<Bool>(count: 8_u64, value: true_seed);
+  for (row in 0_u64..262144_u64) {
+    let bucket = row % 5_u64;
+    mark_even(flags: &even_cells, at: bucket);
+    mark_odd(flags: &odd_cells, at: bucket);
+    mark_false(flags: &bool_cells, at: bucket);
+  }
+  if even_cells.inner.len != 8_u64 {
+    return False();
+  }
+  if odd_cells.inner.len != 8_u64 {
+    return False();
+  }
+  if bool_cells.inner.len != 8_u64 {
+    return False();
+  }
+  for (cell in 0_u64..8_u64) {
+    let expected_even = 99_u64;
+    let expected_odd = 99_u64;
+    let expected_bool = True();
+    if cell < 5_u64 {
+      set expected_even = 42_u64;
+      set expected_odd = 43_u64;
+      set expected_bool = False();
+    }
+    if even_cells.inner[cell] != expected_even {
+      return False();
+    }
+    if odd_cells.inner[cell] != expected_odd {
+      return False();
+    }
+    let wrong_bool = bxor(bool_cells.inner[cell], expected_bool);
+    if wrong_bool {
+      return False();
+    }
+  }
+  return True();
+}
+
+struct CallRow {
+  pad: u8;
+  bits: u64;
+  stamp: u64;
+  count: u64;
+}
+
+fn mark_fields(records: &Box<Array<CallRow>>, at: u64, bits: u64) -> result: unit writes(records) {
+  doc "One helper updates an operation and a mark in the same padded root.";
+  if at < records^.inner.len {
+    set records^.inner[at].bits = ior(records^.inner[at].bits, bits);
+    set records^.inner[at].stamp = 42_u64;
+  }
+  return unit;
+}
+
+fn shared_call_fields() -> result: Bool pure {
+  doc "Two helper families and a direct third family share each private root.";
+  let initial = CallRow(pad: 11_u8, bits: 256_u64, stamp: 99_u64, count: 100_u64);
+  let rows = box_array_filled::<CallRow>(count: 8_u64, value: initial);
+  for (row in 0_u64..262144_u64) {
+    let bucket = row % 5_u64;
+    let quarter = row / 65536_u64;
+    let bits = 1_u64;
+    if quarter == 1_u64 {
+      set bits = 2_u64;
+    } else if quarter == 2_u64 {
+      set bits = 4_u64;
+    } else if quarter == 3_u64 {
+      set bits = 8_u64;
+    }
+    mark_fields(records: &rows, at: bucket, bits: bits);
+    if bucket < rows.inner.len {
+      set rows.inner[bucket].count = rows.inner[bucket].count +wrap 1_u64;
+    }
+  }
+  if rows.inner.len != 8_u64 {
+    return False();
+  }
+  for (cell in 0_u64..8_u64) {
+    let expected_bits = 256_u64;
+    let expected_stamp = 99_u64;
+    let expected_count = 100_u64;
+    if cell < 5_u64 {
+      set expected_bits = 271_u64;
+      set expected_stamp = 42_u64;
+      set expected_count = 52529_u64;
+      if cell == 4_u64 {
+        set expected_count = 52528_u64;
+      }
+    }
+    if rows.inner[cell].pad != 11_u8 {
+      return False();
+    }
+    if rows.inner[cell].bits != expected_bits {
+      return False();
+    }
+    if rows.inner[cell].stamp != expected_stamp {
+      return False();
+    }
+    if rows.inner[cell].count != expected_count {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn nested_helper_fields() -> result: Bool pure {
+  doc "Inner helper joins target the enclosing block without replacing its third family.";
+  let initial = CallRow(pad: 11_u8, bits: 256_u64, stamp: 99_u64, count: 100_u64);
+  let rows = box_array_filled::<CallRow>(count: 8_u64, value: initial);
+  for (round in 0_u64..4_u64) {
+    let bits = 1_u64;
+    if round == 1_u64 {
+      set bits = 2_u64;
+    } else if round == 2_u64 {
+      set bits = 4_u64;
+    } else if round == 3_u64 {
+      set bits = 8_u64;
+    }
+    if 0_u64 < rows.inner.len {
+      set rows.inner[0_u64].count = rows.inner[0_u64].count +wrap 1_u64;
+    }
+    for (row in 0_u64..262144_u64) {
+      let bucket = row % 5_u64;
+      mark_fields(records: &rows, at: bucket, bits: bits);
+    }
+  }
+  if rows.inner.len != 8_u64 {
+    return False();
+  }
+  for (cell in 0_u64..8_u64) {
+    let expected_bits = 256_u64;
+    let expected_stamp = 99_u64;
+    let expected_count = 100_u64;
+    if cell < 5_u64 {
+      set expected_bits = 271_u64;
+      set expected_stamp = 42_u64;
+    }
+    if cell == 0_u64 {
+      set expected_count = 104_u64;
+    }
+    if rows.inner[cell].pad != 11_u8 {
+      return False();
+    }
+    if rows.inner[cell].bits != expected_bits {
+      return False();
+    }
+    if rows.inner[cell].stamp != expected_stamp {
+      return False();
+    }
+    if rows.inner[cell].count != expected_count {
+      return False();
+    }
+  }
+  return True();
+}
+
+struct MeasureOwner {
+  flags: Array<u64, 8>;
+  inline_gate: Slots<u8, 4>;
+  boxed_gate: Box<Slots<u8>>;
+  key_gate: KeySet;
+}
+
+fn mark_measured_owner(owner: &Box<MeasureOwner>, at: u64) -> result: unit writes(owner) {
+  doc "Measure-only siblings of an inline family remain reachable in a private block.";
+  if owner^.inner.inline_gate.len == 1_u64 {
+    if owner^.inner.boxed_gate.inner.len == 1_u64 {
+      if owner^.inner.boxed_gate.inner.cap == 16_u64 {
+        if owner^.inner.key_gate.len == 1_u64 {
+          if at < owner^.inner.flags.len {
+            set owner^.inner.flags[at] = ior(owner^.inner.flags[at], 15_u64);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+struct MeasureCell {
+  flags: u64;
+  inline_gate: Slots<u8, 4>;
+  boxed_gate: Box<Slots<u8>>;
+}
+
+fn mark_measured_cells(table: &Box<Slots<MeasureCell>>, at: u64) -> result: unit writes(table) {
+  doc "Measures inside initialized elements are preserved without visiting spare capacity.";
+  if at < table^.inner.len {
+    if table^.inner[at].inline_gate.len == 1_u64 {
+      if table^.inner[at].boxed_gate.inner.len == 1_u64 {
+        if table^.inner[at].boxed_gate.inner.cap == 16_u64 {
+          set table^.inner[at].flags = ior(table^.inner[at].flags, 15_u64);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn measure_guarded_calls() -> result: Bool pure {
+  doc "Private blocks preserve descendant headers and borrowed measure-only owners.";
+  let flags = array_filled::<u64, 8>(value: 256_u64);
+  let inline_gate = slots_new::<u8, 4>();
+  place_back(window: &inline_gate, value: 7_u8);
+  let boxed_gate = box_slots_new::<u8>(capacity: 16_u64);
+  place_back(window: &boxed_gate.inner, value: 7_u8);
+  let key_data = array_filled::<u8, 1>(value: 5_u8);
+  let keys = key_set_new(capacity: 1_u64);
+  key_set_insert(keys: &keys, key: &key_data[0_u64..1_u64]);
+  let original = MeasureOwner(flags: flags, inline_gate: move inline_gate, boxed_gate: move boxed_gate, key_gate: move keys);
+  let owner = box_new::<MeasureOwner>(value: move original);
+  for (row in 0_u64..262144_u64) {
+    let bucket = row % 5_u64;
+    mark_measured_owner(owner: &owner, at: bucket);
+  }
+  for (cell in 0_u64..8_u64) {
+    let expected = 256_u64;
+    if cell < 5_u64 {
+      set expected = 271_u64;
+    }
+    if owner.inner.flags[cell] != expected {
+      return False();
+    }
+  }
+  let table = box_slots_new::<MeasureCell>(capacity: 16_u64);
+  for @fill (
+    cell in 0_u64..8_u64,
+    invariant filled: table.inner.len == cell
+  ) {
+    let local_gate = slots_new::<u8, 4>();
+    place_back(window: &local_gate, value: 7_u8);
+    let remote_gate = box_slots_new::<u8>(capacity: 16_u64);
+    place_back(window: &remote_gate.inner, value: 7_u8);
+    let record = MeasureCell(flags: 256_u64, inline_gate: move local_gate, boxed_gate: move remote_gate);
+    place_back(window: &table.inner, value: move record);
+  }
+  for (row in 0_u64..262144_u64) {
+    let bucket = row % 5_u64;
+    mark_measured_cells(table: &table, at: bucket);
+  }
+  if table.inner.len != 8_u64 {
+    return False();
+  }
+  for (cell in 0_u64..8_u64) {
+    let expected = 256_u64;
+    if cell < 5_u64 {
+      set expected = 271_u64;
+    }
+    if table.inner[cell].flags != expected {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn mark_empty_array(rows: &Array<CallRow, 0>, at: u64) -> result: unit writes(rows) {
+  doc "A guarded field update in an empty fixed array still has typed lowering.";
+  if at < rows^.len {
+    set rows^[at].bits = ior(rows^[at].bits, 1_u64);
+  }
+  return unit;
+}
+
+fn mark_empty_slots(rows: &Slots<CallRow, 0>, at: u64) -> result: unit writes(rows) {
+  doc "A zero-capacity Slots tail carries no record element alignment.";
+  if at < rows^.len {
+    set rows^[at].stamp = 42_u64;
+  }
+  return unit;
+}
+
+fn empty_call_fields() -> result: Bool pure {
+  doc "Zero cells admit split allocation and cleanup without a cell access.";
+  let initial = CallRow(pad: 11_u8, bits: 256_u64, stamp: 99_u64, count: 100_u64);
+  let array = array_filled::<CallRow, 0>(value: initial);
+  let slots = slots_new::<CallRow, 0>();
+  for (row in 0_u64..262144_u64) {
+    mark_empty_array(rows: &array, at: row);
+  }
+  for (row in 0_u64..262144_u64) {
+    mark_empty_slots(rows: &slots, at: row);
+  }
+  if array.len != 0_u64 {
+    return False();
+  }
+  if slots.len != 0_u64 {
+    return False();
+  }
+  return True();
+}
+
+struct Cell {
+  sum: u64;
+  product: u64;
+}
+
+struct Holder {
+  cells: Array<Cell, 1>;
+}
+
+fn add_field(p: &Holder) -> result: unit writes(p.cells) {
+  doc "Update a field through the enclosing owner of an aliased array.";
+  set p^.cells[0_u64].sum = p^.cells[0_u64].sum +wrap 1_u64;
+  return unit;
+}
+
+fn nested_alias_blocks() -> result: Bool pure {
+  doc "The inner array alias inherits the enclosing helper's private Holder block.";
+  let seed = Cell(sum: 1_u64, product: 1_u64);
+  let values = array_filled::<Cell, 1>(value: seed);
+  let owner = Holder(cells: values);
+  let first = &owner;
+  let second = &owner.cells;
+  for (i in 0_u64..16_u64) {
+    add_field(p: first);
+    for (j in 0_u64..16_u64) {
+      set second^[0_u64].sum = second^[0_u64].sum +wrap 1_u64;
+    }
+  }
+  if owner.cells[0_u64].sum != 273_u64 {
+    return False();
+  }
+  if owner.cells[0_u64].product != 1_u64 {
+    return False();
+  }
+  return True();
+}
+
+fn nested_alias_dense() -> result: Bool pure {
+  doc "Direct nested aliases with different owner depths share the enclosing dense family.";
+  let seed = Cell(sum: 1_u64, product: 1_u64);
+  let values = array_filled::<Cell, 1>(value: seed);
+  let owner = Holder(cells: values);
+  let first = &owner;
+  let second = &owner.cells;
+  for (i in 0_u64..16_u64) {
+    set first^.cells[0_u64].sum = first^.cells[0_u64].sum +wrap 1_u64;
+    for (j in 0_u64..16_u64) {
+      set second^[0_u64].sum = second^[0_u64].sum +wrap 1_u64;
+    }
+  }
+  if owner.cells[0_u64].sum != 273_u64 {
+    return False();
+  }
+  if owner.cells[0_u64].product != 1_u64 {
+    return False();
+  }
+  return True();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Independent literal oracles are checked in sequential and split builds.";
+  let array_ok = call_histogram();
+  let array_bad = bnot(array_ok);
+  if array_bad {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let slots_ok = slots_histogram();
+  let slots_bad = bnot(slots_ok);
+  if slots_bad {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let marks_ok = call_marks();
+  let marks_bad = bnot(marks_ok);
+  if marks_bad {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let fields_ok = shared_call_fields();
+  let fields_bad = bnot(fields_ok);
+  if fields_bad {
+    return std::process::exit_status(code: 4_u8);
+  }
+  let nested_ok = nested_helper_fields();
+  let nested_bad = bnot(nested_ok);
+  if nested_bad {
+    return std::process::exit_status(code: 5_u8);
+  }
+  let measures_ok = measure_guarded_calls();
+  let measures_bad = bnot(measures_ok);
+  if measures_bad {
+    return std::process::exit_status(code: 6_u8);
+  }
+  let empty_ok = empty_call_fields();
+  let empty_bad = bnot(empty_ok);
+  if empty_bad {
+    return std::process::exit_status(code: 7_u8);
+  }
+  let blocks_ok = nested_alias_blocks();
+  let blocks_bad = bnot(blocks_ok);
+  if blocks_bad {
+    return std::process::exit_status(code: 8_u8);
+  }
+  let dense_ok = nested_alias_dense();
+  let dense_bad = bnot(dense_ok);
+  if dense_bad {
+    return std::process::exit_status(code: 9_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

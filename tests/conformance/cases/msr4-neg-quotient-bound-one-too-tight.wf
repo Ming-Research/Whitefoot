@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn leading_digit(total: u64, divisor: u64) -> result: u64 pure contract {
+  requires 1_u64 <= divisor;
+  requires divisor <= 1152921504606846976_u64;
+  requires total < 10_u64 * divisor;
+  ensures result <= 8_u64;
+} {
+  doc "A total of nine divisors divides to nine, so a total below ten divisors does not bound the quotient below nine.";
+  let quotient = total / divisor;
+  return quotient;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

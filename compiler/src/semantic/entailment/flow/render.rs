@@ -3,6 +3,15 @@
 
 use super::*;
 
+/// How a source rendering spells one counted loop binder.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum BinderSpelling<'a> {
+    /// The hidden next value a counted backedge substitutes, `(i + 1_u64)`.
+    Next(BindingId),
+    /// A range clause's bound variable standing for the binder [RANGE-1].
+    Bound(BindingId, &'a str),
+}
+
 impl Input<'_, '_> {
     pub(super) fn render_integer_domain_goal(
         &self,
@@ -52,14 +61,15 @@ impl Input<'_, '_> {
     /// counted backedge the only compiler-written value transition is the
     /// hidden unit update, so occurrences of that binder are rendered as the
     /// exact source expression the writer must preserve. Ordinary loops pass
-    /// no binder and therefore render the header relation unchanged.
+    /// no binder and therefore render the header relation unchanged; a
+    /// bound variable restates the relation at one element [RANGE-1].
     pub(super) fn render_checked_invariant_relation(
         &self,
         relation: &CheckedAffineRelation,
-        counted_next_binder: Option<BindingId>,
+        counted: Option<BinderSpelling<'_>>,
     ) -> String {
-        let left = self.render_checked_affine_expression(&relation.left, counted_next_binder);
-        let right = self.render_checked_affine_expression(&relation.right, counted_next_binder);
+        let left = self.render_checked_affine_expression(&relation.left, counted);
+        let right = self.render_checked_affine_expression(&relation.right, counted);
         if relation.equality {
             return format!("{left} == {right}");
         }
@@ -76,7 +86,7 @@ impl Input<'_, '_> {
     pub(super) fn render_checked_affine_expression(
         &self,
         expression: &CheckedAffineExpression,
-        counted_next_binder: Option<BindingId>,
+        counted: Option<BinderSpelling<'_>>,
     ) -> String {
         let mut values = Vec::new();
         for expression in expression.postorder() {
@@ -85,13 +95,19 @@ impl Input<'_, '_> {
                     format!("{value}_{}", integer_type_name(*ty))
                 }
                 CheckedAffineExpressionKind::Local { binding, .. } => {
-                    self.render_header_binding(*binding, counted_next_binder)
+                    self.render_header_binding(*binding, counted)
                 }
                 // [INV-1] a measure factor renders as the writer wrote it: the
                 // former over the place, never an internal term identity.
                 CheckedAffineExpressionKind::Measure(measure) => self
-                    .render_affine_measure(measure, counted_next_binder)
+                    .render_affine_measure(measure, counted)
                     .unwrap_or_else(|| "?".to_owned()),
+                // [INV-1, ENT-6] a tracked field place factor renders as the
+                // writer wrote it, through a reference root's `^`.
+                CheckedAffineExpressionKind::Field(field) => match self.read_place_path(field) {
+                    Some(place) => self.render_header_place(&place, counted),
+                    None => "?".to_owned(),
+                },
                 CheckedAffineExpressionKind::ConstGeneric { name, .. } => name.clone(),
                 CheckedAffineExpressionKind::Add(_, _)
                 | CheckedAffineExpressionKind::Subtract(_, _) => {
@@ -123,7 +139,7 @@ impl Input<'_, '_> {
     fn render_affine_measure(
         &self,
         expression: &CheckedExpression,
-        counted_next_binder: Option<BindingId>,
+        counted: Option<BinderSpelling<'_>>,
     ) -> Option<String> {
         let (measure, binding, fields) = match expression {
             CheckedExpression::ArrayMeasure {
@@ -134,23 +150,22 @@ impl Input<'_, '_> {
             CheckedExpression::BufferMeasure { measure, root } => {
                 let place = self.render_header_place(
                     &ResolvedPlace::from_path(root.binding, root.place_path()),
-                    counted_next_binder,
+                    counted,
                 );
                 return Some(format!("{place}.{}", measure.spelling()));
             }
             CheckedExpression::RangeMeasure { measure, root } => {
-                (*measure, root.binding, Vec::new())
-            }
-            CheckedExpression::RangeElementMeasure { measure, place, .. } => {
-                let mut resolved = ResolvedPlace::spelled(
-                    PlaceRoot::Binding(place.root.binding),
-                    is_holder(place.root.binding),
-                    Vec::new(),
-                );
-                resolved.path.extend(place.place_path());
                 return Some(format!(
                     "{}.{}",
-                    self.render_header_place(&resolved, counted_next_binder),
+                    self.render_header_place(&root.proof_place(), counted),
+                    measure.spelling()
+                ));
+            }
+            CheckedExpression::RangeElementMeasure { measure, place, .. } => {
+                let resolved = place.proof_place();
+                return Some(format!(
+                    "{}.{}",
+                    self.render_header_place(&resolved, counted),
                     measure.spelling()
                 ));
             }
@@ -158,15 +173,18 @@ impl Input<'_, '_> {
             // rendered from the same source-order path every other consumer
             // reads rather than from a field list.
             CheckedExpression::ContainerMeasure { measure, root } => {
-                let place =
-                    self.render_header_place(&container_root_path(root), counted_next_binder);
+                // A repair is written in the body's scope. Keep its local
+                // reborrow spelling, not the referent used for proof identity.
+                let mut written = ResolvedPlace::spelled(root.root, false, Vec::new());
+                written.path.extend(root.place_path());
+                let place = self.render_header_place(&written, counted);
                 return Some(format!("{place}.{}", measure.spelling()));
             }
             _ => return None,
         };
         let place = self.render_header_place(
             &ResolvedPlace::spelled(PlaceRoot::Binding(binding), false, fields),
-            counted_next_binder,
+            counted,
         );
         Some(format!("{place}.{}", measure.spelling()))
     }
@@ -177,6 +195,38 @@ impl Input<'_, '_> {
             .get(binding.0 as usize)
             .cloned()
             .unwrap_or_else(|| "?".to_owned())
+    }
+
+    /// [RANGE-1] a name for a suggested range clause or bound variable: the
+    /// first of `stem`, `stem1`, `stem2`, ... that no binding of the function
+    /// and no package-level, invariant or range-fact declaration spells, so
+    /// the suggestion cannot collide [TYPE-6].
+    pub(super) fn fresh_name(&self, stem: &str) -> String {
+        use crate::DeclarationRole as Role;
+        let taken = |name: &str| {
+            self.context
+                .binding_names
+                .iter()
+                .any(|binding| binding == name)
+                || self.context.declarations.iter().any(|record| {
+                    record.spelling() == name
+                        && matches!(
+                            record.role(),
+                            Role::Function
+                                | Role::Struct
+                                | Role::Enum
+                                | Role::Variant
+                                | Role::Interface
+                                | Role::NamedConst
+                                | Role::GenericType
+                                | Role::ConstGeneric
+                                | Role::Invariant
+                                | Role::RangeFact
+                                | Role::Alias
+                        )
+                })
+        };
+        crate::semantic::check::repairs::fresh_repair_name(stem, taken)
     }
 
     /// The source spelling of one declaration, such as a generic parameter.
@@ -195,13 +245,11 @@ impl Input<'_, '_> {
     fn render_header_offset(
         &self,
         offset: CapturedValue,
-        counted_next_binder: Option<BindingId>,
+        counted: Option<BinderSpelling<'_>>,
     ) -> String {
         match offset.term {
             CapturedTerm::Literal(value) => value.to_string(),
-            CapturedTerm::Binding(binding) => {
-                self.render_header_binding(binding, counted_next_binder)
-            }
+            CapturedTerm::Binding(binding) => self.render_header_binding(binding, counted),
             CapturedTerm::Const(declaration) => self.declaration_name(declaration),
             // [REF-1] the binding's spelling names a later value than the one
             // this index read, and no source spelling names that one.
@@ -213,24 +261,28 @@ impl Input<'_, '_> {
         self.render_header_place(place, None)
     }
 
-    /// Substitute the next counted value at binding leaves, never field names.
+    /// Substitute the counted binder's spelling at binding leaves, never
+    /// field names.
     pub(super) fn render_header_binding(
         &self,
         binding: BindingId,
-        counted_next_binder: Option<BindingId>,
+        counted: Option<BinderSpelling<'_>>,
     ) -> String {
-        let name = self.binding_name(binding);
-        if counted_next_binder == Some(binding) {
-            format!("({name} + 1_u64)")
-        } else {
-            name
+        match counted {
+            Some(BinderSpelling::Next(binder)) if binder == binding => {
+                format!("({} + 1_u64)", self.binding_name(binding))
+            }
+            Some(BinderSpelling::Bound(binder, variable)) if binder == binding => {
+                variable.to_owned()
+            }
+            _ => self.binding_name(binding),
         }
     }
 
     pub(super) fn render_header_place(
         &self,
         place: &ResolvedPlace,
-        counted_next_binder: Option<BindingId>,
+        counted: Option<BinderSpelling<'_>>,
     ) -> String {
         let reference_root = matches!(place.root, PlaceRoot::Binding(binding)
             if self.places.is_reference(binding));
@@ -263,16 +315,23 @@ impl Input<'_, '_> {
                     .map(|constant| constant.ty),
             ),
         };
-        self.render_place_projections(rendered, ty, &place.path, counted_next_binder)
+        self.render_place_projections(rendered, ty, &place.path, counted)
     }
 
     /// Render body and entry paths through the same typed storage selectors.
+    ///
+    /// The selected type is kept through every step, so a field or payload
+    /// below a window part, a page, a table entry or a shared object is named
+    /// by its declaration. A step whose type was lost belongs to an
+    /// inconsistent checked place; it is spelled with the `?` marker, never
+    /// an ordinal, so the residual degrades rather than stopping the compile,
+    /// since this renderer has no error channel.
     fn render_place_projections(
         &self,
         mut rendered: String,
         mut ty: Option<CheckedType>,
         projections: &[PlaceStep],
-        counted_next_binder: Option<BindingId>,
+        counted: Option<BinderSpelling<'_>>,
     ) -> String {
         for projection in projections {
             match projection {
@@ -281,20 +340,41 @@ impl Input<'_, '_> {
                     ty = Some(target.ty);
                 }
                 PlaceStep::Payload { variant, field } => {
-                    rendered.push_str(&format!(".{variant}.{field}"));
-                    ty = None;
+                    let selected = ty.and_then(|current| {
+                        let CheckedType::Nominal(nominal) = current else {
+                            return None;
+                        };
+                        let CheckedNominalKind::Enum { variants } =
+                            &self.context.nominals.get(nominal.0 as usize)?.kind
+                        else {
+                            return None;
+                        };
+                        let variant = variants.get(*variant as usize)?;
+                        let field = variant.fields.get(*field as usize)?;
+                        Some((&variant.name, &field.name, field.ty))
+                    });
+                    match selected {
+                        Some((variant, field, field_type)) => {
+                            rendered.push_str(&format!(".{variant}.{field}"));
+                            ty = Some(field_type);
+                        }
+                        None => {
+                            rendered.push_str(".?.?");
+                            ty = None;
+                        }
+                    }
                 }
                 PlaceStep::Range(range) => {
                     rendered.push_str(&format!(
                         "[{}..{}]",
-                        self.render_header_offset(range.start, counted_next_binder),
-                        self.render_header_offset(range.end, counted_next_binder)
+                        self.render_header_offset(range.start, counted),
+                        self.render_header_offset(range.end, counted)
                     ));
                 }
                 PlaceStep::Part(part) => {
                     rendered.push('.');
                     rendered.push_str(part.spelling());
-                    ty = None;
+                    ty = ty.map(|ty| self.storage_element_type(ty).unwrap_or(ty));
                 }
                 PlaceStep::Measure(measure) => {
                     rendered.push('.');
@@ -302,10 +382,10 @@ impl Input<'_, '_> {
                     ty = Some(CheckedType::Integer(IntegerType::U64));
                 }
                 PlaceStep::Field(field) => {
-                    let name = ty
+                    match ty
                         .and_then(|current| self.field_name(current, *field))
-                        .unwrap_or(None);
-                    match name {
+                        .flatten()
+                    {
                         Some((field_name, field_ty)) => {
                             rendered.push('.');
                             rendered.push_str(&field_name);
@@ -322,17 +402,23 @@ impl Input<'_, '_> {
                     rendered.push('[');
                     rendered.push_str(&self.render_offset(*offset));
                     rendered.push(']');
-                    ty = None;
+                    ty = ty.map(|ty| self.storage_element_type(ty).unwrap_or(ty));
                 }
                 PlaceStep::Index(offset) => {
                     rendered.push_str(&format!(
                         "[{}]",
-                        self.render_header_offset(*offset, counted_next_binder)
+                        self.render_header_offset(*offset, counted)
                     ));
                     // A range reference's root type is already its element
                     // type [REF-4], so a subscript of a type that selects no
-                    // element keeps it.
-                    ty = ty.map(|ty| element_type(ty, self.context.elements).unwrap_or(ty));
+                    // element keeps it. A table's subscript selects its
+                    // `Option` entry, and the entries run of a key set holds
+                    // the same type [SHARE-2].
+                    ty = ty.map(|ty| {
+                        self.table_entry_type(ty)
+                            .or_else(|| self.storage_element_type(ty))
+                            .unwrap_or(ty)
+                    });
                 }
                 PlaceStep::Deref => {
                     self.render_content_step(&mut rendered, &mut ty);
@@ -340,6 +426,27 @@ impl Input<'_, '_> {
             }
         }
         rendered
+    }
+
+    /// The type one stored element of a window, array, buffer, segment run or
+    /// entries run holds.
+    fn storage_element_type(&self, ty: CheckedType) -> Option<CheckedType> {
+        let element = ty.storage_element()?;
+        self.context.elements.get(element.index()).copied()
+    }
+
+    /// [SHARE-2] the `Option` entry a table's subscript selects.
+    fn table_entry_type(&self, ty: CheckedType) -> Option<CheckedType> {
+        let CheckedType::Nominal(nominal) = ty else {
+            return None;
+        };
+        match self.context.nominals.get(nominal.0 as usize)?.kind {
+            CheckedNominalKind::Shared {
+                shape: crate::CheckedShared::Map { entry },
+                ..
+            } => Some(entry),
+            _ => None,
+        }
     }
 
     /// References cannot be stored in aggregates. After the root reference
@@ -366,6 +473,11 @@ impl Input<'_, '_> {
         let nominal = self.context.nominals.get(id.0 as usize)?;
         match nominal.kind {
             CheckedNominalKind::Box { referent, .. } => Some(referent),
+            // [SHARE-1] a shared object's `^` reaches its state.
+            CheckedNominalKind::Shared {
+                state,
+                shape: crate::CheckedShared::Object,
+            } => Some(state),
             _ => Some(ty),
         }
     }
@@ -595,6 +707,11 @@ impl Input<'_, '_> {
                 GoalProjection::Deref => {
                     self.render_content_step(&mut rendered, &mut ty);
                 }
+                GoalProjection::Measure(measure) => {
+                    rendered.push('.');
+                    rendered.push_str(measure.spelling());
+                    ty = Some(CheckedType::Integer(IntegerType::U64));
+                }
                 GoalProjection::Field(field) => {
                     match ty
                         .and_then(|current| self.field_name(current, *field))
@@ -662,6 +779,10 @@ impl Input<'_, '_> {
                     rendered.push_str(&format!("[parameter #{ordinal}]"));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
+                GoalProjection::FormalPage { ordinal } => {
+                    rendered.push_str(&format!(".pages[parameter #{ordinal}]"));
+                    ty = ty.and_then(|ty| element_type(ty, self.context.elements));
+                }
             }
         }
         rendered
@@ -698,9 +819,45 @@ impl Input<'_, '_> {
                         ty = None;
                     }
                 }
+                CheckedPlaceStep::Payload {
+                    nominal,
+                    variant,
+                    field,
+                } => {
+                    let selected =
+                        self.context
+                            .nominals
+                            .get(nominal.0 as usize)
+                            .and_then(|nominal| match &nominal.kind {
+                                CheckedNominalKind::Enum { variants } => {
+                                    variants.get(*variant as usize).and_then(|variant| {
+                                        variant
+                                            .fields
+                                            .get(*field as usize)
+                                            .map(|field| (&variant.name, &field.name, field.ty))
+                                    })
+                                }
+                                _ => None,
+                            });
+                    match selected {
+                        Some((variant, field, field_type)) => {
+                            rendered.push_str(&format!(".{variant}.{field}"));
+                            ty = Some(field_type);
+                        }
+                        None => {
+                            rendered.push_str(".?.?");
+                            ty = None;
+                        }
+                    }
+                }
                 CheckedPlaceStep::BoxReferent(nominal) => {
                     rendered.push_str(".inner");
                     ty = self.deref_type(CheckedType::Nominal(*nominal));
+                }
+                CheckedPlaceStep::Measure(measure) => {
+                    rendered.push('.');
+                    rendered.push_str(measure.spelling());
+                    ty = Some(CheckedType::Integer(IntegerType::U64));
                 }
                 CheckedPlaceStep::Subscript(index) => {
                     rendered.push_str(&format!("[{}]", self.render_expression(&index.offset)));
@@ -734,20 +891,11 @@ impl Input<'_, '_> {
             ),
             CheckedExpression::RangeMeasure { measure, root } => format!(
                 "{}.{}",
-                self.render_place(&ResolvedPlace::spelled(
-                    PlaceRoot::Binding(root.binding),
-                    is_holder(root.binding),
-                    Vec::new()
-                )),
+                self.render_place(&root.proof_place()),
                 measure.spelling(),
             ),
             CheckedExpression::RangeElementMeasure { measure, place, .. } => {
-                let mut resolved = ResolvedPlace::spelled(
-                    PlaceRoot::Binding(place.root.binding),
-                    is_holder(place.root.binding),
-                    Vec::new(),
-                );
-                resolved.path.extend(place.place_path());
+                let resolved = place.proof_place();
                 format!("{}.{}", self.render_place(&resolved), measure.spelling())
             }
             CheckedExpression::ArrayMeasure { measure, root, .. } => format!(
@@ -872,6 +1020,9 @@ impl Reasoning<'_, '_, '_> {
         match self.vocabulary.terms.kind(term) {
             TermKind::TargetMeasure { source, .. } => {
                 format!("next-header {}", self.render_term(*source))
+            }
+            TermKind::Sum(left, right) => {
+                format!("({} + {})", self.render_term(*left), self.render_term(*right))
             }
             TermKind::Zero => "0".to_owned(),
             TermKind::Constant(value) => value.to_string(),
@@ -1044,8 +1195,8 @@ pub(super) fn render_goal_row(
         GoalOperation::Boolean(operation) => {
             render_operation_spelling(operation.spelling(), arguments)
         }
-        GoalOperation::EnumEquality { equal, .. } => {
-            render_operation_spelling(if *equal { "eeq" } else { "ene" }, arguments)
+        GoalOperation::ValueEquality { equal, .. } => {
+            render_operation_spelling(if *equal { "==" } else { "!=" }, arguments)
         }
         GoalOperation::NumericConversion {
             mode,

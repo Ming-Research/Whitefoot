@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct InplaceLetRow {
+  f: u64;
+  g: u64;
+  h: u64;
+  j: u64;
+  k: u64;
+  l: u64;
+  m: u64;
+  n: u64;
+}
+
+struct InplaceLetBig {
+  inner: InplaceLetRow;
+}
+
+fn inplace_let_probe(big: InplaceLetBig) -> result: u64 pure {
+  doc "Projects an aggregate field of a by-value parameter into a new let.";
+  let r = big.inner;
+  return r.f +wrap r.g;
+}
+
+fn main() -> status: ExitStatus pure {
+  let row = InplaceLetRow(f: 11_u64, g: 31_u64, h: 3_u64, j: 4_u64, k: 5_u64, l: 6_u64, m: 7_u64, n: 8_u64);
+  let big = InplaceLetBig(inner: row);
+  let answer = inplace_let_probe(big: big);
+  if answer != 42_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

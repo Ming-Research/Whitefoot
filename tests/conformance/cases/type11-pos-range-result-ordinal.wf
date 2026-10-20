@@ -1,0 +1,23 @@
+struct Zeroes {
+  cells: Array<u64, 1>;
+  invariant(c): forall zero(k in 0_u64..c^.cells.len): c^.cells[k] == 0_u64;
+}
+
+fn build() -> (count: u64, made: Zeroes) pure {
+  let cells = array_filled::<u64, 1>(value: 0_u64);
+  return 1_u64, Zeroes(cells: cells);
+}
+
+fn need(z: &Zeroes) -> result: unit pure {
+  return unit;
+}
+
+fn forward() -> result: unit pure {
+  let (count, made) = build();
+  need(z: &made);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -54,6 +54,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     DeadlinePassed() => {
       return False();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }

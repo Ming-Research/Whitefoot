@@ -1,0 +1,22 @@
+fn scatter(order: &Slots<u64, 8>, pos: &Slots<u64, 8>, out: &Slots<u64, 8>) -> result: unit reads(order), writes(out) contract {
+  requires pos^.len == out^.len;
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
+} {
+  doc "The left-inverse scatter of range5-pos-scatter-through-left-inverse with its storage passed by reference to the window itself instead of a run reference.";
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let e = order^[k];
+    if e < out^.len {
+      set out^[e] = k;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

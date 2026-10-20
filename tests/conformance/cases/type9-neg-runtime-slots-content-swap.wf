@@ -1,0 +1,12 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "TYPE-9: runtime-capacity contents take only the Box-content home, so exchanging their headers is refused.";
+  let small = box_slots_new::<u64>(capacity: 1_u64);
+  let large = box_slots_new::<u64>(capacity: 64_u64);
+  swap(first: &small.inner, second: &large.inner);
+  for (i in 0_u64..60_u64) {
+    if small.inner.len < small.inner.cap {
+      place_back(window: &small.inner, value: i);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

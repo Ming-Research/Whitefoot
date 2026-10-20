@@ -172,25 +172,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .map(|pointer| format!("%{pointer}"))
     }
 
-    /// [BLK-2] `fixed_vector`: the empty window over `n` raw slots.
-    ///
-    /// The value is the zero aggregate, so both descriptor words start at
-    /// zero, which is exactly the row's four published relations.
+    /// [OP-13] The empty window over `n` raw slots. Only descriptor words
+    /// hold values: WIN-1 leaves every element slot uninitialized.
     pub(super) fn emit_fixed_vector(
         &mut self,
         result: IrValueId,
         ty: IrType,
     ) -> Result<(), BackendFailure> {
-        let Some(_) = RunShape::of(ty) else {
+        let Some(shape) = RunShape::of(ty) else {
             return Err(BackendFailure::InvalidIr);
         };
-        let run_type = self.output.type_name(self.program, ty)?;
+        if shape.capacity.is_none() || shape.shape == IrWindowShape::Paged {
+            return Err(BackendFailure::InvalidIr);
+        }
         let destination = self.value_place(result)?;
-        writeln!(
-            self.output,
-            "  store {run_type} zeroinitializer, ptr {destination}",
-        )
-        .map_err(|_| BackendFailure::TextEmission)
+        for field in 0..shape.slots_field() {
+            let address = self.aggregate_field_pointer(ty, &destination, field as usize)?;
+            writeln!(self.output, "  store i64 0, ptr {address}")?;
+        }
+        Ok(())
     }
 
     /// [MSR-1] one measure of a storage shape, read at run time.
@@ -213,6 +213,24 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // its place; the entries an entry binding names keep the set's count
         // in their record's third word [SHARE-2].
         match self.value_type(container) {
+            Some(IrType::Address(IrAddressed::KeySet)) if measure == IrMeasure::Bytes => {
+                return self.emit_key_set_bytes(result, container);
+            }
+            Some(IrType::KeySet) if measure == IrMeasure::Bytes => {
+                // The byte account lives in the store, so read through the
+                // same runtime bridge as an addressed KeySet.
+                let address = self.next_temporary()?;
+                self.names(&["wf__key_set_bytes"]);
+                return writeln!(
+                    self.output,
+                    "  %{address} = alloca {{ i64, ptr }}
+  store {{ i64, ptr }} {}, ptr %{address}
+  {} = call i64 @wf__key_set_bytes(ptr %{address})",
+                    self.value_name(container),
+                    self.value_name(result)
+                )
+                .map_err(|_| BackendFailure::TextEmission);
+            }
             Some(IrType::KeySet) if measure == IrMeasure::Length => {
                 return writeln!(
                     self.output,
@@ -263,12 +281,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     let pointer = self.aggregate_field_pointer(container_type, &address, 0)?;
                     writeln!(
                         self.output,
-                        "  {} = load i64, ptr {pointer}",
-                        self.value_name(result)
+                        "  {} = load i64, ptr {pointer}{}{}",
+                        self.value_name(result),
+                        storage_alias::Role::ArrayLen.attachment(),
+                        self.owner_alias.read(container)
                     )
                     .map_err(|_| BackendFailure::TextEmission)
                 }
-                IrMeasure::Capacity | IrMeasure::Head | IrMeasure::Pages => {
+                IrMeasure::Capacity | IrMeasure::Head | IrMeasure::Pages | IrMeasure::Bytes => {
                     Err(BackendFailure::InvalidIr)
                 }
             };
@@ -277,6 +297,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         };
         let value = match measure {
+            IrMeasure::Bytes => return Err(BackendFailure::InvalidIr),
             IrMeasure::Pages => {
                 if shape.shape != IrWindowShape::Paged {
                     return Err(BackendFailure::InvalidIr);
@@ -451,7 +472,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let updated = self.prepare_run_update(result, run, run_type)?;
         let physical = self.boundary_slot(shape, run_type, run, row)?;
         let element_pointer = self.element_pointer(result, shape, run_type, updated, &physical)?;
-        self.store_value_at(value, &format!("%{element_pointer}"))?;
+        self.store_source_value_at(value, &format!("%{element_pointer}"))?;
         self.move_run_boundary(shape, run_type, run, row)?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
@@ -464,7 +485,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         row: IrBoundary,
     ) -> Result<(), BackendFailure> {
         let length = self.run_word(run_type, run, shape.length_field())?;
-        let head = self.window_origin(shape, run_type, run)?;
         // The new descriptor words. A back operation leaves `head` where it
         // was; a front operation moves it by one, modulo the capacity.
         let new_length = self.next_temporary()?;
@@ -478,32 +498,44 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // touched: a front placement's is the slot it wrote, and a front
         // removal's is one past the slot it read.
         let new_head = if row.front() {
-            if row.places() {
+            Some(if row.places() {
                 self.boundary_slot(shape, run_type, run, row)?
             } else {
+                let head = self.window_origin(shape, run_type, run)?;
                 self.wrap_offset(shape, run_type, run, &head, "1")?
-            }
+            })
         } else {
-            head
+            None
         };
         let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+        let owner_alias = if shape.capacity.is_none() {
+            self.owner_alias.write(run)
+        } else {
+            String::new()
+        };
         let length_address =
             self.aggregate_field_pointer(run_type, &destination, shape.length_field() as usize)?;
         writeln!(
             self.output,
-            "  store i64 %{new_length}, ptr {length_address}"
+            "  store i64 %{new_length}, ptr {length_address}{}{}",
+            storage_alias::runtime_word(run_type, shape.length_field()),
+            owner_alias
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         // Only a `Ring` stores a window origin [WIN-1]; a `Slots` window
         // begins at slot zero and no operation moves it, so a front
         // operation over one is no row of [OP-10] this emitter can serve.
-        if let Some(field) = shape.head_field() {
+        if let Some(new_head) = new_head {
+            let field = shape.head_field().ok_or(BackendFailure::InvalidIr)?;
             let head_address =
                 self.aggregate_field_pointer(run_type, &destination, field as usize)?;
-            writeln!(self.output, "  store i64 {new_head}, ptr {head_address}")
-                .map_err(|_| BackendFailure::TextEmission)?;
-        } else if row.front() {
-            return Err(BackendFailure::InvalidIr);
+            writeln!(
+                self.output,
+                "  store i64 {new_head}, ptr {head_address}{}{}",
+                storage_alias::runtime_word(run_type, field),
+                owner_alias
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
         }
         Ok(())
     }
@@ -536,7 +568,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     self.output,
                     "  %{at_start} = icmp eq i64 {head}, 0\n  %{predecessor} = select i1 %{at_start}, i64 {capacity}, i64 {head}\n  %{physical} = sub i64 %{predecessor}, 1",
                 )
-                .map_err(|_| BackendFailure::TextEmission)?;
+        .map_err(|_| BackendFailure::TextEmission)?;
                 Ok(format!("%{physical}"))
             }
             IrBoundary::PlaceBack | IrBoundary::TakeBack => {
@@ -592,8 +624,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let word = self.next_temporary()?;
         if let Some(address) = self.run_storage(run)? {
             let pointer = self.aggregate_field_pointer(run_type, &address, field as usize)?;
-            writeln!(self.output, "  %{word} = load i64, ptr {pointer}")
-                .map_err(|_| BackendFailure::TextEmission)?;
+            let owner_alias = if storage_alias::runtime_word(run_type, field).is_empty() {
+                String::new()
+            } else {
+                self.owner_alias.read(run)
+            };
+            writeln!(
+                self.output,
+                "  %{word} = load i64, ptr {pointer}{}{}",
+                storage_alias::runtime_word(run_type, field),
+                owner_alias
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
             return Ok(format!("%{word}"));
         }
         writeln!(
@@ -677,7 +719,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.output,
                 "  %{pointer}.nonnegative = icmp sge i64 {physical}, 0\n  call void @llvm.assume(i1 %{pointer}.nonnegative)"
             )
-            .map_err(|_| BackendFailure::TextEmission)?;
+        .map_err(|_| BackendFailure::TextEmission)?;
         }
         writeln!(
             self.output,
@@ -869,8 +911,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let storage = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
         let length_address =
             self.aggregate_field_pointer(run_type, &storage, shape.length_field() as usize)?;
-        writeln!(self.output, "  store i64 %{moved}, ptr {length_address}")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(
+            self.output,
+            "  store i64 %{moved}, ptr {length_address}{}",
+            storage_alias::runtime_word(run_type, shape.length_field())
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
@@ -898,7 +944,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let offset = self.value_name(index);
         let physical = self.wrap_offset(shape, run_type, run, &origin, &offset)?;
         let slot = self.element_pointer(result, shape, run_type, run, &physical)?;
-        self.store_value_at(value, &format!("%{slot}"))?;
+        self.store_source_value_at(value, &format!("%{slot}"))?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
@@ -934,6 +980,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let head_label = run_transfer_head_label(result);
         let body = run_transfer_body_label(result);
         let done = run_transfer_done_label(result);
+        let commit = format!("{done}.commit");
+        let empty = self.next_temporary()?;
         {
             writeln!(self.output, "  br label %{pre}").map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(pre.to_string());
@@ -954,11 +1002,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             write!(
                 self.output,
-                "  %{count} = sub i64 {source_length}, {index}\n  br label %{head_label}\n"
+                "  %{count} = sub i64 {source_length}, {index}\n  %{empty} = icmp eq i64 %{count}, 0\n  br i1 %{empty}, label %{done}, label %{head_label}\n"
             )
-            .map_err(|_| BackendFailure::TextEmission)?;
+        .map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(head_label.to_string());
-            write!(self.output, "  %{counter} = phi i64 [ 0, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp ult i64 %{counter}, %{count}\n  br i1 %{more}, label %{body}, label %{done}\n").map_err(|_| BackendFailure::TextEmission)?;
+            write!(self.output, "  %{counter} = phi i64 [ 0, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp ult i64 %{counter}, %{count}\n  br i1 %{more}, label %{body}, label %{commit}\n").map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(body.to_string());
             writeln!(self.output, "  %{stepped} = add i64 %{counter}, 1")
                 .map_err(|_| BackendFailure::TextEmission)?;
@@ -1001,7 +1049,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             writeln!(self.output, "  br label %{head_label}")
                 .map_err(|_| BackendFailure::TextEmission)?;
-            self.output.open_block(done.to_string());
+            self.output.open_block(commit);
         };
         let grown = self.next_temporary()?;
         writeln!(
@@ -1017,7 +1065,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         writeln!(
             self.output,
-            "  store i64 {index}, ptr {source_length_address}"
+            "  store i64 {index}, ptr {source_length_address}{}",
+            storage_alias::runtime_word(source_type, source_shape.length_field())
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         let destination_storage = self
@@ -1030,17 +1079,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )?;
         writeln!(
             self.output,
-            "  store i64 %{grown}, ptr {destination_length_address}"
+            "  store i64 %{grown}, ptr {destination_length_address}{}",
+            storage_alias::runtime_word(destination_type, destination_shape.length_field())
         )
         .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(done);
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
     /// [OP-13] one runtime-capacity window block and the cell that owns it.
     ///
-    /// The block is `[len | cap | head? | slots]` in one allocation, so the
-    /// cell pointer is the block pointer and every later access reaches the
-    /// header and the slots through one address
+    /// The block is `[len | cap | head? | slots]`: positive capacity owns
+    /// one allocation and zero capacity shares the immutable empty header.
+    /// The cell pointer is the block pointer and every later access reaches
+    /// the header and the slots through one address
     /// (compiler/storage-representation). The window starts empty, which is
     /// exactly what the row's `ensures` publishes.
     pub(super) fn emit_window_block_new(
@@ -1075,69 +1128,89 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let element_size = self.window_element_size(shape)?;
         let header_size = self.window_header_size(shape, block_type)?;
-        let block = self.output.type_name(self.program, block_type)?;
         let nonnull = self.next_temporary()?;
+        let fresh = self.next_temporary()?;
+        let empty_count = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
         let allocate = window_block_allocate_label(result);
-        {
-            let count = self.value_name(capacity);
-            let address = self.value_name(result);
-            let bytes =
-                self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
-            {
-                self.output.symbol("wf__heap_take");
-                write!(
-                    self.output,
-                    "  {address} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
-                )
-            }?;
-            self.output.open_block(oom.to_string());
-            {
-                self.output.symbol("wf_resource_abort");
-                write!(
-                    self.output,
-                    "  call void @wf_resource_abort()\n  unreachable\n"
-                )
-            }?;
-            self.output.open_block(ready.to_string());
-        };
-        let block_address = self.value_name(result);
+        let empty = format!("{allocate}.empty");
+        let size = format!("{allocate}.size");
+        let init = format!("{allocate}.init");
+        let count = self.value_name(capacity);
+        self.output.symbol("wf__empty_window");
+        writeln!(
+            self.output,
+            "  %{empty_count} = icmp eq i64 {count}, 0\n  br i1 %{empty_count}, label %{empty}, label %{size}"
+        )?;
+        self.output.open_block(empty.clone());
+        writeln!(self.output, "  br label %{ready}")?;
+        self.output.open_block(size);
+        let bytes =
+            self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
+        self.output.symbol("wf__heap_take");
+        writeln!(
+            self.output,
+            "  %{fresh} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
+        )?;
+        self.output.open_block(oom);
+        self.output.symbol("wf_resource_abort");
+        writeln!(
+            self.output,
+            "  call void @wf_resource_abort()\n  unreachable"
+        )?;
+        self.output.open_block(init.clone());
+        let block_address = format!("%{fresh}");
         let length_address = self.aggregate_field_pointer(
             block_type,
             &block_address,
             shape.length_field() as usize,
         )?;
-        writeln!(self.output, "  store i64 0, ptr {length_address}")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(
+            self.output,
+            "  store i64 0, ptr {length_address}{}",
+            storage_alias::runtime_word(block_type, shape.length_field())
+        )?;
         let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
         let capacity_address =
             self.aggregate_field_pointer(block_type, &block_address, capacity_field as usize)?;
         writeln!(
             self.output,
-            "  store i64 {}, ptr {capacity_address}",
-            self.value_name(capacity)
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+            "  store i64 {count}, ptr {capacity_address}{}",
+            storage_alias::runtime_word(block_type, capacity_field)
+        )?;
         if let Some(head) = shape.head_field() {
             let head_address =
                 self.aggregate_field_pointer(block_type, &block_address, head as usize)?;
-            writeln!(self.output, "  store i64 0, ptr {head_address}")
-                .map_err(|_| BackendFailure::TextEmission)?;
+            writeln!(
+                self.output,
+                "  store i64 0, ptr {head_address}{}",
+                storage_alias::runtime_word(block_type, head)
+            )?;
         }
-        let _ = block;
+        writeln!(self.output, "  br label %{ready}")?;
+        self.output.open_block(ready);
+        writeln!(
+            self.output,
+            "  {} = phi ptr [ @wf__empty_window, %{empty} ], [ %{fresh}, %{init} ]",
+            self.value_name(result)
+        )?;
         Ok(())
     }
 
     /// [OP-10] `grow`: the cell's content is reallocated at the new
     /// capacity.
     ///
-    /// One `realloc` keeps the header and the filled slots, possibly in
-    /// place, and the cell's pointer slot takes the
-    /// returned block, which then records the new capacity. [STOR-7] makes
-    /// an address change legal at every value, because no judgment depends
-    /// on the block's address; a failed `realloc` leaves the old block and
-    /// terminates [STOR-8].
+    /// One `wf__heap_retake` keeps the header and the filled slots: the
+    /// runtime copies a block below 1024 bytes into a fresh one and calls
+    /// `realloc`, possibly in place, for a larger block. Zero growth leaves
+    /// the shared empty header alone; positive growth of zero-stride
+    /// elements takes a writable header when the old capacity is zero.
+    /// The cell's pointer
+    /// slot takes the returned block, which then records the new capacity.
+    /// [STOR-7] makes an address change legal at every value, because no
+    /// judgment depends on the block's address; a failed retake leaves the
+    /// old block and terminates [STOR-8].
     pub(super) fn emit_window_grow(
         &mut self,
         result: IrValueId,
@@ -1176,59 +1249,75 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let header_size = self.window_header_size(shape, block_type)?;
         let cell_address = self.value_name(cell);
         let old = self.next_temporary()?;
-        writeln!(self.output, "  %{old} = load ptr, ptr {cell_address}")
-            .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(
+            self.output,
+            "  %{old} = load ptr, ptr {cell_address}{}",
+            storage_alias::Role::BoxOwner.attachment()
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
         let old_capacity_address =
             self.aggregate_field_pointer(block_type, &format!("%{old}"), capacity_field as usize)?;
         let old_capacity = self.next_temporary()?;
         writeln!(
             self.output,
-            "  %{old_capacity} = load i64, ptr {old_capacity_address}"
+            "  %{old_capacity} = load i64, ptr {old_capacity_address}{}",
+            storage_alias::runtime_word(block_type, capacity_field)
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         let fresh = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
+        let empty_count = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
         let allocate = window_block_allocate_label(result);
-        {
-            let old_bytes = self.emit_allocation_size(
-                &format!("%{old_capacity}"),
-                &element_size,
-                &header_size,
-                &oom,
-                &format!("{allocate}.old_size"),
-            )?;
-            let count = self.value_name(capacity);
-            let bytes =
-                self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
-            {
-                self.output.symbol("wf__heap_retake");
-                write!(
-                    self.output,
-                    "  %{fresh} = call ptr @wf__heap_retake(ptr %{old}, i64 {old_bytes}, i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
-                )
-            }?;
-            self.output.open_block(oom.to_string());
-            {
-                self.output.symbol("wf_resource_abort");
-                write!(
-                    self.output,
-                    "  call void @wf_resource_abort()\n  unreachable\n"
-                )
-            }?;
-            self.output.open_block(ready.to_string());
-        };
+        let size = format!("{allocate}.size");
+        let init = format!("{allocate}.init");
+        let count = self.value_name(capacity);
+        // PRE-1 proves new cap >= old cap: new cap zero means the old
+        // window is empty too, and no header or owner store is necessary.
+        writeln!(
+            self.output,
+            "  %{empty_count} = icmp eq i64 {count}, 0\n  br i1 %{empty_count}, label %{ready}, label %{size}"
+        )?;
+        self.output.open_block(size);
+        let old_bytes = self.emit_allocation_size(
+            &format!("%{old_capacity}"),
+            &element_size,
+            &header_size,
+            &oom,
+            &format!("{allocate}.old_size"),
+        )?;
+        let bytes =
+            self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
+        // Every positive growth retakes: from the shared empty header the
+        // runtime always takes a writable block and copies the header.
+        self.output.symbol("wf__heap_retake");
+        writeln!(
+            self.output,
+            "  %{fresh} = call ptr @wf__heap_retake(ptr %{old}, i64 {old_bytes}, i64 {bytes})"
+        )?;
+        writeln!(
+            self.output,
+            "  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
+        )?;
+        self.output.open_block(oom);
+        self.output.symbol("wf_resource_abort");
+        writeln!(
+            self.output,
+            "  call void @wf_resource_abort()\n  unreachable"
+        )?;
+        self.output.open_block(init);
         let fresh_block = format!("%{fresh}");
         let fresh_capacity_address =
             self.aggregate_field_pointer(block_type, &fresh_block, capacity_field as usize)?;
         writeln!(
             self.output,
-            "  store i64 {}, ptr {fresh_capacity_address}\n  store ptr %{fresh}, ptr {cell_address}",
-            self.value_name(capacity)
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+            "  store i64 {count}, ptr {fresh_capacity_address}{capacity_alias}\n  store ptr %{fresh}, ptr {cell_address}{owner_alias}\n  br label %{ready}",
+            capacity_alias = storage_alias::runtime_word(block_type, capacity_field),
+            owner_alias = storage_alias::Role::BoxOwner.attachment(),
+        )?;
+        self.output.open_block(ready);
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 

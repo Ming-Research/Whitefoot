@@ -1,0 +1,9 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "TYPE-9: Segments content takes only the Box-content home, never the exchange place.";
+  let lengths = box_array_filled::<u64>(count: 1_u64, value: 1_u64);
+  let small = box_segments_filled::<u64>(lengths: &lengths.inner[0_u64..1_u64], value: 11_u64);
+  set lengths.inner[0_u64] = 64_u64;
+  let large = box_segments_filled::<u64>(lengths: &lengths.inner[0_u64..1_u64], value: 22_u64);
+  swap(first: &small.inner, second: &large.inner);
+  return std::process::exit_status(code: 0_u8);
+}

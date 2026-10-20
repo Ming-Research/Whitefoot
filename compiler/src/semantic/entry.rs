@@ -318,6 +318,11 @@ fn type_holds_heap(
                 .get(id.0 as usize)
                 .map(|nominal| &nominal.kind)
             {
+                Some(CheckedNominalKind::Box {
+                    referent,
+                    release: super::model::CheckedReleaseClass::Frozen,
+                    ..
+                }) => type_holds_heap(program, *referent, visited),
                 Some(CheckedNominalKind::Box { .. }) => true,
                 Some(CheckedNominalKind::Struct { fields }) => fields
                     .iter()

@@ -1,0 +1,15 @@
+struct Cell {
+  value: u64;
+  invariant zero(cell): cell.value == 0_u64;
+}
+
+fn helper(source: &u64, target: &u64) -> result: Cell writes(target) {
+  set target^ = 1_u64;
+  return Cell(value: 0_u64);
+}
+
+fn caller() -> result: unit pure {
+  let value = 0_u64;
+  let made = helper(source: &value, target: &value);
+  return unit;
+}

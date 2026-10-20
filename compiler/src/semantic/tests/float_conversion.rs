@@ -97,14 +97,16 @@ fn every_float_endpoint_pair_has_uniform_exact_checked_and_defined_interfaces() 
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             expected.len() + 1
         );
-        for (function, (expected_source, expected_destination, destination_name)) in
-            checked.data.functions.iter().zip(expected)
+        for (function, (expected_source, expected_destination, destination_name)) in checked
+            .data
+            .executable_functions()
+            .filter(|function| function.body.is_some())
+            .zip(expected)
         {
             let [
                 CheckedStatement::Let { value: exact, .. },
@@ -161,7 +163,7 @@ fn float_conversion_operand_failures_keep_their_rule_owners() {
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = cvt::<f32, Bool>(1.0_f32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
     assert_rule_kind(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = cvt::<u32, f64>(1_u16);\n  return std::process::exit_status(code: 0_u8);\n}\n",
@@ -279,7 +281,10 @@ fn rounding_conversion_admits_exactly_the_float_destination_pairs() {
                         );
                     };
                     assert_eq!(issue.rule(), SemanticRule::Op1);
-                    assert!(matches!(issue.kind(), SemanticIssueKind::InvalidOperation));
+                    assert!(matches!(
+                        issue.kind(),
+                        SemanticIssueKind::InvalidOperation { .. }
+                    ));
                 }
             });
         }

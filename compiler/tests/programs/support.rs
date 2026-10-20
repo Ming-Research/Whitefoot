@@ -105,7 +105,8 @@ fn invocation_argument(bytes: &[u8]) -> OsString {
 
 /// Links one emitted module with the same ordinary library as the driver.
 fn link_module(module: &Path, executable: &Path, llvm: &str, directory: &Path) {
-    link_module_with_driver_arguments(&[module], executable, llvm, directory, &[]);
+    link_module_with_driver_arguments(&[module], executable, llvm, directory, &[])
+        .unwrap_or_else(|failure| panic!("{failure}"));
 }
 
 /// Links the emitted module's units, each compiled on its own: the whole
@@ -116,13 +117,17 @@ fn link_module_with_driver_arguments(
     llvm: &str,
     directory: &Path,
     driver_arguments: &[&str],
-) {
+) -> Result<(), String> {
+    let driver = directory.join("driver.c");
+    // An explicit host caller can supply a library's arguments and result route.
+    if !driver.exists() {
+        whitefoot::require_executable_runner(llvm)?;
+    }
     let mut command = Command::new(CLANG);
     for unit in units {
         command.arg("-x").arg("ir").arg(unit);
     }
     command.args(COMPILE_ARGUMENTS);
-    let driver = directory.join("driver.c");
     if driver.exists() {
         command
             .args(driver_arguments)
@@ -132,9 +137,10 @@ fn link_module_with_driver_arguments(
             .arg("-x")
             .arg("none");
     }
-    let needs_heap = llvm.contains("@wf__heap_take(")
-        || llvm.contains("@wf__heap_give(")
-        || llvm.contains("@wf__heap_retake(");
+    // A driver that observes the heap may name the shared empty header even
+    // when the module it wraps does not.
+    let needs_heap = whitefoot::module_requires_heap_runtime(llvm)
+        || std::fs::read_to_string(&driver).is_ok_and(|source| source.contains("wf__empty_window"));
     let (sources, objects) =
         append_runtime_objects(&mut command, directory, None, None, needs_heap);
     let compilation = run_command(
@@ -156,6 +162,86 @@ fn link_module_with_driver_arguments(
     for name in ["completion", "sched"] {
         std::fs::remove_dir(directory.join(name)).expect("remove staged native source directory");
     }
+    Ok(())
+}
+
+#[test]
+fn a_checked_library_entry_stops_before_the_program_harness_links() {
+    let source = b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n";
+    let llvm = compile(
+        &[SourceInput::new("entry.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect("a u8 entry is valid library source");
+    let sequence = NEXT_EXECUTION.fetch_add(1, Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "whitefoot-entry-stop-{}-{sequence}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).expect("create unused build directory");
+    let failure = link_module_with_driver_arguments(
+        &[&directory.join("program.ll")],
+        &directory.join("program"),
+        &llvm,
+        &directory,
+        &[],
+    )
+    .expect_err("runner check happens before reading native build inputs");
+    assert_eq!(
+        failure,
+        whitefoot::require_executable_runner(&llvm).expect_err("no executable runner")
+    );
+    assert!(failure.contains("repair: select a function"), "{failure}");
+    assert_eq!(
+        std::fs::read_dir(&directory).expect("build directory").count(),
+        0
+    );
+    std::fs::remove_dir(&directory).expect("remove unused build directory");
+}
+
+#[test]
+fn unit_and_exit_status_repairs_keep_running_in_the_program_harness() {
+    for (source, expected) in [
+        (&b"fn main() -> result: unit pure {\n  return unit;\n}\n"[..], 0),
+        (
+            &b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 7_u8);\n}\n"[..],
+            7,
+        ),
+    ] {
+        let llvm = compile(
+            &[SourceInput::new("entry.wf", source)],
+            CompilerLimits::default(),
+        )
+        .expect("the executable entry checks");
+        assert_eq!(compile_and_run(&llvm).status.code(), Some(expected));
+    }
+}
+
+#[test]
+fn a_host_driver_can_call_a_checked_library_without_the_bundled_runner() {
+    let source = b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n";
+    let mut llvm = compile(
+        &[SourceInput::new("entry.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect("a u8 entry is valid library source")
+    .into_string();
+    // The C host supplies the floor ABI's callback. Declaring it makes the
+    // fallback's call valid LLVM without generating a bundled entry runner.
+    llvm.push_str("\ndeclare i32 @wf__main_body(i32, ptr)\n");
+    whitefoot::require_executable_runner(&llvm)
+        .expect_err("a host callback declaration is not a generated runner");
+    let driver = r#"#include <stdint.h>
+extern uint8_t wf_main(void);
+extern int wf__floor_run(int, char **);
+int wf__main_body(int argc, char **argv) {
+    (void)argc; (void)argv;
+    return wf_main();
+}
+int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
+"#;
+    let program = build_program_with_driver(&llvm, Some(driver));
+    assert_eq!(program.run_with_workers(Some("1")).status.code(), Some(7));
 }
 
 /// The LLVM type name the emitter gives the nominal whose stable spelling is
@@ -454,7 +540,8 @@ pub fn build_program_with_driver_arguments(
             llvm,
             &directory,
             driver_arguments,
-        );
+        )
+        .unwrap_or_else(|failure| panic!("{failure}"));
     });
     CompiledProgram {
         directory,
@@ -489,7 +576,8 @@ pub fn build_program_from_fragments(
         .collect::<Vec<_>>();
     crate::support::timed("native-build", || {
         let units = units.iter().map(PathBuf::as_path).collect::<Vec<_>>();
-        link_module_with_driver_arguments(&units, &executable, llvm, &directory, &[]);
+        link_module_with_driver_arguments(&units, &executable, llvm, &directory, &[])
+            .unwrap_or_else(|failure| panic!("{failure}"));
     });
     // A program that walks its working directory must not see the build.
     for unit in units {

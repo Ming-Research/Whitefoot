@@ -1,7 +1,7 @@
 const names: Array<u8, 1> =[109_u8];
 
-fn full(held: &Option<u8>) -> result: Bool reads(held) {
-  match held^ {
+fn full(observed: &Option<u8>) -> result: Bool reads(observed) {
+  match observed^ {
     Some(value: unused) => {
       return True();
     }
@@ -24,10 +24,10 @@ fn receive(mail: &Shared<ConcurrentHashMap<u8>>) -> result: u8 reads(mail) waits
   spawn deliver(mail: move handle);
   let name = &names[0_u64..1_u64];
   let got = 0_u8;
-  atomic slot = &mail^[name] when full(held: slot) {
+  atomic slot = &mail^[name] when full(observed: slot) {
     match slot^ {
-      Some(value: held) => {
-        set got = held^;
+      Some(value: observed) => {
+        set got = observed^;
       }
       None() => {
       }

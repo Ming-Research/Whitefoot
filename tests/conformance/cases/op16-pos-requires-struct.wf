@@ -1,0 +1,20 @@
+struct EqContract {
+  value: u32;
+}
+
+fn guarded(left: EqContract, right: EqContract) -> result: unit pure contract {
+  requires left == right;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = EqContract(value: 9_u32);
+  let right = EqContract(value: 9_u32);
+  if left == right {
+    guarded(left: left, right: right);
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

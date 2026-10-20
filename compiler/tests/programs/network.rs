@@ -51,18 +51,76 @@ fn connect_when_ready(port: u16) -> TcpStream {
 
 /// Connects to a program that is still starting, at the address it listens on.
 fn connect_to_when_ready(address: SocketAddr) -> TcpStream {
-    let port = address.port();
+    connect_to_when_ready_using(address, TcpStream::connect_timeout)
+}
+
+fn connect_to_when_ready_using(
+    address: SocketAddr,
+    mut connect: impl FnMut(&SocketAddr, Duration) -> std::io::Result<TcpStream>,
+) -> TcpStream {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        match TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "connect to program at {address} exceeded the 20-second deadline"
+        );
+        match connect(&address, remaining) {
             Ok(stream) => return bounded_stream(stream),
-            Err(error) if Instant::now() < deadline => {
-                let _ = error;
+            // A timeout may be reported after the handshake completed. Retrying
+            // it could abandon a connection the program already admitted.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ConnectionRefused
+                    && Instant::now() < deadline =>
+            {
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(error) => panic!("the program never listened on {port}: {error}"),
+            Err(error) => panic!("connect to program at {address} failed: {error}"),
         }
     }
+}
+
+#[test]
+fn readiness_does_not_retry_a_timeout_after_a_completed_handshake() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listen for the readiness regression");
+    let address = listener.local_addr().expect("the listener's address");
+    let mut attempts = 0;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        connect_to_when_ready_using(address, |address, timeout| {
+            attempts += 1;
+            let stream = TcpStream::connect_timeout(address, timeout)?;
+            if attempts == 1 {
+                drop(stream);
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "timeout observed after a completed handshake",
+                ))
+            } else {
+                Ok(stream)
+            }
+        })
+    }));
+    let failure = outcome.expect_err("a timeout must fail readiness");
+    let message = failure
+        .downcast_ref::<String>()
+        .expect("readiness reports a formatted connection error");
+    assert!(
+        message.contains("timeout observed after a completed handshake"),
+        "readiness must report the injected timeout: {message}"
+    );
+    assert_eq!(attempts, 1, "an admitted connection must not be replaced");
+    listener
+        .set_nonblocking(true)
+        .expect("bound regression acceptance");
+    let (accepted, _) = listener.accept().expect("the first connection was admitted");
+    let mut accepted = bounded_stream(accepted);
+    assert_eq!(
+        accepted
+            .read(&mut [0_u8; 1])
+            .expect("read the abandoned connection"),
+        0,
+        "the admitted connection was abandoned before the timeout was reported"
+    );
 }
 
 fn bounded_stream(stream: TcpStream) -> TcpStream {
@@ -221,6 +279,113 @@ fn a_loopback_echo_preserves_all_bytes_and_half_close_on_both_routes() {
     }
 }
 
+/// [PRE-2] An accepted connection reports its peer and its own end:
+/// `tcp_addresses.wf` reads the peer `tcp_accept` returned and the local
+/// address `local_address` reports, spells both as Redis's CLIENT LIST spells
+/// `addr` and `laddr`, and sends that line back. This side's own view of the
+/// same connection is the independent oracle: its local address is the
+/// program's peer, and its peer address is the program's own end, the port
+/// the harness chose.
+#[test]
+fn an_accepted_connection_reports_its_peer_and_its_own_end_on_both_routes() {
+    let llvm = compile_program("tcp_addresses.wf");
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let port = free_port();
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let mut stream = connect_when_ready(port);
+        let local = stream.local_addr().expect("this side's own address");
+        let peer = stream.peer_addr().expect("the program's address");
+        let mut reported = String::new();
+        stream
+            .read_to_string(&mut reported)
+            .expect("read the reported endpoints");
+        drop(stream);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        assert_eq!(
+            peer,
+            SocketAddr::from(([127, 0, 0, 1], port)),
+            "native ring: {native_ring}"
+        );
+        assert_ne!(local.port(), port, "native ring: {native_ring}");
+        assert_eq!(
+            reported,
+            format!("addr={local} laddr={peer}\n"),
+            "native ring: {native_ring}"
+        );
+    }
+}
+
+/// One port the host is not using on the IPv6 loopback, or `None` when the
+/// host has no IPv6 loopback to bind.
+fn free_port_v6() -> Option<u16> {
+    let listener = TcpListener::bind("[::1]:0").ok()?;
+    Some(listener.local_addr().ok()?.port())
+}
+
+/// One endpoint spelled as `tcp_addresses_v6.wf` spells it: the eight groups
+/// of an IPv6 address in decimal, then the port, joined by colons.
+fn v6_endpoint_line(address: SocketAddr) -> String {
+    match address {
+        SocketAddr::V6(v6) => {
+            let mut text = String::new();
+            for group in v6.ip().segments() {
+                text.push_str(&format!("{group}:"));
+            }
+            text.push_str(&v6.port().to_string());
+            text
+        }
+        SocketAddr::V4(_) => "?".to_string(),
+    }
+}
+
+/// [PRE-2] An accepted IPv6 connection reports its peer and its own end:
+/// `tcp_addresses_v6.wf` listens on `::1`, reads the peer `tcp_accept`
+/// returned through `socket_address_ip` and `socket_address_port`, reads the
+/// local address `local_address` reports the same way, and sends both back as
+/// decimal groups. This side's own view of the same connection is the
+/// independent oracle, spelled by the standard library's `Ipv6Addr::segments`.
+/// A host without an IPv6 loopback skips the case, since the program could
+/// not listen there.
+#[test]
+fn an_accepted_ipv6_connection_reports_its_peer_and_its_own_end_on_both_routes() {
+    if free_port_v6().is_none() {
+        eprintln!("skipped: this host has no IPv6 loopback to bind");
+        return;
+    }
+    let llvm = compile_program("tcp_addresses_v6.wf");
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let port = free_port_v6().expect("reserve an IPv6 loopback port");
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let expected = SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), port);
+        let mut stream = connect_to_when_ready(expected);
+        let local = stream.local_addr().expect("this side's own address");
+        let peer = stream.peer_addr().expect("the program's address");
+        let mut reported = String::new();
+        stream
+            .read_to_string(&mut reported)
+            .expect("read the reported endpoints");
+        drop(stream);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        assert_eq!(peer, expected, "native ring: {native_ring}");
+        assert_ne!(local.port(), port, "native ring: {native_ring}");
+        assert_eq!(
+            reported,
+            format!(
+                "addr={} laddr={}\n",
+                v6_endpoint_line(local),
+                v6_endpoint_line(peer)
+            ),
+            "native ring: {native_ring}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_peer_that_resets_reaches_the_program_as_its_own_outcome_on_both_routes() {
@@ -243,9 +408,19 @@ fn a_peer_that_resets_reaches_the_program_as_its_own_outcome_on_both_routes() {
         // on the macOS runner.
         let bytes = vec![7_u8; 64 * 1024];
         stream.write_all(&bytes).expect("send the payload");
-        stream
-            .peek(&mut [0_u8; 1])
-            .expect("the first echoed byte arrives before the peer closes");
+        let local = stream.local_addr();
+        let peer = stream.peer_addr();
+        let peeked = stream.peek(&mut [0_u8; 1]).unwrap_or_else(|error| {
+            panic!(
+                "the first echoed byte must arrive before the peer closes: {error} \
+                 (native ring: {native_ring}, port: {port}, local: {local:?}, peer: {peer:?})"
+            )
+        });
+        assert_eq!(
+            peeked, 1,
+            "the peer must hold an unread echoed byte before closing \
+             (native ring: {native_ring}, port: {port}, local: {local:?}, peer: {peer:?})"
+        );
         drop(stream);
         let (status, _) = finished(child);
         // `tcp_echo.wf` reports 20 plus the portable class for a refused
@@ -420,8 +595,8 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
 /// as it has helpers and fail here too (`WAITS.md`, the readiness route).
 /// Windows has no readiness wait, so there a context's socket wait without
 /// the completion port is exactly such a helper wait, and only the port's
-/// route runs (`docs/todo.md`, "Only Linux with a ring runs several
-/// drivers").
+/// route runs (status board item coord-wfbl-03-41, "only Linux with a ring
+/// runs several drivers").
 /// [PRE-2] a deadline ends an accept no client answers and a receive the peer
 /// never feeds, each only once the clock has reached it and with nothing
 /// transferred: a byte sent afterwards arrives whole, and a sleeping context
@@ -449,6 +624,25 @@ fn a_passed_deadline_ends_a_wait_and_loses_nothing_on_both_routes() {
             "native ring: {native_ring}: {:?}",
             started.elapsed()
         );
+    }
+}
+
+/// One source ends a guarded atomic statement and a receive without a deadline;
+/// a fired watch also ends sleep, and fired-before-wait
+/// cancels. Never watches transfer normally, and an unfired watch preserves
+/// deadline expiry. Timer/work races disarm and join promptly; two cancellation
+/// states order an ordinary Instant target acquired after the guard targets.
+/// Silent peers stay open, so EOF cannot satisfy the case.
+#[test]
+fn cancellation_ends_waits_without_losing_bytes_on_both_routes() {
+    let program = build_program(&compile_program("cancellation.wf"));
+    for native_ring in [true, false] {
+        let port = free_port();
+        let text = port.to_string();
+        let child =
+            program.spawn_on_route_with(native_ring, &[("WF_DRIVERS", "1")], &[text.as_bytes()]);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
     }
 }
 
@@ -702,7 +896,10 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   place_back(window: &bytes, value: 0_u8);
   let destination = &bytes[0_u64..1_u64];
   let no_deadline = None<std::time::Instant>();
-  match std::net::receive_next(receive: &connection^.receive, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::net::receive_next(receive: &connection^.receive, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
     Ok(value: received) => {
       if received != 1_u64 {
         return 11_u8;
@@ -717,7 +914,10 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   }
   set bytes[0_u64] = 65_u8;
   let source = &bytes[0_u64..1_u64];
-  match std::net::send_once(send: &connection^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+  let wait_cancel_2 = std::time::cancel_never();
+  let wait_outcome_2 = std::net::send_once(send: &connection^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
+  match wait_outcome_2 {
     Ok(value: sent) => {
       if sent != 1_u64 {
         return 14_u8;
@@ -734,9 +934,15 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
   let receive_first = True();
   let send_first = False();
   let no_deadline = None<std::time::Instant>();
-  match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
+  let wait_cancel_3 = std::time::cancel_never();
+  let wait_outcome_3 = std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline, cancel: &wait_cancel_3);
+  std::time::close_cancel_watch(watch: move wait_cancel_3);
+  match move wait_outcome_3 {
     Ok(value: first) => {
-      match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
+      let wait_cancel_4 = std::time::cancel_never();
+      let wait_outcome_4 = std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline, cancel: &wait_cancel_4);
+      std::time::close_cancel_watch(watch: move wait_cancel_4);
+      match move wait_outcome_4 {
         Ok(value: second) => {
           let (a, b) = cross(first: move first, second: move second);
           let first_status = close_pair(factory: factory, connection: move a, receive_first: receive_first);
@@ -751,7 +957,10 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
           if exchange_status != 0_u8 {
             return exchange_status;
           }
-          match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
+          let wait_cancel_5 = std::time::cancel_never();
+          let wait_outcome_5 = std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline, cancel: &wait_cancel_5);
+          std::time::close_cancel_watch(watch: move wait_cancel_5);
+          match move wait_outcome_5 {
             Ok(value: checkpoint) => {
               let checkpoint_status = remaining(connection: &checkpoint);
               let closed = close_pair(factory: factory, connection: move checkpoint, receive_first: receive_first);
@@ -778,7 +987,7 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let address = std::net::socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 49151_u16);
@@ -1017,13 +1226,58 @@ fn whole_reply(stream: &mut TcpStream, what: &str) -> String {
 #[cfg(target_os = "linux")]
 fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
     let mut returned = vec![0_u8; expected.len()];
-    stream
-        .read_exact(&mut returned)
-        .unwrap_or_else(|error| panic!("{what}: {error}"));
+    let local = stream.local_addr();
+    let peer = stream.peer_addr();
+    let mut read = 0;
+    while read < returned.len() {
+        let error = match stream.read(&mut returned[read..]) {
+            Ok(0) => std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "peer closed before the expected replies were complete",
+            ),
+            Ok(count) => {
+                read += count;
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => error,
+        };
+        panic!(
+            "{what}: {error}; expected {} bytes, read {read}; \
+             reply prefix (at most 256 bytes): {}; local: {local:?}, peer: {peer:?}",
+            expected.len(),
+            returned[..read.min(256)].escape_ascii()
+        );
+    }
     assert_eq!(
-        String::from_utf8_lossy(&returned),
-        String::from_utf8_lossy(expected),
-        "{what}"
+        returned.as_slice(),
+        expected,
+        "{what}; local: {local:?}, peer: {peer:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn reply_assertion_rejects_distinct_non_utf8_bytes() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listen for the reply regression");
+    let address = listener.local_addr().expect("the listener's address");
+    let mut stream = connect_to_when_ready(address);
+    let (peer, _) = listener.accept().expect("accept the reply regression peer");
+    let mut peer = bounded_stream(peer);
+    peer.write_all(b"\xff").expect("send the invalid UTF-8 byte");
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        expect_replies(&mut stream, b"\xfe", "different invalid UTF-8 bytes");
+    }));
+    let failure = outcome.expect_err(
+        "different bytes must fail even when their lossy UTF-8 renderings are equal",
+    );
+    let message = failure
+        .downcast_ref::<String>()
+        .expect("the byte comparison reports a formatted assertion failure");
+    assert!(
+        message.contains("assertion `left == right` failed")
+            && message.contains("different invalid UTF-8 bytes"),
+        "the byte comparison, not a socket error, must fail: {message}"
     );
 }
 

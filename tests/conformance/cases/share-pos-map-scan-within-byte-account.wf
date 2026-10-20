@@ -1,0 +1,31 @@
+const scan_key: Array<u8, 1> =[97_u8];
+
+fn account_scan(m: &ConcurrentHashMap<u8>, ks: &KeySet, c: u64, n: u64, left: u64) -> remaining: u64 reads(m), writes(ks) {
+  doc "The retained-byte postconditions prove both exact subtractions with no executable guard; before this amendment the byte-query results carried no measure relation or scan bound.";
+  let before = key_set_bytes(keys: ks);
+  match map_scan_within::<u8>(map: m, cursor: c, count: n, limit: left, keys: ks) {
+    Next(next: c2) => {
+      let after = key_set_bytes(keys: ks);
+      let used = after - before;
+      set left = left - used;
+    }
+    Needs(bytes: required) => {
+    }
+  }
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 0_u64);
+  let remaining = 0_u64;
+  atomic map = &store {
+    let name = &scan_key[0_u64..1_u64];
+    set map^[name] = Some<u8>(value: 42_u8);
+    set remaining = account_scan(m: map, ks: &keys, c: 0_u64, n: 1_u64, left: 4096_u64);
+  }
+  if remaining < 4096_u64 {
+    return std::process::exit_status(code: 42_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

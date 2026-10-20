@@ -1,0 +1,21 @@
+const intervening_key: Array<u8, 1> =[122_u8];
+
+fn account_scan(map: &ConcurrentHashMap<u8>, keys: &KeySet, cursor: u64, count: u64, left: u64) -> remaining: u64 reads(map), writes(keys) {
+  doc "A KeySet insertion after the scan invalidates the scan's exit-byte bound before after is read; an exact reservation subtraction must fail OP-2 rather than using stale measure facts.";
+  let before = key_set_bytes(keys: keys);
+  match map_scan_within::<u8>(map: map, cursor: cursor, count: count, limit: left, keys: keys) {
+    Next(next: next_cursor) => {
+      key_set_insert(keys: keys, key: &intervening_key[0_u64..1_u64]);
+      let after = key_set_bytes(keys: keys);
+      let used = after - before;
+      set left = left - used;
+    }
+    Needs(bytes: required) => {
+    }
+  }
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

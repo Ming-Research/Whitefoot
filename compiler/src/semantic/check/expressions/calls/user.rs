@@ -10,21 +10,27 @@ use crate::{
 };
 
 use super::super::super::super::goal::{
-    EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
+    EvaluatedValueOccurrence, GoalAdmission, GoalDatum, GoalExpression, GoalOperation,
+    GoalProjection,
 };
 use super::super::super::super::model::{
     BindingId, CheckedCallContract, CheckedCallSeparation, CheckedCallSeparationPositions,
     CheckedEffectStep, CheckedEffects, CheckedExpression, CheckedMode, CheckedNominalKind,
-    CheckedStatePath, CheckedType,
+    CheckedRangeSource, CheckedSegmentSelect, CheckedSegmentSource, CheckedSeparationOccasion,
+    CheckedSetTarget, CheckedStatePath, CheckedType,
 };
 use super::super::super::super::places::{
     CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
     SeparationOracle, UnprovedSeparations, WindowPart, overlaps_at_every_position, places_overlap,
 };
-use super::super::super::generics::HEAP_ALLOCATING_PRELUDE_FUNCTIONS;
+use super::super::super::contract_reads::{ContractReadStep, range_term_goal};
+use super::super::super::generics::{
+    GenericArgument, GenericParameterKey, HEAP_ALLOCATING_PRELUDE_FUNCTIONS,
+};
 use super::super::super::references::InvalidationEvent;
 use super::super::super::{
-    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, TypedExpression,
+    CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, ParameterSignature,
+    TypedExpression,
 };
 
 /// One entry of a call's substituted effect row [EFF-5].
@@ -35,7 +41,11 @@ use super::super::super::{
 /// (`move`) or a read (copy) of its own place to the same comparison, which
 /// is why an entry carries a resolved place and a category and nothing about
 /// how it was spelled.
+#[derive(Clone)]
 struct SubstitutedEntry {
+    /// A proof-only contract observation; compared only across arguments.
+    contract_read: bool,
+    contract_indices: Vec<(CapturedValue, GoalExpression)>,
     place: ResolvedPlace,
     /// Whether this entry writes, replaces, moves out of, or frees the
     /// storage at its path and everything below it [EFF-1].
@@ -128,6 +138,47 @@ struct FormalCallBoundary {
 pub(in crate::semantic::check) const WAIT1_DECLARE_THE_CALLER_WAITING: &str = "write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits";
 
 impl<'unit> Checker<'_, 'unit> {
+    /// [TYPE-5, REF-4] an array reference and a range reference are distinct
+    /// kinds. Suggest re-slicing only when the array's element type is the
+    /// requested range element type; another mismatch keeps its own payload.
+    fn array_range_argument_repair(
+        &self,
+        atom: NodeId,
+        parameter: &ParameterSignature,
+        argument: &TypedExpression,
+    ) -> Result<Option<String>, CheckStop> {
+        if parameter.mode != CheckedMode::Range || argument.mode.is_range() {
+            return Ok(None);
+        }
+        let element = match argument.expression.ty() {
+            CheckedType::Array { element, .. } | CheckedType::Buffer { element } => element,
+            _ => return Ok(None),
+        };
+        if self.types.element_type(element)? != parameter.ty {
+            return Ok(None);
+        }
+        let tree = &self.types.declarations.tree;
+        if tree.has_fixed(atom, crate::syntax::terminal::FixedTerminal::Move)? {
+            return Ok(None);
+        }
+        let (place, borrowed) = match tree.first_child_with(atom, Production::BorrowExpr)? {
+            Some(borrow) => (tree.first_child_with(borrow, Production::Place)?, true),
+            None => (tree.first_child_with(atom, Production::Place)?, false),
+        };
+        let Some(place) = place else {
+            return Ok(None);
+        };
+        let written = tree.source_spelling(place)?;
+        let place = if !borrowed && argument.mode == CheckedMode::Reference {
+            format!("{written}^")
+        } else {
+            written
+        };
+        Ok(Some(
+            super::super::super::repairs::writer_references::array_range_argument(&place),
+        ))
+    }
+
     pub(super) fn check_user_call(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -354,12 +405,17 @@ impl<'unit> Checker<'_, 'unit> {
                     return self.types.declarations.issue_node(
                         SemanticRule::Type5,
                         atom,
-                        SemanticIssueKind::type_mismatch(
-                            self.types
+                        SemanticIssueKind::TypeMismatch {
+                            expected: self
+                                .types
                                 .checked_value_name(parameter.mode, parameter.ty)?,
-                            self.types
+                            found: self
+                                .types
                                 .checked_value_name(argument.mode, argument.expression.ty())?,
-                        ),
+                            mechanical_fix: self.array_range_argument_repair(
+                                atom, parameter, &argument,
+                            )?,
+                        },
                     );
                 }
             }
@@ -374,9 +430,9 @@ impl<'unit> Checker<'_, 'unit> {
                 );
             }
             if argument.mode != parameter.mode {
-                // [TYPE-7] "A reference binding used where a value of its
-                // referent type is expected is a hard error citing TYPE-7,
-                // with the mechanical fix `p^`." The operand mode is
+                // [TYPE-7] a reference binding used where a value of its
+                // referent type is expected is a hard error with a repair.
+                // The operand mode is
                 // what says which of the two refusals this is: a reference
                 // standing in an `own` position is the implicit read the rule
                 // refuses, and every other disagreement is [TYPE-5]'s.
@@ -387,7 +443,19 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Type7,
                         atom,
                         SemanticIssueKind::MissingDereference {
-                            mechanical_fix: "write `p^`",
+                            mechanical_fix: match &argument.expression {
+                                CheckedExpression::Binding { binding, .. } => {
+                                    match bindings.values().find(|local| local.binding == *binding) {
+                                        Some(local) => self.reference_payload_repair(
+                                            check_context,
+                                            local,
+                                            &self.types.declarations.tree.source_spelling(atom)?,
+                                        )?,
+                                        None => "write `p^`".to_owned(),
+                                    }
+                                }
+                                _ => "write `p^`".to_owned(),
+                            },
                         },
                     );
                 }
@@ -465,6 +533,19 @@ impl<'unit> Checker<'_, 'unit> {
             effects = effects.union(argument.effects);
             arguments.push(argument.expression);
         }
+        // [TYPE-9, FN-2] judge operand-supplied arguments at the complete
+        // call, before OP-11's copy refusal. Use the executable actual's
+        // type parameter identities, never the bound formal's node.
+        let actual_substitution = self.types.signatures[target.0 as usize]
+            .substitution
+            .clone();
+        for (key, argument) in actual_substitution.entries() {
+            if let (GenericParameterKey::Source(parameter), GenericArgument::Type(ty)) =
+                (key, argument)
+            {
+                self.check_type_parameter_placement(node, *parameter, *ty, &function.substitution)?;
+            }
+        }
         // [STOR-8] a unit carrying the no-heap declaration cannot call an
         // allocating prelude row; [OP-11] refuses a `swap` over a copy place.
         self.types
@@ -507,7 +588,105 @@ impl<'unit> Checker<'_, 'unit> {
         // [EFF-5] would otherwise report against that row.
         let atomic_target =
             self.check_atomic_update_row(node, &actual_paths, &substituted, bindings)?;
-        self.check_call_pairwise_disjointness(node, signature, &substituted, bindings)?;
+        let contract_reads = self.contract_read_footprint(check_context, signature)?;
+        let mut compared = substituted.clone();
+        let origin_start = substituted
+            .iter()
+            .map(|entry| entry.origin)
+            .max()
+            .map_or(Some(0), |origin| origin.checked_add(1))
+            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+        let mut contract_position = 0_u32;
+        for (ordinal, read) in contract_reads.iter().enumerate() {
+            let argument = signature
+                .parameters
+                .iter()
+                .position(|parameter| parameter.declaration == read.root)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let mut suffix = Vec::new();
+            let mut contract_indices = Vec::new();
+            for step in &read.steps {
+                match step {
+                    ContractReadStep::Row(step) => {
+                        suffix.extend(Checker::substitute_effect_steps(
+                            signature,
+                            &CheckedStatePath {
+                                root: read.root,
+                                steps: vec![*step],
+                            },
+                            &actual_captures,
+                        )?);
+                    }
+                    ContractReadStep::Captured(step) => suffix.push(*step),
+                    ContractReadStep::Computed(term, definitions) => {
+                        let mut pending = Vec::new();
+                        let goal = range_term_goal(
+                            term,
+                            signature,
+                            definitions,
+                            node,
+                            &mut contract_position,
+                            &mut pending,
+                        )
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        for (capture, template) in pending {
+                            let image = self.instantiate_goal_expression(
+                                check_context,
+                                &template,
+                                signature,
+                                &signature.region_parameters,
+                                &goal_arguments,
+                            )?;
+                            contract_indices.push((capture, image));
+                        }
+                        let goal = self.instantiate_goal_expression(
+                            check_context,
+                            &goal,
+                            signature,
+                            &signature.region_parameters,
+                            &goal_arguments,
+                        )?;
+                        let captured = CapturedValue::new(
+                            CaptureId::ContractRead {
+                                call: node,
+                                position: contract_position,
+                            },
+                            CapturedTerm::Opaque,
+                        );
+                        contract_position = contract_position
+                            .checked_add(1)
+                            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+                        suffix.push(PlaceStep::Index(captured));
+                        contract_indices.push((captured, goal));
+                    }
+                }
+            }
+            for actual in actual_paths.get(argument).into_iter().flatten() {
+                let mut place = actual.clone();
+                let formed = place.path.len();
+                place.path.extend(suffix.iter().copied());
+                compared.push(SubstitutedEntry {
+                    contract_read: true,
+                    contract_indices: contract_indices.clone(),
+                    place,
+                    formed,
+                    write: false,
+                    consuming: false,
+                    argument,
+                    origin: origin_start
+                        .checked_add(ordinal)
+                        .ok_or(SemanticCompilerFailure::CounterOverflow)?,
+                });
+            }
+        }
+        self.check_call_pairwise_disjointness(node, signature, &compared, bindings)?;
+        self.check_held_call(node, function, signature, &actual_paths, bindings)?;
+        let selected = self.types.signatures.get(target.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        self.qualify_snapshot_selection(node, selected.declaration, &selected.substitution)?;
+        for entry in substituted.iter().filter(|entry| entry.write) {
+            self.record_held_write(node, &entry.place);
+        }
         self.types.invalidate_call_references(
             node,
             &substituted,
@@ -517,7 +696,27 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
-        self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
+        self.project_call_effects(
+            node,
+            function,
+            &substituted,
+            bindings,
+            &mut effects,
+            formal.is_none().then_some(signature.parameters.as_slice()),
+        )?;
+        if formal.is_none() && self.body.repair_calls.is_some() {
+            let call = self.effect_repair_call(
+                node,
+                function,
+                signature,
+                &actual_paths,
+                &actual_captures,
+                bindings,
+            )?;
+            if let Some(calls) = &mut self.body.repair_calls {
+                calls.push(call);
+            }
+        }
         if self
             .types
             .declarations
@@ -565,6 +764,7 @@ impl<'unit> Checker<'_, 'unit> {
                 goal_arguments,
                 goal_regions: Vec::new(),
                 requirements: Vec::new(),
+                routed_requirements: Vec::new(),
                 result,
                 result_borrow: None,
             },
@@ -747,6 +947,9 @@ impl<'unit> Checker<'_, 'unit> {
         let formal = Checker::formal_row_places(signature)?;
         for (index, left) in entries.iter().enumerate() {
             for right in entries.iter().skip(index + 1) {
+                if (left.contract_read || right.contract_read) && left.argument == right.argument {
+                    continue;
+                }
                 if left.origin == right.origin || !(left.write || right.write) {
                     continue;
                 }
@@ -769,10 +972,30 @@ impl<'unit> Checker<'_, 'unit> {
                 // A pair whose only unseparated steps are index or range
                 // positions, or an index beside a window part, is the fixed
                 // families' question; every other overlap is refused here and
-                // now.
-                if let Some((positions, window)) =
-                    Checker::separable_by_position(&left.place, &right.place)
-                {
+                // now. A position whose value no fact names is no question
+                // the families can answer, so a pair separable only there is
+                // one no position separates.
+                let separable = Checker::separable_by_position(&left.place, &right.place);
+                let named = separable.as_ref().and_then(|(positions, window)| {
+                    let positions = positions
+                        .iter()
+                        .copied()
+                        .filter(|candidate| candidate.names_its_values())
+                        .collect::<Vec<_>>();
+                    // The window is read only by a position beside its part.
+                    let window = window.clone().filter(|_| {
+                        positions.iter().any(|candidate| {
+                            matches!(
+                                candidate,
+                                CheckedCallSeparationPositions::Live(_)
+                                    | CheckedCallSeparationPositions::RangeWithinLength(_)
+                            )
+                        })
+                    });
+                    (!positions.is_empty()).then_some((positions, window))
+                });
+                let unnamed_positions = separable.is_some() && named.is_none();
+                if let Some((positions, window)) = named {
                     // [OWN-7] positions below different range frames are
                     // relative to those frames. Name the range pair the
                     // proof actually compares, rather than descendant runs
@@ -797,9 +1020,20 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                     self.body.call_separations.push(CheckedCallSeparation {
                         site: self.types.declarations.tree.path(node)?.clone(),
-                        exchange,
+                        occasion: if exchange {
+                            CheckedSeparationOccasion::Exchange
+                        } else {
+                            CheckedSeparationOccasion::Call
+                        },
                         reference_use: None,
+                        held_use: None,
                         positions,
+                        contract_indices: left
+                            .contract_indices
+                            .iter()
+                            .chain(&right.contract_indices)
+                            .cloned()
+                            .collect(),
                         window,
                         left_spelling: self
                             .types
@@ -828,11 +1062,13 @@ impl<'unit> Checker<'_, 'unit> {
                         // the same values over one place the argument names,
                         // or because no family this checker poses at a call
                         // separates the steps at which the two paths differ,
-                        // as for two places a joined argument may name. Only
-                        // the first is repaired at the call's positions.
+                        // as for two places a joined argument may name, or
+                        // whose positions there no fact names. Only the first
+                        // is repaired at the call's positions.
                         mechanical_fix: if exchange {
                             "exchange equal or disjoint places without an ancestor relation"
                         } else if left.argument == right.argument
+                            && !unnamed_positions
                             && left.place.root == right.place.root
                             && left.place.path.get(..left.formed)
                                 == right.place.path.get(..right.formed)
@@ -841,8 +1077,10 @@ impl<'unit> Checker<'_, 'unit> {
                             && Checker::separable_by_position(left_formal, right_formal).is_some()
                         {
                             "this call gives these two entries of the callee's row the same positions: pass positions this call proves do not overlap, or replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                        } else if left.argument == right.argument && unnamed_positions {
+                            super::super::super::repairs::joined_argument_overlap(true)
                         } else if left.argument == right.argument {
-                            "these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                            super::super::super::repairs::joined_argument_overlap(false)
                         } else {
                             "pass places that do not overlap, or pass the shared place through one argument only"
                         },
@@ -949,6 +1187,7 @@ impl<'unit> Checker<'_, 'unit> {
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         effects: &mut EffectSet,
+        retained_reference_parameters: Option<&[ParameterSignature]>,
     ) -> Result<(), CheckStop> {
         for entry in entries {
             for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
@@ -960,7 +1199,17 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     continue;
                 }
-                if entry.write {
+                if retained_reference_parameters
+                    .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)
+                {
+                    if !self.types.effect_repairs.is_capture() {
+                        if entry.write {
+                            effects.add_projected_write(path);
+                        } else {
+                            EffectSet::add_path(&mut effects.reads, path);
+                        }
+                    }
+                } else if entry.write {
                     effects.add_write(path);
                 } else {
                     effects.add_read(path);
@@ -1014,6 +1263,8 @@ impl<'unit> TypeContext<'unit> {
                     let mut place = base.clone();
                     place.path.extend_from_slice(&steps);
                     entries.push(SubstitutedEntry {
+                        contract_read: false,
+                        contract_indices: Vec::new(),
                         formed: base.path.len(),
                         place,
                         write,
@@ -1039,6 +1290,8 @@ impl<'unit> TypeContext<'unit> {
                     .is_copy_place_type(check_context, signature, index)
                     .is_none_or(|copy| !copy);
                 entries.push(SubstitutedEntry {
+                    contract_read: false,
+                    contract_indices: Vec::new(),
                     formed: place.path.len(),
                     place: place.clone(),
                     // A `move` empties the place, which [EFF-1] classes with
@@ -1162,7 +1415,8 @@ impl<'unit> TypeContext<'unit> {
         // [ENT-2] the actual is identified by the proof path of the place it
         // names: the resolved path where that path is exact and the place is
         // not written through a reference variable that is not exact, and
-        // otherwise the place as written through that variable.
+        // otherwise the place as written through that variable, or through
+        // its source where it is a range alias.
         let spelled =
             crate::semantic::places::named_place(&argument.expression).and_then(|named| {
                 let PlaceRoot::Binding(root) = named.root else {
@@ -1172,7 +1426,7 @@ impl<'unit> TypeContext<'unit> {
                 (local.reference.is_some() && exactness.exact_path(local).is_none()).then(|| {
                     let mut place = ResolvedPlace {
                         atomic_aliases: Vec::new(),
-                        root: named.root,
+                        root: PlaceRoot::Binding(exactness.proof_binding(root)),
                         path: named.steps,
                     };
                     place.path.extend(named.suffix);
@@ -1202,15 +1456,22 @@ impl<'unit> TypeContext<'unit> {
             // whose captured endpoints are what [REF-4] makes the range's
             // `len`.
             return Ok(match &argument.expression {
+                // A range alias names its source's term [ENT-2].
                 CheckedExpression::Binding { binding, .. } => {
                     GoalExpression::Datum(GoalDatum::Place {
-                        root: *binding,
+                        root: exactness.proof_binding(*binding),
                         projections: Vec::new(),
                         ty: expected_type,
+                        admission: GoalAdmission::plain_range(expected_type),
                     })
                 }
                 _ => match passed_place {
-                    Some(place) => self.goal_referent_image(place, expected_type, atom)?,
+                    Some(place) => self.goal_referent_image(
+                        place,
+                        expected_type,
+                        atom,
+                        self.call_goal_admission(&argument.expression),
+                    )?,
                     None => GoalExpression::Datum(GoalDatum::EvaluatedValue {
                         function: caller,
                         occurrence: EvaluatedValueOccurrence::CallArgument {
@@ -1226,7 +1487,12 @@ impl<'unit> TypeContext<'unit> {
         }
         if expected_mode != CheckedMode::Own {
             if let Some(place) = passed_place {
-                return self.goal_referent_image(place, expected_type, atom);
+                return self.goal_referent_image(
+                    place,
+                    expected_type,
+                    atom,
+                    self.call_goal_admission(&argument.expression),
+                );
             }
             // FN-1's candidate protects every mutable origin a returned
             // borrow may reach, including when the delivered value is a
@@ -1307,7 +1573,12 @@ impl<'unit> TypeContext<'unit> {
                     element: root.element(),
                     constant: root.type_constant(),
                 },
-                self.goal_referent_image(&root.proof_place(), root.ty, atom)?,
+                self.goal_referent_image(
+                    &root.proof_place(),
+                    root.ty,
+                    atom,
+                    GoalAdmission::written(CheckedSetTarget::Storage(root.clone())),
+                )?,
             )),
             CheckedExpression::RangeMeasure { measure, root } => Some((
                 GoalOperation::ContainerMeasure {
@@ -1316,11 +1587,12 @@ impl<'unit> TypeContext<'unit> {
                     element: Some(root.element),
                     constant: None,
                 },
-                GoalExpression::Datum(GoalDatum::Place {
-                    root: root.binding,
-                    projections: Vec::new(),
-                    ty: root.element_type,
-                }),
+                self.goal_referent_image(
+                    &root.proof_place(),
+                    root.element_type,
+                    atom,
+                    GoalAdmission::plain_range(root.element_type),
+                )?,
             )),
             CheckedExpression::RangeElementMeasure { measure, place, .. } => Some((
                 GoalOperation::ContainerMeasure {
@@ -1331,11 +1603,12 @@ impl<'unit> TypeContext<'unit> {
                     element: place.element(),
                     constant: place.type_constant(),
                 },
-                GoalExpression::Datum(GoalDatum::Place {
-                    root: place.root.binding,
-                    projections: place.goal_projections(),
-                    ty: place.ty,
-                }),
+                self.goal_referent_image(
+                    &place.proof_place(),
+                    place.ty,
+                    atom,
+                    GoalAdmission::written(CheckedSetTarget::RangeIndex(place.clone())),
+                )?,
             )),
             _ => None,
         };
@@ -1355,6 +1628,64 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(image)
     }
+    /// [ENT-2] admission follows the actual's written place, before an exact
+    /// reference description replaces its proof path.
+    fn call_goal_admission(&self, expression: &CheckedExpression) -> GoalAdmission {
+        match expression {
+            CheckedExpression::Binding { ty, .. }
+            | CheckedExpression::DerefAddressed { ty, .. }
+            | CheckedExpression::Project { ty, .. } => GoalAdmission::plain(*ty),
+            CheckedExpression::BoxTake { referent, .. } => GoalAdmission::plain(*referent),
+            CheckedExpression::BorrowAddressed { root, .. }
+            | CheckedExpression::ReadStorage { root, .. }
+            | CheckedExpression::ContainerMeasure { root, .. } => {
+                GoalAdmission::written(CheckedSetTarget::Storage(root.clone()))
+            }
+            CheckedExpression::BorrowRangeIndex { place, .. }
+            | CheckedExpression::RangeIndex { place, .. }
+            | CheckedExpression::RangeElementMeasure { place, .. } => {
+                GoalAdmission::written(CheckedSetTarget::RangeIndex(place.clone()))
+            }
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                let mut admission = GoalAdmission::written(match root {
+                    CheckedSegmentSource::Storage(root) => CheckedSetTarget::Storage(root.clone()),
+                    CheckedSegmentSource::Element(place) => {
+                        CheckedSetTarget::RangeIndex(place.clone())
+                    }
+                });
+                admission.projections.push(match segment {
+                    CheckedSegmentSelect::One(index) => {
+                        GoalProjection::Subscript(index.captured.goal_identity())
+                    }
+                    CheckedSegmentSelect::Page(index) => GoalProjection::Page(index.captured),
+                    CheckedSegmentSelect::All(range) => GoalProjection::Range(*range),
+                });
+                admission
+            }
+            CheckedExpression::RangeOf {
+                source, captured, ..
+            } => {
+                let mut admission = match source {
+                    CheckedRangeSource::Storage(root) => {
+                        GoalAdmission::written(CheckedSetTarget::Storage(root.clone()))
+                    }
+                    CheckedRangeSource::Element(place) => {
+                        GoalAdmission::written(CheckedSetTarget::RangeIndex(place.clone()))
+                    }
+                    CheckedRangeSource::Range(root) => root
+                        .formation
+                        .as_deref()
+                        .map(|formation| self.call_goal_admission(formation))
+                        .unwrap_or_else(|| GoalAdmission::plain_range(root.element_type)),
+                };
+                admission.projections.push(GoalProjection::Range(*captured));
+                admission
+            }
+            // These forms write no subscript, including a holder whose
+            // exact referent identity resolves into indexed storage.
+            _ => GoalAdmission::default(),
+        }
+    }
     /// Forms a caller-visible referent datum. A root that is itself one of the
     /// caller's borrow parameters remains opaque and therefore retains one
     /// `Deref`; a local borrow/reborrow has already resolved through its holder
@@ -1367,18 +1698,17 @@ impl<'unit> TypeContext<'unit> {
         place: &ResolvedPlace,
         ty: CheckedType,
         node: NodeId,
+        admission: GoalAdmission,
     ) -> Result<GoalExpression, CheckStop> {
         let mut projections = Vec::new();
-        for step in &place.path {
+        for step in place.proof_steps() {
             match step {
-                PlaceStep::Field(field) => projections.push(GoalProjection::Field(*field)),
+                PlaceStep::Field(field) => projections.push(GoalProjection::Field(field)),
                 PlaceStep::Payload { variant, field } => {
-                    projections.push(GoalProjection::Payload {
-                        variant: *variant,
-                        field: *field,
-                    });
+                    projections.push(GoalProjection::Payload { variant, field });
                 }
                 PlaceStep::Deref => projections.push(GoalProjection::Deref),
+                PlaceStep::Measure(measure) => projections.push(GoalProjection::Measure(measure)),
                 PlaceStep::Index(index) => {
                     projections.push(GoalProjection::Subscript(index.goal_identity()));
                 }
@@ -1388,16 +1718,17 @@ impl<'unit> TypeContext<'unit> {
                 // quantities [MSR-1], so it is kept and never collapsed onto
                 // its base.
                 PlaceStep::Range(range) => {
-                    projections.push(GoalProjection::Range(*range));
+                    projections.push(GoalProjection::Range(range));
                 }
-                // [REF-4] the page a `&[T]` actual formed from `&p.pages[k]`
-                // names; kept for the same reason as a range step.
+                // [ENT-2, REF-4] proof_steps preserves a terminal page
+                // borrow's capture and canonicalizes a selector above a
+                // borrowed descendant, such as `&p.pages[k][i].inner`.
                 PlaceStep::Page(page) => {
-                    projections.push(GoalProjection::Page(*page));
+                    projections.push(GoalProjection::Page(page));
                 }
                 // A window-part effect is not a value projection. Failing
                 // to represent a value must not substitute its parent.
-                PlaceStep::Part(_) | PlaceStep::Measure(_) | PlaceStep::Descendant(_) => {
+                PlaceStep::Part(_) | PlaceStep::Descendant(_) => {
                     return self.declarations.unsupported(
                         super::super::super::super::UnsupportedSemanticFeature::CompositeValues,
                         node,
@@ -1414,11 +1745,13 @@ impl<'unit> TypeContext<'unit> {
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?,
                 projections,
                 ty,
+                admission,
             },
             PlaceRoot::Binding(binding) => GoalDatum::Place {
                 root: binding,
                 projections,
                 ty,
+                admission,
             },
         };
         Ok(GoalExpression::Datum(datum))
@@ -1451,10 +1784,20 @@ impl<'unit> TypeContext<'unit> {
                     let local = bindings
                         .get(&declaration)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let admission = if local.mode.is_range() {
+                        GoalAdmission::plain_range(local.ty)
+                    } else {
+                        GoalAdmission::plain(local.ty)
+                    };
                     if local.reference.is_some() {
                         (
                             match exactness.exact_path(local) {
-                                Some(path) => self.goal_referent_image(path, local.ty, place)?,
+                                Some(path) => self.goal_referent_image(
+                                    path,
+                                    local.ty,
+                                    place,
+                                    admission.clone(),
+                                )?,
                                 // [REF-1, ENT-2] a joined reference still
                                 // denotes one selected referent, but no member
                                 // of its possible-target set is its
@@ -1463,9 +1806,10 @@ impl<'unit> TypeContext<'unit> {
                                 // the reference's identity so proof kills can
                                 // resolve every candidate.
                                 None => GoalExpression::Datum(GoalDatum::Place {
-                                    root: local.binding,
+                                    root: exactness.proof_binding(local.binding),
                                     projections: Vec::new(),
                                     ty: local.ty,
+                                    admission,
                                 }),
                             },
                             true,
@@ -1476,6 +1820,7 @@ impl<'unit> TypeContext<'unit> {
                                 root: local.binding,
                                 projections: Vec::new(),
                                 ty: local.ty,
+                                admission,
                             }),
                             false,
                         )
@@ -1492,6 +1837,7 @@ impl<'unit> TypeContext<'unit> {
                             declaration,
                             projections: Vec::new(),
                             ty: self.constant(constant)?.ty,
+                            admission: GoalAdmission::plain(self.constant(constant)?.ty),
                         }),
                         false,
                     )
@@ -1574,6 +1920,8 @@ impl<'unit> DeclarationInventory<'unit> {
     /// `remove_at` do, and no `ensures` is read here to show that it does
     /// not, so its call ends the bound as well. Every reference into such a
     /// window dies [REF-2, REF-4].
+    /// Only written entries identify an operated window: a by-value
+    /// argument contributes a read, which ends no reference's bound [EFF-5].
     fn invalidate_window_operation_references(
         &self,
         signature: &FunctionSignature,
@@ -1593,6 +1941,9 @@ impl<'unit> DeclarationInventory<'unit> {
         let prelude = self.tree.is_prelude_node(signature.node)?;
         let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());
         for entry in entries {
+            if !entry.write {
+                continue;
+            }
             // A row entry names a part or a measure word of the window --
             // `writes(window.filled)`, `writes(window.len)` -- and the window
             // whose bound the call ends is the place below that step.
@@ -1603,7 +1954,6 @@ impl<'unit> DeclarationInventory<'unit> {
                 .position(|step| matches!(step, PlaceStep::Part(_) | PlaceStep::Measure(_)))
                 .unwrap_or(entry.place.path.len());
             let takes_back = !prelude
-                && entry.write
                 && matches!(
                     entry.place.path.get(cut),
                     Some(PlaceStep::Part(WindowPart::Last | WindowPart::Filled))
@@ -1616,7 +1966,9 @@ impl<'unit> DeclarationInventory<'unit> {
                 root: entry.place.root,
                 path: entry.place.path[..cut].to_vec(),
             };
-            Checker::invalidate_window_references(bindings, &window);
+            let shifts_origin =
+                prelude && matches!(signature.name.as_str(), "place_front" | "take_front");
+            Checker::invalidate_window_references(bindings, &window, shifts_origin);
         }
         Ok(())
     }

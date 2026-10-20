@@ -1,6 +1,8 @@
 //! [INV-1] loop invariants: the checked affine forms of an invariant,
 //! its base and backedge batches, and its recorded outcome.
 
+use super::super::CountedElementRelation;
+use super::render::BinderSpelling;
 use super::*;
 
 impl Reasoning<'_, '_, '_> {
@@ -46,6 +48,15 @@ impl Reasoning<'_, '_, '_> {
                             .checked_measure_term(measure)
                             .ok_or(AffineCheckError::CoefficientMismatch)?;
                         values.push(self.vocabulary.measure_atom(term, state));
+                    }
+                    // [INV-1, ENT-6] a tracked field place factor reads that
+                    // place's current image, retargeted by exactly the events
+                    // that kill the place, as a measure factor's is.
+                    CheckedAffineExpressionKind::Field(field) => {
+                        let value = self
+                            .tracked_field_image(field, state)
+                            .ok_or(AffineCheckError::CoefficientMismatch)?;
+                        values.push(value);
                     }
                     // [INV-1, MSR-6, ENT-2] a const generic at the symbolic
                     // instance is the declaration-anchored constant term, and
@@ -387,6 +398,7 @@ impl Reasoning<'_, '_, '_> {
                         AffineForm::term(AffineTermId::from_index(index))
                     }
                     CheckedAffineExpressionKind::Measure(_)
+                    | CheckedAffineExpressionKind::Field(_)
                     | CheckedAffineExpressionKind::ConstGeneric { .. } => {
                         let term = *measures.get(*visited)?;
                         *visited = visited.checked_add(1)?;
@@ -487,8 +499,9 @@ impl Judging<'_, '_, '_> {
         invariants: &[CheckedLoopInvariant],
         base: &[RelationBatch],
         batches: &[InductionBatch],
-        counted_binder: Option<BindingId>,
+        counted: Option<(BindingId, &CheckedExpression)>,
     ) {
+        let counted_binder = counted.map(|(binder, _)| binder);
         for (index, invariant) in invariants.iter().enumerate() {
             let first_failure = batches
                 .iter()
@@ -512,11 +525,56 @@ impl Judging<'_, '_, '_> {
                 base_target: self
                     .input
                     .render_checked_invariant_relation(&invariant.relation, None),
-                backedge_target: self
-                    .input
-                    .render_checked_invariant_relation(&invariant.relation, counted_binder),
+                backedge_target: self.input.render_checked_invariant_relation(
+                    &invariant.relation,
+                    counted_binder.map(BinderSpelling::Next),
+                ),
                 base_evidence: base[index].evidence.clone(),
                 inputs,
+                element: counted.map(|(binder, lower)| {
+                    let variable = self.input.fresh_name("k");
+                    let admitted = |binding| {
+                        binding == binder
+                            || self
+                                .input
+                                .function
+                                .parameters
+                                .iter()
+                                .any(|parameter| parameter.binding == binding)
+                    };
+                    let requirement_in_scope = invariant
+                        .relation
+                        .left
+                        .postorder()
+                        .chain(invariant.relation.right.postorder())
+                        .all(|expression| match &expression.kind {
+                            CheckedAffineExpressionKind::Local { binding, .. } => {
+                                admitted(*binding)
+                            }
+                            CheckedAffineExpressionKind::Measure(value)
+                            | CheckedAffineExpressionKind::Field(value) => {
+                                let mut in_scope = true;
+                                crate::semantic::permission::visit_read_bindings(
+                                    value,
+                                    &mut |binding| in_scope &= admitted(binding),
+                                );
+                                in_scope
+                            }
+                            _ => true,
+                        });
+                    CountedElementRelation {
+                        requirement_in_scope,
+                        requirement: self.input.fresh_name(&format!("{}_all", invariant.name)),
+                        binder,
+                        binder_name: self.input.binding_name(binder),
+                        lower: self.input.render_expression(lower),
+                        relation: self.input.render_checked_invariant_relation(
+                            &invariant.relation,
+                            Some(BinderSpelling::Bound(binder, &variable)),
+                        ),
+                        variable,
+                    }
+                }),
                 proof: LoopInvariantProof {
                     base: base[index].disposition == TargetDisposition::Proved,
                     step: (!batches.is_empty()).then_some(first_failure.is_none()),

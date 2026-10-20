@@ -1,0 +1,7 @@
+struct MutablePart {
+  state: Shared<u8>;
+}
+
+fn denied(value: MutablePart) -> result: Frozen<MutablePart> pure {
+  return frozen_new::<MutablePart>(value: move value);
+}

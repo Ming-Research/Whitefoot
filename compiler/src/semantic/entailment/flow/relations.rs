@@ -3,6 +3,7 @@
 
 use super::super::state::AffineRelationInstance;
 use super::super::{LoopFormationFailure, LoopRelationEvidence};
+use super::render::BinderSpelling;
 use super::*;
 
 pub(super) struct NextHeader<'a> {
@@ -67,6 +68,16 @@ impl Reasoning<'_, '_, '_> {
                         view.affine.measure_atoms.borrow_mut().insert(term, image);
                         self.target_measure(term, &mut view, next, &mut targets);
                     }
+                    // [ENT-6] a tracked field place has one current image
+                    // shared by all frozen candidate views, as an ordinary
+                    // measure does. This adds no premise.
+                    CheckedAffineExpressionKind::Field(expression) => {
+                        let term = self.read_operand(expression).ok_or(None)?;
+                        let image = self
+                            .tracked_field_image(expression, &state.affine)
+                            .ok_or(None)?;
+                        view.affine.measure_atoms.borrow_mut().insert(term, image);
+                    }
                     _ => {}
                 }
             }
@@ -89,6 +100,7 @@ impl Reasoning<'_, '_, '_> {
                     leaf.kind,
                     CheckedAffineExpressionKind::Local { .. }
                         | CheckedAffineExpressionKind::Measure(_)
+                        | CheckedAffineExpressionKind::Field(_)
                         | CheckedAffineExpressionKind::Constant { .. }
                         | CheckedAffineExpressionKind::ConstGeneric { .. }
                 ) {
@@ -231,7 +243,13 @@ impl Reasoning<'_, '_, '_> {
         let TermKind::Measure(_, path) = self.vocabulary.terms.kind(source) else {
             return source;
         };
-        if !path.path.iter().any(|step| matches!(step, PlaceStep::Index(offset) if offset.support() == Some(next.binder))) { return source; }
+        if !path
+            .path
+            .iter()
+            .any(|step| step.measure_offset_support() == Some(next.binder))
+        {
+            return source;
+        }
         if let Some(target) = targets.get(&source) {
             return *target;
         }
@@ -242,6 +260,7 @@ impl Reasoning<'_, '_, '_> {
             CheckedMeasure::Length,
             CheckedMeasure::Capacity,
             CheckedMeasure::Head,
+            CheckedMeasure::Bytes,
         ] {
             if let Some(sibling) = self.vocabulary.terms.sibling_measure(source, measure) {
                 let target = self.vocabulary.terms.intern(TermKind::TargetMeasure {
@@ -283,12 +302,17 @@ impl Reasoning<'_, '_, '_> {
             CheckedExpression::ContainerMeasure { root, .. } => {
                 (root.proof_prefix(), root.path.as_slice())
             }
+            CheckedExpression::RangeMeasure { root, .. } => {
+                return self.form_relation_range_root(root, view, next, targets, proofs);
+            }
             CheckedExpression::RangeElementMeasure { place, .. } => {
-                let mut base = bound_place(place.root.binding);
+                self.form_relation_range_root(&place.root, view, next, targets, proofs)?;
+                let mut base = place.root.proof_place();
                 self.form_relation_subscript(
                     &base,
                     MeasuredKind::Range,
                     None,
+                    CheckedMeasure::Length,
                     &place.offset,
                     &place.obligation,
                     view,
@@ -304,7 +328,14 @@ impl Reasoning<'_, '_, '_> {
         for step in steps {
             match step {
                 CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    base.path.push(PlaceStep::Payload {
+                        variant: *variant,
+                        field: *field,
+                    });
+                }
                 CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
+                CheckedPlaceStep::Measure(measure) => base.path.push(PlaceStep::Measure(*measure)),
                 CheckedPlaceStep::Subscript(subscript) => {
                     // Nominal subscripts are ordinary checked operations;
                     // affine measure terms admit only their tracked offsets.
@@ -313,6 +344,7 @@ impl Reasoning<'_, '_, '_> {
                             &base,
                             measured,
                             type_constant(subscript.base_type),
+                            CheckedMeasure::Length,
                             &subscript.offset,
                             &subscript.obligation,
                             view,
@@ -328,12 +360,82 @@ impl Reasoning<'_, '_, '_> {
         Ok(())
     }
 
+    fn form_relation_range_root(
+        &mut self,
+        root: &super::super::super::model::CheckedRangeRoot,
+        view: &mut ProofFlowState,
+        next: Option<&NextHeader<'_>>,
+        targets: &mut HashMap<TermId, TermId>,
+        proofs: &mut Vec<DerivationId>,
+    ) -> Result<(), Option<LoopFormationFailure>> {
+        let Some(CheckedExpression::BorrowSegment {
+            carrier,
+            root,
+            segment,
+            ..
+        }) = root.formation.as_deref()
+        else {
+            return Ok(());
+        };
+        let base = match root {
+            crate::semantic::CheckedSegmentSource::Storage(root) => {
+                self.form_relation_measure(
+                    &CheckedExpression::ContainerMeasure {
+                        measure: CheckedMeasure::Length,
+                        root: root.clone(),
+                    },
+                    view,
+                    next,
+                    targets,
+                    proofs,
+                )?;
+                root.proof_place()
+            }
+            crate::semantic::CheckedSegmentSource::Element(place) => {
+                self.form_relation_measure(
+                    &CheckedExpression::RangeElementMeasure {
+                        carrier: carrier.clone(),
+                        measure: CheckedMeasure::Length,
+                        place: place.clone(),
+                    },
+                    view,
+                    next,
+                    targets,
+                    proofs,
+                )?;
+                place.proof_place()
+            }
+        };
+        let (index, measured, measure) = match segment {
+            crate::semantic::CheckedSegmentSelect::One(index) => {
+                (index, MeasuredKind::Segments, CheckedMeasure::Length)
+            }
+            crate::semantic::CheckedSegmentSelect::Page(index) => {
+                (index, MeasuredKind::Paged, CheckedMeasure::Pages)
+            }
+            crate::semantic::CheckedSegmentSelect::All(_) => return Ok(()),
+        };
+        self.form_relation_subscript(
+            &base,
+            measured,
+            None,
+            measure,
+            &index.offset,
+            &index.obligation,
+            view,
+            next,
+            targets,
+            proofs,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn form_relation_subscript(
         &mut self,
         base: &ResolvedPlace,
         measured: MeasuredKind,
         length: Option<CheckedConst>,
+        measure: CheckedMeasure,
         offset: &CheckedExpression,
         site: &crate::NodePath,
         view: &mut ProofFlowState,
@@ -341,8 +443,7 @@ impl Reasoning<'_, '_, '_> {
         targets: &mut HashMap<TermId, TermId>,
         proofs: &mut Vec<DerivationId>,
     ) -> Result<(), Option<LoopFormationFailure>> {
-        let source =
-            self.place_measure_term(CheckedMeasure::Length, base.clone(), measured, length);
+        let source = self.place_measure_term(measure, base.clone(), measured, length);
         let term = self.target_measure(source, view, next, targets);
         let mut target_values = view.affine.clone();
         if let Some(next) = next {
@@ -368,20 +469,25 @@ impl Reasoning<'_, '_, '_> {
             proofs.push(proof.derivation.expect("formed subscript has evidence"));
             Ok(())
         } else {
-            let counted_next_binder = next.map(|next| next.binder);
-            let offset = match offset {
-                CheckedExpression::Binding { binding, .. } => self
-                    .input
-                    .render_header_binding(*binding, counted_next_binder),
-                _ => self.input.render_expression(offset),
+            let counted = next.map(|next| BinderSpelling::Next(next.binder));
+            let binding = match offset {
+                CheckedExpression::Binding { binding, .. } => Some(*binding),
+                _ => None,
+            };
+            let rendered = match binding {
+                Some(binding) => self.input.render_header_binding(binding, counted),
+                None => self.input.render_expression(offset),
             };
             let required = format!(
-                "{offset} < {}.len",
-                self.input.render_header_place(base, counted_next_binder)
+                "{rendered} < {}.{}",
+                self.input.render_header_place(base, counted),
+                measure.spelling()
             );
             Err(Some(LoopFormationFailure {
                 site: site.clone(),
                 required,
+                offset: binding,
+                extent: format!("{}.{}", self.input.render_place(base), measure.spelling()),
             }))
         }
     }

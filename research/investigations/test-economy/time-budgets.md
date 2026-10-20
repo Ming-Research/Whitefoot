@@ -259,6 +259,137 @@ refuses a new test that runs its program with `Command::output`, which
 
 ## The gate
 
+### Per-CPU Linux budgets and report-only macOS overruns
+
+The owner ruled on 2026-10-13 that Linux budgets are per CPU model. For each
+stage and model, take the maximum of at least its 20 most recent recorded runs,
+add 10%, and round up to 5 s. The prior 10 s floor remains; it was not part of
+this ruling. It can affect only stages whose measured maximum is below about
+9 s; larger-stage budgets are unchanged by the floor. Models with fewer than
+20 recorded runs have no column. An unmapped model uses the stage's largest
+Linux class value, remains held to it, and is named in the printed and recorded
+note. macOS keeps its reference values but reports overruns without failing the
+verdict. Windows rows retain their existing policy. A stage without a row for its host fails
+on every host; the wrapper still preserves the command's own exit status.
+
+The per-class numbers live in `.github/time-budgets.txt`; the following sample
+records their measurement evidence. Rows outside this sample keep the former
+Linux values in all three CPU columns until per-CPU runs are recorded.
+
+#### Per-CPU sample on 2026-10-13
+
+The supplied extraction covers gate jobs from 197 Linux `gate.yml` runs
+created from 2026-10-13 00:32 to 07:28 UTC. Cancelled runs are excluded;
+over-budget runs are included. Recorded stage counts differ because not
+every job reaches every stage. The tables below
+retain the supplied aggregate data after the scratch TSV inputs are removed.
+
+For each AMD class, every sampled stage has at least 20 observations. Each
+cell is **count / median / maximum / budget**; all times are seconds. The
+budget uses all recorded observations in this sample, with the 10% margin,
+5 s rounding and 10 s floor. The former Linux budget is the table's value
+before this change.
+
+| Stage | Former Linux budget | EPYC 7763 | EPYC 9V74 | EPYC 9V45 |
+|---|---:|---:|---:|---:|
+| `check/corpus` | 335 | 103 / 280.7 / 323.7 / 360 | 34 / 221.6 / 288.3 / 320 | 24 / 181.6 / 197.8 / 220 |
+| `check/runtime` | 30 | 101 / 18.8 / 20.8 / 25 | 40 / 15.4 / 19.8 / 25 | 26 / 12.2 / 13.6 / 15 |
+| `check/static` | 85 | 105 / 53.9 / 71.4 / 80 | 36 / 48.0 / 73.2 / 85 | 26 / 40.2 / 54.7 / 65 |
+| `check/unit` | 325 | 85 / 284.5 / 346.8 / 385 | 46 / 224.8 / 288.7 / 320 | 31 / 186.6 / 201.4 / 225 |
+| `compiler/lint` | 55 | 91 / 29.5 / 46.5 / 55 | 29 / 26.3 / 50.3 / 60 | 23 / 19.3 / 33.3 / 40 |
+| `compiler/test-build-corpus` | 135 | 103 / 98.2 / 119.4 / 135 | 34 / 80.2 / 100.8 / 115 | 25 / 68.0 / 75.7 / 85 |
+| `compiler/test-build-unit` | 175 | 87 / 148.6 / 158.8 / 175 | 46 / 120.3 / 155.5 / 175 | 31 / 104.1 / 115.4 / 130 |
+| `compiler/test-corpus` | 205 | 103 / 182.3 / 210.0 / 235 | 33 / 143.3 / 188.3 / 210 | 23 / 114.2 / 124.3 / 140 |
+| `compiler/test-unit` | 150 | 83 / 136.2 / 194.6 / 215 | 45 / 103.5 / 133.5 / 150 | 30 / 82.5 / 90.4 / 100 |
+| `conformance` | 10 | 91 / 0.7 / 0.7 / 10 | 29 / 0.5 / 1.0 / 10 | 23 / 0.4 / 0.8 / 10 |
+| `design-lint` | 10 | 93 / 1.8 / 2.1 / 10 | 30 / 1.9 / 2.6 / 10 | 23 / 1.4 / 1.7 / 10 |
+| `guidance` | 10 | 96 / 0.2 / 0.2 / 10 | 31 / 0.1 / 0.4 / 10 | 23 / 0.1 / 0.3 / 10 |
+| `performance-instrument` | 10 | 91 / 0.3 / 0.3 / 10 | 29 / 0.3 / 0.6 / 10 | 23 / 0.2 / 0.6 / 10 |
+| `readme-translation` | 10 | 96 / 0.3 / 0.3 / 10 | 31 / 0.3 / 0.6 / 10 | 23 / 0.2 / 0.5 / 10 |
+| `repository-invariants` | 25 | 105 / 20.4 / 20.7 / 25 | 36 / 19.1 / 20.3 / 25 | 26 / 18.0 / 18.3 / 25 |
+| `source-size` | 10 | 96 / 0.5 / 0.6 / 10 | 31 / 0.4 / 0.6 / 10 | 23 / 0.4 / 0.4 / 10 |
+| `spec-archives` | 10 | 96 / 0.7 / 0.8 / 10 | 31 / 0.8 / 1.3 / 10 | 23 / 0.6 / 0.8 / 10 |
+| `spec-prose-integrity` | 10 | 96 / 0.1 / 0.1 / 10 | 31 / 0.1 / 0.1 / 10 | 23 / 0.1 / 0.1 / 10 |
+
+The Intel model names are exactly `INTEL(R) XEON(R) PLATINUM 8573C`,
+`Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz`, and
+`Intel(R) Xeon(R) 6973P-C`. Their per-stage counts are:
+
+| Stage | Xeon 8573C | Xeon 8370C | Xeon 6973P-C |
+|---|---:|---:|---:|
+| `check/corpus` | 13 | 16 | 6 |
+| `check/runtime` | 14 | 7 | 9 |
+| `check/static` | 21 | 6 | 3 |
+| `check/unit` | 19 | 10 | 3 |
+| `compiler/lint` | 19 | 5 | 2 |
+| `compiler/test-build-corpus` | 13 | 16 | 6 |
+| `compiler/test-build-unit` | 19 | 10 | 4 |
+| `compiler/test-corpus` | 12 | 16 | 6 |
+| `compiler/test-unit` | 18 | 9 | 3 |
+| `conformance` | 19 | 5 | 2 |
+| `design-lint` | 19 | 5 | 3 |
+| `guidance` | 19 | 5 | 3 |
+| `performance-instrument` | 19 | 5 | 2 |
+| `readme-translation` | 19 | 5 | 3 |
+| `repository-invariants` | 21 | 6 | 3 |
+| `source-size` | 19 | 5 | 3 |
+| `spec-archives` | 19 | 5 | 3 |
+| `spec-prose-integrity` | 19 | 5 | 3 |
+
+Xeon 8573C has 21 observations for `check/static` and
+`repository-invariants`; its other sampled stages have fewer than 20.
+No Intel model has 20 observations for every sampled stage, so the owner
+kept all three without columns. They use each stage's largest AMD budget,
+with a note naming the CPU model; they remain held to that budget.
+
+This is one morning's sample, not evidence of a long-term
+trend or an attribution of compiler cost. Recompute from at least 20 recent
+per-class stage runs when a budget trips or suite growth changes the work.
+
+#### macOS sample on 2026-10-13
+
+A separate supplied extraction covers 44 completed `gate.yml` runs with
+macOS jobs, created from 2026-10-13T04:34:30Z to 2026-10-13T07:18:50Z. Its
+stage samples come from both `== BUDGET` and `== OVER BUDGET` lines; an
+overrun prints only the latter. The extraction summarizes only stages whose
+recorded budget is at least 60 s. The 90th percentile uses linear
+interpolation; all times and budget references below are seconds.
+
+| Stage | Count | Minimum | Median | 90th percentile | Maximum | Recorded budget references | Exceeded |
+|---|---:|---:|---:|---:|---:|---|---:|
+| `check/corpus` | 44 | 207.7 | 290.2 | 350.8 | 380.9 | 340, 360 | 4 |
+| `check/static` | 44 | 32.5 | 78.2 | 98.2 | 105.4 | 125 | 0 |
+| `check/unit` | 44 | 222.4 | 340.4 | 396.3 | 420.2 | 425 | 0 |
+| `compiler/lint` | 43 | 21.4 | 39.4 | 56.4 | 61.4 | 75 | 0 |
+| `compiler/test-build-corpus` | 44 | 87.6 | 129.3 | 154.0 | 170.6 | 175 | 0 |
+| `compiler/test-build-unit` | 44 | 142.5 | 220.7 | 262.4 | 282.7 | 300 | 0 |
+| `compiler/test-corpus` | 44 | 118.9 | 162.0 | 193.8 | 214.1 | 185, 205 | 5 |
+| `compiler/test-unit` | 44 | 79.4 | 122.4 | 136.4 | 149.8 | 175 | 0 |
+
+Recorded references include both older and newer values where budgets changed
+across these runs. The exceedance counts use the line kind, rather than
+comparing rounded seconds: an `== OVER BUDGET` line counts even when its
+printed time equals its budget after rounding. The supplied extraction has
+one such Linux observation, 140.0 s against 140 s.
+
+Every macOS sample reports `Apple M1 (Virtual)`. The corpus group's maximum
+380.9 s is 1.83 times its minimum 207.7 s; the unit group's maximum 420.2 s
+is 1.89 times its minimum 222.4 s. The sample spans multiple revisions on
+main and work branches, so it does not attribute that spread solely to host
+variation or establish a causal performance change. The intended 80 runs
+over three days were not reached: of 996 completed runs in the three-day
+listing, the extraction fetched the newest 140 logs within its API budget,
+and 44 had macOS jobs. This one morning cannot establish a long-term trend.
+
+This rule supersedes the Linux budget size and fixed 10 s raises, and macOS
+enforcement, in the historical account below. It does not change the diagnosis:
+inspect the change, the slowest cases and the host; fix an attributable cause
+or bring a raise to the owner, and rerun once when attribution is unclear. A
+reported macOS overrun does not hold the revision back. AGENTS.md "Checks" owns the
+current procedure.
+
+### Historical policy and earlier measurements
+
 **Mechanism.** `.github/time-budgets.txt` gives each labeled stage a
 wall-time budget per hosted runner class. `run-check.pl` compares every
 stage's wall time with its budget when the stage ends and never changes the
@@ -333,6 +464,37 @@ judgment reads as runner variance is expected. Slowest runs, in seconds:
 
 Every other stage's slowest run was under 6.6 s, so its budget is the 10-s
 floor.
+
+**The corpus group on macOS, raised by 10 s.** On main at `032a0f665`
+(Whitefoot run 38190993768), with every test passing, the corpus job on
+macos-15 took 365.8 s of `check/corpus`'s 330 s: 177.2 s of
+`compiler/test-build-corpus`'s 165 s and 188.1 s of `compiler/test-corpus`'s
+175 s. Over the 35 most recent corpus jobs on macos-15 the group's median was
+291 s, its 90th percentile 340 s and its longest 365 s, with six above 330 s;
+the same revision varied widely, 338 s and then 244 s on a rerun of #368, so
+the overruns are mostly runner variance with some growth of main. The owner
+approved the rule's raise of 10 s on the status board on 2026-10-12 (card
+coord-devspeed-macos-corpus-budget): `check/corpus` to 340 s,
+`compiler/test-build-corpus` to 175 s and `compiler/test-corpus` to 185 s on
+macOS; ubuntu is unchanged.
+
+**`check/runtime` on macOS, raised to 30 s.** On macOS hosted runners the
+stage overran 20 s five times on changes that touched none of its code:
+23.2 s on Whitefoot#298, 20.5 s on #311, 20.7 s on #312, 27.0 s on #333
+and 21.4 s on #340, whose same compiler code had taken 14.6 s and 12.3 s on
+earlier runs; reruns passed each time. A third overrun is no longer read as
+noise, so the owner approved a raise of 10 s, to 30 s, on the status board
+on 2026-10-10 (item gran-ci-runtime-macos); ubuntu stays at 20 s.
+
+**`linux-asan-ubsan` raised to 20 s.** io-hosts' completion-linux job
+builds and runs the completion runtime under AddressSanitizer and
+UndefinedBehaviorSanitizer. The stage took 9.11 s on main at `a3205af0b`
+and overran its 10-s floor on three PRs: 10.31, 10.31 and 10.0 s on
+Whitefoot#343, which grows `keyed_table.c`; 10.1, 10.3 and 10.8 s on #344
+and 10.5 s on #347, which change no C code, where an earlier commit of #347
+took 9.0 s. The stage runs at its floor on the hosted runners whatever a
+change adds, so the owner approved a raise of 10 s, to 20 s, on the status
+board on 2026-10-11 (item firn-gap-scan-bound).
 
 **`check/runtime` on macOS, raised to 20 s.** The concurrent map's test
 (`compiler/src/backend/concurrent_map_test.c`, three builds) took the stage
@@ -462,21 +624,104 @@ in the workflow's order, the first build took 101.6 s and the second 93.2 s;
 in run 37395370468, with the two build steps swapped, the first took 107.2 s
 and the second 93.2 s. The owner set the budget directly to 130 s on
 2026-10-05, about 10 s over that slowest run, in the same ruling that fixed
-every later raise at 10 s; `performance-baseline-compiler` keeps 105 s, over its slowest run of 97.3 s. Why the first cold build is
+every later raise at 10 s; `performance-baseline-compiler` then kept 105 s, over its slowest run of 97.3 s. Why the first cold build is
 slower was not measured; an untimed warm-up before both builds would remove
 the difference instead of covering it.
 
-**The candidate's images, 20 s.** `performance-candidate-images` builds the
-five formal kernels with the candidate compiler right after the two cold
-compiler builds. On PRs #278 and #289 it overran its 10-s floor on the first
-attempt of five runs out of seven, at 10.6, 11.9, 19.7, 13.5 and 12.3 s, while
-every re-run passed at 2.2 to 5.5 s and the paired comparison passed every
-time; another PR's run took 14.7 s. The baseline's images, built next, took
-1.6 to 2.2 s. The changes on those PRs touch no part of the kernel build that
-could explain a fourfold first-attempt cost. The owner raised the budget to
-20 s on 2026-10-09 on the status board, which covers the largest overrun
-seen; why the first image build after the compiler builds is slow was not
-measured, and an overrun past 20 s would need that cause found.
+**`performance-baseline-compiler` raised to 115 s.** The baseline build
+compiles main's source, which no pull request changes, yet it overran 105 s on
+four branches with different changes, Whitefoot#346, #355, #358 and #359, at
+105.0 to 108.5 s, and every re-run passed. Main's cold build grows with main,
+so the owner approved a raise of 10 s, to 115 s, on the status board on
+2026-10-11 (card coord-budget-baseline-raise).
+
+**`compiler/test-corpus` on ubuntu, raised to 185 s.** The stage's time
+depends on the hosted runner's processor: an AMD EPYC 9V45 host ran it in
+109.6 s (main, run 38214030096), while Intel Xeon Platinum 8370C, AMD EPYC
+7763 and AMD EPYC 9V74 hosts took 170.0 to 178.6 s (main runs 38238443040
+and 38303779039; Whitefoot#394 and #400, the latter a research-only change).
+Main itself kept 2 s of margin, so any change landing on a slow host failed.
+The owner approved a raise of 10 s, to 185 s, with `check/corpus` on ubuntu
+to 315 s, on the status board on 2026-10-12 (card ci-corpus-budget-raise).
+Per-processor budgets would restore the sensitivity this raise gives up.
+
+**`compiler/test-build-unit` on macOS, raised to 300 s.** Four pull requests
+that did not change the Rust test build took 282.7, 290.4, 282.5 and 321.9 s
+against 270 s on 2026-10-12; a 10-s raise would not have covered three of
+them. The owner approved a raise of 30 s, to 300 s, with `check/unit` on
+macOS to 425 s, on the status board on 2026-10-12 (card
+coord-ci-budget-1012), and asked whether macOS speed also depends on the
+host assigned, to lower the budget or split it by host once known.
+
+**`check/runtime` on ubuntu, raised to 30 s.** The same main code ran the
+stage in 12.1 s on an AMD EPYC 9V45 host (run 38303779039), 14.6 s on an
+AMD EPYC 9V74 (run 38306929562) and 19.1 and 19.3 s on AMD EPYC 7763 hosts
+(runs 38310976155 and 38314210000), with only a budget-file change merged
+between the 14.6-s and 19.1-s runs; three pull requests that do not touch
+the runtime, Whitefoot#383 and #399 twice, took 20.6, 20.0 and 20.1 s on
+EPYC 7763 hosts against 20 s on 2026-10-12. The stage is its group's only
+labeled stage. The owner approved a raise of 10 s, to 30 s, on the status
+board on 2026-10-12 (card ci-runtime-budget-raise).
+
+**The corpus stage on macOS, raised to 205 s.** On 2026-10-13 three consecutive
+main merges failed the gate only because `compiler/test-corpus` overran its
+185 s on macos-15, with every case passing: 203.5 s (run 38326724649, a
+research-only change), 196.6 s (run 38331202789) and 192.2 s with
+`check/corpus` at 360.4 s of 340 s (run 38332455808). Over the 58 main runs
+from 2026-10-10 to 2026-10-13 the stage took 110.8 to 203.7 s, mean 146.7 s;
+the four runs over 185 s were spread over three days, the ubuntu stage rose
+and fell with it, the runner images did not change, and the ten slowest
+cases were the same in fast and slow runs, so no change of main explains the
+overruns. The rule's 10-s raise would not have covered 203.5 s, so the owner
+set the budget directly, approving a raise of 20 s, to 205 s, with
+`check/corpus` on macOS to 360 s, on the status board on 2026-10-13 (card
+macos-corpus-budget-raise); ubuntu is unchanged.
+
+**The corpus stage on ubuntu, raised to 205 s.** On 2026-10-13 three pull
+requests failed the gate only because `compiler/test-corpus` overran its
+185 s on ubuntu-24.04, every case passing and each re-run passing: 188.4 s on
+a change to gate workflow messages only (#415), 185.4 s on a change adding
+conformance cases (#406, 144.6 s on the round before) and 185.9 s on a
+backend change adding no corpus case (#417, 183.6 s on the same commit
+earlier). Eleven recent ubuntu runs took 137.3 to 185.9 s, a spread of about
+35% for the same work, matching the macOS finding above that no change of
+main explains the overruns. The owner set the budget directly, approving a
+raise of 20 s, to 205 s, with `check/corpus` on ubuntu to 335 s, on the status
+board on 2026-10-13 (card linux-corpus-budget-raise), so both hosts carry the
+same corpus budget.
+
+**The unit stage on ubuntu, raised to 150 s.** On 2026-10-13 four pull
+requests failed the gate only because `compiler/test-unit` overran its 140 s
+on ubuntu-24.04, every test passing: 140.4 s on a change to the corpus budget
+file only (#422), 142.7 s (#417), 142.9 s (#393) and 145.4 s (#420). Recent
+ubuntu runs of the stage split by host into a fast group (77.4 to 103.5 s) and
+a slow one (131.3 and 132.9 s on main, 133.7 to 136.6 s on branches), and the
+ten slowest cases were the same in both, so the overruns are host variance on
+a stage main already runs within 5% of its budget. The rule's 10-s raise
+covers the slowest run seen; the owner approved it, to 150 s, with
+`check/unit` on ubuntu to 325 s, on the status board on 2026-10-13 (card
+linux-unit-budget-raise).
+
+**The candidate's images, back to 10 s.** `performance-candidate-images`
+builds the five formal kernels with the candidate compiler right after the
+two cold compiler builds. On PRs #278 and #289 it overran its 10-s floor on
+first attempts, at 10.6 to 21.3 s, while every re-run passed at 2.2 to 5.5 s,
+the paired comparison passed every time, and the identical baseline stage
+right after it took about 2 s; the owner raised the budget to 20 s on
+2026-10-09. A temporary workflow (run 37890815236, twelve hosted jobs after
+the same two compiler builds) then timed the image build twice per job after
+three preparations: with none the first build took 4.3 to 28.7 s, after a
+`sync` (itself 0.0 to 0.5 s) 2.8 to 16.6 s, and after a one-file clang
+warm-up (itself 2.7 to 8.8 s) 4.9 to 12.8 s, while the second build took 2.0
+to 3.4 s in every job. The first build's extra cost is therefore neither
+writeback nor clang's start alone; the likeliest reading is the native
+toolchain's first use paging in from a cold disk, an inference the
+experiment does not measure, and it did not find which construction phase
+owns the delay or whether a smaller preparation would suffice. A whole build
+was sufficient in every sampled job, so `compute-regression.yml` builds the
+images once, untimed, before the timed stages; the stage then took 2.7 s in
+run 37892608427, and its budget returns to the 10-s floor (PR #300). The
+first-use cost now falls in the untimed warm-up and no budget covers it.
 
 **The placement control's two stages, 10 s and 45 s.** The code-placement
 change (PR #252) added `performance-shifted-images`, which links the
@@ -518,6 +763,97 @@ does not hold the revision back. AGENTS.md "Checks" states the steps.
 largest gaps between case completions, and `WHITEFOOT_TEST_TIMINGS` records
 the shared helpers' phases per case.
 
+### The map sanitizers
+
+`map-sanitizers.yml` runs the concurrent map's test under AddressSanitizer
+(`map-asan`) and ThreadSanitizer (`map-tsan`) on every push that changes the
+map's runtime or its test. Three runs on Whitefoot#311's branch (37918319834,
+37920968896, 37924587182) took, on ubuntu-24.04 and macos-15:
+
+| Stage | linux runs (s) | macos runs (s) | budget linux | budget macos |
+| --- | --- | --- | ---: | ---: |
+| map-asan | 17.9, 13.5, 21.1 | 13.1, 11.6, 9.1 | 30 | 20 |
+| map-tsan | 25.2, 21.1, 24.9 | 33.7, 23.7, 19.3 | 35 | 45 |
+
+Each budget is 1.25 times the slowest run, rounded up to 5 s.
+
+**`map-tsan` on ubuntu, raised to 45 s.** By 2026-10-11 the linux stage
+took 23 to 39 s across branches, and main's own source overran 35 s. Five
+interleaved dispatched rounds of main and Whitefoot#355's branch, on
+ubuntu-24.04 in the same hour (runs 38177118636 through 38178759524), took
+29.84, 34.75, 36.35, 35.36 and 29.75 s on main, two over budget, and 34.45,
+29.74, 35.56, 23.23 and 34.86 s on the branch, so the overruns were runner
+variance and not that change's cost. The owner approved a raise of 10 s, to
+45 s, on the status board (card gran-map-tsan-budget-raise, option A); macOS
+stays at 45 s.
+
+### macOS runner queue
+
+Every successful `gate.yml` run created between 2026-10-11 12:04Z and
+22:53Z, 58 runs of 4 groups on each platform, read from the Actions API
+(each job's `created_at`, `started_at` and `completed_at`). Twelve Linux
+and nine macOS jobs, re-run attempts, report a start before their creation;
+those waits count as zero:
+
+| Platform | Jobs | Job run, median / max (min) | Slowest job's wait per run, median / mean / max (min) |
+| --- | ---: | --- | --- |
+| ubuntu-24.04 | 232 | 2.4 / 5.6 | 0.2 / 1.8 / 12.0 |
+| macos-15 | 232 | 3.0 / 7.1 | 3.3 / 6.7 / 37.5 |
+
+A run's wall from its first job's creation to its last job's completion had
+a median of 8.4 minutes and a maximum of 43.6.
+
+The wait follows load. By the hour the run was created, the slowest macOS
+job's wait per run (job creation to start, minutes):
+
+| Hour (UTC) | Runs | Median | Max |
+| --- | ---: | ---: | ---: |
+| 12 | 10 | 5.5 | 11.4 |
+| 13 | 4 | 2.3 | 7.0 |
+| 14 | 8 | 3.1 | 5.3 |
+| 15 | 7 | 0.9 | 2.4 |
+| 16–20 | 9 | 0.1–0.2 | 0.2 |
+| 21 | 13 | 13.6 | 37.5 |
+| 22 | 7 | 10.3 | 26.8 |
+
+Measured instead from the run's creation to its slowest macOS job's start,
+which adds the selection job and any later re-run of failed jobs, the median
+is 5.4, the mean 9.6 and the 21Z and 22Z medians 15.9 and 22.4; the
+coordinator's count over 55 of these runs gave a median of 5.1, a mean of 8.7
+and a maximum of 39.7, and its earlier 13.5-minute mean covered the 25 most
+recent runs, all in the busy hours. Several sessions pushed work branches in
+those hours, and every push queued four macOS jobs; the macOS wait, not the
+jobs, made the slow runs. From this, the gate runs macOS only where its
+answer decides a merge (a ready pull request, `main`, a manual run) and checks
+both platforms per revision in a final job
+([decision](../../../design/compiler/verification.md)).
+
+### Gate only where a pull request is open
+
+Read from the Actions API on 2026-10-12: `gate.yml` had 408 runs in the 24
+hours to 11:07Z, at most 41 created in one UTC hour. Its 359 push runs on
+branches other than `main` created between 2026-10-11 11:54Z and 2026-10-12
+11:05Z were compared with each branch's pull requests: 235 were for a branch
+with a pull request open when the run was created (created no later than the
+run and not closed before it), and 124, about a third, for a branch with
+none. Every one of these branches was named `claude/`, so a branch name could
+not have told the two apart. `io-hosts.yml` ran on the same pushes.
+
+From this, a push to a branch without an open pull request runs one deciding
+job and skips every check ([decision](../../../design/compiler/verification.md)).
+Two properties of GitHub, documented rather than measured here, shape the
+rule. GitHub starts no pull request run while the pull request conflicts
+with its base, so pull request events cannot be the only trigger. And a
+session opens its pull request seconds after the first push, while that
+push's run may wait minutes for a runner before it decides; a push run that
+counted every pull request open when it decided would usually check that
+head a second time beside the opening's run. The push run therefore counts
+only pull requests created no later than itself: a run is created after its
+push, so this errs only toward checking a head twice. A conflicting pull
+request opened after its branch's last push gets no run of its own either;
+that head cannot merge until `main` is merged into it, and the push that
+does so is checked.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
@@ -537,7 +873,7 @@ found 9–25 s per incremental rebuild for edits inside existing functions.
 Either way an edit reaches a focused result in well under a minute, and the
 full local gate, warm, in about three.
 
-## Limits and deferred work
+## Historical limits and deferred work
 
 - Budgets are measured on hosted runners; local hosts are not gated.
 - The gate measures cold builds only. A change that slows incremental

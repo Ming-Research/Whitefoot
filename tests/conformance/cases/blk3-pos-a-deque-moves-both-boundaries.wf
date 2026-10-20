@@ -17,8 +17,8 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 7_u8);
   }
   place_front(window: &run, value: 3_u8);
-  let held = run.len;
-  if held == 3_u64 {
+  let observed = run.len;
+  if observed == 3_u64 {
   } else {
     return exit_status(code: 8_u8);
   }

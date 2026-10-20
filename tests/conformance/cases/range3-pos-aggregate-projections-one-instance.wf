@@ -1,0 +1,15 @@
+fn need(targets: &[Array<u8, 257>], expected: u8) -> result: unit pure contract {
+  requires forall last(k in 0_u64..targets^.len): targets^[k][256_u64] == expected;
+} {
+  return unit;
+}
+
+fn forward(value: Array<u8, 257>) -> result: unit pure {
+  let targets = array_filled::<Array<u8, 257>, 1>(value: value);
+  need(targets: &targets[0_u64..1_u64], expected: value[256_u64]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

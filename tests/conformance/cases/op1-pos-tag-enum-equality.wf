@@ -15,13 +15,13 @@ enum TrioEq {
 }
 
 fn empty_compile_only(left: EmptyEq, right: EmptyEq) -> return_value: Bool pure {
-  return eeq(left, right);
+  return left == right;
 }
 
 fn main() -> return_value: ExitStatus pure {
   let one = OneEq::OneOnly();
-  let one_eq = eeq(one, one);
-  let one_ne = ene(one, one);
+  let one_eq = one == one;
+  let one_ne = one != one;
   if one_eq {
   } else {
     return exit_status(code: 1_u8);
@@ -34,8 +34,8 @@ fn main() -> return_value: ExitStatus pure {
   let first = TrioEq::TrioFirst();
   let second = TrioEq::TrioSecond();
   let third = TrioEq::TrioThird();
-  let eq00 = eeq(first, first);
-  let ne00 = ene(first, first);
+  let eq00 = first == first;
+  let ne00 = first != first;
   if eq00 {
   } else {
     return exit_status(code: 3_u8);
@@ -45,8 +45,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 4_u8);
   }
-  let eq01 = eeq(first, second);
-  let ne01 = ene(first, second);
+  let eq01 = first == second;
+  let ne01 = first != second;
   let not_eq01 = bnot(eq01);
   if not_eq01 {
   } else {
@@ -56,8 +56,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 6_u8);
   }
-  let eq02 = eeq(first, third);
-  let ne02 = ene(first, third);
+  let eq02 = first == third;
+  let ne02 = first != third;
   let not_eq02 = bnot(eq02);
   if not_eq02 {
   } else {
@@ -67,8 +67,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 8_u8);
   }
-  let eq10 = eeq(second, first);
-  let ne10 = ene(second, first);
+  let eq10 = second == first;
+  let ne10 = second != first;
   let not_eq10 = bnot(eq10);
   if not_eq10 {
   } else {
@@ -78,8 +78,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 10_u8);
   }
-  let eq11 = eeq(second, second);
-  let ne11 = ene(second, second);
+  let eq11 = second == second;
+  let ne11 = second != second;
   if eq11 {
   } else {
     return exit_status(code: 11_u8);
@@ -89,8 +89,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 12_u8);
   }
-  let eq12 = eeq(second, third);
-  let ne12 = ene(second, third);
+  let eq12 = second == third;
+  let ne12 = second != third;
   let not_eq12 = bnot(eq12);
   if not_eq12 {
   } else {
@@ -100,8 +100,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 14_u8);
   }
-  let eq20 = eeq(third, first);
-  let ne20 = ene(third, first);
+  let eq20 = third == first;
+  let ne20 = third != first;
   let not_eq20 = bnot(eq20);
   if not_eq20 {
   } else {
@@ -111,8 +111,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 16_u8);
   }
-  let eq21 = eeq(third, second);
-  let ne21 = ene(third, second);
+  let eq21 = third == second;
+  let ne21 = third != second;
   let not_eq21 = bnot(eq21);
   if not_eq21 {
   } else {
@@ -122,8 +122,8 @@ fn main() -> return_value: ExitStatus pure {
   } else {
     return exit_status(code: 18_u8);
   }
-  let eq22 = eeq(third, third);
-  let ne22 = ene(third, third);
+  let eq22 = third == third;
+  let ne22 = third != third;
   if eq22 {
   } else {
     return exit_status(code: 19_u8);

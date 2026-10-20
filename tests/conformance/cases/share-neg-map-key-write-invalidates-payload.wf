@@ -10,9 +10,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
     set t^[first] = Some<u8>(value: 5_u8);
     let second = &names[1_u64..2_u64];
     match t^[first] {
-      Some(value: held) => {
+      Some(value: observed) => {
         set t^[second] = Some<u8>(value: 4_u8);
-        set got = held^;
+        set got = observed^;
       }
       None() => {
         set got = 2_u8;

@@ -112,6 +112,7 @@ impl Input<'_, '_> {
                 declaration,
                 projections,
                 ty,
+                ..
             }) if projections.is_empty() => {
                 let value = &self.context.constant(*declaration)?.value;
                 (value.ty() == *ty).then_some(value)
@@ -170,7 +171,7 @@ impl Judging<'_, '_, '_> {
         if outcome.route == Some(ProofRoute::Affine) || outcome.route.is_none() {
             state.affine = prepared;
         } else {
-            self.vocabulary.affine_atoms.truncate(candidate_atom_start);
+            self.vocabulary.discard_atoms_from(candidate_atom_start);
         }
         let discharged = outcome.disposition == ProofDisposition::Proved;
         if let Some(root) = outcome.derivation {
@@ -198,6 +199,7 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
             killed_by: Vec::new(),
+            selected_return: None,
         });
     }
 }

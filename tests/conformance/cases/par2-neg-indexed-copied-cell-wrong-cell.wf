@@ -1,0 +1,17 @@
+fn reduce() -> result: u64 pure {
+  doc "A copied cell must preserve the indexed update contract.";
+  let counts = array_filled::<u64, 4>(value: 5_u64);
+  for (i in 0_u64..8_u64) {
+    let e = i % 2_u64;
+    let old = counts[3_u64];
+    let next = old +wrap 1_u64;
+    set counts[e] = next;
+  }
+  return counts[0_u64] +wrap counts[3_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Sequential source remains accepted while checker tests observe permission.";
+  let observed = reduce();
+  return std::process::exit_status(code: 0_u8);
+}

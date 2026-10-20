@@ -2461,7 +2461,10 @@ fn write_all(files: &HandleFactory, out: &OutputStream, mem: &Box<Array<u8>>, fr
     if at >= to {
       break @writing;
     }
-    match write_once(factory: files, output: out, source: &mem^.inner[0_u64..len], start: at, end: to, deadline: none) {
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = write_once(factory: files, output: out, source: &mem^.inner[0_u64..len], start: at, end: to, deadline: none, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
       Ok(value: next) => {
         if next == at {
           return False();
@@ -2691,6 +2694,72 @@ fn grow_memory(mem: Box<Array<u8>>, delta: u64, max_pages: u64) -> (grown: Box<A
   return move fresh, pages;
 }
 
+fn validate_br_tables(code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>) -> admitted: Result<u64, u64> reads(code), reads(brtab) contract {
+  ensures when Ok(value: validated): forall targets(j in 0_u64..brtab^.inner.len): brtab^.inner[j].t < code^.inner.len;
+  ensures when Ok(value: validated): forall moves(j in 0_u64..brtab^.inner.len) when brtab^.inner[j].k != 0_u32: brtab^.inner[j].s < 65536_u64, brtab^.inner[j].d < 65536_u64;
+  ensures when Ok(value: validated): forall tables(i in 0_u64..code^.inner.len): code^.inner[i].BrTable.start + code^.inner[i].BrTable.count < brtab^.inner.len;
+  ensures when Ok(value: validated): forall no_moves(i in 0_u64..code^.inner.len): code^.inner[i].BrTableN.start + code^.inner[i].BrTableN.count < brtab^.inner.len;
+  ensures when Ok(value: validated): forall acc_tables(i in 0_u64..code^.inner.len): code^.inner[i].BrTableNC.start + code^.inner[i].BrTableNC.count < brtab^.inner.len;
+} {
+  doc "Validates translated branch tables after all targets have been patched. count excludes the default slot, so start plus count must select an existing entry. Invalid targets, table slices and moved frame slots fail the load with reason 25.";
+  for (
+    j in 0_u64..brtab^.inner.len,
+    invariant forall targets_checked(q in 0_u64..j): brtab^.inner[q].t < code^.inner.len,
+    invariant forall moves_checked(q in 0_u64..j) when brtab^.inner[q].k != 0_u32: brtab^.inner[q].s < 65536_u64, brtab^.inner[q].d < 65536_u64
+  ) {
+    let slot = brtab^.inner[j];
+    let target = cvt::<u32, u64>(slot.t);
+    if target >= code^.inner.len {
+      return Err<u64, u64>(error: 25_u64);
+    }
+    if slot.k != 0_u32 {
+      let source = cvt::<u32, u64>(slot.s);
+      let destination = cvt::<u32, u64>(slot.d);
+      if source >= 65536_u64 {
+        return Err<u64, u64>(error: 25_u64);
+      }
+      if destination >= 65536_u64 {
+        return Err<u64, u64>(error: 25_u64);
+      }
+    }
+  }
+  for (
+    i in 0_u64..code^.inner.len,
+    invariant forall tables_checked(q in 0_u64..i): code^.inner[q].BrTable.start + code^.inner[q].BrTable.count < brtab^.inner.len,
+    invariant forall no_moves_checked(q in 0_u64..i): code^.inner[q].BrTableN.start + code^.inner[q].BrTableN.count < brtab^.inner.len,
+    invariant forall acc_tables_checked(q in 0_u64..i): code^.inner[q].BrTableNC.start + code^.inner[q].BrTableNC.count < brtab^.inner.len
+  ) {
+    match code^.inner[i] {
+      BrTable(c: unused, start: startv, count: countv) => {
+        let start = cvt::<u32, u64>(startv^);
+        let count = cvt::<u32, u64>(countv^);
+        let last = start + count;
+        if last >= brtab^.inner.len {
+          return Err<u64, u64>(error: 25_u64);
+        }
+      }
+      BrTableN(c: unused, start: startv, count: countv) => {
+        let start = cvt::<u32, u64>(startv^);
+        let count = cvt::<u32, u64>(countv^);
+        let last = start + count;
+        if last >= brtab^.inner.len {
+          return Err<u64, u64>(error: 25_u64);
+        }
+      }
+      BrTableNC(c: unused, start: startv, count: countv) => {
+        let start = cvt::<u32, u64>(startv^);
+        let count = cvt::<u32, u64>(countv^);
+        let last = start + count;
+        if last >= brtab^.inner.len {
+          return Err<u64, u64>(error: 25_u64);
+        }
+      }
+@@BRTABLE_VALIDATION_OTHER_ARMS@@
+    }
+  }
+  return Ok<u64, u64>(value: 0_u64);
+}
+
 fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory, out: &OutputStream, err: &OutputStream, clock: &Clock) -> status: u8 reads(bytes), reads(args), writes(files), writes(out), writes(err), writes(clock) waits {
   doc "Loads the module, runs _start and serves its WASI calls; the result is the exit code.";
   let origin = now(clock: clock);
@@ -2706,6 +2775,15 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
     let r8 = cvt.wrap::<u64, u8>(info.reason);
     let shown = r8 +wrap 30_u8;
     return shown;
+  }
+  match validate_br_tables(code: &code, brtab: &brtab) {
+    Ok(value: validated) => {
+    }
+    Err(error: reason) => {
+      let r8 = cvt.wrap::<u64, u8>(reason);
+      let shown = r8 +wrap 30_u8;
+      return shown;
+    }
   }
   if info.pages > 16384_u64 {
     return 66_u8;
@@ -2843,7 +2921,7 @@ fn read_module(args: &Args, cwd: &DirectoryRead, files: &HandleFactory, bytes: &
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "wasm-interp <module.wasm> [arguments...]: runs the module's _start under WASI preview 1; the module sees its own path and the arguments after it.";
-  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   let closed_write = std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let bytes = box_array_filled::<u8>(count: 16777216_u64, value: 0_u8);

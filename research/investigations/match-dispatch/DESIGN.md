@@ -253,8 +253,8 @@ registers the values the loop cannot change wait in the frame; a loop that
 still does not fit is emitted whole. The enclosing function computes the
 loop's invariant loads once and passes the handler table's address where a
 register is left. `whitefootc --dispatch-ledger` reports each loop's
-verdict. Derived addresses for loop-carried indices remain in
-`docs/todo.md` under "Interpreter dispatch lowering".
+verdict. Derived addresses for loop-carried indices remain open as status
+board item `coord-wfbl-06-02`.
 
 ## Later stages
 
@@ -320,8 +320,8 @@ Criteria, fixed before the first measurement:
   measured.
 - **Compiler attribution.** A gap that profiles to code the compiler emits
   around a handler (reloads, spills, checks it could have proved) rather
-  than to the interpreter's design goes to `docs/todo.md` as a compiler
-  item with the profile as evidence.
+  than to the interpreter's design goes on the status board as a compiler
+  item in the owning session's area, with the profile as evidence.
 
 ## Stage 3 v1 outcome
 
@@ -1194,6 +1194,125 @@ predecessors that arm reaches:
 - mixed steps take a pointer phi of each predecessor's cursor;
 - arbitrary targets form the cursor from the run.
 
+#### Mixed-join cursor transport: question, comparison and rejection criterion
+
+**Question.** Does carrying the matched element's address through a join
+between a constant-step index and an absolute target remove useful work
+beyond the current constant-step/rebase lowering? The reported static census
+on main identifies 33 mixed sites among 41 rebasing continuing edges out of
+359 in v2h; this is an opportunity count, not a dynamic cost measurement.
+The candidate preserves both the numeric index and its corresponding cursor.
+A constant-step predecessor advances the received cursor, an absolute-target
+predecessor forms its cursor from the stable run, and a pointer phi merges
+them. Equal constant steps through a join retain one step; joins containing
+only arbitrary targets retain run-based rebasing.
+
+**Scope and safety.** Implement this one candidate in dispatch lowering,
+without opcode-specific cases, new acceptance rules or runtime checks.
+Preserve bounds guards, target-domain obligations, stable storage and the
+index/address correspondence. In particular, a loaded target must not cause
+an `inbounds` address to be formed before its bound is established on that
+path. Where a guard follows the scalar join, address transport must preserve
+its dominance over address formation. The selected implementation approach
+distributes a compare-only bounds guard to the incoming paths, preserving
+one execution of the original comparison on each path, and joins the
+pointers only after success. Failure retains the original continuation;
+the former joined guard is removed. Merely omitting `inbounds` is
+insufficient for an arbitrary loaded index: [STOR-6] still requires exact
+target-index and scaled-offset representation. Joins whose guard or failure
+continuation cannot be transported safely keep the existing rebase.
+Unknown steps still rebase; this candidate does not compute `next - old`.
+
+**Comparison.** Generate identical v2h source once from this revision's
+`research/experiments/match-dispatch/wasm/gen.py`. Compile it with main at
+`032a0f665`, the candidate, and an independently built twin of that main.
+Use the same LLVM, optimization settings and CoreMark 2K workload. Also
+compile Halo-wf at `641eb29f48334489ff62af3b3ed71721c2967fb6`
+with all three compilers and full LTO; run `fib` at N = 35 and `loop`.
+This source supplies the current cancellation arguments, watch lifetime,
+canonical float spellings and Boolean equality forms. Its benchmark graph
+and both kernel sources are byte-identical to `acb39ad7f`, used in
+[the previous Halo comparison](../../experiments/match-dispatch/RESULTS.md#the-register-pressure-candidate-and-the-code-cursor-on-halo).
+The interpreter has also evolved, so the comparison qualifies B1 against
+current main on identical current source; its absolute times do not repeat
+the historical measurement. CI must confirm this pinned source's acceptance
+by all three compilers before timing.
+The temporary CI workflow is manually dispatched to keep research inputs
+outside automatic correctness workflows. It first offers a two-round hosted
+smoke run; the measurement is seven interleaved launches in rotated order on
+the 14900K.
+Record correctness, per-round results, medians, spread, paired
+candidate/main and twin/main ratios, and dispatch ledgers. Inspect affected
+address sequences and any added branches or spills before attributing a
+score change to eliminated fall-through rebasing. Hosted results qualify
+the workflow, not the performance claim.
+
+**Prediction and rejection criterion, fixed before measuring.** Mixed-join
+transport should remove fall-through rebasing at recognized mixed sites
+while retaining necessary absolute-target rebasing. Adopt only if v2h
+CoreMark's median score rises at least 2%, neither Halo kernel (`fib`,
+`loop`) becomes more than 2% slower, and the result is distinguishable from
+the twin. Reject or leave inconclusive a result that misses these conditions.
+Incorrect pointer formation, changed acceptance or an added runtime check
+fails regardless of performance. A lower GEP count alone is not adoption
+evidence; extra spills or branches count against the measured result.
+
+**Prior objections.** The
+[per-arm derived-pointer trial](../../experiments/match-dispatch/RESULTS.md#frame-slots-addressed-from-a-derived-pointer)
+cut v2h instructions 3.3% but raised score only 0.9%, below its criterion.
+The [carried-frame prototype](../../experiments/match-dispatch/RESULTS.md#stage-3-the-frame-as-an-address)
+scored 0.994 of its comparator and missed Halo's non-inlined helpers; its
+AArch64 `Copy` reconstructed the stack base. B1 changes join transport,
+not frame-slot consumers, and makes no claim to address either failure.
+Replacing the index with the cursor scored 1.6% below carrying both, so B1
+retains numeric PC, including its trap, outcome and saved-return uses.
+Moving every cursor by `next - old` slowed Halo `loop` 5.7%; B1 preserves
+the [constant-step/rebase rule](../../experiments/match-dispatch/RESULTS.md#edges-by-their-step)
+that removed that regression. Absolute target bounds authorize valid
+address formation, not cheaper relative arithmetic.
+
+**Uncertainties.** The census supplies neither dynamic fall-through
+frequency nor optimized x86 cost. Bounds established after a join constrain
+where address formation may assert validity. The candidate must account for
+the run as a reader wherever a transported alternative rebases. Halo timing
+is a regression control, not evidence that helper-based frame accesses
+receive this mechanism.
+
+**Expected coverage.** The generated v2h source contains 33 mixed sites:
+`BrIf`, `BrUnless`, `BrIfMove`, ten ordinary `BrI32` compares, eighteen
+accumulator `BrI32` compares, and `BrIfC`/`BrUnlessC`. The last bounds guard
+at each site qualifies the selected index before transfer. `BrIfMove` also
+forwards unchanged values through nested joins; recognizing those values by
+their common SSA source preserves its failure path's original PC. The
+candidate ledger must expose the transported count, including zero; 33 is
+the expected coverage to verify in CI, not an observed compiler result.
+
+**Later candidates.** Persistent frame pointers require complete consumer
+rewriting, helper coverage and an explicit usable relation for `enter`'s
+successful frame result; stable length alone does not supply that relation.
+Producer-supplied target addresses require a separate private representation
+and lifetime design; carrying a pointer alone does not remove its first GEP.
+
+**Result on the 14900K.** Whitefoot run 38196645988 (candidate 22071cccd,
+main `032a0f665` and its twin, seven rotated rounds, CoreMark 20000
+iterations, Halo-wf `641eb29f4` with full LTO). The candidate ledger shows
+33 transported mixed joins in v2h, as expected, and 0 in every Halo loop.
+
+| Workload | Candidate/main, paired median (range) | Twin/main, paired median (range) |
+| --- | --- | --- |
+| v2h CoreMark score | 1.0128 (1.0095-1.0154), higher in 7/7 | 1.0011 (0.9979-1.0024) |
+| Halo `fib` time | 1.0008 (0.9952-1.0036) | 1.0033 (0.9940-1.0130) |
+| Halo `loop` time | 0.9998 (0.9965-1.0035) | 1.0013 (0.9984-1.0083) |
+
+The CoreMark gain is consistent and separated from the twin, and neither
+Halo kernel slowed, but 1.3% misses the pre-registered 2% adoption
+threshold, so by that criterion the candidate is not adopted. The owner
+then ruled to keep it as an exception (board card lm-b1-adopt, option B),
+under the standing rule that a change which reads as an ordinary
+optimization, adds little complexity and is not a hack may stay for a small
+stable gain. The threshold above is unchanged as the record of what was
+predicted; the adoption rests on the owner's ruling, not on meeting it.
+
 **B2. Parameters that only travel.** `natural-loop.wf` passes its
 `count0` and the enclosing frame through every arm unread. The fix is
 liveness over real observations, applied to the dispatcher, the arms and
@@ -1631,6 +1750,59 @@ small (few new arms, no clear rise in checking time). Under it `BrTableN`
 (1.013, every pair at or above 1.003, twin equal, 2 arms) is adopted and
 restored. Steps 2 (1.006, pairs below 1.0) and 4 (1.003, a pair at 0.982)
 stay reverted.
+
+The owner replaced that criterion on 2026-10-09 (status board, phase-3
+item): a step is kept when its gain is stable and not noise and it adds no
+complexity or maintenance cost and fits the code's architecture; no fixed
+percentage is required.
+
+**Branch-table bounds proved at load.** `BrTable` and `BrTableN` tested two
+bounds on every jump that wasmi's validated bytecode never tests: the
+selected entry inside the table and the entry's target inside the code.
+`BrTable` also tested its moved slots against the frame. The loader now
+validates, after patching every target, that each entry's target is below
+the code length, that each moving entry's source and destination slots are
+below 65536, and that each `BrTable`, `BrTableN` and `BrTableNC` operation's
+start plus count selects an existing entry (count excludes the default
+slot). A failure rejects the load as wasm validation would. `run` states
+these as quantified requirements over `code` and `brtab`, so the arms read
+the entry and jump with no run-time test. Whitefoot accepted the natural
+statement through `Box<Slots<...>>`, including a relation between one
+container's enum payloads and another container's length, once Whitefoot#354
+kept range facts read through a box across loop heads.
+
+The first version needed two local invariants restating facts the arms
+already have: `pick <= count` after `imin`, and the moved slots' bounds
+before `move_slot`. Without them the checker refused the arm. The checker
+line found both refusals conformant to the specification then active, yet
+a gap in the natural form: the range walk saw `imin`'s result as a fresh
+unknown instead of using its [ENT-3.S7] relation, and it forgets a written
+window's length when a call's length-preserving postcondition names
+`entry(...)`. Specification v0.131 gives the range walk the S7 operation
+relations, so the three `pick <= count` invariants are gone. The moved
+slots' bounds remain until the `entry(...)` postcondition gap closes
+(status board item proof-bl-imin-span-annotation).
+
+Observed on the 14900K, at `9d640d1c3` against `89ddad886`, both generators
+compiled by `89ddad886`'s compiler, with a byte-identical twin of the
+base, 7 interleaved launches:
+
+| CoreMark iterations | candidate / base, median (range) | launches at or above base | twin / base, median (range) | run |
+|---|---|---|---|---|
+| 2000 | 1.0027 (0.9974-1.0080) | 6 of 7 | 1.0000 (0.9974-1.0026) | [38169330587](https://github.com/Ming-Research/Whitefoot/actions/runs/38169330587) |
+| 20000 | 1.0048 (1.0034-1.0085) | 7 of 7 | 1.0013 (0.9995-1.0050) | [38169641172](https://github.com/Ming-Research/Whitefoot/actions/runs/38169641172) |
+
+At 2000 iterations the score moves in steps of about 0.26%, too coarse to
+separate the change from the twin; at 20000 every candidate launch is
+above its base and its smallest ratio exceeds the twin's median. All
+engines report the same final CRC (0x4983 at 2000, 0x382f at 20000). The
+candidate's median score is 0.946 of wasmi's (base 0.940) and 0.801 of
+Silverfir-nano's; wasmi is 0.847 of nano. The `BrTable` arm shrinks from 50
+to 27 instructions and `BrTableN` from 30 to 20; `BrTableNC`'s arm was not
+located by the name-to-arm map in that run, so its code is unverified, and
+CoreMark takes `BrTableN` for 9.15M of its table dispatches. The gain is
+small but stable, and the validation is the interpreter's own, as wasmi's
+is, so the step is kept.
 
 ### Constructor and runtime-boundary audit
 

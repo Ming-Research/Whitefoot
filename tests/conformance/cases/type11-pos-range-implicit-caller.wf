@@ -1,0 +1,17 @@
+struct Zeroes {
+  cells: Array<u64, 1>;
+  invariant(c): forall zero(k in 0_u64..c^.cells.len): c^.cells[k] == 0_u64;
+}
+
+fn need(z: &Zeroes) -> result: unit pure {
+  return unit;
+}
+
+fn forward(z: &Zeroes) -> result: unit pure {
+  need(z: z);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

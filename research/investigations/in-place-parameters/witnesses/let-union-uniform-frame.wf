@@ -1,0 +1,156 @@
+alias LuxExit = std::process::ExitStatus;
+alias lux_exit = std::process::exit_status;
+
+enum LuxValue {
+  LuxNil();
+  LuxNumber(x: u64);
+  LuxHandle(h: u32);
+  LuxOther(k: u32);
+}
+
+struct LuxRow {
+  dest: u64;
+  padding: Array<u64, 16>;
+  comparator: LuxValue;
+}
+
+struct LuxMarker {
+  token: u64;
+}
+
+struct LuxBig {
+  inner: Array<LuxRow, 2>;
+  plan: u64;
+}
+
+fn lux_num(v: LuxValue) -> result: u64 pure {
+  let answer = 0_u64;
+  match v {
+    LuxNil() => {
+    }
+    LuxNumber(x: captured) => {
+      set answer = captured;
+    }
+    LuxHandle(..) => {
+    }
+    LuxOther(..) => {
+    }
+  }
+  return answer;
+}
+
+fn lux_nil(v: LuxValue) -> result: Bool pure {
+  let answer = False();
+  match v {
+    LuxNil() => {
+      set answer = True();
+    }
+    LuxNumber(..) => {
+    }
+    LuxHandle(..) => {
+    }
+    LuxOther(..) => {
+    }
+  }
+  return answer;
+}
+
+fn lux_slow(big: &LuxBig, dest: u64, f: LuxValue, a: LuxValue, b: LuxValue, third: LuxValue, marker: LuxMarker, depth: u64) -> result: u64 writes(big) {
+  let changed = LuxValue::LuxNumber(x: 99_u64);
+  set big^.inner[0_u64].dest = 99_u64;
+  set big^.inner[1_u64].dest = 99_u64;
+  set big^.inner[0_u64].comparator = changed;
+  set big^.inner[1_u64].comparator = changed;
+  if depth > 0_u64 {
+    let next = depth - 1_u64;
+    let left = lux_slow(big: big, dest: dest, f: f, a: a, b: b, third: third, marker: marker, depth: next);
+    let right = lux_slow(big: big, dest: dest, f: f, a: a, b: b, third: third, marker: marker, depth: next);
+    return left +wrap right;
+  }
+  let nf = lux_num(v: f);
+  let na = lux_num(v: a);
+  let nb = lux_num(v: b);
+  let nt = lux_num(v: third);
+  let token = marker.token;
+  let s0 = dest +wrap nf;
+  let s1 = s0 +wrap na;
+  let s2 = s1 +wrap nb;
+  let s3 = s2 +wrap nt;
+  return s3 +wrap token;
+}
+
+fn inplace_let_probe(big: &LuxBig, i: u64, a: LuxValue, b: LuxValue, fast: Bool, token: u64, depth: u64) -> result: u64 writes(big) contract {
+  requires i < 2_u64;
+} {
+  set big^.plan = i;
+  let snapshot = big^.inner[i];
+  let dest = snapshot.dest;
+  let nil = LuxValue::LuxNil();
+  let marker = LuxMarker(token: token);
+  if lux_nil(v: snapshot.comparator) {
+    if fast {
+      let na = lux_num(v: a);
+      let nb = lux_num(v: b);
+      let sum = na +wrap nb;
+      return dest +wrap sum;
+    }
+    let compared = lux_slow(big: big, dest: dest, f: nil, a: a, b: b, third: nil, marker: marker, depth: depth);
+    return compared;
+  }
+  let compared = lux_slow(big: big, dest: dest, f: snapshot.comparator, a: a, b: b, third: nil, marker: marker, depth: depth);
+  return compared;
+}
+
+fn lux_falsifier(big: &LuxBig, i: u64) -> result: u64 writes(big) contract {
+  requires i < 2_u64;
+} {
+  let snapshot = big^.inner[i];
+  let nil = LuxValue::LuxNil();
+  let marker = LuxMarker(token: 0_u64);
+  let discarded = lux_slow(big: big, dest: 0_u64, f: nil, a: nil, b: nil, third: nil, marker: marker, depth: 0_u64);
+  let old_number = lux_num(v: snapshot.comparator);
+  return snapshot.dest +wrap old_number;
+}
+
+fn main() -> status: LuxExit pure {
+  let nil = LuxValue::LuxNil();
+  let eleven = LuxValue::LuxNumber(x: 11_u64);
+  let thirty_one = LuxValue::LuxNumber(x: 31_u64);
+  let padding = array_filled::<u64, 16>(value: 0_u64);
+  let row0 = LuxRow(dest: 0_u64, padding: padding, comparator: nil);
+  let row1 = LuxRow(dest: 0_u64, padding: padding, comparator: eleven);
+  let rows = array_filled::<LuxRow, 2>(value: row0);
+  set rows[1_u64] = row1;
+  let big = LuxBig(inner: rows, plan: 0_u64);
+  let yes = True();
+  let no = False();
+  let fast = inplace_let_probe(big: &big, i: 0_u64, a: eleven, b: thirty_one, fast: yes, token: 0_u64, depth: 1_u64);
+  if fast != 42_u64 {
+    return lux_exit(code: 1_u8);
+  }
+  let callback = inplace_let_probe(big: &big, i: 1_u64, a: nil, b: thirty_one, fast: no, token: 0_u64, depth: 1_u64);
+  if callback != 84_u64 {
+    return lux_exit(code: 2_u8);
+  }
+  if big.inner[1_u64].dest != 99_u64 {
+    return lux_exit(code: 3_u8);
+  }
+  let changed = lux_num(v: big.inner[1_u64].comparator);
+  if changed != 99_u64 {
+    return lux_exit(code: 4_u8);
+  }
+  let fresh = LuxBig(inner: rows, plan: 0_u64);
+  let old = lux_falsifier(big: &fresh, i: 1_u64);
+  if old != 11_u64 {
+    return lux_exit(code: 5_u8);
+  }
+  let nil_big = LuxBig(inner: rows, plan: 0_u64);
+  let slow = inplace_let_probe(big: &nil_big, i: 0_u64, a: eleven, b: thirty_one, fast: no, token: 0_u64, depth: 1_u64);
+  if slow != 84_u64 {
+    return lux_exit(code: 6_u8);
+  }
+  if big.plan != 1_u64 {
+    return lux_exit(code: 7_u8);
+  }
+  return lux_exit(code: 0_u8);
+}

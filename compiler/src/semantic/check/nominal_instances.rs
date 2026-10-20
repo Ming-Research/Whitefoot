@@ -11,7 +11,7 @@ use crate::{
 
 use super::super::model::{
     CheckedConstructor, CheckedElement, CheckedField, CheckedNominal, CheckedNominalKind,
-    CheckedNumericType, CheckedShared, CheckedType, CheckedVariant, NominalId,
+    CheckedNumericType, CheckedShared, CheckedType, CheckedVariant, IntegerType, NominalId,
 };
 use super::generics::GenericSubstitution;
 use super::{
@@ -167,7 +167,8 @@ impl<'unit> Checker<'_, 'unit> {
             self.ensure_source_constructor_instance(check_context, construct, substitution)?;
         }
         self.ensure_implicit_prelude_nominals(check_context, node, substitution, false)?;
-        self.types.reject_recursive_nominal_layouts()
+        self.types.reject_recursive_nominal_layouts()?;
+        self.validate_frozen_instances()
     }
 
     /// Performs the ordinary nominal pre-scan for one function without
@@ -216,7 +217,8 @@ impl<'unit> Checker<'_, 'unit> {
         }
         self.ensure_implicit_prelude_nominals(check_context, function, substitution, true)?;
         self.ensure_result_list_nominal(check_context, function, substitution)?;
-        self.types.reject_recursive_nominal_layouts()
+        self.types.reject_recursive_nominal_layouts()?;
+        self.validate_frozen_instances()
     }
 
     /// Interns the compiler-owned result-list nominal of a `fn_decl` that
@@ -640,6 +642,33 @@ impl<'unit> Checker<'_, 'unit> {
                 .checked_add(1)
                 .ok_or(SemanticCompilerFailure::CounterOverflow)?;
         }
+        self.validate_frozen_instances()?;
+        Ok(())
+    }
+
+    fn validate_frozen_instances(&self) -> Result<(), CheckStop> {
+        for id in &self.types.view.nominals {
+            if let CheckedNominalKind::Box {
+                referent,
+                release: super::super::model::CheckedReleaseClass::Frozen,
+                ..
+            } = self.types.nominal(*id)?.kind
+            {
+                let (template, substitution) = self.types.source_nominal_instances[id.0 as usize]
+                    .as_ref()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let template = &self.types.nominal_templates[*template];
+                let key = template
+                    .generic_parameters
+                    .first()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                    .key();
+                let site = self
+                    .types
+                    .behavior_binding_site(template.node, key, substitution)?;
+                self.types.reject_frozen_part(site, referent)?;
+            }
+        }
         Ok(())
     }
 
@@ -756,16 +785,45 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
-                    if matches!(template.name.as_str(), "Shared" | "ConcurrentHashMap")
+                    if template.name == "DecisionCell"
                         && self
                             .types
                             .declarations
                             .is_prelude_opaque_declaration(template.node)? =>
                 {
+                    CheckedNominalKind::Shared {
+                        state: CheckedType::Integer(IntegerType::U32),
+                        shape: CheckedShared::Object,
+                    }
+                }
+                DeclarationRole::Struct
+                    if template.name == "Frozen"
+                        && self
+                            .types
+                            .declarations
+                            .is_prelude_opaque_declaration(template.node)? =>
+                {
+                    CheckedNominalKind::Box {
+                        referent: substitution
+                            .first_type_argument()
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                        region: None,
+                        release: super::super::model::CheckedReleaseClass::Frozen,
+                    }
+                }
+                DeclarationRole::Struct
+                    if matches!(
+                        template.name.as_str(),
+                        "Shared" | "SharedRead" | "ConcurrentHashMap"
+                    ) && self
+                        .types
+                        .declarations
+                        .is_prelude_opaque_declaration(template.node)? =>
+                {
                     let state = substitution
                         .first_type_argument()
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let shape = if template.name == "Shared" {
+                    let shape = if matches!(template.name.as_str(), "Shared" | "SharedRead") {
                         CheckedShared::Object
                     } else {
                         // A table's entries are the prelude's `Option<V>`.
@@ -781,7 +839,13 @@ impl<'unit> Checker<'_, 'unit> {
                     if self
                         .types
                         .declarations
-                        .is_opaque_declaration(template.node)? =>
+                        .is_opaque_declaration(template.node)?
+                        && self
+                            .types
+                            .declarations
+                            .tree
+                            .children_with(template.node, Production::Field)?
+                            .is_empty() =>
                 {
                     CheckedNominalKind::Opaque
                 }
@@ -1074,7 +1138,11 @@ impl<'unit> Checker<'_, 'unit> {
                     self.substitute_type_regions(check_context, ok, regions)?,
                     self.substitute_type_regions(check_context, error, regions)?,
                 ),
-                PreludeType::Overflow | PreludeType::DivError | PreludeType::NarrowError => prelude,
+                PreludeType::Overflow
+                | PreludeType::DivError
+                | PreludeType::NarrowError
+                | PreludeType::ScanStep
+                | PreludeType::DecisionState => prelude,
             };
             if substituted == prelude {
                 return Ok(CheckedType::Nominal(id));
@@ -1239,7 +1307,7 @@ impl<'unit> Checker<'_, 'unit> {
 
 impl<'unit> DeclarationInventory<'unit> {
     /// Whether `node` is an opaque struct the prelude declares [PRE-1].
-    fn is_prelude_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
+    pub(super) fn is_prelude_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
         let source = self.tree.coordinate(node)?.source();
         Ok(self
             .resolved
@@ -1817,6 +1885,7 @@ impl<'unit> TypeContext<'unit> {
             },
             linear: template.linear,
             nocopy: template.nocopy,
+            type_invariant: false,
         });
         self.nominals_by_declaration
             .entry(template.declaration)
@@ -1899,6 +1968,22 @@ impl<'unit> TypeContext<'unit> {
         &self,
         declaration: crate::DeclarationId,
     ) -> Result<super::repairs::OpaqueStruct, CheckStop> {
+        use super::repairs::OpaqueStruct;
+        let template = self
+            .nominal_templates_by_declaration
+            .get(&declaration)
+            .and_then(|&index| self.nominal_templates.get(index))
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if self.declarations.tree.is_prelude_node(template.node)? {
+            return Ok(match template.name.as_str() {
+                "Frozen" => OpaqueStruct::Frozen,
+                "Shared" => OpaqueStruct::Shared,
+                "SharedRead" => OpaqueStruct::SharedRead,
+                "DecisionCell" => OpaqueStruct::DecisionCell,
+                "ConcurrentHashMap" => OpaqueStruct::ConcurrentHashMap,
+                _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+            });
+        }
         if self
             .declarations
             .declaration_home(declaration)
@@ -1906,11 +1991,6 @@ impl<'unit> TypeContext<'unit> {
         {
             return Ok(super::repairs::OpaqueStruct::Program);
         }
-        let template = self
-            .nominal_templates_by_declaration
-            .get(&declaration)
-            .and_then(|&index| self.nominal_templates.get(index))
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         if !self
             .declarations
             .tree

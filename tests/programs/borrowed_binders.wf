@@ -11,9 +11,9 @@ fn length_of(stored: &Box<Slots<u8>>) -> length: u64 reads(stored) {
   return stored^.inner.len;
 }
 
-fn read_then_pass(held: &Held) -> total: u64 reads(held) {
+fn read_then_pass(observed: &Held) -> total: u64 reads(observed) {
   doc "Reads through a borrowed binder, then passes the binder on: both see the same string.";
-  match held^ {
+  match observed^ {
     Text(bytes: stored) => {
       let direct = stored^.inner.len;
       let passed = length_of(stored: stored);
@@ -26,9 +26,9 @@ fn read_then_pass(held: &Held) -> total: u64 reads(held) {
   }
 }
 
-fn pass_then_replace(held: &Held) -> lengths: u64 writes(held) {
+fn pass_then_replace(observed: &Held) -> lengths: u64 writes(observed) {
   doc "Passes a borrowed binder on, replaces the string through it, then passes it on again: the second call sees the replacement.";
-  match held^ {
+  match observed^ {
     Text(bytes: stored) => {
       let before = length_of(stored: stored);
       let fresh = box_slots_new::<u8>(capacity: 2_u64);
@@ -46,9 +46,9 @@ fn pass_then_replace(held: &Held) -> lengths: u64 writes(held) {
   }
 }
 
-fn first_byte(held: &Held) -> first: u8 reads(held) {
+fn first_byte(observed: &Held) -> first: u8 reads(observed) {
   doc "The first byte of the held string, zero when there is none.";
-  match held^ {
+  match observed^ {
     Text(bytes: stored) => {
       if stored^.inner.len > 0_u64 {
         let first = stored^.inner[0_u64];
@@ -66,16 +66,16 @@ fn main() -> status: ExitStatus pure {
   doc "A borrowed match binder read or written through and then passed to a call passes the field's address: the call sees the field, and a replacement made through the binder reaches the matched value.";
   let bytes = box_slots_new::<u8>(capacity: 1_u64);
   place_back(window: &bytes.inner, value: 7_u8);
-  let held = Held::Text(bytes: move bytes);
-  let total = read_then_pass(held: &held);
+  let observed = Held::Text(bytes: move bytes);
+  let total = read_then_pass(observed: &observed);
   if total != 2_u64 {
     return exit_status(code: 1_u8);
   }
-  let lengths = pass_then_replace(held: &held);
+  let lengths = pass_then_replace(observed: &observed);
   if lengths != 12_u64 {
     return exit_status(code: 2_u8);
   }
-  let first = first_byte(held: &held);
+  let first = first_byte(observed: &observed);
   if first != 9_u8 {
     return exit_status(code: 3_u8);
   }

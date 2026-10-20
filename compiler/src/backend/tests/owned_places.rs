@@ -53,7 +53,8 @@ use super::{compile, compile_and_run, compile_link_and_run};
 
 /// Retain the ordinary emitted call boundaries for a second execution. This
 /// changes only optimization permission, so a passing inlined body cannot hide
-/// a broken aggregate argument or result ABI.
+/// a broken aggregate argument or result ABI. Mandatory-inline dispatch headers
+/// keep their contract; their ordinary enclosing functions and arms are retained.
 pub(super) fn retain_calls(module: &str) -> String {
     let mut retained = 0;
     let result = module
@@ -62,6 +63,7 @@ pub(super) fn retain_calls(module: &str) -> String {
             if line.starts_with("define ")
                 && line.contains(" @wf_")
                 && !line.contains(" @wf__")
+                && !line.split_whitespace().any(|word| word == "alwaysinline")
                 && let Some(header) = line.strip_suffix(" {")
             {
                 retained += 1;
@@ -73,6 +75,20 @@ pub(super) fn retain_calls(module: &str) -> String {
         .collect();
     assert!(retained > 0, "the fixture must retain an emitted function");
     result
+}
+
+#[test]
+fn retained_calls_preserve_mandatory_inline_dispatch_headers() {
+    let module = "define i64 @wf_reader(ptr %input) {\n  ret i64 7\n}\n\
+                  define internal i64 @wf_reader.dispatch(ptr %input) alwaysinline {\n  ret i64 7\n}\n\
+                  define internal i64 @wf_reader.arm.0(ptr %input) {\n  ret i64 7\n}\n";
+    let retained = retain_calls(module);
+    assert_eq!(
+        retained,
+        "define i64 @wf_reader(ptr %input) noinline {\n  ret i64 7\n}\n\
+         define internal i64 @wf_reader.dispatch(ptr %input) alwaysinline {\n  ret i64 7\n}\n\
+         define internal i64 @wf_reader.arm.0(ptr %input) noinline {\n  ret i64 7\n}\n"
+    );
 }
 
 fn assert_success(module: &str) {
@@ -304,8 +320,8 @@ fn loop_owner_sources_cover_later_iterations_and_counted_exhaustion() {
   for (iteration in 0_u64..count) {
     swap(first: &first, second: &second);
   }
-  let held = first.inner;
-  return held;
+  let observed_state = first.inner;
+  return observed_state;
 }
 
 fn once(first: Box<u64>, second: Box<u64>) -> result: u64 pure {
@@ -319,8 +335,8 @@ fn once(first: Box<u64>, second: Box<u64>) -> result: u64 pure {
       break;
     }
   }
-  let held = first.inner;
-  return held;
+  let observed_state = first.inner;
+  return observed_state;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -598,18 +614,18 @@ fn choose(left: Row, right: Row, watch: &u64) -> result: Row reads(watch) {
   return move left;
 }
 
-fn relay(held: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
+fn relay(observed_state: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
   let row = Row(value: offered);
   let fresh = Holder(row: move row);
-  return choose(left: move fresh.row, right: move held, watch: watch);
+  return choose(left: move fresh.row, right: move observed_state, watch: watch);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let watch = 29_u64;
   let first_input = Row(value: 29_u64);
   let second_input = Row(value: 31_u64);
-  let first = relay(held: move first_input, watch: &watch, offered: 11_u64);
-  let second = relay(held: move second_input, watch: &watch, offered: 17_u64);
+  let first = relay(observed_state: move first_input, watch: &watch, offered: 11_u64);
+  let second = relay(observed_state: move second_input, watch: &watch, offered: 17_u64);
   if first.value != 11_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -668,18 +684,18 @@ fn choose(left: Row, right: Row, watch: &u64) -> result: Row reads(watch) {
   return move left;
 }
 
-fn relay(held: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
+fn relay(observed_state: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
   let row = Row(value: offered, b: 1_u64, c: 2_u64, d: 3_u64);
   let fresh = Holder(row: move row);
-  return choose(left: move fresh.row, right: move held, watch: watch);
+  return choose(left: move fresh.row, right: move observed_state, watch: watch);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let watch = 29_u64;
   let first_input = Row(value: 29_u64, b: 4_u64, c: 5_u64, d: 6_u64);
   let second_input = Row(value: 31_u64, b: 7_u64, c: 8_u64, d: 9_u64);
-  let first = relay(held: move first_input, watch: &watch, offered: 11_u64);
-  let second = relay(held: move second_input, watch: &watch, offered: 17_u64);
+  let first = relay(observed_state: move first_input, watch: &watch, offered: 11_u64);
+  let second = relay(observed_state: move second_input, watch: &watch, offered: 17_u64);
   if first.value != 11_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -1341,8 +1357,8 @@ fn choose(left: Cell, right: Cell, flag: Bool) -> result: u64 pure {
     let second = move right;
     give move second;
   }
-  let held = selected.value.inner;
-  return held;
+  let observed_state = selected.value.inner;
+  return observed_state;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1402,7 +1418,7 @@ fn consume(value: Holder) -> result: u8 pure {
   return 0_u8;
 }
 
-fn release(value: Holder, early: Bool) -> result: u8 pure {
+fn finish(value: Holder, early: Bool) -> result: u8 pure {
   touch(value: &value.stamp);
   if value.stamp != 41_u64 {
     return 2_u8;
@@ -1420,7 +1436,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let bytes = box_slots_new::<u8>(capacity: 3_u64);
     let holder = Holder(cell: move cell, bytes: move bytes, stamp: 0_u64);
     let early = round == 0_u64;
-    let status = release(value: move holder, early: early);
+    let status = finish(value: move holder, early: early);
     if status != 0_u8 {
       return std::process::exit_status(code: status);
     }
@@ -1479,8 +1495,8 @@ fn hold_triple() -> result: u8 pure {
   let tail = box_new::<u64>(value: 66_u64);
   let triple = Triple(first: move first, selected: move selected, tail: move tail);
   let retained = move triple.selected;
-  let held = retained.inner;
-  if held != 55_u64 {
+  let observed_state = retained.inner;
+  if observed_state != 55_u64 {
     return 1_u8;
   }
   return 0_u8;
@@ -1598,6 +1614,9 @@ fn allocation_observer_body(limit: usize, refused: &str, observe_u64_payload: bo
 #include <stdlib.h>
 #include <string.h>
 
+/* STOR-1: capacity-zero runtime windows allocate nothing and are never freed. */
+extern const unsigned char wf__empty_window[64];
+
 static void *held[{slots}];
 static size_t requested[{slots}];
 static unsigned attempts;
@@ -1630,6 +1649,7 @@ void *wf_test_allocate(size_t size) {{
 }}
 
 void wf_test_release(void *allocation, uint64_t bytes) {{
+    if (allocation == (const void *)&wf__empty_window) return;
     lock_observer();
     for (unsigned id = 1; id <= attempts && id <= {limit}; ++id) {{
         if (allocation != NULL && held[id] == allocation) {{
@@ -1649,6 +1669,11 @@ void wf_test_release(void *allocation, uint64_t bytes) {{
    A-then-F events the former malloc, copy and free produced, and a refusal of
    the request returns NULL with the old block still held. */
 void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
+    if (allocation == (const void *)&wf__empty_window) {{
+        void *fresh = wf_test_allocate(size);
+        if (fresh != NULL) memcpy(fresh, allocation, (size_t)old_bytes);
+        return fresh;
+    }}
     if (allocation == NULL) return wf_test_allocate(size);
     lock_observer();
     unsigned id = ++attempts;
@@ -1925,8 +1950,8 @@ fn main() -> status: std::process::ExitStatus pure {
   if owner.inner.left != 37_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  let held = &owner.inner.right;
-  write(value: held, fresh: 43_u64);
+  let observed_state = &owner.inner.right;
+  write(value: observed_state, fresh: 43_u64);
   if owner.inner.right != 43_u64 {
     return std::process::exit_status(code: 3_u8);
   }
@@ -1961,8 +1986,8 @@ fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<Slots<u64, 2>>(value: move values);
   let size = owner.inner.len;
   if size > 0_u64 {
-    let held = &owner.inner;
-    let observed = first(values: held);
+    let observed_state = &owner.inner;
+    let observed = first(values: observed_state);
     if observed == 29_u64 {
       return std::process::exit_status(code: 0_u8);
     }
@@ -2108,7 +2133,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 
 #[test]
 fn discarded_struct_results_release_nested_cells_once() {
-    for statement in ["make();", "let held = make();"] {
+    for statement in ["make();", "let observed = make();"] {
         let source = format!(
             r#"struct Inner {{
   value: Box<u64>;
@@ -2202,6 +2227,88 @@ fn main() -> status: std::process::ExitStatus pure {
         // Payload identity is independent of parallel allocation order:
         // release the residual, then the outer cell, then the moved result.
         assert_eq!(released, ["V29", "V43", "V17"], "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
+}
+
+/// A binding unused by source after a match is still live when scope cleanup
+/// owns its release. Dropping only source reads would lose this allocation;
+/// treating an edge transfer as a release would free it twice.
+#[test]
+fn a_cleanup_only_join_parameter_releases_its_owner_exactly_once() {
+    let source = format!(
+        "{}{}",
+        super::payload_enums::SELECT_STEP,
+        r#"
+struct Owner {
+  cell: Box<u64>;
+  first: u64;
+  second: u64;
+  third: u64;
+}
+
+fn release_after_match(n: u64) -> result: u64 pure {
+  let cell = box_new::<u64>(value: n);
+  let owner = Owner(cell: move cell, first: 11_u64, second: 13_u64, third: 17_u64);
+  let step = prepare(n: n);
+  match step {
+    Error() => {
+    }
+    Jump(..) => {
+    }
+    Done(..) => {
+    }
+    Stop() => {
+    }
+    Budget() => {
+    }
+  }
+  return n;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (n in 0_u64..5_u64) {
+    let result = release_after_match(n: n);
+    if result != n {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    );
+    super::system::with_ir(source.as_bytes(), |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "release_after_match")
+            .expect("cleanup function");
+        let cleanup_carries = function
+            .blocks()
+            .iter()
+            .flat_map(|block| {
+                let drops = match block.terminator() {
+                    crate::IrTerminator::Return { drops, .. } => drops.as_slice(),
+                    _ => &[],
+                };
+                block.parameters().iter().filter(move |(parameter, _)| {
+                    drops.iter().any(|drop| drop.operand() == *parameter)
+                })
+            })
+            .count();
+        assert_eq!(
+            cleanup_carries, 1,
+            "the owner reaches its return cleanup through the join"
+        );
+    });
+    for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
+        let module = retain_calls(&super::emit_lowered(source.as_bytes(), overlap))
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
+        let host = allocation_observer(5, 0);
+        let output = compile_link_and_run(&module, Some(&host), &[]);
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+        assert_eq!(output.stdout, b"A1;F1;A2;F2;A3;F3;A4;F4;A5;F5;");
         assert!(output.stderr.is_empty(), "{output:?}");
     }
 }

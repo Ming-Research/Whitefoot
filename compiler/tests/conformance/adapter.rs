@@ -41,15 +41,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use whitefoot::{
     BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
-    HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, ModuleProgramFailure,
-    SourceInput, check, check_module_entry, check_module_program, check_with_cache, compile,
-    compile_module_program, discover_module_sources, entry_verdict, form_module_program_graph,
-    module_verdict,
+    DiagnosticFormat, HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry,
+    ModuleProgramFailure, SourceInput, check, check_module_entry, check_module_program,
+    check_with_cache, compile, compile_module_program, discover_module_sources, entry_verdict,
+    form_module_program_graph, module_verdict,
 };
 
 use crate::support::{PROGRAM_DEADLINE, ProgramChild, append_runtime_objects};
 
-use super::corpus::{self, Arrangement, Case, Expectation, Verdict};
+use super::corpus::{self, Arrangement, Case, Expectation, Span, Verdict};
+use super::json;
 
 static NEXT_INVOCATION: AtomicU64 = AtomicU64::new(0);
 
@@ -136,22 +137,7 @@ fn reach(case: &Case) -> Reached {
         Ok(module) => module,
         Err(failure) => {
             let note = Some(failure.to_string());
-            let verdict = match failure.kind() {
-                // A numbered source rule was violated. The rule the
-                // diagnostic cites is the verdict's whole content; an
-                // uncited stop stays `None` rather than being attributed to
-                // the rule the case happens to declare.
-                CompilationFailureKind::Source => {
-                    Verdict::Reject(failure.rule_id().map(ToOwned::to_owned))
-                }
-                // Valid source needing an unimplemented capability reaches
-                // the same verdict kind, so a `runnable` case fails rather
-                // than passing as though the language had judged it.
-                CompilationFailureKind::Unsupported => Verdict::Unsupported(failure.to_string()),
-                // Everything else is a compiler, resource, or target stop the
-                // corpus does not model. It must never become a verdict.
-                _ => Verdict::Stopped(failure.to_string()),
-            };
+            let verdict = failure_verdict(&failure);
             return Reached { verdict, note };
         }
     };
@@ -174,6 +160,9 @@ fn reach(case: &Case) -> Reached {
 
 /// Links and runs one emitted module under the case's own arrangement.
 fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
+    if let Err(failure) = whitefoot::require_executable_runner(module) {
+        return Verdict::Stopped(failure);
+    }
     let default = Arrangement::default();
     let arrange = arrange.unwrap_or(&default);
     let directory = invocation_directory();
@@ -287,9 +276,7 @@ fn link(module: &str, directory: &Path) -> PathBuf {
     let mut command = Command::new("/usr/bin/clang");
     command.arg("-x").arg("ir").arg(&assembly);
     command.arg("-pthread");
-    let needs_heap = module.contains("@wf__heap_take(")
-        || module.contains("@wf__heap_give(")
-        || module.contains("@wf__heap_retake(");
+    let needs_heap = whitefoot::module_requires_heap_runtime(module);
     let (_sources, objects) =
         append_runtime_objects(&mut command, directory, None, None, needs_heap);
     let linked = command
@@ -313,6 +300,42 @@ fn link(module: &str, directory: &Path) -> PathBuf {
     executable
 }
 
+#[test]
+fn executable_case_without_a_runner_stops_before_linking() {
+    let source = b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n";
+    let module = compile(
+        &[SourceInput::new("entry.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect("a u8 entry is valid library source");
+    let Verdict::Stopped(failure) = execute(&module, None) else {
+        panic!("a library has no executable case runner");
+    };
+    assert_eq!(
+        failure,
+        whitefoot::require_executable_runner(&module).expect_err("no executable runner")
+    );
+    assert!(failure.contains("repair: select a function"), "{failure}");
+}
+
+#[test]
+fn executable_cases_with_unit_and_exit_status_keep_running() {
+    for (source, expected) in [
+        (&b"fn main() -> result: unit pure {\n  return unit;\n}\n"[..], 0),
+        (
+            &b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 7_u8);\n}\n"[..],
+            7,
+        ),
+    ] {
+        let module = compile(
+            &[SourceInput::new("entry.wf", source)],
+            CompilerLimits::default(),
+        )
+        .expect("the executable entry checks");
+        assert_eq!(execute(&module, None), Verdict::Run(expected));
+    }
+}
+
 /// One case's outcome, named as `runner.py` names it.
 ///
 /// x1 retires the readiness axis with the manifest statuses that carried it:
@@ -332,7 +355,7 @@ fn outcome(case: &Case, reached: &Verdict) -> Outcome {
     if matches!(reached, Verdict::Unsupported(_)) && case.expect != Expectation::Unsupported {
         return Outcome::Fail;
     }
-    if case.expect.matched_by(reached) {
+    if case.expect.matched_by(reached) && case.matches_span(reached) {
         Outcome::Pass
     } else {
         Outcome::Fail
@@ -376,10 +399,25 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     assert_eq!(failed, 0, "conformance adapter: {summary}");
 }
 
-/// One failure's corpus verdict, as `reach` reduces it.
+/// One failure's rule and position from the same complete diagnostic record.
+/// Module verdicts retained as text cannot supply byte spans; the manifest
+/// therefore limits span assertions to single-source cases, including caches.
 fn failure_verdict(failure: &CompilationFailure) -> Verdict {
     match failure.kind() {
-        CompilationFailureKind::Source => Verdict::Reject(failure.rule_id().map(ToOwned::to_owned)),
+        CompilationFailureKind::Source => {
+            let rendered = failure.render(DiagnosticFormat::Json);
+            let record = json::parse(&rendered).expect("source diagnostic is valid JSON");
+            let span = record.get("bytes").map(|bytes| {
+                let file = record
+                    .get("at")
+                    .and_then(|at| at.get("file"))
+                    .and_then(json::Value::string)
+                    .expect("a diagnostic byte interval has a source file")
+                    .to_owned();
+                (file, Span::read(bytes).expect("diagnostic byte interval"))
+            });
+            Verdict::Reject(failure.rule_id().map(ToOwned::to_owned), span)
+        }
         CompilationFailureKind::Unsupported => Verdict::Unsupported(failure.to_string()),
         _ => Verdict::Stopped(failure.to_string()),
     }
@@ -443,7 +481,7 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
     verdicts
         .iter()
         .find_map(|verdict| match verdict.outcome() {
-            CheckOutcome::Rejected { rule, .. } => Some(Verdict::Reject(rule.clone())),
+            CheckOutcome::Rejected { rule, .. } => Some(Verdict::Reject(rule.clone(), None)),
             CheckOutcome::Accepted { .. } => None,
         })
         .unwrap_or(Verdict::Accept)
@@ -477,7 +515,7 @@ fn a_shared_proof_receipt_cache_reaches_every_declared_source_verdict() {
         };
         checked += 1;
         let reached = reach_with_receipts(case, &cache);
-        if !expected.matched_by(&reached) {
+        if !expected.matched_by(&reached) || !case.matches_span(&reached) {
             reports.push(format!(
                 "  {} want {expected:?} reached {reached:?}",
                 case.id

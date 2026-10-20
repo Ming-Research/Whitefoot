@@ -155,6 +155,10 @@ fn host_convention() -> (&'static str, usize) {
 }
 
 fn assert_split(module: &str, base: &str, arms: usize) {
+    assert_split_with_table_slots(module, base, arms, arms);
+}
+
+fn assert_split_with_table_slots(module: &str, base: &str, arms: usize, table_slots: usize) {
     let (convention, _) = host_convention();
     let dispatch = definition(module, &format!("{base}.dispatch"));
     assert!(
@@ -166,7 +170,10 @@ fn assert_split(module: &str, base: &str, arms: usize) {
     if word {
         assert!(dispatch.contains("load ptr, ptr "), "{dispatch}");
         assert!(!dispatch.contains("x ptr], ptr "), "{dispatch}");
-        assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
+        assert!(
+            !module.contains(&format!("@{base}.dispatch.table")),
+            "{module}"
+        );
     } else {
         // Keep the original table checks for every unthreaded split.
         let through_parameter = dispatch.contains("x ptr], ptr %wf.dispatch.base");
@@ -175,13 +182,32 @@ fn assert_split(module: &str, base: &str, arms: usize) {
             "the header transfers through the handler table: {dispatch}"
         );
         assert!(!through_parameter || module.contains(&format!("ptr @{base}.dispatch.table")));
-        let table = module.lines()
+        let table = module
+            .lines()
             .find(|line| line.starts_with(&format!("@{base}.dispatch.table = ")))
             .expect("the handler table is emitted");
-        assert!(table.contains(&format!("[{arms} x ptr]"))
-            && (0..arms).all(|arm| table.contains(&format!("ptr @{base}.arm.{arm}"))), "{table}");
+        let entries = table
+            .split_once(&format!("[{table_slots} x ptr] ["))
+            .and_then(|(_, entries)| entries.split_once(']'))
+            .map(|(entries, _)| entries.split(", ").collect::<Vec<_>>())
+            .expect("the handler table has the declared number of tag slots");
+        assert_eq!(entries.len(), table_slots, "{table}");
+        let prefix = format!("ptr @{base}.arm.");
+        let targets = entries
+            .iter()
+            .map(|entry| {
+                entry.strip_prefix(&prefix)
+                    .and_then(|arm| arm.parse::<usize>().ok())
+                    .expect("every tag slot names an arm of this split")
+            })
+            .collect::<Vec<_>>();
+        assert!(targets.iter().all(|arm| *arm < arms)
+            && (0..arms).all(|arm| targets.contains(&arm)), "{table}");
     }
-    assert!(dispatch.contains(&format!("musttail call {convention}")), "{dispatch}");
+    assert!(
+        dispatch.contains(&format!("musttail call {convention}")),
+        "{dispatch}"
+    );
     assert!(!dispatch.contains("switch "), "{dispatch}");
     for arm in 0..arms {
         let arm = definition(module, &format!("{base}.arm.{arm}"));
@@ -247,8 +273,8 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     if !convention.is_empty() {
         // Seven parameters: pc, acc, count, the hoisted code length and
         // box referent (the run), the cell's address and the frame. Jnz's
-        // joined next index is not a known step,
-        // so its edge needs the run to form the next cell's address.
+        // absolute predecessor still needs the run to form its address;
+        // the fall-through predecessor now advances the received cursor.
         assert!(
             verdict.starts_with(
                 "split: the loop over Op into 4 arms, taking 7 integer and 0 floating"
@@ -286,8 +312,69 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     } else {
         assert!(!module.contains("@wf_run.dispatch"), "{module}");
     }
+    // Main rebases Jnz's scalar phi, so the pointer phi and received-cursor
+    // advance asserted here fail on main. Runtime takes 999 absolute jumps,
+    // then the mixed join's fall-through, checking both pointer paths.
+    assert_mixed_cursor_join(&module);
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn split_dispatch_keeps_one_struct_and_passes_its_pointer_to_every_part() {
+    let module = emit(
+        br#"enum Step {
+  Again(left: u64);
+  Done();
+}
+
+fn run(first: Step) -> result: u64 pure {
+  let step = first;
+  loop @steps {
+    match step {
+      Again(left: n) => {
+        let left = n;
+        if left == 0_u64 {
+          return 0_u64;
+        }
+        let next = left -wrap 1_u64;
+        set step = Step::Again(left: next);
+        continue;
+      }
+      Done() => {
+        break @steps;
+      }
+    }
+  }
+  return 1_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first = Step::Again(left: 2_u64);
+  let result = run(first: first);
+  if result == 0_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#,
+    );
+    assert_split(&module, "wf_run", 2);
+    let enclosing = emitted_body(&module, "run");
+    assert_eq!(enclosing.matches("%wf.frame = alloca {").count(), 1);
+    assert_eq!(enclosing.matches(" = alloca ").count(), 1, "{enclosing}");
+    assert!(enclosing.contains(", ptr %wf.frame, i32 0, i32 "));
+    let call = enclosing
+        .lines()
+        .find(|line| line.contains("@wf_run.dispatch("))
+        .expect("the enclosing function calls dispatch");
+    assert!(call.contains("ptr %wf.frame"), "{call}");
+    for symbol in ["wf_run.dispatch", "wf_run.arm.0", "wf_run.arm.1"] {
+        let part = definition(&module, symbol);
+        let signature = part.lines().next().expect("a part signature");
+        assert_eq!(signature.matches("ptr %wf.frame").count(), 1, "{part}");
+        assert!(!part.contains("%wf.frame = alloca"), "{part}");
+    }
 }
 
 #[test]
@@ -313,6 +400,265 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
         );
     } else {
         assert!(!module.contains(&format!("@{base}.dispatch")), "{module}");
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// Read one emitted LLVM block, excluding its following block.
+fn cursor_block<'body>(body: &'body str, label: &str) -> &'body str {
+    let start = body
+        .find(&format!("\n{label}:\n"))
+        .expect("the cursor predecessor exists")
+        + 1;
+    let rest = &body[start..];
+    let mut end = rest.len();
+    let mut offset = rest.lines().next().expect("the block has a label").len() + 1;
+    for line in rest[offset..].lines() {
+        if !line.starts_with(' ') && line.ends_with(':') {
+            end = offset;
+            break;
+        }
+        offset += line.len() + 1;
+    }
+    &rest[..end]
+}
+
+fn assert_transported_joins(module: &str, count: usize) {
+    let entry = format!(
+        "{}wf_run: transports the matched element's address through {count} mixed joins",
+        crate::DISPATCH_LEDGER_PREFIX
+    );
+    assert!(
+        module.lines().any(|line| line == entry),
+        "the ledger reports {count} transported joins: {module}"
+    );
+}
+
+/// The scalar join's bounds test is distributed once per reached path,
+/// before either pointer is formed. The qualified predecessors then join
+/// their pointers; the original scalar guard block contains no second test.
+fn assert_mixed_cursor_join(module: &str) {
+    let (convention, _) = host_convention();
+    let split = verdict(module, "wf_run").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if !split {
+        return;
+    }
+    let arm = definition(module, "wf_run.arm.2");
+    let phis = arm
+        .lines()
+        // Ordinary pointer phis also name cursor predecessor labels on
+        // their right-hand side. Count only cursor definitions.
+        .filter(|line| {
+            line.trim_start().starts_with("%wf.cursor.v") && line.contains(" = phi ptr ")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(phis.len(), 1, "one mixed join transports an address: {arm}");
+    assert_transported_joins(module, 1);
+    let (pointer, inputs) = phis[0]
+        .trim()
+        .split_once(" = phi ptr ")
+        .expect("the cursor phi");
+    let run = cursor_run(module);
+    let mut advancing = 0;
+    let mut rebasing = 0;
+    for input in inputs.split("],") {
+        let (_, predecessor) = input.split_once(", %").expect("the phi predecessor");
+        let label = predecessor.trim().trim_end_matches(']').trim();
+        assert!(
+            label.ends_with(".valid"),
+            "every pointer is formed after the bound: {arm}"
+        );
+        let qualified = cursor_block(arm, label);
+        let source = label
+            .rsplit_once(".from.b")
+            .expect("the source block")
+            .1
+            .trim_end_matches(".valid");
+        let predecessor = cursor_block(arm, &format!("bb{source}"));
+        assert!(
+            predecessor.contains(" = icmp ult i64 ")
+                && predecessor.contains(&format!("label %{label}")),
+            "the original bounds test qualifies this predecessor: {arm}"
+        );
+        assert!(
+            !predecessor.contains(".nonnegative =")
+                && !predecessor.contains(&format!(", ptr {run},")),
+            "no loaded target is addressed or assumed in-domain before its guard: {arm}"
+        );
+        if let Some(step) = qualified
+            .lines()
+            .find(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1"))
+        {
+            advancing += 1;
+            let (_, operands) = step
+                .split_once(", ptr ")
+                .expect("the step's pointer operand");
+            let (received, _) = operands.split_once(',').expect("the step's offset");
+            assert!(
+                received != run
+                    && arm
+                        .lines()
+                        .next()
+                        .expect("the arm's signature")
+                        .contains(&format!("ptr {received}")),
+                "the fall-through advances the received cursor: {qualified}"
+            );
+            assert!(
+                !qualified.contains(&format!(", ptr {run},")),
+                "fall-through never rebases: {qualified}"
+            );
+        } else {
+            rebasing += 1;
+            assert!(
+                qualified
+                    .lines()
+                    .any(|line| line.contains(" = getelementptr inbounds {")
+                        && line.contains(&format!(", ptr {run},"))),
+                "the qualified absolute target rebases: {qualified}"
+            );
+        }
+    }
+    assert_eq!((advancing, rebasing), (1, 1), "{arm}");
+    assert!(
+        arm.lines().any(|line| {
+            line.contains("musttail call ") && line.contains(&format!("ptr {pointer}"))
+        }),
+        "the continuing edge uses the joined pointer: {arm}"
+    );
+    let join_label = arm[..arm.find(phis[0]).expect("the phi is in the arm")]
+        .lines()
+        .rev()
+        .find(|line| line.ends_with(':'))
+        .expect("the join's label")
+        .trim_end_matches(':');
+    assert!(
+        !cursor_block(arm, join_label).contains("icmp ult"),
+        "the guard is moved, never duplicated dynamically: {arm}"
+    );
+}
+
+/// Nested branches forward the unchanged pc through distinct SSA parameters.
+/// The failure continuation reads that pc, so recognizing only literally
+/// identical incoming values would discard this mixed join.
+fn nested_mixed_interpreter() -> String {
+    scalar_interpreter()
+        .replace(
+            "          set next = tv^;",
+            "          if count < 1001_u64 {\n            set next = tv^;\n          }",
+        )
+        .replace("return 0_u64;", "return pc;")
+}
+
+#[test]
+fn nested_forwarding_joins_keep_the_failure_value_and_transport_the_cursor() {
+    let module = emit(nested_mixed_interpreter().as_bytes());
+    assert_mixed_cursor_join(&module);
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_guard_written_bound_above_index_transports_the_cursor() {
+    // `n > next` is `next < n` with its operands swapped: the same test, so
+    // the same join carries the address.
+    let source = scalar_interpreter().replace(
+        "        }\n        if next < n {",
+        "        }\n        if n > next {",
+    );
+    assert!(source.contains("if n > next {"));
+    let module = emit(source.as_bytes());
+    assert_mixed_cursor_join(&module);
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn an_out_of_bounds_mixed_target_reaches_the_original_failure_without_addressing_it() {
+    // A full-width target would poison an inbounds GEP or its nonnegative
+    // assumption before the guard. Keep it on the original safe failure path.
+    for source in [scalar_interpreter(), nested_mixed_interpreter()] {
+        let source = source
+            .replace("Op::Jnz(t: 0_u64)", "Op::Jnz(t: 18446744073709551615_u64)")
+            .replace("return 0_u64;", "return pc;")
+            .replace("r == 3000_u64", "r == 2_u64");
+        assert!(
+            source.contains("Op::Jnz(t: 18446744073709551615_u64)")
+                && source.contains("r == 2_u64")
+        );
+        let module = emit(source.as_bytes());
+        assert_mixed_cursor_join(&module);
+        let output = compile_and_run(&module);
+        assert!(
+            output.status.success(),
+            "the invalid target returns its original pc through the failure aliases: {output:?}"
+        );
+    }
+}
+
+#[test]
+fn two_absolute_join_predecessors_keep_run_based_cursor_formation() {
+    // This control already passes main. Neither incoming value is a known
+    // step, so B1 must not revive the arbitrary index-delta optimization.
+    let source = scalar_interpreter().replace(
+        "let next = pc + 1_u64;\n        if count != 0_u64 {\n          set next = tv^;",
+        "let next = tv^;\n        if count != 0_u64 {\n          set next = 0_u64;",
+    );
+    let module = emit(source.as_bytes());
+    let (convention, _) = host_convention();
+    let split = verdict(&module, "wf_run").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if split {
+        let arm = definition(&module, "wf_run.arm.2");
+        let run = cursor_run(&module);
+        assert_transported_joins(&module, 0);
+        assert!(
+            !arm.contains("%wf.cursor.v"),
+            "all-absolute joins have no cursor phi: {arm}"
+        );
+        assert!(
+            arm.lines()
+                .any(|line| line.contains(" = getelementptr inbounds {")
+                    && line.contains(&format!(", ptr {run},"))),
+            "the continuing edge still rebases: {arm}"
+        );
+        assert!(!arm.contains("sub i64"), "no arbitrary index delta: {arm}");
+    }
+}
+
+#[test]
+fn equal_nonzero_steps_through_a_join_advance_without_a_pointer_phi() {
+    // Distinct additions in the two predecessors carry the same step.
+    // Main only propagates step zero through joins, then rebases this pc+1.
+    // Jnz now falls through to Halt, so the run returns the first Add's 3.
+    let source = scalar_interpreter()
+        .replace(
+            "set next = tv^;",
+            "let same_next = pc + 1_u64;\n          set next = same_next;",
+        )
+        .replace("r == 3000_u64", "r == 3_u64");
+    assert!(source.contains("set next = same_next;") && source.contains("r == 3_u64"));
+    let module = emit(source.as_bytes());
+    let (convention, _) = host_convention();
+    let split = verdict(&module, "wf_run").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if split {
+        let arm = definition(&module, "wf_run.arm.2");
+        let run = cursor_run(&module);
+        assert!(
+            !arm.contains("%wf.cursor.v"),
+            "an equal step needs no pointer phi: {arm}"
+        );
+        assert!(
+            arm.lines()
+                .any(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1")),
+            "the common nonzero step advances the received address: {arm}"
+        );
+        assert!(
+            !arm.contains(&format!(", ptr {run},")),
+            "equal steps never rebase: {arm}"
+        );
     }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
@@ -601,11 +947,7 @@ fn known_steps_leave_the_cursor_s_run_in_the_enclosing_function() {
     );
 }
 
-#[test]
-fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
-    // A tag-only enum of two variants has a one-bit tag, which must index
-    // the table as 0 or 1, never as -1. Ten alternating steps add 25.
-    let source = r#"alias ExitStatus = std::process::ExitStatus;
+const PARITY_TABLE: &str = r#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 enum Parity {
@@ -647,17 +989,63 @@ fn run(steps: u64, first: Parity) -> r: u64 pure {
   }
 }
 
+fn same_parity(left: Parity, right: Parity) -> result: Bool pure {
+  return left == right;
+}
+
+fn different_parity(left: Parity, right: Parity) -> result: Bool pure {
+  return left != right;
+}
+
+fn parity_kind(value: &Parity) -> result: u8 reads(value) {
+  match value^ {
+    Even() => {
+      return 0_u8;
+    }
+    Odd() => {
+      return 1_u8;
+    }
+  }
+}
+
 fn main() -> status: ExitStatus pure {
   let first = Parity::Even();
-  let r = run(steps: 10_u64, first: first);
+  let high = Parity::Odd();
+  let observed = array_filled::<Parity, 2>(value: first);
+  set observed[1_u64] = high;
+  let kind = parity_kind(value: &observed[1_u64]);
+  if kind != 1_u8 {
+    return exit_status(code: 2_u8);
+  }
+  let equal = same_parity(left: observed[1_u64], right: high);
+  let unequal = different_parity(left: observed[0_u64], right: high);
+  if equal {
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  if unequal {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  let r = run(steps: 10_u64, first: high);
   if r == 25_u64 {
     return exit_status(code: 0_u8);
   }
   return exit_status(code: 1_u8);
 }
 "#;
-    let module = emit(source.as_bytes());
+
+#[test]
+fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
+    // A tag-only enum of two variants has a one-bit tag, which must index
+    // the table as 0 or 1, never as -1. Ten alternating steps add 25.
+
+    let module = emit(PARITY_TABLE.as_bytes());
     assert_split(&module, "wf_run", 2);
+    assert!(
+        !module.contains("transports the matched element's address"),
+        "a loop that carries no address reports no mixed joins: {module}"
+    );
     let dispatch = definition(&module, "wf_run.dispatch");
     assert!(
         dispatch.contains("zext i1 "),
@@ -665,6 +1053,101 @@ fn main() -> status: ExitStatus pure {
     );
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
+}
+
+/// Expand the checked two-state fixture in IR, keeping dense declarations and
+/// exhaustive matches. All added variants share Even's existing block, so
+/// dispatch still has two arms rather than thousands of copies of one arm.
+/// This isolates representation from the cost of parsing/checking a large enum.
+fn high_tag_program(high: u32) -> crate::IrProgram {
+    super::system::with_ir(PARITY_TABLE.as_bytes(), |original| {
+        let mut program = original.clone();
+        let id = program.nominals.iter().find(|n| n.name() == "Parity").unwrap().id();
+        let nominal = &mut program.nominals[id.index()];
+        nominal.kind = crate::IrNominalKind::Enum {
+            variants: (0..=high).map(|tag| crate::IrVariant {
+                tag,
+                fields: Vec::new(),
+            }).collect(),
+        };
+        // OP-9 remains four bytes for every tag-only enum with >2 variants.
+        program.nominal_ceilings[id.index()] = crate::IrLayoutCeiling {
+            size: crate::IrLayoutMagnitude::Finite(4),
+            align: 4,
+            stride: crate::IrLayoutMagnitude::Finite(4),
+        };
+        for function in &mut program.functions {
+            for block in &mut function.blocks {
+                for instruction in &mut block.instructions {
+                    if let crate::IrInstruction::Define {
+                        operation: crate::IrOperation::ConstructEnum { nominal, variant, .. },
+                        ..
+                    } = instruction
+                        && *nominal == id
+                    {
+                        *variant = if *variant == 0 { high - 1 } else { high };
+                    }
+                }
+                if let crate::IrTerminator::Match {
+                    enum_type: crate::IrEnumType::Nominal(matched), targets, ..
+                } = &mut block.terminator
+                    && *matched == id
+                {
+                    assert_eq!(targets.len(), 2, "the source has two exhaustive arms");
+                    let even = targets.iter().find(|t| t.tag == 0).unwrap().block;
+                    let odd = targets.iter().find(|t| t.tag == 1).unwrap().block;
+                    *targets = (0..=high).map(|tag| crate::IrMatchTarget {
+                        tag,
+                        block: if tag == high { odd } else { even },
+                    }).collect();
+                }
+            }
+        }
+        program
+    })
+}
+
+#[test]
+fn high_tags_keep_their_bits_through_construction_storage_match_and_dispatch() {
+    for (high, width) in [(128, 8), (32768, 16)] {
+        let program = high_tag_program(high);
+        let mut module = crate::emit_llvm(&program).expect("dense high-tag enums emit");
+        // Direct IR emission has the callable ABI; executable builds add
+        // their selected entry's launcher after emission.
+        module.append(crate::driver::launcher::render(&program, "main")
+            .expect("the high-tag fixture's main has an executable launcher"))
+            .expect("the launcher module appends");
+        let module = module.into_string();
+        let slots = usize::try_from(high).unwrap() + 1;
+        assert_split_with_table_slots(&module, "wf_run", 2, slots);
+        let table = module.lines().find(|line| line.starts_with("@wf_run.dispatch.table = "))
+            .expect("the high-tag handler table is emitted");
+        assert_eq!(table.matches("ptr @wf_run.arm.0").count(), slots - 1, "{table}");
+        assert!(table.contains("ptr @wf_run.arm.1]"), "the highest tag selects Odd: {table}");
+        let dispatch = definition(&module, "wf_run.dispatch");
+        assert!(dispatch.contains(&format!("zext i{width} ")), "{dispatch}");
+        assert!(!dispatch.contains(&format!("sext i{width} ")), "{dispatch}");
+        let main = emitted_body(&module, "main");
+        assert!(main.contains(&format!("or i{width} 0, {high}")), "{main}");
+        assert!(main.contains(&format!("store i{width} ")), "{main}");
+        let kind = emitted_body(&module, "parity_kind");
+        assert!(kind.contains(&format!("load i{width},")), "{kind}");
+        assert!(kind.contains(&format!("switch i{width} ")), "{kind}");
+        assert!(kind.contains(&format!("i{width} {high}, label")), "{kind}");
+        for (name, predicate) in [("same_parity", "eq"), ("different_parity", "ne")] {
+            let body = emitted_body(&module, name);
+            assert!(body.contains(&format!("icmp {predicate} i{width} ")), "{body}");
+        }
+        // Only the 129-variant module is sent to clang. The 32769-variant
+        // module has emission assertions, avoiding a large native build while
+        // detecting truncation and signed table indexing at the i16 boundary.
+        if high == 128 {
+            assert!(definition(&module, "wf__main_body").contains("wf_main"),
+                "the executable launcher invokes the mutated fixture's main");
+            let output = compile_and_run(&module);
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+        }
+    }
 }
 
 /// A two-arm loop over thirty `u64` values. With `changing`, every arm adds
@@ -983,9 +1466,16 @@ fn some_part_reloads_a_box(module: &str, base: &str, arms: usize) -> bool {
                 .split_once(" = load ptr, ptr %wf.slot.")
                 .map(|(name, _)| name)
         });
-        parameters
-            .chain(spilled)
-            .any(|name| part.contains(&format!("load ptr, ptr {name}\n")))
+        parameters.chain(spilled).any(|name| {
+            let load = format!("load ptr, ptr {name}");
+            part.lines().any(|line| {
+                line.trim()
+                    .split_once(" = ")
+                    .is_some_and(|(_, instruction)| {
+                        instruction.split(", !tbaa !").next() == Some(load.as_str())
+                    })
+            })
+        })
     })
 }
 
@@ -1416,16 +1906,16 @@ fn continue_edges_to_a_header_match_split_into_handlers() {
     }
 }
 
-/// A 12-byte union inside a 28-byte product ceiling: one word makes 20,
-/// two words make 28, three cannot fit. Tags deliberately differ from arm
+/// An 8-byte union inside an unchanged 28-byte product ceiling: one word
+/// makes 16, two words make 24, three cannot fit. Tags deliberately differ from arm
 /// order. Copying Add, then replacing that copy with Sub must compute 18.
 const HANDLER_CELLS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 enum Cell {
-  Halt(value: u32, extra: u8);
-  Add(value: u32, extra: u8);
-  Sub(value: u32, extra: u8);
+  Halt(first: u8, second: u8, extra: u8, value: u32);
+  Add(first: u8, second: u8, extra: u8, value: u32);
+  Sub(first: u8, second: u8, extra: u8, value: u32);
 }
 
 fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
@@ -1438,7 +1928,7 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
     invariant bound: pc < n
   ) {
     match code^.inner[pc] {
-      Add(value: v, extra: e) => {
+      Add(extra: e, value: v, ..) => {
         let extra = cvt::<u8, u32>(e^);
         let amount = v^ +wrap extra;
         set acc = acc +wrap amount;
@@ -1449,7 +1939,7 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
         }
         return 0_u32;
       }
-      Sub(value: v, extra: e) => {
+      Sub(extra: e, value: v, ..) => {
         let extra = cvt::<u8, u32>(e^);
         let amount = v^ +wrap extra;
         set acc = acc -wrap amount;
@@ -1460,7 +1950,7 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
         }
         return 0_u32;
       }
-      Halt(value: v, extra: e) => {
+      Halt(extra: e, value: v, ..) => {
         let extra = cvt::<u8, u32>(e^);
         let amount = v^ +wrap extra;
         return acc +wrap amount;
@@ -1470,22 +1960,44 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
 }
 
 fn make_add() -> result: Cell pure {
-  return Cell::Add(value: 7_u32, extra: 2_u8);
+  return Cell::Add(first: 131_u8, second: 197_u8, extra: 2_u8, value: 7_u32);
 }
 
 fn copy_cell(cell: &Cell) -> result: Cell reads(cell) {
   return cell^;
 }
 
+fn copy_cell_into(cell: &Cell, target: &Cell) -> result: unit reads(cell), writes(target) {
+  set target^ = cell^;
+  return unit;
+}
+
+fn make_cell_into(target: &Cell) -> result: u32 writes(target) {
+  let value = Cell::Add(first: 131_u8, second: 197_u8, extra: 2_u8, value: 7_u32);
+  set target^ = value;
+  match value {
+    Add(extra: e, value: v, ..) => {
+      let extra = cvt::<u8, u32>(e);
+      return v +wrap extra;
+    }
+    Halt(..) => {
+      return 0_u32;
+    }
+    Sub(..) => {
+      return 0_u32;
+    }
+  }
+}
+
 fn tag(cell: &Cell) -> result: u32 reads(cell) {
   match cell^ {
-    Add(value: v, extra: e) => {
+    Add(extra: e, value: v, ..) => {
       return 1_u32;
     }
-    Sub(value: v, extra: e) => {
+    Sub(extra: e, value: v, ..) => {
       return 2_u32;
     }
-    Halt(value: v, extra: e) => {
+    Halt(extra: e, value: v, ..) => {
       return 3_u32;
     }
   }
@@ -1502,12 +2014,34 @@ fn main() -> status: ExitStatus pure {
   let code = box_slots_new::<Cell>(capacity: 3_u64);
   let first = make_add();
   let copied = copy_cell(cell: &first);
-  push(code: &code, cell: copied);
+  let internal_copy = Cell::Halt(first: 0_u8, second: 0_u8, extra: 0_u8, value: 0_u32);
+  let made = make_cell_into(target: &internal_copy);
+  if made != 9_u32 {
+    return exit_status(code: 3_u8);
+  }
+  match internal_copy {
+    Add(extra: e, value: v, ..) => {
+      if v != 7_u32 {
+        return exit_status(code: 4_u8);
+      }
+      if e != 2_u8 {
+        return exit_status(code: 4_u8);
+      }
+    }
+    Halt(..) => {
+      return exit_status(code: 4_u8);
+    }
+    Sub(..) => {
+      return exit_status(code: 4_u8);
+    }
+  }
+  copy_cell_into(cell: &copied, target: &internal_copy);
+  push(code: &code, cell: internal_copy);
   push(code: &code, cell: first);
-  let third = Cell::Halt(value: 10_u32, extra: 3_u8);
+  let third = Cell::Halt(first: 131_u8, second: 197_u8, extra: 3_u8, value: 10_u32);
   push(code: &code, cell: third);
   if code.inner.len == 3_u64 {
-    let replacement = Cell::Sub(value: 3_u32, extra: 1_u8);
+    let replacement = Cell::Sub(first: 131_u8, second: 197_u8, extra: 1_u8, value: 3_u32);
     set code.inner[1_u64] = replacement;
     let kind = tag(cell: &code.inner[1_u64]);
     let result = run(code: &code);
@@ -1526,21 +2060,59 @@ fn main() -> status: ExitStatus pure {
 /// to the indirect call. A tag/table implementation cannot satisfy this.
 fn assert_handler_load(module: &str, base: &str, offset: u64, align: u64) {
     let dispatch = definition(module, &format!("{base}.dispatch"));
-    let (slot, place) = dispatch.lines().find_map(|line| {
-        let (slot, gep) = line.trim().split_once(" = getelementptr inbounds i8, ptr ")?;
-        let place = gep.strip_suffix(&format!(", i64 {offset}"))?;
-        Some((slot, place))
-    }).expect("the handler word is addressed in the received element");
-    let handler = dispatch.lines().find_map(|line| {
-        line.trim().strip_suffix(&format!(" = load ptr, ptr {slot}, align {align}"))
-    }).expect("the target is loaded with the word's alignment");
-    assert!(dispatch.lines().next().unwrap().contains(&format!("ptr {place}")), "{dispatch}");
-    assert!(dispatch.lines().any(|line| line.contains("musttail call ")
-        && line.contains(&format!(" {handler}("))), "{dispatch}");
-    assert!(!dispatch.contains("load i32"), "{dispatch}");
+    // Copies also address the word at this offset, but their loads use align 1.
+    // Trace the actual call target backwards instead of taking the first GEP.
+    let handler = dispatch
+        .lines()
+        .find_map(|line| {
+            let (_, call) = line.split_once("musttail call ")?;
+            let (target, _) = call.split_once('(')?;
+            target.split_whitespace().next_back()
+        })
+        .expect("the dispatcher tail-calls its handler");
+    assert!(handler.starts_with('%'), "{dispatch}");
+    let slot = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&format!("{handler} = load ptr, ptr "))?
+                .strip_suffix(&format!(", align {align}"))
+        })
+        .expect("the called target is loaded with the word's alignment");
+    let place = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&format!("{slot} = getelementptr inbounds i8, ptr "))?
+                .strip_suffix(&format!(", i64 {offset}"))
+        })
+        .expect("the called handler word is addressed in the received element");
+    assert!(
+        dispatch
+            .lines()
+            .next()
+            .unwrap()
+            .contains(&format!("ptr {place}")),
+        "{dispatch}"
+    );
+    assert!(
+        dispatch
+            .lines()
+            .any(|line| line.contains("musttail call ") && line.contains(&format!(" {handler}("))),
+        "{dispatch}"
+    );
+    // A bounded copy may load the tag; dispatch must still
+    // use the received element's pointer word, never a tag switch or table.
+    assert!(!dispatch.contains("switch "), "{dispatch}");
     assert!(!dispatch.contains("x ptr]"), "{dispatch}");
-    assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
-    assert!(module.contains(&format!("{base}: dispatches through the handler word")), "{module}");
+    assert!(
+        !module.contains(&format!("@{base}.dispatch.table")),
+        "{module}"
+    );
+    assert!(
+        module.contains(&format!("{base}: dispatches through the handler word")),
+        "{module}"
+    );
 }
 
 #[test]
@@ -1550,32 +2122,107 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
         let prepared = crate::backend::emitter::prepare_dispatch_layout(program, target, false)
             .expect("composition plan");
         let selected = &prepared.program;
-        let cell = selected.nominals().iter().find(|n| n.name() == "Cell").unwrap();
+        let cell = selected
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Cell")
+            .unwrap();
         let layout = crate::target::union_enum_layout(target, selected, cell.id()).unwrap();
         assert_eq!((layout.size(), layout.handler_offset(), layout.handler_alignment()),
-            (20, Some(12), Some(4)));
+            (16, Some(8), Some(4)));
+        // The same shape with exactly two payload variants has OP-9 ceiling
+        // 20 rather than 28, and still admits one word in a 16-byte value.
+        // This is a layout-only nominal probe; no altered function is emitted.
+        let mut halo_two = selected.clone().into_owned();
+        if let crate::IrNominalKind::Enum { variants } = &mut halo_two.nominals[cell.id().index()].kind {
+            variants.truncate(2);
+        }
+        halo_two.nominal_ceilings[cell.id().index()] = crate::IrLayoutCeiling {
+            size: crate::IrLayoutMagnitude::Finite(20), align: 4,
+            stride: crate::IrLayoutMagnitude::Finite(20),
+        };
+        let two = crate::target::union_enum_layout(target, &halo_two, cell.id()).unwrap();
+        assert_eq!((two.size(), two.handler_offset(), two.handler_alignment()),
+            (16, Some(8), Some(4)));
+        assert!(crate::target::threaded_enum_fits(target, &halo_two, cell.id()).unwrap());
         (format!("wf.t.{}", cell.link_name()), super::payload_enums::enum_layout_probes(selected))
     });
     let module = emit(HANDLER_CELLS);
-    assert_handler_load(&module, "wf_run", 12, 4);
+    assert_handler_load(&module, "wf_run", 8, 4);
     let made = emitted_body(&module, "make_add");
-    assert!(made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"), "{made}");
+    assert!(
+        made.contains("store ptr @wf_run.arm.0,") && made.contains(", align 4"),
+        "{made}"
+    );
+    let fields = [(0, "i8"), (1, "i8"), (2, "i8"), (3, "i8"), (4, "i32"), (8, "ptr")];
+    // Incoming and local copies preserve every typed interval and handler word.
     let copied = emitted_body(&module, "copy_cell");
-    assert!(copied.contains("call void @llvm.memmove.")
-        && copied.contains(&format!("getelementptr (%{ty}, ptr null, i32 1)")), "{copied}");
+    super::layout_transfers::assert_typed_transfer(copied, &fields);
+    assert_eq!(
+        super::layout_transfers::transfer_region(copied).2,
+        "%wf.result",
+        "{copied}"
+    );
+    assert_eq!(
+        copied.matches("  ; layout-bounded transfer from ").count(),
+        1,
+        "{copied}"
+    );
+    assert!(
+        !copied.contains("@llvm.memmove.") && !copied.contains("@llvm.memcpy."),
+        "{copied}"
+    );
+    let copied_into = emitted_body(&module, "copy_cell_into");
+    // Store is an ineligible read-through observation of this Load snapshot,
+    // so retain the complete private capture followed by its complete write.
+    let copies: Vec<_> = copied_into
+        .match_indices("  ; layout-bounded transfer from ")
+        .map(|(start, _)| &copied_into[start..])
+        .collect();
+    assert_eq!(copies.len(), 2, "{copied_into}");
+    let (_, source, captured) = super::layout_transfers::transfer_region(copies[0]);
+    assert_eq!(source, "%v0", "capture the received Cell: {copied_into}");
+    assert!(
+        captured.starts_with("%wf.slot.")
+            && copied_into.lines().any(|line| {
+                line.trim()
+                    .starts_with(&format!("{captured} = alloca %{ty}, align "))
+            }),
+        "the captured Cell has private complete storage: {copied_into}"
+    );
+    let (_, stored_source, destination) = super::layout_transfers::transfer_region(copies[1]);
+    assert_eq!(
+        (stored_source, destination),
+        (captured, "%v1"),
+        "write the same snapshot: {copied_into}"
+    );
+    for copy in copies {
+        super::layout_transfers::assert_typed_transfer(copy, &fields);
+    }
+    assert!(
+        !copied_into.contains("@llvm.memmove.") && !copied_into.contains("@llvm.memcpy."),
+        "{copied_into}"
+    );
+    super::layout_transfers::assert_typed_transfer(
+        emitted_body(&module, "make_cell_into"),
+        &fields,
+    );
     let main = emitted_body(&module, "main");
-    assert!(main.contains("store ptr @wf_run.arm.1,") && main.contains("store ptr @wf_run.arm.2,"), "{main}");
+    assert!(
+        main.contains("store ptr @wf_run.arm.1,") && main.contains("store ptr @wf_run.arm.2,"),
+        "{main}"
+    );
     let tag = emitted_body(&module, "tag");
-    assert!(tag.contains("load i32") && tag.contains("switch i32"), "{tag}");
+    assert!(tag.contains("load i8") && tag.contains("switch i8"), "{tag}");
     assert!(!tag.contains("load ptr"), "an ordinary match reads only the tag: {tag}");
     assert!(module.contains(&format!(
-        "%{ty} = type {{ i32, [8 x i8], [8 x i8], [0 x i8], [0 x %{ty}.v0] }}"
+        "%{ty} = type {{ i8, [7 x i8], [8 x i8], [0 x i8], [0 x %{ty}.v0] }}"
     )), "{module}");
     // Fixed layout constants plus LLVM DataLayout and the program's result
     // distinguish a coherent wrong layout from the approved representation.
-    probes.insert(ty.clone(), (20, 4));
+    probes.insert(ty.clone(), (16, 4));
     for tag in 0..3 {
-        probes.insert(format!("{ty}.v{tag}"), (12, 4));
+        probes.insert(format!("{ty}.v{tag}"), (8, 4));
     }
     super::payload_enums::assert_llvm_layouts(&module, probes);
 }
@@ -1584,30 +2231,62 @@ fn handler_words_preserve_copies_replacements_tags_and_four_byte_alignment() {
 fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
     super::system::with_ir(HANDLER_CELLS, |program| {
         let target = crate::target::TargetLayout::host().unwrap();
-        let owner = program.functions().iter().position(|f| f.name() == "run").unwrap();
-        let cell = program.nominals().iter().find(|n| n.name() == "Cell").unwrap().id();
+        let owner = program
+            .functions()
+            .iter()
+            .position(|f| f.name() == "run")
+            .unwrap();
+        let cell = program
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Cell")
+            .unwrap()
+            .id();
         let mut two = program.clone();
         let mut other = two.functions[owner].clone();
         other.name = "other_run".to_owned();
         two.functions.push(other.clone());
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&two, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&two, target, false).unwrap();
         let layout = crate::target::union_enum_layout(target, &prepared.program, cell).unwrap();
-        assert_eq!((layout.size(), layout.handler_offset()), (28, Some(12)));
+        assert_eq!((layout.size(), layout.handler_offset()), (24, Some(8)));
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
-        assert_handler_load(&module, "wf_run", 12, 4);
-        assert_handler_load(&module, "wf_other_run", 20, 4);
+        assert_handler_load(&module, "wf_run", 8, 4);
+        assert_handler_load(&module, "wf_other_run", 16, 4);
+        // The public result and the private target both carry both handler words.
+        for name in ["copy_cell", "copy_cell_into"] {
+            super::layout_transfers::assert_typed_transfer(
+                emitted_body(&module, name),
+                &[
+                    (0, "i8"),
+                    (1, "i8"),
+                    (2, "i8"),
+                    (3, "i8"),
+                    (4, "i32"),
+                    (8, "ptr"),
+                    (16, "ptr"),
+                ],
+            );
+        }
         let made = emitted_body(&module, "make_add");
-        assert!(made.contains("store ptr @wf_run.arm.0,")
-            && made.contains("store ptr @wf_other_run.arm.0,"), "{made}");
+        assert!(
+            made.contains("store ptr @wf_run.arm.0,")
+                && made.contains("store ptr @wf_other_run.arm.0,"),
+            "{made}"
+        );
         let mut three = two;
         other.name = "third_run".to_owned();
         three.functions.push(other);
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
         assert_eq!(prepared.program.nominal(cell).unwrap().handler_words, 0);
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
         for base in ["wf_run", "wf_other_run", "wf_third_run"] {
             assert_split(&module, base, 3);
-            assert!(module.contains(&format!("@{base}.dispatch.table = ")), "{module}");
+            assert!(
+                module.contains(&format!("@{base}.dispatch.table = ")),
+                "{module}"
+            );
         }
         assert!(!module.contains("store ptr @wf_run.arm."), "{module}");
     });
@@ -1617,21 +2296,35 @@ fn each_dispatch_family_gets_a_word_only_when_all_families_fit() {
 fn unsplit_and_native_owners_leave_enums_unthreaded() {
     super::system::with_ir(HANDLER_CELLS, |program| {
         let target = crate::target::TargetLayout::host().unwrap();
-        let owner = program.functions().iter().position(|f| f.name() == "run").unwrap();
-        let cell = program.nominals().iter().find(|n| n.name() == "Cell").unwrap().id();
+        let owner = program
+            .functions()
+            .iter()
+            .position(|f| f.name() == "run")
+            .unwrap();
+        let cell = program
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Cell")
+            .unwrap()
+            .id();
         let mut unsplit = program.clone();
         unsplit.functions[owner].synthesis = Some(crate::IrSynthesis::Chunk);
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&unsplit, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&unsplit, target, false).unwrap();
         assert_eq!(prepared.program.nominal(cell).unwrap().handler_words, 0);
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
-        assert!(verdict(&module, "wf_run").contains("compiler-synthesized"), "{module}");
+        assert!(
+            verdict(&module, "wf_run").contains("compiler-synthesized"),
+            "{module}"
+        );
         assert!(!module.contains("store ptr @wf_run.arm."), "{module}");
         let mut foreign = program.clone();
         let mut native = foreign.functions[owner].clone();
         native.name = "native_run".to_owned();
         native.blocks.clear();
         foreign.functions.push(native);
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&foreign, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&foreign, target, false).unwrap();
         assert_eq!(prepared.program.nominal(cell).unwrap().handler_words, 0);
     });
 }
@@ -1639,9 +2332,21 @@ fn unsplit_and_native_owners_leave_enums_unthreaded() {
 #[test]
 fn handler_words_use_body_symbols_and_fragment_mode_keeps_tables() {
     let source = enum_interpreter();
-    let inputs = [crate::SourceInput::new("handler-bodies.wf", source.as_bytes())];
-    let compile = |fragments| crate::compile_for_emission(&inputs,
-        crate::CompilerLimits::default(), crate::OverlapLowering::Off, None, fragments).unwrap().0;
+    let inputs = [crate::SourceInput::new(
+        "handler-bodies.wf",
+        source.as_bytes(),
+    )];
+    let compile = |fragments| {
+        crate::compile_for_emission(
+            &inputs,
+            crate::CompilerLimits::default(),
+            crate::OverlapLowering::Off,
+            None,
+            fragments,
+        )
+        .unwrap()
+        .0
+    };
     let whole = compile(false);
     let fragments = compile(true);
     // The destination wrapper is for Outcome; Op's selected representation
@@ -1660,7 +2365,10 @@ fn handler_words_use_body_symbols_and_fragment_mode_keeps_tables() {
     if verdict(&fragments, "wf_run.body").starts_with("split") {
         assert_split(&fragments, "wf_run.body", 4);
     }
-    for granularity in [crate::FragmentGranularity::Function, crate::FragmentGranularity::Module] {
+    for granularity in [
+        crate::FragmentGranularity::Function,
+        crate::FragmentGranularity::Module,
+    ] {
         crate::split_module(&fragments, granularity).expect("ordinary layouts remain splittable");
     }
 }
@@ -1702,27 +2410,45 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     super::system::with_ir(source, |program| {
         let target = crate::target::TargetLayout::host().unwrap();
-        let outer = program.nominals().iter().find(|n| n.name() == "Outer").unwrap().id();
-        let owner = program.functions().iter().find(|f| f.name() == "walk").unwrap();
+        let outer = program
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Outer")
+            .unwrap()
+            .id();
+        let owner = program
+            .functions()
+            .iter()
+            .find(|f| f.name() == "walk")
+            .unwrap();
         let mut three = program.clone();
         for name in ["second_walk", "third_walk"] {
             let mut other = owner.clone();
             other.name = name.to_owned();
             three.functions.push(other);
         }
-        let prepared = crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
+        let prepared =
+            crate::backend::emitter::prepare_dispatch_layout(&three, target, false).unwrap();
         // Inner: selected 16, ceiling 32. Outer: selected union 24,
         // selected-child product 40, language ceiling 72. Three words give
         // 48: legal under OP-9, refused by the prototype's 40-byte bound.
         let layout = crate::target::union_enum_layout(target, &prepared.program, outer).unwrap();
         assert_eq!((layout.size(), layout.handler_offset()), (48, Some(24)));
         assert_eq!(prepared.program.nominal(outer).unwrap().handler_words, 3);
-        assert_eq!(prepared.program.nominal_ceilings[outer.index()].size,
-            crate::IrLayoutMagnitude::Finite(72));
+        assert_eq!(
+            prepared.program.nominal_ceilings[outer.index()].size,
+            crate::IrLayoutMagnitude::Finite(72)
+        );
         let module = crate::backend::emitter::emit_prepared_llvm(&prepared, target).unwrap();
         for base in ["wf_walk", "wf_second_walk", "wf_third_walk"] {
-            assert!(module.contains(&format!("{base}: dispatches through the handler word")), "{module}");
-            assert!(!module.contains(&format!("@{base}.dispatch.table")), "{module}");
+            assert!(
+                module.contains(&format!("{base}: dispatches through the handler word")),
+                "{module}"
+            );
+            assert!(
+                !module.contains(&format!("@{base}.dispatch.table")),
+                "{module}"
+            );
         }
     });
 }
@@ -2006,6 +2732,837 @@ fn runtime_map_values_keep_ordinary_layout_without_disabling_unrelated_handlers(
     assert!(
         module.contains("wf_handler_independent_run: dispatches through the handler word"),
         "{module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// The same provisional-result selection in a dispatch arm must write into
+/// the enclosing call's result destination, not into a part-local temporary.
+#[test]
+fn selection_in_a_split_arm_passes_the_result_destination_to_its_producer() {
+    let source = format!(
+        "{}{}",
+        super::payload_enums::SELECT_STEP,
+        r#"
+enum Command {
+  Again();
+  Select();
+}
+
+fn dispatch(command: Command, n: u64) -> result: Step pure {
+  loop {
+    match command {
+      Again() => {
+        set command = Command::Select();
+        continue;
+      }
+      Select() => {
+        let step = prepare(n: n);
+        let final_step = step;
+        match step {
+          Error() => {
+            set final_step = unwind(n: n);
+          }
+          Jump(..) => {
+          }
+          Done(..) => {
+          }
+          Stop() => {
+          }
+          Budget() => {
+          }
+        }
+        return final_step;
+      }
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  for (n in 0_u64..5_u64) {
+    let select = Command::Select();
+    let direct = dispatch(command: select, n: n);
+    let first = valid_step(step: direct, n: n);
+    if bnot(first) {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let again = Command::Again();
+    let repeated = dispatch(command: again, n: n);
+    let second = valid_step(step: repeated, n: n);
+    if bnot(second) {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    );
+    let module = super::payload_enums::retain_step_producers(&emit(source.as_bytes()));
+    assert_split(&module, "wf_dispatch", 2);
+    super::payload_enums::assert_step_destination(definition(&module, "wf_dispatch.arm.1"));
+    let optimized = super::host_optimized_module(&module);
+    super::payload_enums::assert_step_destination(definition(&optimized, "wf_dispatch.arm.1"));
+    // The base retains both Step join parameters within this arm, so its raw
+    // producer destination and copy assertions fail even if LLVM hides a copy.
+    let output = compile_and_run(&module);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn bounded_scan_results_initialize_handler_words() {
+    // ScanStep may acquire a handler word just like a source payload enum.
+    // Constructing only an SSA { tag, next, bytes } leaves that word absent.
+    let source = br#"fn scan_step_run(value: &ScanStep, count: u64) -> result: u64 reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      Next(next: cursor) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        return cursor^;
+      }
+      Needs(bytes: required) => {
+        return 99_u64;
+      }
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 0_u64);
+  let key = array_filled::<u8, 1>(value: 255_u8);
+  let code = 1_u8;
+  atomic map = &store {
+    let name = &key[0_u64..1_u64];
+    set map^[name] = Some<u8>(value: 1_u8);
+    let needs = map_scan_within::<u8>(map: map, cursor: 0_u64, count: 1_u64, limit: 0_u64, keys: &keys);
+    let refused = scan_step_run(value: &needs, count: 2_u64);
+    let required = 0_u64;
+    match needs {
+      Next(next: cursor) => {
+      }
+      Needs(bytes: wanted) => {
+        set required = wanted;
+      }
+    }
+    if refused == 99_u64 {
+      if required > 0_u64 {
+        let next = map_scan_within::<u8>(map: map, cursor: 0_u64, count: 1_u64, limit: required, keys: &keys);
+        let cursor = scan_step_run(value: &next, count: 2_u64);
+        if cursor == 0_u64 {
+          if keys.len == 1_u64 {
+            set code = 0_u8;
+          }
+        }
+      }
+    }
+  }
+  return std::process::exit_status(code: code);
+}
+"#;
+    let module = emit(source);
+    assert_split(&module, "wf_scan_step_run", 2);
+    assert!(
+        module.contains("wf_scan_step_run: dispatches through the handler word"),
+        "{module}"
+    );
+    for arm in 0..2 {
+        assert!(
+            module.contains(&format!("store ptr @wf_scan_step_run.arm.{arm},")),
+            "{module}"
+        );
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// The pointer every call of `callee` in `part` passes first.
+fn first_pointer_arguments<'part>(part: &'part str, callee: &str) -> Vec<&'part str> {
+    let call = format!("@{callee}(ptr ");
+    part.lines()
+        .filter_map(|line| line.split_once(call.as_str()))
+        .map(|(_, arguments)| {
+            arguments
+                .split([',', ')'])
+                .next()
+                .expect("a pointer operand")
+        })
+        .collect()
+}
+
+/// Whether `part` reaches the frame slot `pointer` through the shared frame,
+/// deriving it from `%wf.frame`, rather than allocating it itself.
+fn reached_through_frame(part: &str, pointer: &str) -> bool {
+    let defined = format!("{pointer} = ");
+    let definition = part
+        .lines()
+        .map(str::trim_start)
+        .find_map(|line| line.strip_prefix(defined.as_str()))
+        .unwrap_or_else(|| panic!("{pointer} is defined in the part: {part}"));
+    if definition.starts_with("alloca ") {
+        return false;
+    }
+    assert!(
+        definition.starts_with("getelementptr inbounds {")
+            && definition.contains(", ptr %wf.frame, i32 0, i32 "),
+        "{pointer} is the part's own or the shared frame's: {part}"
+    );
+    true
+}
+
+/// An interpreter whose looping arms fall through to one join after the
+/// `match`, the shape of Halo's `run`: the join calls `checked_step`, whose
+/// `Result` of a four-word `Cursor` comes back through a destination, and
+/// continues from the `Ok` cursor. `Inc 3; Skip; Inc 10; Halt` from 5
+/// counts three steps and returns 18 + 3 = 21.
+const JOIN_INTERPRETER: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Inc(k: u64);
+  Skip();
+  Halt();
+}
+
+struct Cursor {
+  pc: u64;
+  acc: u64;
+  steps: u64;
+  spare: u64;
+}
+
+fn checked_step(next: u64, acc: u64, steps: u64, n: u64) -> result: Result<Cursor, u64> pure {
+  if next < n {
+    let cursor = Cursor(pc: next, acc: acc, steps: steps, spare: 0_u64);
+    return Ok<Cursor, u64>(value: cursor);
+  }
+  return Err<Cursor, u64>(error: acc);
+}
+
+fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
+  requires start < code^.inner.len;
+} {
+  let n = code^.inner.len;
+  let pc = start;
+  let acc = seed;
+  let steps = 0_u64;
+  loop (
+    invariant code_bound: pc < n
+  ) {
+    let next = pc + 1_u64;
+    let updated = acc;
+    match code^.inner[pc] {
+      Inc(k: kv) => {
+        set updated = acc +wrap kv^;
+      }
+      Skip() => {
+      }
+      Halt() => {
+        let tally = acc +wrap steps;
+        return tally;
+      }
+    }
+    let counted = steps +wrap 1_u64;
+    match checked_step(next: next, acc: updated, steps: counted, n: n) {
+      Ok(value: cursor) => {
+        let target = cursor.pc;
+        if target < n {
+          set pc = target;
+          set acc = cursor.acc;
+          set steps = cursor.steps;
+          continue;
+        }
+        return 1_u64;
+      }
+      Err(error: last) => {
+        return last;
+      }
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Inc(k: 3_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Skip();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Inc(k: 10_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  if code.inner.len > 0_u64 {
+    let r = run(code: &code, start: 0_u64, seed: 5_u64);
+    if r == 21_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn a_join_s_temporaries_are_each_arm_s_own_allocation() {
+    // The join's `Result` is written and read within each arm that holds a
+    // copy of the join, so no transfer carries it. Counting the parts that
+    // use it, both looping arms, kept it in the shared frame, which fails
+    // the arms' assertion below.
+    let module = emit(JOIN_INTERPRETER);
+    let (convention, _) = host_convention();
+    let verdict = verdict(&module, "wf_run");
+    assert!(
+        convention.is_empty() || verdict.starts_with("split"),
+        "{verdict}"
+    );
+    if verdict.starts_with("split") {
+        assert_split(&module, "wf_run", 3);
+        let mut joins = 0;
+        for arm in 0..3 {
+            let part = definition(&module, &format!("wf_run.arm.{arm}"));
+            for result in first_pointer_arguments(part, "wf_checked_step") {
+                joins += 1;
+                assert!(
+                    !reached_through_frame(part, result),
+                    "the join's Result is the arm's own allocation: {part}"
+                );
+            }
+        }
+        assert_eq!(joins, 2, "both looping arms hold the join: {module}");
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// A loop whose values cross transfers in both directions a split has: the
+/// header builds `snapshot` in the dispatch function and the arms read it
+/// after the tail call into them, and `Shift` writes `carried` before its
+/// tail call of the dispatch function while `Mix` and `Halt` read it in a
+/// later part. With `weigh(make_quad(a, b))` equal to 2a + 3b + 1,
+/// `Shift 1; Shift 2; Mix; Halt` from 5 returns 447 + 181 = 628.
+const CARRIED_QUADS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Shift(k: u64);
+  Mix();
+  Halt();
+}
+
+struct Quad {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+fn make_quad(a: u64, b: u64) -> result: Quad pure {
+  let c = a +wrap b;
+  let d = b +wrap 1_u64;
+  return Quad(a: a, b: b, c: c, d: d);
+}
+
+fn weigh(quad: Quad) -> result: u64 pure {
+  let ab = quad.a +wrap quad.b;
+  let cd = quad.c +wrap quad.d;
+  return ab +wrap cd;
+}
+
+fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
+  requires start < code^.inner.len;
+} {
+  let n = code^.inner.len;
+  let pc = start;
+  let acc = seed;
+  let carried = make_quad(a: seed, b: 1_u64);
+  loop (
+    invariant code_bound: pc < n
+  ) {
+    let next = pc + 1_u64;
+    let snapshot = make_quad(a: pc, b: acc);
+    match code^.inner[pc] {
+      Shift(k: kv) => {
+        let weight = weigh(quad: snapshot);
+        let total = acc +wrap weight;
+        let shift = kv^;
+        let fresh = make_quad(a: total, b: shift);
+        if next < n {
+          set pc = next;
+          set acc = total;
+          set carried = fresh;
+          continue;
+        }
+        return 0_u64;
+      }
+      Mix() => {
+        let weight = weigh(quad: snapshot);
+        let kept = weigh(quad: carried);
+        let total = weight +wrap kept;
+        if next < n {
+          set pc = next;
+          set acc = total;
+          continue;
+        }
+        return 0_u64;
+      }
+      Halt() => {
+        let kept = weigh(quad: carried);
+        let total = acc +wrap kept;
+        return total;
+      }
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Shift(k: 1_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Shift(k: 2_u64);
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Mix();
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  if code.inner.len > 0_u64 {
+    let r = run(code: &code, start: 0_u64, seed: 5_u64);
+    if r == 628_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn a_slot_read_after_a_transfer_stays_in_the_shared_frame() {
+    // `snapshot` is written by the dispatch function and read by the arm it
+    // tail-calls, and only the storage plan's analysis keeps its slot
+    // shared: made part-local, the slot is an allocation of the dispatch
+    // function's own, which fails the assertion on that function below.
+    // `carried` is written by one arm and read by a later one, but the
+    // enclosing function writes its slot before the loop, which keeps it in
+    // the shared frame whatever the analysis decides, so its reads guard
+    // only that; `the_storage_plan_names_the_slots_a_split_s_transfers_carry`
+    // reads the analysis's answer for a header parameter directly.
+    let module = emit(CARRIED_QUADS);
+    let (convention, _) = host_convention();
+    let verdict = verdict(&module, "wf_run");
+    assert!(
+        convention.is_empty() || verdict.starts_with("split"),
+        "{verdict}"
+    );
+    if verdict.starts_with("split") {
+        assert_split(&module, "wf_run", 3);
+        let dispatch = definition(&module, "wf_run.dispatch");
+        let built = first_pointer_arguments(dispatch, "wf_make_quad");
+        assert_eq!(
+            built.len(),
+            1,
+            "the header builds the snapshot once per dispatch: {dispatch}"
+        );
+        assert!(
+            reached_through_frame(dispatch, built[0]),
+            "the snapshot the arms read is in the shared frame: {dispatch}"
+        );
+        let mut reads = 0;
+        for arm in 0..3 {
+            let part = definition(&module, &format!("wf_run.arm.{arm}"));
+            for read in first_pointer_arguments(part, "wf_weigh") {
+                reads += 1;
+                assert!(
+                    reached_through_frame(part, read),
+                    "a value written before a transfer is read through the frame: {part}"
+                );
+            }
+        }
+        assert_eq!(reads, 4, "four Quads are weighed: {module}");
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// A loop whose `Quad`s each meet one kind of transfer, or none: `state`, a
+/// header parameter only the header reads, is written by each looping arm
+/// before its tail call of the dispatch function; `snapshot` is built by the
+/// header and read by `Mix` after the tail call into it; `probe` is built
+/// and read within `Mix`. With `weigh(make_quad(a, b))` equal to
+/// 2a + 3b + 1, `Shift 4; Mix; Halt` from 5 returns 120 + 364 = 484.
+const CROSSINGS: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Shift(k: u64);
+  Mix();
+  Halt();
+}
+
+struct Quad {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+fn make_quad(a: u64, b: u64) -> result: Quad pure {
+  let c = a +wrap b;
+  let d = b +wrap 1_u64;
+  return Quad(a: a, b: b, c: c, d: d);
+}
+
+fn probe_quad(a: u64, b: u64) -> result: Quad pure {
+  let c = a +wrap 2_u64;
+  return Quad(a: a, b: b, c: c, d: b);
+}
+
+fn weigh(quad: Quad) -> result: u64 pure {
+  let ab = quad.a +wrap quad.b;
+  let cd = quad.c +wrap quad.d;
+  return ab +wrap cd;
+}
+
+fn run(code: &Box<Slots<Op>>, start: u64, seed: u64) -> r: u64 reads(code) contract {
+  requires start < code^.inner.len;
+} {
+  let n = code^.inner.len;
+  let pc = start;
+  let acc = seed;
+  let state = make_quad(a: seed, b: 1_u64);
+  loop (
+    invariant code_bound: pc < n
+  ) {
+    let next = pc + 1_u64;
+    let base = weigh(quad: state);
+    let snapshot = make_quad(a: pc, b: acc);
+    match code^.inner[pc] {
+      Shift(k: kv) => {
+        let shift = kv^;
+        let fresh = make_quad(a: base, b: shift);
+        if next < n {
+          set pc = next;
+          set state = fresh;
+          continue;
+        }
+        return 0_u64;
+      }
+      Mix() => {
+        let weight = weigh(quad: snapshot);
+        let probe = probe_quad(a: weight, b: base);
+        let mixed = weigh(quad: probe);
+        let renewed = make_quad(a: mixed, b: base);
+        if next < n {
+          set pc = next;
+          set acc = mixed;
+          set state = renewed;
+          continue;
+        }
+        return 0_u64;
+      }
+      Halt() => {
+        let total = acc +wrap base;
+        return total;
+      }
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 3_u64);
+  let c0 = Op::Shift(k: 4_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Mix();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Halt();
+  let p2 = push(code: &code, op: c2);
+  if code.inner.len > 0_u64 {
+    let r = run(code: &code, start: 0_u64, seed: 5_u64);
+    if r == 484_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn the_storage_plan_names_the_slots_a_split_s_transfers_carry() {
+    // Read from the storage plan itself: in the emitted split the enclosing
+    // function's write of `state` before the loop keeps its slot shared
+    // whatever the analysis decides, so only this reading fails when the
+    // analysis leaves a header parameter out.
+    super::system::with_ir(CROSSINGS, |program| {
+        let run = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "run")
+            .expect("the fixture's run");
+        let header = crate::backend::emitter::dispatch::storage_parts(run)
+            .expect("run's storage parts")
+            .iter()
+            .position(Option::is_none)
+            .expect("run's loop is a dispatch loop");
+        let plan = crate::backend::storage::FunctionStoragePlan::build(program, run)
+            .expect("run's storage plan");
+        let across = plan
+            .allocations_across(program, run, header, false)
+            .expect("the allocations run's transfers carry");
+        let allocation = |value: crate::IrValueId| {
+            plan.allocation_root(plan.slot(value).expect("a Quad is held in a slot"))
+        };
+        let calls = |callee: &str| {
+            let mut found = Vec::new();
+            for (index, block) in run.blocks().iter().enumerate() {
+                for instruction in block.instructions() {
+                    if let crate::IrInstruction::Define {
+                        result,
+                        operation: crate::IrOperation::Call { function, .. },
+                        ..
+                    } = instruction
+                        && program
+                            .functions()
+                            .get(*function as usize)
+                            .is_some_and(|called| called.name() == callee)
+                    {
+                        found.push((index, *result));
+                    }
+                }
+            }
+            found
+        };
+        let held: Vec<crate::IrValueId> = run.blocks()[header]
+            .parameters()
+            .iter()
+            .map(|(value, _)| *value)
+            .filter(|value| plan.slot(*value).is_some())
+            .collect();
+        let [state] = held.as_slice() else {
+            panic!("`state` is the header's one parameter held in a slot");
+        };
+        let snapshot = calls("make_quad")
+            .into_iter()
+            .find_map(|(block, result)| (block == header).then_some(result))
+            .expect("the header builds `snapshot`");
+        let probes = calls("probe_quad");
+        let [(_, probe)] = probes.as_slice() else {
+            panic!("`Mix` builds one `probe`");
+        };
+        assert!(
+            across.contains(&allocation(*state)),
+            "a header parameter crosses into the header: {across:?}"
+        );
+        assert!(
+            across.contains(&allocation(snapshot)),
+            "a value the header builds crosses into the arm reading it: {across:?}"
+        );
+        assert!(
+            !across.contains(&allocation(*probe)),
+            "a value written and read within one arm stays in it: {across:?}"
+        );
+    });
+    let module = emit(CROSSINGS);
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn integer_match_keeps_exact_constants_and_emits_one_width_correct_switch() {
+    for (ty, low, high, width) in [
+        ("i8", "-128_i8", "127_i8", 8),
+        ("u8", "0_u8", "255_u8", 8),
+        ("i16", "-32768_i16", "32767_i16", 16),
+        ("u16", "0_u16", "65535_u16", 16),
+        ("i32", "-2147483648_i32", "2147483647_i32", 32),
+        ("u32", "0_u32", "4294967295_u32", 32),
+        (
+            "i64",
+            "-9223372036854775808_i64",
+            "9223372036854775807_i64",
+            64,
+        ),
+        ("u64", "0_u64", "18446744073709551615_u64", 64),
+    ] {
+        let source = format!(
+            r#"const high: {ty} = {high};
+
+fn identity(code: {ty}) -> result: {ty} pure {{
+  return code;
+}}
+
+fn choose(code: {ty}) -> result: u8 pure {{
+  let answer = match identity(code: code) {{
+    {low} => {{
+      give 1_u8;
+    }}
+    high => {{
+      give 2_u8;
+    }}
+    else => {{
+      give 3_u8;
+    }}
+  }}
+  return answer;
+}}
+"#
+        );
+        super::system::with_ir(source.as_bytes(), |program| {
+            let choose = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "choose")
+                .unwrap();
+            let switches: Vec<_> = choose
+                .blocks()
+                .iter()
+                .filter_map(|block| {
+                    if let crate::IrTerminator::IntegerMatch {
+                        targets, default, ..
+                    } = block.terminator()
+                    {
+                        Some((targets, default))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(switches.len(), 1);
+            assert_eq!(switches[0].0.len(), 2);
+            assert!(switches[0].1.is_some());
+            let expected_low = low.split('_').next().unwrap().parse::<i128>().unwrap();
+            let expected_high = high.split('_').next().unwrap().parse::<i128>().unwrap();
+            assert_eq!(switches[0].0[0].value(), expected_low);
+            assert_eq!(switches[0].0[1].value(), expected_high);
+        });
+        let module = emit(source.as_bytes());
+        let body = emitted_body(&module, "choose");
+        assert_eq!(
+            body.matches(&format!("switch i{width} ")).count(),
+            1,
+            "{body}"
+        );
+        assert_eq!(
+            body.matches("@wf_identity(").count(),
+            1,
+            "scrutinee evaluated once: {body}"
+        );
+        assert!(
+            !body.contains("unreachable"),
+            "else is the real default: {body}"
+        );
+    }
+}
+
+#[test]
+fn exhaustive_u8_integer_match_has_an_unreachable_default() {
+    let mut source = String::from("fn choose(code: u8) -> result: u8 pure {\n  match code {\n");
+    for value in 0..=255 {
+        source.push_str(&format!(
+            "    {value}_u8 => {{\n      return {value}_u8;\n    }}\n"
+        ));
+    }
+    source.push_str("  }\n}\n");
+    super::system::with_ir(source.as_bytes(), |program| {
+        let choose = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "choose")
+            .unwrap();
+        let switch = choose
+            .blocks()
+            .iter()
+            .find_map(|block| {
+                if let crate::IrTerminator::IntegerMatch {
+                    targets, default, ..
+                } = block.terminator()
+                {
+                    Some((targets, default))
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert_eq!(switch.0.len(), 256);
+        assert_eq!(*switch.1, None);
+    });
+    let module = emit(source.as_bytes());
+    let body = emitted_body(&module, "choose");
+    assert_eq!(body.matches("switch i8 ").count(), 1, "{body}");
+    assert!(body.contains("unreachable"), "{body}");
+}
+
+#[test]
+fn sparse_integer_dispatch_loop_keeps_ordinary_switch_and_continuation_semantics() {
+    let source = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn run(start: u64) -> result: u8 pure {
+  let code = start;
+  loop {
+    match code {
+      1196312912_u64 => {
+        set code = 1330135877_u64;
+        continue;
+      }
+      1330135877_u64 => {
+        return 7_u8;
+      }
+      else => {
+        return 9_u8;
+      }
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let selected = run(start: 1196312912_u64);
+  let fallback = run(start: 0_u64);
+  if selected == 7_u8 {
+    if fallback == 9_u8 {
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}
+"#;
+    let module = emit(source);
+    let body = emitted_body(&module, "run");
+    assert!(body.contains("switch i64 "), "{body}");
+    assert!(
+        !module.contains("@wf_run.dispatch("),
+        "integer loop is emitted whole: {module}"
     );
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");

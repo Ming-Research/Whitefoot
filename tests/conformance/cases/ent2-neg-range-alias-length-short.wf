@@ -1,0 +1,13 @@
+fn probe(r: &[u64]) -> result: u64 reads(r) contract {
+  requires r^.len >= 1_u64;
+} {
+  doc "ENT-2, OP-4: the range alias q shares r's length term, and that term is only known to be at least one, so index one is undischarged.";
+  let q = r;
+  let second = q^[1_u64];
+  return second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "No call is needed to exercise the proof identity.";
+  return std::process::exit_status(code: 0_u8);
+}

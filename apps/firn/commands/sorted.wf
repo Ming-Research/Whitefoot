@@ -245,7 +245,7 @@ fn add_ranked(sorted: &Sorted, client: &Client, adding: &Adding) -> result: unit
           let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: &keys);
           set adding^.updated = adding^.updated +wrap 1_u64;
         } else {
-          let unchanged = move member;
+          let retained_member = move member;
         }
       }
     } else if adding^.xx {
@@ -398,8 +398,8 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let adding = Adding(nx: nx, xx: xx, gt: gt, lt: lt, incr: incr, added: 0_u64, updated: 0_u64, processed: 0_u64, score: 0.0_f64, nan: unset);
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = add_scores(env: client, value: held, adding: &adding);
+      Some(value: observed) => {
+        let edited = add_scores(env: client, value: observed, adding: &adding);
       }
       None() => {
       }
@@ -479,8 +479,8 @@ fn remove_ranked(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(v
           let pair = hash_map_remove::<KeyHash, f64, ceiling>(map: &sorted^.scores, key: &member, env: &keys);
           match move pair {
             Some(value: gone) => {
-              let HashMapPair(key: held, value: score) = move gone;
-              let rank = Rank(score: score, member: move held);
+              let HashMapPair(key: observed, value: score) = move gone;
+              let rank = Rank(score: score, member: move observed);
               let unranked = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &rank, env: &keys);
               set removed = removed +wrap 1_u64;
             }
@@ -528,8 +528,8 @@ fn run_zrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = remove_ranked(env: client, value: held);
+      Some(value: observed) => {
+        let edited = remove_ranked(env: client, value: observed);
       }
       None() => {
       }
@@ -722,8 +722,8 @@ fn run_zpop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   }
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = pop_ranked(env: client, value: held);
+      Some(value: observed) => {
+        let edited = pop_ranked(env: client, value: observed);
       }
       None() => {
       }
@@ -804,8 +804,8 @@ fn run_zcard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = sorted_size(env: client, value: held);
+      Some(value: observed) => {
+        let found = sorted_size(env: client, value: observed);
       }
       None() => {
       }
@@ -876,8 +876,8 @@ fn run_zscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = member_score(env: client, value: held);
+      Some(value: observed) => {
+        let found = member_score(env: client, value: observed);
       }
       None() => {
       }
@@ -957,8 +957,8 @@ fn run_zmscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = member_scores(env: client, value: held);
+      Some(value: observed) => {
+        let found = member_scores(env: client, value: observed);
       }
       None() => {
       }
@@ -1103,8 +1103,8 @@ fn run_zrank(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   }
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = member_rank(env: client, value: held);
+      Some(value: observed) => {
+        let found = member_rank(env: client, value: observed);
       }
       None() => {
       }
@@ -1133,219 +1133,223 @@ fn sorted_command(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
   let open = bnot(client^.locked);
   let yes = True();
   let no = False();
-  if code == code_zadd {
-    let fits = count >= 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zadd(store: store, input: input, args: args, client: client, env: env, time: time, increment: no);
-    }
-    return True();
-  }
-  if code == code_zincrby {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zadd(store: store, input: input, args: args, client: client, env: env, time: time, increment: yes);
-    }
-    return True();
-  }
-  if code == code_zcard {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zcard(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_zscore {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zscore(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_zmscore {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zmscore(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_zpopmin {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zpop(store: store, input: input, args: args, client: client, env: env, time: time, from_top: no);
-    }
-    return True();
-  }
-  if code == code_zpopmax {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zpop(store: store, input: input, args: args, client: client, env: env, time: time, from_top: yes);
-    }
-    return True();
-  }
-  if code == code_zrem {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zrem(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_zrank {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zrank(store: store, input: input, args: args, client: client, env: env, time: time, reverse: no);
-    }
-    return True();
-  }
-  if code == code_zrevrank {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zrank(store: store, input: input, args: args, client: client, env: env, time: time, reverse: yes);
-    }
-    return True();
-  }
-  if code == code_zcount {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zcount(store: store, input: input, args: args, client: client, env: env, time: time, kind: 1_u64);
-    }
-    return True();
-  }
-  if code == code_zrange {
-    let fits = count >= 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: 0_u64, direction: 0_u64);
-    }
-    return True();
-  }
-  if code == code_zrevrang {
-    let rank = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrange[0_u64..9_u64]);
-    let score = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrangebyscore[0_u64..16_u64]);
-    let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrangebylex[0_u64..14_u64]);
-    let kind = 0_u64;
-    if rank {
-      set kind = 1_u64;
-    } else if score {
-      set kind = 2_u64;
-    } else if lex {
-      set kind = 3_u64;
-    }
-    if kind != 0_u64 {
+  match code {
+    code_zadd => {
       let fits = count >= 4_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind, direction: 2_u64);
+        run_zadd(store: store, input: input, args: args, client: client, env: env, time: time, increment: no);
       }
       return True();
     }
-  }
-  if code == code_zrangeby {
-    let score = name_is(input: input, start: name.start, length: name.length, word: &word_zrangebyscore[0_u64..13_u64]);
-    let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zrangebylex[0_u64..11_u64]);
-    let kind = 0_u64;
-    if score {
-      set kind = 2_u64;
-    } else if lex {
-      set kind = 3_u64;
+    code_zincrby => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zadd(store: store, input: input, args: args, client: client, env: env, time: time, increment: yes);
+      }
+      return True();
     }
-    if kind != 0_u64 {
+    code_zcard => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zcard(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_zscore => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zscore(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_zmscore => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zmscore(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_zpopmin => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zpop(store: store, input: input, args: args, client: client, env: env, time: time, from_top: no);
+      }
+      return True();
+    }
+    code_zpopmax => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zpop(store: store, input: input, args: args, client: client, env: env, time: time, from_top: yes);
+      }
+      return True();
+    }
+    code_zrem => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zrem(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_zrank => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zrank(store: store, input: input, args: args, client: client, env: env, time: time, reverse: no);
+      }
+      return True();
+    }
+    code_zrevrank => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zrank(store: store, input: input, args: args, client: client, env: env, time: time, reverse: yes);
+      }
+      return True();
+    }
+    code_zcount => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zcount(store: store, input: input, args: args, client: client, env: env, time: time, kind: 1_u64);
+      }
+      return True();
+    }
+    code_zrange => {
       let fits = count >= 4_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind, direction: 1_u64);
+        run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: 0_u64, direction: 0_u64);
       }
       return True();
     }
-  }
-  if code == code_zremrang {
-    let rank = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebyrank[0_u64..15_u64]);
-    let score = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebyscore[0_u64..16_u64]);
-    let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebylex[0_u64..14_u64]);
-    let kind = 3_u64;
-    if rank {
-      set kind = 0_u64;
-    } else if score {
-      set kind = 1_u64;
-    } else if lex {
-      set kind = 2_u64;
+    code_zrevrang => {
+      let rank = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrange[0_u64..9_u64]);
+      let score = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrangebyscore[0_u64..16_u64]);
+      let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrangebylex[0_u64..14_u64]);
+      let kind = 0_u64;
+      if rank {
+        set kind = 1_u64;
+      } else if score {
+        set kind = 2_u64;
+      } else if lex {
+        set kind = 3_u64;
+      }
+      if kind != 0_u64 {
+        let fits = count >= 4_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind, direction: 2_u64);
+        }
+        return True();
+      }
     }
-    if kind != 3_u64 {
-      let fits = count == 4_u64;
-      let go = band(fits, open);
-      if bnot(go) {
-        refused(client: client, input: input, name: name, fits: fits);
+    code_zrangeby => {
+      let score = name_is(input: input, start: name.start, length: name.length, word: &word_zrangebyscore[0_u64..13_u64]);
+      let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zrangebylex[0_u64..11_u64]);
+      let kind = 0_u64;
+      if score {
+        set kind = 2_u64;
+      } else if lex {
+        set kind = 3_u64;
       }
-      if go {
-        run_zremrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind);
+      if kind != 0_u64 {
+        let fits = count >= 4_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind, direction: 1_u64);
+        }
+        return True();
       }
-      return True();
     }
-  }
-  if code == code_zlexcount {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_zlexcount[0_u64..9_u64]);
-    if spelled {
-      let fits = count == 4_u64;
-      let go = band(fits, open);
-      if bnot(go) {
-        refused(client: client, input: input, name: name, fits: fits);
+    code_zremrang => {
+      let rank = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebyrank[0_u64..15_u64]);
+      let score = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebyscore[0_u64..16_u64]);
+      let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebylex[0_u64..14_u64]);
+      let kind = 3_u64;
+      if rank {
+        set kind = 0_u64;
+      } else if score {
+        set kind = 1_u64;
+      } else if lex {
+        set kind = 2_u64;
       }
-      if go {
-        run_zcount(store: store, input: input, args: args, client: client, env: env, time: time, kind: 2_u64);
+      if kind != 3_u64 {
+        let fits = count == 4_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_zremrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind);
+        }
+        return True();
       }
-      return True();
+    }
+    code_zlexcount => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_zlexcount[0_u64..9_u64]);
+      if spelled {
+        let fits = count == 4_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_zcount(store: store, input: input, args: args, client: client, env: env, time: time, kind: 2_u64);
+        }
+        return True();
+      }
+    }
+    else => {
     }
   }
   return False();

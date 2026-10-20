@@ -18,7 +18,7 @@ use super::super::model::{
 use super::super::places::WindowPart;
 use super::floats::parse_float_literal;
 use super::generics::GenericSubstitution;
-use super::{CheckStop, Checker, EffectSet, ParameterSignature, PreludeType};
+use super::{CheckStop, Checker, EffectSet, FunctionSignature, ParameterSignature, PreludeType};
 
 /// [TYPE-5]'s two sides where a type spelling that takes no type arguments
 /// carries a written `<...>` list.
@@ -49,7 +49,7 @@ const EFF1_CATEGORY_ORDER_FIX: &str = "write every `reads` entry before the firs
 const EFF1_REPEATED_PATH: &str =
     "a row lists each path at most once per category, and this entry repeats one";
 const EFF1_REPEATED_PATH_FIX: &str = "delete the repeated entry";
-const EFF1_NON_PARAMETER_ROOT: &str = "every effect path is rooted at one formal value parameter of the same callable, and this root is not one";
+const EFF1_NON_PARAMETER_ROOT: &str = "every effect path is rooted at one reference parameter of the same callable, and this root is not one";
 const EFF1_NON_PARAMETER_ROOT_FIX: &str = "root the path at a parameter of this function; a local, a result binder, a region, and an unrelated declaration are never effect roots";
 const EFF1_FIELD_OF_NON_STRUCT: &str = "each effect-path suffix must select a field, payload, measure, window part, or indexed position admitted by its prefix type";
 const EFF1_FIELD_OF_NON_STRUCT_FIX: &str = "select a member or position admitted by the prefix type, or name the reference parameter's complete state; use .inner for Box contents";
@@ -79,6 +79,7 @@ pub(super) enum Placement {
     Reference,
     BoxContent,
     SharedState,
+    Exchange,
 }
 
 impl<'unit> Checker<'_, 'unit> {
@@ -275,6 +276,8 @@ impl<'unit> Checker<'_, 'unit> {
                         crate::BuiltinPreludeId::OVERFLOW_TYPE
                             | crate::BuiltinPreludeId::DIV_ERROR_TYPE
                             | crate::BuiltinPreludeId::NARROW_ERROR_TYPE
+                            | crate::BuiltinPreludeId::SCAN_STEP
+                            | crate::BuiltinPreludeId::DECISION_STATE
                     ) =>
                 {
                     if targs.is_some() {
@@ -291,6 +294,8 @@ impl<'unit> Checker<'_, 'unit> {
                         crate::BuiltinPreludeId::OVERFLOW_TYPE => PreludeType::Overflow,
                         crate::BuiltinPreludeId::DIV_ERROR_TYPE => PreludeType::DivError,
                         crate::BuiltinPreludeId::NARROW_ERROR_TYPE => PreludeType::NarrowError,
+                        crate::BuiltinPreludeId::SCAN_STEP => PreludeType::ScanStep,
+                        crate::BuiltinPreludeId::DECISION_STATE => PreludeType::DecisionState,
                         _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
                     };
                     return Ok(CheckedType::Nominal(self.types.prelude_nominal(ty)?));
@@ -571,8 +576,15 @@ impl<'unit> Checker<'_, 'unit> {
             return mismatch("a const argument in the element position");
         };
         let element_type = self.parse_type_with(check_context, element_node, substitution)?;
+        // [CONST-1, PRE-1] a storage shape's capacity is the argument of its
+        // declared `const n: u64` parameter.
         let capacity = capacity
-            .map(|length| self.parse_const_expression_with(check_context, length, substitution))
+            .map(|length| {
+                let value =
+                    self.parse_const_expression_with(check_context, length, substitution)?;
+                self.check_const_argument(check_context, length, value, IntegerType::U64)?;
+                Ok::<_, CheckStop>(value)
+            })
             .transpose()?;
         match (shape, capacity) {
             // An `Array` has no window: every slot always holds a value and
@@ -779,6 +791,91 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .combine_const(operation, left, right)
             .ok_or_else(|| SemanticCompilerFailure::CounterOverflow.into())
+    }
+
+    /// [CONST-1] admits one const argument for a const parameter of integer
+    /// type `parameter`: each IDENT term must declare exactly that type, and
+    /// the evaluated `value` must lie in its closed range [FORM-7]. A closed
+    /// argument's value is concrete wherever it is written; a symbolic one is
+    /// judged at each concrete instance, whose substitution evaluates it, as
+    /// the u64 domain of [`Self::parse_const_expression_with`] is.
+    pub(super) fn check_const_argument(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        value: CheckedConst,
+        parameter: IntegerType,
+    ) -> Result<(), CheckStop> {
+        let terms = self.const_term_types(check_context, node)?;
+        if let Some(found) = terms.into_iter().find(|term| *term != parameter) {
+            return self.types.declarations.issue_node(
+                SemanticRule::Const1,
+                node,
+                SemanticIssueKind::type_mismatch(
+                    self.types.checked_type_name(CheckedType::Integer(parameter))?,
+                    self.types.checked_type_name(CheckedType::Integer(found))?,
+                ),
+            );
+        }
+        let CheckedConst::Value(value) = value else {
+            return Ok(());
+        };
+        // Every const value is a nonnegative u64, so only the upper end of
+        // the closed range can fail.
+        let unused_high_bits =
+            64 - u32::from(parameter.width()) + u32::from(parameter.signed());
+        if value <= u64::MAX >> unused_high_bits {
+            return Ok(());
+        }
+        self.types.declarations.issue_node(
+            SemanticRule::Const1,
+            node,
+            SemanticIssueKind::ConstArgumentOutOfRange {
+                parameter_type: self
+                    .types
+                    .checked_type_name(CheckedType::Integer(parameter))?,
+                value,
+            },
+        )
+    }
+
+    /// The declared integer type of each IDENT term of `node`, in source
+    /// order: a const generic's written `gparam` type [MSR-6] or a named
+    /// const's declared type [CONST-2]. [`Self::parse_const_term`] has
+    /// already resolved every term to one of the two.
+    fn const_term_types(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+    ) -> Result<Vec<IntegerType>, CheckStop> {
+        let uses =
+            self.types
+                .declarations
+                .uses_at_ordered(check_context, node, LexicalUseRole::Const)?;
+        uses.iter()
+            .map(|usage| match usage.target() {
+                ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::ConstGeneric,
+                } => self.types.const_generic_type(declaration),
+                ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::NamedConst,
+                } => {
+                    let constant = self
+                        .types
+                        .constants
+                        .get(&declaration)
+                        .copied()
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    match &self.types.constant(constant)?.value {
+                        CheckedValue::Integer { ty, .. } => Ok(*ty),
+                        _ => Err(SemanticCompilerFailure::InvalidResolution.into()),
+                    }
+                }
+                _ => Err(SemanticCompilerFailure::InvalidResolution.into()),
+            })
+            .collect()
     }
 
     /// One `const` term: a bare decimal u64 literal, an integer-typed named
@@ -1246,6 +1343,7 @@ pub(super) fn measure_named(spelling: &str) -> Option<CheckedMeasure> {
         "len" => Some(CheckedMeasure::Length),
         "cap" => Some(CheckedMeasure::Capacity),
         "head" => Some(CheckedMeasure::Head),
+        "bytes" => Some(CheckedMeasure::Bytes),
         _ => None,
     }
 }
@@ -1304,18 +1402,23 @@ impl<'unit> DeclarationInventory<'unit> {
         // [EFF-1] a root resolving to a local, a result binder, a by-value
         // parameter, or a non-parameter declaration is a rejection: a
         // by-value parameter has no effect entry at all, the call site
-        // recording the consumption of a `move` argument instead [EFF-5].
-        let Some(parameter) = parameters
+        // recording the argument's read or consumption instead [EFF-5].
+        let root_parameter = parameters
             .iter()
-            .find(|parameter| parameter.declaration == declaration)
-            .filter(|parameter| parameter.mode.is_reference())
+            .find(|parameter| parameter.declaration == declaration);
+        let Some(parameter) = root_parameter.filter(|parameter| parameter.mode.is_reference())
         else {
             return self.issue_node(
                 SemanticRule::Eff1,
                 effect,
                 SemanticIssueKind::InvalidEffectRow {
                     reason: EFF1_NON_PARAMETER_ROOT,
-                    mechanical_fix: EFF1_NON_PARAMETER_ROOT_FIX,
+                    mechanical_fix: root_parameter.map_or_else(
+                        || EFF1_NON_PARAMETER_ROOT_FIX.to_owned(),
+                        |parameter| {
+                            super::repairs::writer_references::by_value_effect_root(&parameter.name)
+                        },
+                    ),
                 },
             );
         };
@@ -1344,7 +1447,7 @@ impl<'unit> DeclarationInventory<'unit> {
             node,
             SemanticIssueKind::InvalidEffectRow {
                 reason,
-                mechanical_fix,
+                mechanical_fix: mechanical_fix.to_owned(),
             },
         )
     }
@@ -1463,11 +1566,16 @@ impl<'unit> DeclarationInventory<'unit> {
             return Ok(CheckedValue::Unit);
         }
         if bytes.ends_with(b"_f32") || bytes.ends_with(b"_f64") {
-            return parse_float_literal(bytes).ok_or_else(|| {
+            return parse_float_literal(bytes).map_err(|canonical_spelling| {
+                let mechanical_fix =
+                    super::repairs::float_literal_repair(canonical_spelling.as_deref());
                 self.issue_value(
                     SemanticRule::Form7,
                     node,
-                    SemanticIssueKind::InvalidFloatLiteral,
+                    SemanticIssueKind::InvalidFloatLiteral {
+                        canonical_spelling,
+                        mechanical_fix,
+                    },
                 )
             });
         }
@@ -1484,13 +1592,35 @@ impl<'unit> DeclarationInventory<'unit> {
 impl<'unit> TypeContext<'unit> {
     /// The element type of a storage shape [TYPE-9], or `None` where the type
     /// is not one.
-    fn container_element_type(&self, ty: CheckedType) -> Result<Option<CheckedType>, CheckStop> {
-        Ok(match ty {
-            CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
-                Some(self.element_type(element)?)
+    pub(in crate::semantic::check) fn container_element_type(
+        &self,
+        ty: CheckedType,
+    ) -> Result<Option<CheckedType>, CheckStop> {
+        ty.storage_element()
+            .map(|element| self.element_type(element))
+            .transpose()
+    }
+    /// Select a row position by the same stored element as ordinary path
+    /// typing. A segment or page selects a run; indexing a run selects T.
+    fn effect_selected_position(
+        &self,
+        selected: SelectedPlaceType,
+        run: bool,
+    ) -> Result<SelectedPlaceType, CheckStop> {
+        let (element, segment) = match selected {
+            SelectedPlaceType::Range(element) => (element, false),
+            SelectedPlaceType::Value(ty) => (
+                self.container_element_type(ty)?.unwrap_or(ty),
+                matches!(ty, CheckedType::Segments { .. }),
+            ),
+            SelectedPlaceType::UnresolvedWindowElement => {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
-            CheckedType::Buffer { element } => Some(self.element_type(element)?),
-            _ => None,
+        };
+        Ok(if run || segment {
+            SelectedPlaceType::Range(element)
+        } else {
+            SelectedPlaceType::Value(element)
         })
     }
     pub(super) fn constant(&self, id: CheckedConstantId) -> Result<&CheckedConstant, CheckStop> {
@@ -1515,6 +1645,13 @@ impl<'unit> TypeContext<'unit> {
                     pending.push(self.element_type(element)?);
                 }
                 CheckedType::Nominal(id) => {
+                    if let Some((template, _)) = &self.source_nominal_instances[id.0 as usize]
+                        && self.is_opaque_struct_declaration(
+                            self.nominal_templates[*template].declaration,
+                        )?
+                    {
+                        return Ok(false);
+                    }
                     let CheckedNominalKind::Struct { fields } = &self.nominal(id)?.kind else {
                         return Ok(false);
                     };
@@ -1583,7 +1720,11 @@ impl<'unit> TypeContext<'unit> {
             );
             let map = matches!(ty, CheckedType::Nominal(id) if matches!(cx.nominals[id.0 as usize].kind, CheckedNominalKind::Shared { shape: super::super::model::CheckedShared::Map { .. }, .. }));
             if runtime && !matches!(position, Placement::BoxContent | Placement::Reference)
-                || map && !matches!(position, Placement::SharedState | Placement::Reference)
+                || map
+                    && !matches!(
+                        position,
+                        Placement::SharedState | Placement::Reference | Placement::Exchange
+                    )
             {
                 return Some((ty, position));
             }
@@ -1592,9 +1733,18 @@ impl<'unit> TypeContext<'unit> {
             }
             match ty {
                 CheckedType::Nominal(id) => match &cx.nominals[id.0 as usize].kind {
-                    CheckedNominalKind::Box { referent, .. } => {
-                        visit(cx, *referent, Placement::BoxContent, seen)
-                    }
+                    CheckedNominalKind::Box {
+                        referent, release, ..
+                    } => visit(
+                        cx,
+                        *referent,
+                        if *release == super::super::model::CheckedReleaseClass::Frozen {
+                            Placement::Value
+                        } else {
+                            Placement::BoxContent
+                        },
+                        seen,
+                    ),
                     CheckedNominalKind::Shared {
                         state,
                         shape: super::super::model::CheckedShared::Object,
@@ -1629,24 +1779,32 @@ impl<'unit> TypeContext<'unit> {
             return Ok(());
         }
         let owner = self.declarations.tree.path(node)?.components();
-        let parameter_uses = self
-            .declarations
-            .resolved
-            .lexical_uses()
-            .iter()
-            .filter_map(|usage| {
-                if !usage.origin().node().components().starts_with(owner) {
-                    return None;
-                }
-                match usage.target() {
-                    ResolvedTarget::Source {
-                        declaration,
-                        class: DeclarationClass::GenericType,
-                    } => Some(declaration),
-                    _ => None,
-                }
-            })
-            .collect::<Vec<_>>();
+        let parameter_uses = if matches!(position, Placement::Exchange)
+            && let Some(parameter) = self.behavior.exchange_parameters.get(&node)
+        {
+            vec![*parameter]
+        } else {
+            // A written `fn swap::<T>` can be resolved concretely before
+            // the canonical symbolic body records its exchange. Its targ
+            // still names the supplying parameter directly [TYPE-9, FN-2].
+            self.declarations
+                .resolved
+                .lexical_uses()
+                .iter()
+                .filter_map(|usage| {
+                    if !usage.origin().node().components().starts_with(owner) {
+                        return None;
+                    }
+                    match usage.target() {
+                        ResolvedTarget::Source {
+                            declaration,
+                            class: DeclarationClass::GenericType,
+                        } => Some(declaration),
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
         let mut source = node;
         for (key, argument) in substitution.entries() {
             let super::generics::GenericArgument::Type(argument) = argument else {
@@ -1655,7 +1813,9 @@ impl<'unit> TypeContext<'unit> {
             let super::generics::GenericParameterKey::Source(declaration) = key else {
                 continue;
             };
-            if !parameter_uses.is_empty() && !parameter_uses.contains(declaration) {
+            if (!parameter_uses.is_empty() || matches!(position, Placement::Exchange))
+                && !parameter_uses.contains(declaration)
+            {
                 continue;
             }
             if visit(self, *argument, Placement::Value, &mut HashSet::new()).map(|(ty, _)| ty)
@@ -1673,8 +1833,11 @@ impl<'unit> TypeContext<'unit> {
                 Placement::Reference => "a reference referent",
                 Placement::BoxContent => "Box content",
                 Placement::SharedState => "shared-object state",
+                Placement::Exchange => "the exchange of a `swap`",
             };
-            let repair = if matches!(found, CheckedType::Nominal(_)) {
+            let repair = if matches!(refused_position, Placement::Exchange) {
+                "swap the owning `Box` values instead of their contents"
+            } else if matches!(found, CheckedType::Nominal(_)) {
                 "make a shared map with `shared_map_new::<V>(capacity: n)`, and pass its handle `Shared<ConcurrentHashMap<V>>` or a reference `&ConcurrentHashMap<V>` instead"
             } else {
                 "put the runtime-capacity storage behind a Box and pass a reference to its content"
@@ -1683,6 +1846,8 @@ impl<'unit> TypeContext<'unit> {
                 "this type argument would place `{}` as {position}; {repair}",
                 self.checked_type_name(found)?
             )
+        } else if matches!(refused_position, Placement::Exchange) {
+            "swap the owning `Box` values instead of their contents".to_owned()
         } else if matches!(found, CheckedType::Nominal(_)) {
             "a `ConcurrentHashMap<V>` is only ever the state of a shared object: write `Shared<ConcurrentHashMap<V>>`, made by `shared_map_new::<V>(capacity: n)`, and reach the map through an atomic target; a callee takes `&ConcurrentHashMap<V>`".to_owned()
         } else if matches!(
@@ -1693,9 +1858,9 @@ impl<'unit> TypeContext<'unit> {
                     ..
                 }
         ) {
-            "wrap it in a Box and pass a reference to its content".to_owned()
+            super::repairs::INLINE_SEGMENTS_OR_PAGED.to_owned()
         } else {
-            "wrap it in a Box, or write the constant-capacity form".to_owned()
+            super::repairs::INLINE_RUNTIME_STORAGE.to_owned()
         };
         self.declarations.issue_node(
             SemanticRule::Type9,
@@ -1735,19 +1900,28 @@ impl<'unit> TypeContext<'unit> {
                     match shape {
                         WindowShape::Slots => 12,
                         WindowShape::Ring => 13,
-                        WindowShape::Paged => 26,
+                        WindowShape::Paged => 15,
                     },
                     None,
                 )
             }
             CheckedType::Segments { element } => (14, Some(element)),
-            CheckedType::KeySet => (18, None),
-            CheckedType::Entries { element } => (19, Some(element)),
-            CheckedType::Bool => (20, None),
+            CheckedType::KeySet => (21, None),
+            CheckedType::Entries { element } => (22, Some(element)),
+            CheckedType::Bool => (23, None),
             CheckedType::Nominal(id) => {
-                if let CheckedNominalKind::Box { referent, .. } = self.nominals[id.0 as usize].kind
+                if let CheckedNominalKind::Box {
+                    referent, release, ..
+                } = self.nominals[id.0 as usize].kind
                 {
-                    result.push("015".to_owned());
+                    result.push(
+                        if release == super::super::model::CheckedReleaseClass::Frozen {
+                            "019"
+                        } else {
+                            "016"
+                        }
+                        .to_owned(),
+                    );
                     result.extend(self.atomic_type_order(referent)?);
                     return Ok(result);
                 }
@@ -1756,14 +1930,16 @@ impl<'unit> TypeContext<'unit> {
                 {
                     let template = &self.nominal_templates[*template];
                     let rank = match template.name.as_str() {
-                        "Box" => 15,
-                        "Shared" => 16,
-                        "ConcurrentHashMap" => 17,
-                        "Option" => 21,
-                        "Result" => 22,
-                        "Overflow" => 23,
-                        "DivError" => 24,
-                        "NarrowError" => 25,
+                        "Box" => 16,
+                        "Shared" => 17,
+                        "SharedRead" => 18,
+                        "ConcurrentHashMap" => 20,
+                        "Option" => 24,
+                        "Result" => 25,
+                        "Overflow" => 26,
+                        "DivError" => 27,
+                        "NarrowError" => 28,
+                        "ScanStep" => 29,
                         _ => 100,
                     };
                     result.push(format!("{rank:03}"));
@@ -1790,19 +1966,21 @@ impl<'unit> TypeContext<'unit> {
                 }
                 match self.prelude_type(id) {
                     Some(PreludeType::Option(t)) => {
-                        result.push("021".to_owned());
+                        result.push("024".to_owned());
                         result.extend(self.atomic_type_order(t)?);
                         return Ok(result);
                     }
                     Some(PreludeType::Result(a, b)) => {
-                        result.push("022".to_owned());
+                        result.push("025".to_owned());
                         result.extend(self.atomic_type_order(a)?);
                         result.extend(self.atomic_type_order(b)?);
                         return Ok(result);
                     }
-                    Some(PreludeType::Overflow) => (23, None),
-                    Some(PreludeType::DivError) => (24, None),
-                    Some(PreludeType::NarrowError) => (25, None),
+                    Some(PreludeType::Overflow) => (26, None),
+                    Some(PreludeType::DivError) => (27, None),
+                    Some(PreludeType::NarrowError) => (28, None),
+                    Some(PreludeType::ScanStep) => (29, None),
+                    Some(PreludeType::DecisionState) => (30, None),
                     _ => {
                         result.push(self.checked_type_name(ty)?);
                         (100, None)
@@ -1899,19 +2077,19 @@ impl<'unit> TypeContext<'unit> {
                                         CheckedNominalKind::Box {
                                             referent: a,
                                             region: ar,
-                                            ..
+                                            release: ac,
                                         },
                                         CheckedNominalKind::Box {
                                             referent: b,
                                             region: br,
-                                            ..
+                                            release: bc,
                                         },
                                     ) => {
                                         // [TYPE-9] Box has no brand. intern_box_nominal
                                         // is its sole constructor and sets region to None,
                                         // including symbolic and concrete instances.
                                         debug_assert!(ar.is_none() && br.is_none());
-                                        if ar != br {
+                                        if ar != br || ac != bc {
                                             return Ok(false);
                                         }
                                         pending.push((
@@ -2212,7 +2390,7 @@ impl<'unit> TypeContext<'unit> {
                     node,
                     SemanticIssueKind::InvalidEffectRow {
                         reason: EFF1_CATEGORY_ORDER,
-                        mechanical_fix: EFF1_CATEGORY_ORDER_FIX,
+                        mechanical_fix: EFF1_CATEGORY_ORDER_FIX.to_owned(),
                     },
                 );
             }
@@ -2227,7 +2405,7 @@ impl<'unit> TypeContext<'unit> {
                         effect,
                         SemanticIssueKind::InvalidEffectRow {
                             reason: EFF1_REPEATED_PATH,
-                            mechanical_fix: EFF1_REPEATED_PATH_FIX,
+                            mechanical_fix: EFF1_REPEATED_PATH_FIX.to_owned(),
                         },
                     );
                 }
@@ -2293,6 +2471,134 @@ impl<'unit> TypeContext<'unit> {
             );
         }
         Ok(paths)
+    }
+    /// One checked effect path in its canonical source spelling [EFF-1].
+    /// Keep the selected value or range type through every selector, so
+    /// fields and payloads below an indexed Box retain their declared names.
+    /// A checked path with no matching declaration is an internal resolution
+    /// failure, never a source repair containing field or payload ordinals.
+    pub(super) fn render_effect_path(
+        &self,
+        path: &CheckedStatePath,
+        signature: &FunctionSignature,
+    ) -> Result<String, CheckStop> {
+        Ok(self.walk_effect_path(path, signature)?.0)
+    }
+    /// The value or range type a checked effect path's last step selects,
+    /// from the callee parameter types `signature` carries [EFF-1].
+    pub(super) fn effect_path_selected(
+        &self,
+        path: &CheckedStatePath,
+        signature: &FunctionSignature,
+    ) -> Result<SelectedPlaceType, CheckStop> {
+        Ok(self.walk_effect_path(path, signature)?.1)
+    }
+    /// One checked effect path's canonical spelling and the type its last
+    /// step selects.
+    fn walk_effect_path(
+        &self,
+        path: &CheckedStatePath,
+        signature: &FunctionSignature,
+    ) -> Result<(String, SelectedPlaceType), CheckStop> {
+        let parameter = signature
+            .parameters
+            .iter()
+            .find(|parameter| parameter.declaration == path.root)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let mut rendered = parameter.name.clone();
+        let mut selected = if parameter.mode.is_range() {
+            SelectedPlaceType::Range(parameter.ty)
+        } else {
+            SelectedPlaceType::Value(parameter.ty)
+        };
+        for step in &path.steps {
+            match *step {
+                CheckedEffectStep::Field(field) => {
+                    let SelectedPlaceType::Value(CheckedType::Nominal(nominal)) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let field = fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push('.');
+                    rendered.push_str(&field.name);
+                    selected = SelectedPlaceType::Value(field.ty);
+                }
+                CheckedEffectStep::Deref => {
+                    let SelectedPlaceType::Value(ty) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let referent = self
+                        .box_content(ty)?
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push_str(".inner");
+                    selected = SelectedPlaceType::Value(referent);
+                }
+                CheckedEffectStep::Payload { variant, field } => {
+                    let SelectedPlaceType::Value(CheckedType::Nominal(nominal)) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let variant = variants
+                        .get(variant as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let field = variant
+                        .fields
+                        .get(field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    rendered.push_str(&format!(".{}.{}", variant.name, field.name));
+                    selected = SelectedPlaceType::Value(field.ty);
+                }
+                CheckedEffectStep::Page(index)
+                | CheckedEffectStep::Index(index)
+                | CheckedEffectStep::Range { start: index, .. } => {
+                    selected = self.effect_selected_position(
+                        selected,
+                        !matches!(*step, CheckedEffectStep::Index(_)),
+                    )?;
+                    let index = self.declarations.declaration_spelling(index)?;
+                    match *step {
+                        CheckedEffectStep::Page(_) => {
+                            rendered.push_str(&format!(".pages[{index}]"));
+                        }
+                        CheckedEffectStep::Range { end, .. } => {
+                            rendered.push_str(&format!(
+                                "[{index}..{}]",
+                                self.declarations.declaration_spelling(end)?
+                            ));
+                        }
+                        _ => {
+                            rendered.push_str(&format!("[{index}]"));
+                        }
+                    };
+                }
+                CheckedEffectStep::Part(part) => {
+                    let SelectedPlaceType::Value(ty) = selected else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    rendered.push('.');
+                    rendered.push_str(part.spelling());
+                    selected = if matches!(ty, CheckedType::Generic(declaration)
+                        if self.declarations.is_window_type_parameter(declaration)?)
+                    {
+                        SelectedPlaceType::UnresolvedWindowElement
+                    } else {
+                        SelectedPlaceType::Value(self.container_element_type(ty)?.unwrap_or(ty))
+                    };
+                }
+                CheckedEffectStep::Measure(measure) => {
+                    rendered.push('.');
+                    rendered.push_str(measure.spelling());
+                    selected = SelectedPlaceType::Value(CheckedType::Integer(IntegerType::U64));
+                }
+            }
+        }
+        Ok((rendered, selected))
     }
     /// One `effect_path := epbase epsuffix*` [EFF-1], with the type its last
     /// step selects.
@@ -2463,7 +2769,8 @@ impl<'unit> TypeContext<'unit> {
                         (spelling == "len").then_some(CheckedMeasure::Length)
                     }
                     SelectedPlaceType::Value(ty) => measure_named(spelling).filter(|measure| {
-                        (symbolic_window && *measure != CheckedMeasure::Head)
+                        (symbolic_window
+                            && matches!(measure, CheckedMeasure::Length | CheckedMeasure::Capacity))
                             || ty.measured().is_some_and(|measured| {
                                 !matches!(
                                     measure.cell(measured),
@@ -2616,22 +2923,15 @@ impl<'unit> TypeContext<'unit> {
             }
             endpoints.push(declaration);
         }
-        let element = match selected {
-            // An index into a range selects the range's element itself. It
-            // must not project through that element again when T is Array or
-            // another container.
-            SelectedPlaceType::Range(element) => element,
-            SelectedPlaceType::Value(ty) => self.container_element_type(ty)?.unwrap_or(ty),
-            SelectedPlaceType::UnresolvedWindowElement => {
-                return self
-                    .declarations
-                    .invalid_effect_row(suffix, EFF1_FIELD_OF_NON_STRUCT);
-            }
-        };
+        if matches!(selected, SelectedPlaceType::UnresolvedWindowElement) {
+            return self
+                .declarations
+                .invalid_effect_row(suffix, EFF1_FIELD_OF_NON_STRUCT);
+        }
         match endpoints.as_slice() {
             [index] => Ok((
                 CheckedEffectStep::Index(*index),
-                SelectedPlaceType::Value(element),
+                self.effect_selected_position(selected, false)?,
             )),
             // A range position names a run of elements [REF-4], so every step
             // below it is relative to that run and reads the element type.
@@ -2640,7 +2940,7 @@ impl<'unit> TypeContext<'unit> {
                     start: *start,
                     end: *end,
                 },
-                SelectedPlaceType::Range(element),
+                self.effect_selected_position(selected, true)?,
             )),
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }

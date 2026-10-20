@@ -1,0 +1,73 @@
+alias MemoryMeter = std::process::MemoryMeter;
+
+fn early(meter: &MemoryMeter, leave: Bool) -> result: u64 writes(meter) {
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  if leave {
+    return std::process::heap_in_use(meter: meter);
+  }
+  return 0_u64;
+}
+
+fn tried(meter: &MemoryMeter, during: &u64, outcome: Result<unit, u8>) -> result: Result<unit, u8> writes(meter), writes(during) {
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  set during^ = std::process::heap_in_use(meter: meter);
+  let value = propagate outcome;
+  return Ok<unit, u8>(value: value);
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let before = std::process::heap_in_use(meter: &meter);
+  let leave = True();
+  let during_early = early(meter: &meter, leave: leave);
+  let after_early = std::process::heap_in_use(meter: &meter);
+  if during_early <= before {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if after_early != before {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let during_error = 0_u64;
+  let failed = Err<unit, u8>(error: 7_u8);
+  let outcome = tried(meter: &meter, during: &during_error, outcome: failed);
+  let after_error = std::process::heap_in_use(meter: &meter);
+  if during_error <= before {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if after_error != before {
+    return std::process::exit_status(code: 4_u8);
+  }
+  match outcome {
+    Ok(value: unexpected) => {
+      return std::process::exit_status(code: 5_u8);
+    }
+    Err(error: code) => {
+      if code != 7_u8 {
+        return std::process::exit_status(code: 6_u8);
+      }
+    }
+  }
+  let during_ok = 0_u64;
+  let success = Ok<unit, u8>(value: unit);
+  let normal = tried(meter: &meter, during: &during_ok, outcome: success);
+  let after_ok = std::process::heap_in_use(meter: &meter);
+  if during_ok <= before {
+    return std::process::exit_status(code: 7_u8);
+  }
+  if after_ok != before {
+    return std::process::exit_status(code: 8_u8);
+  }
+  match normal {
+    Ok(value: returned) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: unexpected) => {
+      return std::process::exit_status(code: 9_u8);
+    }
+  }
+}

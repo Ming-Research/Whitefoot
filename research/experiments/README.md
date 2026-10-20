@@ -8,7 +8,7 @@ evidence remain useful, but their old runner is not replayable from HEAD and is
 not a current compiler gate. Historical chronology and decisions are indexed
 by `../../archive/governance/decision-log.md`; current design decisions live in
 `../../design/`, research questions in [ideas](../../docs/ideas.md), and known
-compiler defects in [todo](../../docs/todo.md). Research notes do not grant or
+compiler defects on the [status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip). Research notes do not grant or
 withhold branch permission.
 
 These bundles follow the [research boundary](../README.md): execution is

@@ -45,15 +45,17 @@ fn every_integer_pair_has_uniform_conversion_interfaces() {
         assert_eq!(
             checked
                 .data
-                .functions
-                .iter()
+                .executable_functions()
                 .filter(|function| function.body.is_some())
                 .count(),
             expected.len() + 1
         );
         assert_eq!(expected.len(), 64);
-        for (function, (source_type, destination_type)) in
-            checked.data.functions.iter().zip(expected)
+        for (function, (source_type, destination_type)) in checked
+            .data
+            .executable_functions()
+            .filter(|function| function.body.is_some())
+            .zip(expected)
         {
             let [
                 CheckedStatement::Let { value: exact, .. },
@@ -145,7 +147,7 @@ fn conversion_shape_and_operand_failures_keep_their_rule_owners() {
         assert_rule(
             source.as_bytes(),
             SemanticRule::Type5,
-            SemanticIssueKind::InvalidOperation,
+            SemanticIssueKind::invalid_operation(),
         );
         let source = format!(
             "fn main() -> status: std::process::ExitStatus pure {{\n  let value = {operation}::<i32>(1_i32);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
@@ -153,7 +155,7 @@ fn conversion_shape_and_operand_failures_keep_their_rule_owners() {
         assert_rule(
             source.as_bytes(),
             SemanticRule::Op1,
-            SemanticIssueKind::InvalidOperation,
+            SemanticIssueKind::invalid_operation(),
         );
         let source = format!(
             "fn main() -> status: std::process::ExitStatus pure {{\n  let flag = True();\n  let value = {operation}::<Bool, i32>(flag);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
@@ -161,7 +163,7 @@ fn conversion_shape_and_operand_failures_keep_their_rule_owners() {
         assert_rule(
             source.as_bytes(),
             SemanticRule::Op1,
-            SemanticIssueKind::InvalidOperation,
+            SemanticIssueKind::invalid_operation(),
         );
     }
 }
@@ -181,10 +183,10 @@ fn main() -> status: std::process::ExitStatus pure {{
 }}
 "
         );
-        assert_rule(
+        assert_rule_kind(
             source.as_bytes(),
             SemanticRule::Op1,
-            SemanticIssueKind::InvalidOperation,
+            |kind| matches!(kind, SemanticIssueKind::InvalidOperation { .. }),
         );
     }
     for parameters in [
@@ -203,10 +205,10 @@ fn main() -> status: std::process::ExitStatus pure {{
 }}
 "
         );
-        assert_rule(
+        assert_rule_kind(
             source.as_bytes(),
             SemanticRule::Op1,
-            SemanticIssueKind::InvalidOperation,
+            |kind| matches!(kind, SemanticIssueKind::InvalidOperation { .. }),
         );
     }
 }

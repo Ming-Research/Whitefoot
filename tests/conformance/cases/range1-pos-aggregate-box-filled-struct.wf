@@ -1,0 +1,16 @@
+struct Block {
+  entry_slot: u32;
+}
+
+fn need(targets: &[Block]) -> result: unit pure contract {
+  requires forall zero(k in 0_u64..targets^.len): targets^[k].entry_slot == 0_u32;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let block = Block(entry_slot: 0_u32);
+  let targets = box_array_filled::<Block>(count: 2_u64, value: block);
+  need(targets: &targets.inner[0_u64..2_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

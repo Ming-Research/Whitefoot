@@ -53,6 +53,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     DeadlinePassed() => {
       return False();
     }
+    Cancelled() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -158,6 +161,9 @@ fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: 
                   return exit_status(code: 11_u8);
                 }
                 DeadlinePassed() => {
+                  return exit_status(code: 11_u8);
+                }
+                Cancelled() => {
                   return exit_status(code: 11_u8);
                 }
                 BrokenPipe(code: c, origin: o) => {

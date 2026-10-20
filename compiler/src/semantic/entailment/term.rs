@@ -30,6 +30,8 @@ pub(crate) enum CountedCaptureSide {
 pub(crate) enum TermKind {
     /// The distinguished zero term Z, carrying constant bounds.
     Zero,
+    /// Mathematical sum of one admitted FN-9 side, without a fragment type.
+    Sum(TermId, TermId),
     /// The mathematical value of an integer literal or integer-typed named
     /// const. Value and capture identities may retain constant terms;
     /// relation operands fold their value through Z with `constant_part`.
@@ -202,6 +204,7 @@ pub(crate) const ZERO: TermId = TermId(0);
 /// unregistered term.
 pub(crate) struct TermTable {
     terms: Vec<TermKind>,
+    sums: Vec<TermId>,
     ids: WordHashMap<TermKind, TermId>,
     measure_bounds: WordHashMap<TermId, MeasureBound>,
     revision: usize,
@@ -222,6 +225,7 @@ impl TermTable {
     pub(crate) fn new() -> Self {
         let mut table = Self {
             terms: Vec::new(),
+            sums: Vec::new(),
             ids: WordHashMap::default(),
             measure_bounds: WordHashMap::default(),
             revision: 0,
@@ -309,6 +313,9 @@ impl TermTable {
             u32::try_from(self.terms.len())
                 .expect("ENT term inventory exceeds the u32 identity space"),
         );
+        if matches!(kind, TermKind::Sum(..)) {
+            self.sums.push(id);
+        }
         self.terms.push(kind.clone());
         self.ids.insert(kind, id);
         self.implicit_log.push(id);
@@ -317,6 +324,62 @@ impl TermTable {
             .checked_add(1)
             .expect("term revision fits usize");
         id
+    }
+
+    pub(crate) fn sum_ids(&self) -> impl Iterator<Item = TermId> + '_ {
+        self.sums.iter().copied()
+    }
+
+    pub(crate) fn sum(&mut self, left: TermId, right: TermId) -> TermId {
+        if left == ZERO {
+            return right;
+        }
+        if right == ZERO {
+            return left;
+        }
+        self.intern(TermKind::Sum(left.min(right), left.max(right)))
+    }
+
+    /// Extend one simultaneous substitution through the finite sum inventory.
+    /// Children were interned before their sum, so one term-order pass suffices.
+    pub(crate) fn expand_substitutions(
+        &mut self,
+        pairs: &[(TermId, TermId)],
+    ) -> Vec<(TermId, TermId)> {
+        let mut expanded = pairs.to_vec();
+        let sums = self
+            .sum_ids()
+            .filter_map(|term| match self.kind(term) {
+                TermKind::Sum(left, right) => Some((term, *left, *right)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for (term, left, right) in sums {
+            if expanded.iter().any(|(from, _)| *from == term) {
+                continue;
+            }
+            let substitute = |leaf| {
+                expanded
+                    .iter()
+                    .find_map(|(from, to)| (*from == leaf).then_some(*to))
+                    .unwrap_or(leaf)
+            };
+            let (new_left, new_right) = (substitute(left), substitute(right));
+            if (new_left, new_right) != (left, right) {
+                expanded.push((term, self.sum(new_left, new_right)));
+            }
+        }
+        expanded
+    }
+
+    /// Whether a sum or one of its leaves satisfies a support predicate.
+    pub(crate) fn any_leaf(&self, term: TermId, predicate: &impl Fn(TermId) -> bool) -> bool {
+        match self.kind(term) {
+            TermKind::Sum(left, right) => {
+                self.any_leaf(*left, predicate) || self.any_leaf(*right, predicate)
+            }
+            _ => predicate(term),
+        }
     }
 
     /// Splits an operand into its nonconstant term and mathematical offset.
@@ -344,6 +407,16 @@ impl TermTable {
     fn identity(kind: TermKind) -> TermKind {
         match kind {
             TermKind::Constant(0) => TermKind::Zero,
+            // [ENT-2, OP-15] an exact reference to a declared measure
+            // reads the same term as that readonly field's direct read.
+            TermKind::Place(mut place, IntegerType::U64)
+                if matches!(place.path.last(), Some(PlaceStep::Measure(_))) =>
+            {
+                let Some(PlaceStep::Measure(measure)) = place.path.pop() else {
+                    unreachable!();
+                };
+                TermKind::Measure(measure, place.term_identity())
+            }
             TermKind::Place(place, fragment) => TermKind::Place(place.term_identity(), fragment),
             TermKind::Measure(measure, place) => TermKind::Measure(measure, place.term_identity()),
             other => other,
@@ -401,4 +474,41 @@ pub(crate) const fn integer_value(ty: IntegerType, bits: u64) -> i128 {
         }
     }
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::semantic::model::BindingId;
+
+    /// [ENT-2, MSR-2] a measure reference's integer read shares the
+    /// direct field's term, so it shares its standing bounds and word kills.
+    #[test]
+    fn measure_reference_read_has_the_direct_measure_identity() {
+        let mut terms = TermTable::new();
+        let base = ResolvedPlace::binding(BindingId(0));
+        for measure in [
+            CheckedMeasure::Length,
+            CheckedMeasure::Capacity,
+            CheckedMeasure::Head,
+        ] {
+            let direct = terms.intern(TermKind::Measure(measure, base.clone()));
+            let mut selected = base.clone();
+            selected.path.push(PlaceStep::Measure(measure));
+            let through_reference = terms.intern(TermKind::Place(selected, IntegerType::U64));
+            assert_eq!(direct, through_reference);
+            terms.set_measure_bound(direct, MeasureBound::Constant(7));
+            assert_eq!(
+                terms.measure_bound(through_reference),
+                Some(MeasureBound::Constant(7))
+            );
+            assert_eq!(
+                terms.kind(through_reference),
+                &TermKind::Measure(measure, base.clone())
+            );
+        }
+        let length = terms.intern(TermKind::Measure(CheckedMeasure::Length, base.clone()));
+        let capacity = terms.intern(TermKind::Measure(CheckedMeasure::Capacity, base));
+        assert_ne!(length, capacity);
+    }
 }

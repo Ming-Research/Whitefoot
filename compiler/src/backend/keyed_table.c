@@ -5,9 +5,9 @@
  * this unit's functions).
  *
  * A map state is one pointer inside a reference-counted shared object.
- * The object owns the map and releases it with its last handle. Each driver thread is one user of
- * every table, numbered by its driver, since a statement holding a table's
- * entries never suspends and so ends on the driver it began on. Everything a
+ * The object owns the map and releases it with its last handle. Each physical executor is one user of
+ * every table, retaining its identity when its logical driver is reassigned:
+ * a statement holding entries never suspends and ends on its original thread. Everything a
  * statement holds lives in what its compiled code reserves in its frame: a
  * wf_table_entry for one key, a hold for several keys or the whole table,
  * and a watch for a guard. So one statement may hold entries of several
@@ -28,6 +28,10 @@
 #define WF_CMAP_GIVE(block, bytes) wf__runtime_give((block), (bytes))
 #define WF_CMAP_YIELD() wf__runtime_yield()
 #define WF_CMAP_EXHAUSTED() wf__runtime_exhausted()
+#define WF_CMAP_GRANTED(bytes) wf__runtime_granted(bytes)
+#endif
+#ifndef WF_CMAP_HEAP_CHANGE
+#define WF_CMAP_HEAP_CHANGE(delta) wf__heap_change(delta)
 #endif
 /* A table keeps the watches of the guards that read it. */
 #define WF_CMAP_HOST_FIELDS wf_watch_list watch;
@@ -40,6 +44,7 @@
 static _Thread_local void *wf_key_set_spare;
 #define WF_CMAP_SPARE_KEYS() (wf_key_set_spare)
 #include "concurrent_map.c"
+
 
 /* What a statement on one key keeps in its frame: the entry's unlock, the
  * table's user, whether the statement only reads the entry, and whether the
@@ -70,6 +75,8 @@ static inline void table_written(wf_cmap *map) {
 }
 
 void wf__key_set_new(wf_key_set *out, uint64_t capacity) { wf_cmap_key_set_new(out, capacity); }
+
+uint64_t wf__key_set_bytes(const wf_key_set *set) { return wf_cmap_key_set_bytes(set); }
 
 uint64_t wf__key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length) {
     return wf_cmap_key_set_insert(set, key, length);
@@ -128,6 +135,12 @@ uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_wi
 
 uint64_t *wf__keyed_table_drain(void *table) { return (uint64_t *)wf_cmap_drain((wf_cmap *)table); }
 
+uint64_t wf__keyed_table_scan_within(void *table, uint64_t cursor, uint64_t count, uint64_t limit,
+                                    wf_key_set *set, uint32_t *needs, uint64_t tag_offset,
+                                    uint32_t tag_width, uint64_t none_tag) {
+    return wf_cmap_scan_within((wf_cmap *)table, cursor, count, limit, set, needs, tag_offset, tag_width, none_tag);
+}
+
 uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, wf_key_set *set, uint64_t tag_offset,
                               uint32_t tag_width, uint64_t none_tag) {
     return wf_cmap_scan((wf_cmap *)table, cursor, count, set, tag_offset, tag_width, none_tag);
@@ -140,6 +153,8 @@ void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width,
                            void (*release)(void *)) {
     wf_cmap_clear((wf_cmap *)table, tag_offset, tag_width, none_tag, release);
 }
+
+uint64_t wf__keyed_table_release_reserve(void *table) { return wf_cmap_release_reserve((wf_cmap *)table); }
 
 /* No statement reaches a table that is freed, so no guard's watch is
  * registered on it; one still registered would be left on a freed list. */
@@ -162,25 +177,13 @@ void *wf__table_lock_entry(void *table, const unsigned char *key, uint64_t lengt
     wf_cmap_user *u = wf_cmap_user_at(map, wf__driver_index());
     int held = wf_cmap_holds_whole(u);
     entry->user = u;
-    entry->read = read != 0u;
+    entry->read = (read & 1u) != 0u;
     entry->held = (uint32_t)held;
-    if (read != 0u) {
-        void *slot = (void *)wf_cmap_read_entry(u, key, length, held, &entry->inner);
-        if ((read & 2u) != 0 && entry->inner.cell == NULL && !held && !entry->inner.upgraded) {
-            /* Beside another object, absence must remain stable until release. */
-            atomic_store_explicit(&u->active, 0, memory_order_release);
-            wf_cmap_hold(u);
-            entry->inner.upgraded = 1;
-            u->patience = UINT64_MAX;
-            cell *c = NULL;
-            struct table *t;
-            int r = read_entry(u, tag_of(key, length), key, length, &c, &t);
-            entry->inner.cell = r == FOUND ? c : NULL;
-            entry->inner.table = t;
-            slot = r == FOUND ? slot_of(map, node_at(c)) : map->none;
-        }
-        return slot;
-    }
+    /* Flags: shared read, stable absence, non-inserting exclusive access. */
+    if (entry->read)
+        return access_existing_entry(u, key, length, held, &entry->inner, 0, (read & 2u) != 0);
+    if ((read & 4u) != 0)
+        return wf_cmap_lock_present_entry(u, key, length, held, (read & 2u) != 0, &entry->inner);
     return wf_cmap_lock_entry(u, key, length, held, &entry->inner);
 }
 
@@ -191,8 +194,10 @@ void wf__table_unlock_entry(wf_table_entry *entry, uint32_t present) {
         wf_cmap_unread_entry(u, &entry->inner, (int)entry->held);
         return;
     }
+    int had_cell = entry->inner.cell != NULL;
     wf_cmap_unlock_entry(u, &entry->inner, (int)entry->held, present != 0u);
-    table_written(u->map);
+    if (had_cell)
+        table_written(u->map);
 }
 
 void wf__table_hold_begin(void *hold, void *table) { wf_cmap_hold_begin((wf_cmap_holding *)hold, (wf_cmap *)table); }
@@ -243,11 +248,18 @@ void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width,
 void wf__watch_table(void *watch, void *table) { wf__watch_unit(watch, &((wf_cmap *)table)->watch); }
 
 /* One type group, sorted by object identity before any of its objects is
- * held. Equal map handles combine their keys before taking the map once. */
-typedef struct wf_atomic_target { void *object; wf_cmap_holding *hold; } wf_atomic_target;
+ * held. Equal map handles combine their keys before taking the map once.
+ * `wrote` says whether the statement may write an ordinary object; it
+ * travels with its target through the sort. */
+typedef struct wf_atomic_target {
+    void *object;
+    wf_cmap_holding *hold;
+    uint32_t wrote;
+} wf_atomic_target;
 
-void wf__atomic_group_take(void *record, uint64_t count) {
-    wf_atomic_target *targets = record;
+/* Sorts the group by identity; a sorted group stays as it is, so a
+ * statement that resumes and asks again sees the same order. */
+static void atomic_group_sort(wf_atomic_target *targets, uint64_t count) {
     for (uint64_t i = 1; i < count; ++i) {
         wf_atomic_target item = targets[i];
         uint64_t j = i;
@@ -257,9 +269,19 @@ void wf__atomic_group_take(void *record, uint64_t count) {
         }
         targets[j] = item;
     }
-    for (uint64_t i = 0; i < count;) {
-        uint64_t end = i + 1;
-        while (end < count && targets[end].object == targets[i].object) ++end;
+}
+
+/* The end of the run of targets from `i` that name one object. */
+static uint64_t atomic_group_run(const wf_atomic_target *targets, uint64_t count, uint64_t i) {
+    uint64_t end = i + 1;
+    while (end < count && targets[end].object == targets[i].object) ++end;
+    return end;
+}
+
+/* Takes the sorted group's objects from the run at `i` on, each once. */
+static void atomic_group_take_from(wf_atomic_target *targets, uint64_t count, uint64_t i) {
+    while (i < count) {
+        uint64_t end = atomic_group_run(targets, count, i);
         wf_cmap_holding *primary = targets[i].hold;
         if (primary == NULL) {
             wf__shared_take(targets[i].object, 1);
@@ -272,7 +294,9 @@ void wf__atomic_group_take(void *record, uint64_t count) {
                     wf_cmap_hold_key(primary, keys[k].key, keys[k].length);
                 primary->wants |= secondary->wants;
                 primary->read &= secondary->read;
-                wf_cmap_hold_release(secondary, 0, 4, 0);
+                /* Before take, user is NULL: release only preparatory scratch,
+                 * never acquired entries, so no tag metadata is consumed. */
+                wf_cmap_hold_release(secondary, 0, 0, 0);
                 secondary->primary = primary;
                 secondary->first = first;
             }
@@ -282,15 +306,49 @@ void wf__atomic_group_take(void *record, uint64_t count) {
     }
 }
 
-void wf__atomic_group_release(void *record, uint64_t count) {
+void wf__atomic_group_take(void *record, uint64_t count) {
+    wf_atomic_target *targets = record;
+    atomic_group_sort(targets, count);
+    atomic_group_take_from(targets, count, 0);
+}
+
+/* The statement's first group, which holds nothing before it: its first
+ * ordinary object is acquired as a statement of one object is, so a guard's
+ * reservation refuses it and it parks, answering 1 with nothing held; the
+ * frame suspends and calls again once resumed. Holding that object, it
+ * takes the others, which follow it in identity order, as an earlier
+ * object's holder, whom a reservation admits. A map group parks nowhere. */
+int wf__atomic_group_acquire(void *record, uint64_t count, void *frame) {
+    wf_atomic_target *targets = record;
+    atomic_group_sort(targets, count);
+    if (count == 0 || targets[0].hold != NULL) {
+        atomic_group_take_from(targets, count, 0);
+        return 0;
+    }
+    if (wf__shared_acquire(targets[0].object, 1, frame))
+        return 1;
+    atomic_group_take_from(targets, count, atomic_group_run(targets, count, 0));
+    return 0;
+}
+
+void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
+                              uint32_t tag_width, uint64_t none_tag) {
     wf_atomic_target *targets = record;
     while (count != 0) {
         uint64_t first = count - 1;
         while (first != 0 && targets[first - 1].object == targets[count - 1].object) --first;
-        if (targets[first].hold != NULL)
-            wf__table_hold_release(targets[first].hold, 0, 4, 0);
-        else
-            wf__shared_unlock(targets[first].object, 1);
+        if (targets[first].hold != NULL) {
+            wf__table_hold_release(targets[first].hold, tag_offset, tag_width, none_tag);
+        } else {
+            /* An object several targets name is written if any may write
+             * it; one none may write starts no sweep of its watches. */
+            uint32_t wrote = 0;
+            for (uint64_t i = first; i < count; ++i) wrote |= targets[i].wrote;
+            if (wrote)
+                wf__shared_unlock(targets[first].object, 1);
+            else
+                wf__shared_unlock_unwritten(targets[first].object, 1);
+        }
         count = first;
     }
 }

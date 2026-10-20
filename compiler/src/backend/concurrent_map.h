@@ -16,11 +16,12 @@ typedef struct wf_cmap wf_cmap;
 typedef struct wf_cmap_user wf_cmap_user;
 
 /* Users a map can have at once. */
-#define WF_CMAP_MAX_USERS 64
+#define WF_CMAP_MAX_USERS 128
 
 /* A map sized for capacity keys, or a small default when capacity is zero. */
 wf_cmap *wf_cmap_create(uint64_t capacity);
-/* Frees the map; it has no users left. */
+/* Frees the map and its nodes; it has no users left. The caller must first
+ * drain any slots whose payloads need releasing. */
 void wf_cmap_destroy(wf_cmap *map);
 /* A user of map for the calling thread; NULL when map already has
  * WF_CMAP_MAX_USERS. */
@@ -59,6 +60,12 @@ typedef struct {
  * With held set, the caller holds the whole map. */
 void *wf_cmap_lock_entry(wf_cmap_user *user, const unsigned char *key, uint64_t length, int held,
                          wf_cmap_entry *entry);
+/* Locks only a present key. An absent key returns the immutable shared None
+ * slot and records cell == NULL; unlock must receive present == 0 then.
+ * stable_absence holds the map whole and rechecks an absence until release.
+ * held has the same contract as wf_cmap_lock_entry. */
+void *wf_cmap_lock_present_entry(wf_cmap_user *user, const unsigned char *key, uint64_t length, int held,
+                                 int stable_absence, wf_cmap_entry *entry);
 /* Unlocks the entry: kept when present, else removed with its slot, which
  * then holds nothing to release. */
 void wf_cmap_unlock_entry(wf_cmap_user *user, wf_cmap_entry *entry, int held, int present);
@@ -87,17 +94,23 @@ typedef struct wf_key_set {
 
 /* An empty set with room for capacity keys. */
 void wf_cmap_key_set_new(wf_key_set *set, uint64_t capacity);
+/* The pool-granted bytes of its item/index store and byte arena, including
+ * capacity not occupied by a key. A storeless set retains zero bytes. */
+uint64_t wf_cmap_key_set_bytes(const wf_key_set *set);
 /* The index of key in the set: that of its first insertion when the set
  * has it, else len, after appending it. */
 uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length);
 /* The bytes of the key at index, below len; they stay where they are until
  * the set next changes. */
 const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length);
-/* Gives the set's memory back, leaving it empty; or gives back the memory
- * of a set whose `store` alone is at hand, NULL for none. When the includer
- * keeps spares (WF_CMAP_SPARE_KEYS), a small set's memory stays as the
- * calling thread's spare instead, for its next set, until
- * wf_cmap_key_set_drop_spare gives it back. */
+/* Gives all the set's grants back, leaving it empty; or gives back the
+ * memory of a set whose `store` alone is at hand, NULL for none. When the
+ * includer keeps spares (WF_CMAP_SPARE_KEYS), a small set's memory stays as
+ * the calling thread's spare instead, for its next set; the heap reading
+ * records either as the same release of the set's granted bytes. Only tests
+ * give a spare back (wf_cmap_key_set_drop_spare): a runtime thread keeps its
+ * one bounded spare until the process ends, and one that exits leaves it
+ * unreturned, already outside the reading. */
 void wf_cmap_key_set_release(wf_key_set *set);
 void wf_cmap_key_set_free_store(void *store);
 void wf_cmap_key_set_drop_spare(void);
@@ -223,6 +236,13 @@ uint64_t wf_cmap_count_held(wf_cmap *map, uint64_t tag_offset, uint32_t tag_widt
  * map whole may scan it at once. */
 uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set *set, uint64_t tag_offset,
                       uint32_t tag_width, uint64_t none_tag);
+/* The byte-bounded scan under the same whole-map hold: the return value
+ * is Next's cursor when *needs is 0, or Needs' exact peak growth when it
+ * is 1. Admission includes whole positions, store/arena growth and scratch. */
+uint64_t wf_cmap_scan_within(wf_cmap *map, uint64_t cursor, uint64_t count, uint64_t limit,
+                             wf_key_set *set, uint32_t *needs, uint64_t tag_offset,
+                             uint32_t tag_width, uint64_t none_tag);
+
 /* Empties a map its caller's hold holds whole, as wf_cmap_swap with a new
  * empty map of its layout would, and keeps that map, now holding the old
  * entries, for the caller to release once the hold is given up:
@@ -233,6 +253,16 @@ void wf_cmap_clear(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64
                    void (*release)(void *));
 wf_cmap *wf_cmap_take_cleared(wf_cmap *map);
 void wf_cmap_release_cleared(wf_cmap *cleared);
+
+/* Tries the map's short lock, detaches its spare cells and unprotected
+ * retired tables, then frees them after unlocking and returns their
+ * counted heap bytes, including table headers. A closed whole-map gate
+ * protects all retired tables; otherwise a matching publication protects
+ * while its entry user is active, or unconditionally for a word-map user.
+ * Returns 0 at once when the lock is busy, or when nothing is reclaimable.
+ * It changes no entry, waits for no holder, helps no move, and needs
+ * neither a user nor a whole hold. */
+uint64_t wf_cmap_release_reserve(wf_cmap *map);
 
 /* With no users left: the slot of an entry not yet drained, whose value the
  * caller releases before calling again, or NULL once every entry has been. */

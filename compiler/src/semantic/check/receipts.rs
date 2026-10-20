@@ -18,17 +18,19 @@
 //!
 //! A receipt records only what an accepted analysis concluded and later
 //! stages read: that every judgment held, which postconditions it published
-//! to callers, the body's disposition, and each proved allocation ceiling.
+//! to callers, the body's disposition, each proved allocation ceiling, and
+//! the operation operand intervals the range judgment reads [RANGE-2].
 //! A rejection is never recorded, so a failing function is analyzed afresh
 //! and reported where its current source stands.
 
 use crate::semantic::check::{AnalysisState, DeclarationInventory, TypeContext};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::{CheckStop, CheckedFunctionInventory, Checker};
+use crate::semantic::entailment::operation_facts::Interval;
 use crate::semantic::entailment::{
     DerivationId, EntailmentCallee, FunctionEntailment, FunctionPostconditionProof,
-    PostconditionAggregate,
+    PostconditionAggregate, PostconditionSchedule,
 };
 use crate::semantic::model::{
     CheckedBodyDisposition, CheckedContractQuery, CheckedFunction, CheckedType, IntegerType,
@@ -372,39 +374,111 @@ pub(super) struct ProofReceipt {
     /// The body's disposition at entry [ENT-5]: an uninhabited body
     /// publishes nothing and lowers to an unreachable terminator.
     pub(super) uninhabited: bool,
+    /// [RANGE-2, ENT-3.S7] operation sites use stable item identities and
+    /// item-relative paths, rebound to the current unit when reused [MOD-8].
+    operation_intervals: BTreeMap<ReceiptNodePath, Option<Vec<Interval>>>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ReceiptNodePath {
+    item: String,
+    components: Vec<u32>,
 }
 
 impl ProofReceipt {
-    const HEADER: &'static str = "proof-receipt 2";
+    const HEADER: &'static [u8] = b"proof-receipt 3\n";
 
-    pub(super) fn encode(&self) -> Vec<u8> {
-        format!(
-            "{}\n{}\n",
-            Self::HEADER,
-            if self.uninhabited {
-                "uninhabited"
-            } else {
-                "inhabited"
+    pub(super) fn encode(&self) -> Option<Vec<u8>> {
+        let mut bytes = Self::HEADER.to_vec();
+        bytes.push(u8::from(self.uninhabited));
+        bytes.extend_from_slice(
+            &u32::try_from(self.operation_intervals.len())
+                .ok()?
+                .to_le_bytes(),
+        );
+        for (path, intervals) in &self.operation_intervals {
+            bytes.extend_from_slice(&u32::try_from(path.item.len()).ok()?.to_le_bytes());
+            bytes.extend_from_slice(path.item.as_bytes());
+            bytes.extend_from_slice(&u32::try_from(path.components.len()).ok()?.to_le_bytes());
+            for component in &path.components {
+                bytes.extend_from_slice(&component.to_le_bytes());
             }
-        )
-        .into_bytes()
+            match intervals {
+                None => bytes.push(0),
+                Some(intervals) => {
+                    bytes.push(1);
+                    bytes.extend_from_slice(&u32::try_from(intervals.len()).ok()?.to_le_bytes());
+                    for interval in intervals {
+                        bytes.extend_from_slice(&interval.low.to_le_bytes());
+                        bytes.extend_from_slice(&interval.high.to_le_bytes());
+                    }
+                }
+            }
+        }
+        Some(bytes)
     }
 
     pub(super) fn decode(bytes: &[u8]) -> Option<Self> {
-        let text = std::str::from_utf8(bytes).ok()?;
-        let mut lines = text.lines();
-        if lines.next()? != Self::HEADER {
-            return None;
-        }
-        let uninhabited = match lines.next()? {
-            "inhabited" => false,
-            "uninhabited" => true,
+        let mut input = ReceiptReader(bytes.strip_prefix(Self::HEADER)?);
+        let uninhabited = match input.take(1)?[0] {
+            0 => false,
+            1 => true,
             _ => return None,
         };
-        if lines.next().is_some() {
+        let mut operation_intervals = BTreeMap::new();
+        for _ in 0..input.u32()? {
+            let item_length = usize::try_from(input.u32()?).ok()?;
+            let item = std::str::from_utf8(input.take(item_length)?)
+                .ok()?
+                .to_owned();
+            let mut components = Vec::new();
+            for _ in 0..input.u32()? {
+                components.push(input.u32()?);
+            }
+            let intervals = match input.take(1)?[0] {
+                0 => None,
+                1 => {
+                    let mut intervals = Vec::new();
+                    for _ in 0..input.u32()? {
+                        let low = i128::from_le_bytes(input.take(16)?.try_into().ok()?);
+                        let high = i128::from_le_bytes(input.take(16)?.try_into().ok()?);
+                        if low > high {
+                            return None;
+                        }
+                        intervals.push(Interval::new(low, high));
+                    }
+                    Some(intervals)
+                }
+                _ => return None,
+            };
+            if operation_intervals
+                .insert(ReceiptNodePath { item, components }, intervals)
+                .is_some()
+            {
+                return None;
+            }
+        }
+        if !input.0.is_empty() {
             return None;
         }
-        Some(Self { uninhabited })
+        Some(Self {
+            uninhabited,
+            operation_intervals,
+        })
+    }
+}
+
+struct ReceiptReader<'a>(&'a [u8]);
+
+impl<'a> ReceiptReader<'a> {
+    fn take(&mut self, count: usize) -> Option<&'a [u8]> {
+        let bytes = self.0.get(..count)?;
+        self.0 = self.0.get(count..)?;
+        Some(bytes)
+    }
+
+    fn u32(&mut self) -> Option<u32> {
+        Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
     }
 }
 
@@ -435,11 +509,35 @@ fn receipt_item(key: &crate::ItemKey) -> crate::ItemKey {
 /// ordinal, as [`receipt_item`] spells them.
 pub(super) struct ItemSpellings {
     by_ordinal: Vec<Option<String>>,
+    by_spelling: HashMap<String, Option<u32>>,
 }
 
 impl ItemSpellings {
+    fn new(by_ordinal: Vec<Option<String>>) -> Self {
+        let mut by_spelling = HashMap::new();
+        for (ordinal, spelling) in by_ordinal.iter().enumerate() {
+            let Some(spelling) = spelling else {
+                continue;
+            };
+            by_spelling
+                .entry(spelling.clone())
+                .and_modify(|ordinal| *ordinal = None)
+                .or_insert_with(|| u32::try_from(ordinal).ok());
+        }
+        Self {
+            by_ordinal,
+            by_spelling,
+        }
+    }
+
     fn spelling(&self, ordinal: u32) -> Option<String> {
         self.by_ordinal.get(ordinal as usize)?.clone()
+    }
+
+    /// A retained item must select exactly one current item. An ambiguous
+    /// spelling makes the receipt incomplete for this unit, so recompute.
+    fn ordinal(&self, spelling: &str) -> Option<u32> {
+        self.by_spelling.get(spelling).copied().flatten()
     }
 }
 
@@ -453,6 +551,9 @@ impl ItemSpellings {
 fn analyzed_rendering(function: &CheckedFunction) -> String {
     let CheckedFunction {
         formal_hypothesis,
+        // A symbolic instance taking its canonical instance's outcomes is
+        // never analyzed, and no receipt stands for a symbolic analysis.
+        summary_source: _,
         prelude_element: _,
         id,
         declaration,
@@ -467,7 +568,10 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         declared_state_writes,
         declared_state_reads,
         requirements,
+        held_parameters,
+        held_calls,
         requirement_places,
+        routed_requirements,
         postconditions,
         range_facts,
         body,
@@ -484,7 +588,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         "{formal_hypothesis:?}\n{id:?}\n{declaration:?}\n{module:?}\n{name:?}\n{symbol:?}\n\
          {function_actuals:?}\n{region_parameters:?}\n{parameters:?}\n{result_mode:?}\n\
          {result:?}\n{declared_state_writes:?}\n{declared_state_reads:?}\n{requirements:?}\n\
-         {requirement_places:?}\n\
+         {requirement_places:?}\n{held_parameters:?}\n{held_calls:?}\n{routed_requirements:?}\n\
          {postconditions:?}\n{range_facts:?}\n{body:?}\n{reference_origins:?}\n\
          {body_disposition:?}\n{call_separations:?}\n{permission_separation_queries:?}\n\
          {waiting:?}"
@@ -512,7 +616,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         })
         .collect::<Vec<_>>();
     format!(
-        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
+        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
         function.formal_hypothesis,
         function.symbol,
         function.module,
@@ -522,6 +626,8 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         function.declared_state_writes,
         function.declared_state_reads,
         function.requirements,
+        function.held_parameters,
+        function.routed_requirements,
         function.function_actuals,
         function.range_facts.requirements,
         function.range_facts.postconditions,
@@ -686,8 +792,8 @@ impl Checker<'_, '_> {
                 IdKind::Nominal => {
                     let nominal = self.types.nominals.get(position)?;
                     format!(
-                        "nominal\n{:?}\n{:?} {:?}",
-                        nominal.kind, nominal.linear, nominal.nocopy
+                        "nominal\n{:?}\n{:?} {:?} {:?}",
+                        nominal.kind, nominal.linear, nominal.nocopy, nominal.type_invariant
                     )
                 }
                 IdKind::Element => {
@@ -767,7 +873,11 @@ impl Checker<'_, '_> {
             .load(&key)
             .and_then(|bytes| ProofReceipt::decode(&bytes))
             .and_then(|receipt| {
-                DeclarationInventory::receipt_entailment(&functions.get(index)?.function, &receipt)
+                DeclarationInventory::receipt_entailment(
+                    &functions.get(index)?.function,
+                    &receipt,
+                    items,
+                )
             });
         if recorded.is_some() {
             if let Some(slot) = self.analysis.reused_analyses.get_mut(index) {
@@ -779,19 +889,47 @@ impl Checker<'_, '_> {
         recorded
     }
 
-    /// Records the receipt of every function analyzed afresh whose analysis
-    /// no rejection names.
-    pub(super) fn record_receipts(&mut self, functions: &[&CheckedFunction], rejected: &[bool]) {
+    /// Records accepted fresh analyses only after every member of their
+    /// component has verified, including the range judgment [DIAG-2, MOD-8].
+    /// A failed component leaves unrelated components' receipts available.
+    pub(super) fn record_receipts(
+        &mut self,
+        functions: &[&CheckedFunction],
+        rejected: &[bool],
+        schedule: &PostconditionSchedule,
+    ) {
         let Some(store) = self.receipts else {
             return;
         };
+        if self.analysis.receipt_keys.is_empty() {
+            return;
+        }
+        let Ok(items) = self.types.declarations.receipt_items() else {
+            return;
+        };
+        let mut rejected = rejected.to_vec();
+        for component in &schedule.components {
+            if component
+                .functions
+                .iter()
+                .any(|function| rejected.get(function.0 as usize).copied().unwrap_or(true))
+            {
+                for function in &component.functions {
+                    if let Some(rejected) = rejected.get_mut(function.0 as usize) {
+                        *rejected = true;
+                    }
+                }
+            }
+        }
         for (index, key) in std::mem::take(&mut self.analysis.receipt_keys) {
             if rejected.get(index).copied().unwrap_or(true) {
                 continue;
             }
-            if let Some(function) = functions.get(index) {
-                let receipt = DeclarationInventory::proof_receipt(function);
-                store.store(&key, &receipt.encode());
+            if let Some(function) = functions.get(index)
+                && let Some(bytes) = DeclarationInventory::proof_receipt(function, &items)
+                    .and_then(|receipt| receipt.encode())
+            {
+                store.store(&key, &bytes);
             }
         }
     }
@@ -813,23 +951,56 @@ impl<'unit> DeclarationInventory<'unit> {
                     .map(|key| receipt_item(key).to_string())
             })
             .collect();
-        Ok(ItemSpellings { by_ordinal })
+        Ok(ItemSpellings::new(by_ordinal))
     }
     /// The receipt of an accepted analysis of `function`.
-    pub(super) fn proof_receipt(function: &CheckedFunction) -> ProofReceipt {
-        ProofReceipt {
+    pub(super) fn proof_receipt(
+        function: &CheckedFunction,
+        items: &ItemSpellings,
+    ) -> Option<ProofReceipt> {
+        let operation_intervals = function
+            .entailment
+            .operation_intervals
+            .iter()
+            .map(|(path, intervals)| {
+                let (item, components) = path.components.split_first()?;
+                let spelling = items.spelling(*item)?;
+                if items.ordinal(&spelling)? != *item {
+                    return None;
+                }
+                Some((
+                    ReceiptNodePath {
+                        item: spelling,
+                        components: components.to_vec(),
+                    },
+                    intervals.clone(),
+                ))
+            })
+            .collect::<Option<BTreeMap<_, _>>>()?;
+        Some(ProofReceipt {
             uninhabited: matches!(
                 function.entailment.body_disposition,
                 CheckedBodyDisposition::Uninhabited { .. }
             ),
-        }
+            operation_intervals,
+        })
     }
     /// The analysis a receipt stands for: everything later stages read of
     /// it, and every postcondition verified for publication [FN-9].
     pub(super) fn receipt_entailment(
         function: &CheckedFunction,
         receipt: &ProofReceipt,
+        items: &ItemSpellings,
     ) -> Option<FunctionEntailment> {
+        let operation_intervals = receipt
+            .operation_intervals
+            .iter()
+            .map(|(path, intervals)| {
+                let mut components = vec![items.ordinal(&path.item)?];
+                components.extend_from_slice(&path.components);
+                Some((crate::NodePath { components }, intervals.clone()))
+            })
+            .collect::<Option<BTreeMap<_, _>>>()?;
         let postconditions = function
             .postconditions
             .iter()
@@ -841,6 +1012,7 @@ impl<'unit> DeclarationInventory<'unit> {
                     relation_ordinal: u32::try_from(ordinal).ok()?,
                     summary: None,
                     exits: Vec::new(),
+                    vacuous: postcondition.selector.vacuous_when_unselected(),
                     aggregate: PostconditionAggregate {
                         discharged: true,
                         derivation: None,
@@ -849,6 +1021,7 @@ impl<'unit> DeclarationInventory<'unit> {
             })
             .collect::<Option<Vec<_>>>()?;
         Some(FunctionEntailment {
+            operation_intervals,
             body_disposition: if receipt.uninhabited {
                 CheckedBodyDisposition::Uninhabited {
                     contradiction: DerivationId(0),
@@ -890,7 +1063,72 @@ impl AnalysisState {
 
 #[cfg(test)]
 mod tests {
-    use super::{IdKind, Spelling, StableText};
+    use super::{IdKind, ItemSpellings, ProofReceipt, ReceiptNodePath, Spelling, StableText};
+    use crate::semantic::entailment::operation_facts::Interval;
+    use crate::semantic::places::CaptureId;
+    use crate::syntax::NodeId;
+    use std::collections::BTreeMap;
+
+    /// [MOD-8, RANGE-2] reuse retains exact intervals and contradictory
+    /// points, and an old or incomplete receipt never supplies missing facts.
+    #[test]
+    fn operation_intervals_round_trip_and_require_a_complete_receipt() {
+        let receipt = ProofReceipt {
+            uninhabited: false,
+            operation_intervals: BTreeMap::from([
+                (
+                    ReceiptNodePath {
+                        item: "operation item".to_owned(),
+                        components: vec![2, 3],
+                    },
+                    Some(vec![
+                        Interval::new(i128::MIN, i128::MAX),
+                        Interval::value(7),
+                    ]),
+                ),
+                (
+                    ReceiptNodePath {
+                        item: "contradictory item".to_owned(),
+                        components: vec![4],
+                    },
+                    None,
+                ),
+            ]),
+        };
+        let bytes = receipt.encode().expect("the receipt fits its encoding");
+        assert_eq!(ProofReceipt::decode(&bytes), Some(receipt));
+        assert!(ProofReceipt::decode(b"proof-receipt 2\ninhabited\n").is_none());
+        for end in 0..bytes.len() {
+            assert!(ProofReceipt::decode(&bytes[..end]).is_none());
+        }
+        let mut invalid = bytes.clone();
+        invalid[ProofReceipt::HEADER.len()] = 2;
+        assert!(ProofReceipt::decode(&invalid).is_none());
+        let mut invalid = bytes.clone();
+        invalid.extend_from_slice(b"extra");
+        assert!(ProofReceipt::decode(&invalid).is_none());
+        let mut invalid = bytes;
+        let reversed_low = invalid.len() - 32;
+        invalid[reversed_low..reversed_low + 16].copy_from_slice(&8_i128.to_le_bytes());
+        assert!(ProofReceipt::decode(&invalid).is_none());
+    }
+
+    /// [MOD-8] dense top-level item order is not receipt identity, while
+    /// a missing or ambiguous stable spelling cannot select an operation.
+    #[test]
+    fn retained_operation_items_rebind_after_reordering() {
+        let old = ItemSpellings::new(vec![Some("target".to_owned())]);
+        let moved = ItemSpellings::new(vec![
+            Some("unrelated".to_owned()),
+            Some("target".to_owned()),
+        ]);
+        let spelling = old.spelling(0).expect("old operation item");
+        assert_eq!(moved.ordinal(&spelling), Some(1));
+        assert_eq!(moved.ordinal("missing"), None);
+        let ambiguous =
+            ItemSpellings::new(vec![Some("target".to_owned()), Some("target".to_owned())]);
+        assert_eq!(ambiguous.ordinal(&spelling), None);
+    }
 
     fn spelled(rendering: &str) -> Option<(String, Vec<(IdKind, u64)>)> {
         let mut text = StableText::default();
@@ -928,13 +1166,20 @@ mod tests {
     }
 
     /// A source coordinate is dropped whole, and a capture's source
-    /// occurrence is spelled as the node it names.
+    /// occurrence or contract-read call is spelled as the node it names.
     #[test]
     fn coordinates_are_dropped_and_captures_spelled_by_node() {
+        let erased = CaptureId::ContractRead {
+            call: NodeId::from_index(88).expect("node index fits"),
+            position: 2,
+        };
         let mut text = StableText::default();
         text.push(
-            "Origin { coordinate: SyntaxCoordinate { source: SourceId(3), start: ByteOffset(120), \
-             end: ByteOffset(125) }, capture: Source(88), constructor: Source(DeclarationId(4)) }",
+            &format!(
+                "Origin {{ coordinate: SyntaxCoordinate {{ source: SourceId(3), \
+                 start: ByteOffset(120), end: ByteOffset(125) }}, capture: Source(88), \
+                 erased: {erased:?}, constructor: Source(DeclarationId(4)) }}"
+            ),
             &mut |kind, value| match kind {
                 IdKind::Node => Some(Spelling::Stable(format!("node{value}"))),
                 IdKind::Declaration => Some(Spelling::Stable(format!("decl{value}"))),
@@ -945,7 +1190,8 @@ mod tests {
         .expect("every identity is spelled");
         assert_eq!(
             text.into_text(),
-            "Origin { coordinate: SyntaxCoordinate, capture: Source(node88), constructor: \
+            "Origin { coordinate: SyntaxCoordinate, capture: Source(node88), \
+             erased: ContractRead { call: NodeId(node88), position: 2 }, constructor: \
              Source(DeclarationId(decl4)) }"
         );
     }

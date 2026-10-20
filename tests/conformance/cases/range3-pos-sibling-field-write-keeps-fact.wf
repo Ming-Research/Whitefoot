@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Block {
+  entry_slot: u64;
+  normal_y: i64;
+}
+
+fn need(order: &[u64], targets: &[Block]) -> result: unit pure contract {
+  requires forall inverse(k in 0_u64..order^.len) when order^[k] < targets^.len: targets^[order^[k]].entry_slot == k;
+} {
+  doc "Owes nothing; its requirement is the stored left inverse.";
+  return unit;
+}
+
+fn adjust(order: &[u64], targets: &[Block]) -> result: unit writes(targets) contract {
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < targets^.len: targets^[order^[k]].entry_slot == k;
+} {
+  doc "Writes the sibling field of the first block, which leaves the entry_slot fact intact at the call.";
+  if 0_u64 < targets^.len {
+    set targets^[0_u64].normal_y = 9_i64;
+  }
+  need(order: order, targets: targets);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,13 @@
+enum RouteFlag {
+  Flag(flag: Bool);
+}
+
+fn selected(value: Bool) -> result: RouteFlag pure contract {
+  ensures when Flag(flag: payload): payload == value;
+} {
+  return RouteFlag::Flag(flag: value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

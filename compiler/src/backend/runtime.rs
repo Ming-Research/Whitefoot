@@ -10,6 +10,15 @@ pub const ORDINARY_VALUES_LLVM: &str = include_str!("ordinary_values.ll");
 /// Counted libc allocation wrappers, linked only for emitted heap references.
 pub const HEAP_SOURCE: &str = include_str!("heap.c");
 
+/// True when this emitted module references the heap unit: an allocation
+/// wrapper or the shared empty window header [STOR-1] that it defines.
+pub fn module_requires_heap_runtime(module: &str) -> bool {
+    module.contains("@wf__heap_take(")
+        || module.contains("@wf__heap_give(")
+        || module.contains("@wf__heap_retake(")
+        || module.contains("@wf__empty_window")
+}
+
 /// The finite completion core contract embedded in the compiler.
 pub const COMPLETION_CONTRACT_HEADER: &str = include_str!("completion/contract.h");
 /// The typed file-adapter contract embedded in the compiler.
@@ -40,6 +49,17 @@ pub const COMPLETION_FILE_WINDOWS_SOURCE: &str = include_str!("completion/file_w
 pub const COMPLETION_STOP_SIGNALS_SOURCE: &str = include_str!("completion/stop_signals.c");
 /// The compiler-owned file-completion bridge embedded in the compiler.
 pub const COMPLETION_BRIDGE_SOURCE: &str = include_str!("completion/bridge.c");
+/// Qualified fixed snapshot encoder and its immutable descriptor ABI.
+pub const SNAPSHOT_EXPORT_SOURCE: &str = include_str!("completion/snapshot_export.c");
+/// The snapshot encoder's descriptor ABI header.
+pub const SNAPSHOT_EXPORT_HEADER: &str = include_str!("completion/snapshot_export.h");
+/// Restricted fork capsule used by the supplied snapshot implementation.
+pub const FORK_CAPSULE_SOURCE: &str = include_str!("completion/fork_capsule.c");
+/// The fork capsule's interface header.
+pub const FORK_CAPSULE_HEADER: &str = include_str!("completion/fork_capsule.h");
+/// Child code cannot acquire hidden libc, stack-protector or sanitizer calls.
+pub const RESTRICTED_CHILD_COMPILE_ARGUMENTS: &[&str] =
+    &["-fno-builtin", "-fno-stack-protector", "-fno-sanitize=all"];
 /// The target-guarded Linux io_uring adapter embedded in the compiler.
 pub const COMPLETION_LINUX_IO_URING_SOURCE: &str = include_str!("completion/linux_io_uring.c");
 /// The target-guarded Windows IOCP ring embedded in the compiler.
@@ -68,6 +88,8 @@ pub const SCHED_ENTRY_SOURCE: &str = include_str!("sched/entry.c");
 /// unit that compiles it in as keyed tables and key sets over the completion
 /// runtime [SHARE-1].
 pub const CONCURRENT_MAP_HEADER: &str = include_str!("concurrent_map.h");
+/// The map's private layout, shared with the restricted image walker.
+pub const CONCURRENT_MAP_LAYOUT_HEADER: &str = include_str!("concurrent_map_layout.h");
 /// The concurrent map's implementation, which `keyed_table.c` includes.
 pub const CONCURRENT_MAP_SOURCE: &str = include_str!("concurrent_map.c");
 /// `keyed_table.c`, the emitted module's `wf__keyed_table_*`, `wf__table_*`,
@@ -155,6 +177,10 @@ mod tests {
             ("completion/file_posix.c", COMPLETION_FILE_POSIX_SOURCE),
             ("completion/file_windows.c", COMPLETION_FILE_WINDOWS_SOURCE),
             ("completion/bridge.c", COMPLETION_BRIDGE_SOURCE),
+            ("completion/snapshot_export.c", SNAPSHOT_EXPORT_SOURCE),
+            ("completion/snapshot_export.h", SNAPSHOT_EXPORT_HEADER),
+            ("completion/fork_capsule.c", FORK_CAPSULE_SOURCE),
+            ("completion/fork_capsule.h", FORK_CAPSULE_HEADER),
             ("completion/stop_signals.c", COMPLETION_STOP_SIGNALS_SOURCE),
             (
                 "completion/linux_io_uring.c",
@@ -171,6 +197,7 @@ mod tests {
             ("windows_runtime.h", WINDOWS_RUNTIME_HEADER),
             ("windows_runtime.c", WINDOWS_RUNTIME_SOURCE),
             ("concurrent_map.h", CONCURRENT_MAP_HEADER),
+            ("concurrent_map_layout.h", CONCURRENT_MAP_LAYOUT_HEADER),
             ("concurrent_map.c", CONCURRENT_MAP_SOURCE),
             ("keyed_table.c", KEYED_TABLE_SOURCE),
             ("wf_floor.c", super::super::emitter::FLOOR_RUNTIME_SOURCE),

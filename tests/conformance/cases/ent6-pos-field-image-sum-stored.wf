@@ -1,0 +1,70 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  doc "One count.";
+  count: u64;
+}
+
+fn advance(counter: &Counter, delta: u64) -> result: unit writes(counter) contract {
+  requires counter^.count + delta <= 800_u64;
+} {
+  doc "Adds delta to the count; the requirement bounds the sum that is stored.";
+  let count = counter^.count;
+  let total = count + delta;
+  set counter^.count = total;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Advances four counters after checking their room and compares each count with the sum computed outside the compiler.";
+  let counter_1 = Counter(count: 5_u64);
+  let held_1 = counter_1.count;
+  if held_1 <= 793_u64 {
+  } else {
+    return exit_status(code: 11_u8);
+  }
+  advance(counter: &counter_1, delta: 7_u64);
+  let count_1 = counter_1.count;
+  if count_1 == 12_u64 {
+  } else {
+    return exit_status(code: 12_u8);
+  }
+  let counter_2 = Counter(count: 0_u64);
+  let held_2 = counter_2.count;
+  if held_2 <= 0_u64 {
+  } else {
+    return exit_status(code: 21_u8);
+  }
+  advance(counter: &counter_2, delta: 800_u64);
+  let count_2 = counter_2.count;
+  if count_2 == 800_u64 {
+  } else {
+    return exit_status(code: 22_u8);
+  }
+  let counter_3 = Counter(count: 800_u64);
+  let held_3 = counter_3.count;
+  if held_3 <= 800_u64 {
+  } else {
+    return exit_status(code: 31_u8);
+  }
+  advance(counter: &counter_3, delta: 0_u64);
+  let count_3 = counter_3.count;
+  if count_3 == 800_u64 {
+  } else {
+    return exit_status(code: 32_u8);
+  }
+  let counter_4 = Counter(count: 399_u64);
+  let held_4 = counter_4.count;
+  if held_4 <= 399_u64 {
+  } else {
+    return exit_status(code: 41_u8);
+  }
+  advance(counter: &counter_4, delta: 401_u64);
+  let count_4 = counter_4.count;
+  if count_4 == 800_u64 {
+  } else {
+    return exit_status(code: 42_u8);
+  }
+  return exit_status(code: 0_u8);
+}

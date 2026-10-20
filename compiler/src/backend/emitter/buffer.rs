@@ -1,10 +1,9 @@
 //! Emission of the runtime-capacity `Array<T>` [TYPE-9] and its readers.
 //!
-//! The shape is one heap block `[len | elements]`
-//! (compiler/storage-representation): [TYPE-9] stores a `Box`'s content "in
-//! exactly one heap object the `Box` value owns" and [STOR-3] reclaims it
-//! with "one compiler-derived heap free", so the cell pointer *is* the block
-//! pointer, one `malloc` builds it, one `free` reclaims it, and every element
+//! The shape is header-first `[len | elements]` storage
+//! (compiler/storage-representation): positive capacity owns one allocation;
+//! capacity zero shares the immutable empty header [STOR-1, STOR-3].
+//! The cell pointer *is* the block pointer, and every element
 //! address is one `inbounds` step past the header. An `Array`'s `len` equals
 //! its `cap` [WIN-1], so the one runtime number is stored once, exactly as a
 //! boxed `Slots` stores `len` and `cap` and a boxed `Ring` stores `head`
@@ -232,8 +231,9 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         Ok(format!("%{bytes}"))
     }
 
-    /// One allocation of `header + count * stride` bytes, the `len` word, and
-    /// the element loop. The size is checked as it is computed [OP-9].
+    /// Positive count allocates `header + count * stride` bytes, initializes
+    /// `len` and fills elements; zero count returns the shared empty header
+    /// without stores. The allocation size is checked as computed [OP-9].
     fn emit_buffer_block(
         &mut self,
         result: IrValueId,
@@ -258,7 +258,19 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         let body = buffer_fill_body_label(result);
         let done = buffer_fill_done_label(result);
         let count = self.value_name(length);
-        let address = self.value_name(result);
+        let address = format!("%{}", self.next_temporary()?);
+        let empty_count = self.next_temporary()?;
+        let empty = format!("{allocate}.empty");
+        let size = format!("{allocate}.size");
+        let filled = format!("{done}.filled");
+        self.output.symbol("wf__empty_window");
+        writeln!(
+            self.output,
+            "  %{empty_count} = icmp eq i64 {count}, 0\n  br i1 %{empty_count}, label %{empty}, label %{size}"
+        )?;
+        self.output.open_block(empty.clone());
+        writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(size);
         {
             let bytes = self.emit_allocation_size(&count, &stride, &header, &oom, &allocate)?;
             {
@@ -285,11 +297,12 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         {
             write!(
                 self.output,
-                "  store i64 {count}, ptr {length_address}\n  br label %{head}\n"
+                "  store i64 {count}, ptr {length_address}{}\n  br label %{head}\n",
+                storage_alias::Role::ArrayLen.attachment()
             )
             .map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(head.to_string());
-            write!(self.output, "  %{index} = phi i64 [ 0, %{init} ], [ %{next_index}, %{body} ]\n  %{in_range} = icmp ult i64 %{index}, {count}\n  br i1 %{in_range}, label %{body}, label %{done}\n").map_err(|_| BackendFailure::TextEmission)?;
+            write!(self.output, "  %{index} = phi i64 [ 0, %{init} ], [ %{next_index}, %{body} ]\n  %{in_range} = icmp ult i64 %{index}, {count}\n  br i1 %{in_range}, label %{body}, label %{filled}\n").map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(body.to_string());
         };
         let offset = format!("%{index}");
@@ -309,7 +322,14 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
                 "  %{next_index} = add i64 %{index}, 1\n  br label %{head}\n"
             )
             .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(filled.clone());
+            writeln!(self.output, "  br label %{done}")?;
             self.output.open_block(done.to_string());
+            writeln!(
+                self.output,
+                "  {} = phi ptr [ @wf__empty_window, %{empty} ], [ {address}, %{filled} ]",
+                self.value_name(result)
+            )?;
             Ok::<_, BackendFailure>(())
         }
     }
@@ -335,8 +355,9 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         let length_address = self.aggregate_field_pointer(block, &address, LENGTH_FIELD)?;
         writeln!(
             self.output,
-            "  {} = load i64, ptr {length_address}",
+            "  {} = load i64, ptr {length_address}{}",
             self.value_name(result),
+            storage_alias::Role::ArrayLen.attachment(),
         )
         .map_err(|_| BackendFailure::TextEmission)
     }
@@ -439,23 +460,41 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
                 let address = self.value_name(buffer);
                 let length_address = self.aggregate_field_pointer(block, &address, LENGTH_FIELD)?;
                 let length = self.next_temporary()?;
-                writeln!(self.output, "  %{length} = load i64, ptr {length_address}")
-                    .map_err(|_| BackendFailure::TextEmission)?;
+                writeln!(
+                    self.output,
+                    "  %{length} = load i64, ptr {length_address}{}",
+                    storage_alias::Role::ArrayLen.attachment()
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
                 let zero = "0".to_owned();
                 let first = self.buffer_element_pointer(block, &address, &zero)?;
-                (format!("%{length}"), first)
+                (format!("%{length}"), Some(first))
             }
             Some(IrType::Address(IrAddressed::Array {
                 element,
                 length: count,
             })) if self.program.element(element) == Some(u8_type) => {
-                (count.to_string(), self.value_name(buffer))
+                // Only a record slot binds in the block that reads it; every
+                // other operand resolves here, as it always has.
+                let first = if self.defers_record_slot(buffer) {
+                    None
+                } else {
+                    Some(self.value_name(buffer))
+                };
+                (count.to_string(), first)
             }
             Some(IrType::Array {
                 element,
                 length: count,
             }) if self.program.element(element) == Some(u8_type) => {
-                (count.to_string(), self.value_place(buffer)?)
+                // A by-value array can read through an immutable borrow; a
+                // record slot's place binds after the guards, any other here.
+                let first = if self.defers_record_slot(buffer) {
+                    None
+                } else {
+                    Some(self.value_place(buffer)?)
+                };
+                (count.to_string(), first)
             }
             _ => return Err(BackendFailure::InvalidIr),
         };
@@ -482,6 +521,13 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
             self.output.open_block(emission_argument_4.to_string());
             write!(self.output, "  %{edge} = sub i64 %{window}, 16\n  %{fits} = icmp ule i64 {emission_argument_5}, %{edge}\n  br i1 %{fits}, label %{emission_argument_6}, label %{emission_argument_7}\n").map_err(|_| BackendFailure::TextEmission)?;
             self.output.open_block(emission_argument_8.to_string());
+            let first_element = match first_element {
+                Some(pointer) => pointer,
+                None if matches!(self.value_type(buffer), Some(IrType::Array { .. })) => {
+                    self.value_place(buffer)?
+                }
+                None => self.value_name(buffer),
+            };
             write!(self.output, "  %{address} = getelementptr inbounds i8, ptr {first_element}, i64 {emission_argument_9}\n  %{vector} = load <16 x i8>, ptr %{address}, align 1\n").map_err(|_| BackendFailure::TextEmission)?;
         };
         let mut accumulated: Option<String> = None;

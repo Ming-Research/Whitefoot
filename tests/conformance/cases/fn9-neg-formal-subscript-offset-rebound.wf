@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {
+  requires i < 4_u64;
+  ensures r <= rows^[i].len;
+} {
+  doc "The clause's offset is i at entry, which the requirement bounds; rebinding i makes its entry value unavailable at the returns.";
+  set i = 9_u64;
+  if rows^[0_u64].len > 9_u64 {
+    return 0_u64;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The declaration alone is judged.";
+  return exit_status(code: 0_u8);
+}

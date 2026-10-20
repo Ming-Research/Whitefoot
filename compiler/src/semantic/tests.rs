@@ -36,21 +36,25 @@ mod checked_division;
 mod conditionals;
 mod const_eval;
 mod contracts;
+mod held;
 mod counted_ranges;
 mod derivation;
 mod descriptor_invalidation;
 mod division_obligations;
+mod enum_routed_ensures;
 mod entailment;
 mod entailment_sources;
 mod entry_form;
 mod exclusive_contracts;
 mod float_conversion;
 mod floating;
+mod frozen;
 mod generics;
 mod infix;
 mod integer_absolute;
 mod integer_conversion;
 mod integer_extended;
+mod integer_matches;
 mod integer_negation;
 mod loop_invariants;
 mod loop_permission;
@@ -60,13 +64,19 @@ mod ordinary_effects;
 mod originating_acceptance;
 mod owned_places;
 mod permission;
+mod postcondition_places;
 mod postconditions;
 mod range_facts;
+mod range_ordinary;
 mod range_references;
+mod range_type_invariants;
+mod recursive_postconditions;
 mod references;
 mod reinterpret;
 mod requires;
 mod source_proofs;
+mod struct_equality;
+mod value_equality;
 mod windows;
 
 use crate::lexer::{LexLimits, LexOutcome, lex};
@@ -134,7 +144,7 @@ const CANONICAL_LIMITS: CanonicalLimits = CanonicalLimits {
     max_path_components: 8_192,
 };
 
-fn with_semantics<ResultValue>(
+pub(super) fn with_semantics<ResultValue>(
     source: &[u8],
     run: impl FnOnce(SemanticOutcome) -> ResultValue,
 ) -> ResultValue {
@@ -456,7 +466,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_local_invariant_equality_is_an_inv1_target() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {
-  invariant held: 0_u64 == 0_u64;
+  invariant observed: 0_u64 == 0_u64;
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -753,7 +763,10 @@ fn main() -> status: std::process::ExitStatus pure {
         b"fn main() -> status: std::process::ExitStatus pure {\n  let a = 1_i32;\n  let b = move a;\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Own1,
         SemanticIssueKind::MoveOfCopy {
-            mechanical_fix: "use the copy place without `move`",
+            binding: "a".to_owned(),
+            ty: "i32".to_owned(),
+            reason: "`a` has type i32; every part is copy".to_owned(),
+            mechanical_fix: "write `a` without `move`".to_owned(),
         },
     );
 }
@@ -776,7 +789,7 @@ fn operation_call_shapes_keep_their_exact_rule_owners() {
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = 4_i32;\n  let narrowed = cvt(value);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Type5,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let left = 1_i32;\n  let right = 2_i32;\n  let value = imin(left: left, right: right);\n  return std::process::exit_status(code: 0_u8);\n}\n",
@@ -809,7 +822,7 @@ fn the_cited_rule_follows_the_callee_class_and_not_the_argument_problem() {
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = 4_i32;\n  let narrowed = cvt(value);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Type5,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
 
     // A wrong-count argument list, the same failure on both classes.
@@ -821,7 +834,7 @@ fn the_cited_rule_follows_the_callee_class_and_not_the_argument_problem() {
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = 4_i32;\n  let narrowed = cvt::<i32>(value);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
 
     // A generic nominal's construct is a third class: [TYPE-5] owns its
@@ -923,20 +936,6 @@ fn give_completeness_rejects_each_structural_failure() {
 }
 
 #[test]
-fn enum_equality_exclusions_reach_the_intended_rule() {
-    assert_rule(
-        b"enum PayloadEq {\n  PayloadEmpty();\n  PayloadValue(value: u32);\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let left = PayloadEq::PayloadEmpty();\n  let right = PayloadEq::PayloadEmpty();\n  let equal = eeq(left, right);\n  return std::process::exit_status(code: 0_u8);\n}\n",
-        SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
-    );
-    assert_rule_kind(
-        b"enum LeftEq {\n  LeftFirst();\n}\n\nenum RightEq {\n  RightFirst();\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let left = LeftEq::LeftFirst();\n  let right = RightEq::RightFirst();\n  let equal = eeq(left, right);\n  return std::process::exit_status(code: 0_u8);\n}\n",
-        SemanticRule::Type5,
-        |kind| matches!(kind, SemanticIssueKind::TypeMismatch { .. }),
-    );
-}
-
-#[test]
 fn nominal_adjacent_unimplemented_behavior_stays_non_language_failure() {
     // Keep the capability control smaller than the conformance program: this
     // test isolates set-field construction and read-back, while
@@ -963,9 +962,10 @@ fn nominal_adjacent_unimplemented_behavior_stays_non_language_failure() {
         b"struct Node {\n  next: Node;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
         UnsupportedSemanticFeature::RecursiveNominalLayout,
     );
-    assert_unsupported(
+    assert_rule(
         b"enum Flag {\n  A();\n  B();\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let flag = Flag::A();\n  match flag {\n    A() => {\n    }\n    A() => {\n    }\n    B() => {\n    }\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
-        UnsupportedSemanticFeature::DuplicateMatchArm,
+        SemanticRule::Err2,
+        SemanticIssueKind::DuplicateMatchVariant { variant: "A".to_owned(), mechanical_fix: "remove the repeated variant arm".to_owned() },
     );
     // Each iteration consumes the local run and installs the returned run in
     // that binding. Ordinary ownership checks the complete replacement without
@@ -1023,7 +1023,7 @@ fn a_bare_reference_subscript_is_a_type7_missing_dereference() {
         include_bytes!("../../../tests/conformance/cases/type7-neg-index-reference-holder.wf"),
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 }
@@ -1036,7 +1036,7 @@ fn reference_holders_written_bare_are_type7_missing_dereferences() {
         include_bytes!("../../../tests/conformance/cases/type7-neg-match-reference-holder.wf"),
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 }
@@ -1054,7 +1054,7 @@ fn box_holders_are_refused_by_each_positions_own_rule() {
     assert_rule_kind(
         include_bytes!("../../../tests/conformance/cases/type7-neg-propagate-box-holder.wf"),
         SemanticRule::Err3,
-        |kind| matches!(kind, SemanticIssueKind::InvalidPropagation),
+        |kind| matches!(kind, SemanticIssueKind::InvalidPropagation { .. }),
     );
     assert_rule_kind(
         include_bytes!("../../../tests/conformance/cases/type7-neg-match-box-holder.wf"),
@@ -1149,10 +1149,10 @@ fn main() -> status: std::process::ExitStatus pure {
         },
     );
 
-    assert_rule(
+    assert_rule_kind(
         include_bytes!("../../../tests/conformance/cases/err3-neg-error-type-mismatch.wf"),
         SemanticRule::Err3,
-        SemanticIssueKind::InvalidPropagation,
+        |kind| matches!(kind, SemanticIssueKind::InvalidPropagation { .. }),
     );
     assert_rule_kind(
         br#"enum Flag {

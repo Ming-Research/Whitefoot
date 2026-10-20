@@ -9,6 +9,29 @@ declare void @wf_std.fs.open_file.finish(ptr, ptr, ptr, ptr, i64, i64, i64, ptr)
 declare i32 @wf_std.fs.read_at.start(ptr, ptr, ptr, ptr, i64, i64, i64, i64, ptr)
 declare void @wf_std.fs.read_at.finish(ptr, ptr, ptr, ptr, i64, i64, i64, i64, ptr)
 
+declare void @wf_std.io.error_copy_description(ptr, ptr, ptr, i64, i64, i64)
+declare void @wf_std.io.error_copy_class_description(ptr, ptr, ptr, i64, i64, i64)
+
+; Exercise the actual linked callable boundary, including split range ABI,
+; rather than relying only on its private C body's pointer convention.
+define void @wf_test_public_error_copy_description(ptr %result, ptr %error, ptr %destination, i64 %start, i64 %end) {
+entry:
+  %view = load { ptr, i64 }, ptr %destination
+  %data = extractvalue { ptr, i64 } %view, 0
+  %len = extractvalue { ptr, i64 } %view, 1
+  call void @wf_std.io.error_copy_description(ptr %result, ptr %error, ptr %data, i64 %len, i64 %start, i64 %end)
+  ret void
+}
+
+define void @wf_test_public_error_copy_class_description(ptr %result, ptr %error, ptr %destination, i64 %start, i64 %end) {
+entry:
+  %view = load { ptr, i64 }, ptr %destination
+  %data = extractvalue { ptr, i64 } %view, 0
+  %len = extractvalue { ptr, i64 } %view, 1
+  call void @wf_std.io.error_copy_class_description(ptr %result, ptr %error, ptr %data, i64 %len, i64 %start, i64 %end)
+  ret void
+}
+
 define void @wf_test_public_open(ptr %result, ptr %factory, ptr %root, ptr %name, i64 %start, i64 %end) {
 entry:
   %operation = alloca [1216 x i8], align 16
@@ -61,8 +84,8 @@ done:
 }
 
 declare void @wf_std.process.stop_listen(ptr, ptr, ptr)
-declare i32 @wf_std.process.stop_next.start(ptr, ptr, ptr, ptr, ptr)
-declare void @wf_std.process.stop_next.finish(ptr, ptr, ptr, ptr, ptr)
+declare i32 @wf_std.process.stop_next.start(ptr, ptr, ptr, ptr, ptr, ptr)
+declare void @wf_std.process.stop_next.finish(ptr, ptr, ptr, ptr, ptr, ptr)
 declare i32 @wf_std.process.close_stop_listener.start(ptr, ptr, ptr, ptr)
 declare void @wf_std.process.close_stop_listener.finish(ptr, ptr, ptr, ptr)
 
@@ -72,14 +95,14 @@ entry:
   ret void
 }
 
-define void @wf_test_public_stop_next(ptr %result, ptr %factory, ptr %listener, ptr %deadline) {
+define void @wf_test_public_stop_next(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel) {
 entry:
   %operation = alloca [1216 x i8], align 16
-  %state = call i32 @wf_std.process.stop_next.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  %state = call i32 @wf_std.process.stop_next.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation)
   %answered = icmp eq i32 %state, 0
   br i1 %answered, label %done, label %finish
 finish:
-  call void @wf_std.process.stop_next.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  call void @wf_std.process.stop_next.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation)
   br label %done
 done:
   ret void
