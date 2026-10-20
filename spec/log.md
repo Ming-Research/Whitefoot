@@ -12,7 +12,7 @@ released archives beside this file; git holds the rest of the history.
 
 ## 2026-10-13 v0.152: a compilation reports the first syntax error of each top-level declaration, with expected tokens from the parse stack
 
-Rules: changed GRAM-1, GRAM-9, DIAG-1, MOD-8; added the graph-record segment production and the call-chain expected-token computation; restricted the implementation-chosen order of distinct rejections to semantic rejections after name resolution; the prelude is not segmented
+Rules: changed GRAM-1, GRAM-9, DIAG-1, MOD-8; added to GRAM-2 the graph-record segment production, to DIAG-1 the call-chain expected-token computation, and to PRE-1 the statement that compiler-owned declaration records are not writer source records and are not segmented; restricted the implementation-chosen order of distinct rejections to semantic rejections after name resolution
 
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the specification and design logs, mark it ready and merge it through the coordinator after the gate on both platforms (if main advances, the version is main plus one and the rules are unchanged)" (translated), on the card "approve the grammar-diagnostic rules of specification v0.150 and the design-tree change in PR Whitefoot#430 at head commit 832bdd593?" (translated); it carries out the owner's 2026-10-13 rulings on the cards "report the first error of each top-level declaration instead of one per compilation" and "list only the tokens that can follow at the failure position" (translated). The revision merged here differs from 832bdd593 by the merge of main and the renumbering of the specification from v0.150 to v0.152, because main reached v0.151 first.
 
