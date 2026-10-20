@@ -1,0 +1,72 @@
+# Temporary quick check for the frame-binding amendment: builds the compiler
+# and reaches each frame-binding conformance case's declared verdict, plus the
+# static group. Removed before the pull request is marked ready.
+name: tmp-frame-binding
+
+on:
+  push:
+    branches: [claude/narrow-binding]
+
+permissions:
+  contents: read
+
+jobs:
+  frame-cases:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+      - name: Build the compiler
+        run: cargo build --release --locked --manifest-path compiler/Cargo.toml
+      - name: Reach each frame-binding case's verdict
+        run: |
+          python3 - <<'EOF'
+          import json, subprocess, sys, os, tempfile
+          wanted = lambda i: "frame-binding" in i or "frame-premise" in i or i == "fn4-pos-reads-only-host-binding"
+          failed = 0
+          for line in open("tests/conformance/manifest.jsonl"):
+              case = json.loads(line)
+              if not wanted(case["id"]):
+                  continue
+              path = f"tests/conformance/cases/{case['id']}.wf"
+              out = os.path.join(tempfile.mkdtemp(), "a.out")
+              expect = case["expect"]
+              args = ["compiler/target/release/whitefootc", path]
+              if expect["kind"] == "run":
+                  args += ["-o", out]
+              compiled = subprocess.run(args, capture_output=True, text=True)
+              text = compiled.stdout + compiled.stderr
+              if expect["kind"] == "reject":
+                  first = next((l for l in text.splitlines() if "error[" in l), "")
+                  ok = compiled.returncode != 0 and f"error[{expect['rule']}]" in first
+                  reached = first
+              elif expect["kind"] == "accept":
+                  ok = compiled.returncode == 0
+                  reached = f"exit {compiled.returncode}"
+              else:
+                  if compiled.returncode != 0:
+                      ok, reached = False, "compile failed"
+                  else:
+                      ran = subprocess.run([out])
+                      ok = ran.returncode == expect["exit"]
+                      reached = f"run exit {ran.returncode}"
+              print(("PASS " if ok else "FAIL ") + case["id"] + ": " + reached)
+              if not ok:
+                  print(text)
+                  failed += 1
+          sys.exit(1 if failed else 0)
+          EOF
+      - name: Static group
+        run: |
+          git branch -f main origin/main
+          make static
