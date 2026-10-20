@@ -112,7 +112,7 @@ neither applies, the source is rejected—never repaired with an executable proo
 fallback.
 
 The proof cost is source explicitness. Consider the relation that bounds a
-running byte sum: a counted loop whose header carries `invariant per_byte: sum <= 255_u32 * i`. This example is written for this essay and has no committed source file, so its loop body is described rather than listed.
+running byte sum: a counted loop whose header carries `invariant per_byte: sum <= 255_u32 * i`. This example is written for this essay and has no committed source file, so its loop body is described rather than listed: each iteration reads one byte, widens it to `u32` as `wide`, and adds it to `sum`.
 
 The header states what must hold at every reachable iteration. AUTO subtracts
 the one published affine premise `per_byte`; DIRECT then proves the residual
@@ -229,7 +229,7 @@ The floor claim lands in one experiment. In Whitefoot the obvious shape plus one
 ## 4. Effect rows the optimizer can trust across an opaque boundary
 
 Every Whitefoot signature declares its effects: `pure`, or a row of
-`reads('r)`, `writes('r)`, `allocates(...)`. The checker verifies the
+`reads(path)` and `writes(path)` entries; allocation carries no effect entry. The checker verifies the
 row in both directions, so it is a checked fact rather than an aspiration. The
 retired experiment lowered suitable rows to function attributes. The current
 compiler emits no effect-derived attributes, and v0.17 has no termination
@@ -298,7 +298,7 @@ LBB0_2:
 	b.ne	LBB0_2
 ```
 
-Whitefoot's exclusive reference parameters `acc` and `addend` emit `noalias`/`readonly` on the parameters by construction, and the loop keeps everything in registers:
+Whitefoot's exclusive borrow `acc` emits `noalias`, and its shared borrow `addend` emits `readonly`, by construction, and the loop keeps everything in registers:
 
 ```
 _accumulate:                     ; Whitefoot, from the borrow modes
@@ -316,7 +316,7 @@ On the additive variant of this kernel the same fact changes the complexity clas
 
 **Second, the half Rust cannot reach.** Rust's `&mut Cols` gives LLVM `noalias` on the reference parameter, but the `Vec` data pointers loaded through it are fresh pointers the optimizer treats as possibly overlapping each other. That is exactly where real numeric kernels live: multiple columns, loaded from one struct, read and written in one loop.
 
-The historical kernel (`research/experiments/`, written before the current spec) is a struct-of-arrays update: eight `u64` columns in one struct, two written, six read, in the obvious loop. Its source used a `buffer<u64>` column type and `index<u64>` element access, both retired, so the listing is not reproduced here. The current spec has no such type; its fixed-capacity column form is `Array<u64, N>`, read and written by subscript.
+The historical kernel (`research/experiments/scoped-alias-channel/kernel.wf`, written before the current spec) is a struct-of-arrays update: eight `u64` columns in one struct, two written, six read, in the obvious loop. Its source used a `buffer<u64>` column type and `index<u64>` element access, both retired, so the listing is not reproduced here. The current spec has no such type; the current spec's fixed-length array type is `Array<T, N>`, read and written by subscript.
 
 Because the historical buffer columns were single-owner and its exclusive loans had
 singleton provenance, the retired experiment emitted per-column alias scopes on
@@ -370,7 +370,7 @@ The retired optimizer experiment additionally consumed it for reassociation.
 D7 removes that source syntax and assumes no laws of supplied behavior. The
 following listing and measurement are historical evidence for a possible
 future proof consumer, not an active writer form or compiler capability.
-The historical kernel declared a `SatMonoid` contract with three laws (`associative`, `commutative`, and an `identity` of 0) for an unsigned saturating add, then folded a `buffer<u64>` with that operation in a plain loop. Its source used `law`, `conform`, `buffer` and `traps` forms that the current spec does not accept, so the listing is not reproduced here. The current spec's `+sat` operator is the same saturating add; it states no laws.
+The historical kernel (`research/experiments/checked-law-channel/kernel.wf`) declared a `SatMonoid` contract with three laws (`associative`, `commutative`, and an `identity` of 0) for an unsigned saturating add, then folded a `buffer<u64>` with that operation in a plain loop. Its source used `law`, `conform`, `buffer` and `traps` forms that the current spec does not accept, so the listing is not reproduced here. The current spec's `+sat` operator is the same saturating add; it states no laws.
 
 The writer states the laws. The checker discharges them against the operation table's semantics, where unsigned saturating add is associative as table data rather than writer folklore. Only then does the optimizer use them, reassociating the obvious fold into four independent, block-interleaved accumulators seeded with the proved identity. From the committed assembly, the four parallel saturating chains:
 
@@ -403,7 +403,7 @@ A smaller mechanism with an outsized codegen swing, and an honest framing: this 
 
 Scanner kernels (word counting, token classification, run detection) carry per-byte boolean state across loop iterations. Express that state as an integer flag (`0`/`1` in a `u64`) and LLVM's vectorizer carries a full-width integer recurrence, vectorizing at width 2. Express it as a genuine 1-bit boolean combined with boolean operations, and the recurrence stays `i1`, so the same loop vectorizes at width 16.
 
-The historical word-count kernel keeps every predicate in `Bool`: each byte's
+The historical word-count kernel (`research/experiments/port-study/wc-chunk-summary/chunk_wc.wf`) keeps every predicate in `Bool`: each byte's
 class is one comparison (`>= 9`, `<= 13`, `== 32`) and the whitespace state is
 built from `Bool` conjunctions and disjunctions, with no integer flag. Its source
 used `index<u8>`, `ige<u8>` and `band<Bool>` spellings the current spec does not
@@ -434,7 +434,7 @@ There is one legal spelling per construct and one legal byte-level formatting, c
 
 The example is a helper, `clamp_hundred`, whose contract promises `result <= 100_u64` at each normal return; its body returns the smaller of its argument and 100. This example is written for this essay and has no committed source file, so it is described rather than listed.
 
-The helper owns and proves that normal-result promise. Its caller consumes the verified relation directly: a bare `+` on the clamped result and on another `u64` is accepted without a restated bound, while `+wrap`, `+checked` and `+sat` need no proof at all.
+The helper owns and proves that normal-result promise. Its caller consumes the verified relation directly: a bare `+` of the clamped result and the literal `1_u64` is accepted without a restated bound, since the sum is at most 101, while `+wrap`, `+checked` and `+sat` need no proof at all.
 
 The wrapping, checked, and saturating forms are total value operations. The
 bare exact addition has one matching static domain obligation. FN-9 proves
@@ -465,15 +465,15 @@ At statement level, Whitefoot forces one loop form and one conditional. It appli
 
 A human language could not do this. Designers must let users carry their familiar architectures in, or the language gets rejected. An AI writer has no architectural nostalgia, so the catalog can hold exactly the shapes the fact channels light up.
 
-Take the flagship example, the command-buffer pattern, which replaces scattered mutation. Deep code, the parser, the rules engine, whatever lives at call depth ten, is declared `pure` or `reads('world)`: it computes and returns write-intents as plain values. One shallow function holds the single exclusive borrow of the world state and applies the intents. In Rust you may adopt this discipline; in Whitefoot the checker's rules leave you no other option, because deep code cannot manufacture write access it was not handed. The `Rc<RefCell<World>>` alternative, where you hand out shared handles, mutate from anywhere, and hope the panics find the overlap, is unrepresentable.
+Take the flagship example, the command-buffer pattern, which replaces scattered mutation. Deep code, the parser, the rules engine, whatever lives at call depth ten, is declared `pure` or `reads(world)`: it computes and returns write-intents as plain values. One shallow function holds the single exclusive borrow of the world state and applies the intents. In Rust you may adopt this discipline; in Whitefoot the checker's rules leave you no other option, because deep code cannot manufacture write access it was not handed. The `Rc<RefCell<World>>` alternative, where you hand out shared handles, mutate from anywhere, and hope the panics find the overlap, is unrepresentable.
 
 Enforcing it buys three things back.
 
 - The aliasing facts of § 5 stay sound, because mutation cannot scatter.
-- Effect rows make the architecture readable at a glance. Grep the signatures and you find exactly one `writes('world)` in the system, and the checker verified every row (§ 4). "Where can state change?" becomes a query, not an investigation.
+- Effect rows make the architecture readable at a glance. Grep the signatures and you find exactly one `writes(world)` in the system, and the checker verified every row (§ 4). "Where can state change?" becomes a query, not an investigation.
 - Read-only deep code is the precondition for the parallel fan-out story.
 
-Second example: struct-of-arrays is the default layout for bulk data, and § 5's historical kernel is that shape: eight columns held in one struct, each element reached by subscript. Contiguous per-field columns are what the cache and the vectorizer want; per-node heap objects with headers and refcounts are what object-oriented habit wants. The AI has no such habit, so the language teaches SoA as the norm. The catalog is empirical, not ideological. Where measurement shows the paired layout wins, as it did for hash-table key/value slots, where splitting keys from values doubled the cache misses per insert, the catalog pins that instead. Patterns encode measured layout decisions.
+Second example: struct-of-arrays is the default layout for bulk data, and § 5's historical kernel is that shape: eight columns held in one struct, each element reached by element access. Contiguous per-field columns are what the cache and the vectorizer want; per-node heap objects with headers and refcounts are what object-oriented habit wants. The AI has no such habit, so the language teaches SoA as the norm. The catalog is empirical, not ideological. Where measurement shows the paired layout wins, as it did for hash-table key/value slots, where splitting keys from values doubled the cache misses per insert, the catalog pins that instead. Patterns encode measured layout decisions.
 
 The one line that justifies the whole part: whatever is representable eventually gets written. A language that leaves the slow architecture representable has scheduled its own performance regressions; one that removes it makes the fast shape the path of least resistance, and the only path.
 
