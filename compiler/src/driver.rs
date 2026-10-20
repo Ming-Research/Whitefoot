@@ -3120,25 +3120,20 @@ fn lower_selected(
             }
             Ok(Reported { module, ledger })
         })
-        .map_err(|failure: BackendFailure| {
-            if let BackendFailure::TargetLayout(layout) = failure {
-                return CompilationFailure::target_layout(layout, &ir, resolved);
+        .map_err(|failure: BackendFailure| match failure {
+            BackendFailure::TargetLayout(layout) => {
+                CompilationFailure::target_layout(layout, &ir, resolved)
             }
-            if failure == BackendFailure::SnapshotTargetUnsupported {
-                return CompilationFailure::new(
-                    CompilationStage::Backend,
-                    CompilationFailureKind::Unsupported,
-                    "snapshot export requires Linux x86-64 with glibc; source checking succeeded",
-                );
-            }
-            let (stage, kind) = match failure {
-                BackendFailure::TargetLayout(_) => (
-                    CompilationStage::TargetLayout,
-                    CompilationFailureKind::TargetLayout,
-                ),
-                _ => (CompilationStage::Backend, CompilationFailureKind::Backend),
-            };
-            CompilationFailure::new(stage, kind, failure)
+            BackendFailure::SnapshotTargetUnsupported => CompilationFailure::new(
+                CompilationStage::Backend,
+                CompilationFailureKind::Unsupported,
+                "snapshot export requires Linux x86-64 with glibc; source checking succeeded",
+            ),
+            failure => CompilationFailure::new(
+                CompilationStage::Backend,
+                CompilationFailureKind::Backend,
+                failure,
+            ),
         })
 }
 
