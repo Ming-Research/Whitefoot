@@ -1034,13 +1034,16 @@ impl<'unit> TypeContext<'unit> {
         ) else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
-        let Some(value) = tree.first_child_with(statement, Production::Expr)? else {
+        // A `return` of several values names no one value for the clause's
+        // result, so it has no reading here.
+        let values = tree.children_with(statement, Production::Expr)?;
+        let [value] = values.as_slice() else {
             return Ok(None);
         };
         Ok(clause_at_return(
             &tree.source_spelling(clause)?,
             &tree.source_spelling(selector)?,
-            &tree.source_spelling(value)?,
+            &tree.source_spelling(*value)?,
         ))
     }
 }

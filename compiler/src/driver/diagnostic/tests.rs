@@ -682,3 +682,24 @@ fn integer_match_coverage_diagnostic_carries_full_domain_and_repair() {
     );
     assert_no_internal_identity(&rendered);
 }
+
+/// The returned value is written into the clause the writer wrote, as the
+/// writer compares it: `20_u64 < 10_u64`, beside the normalized relation.
+#[test]
+fn a_returned_value_is_written_into_its_clause() {
+    let source = br#"fn small() -> result: u64 pure contract {
+  ensures result < 10_u64;
+} {
+  return 20_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let text = stop("small.wf", source).to_string();
+    assert!(
+        text.contains("\n  relation_at_return: 20_u64 < 10_u64\n"),
+        "{text}"
+    );
+}
