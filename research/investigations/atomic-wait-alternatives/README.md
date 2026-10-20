@@ -142,7 +142,27 @@ protocols must fail at least one configuration: keeping the units taken,
 leaving the links, dropping a wake, keeping a notification, keeping a
 reservation, and admitting after expiry.
 
-RESULTS-PLACEHOLDER
+Result (GitHub-hosted `ubuntu-24.04`, workflow run 39476508134, model at
+commit 188ac7ded, 13 s): the proposed protocol passes all 33
+configurations, 279,991 reachable states in total; the largest, two units
+with all five kinds of statement and the guarded timed statement, has
+131,878. Both outcomes occur: 295 final states with the body, 227 with
+`else`. The races are reached: the timer fires while the timed statement
+holds a unit (15,795 states), waits on a claim (3,195), owns a notification
+(19,161), owns a reservation (7,132), and has been woken (10,575). Each
+broken protocol fails. The model reports the first failing configuration and
+the violated check ("admitted after expiry" for the last row, a state with
+no step that is not final for the others); the cause column is deduced from
+the mutation, not read from a trace:
+
+| Broken protocol | First failing configuration | Cause |
+|---|---|---|
+| Keep the units taken | one unit, writer and timed guarded statement | a unit stays held; no completion |
+| Leave the links | the same | a later unlock hands the unit to the departed statement |
+| Drop a wake | one unit, writer, timed and untimed guarded statements | a parked statement is never woken while the unit is free |
+| Keep a notification | one unit, writer and timed guarded statement | the notification is never passed on |
+| Keep a reservation | the same | newcomers stay refused |
+| Admit after expiry | the same | the body runs after the timer fired |
 
 What the model does not cover: map entries and whole-map tickets (rows four
 and five), lazily taken groups (excluded by the eager rule above), a
