@@ -157,7 +157,7 @@ pre-transfer state. The callee receives those facts at body entry without a
 runtime prologue, storage slot, `llvm.assume`, or fallback edge. The sole
 `command fn main` has no contract and cannot be called from source.
 
-Worked example: a base64 encoder, the two-buffer shape every codec has, one shared input, one exclusive output, and a capacity relation between them. The historical experiment (`research/experiments/port-study/base64/`) wrote the encoder with a `buffer` spelling and a `loop @label` form, which the current spec does not accept, so its source is not reproduced here. Its contract was one line: the output holds `4 * ceil(len(src)/3)` bytes, spelled as an overflow-safe comparison. The body was the obvious indexed loop: three reads, four table lookups, four writes per iteration.
+Worked example: a base64 encoder, the two-buffer shape every codec has, one shared input, one exclusive output, and a capacity relation between them. The historical experiment (`research/experiments/port-study/base64/`) wrote the encoder with a `buffer` spelling and a `loop @label` form, which the current spec does not define, so its source is not reproduced here. Those spellings appear last in the spec at v0.9 (`spec/kernel-spec-v0.9.md`), the newest archived version that contains them. Its contract was one line: the output holds `4 * ceil(len(src)/3)` bytes, spelled as an overflow-safe comparison. The body was the obvious indexed loop: three reads, four table lookups, four writes per iteration.
 
 Before the proof tier (committed `b64.s`, the checked build), every read and write in the loop carries its compare-and-branch. This is what "everything is checked" costs:
 
@@ -239,7 +239,7 @@ Rust has no channel for this. An optimizer facing a Rust call inlines it or prov
 
 The committed experiment isolates that boundary. A pure mixing function compiles into its own object file, so the caller's compiler never sees the body:
 
-Historical listing, abridged from `research/experiments/effect-attrs-channel/kernel.wf`. It uses the retired `imul.wrap<i64>` and `iadd.wrap<i64>` spellings, which the current compiler does not accept; the current spec writes `*wrap` and `+wrap`:
+Historical listing, abridged from `research/experiments/effect-attrs-channel/kernel.wf`. It uses the retired `imul.wrap<i64>` and `iadd.wrap<i64>` spellings, which the current spec does not define; the current spec writes `*wrap` and `+wrap`. `imul.wrap` and `iadd.wrap` appear last in the spec at v0.9 (`spec/kernel-spec-v0.9.md`), `ige<` at v0.22 (`spec/kernel-spec-v0.22.md`), and `traps` at v0.99 (`spec/kernel-spec-v0.99.md`), each the newest archived version that contains it:
 
 ```
 fn mix (x: own i64) -> own i64 pure {
@@ -316,7 +316,7 @@ On the additive variant of this kernel the same fact changes the complexity clas
 
 **Second, the half Rust cannot reach.** Rust's `&mut Cols` gives LLVM `noalias` on the reference parameter, but the `Vec` data pointers loaded through it are fresh pointers the optimizer treats as possibly overlapping each other. That is exactly where real numeric kernels live: multiple columns, loaded from one struct, read and written in one loop.
 
-The historical kernel (`research/experiments/scoped-alias-channel/kernel.wf`, written before the current spec) is a struct-of-arrays update: eight `u64` columns in one struct, two written, six read, in the obvious loop. Its source used a `buffer<u64>` column type and `index<u64>` element access, both retired, so the listing is not reproduced here. The current spec has no such type; the current spec's fixed-length array type is `Array<T, N>`, read and written by subscript.
+The historical kernel (`research/experiments/scoped-alias-channel/kernel.wf`, written before the current spec) is a struct-of-arrays update: eight `u64` columns in one struct, two written, six read, in the obvious loop. Its source used a `buffer<u64>` column type and `index<u64>` element access, both retired, so the listing is not reproduced here. `buffer` appears last in the spec at v0.9 (`spec/kernel-spec-v0.9.md`); `index<u64>` appears in no archived spec. The current spec has no such type; the current spec's fixed-length array type is `Array<T, N>`, read and written by subscript.
 
 Because the historical buffer columns were single-owner and its exclusive loans had
 singleton provenance, the retired experiment emitted per-column alias scopes on
@@ -370,7 +370,7 @@ The retired optimizer experiment additionally consumed it for reassociation.
 D7 removes that source syntax and assumes no laws of supplied behavior. The
 following listing and measurement are historical evidence for a possible
 future proof consumer, not an active writer form or compiler capability.
-The historical kernel (`research/experiments/checked-law-channel/kernel.wf`) declared a `SatMonoid` contract with three laws (`associative`, `commutative`, and an `identity` of 0) for an unsigned saturating add, then folded a `buffer<u64>` with that operation in a plain loop. Its source used `law`, `conform`, `buffer` and `traps` forms that the current spec does not accept, so the listing is not reproduced here. The current spec's `+sat` operator is the same saturating add; it states no laws.
+The historical kernel (`research/experiments/checked-law-channel/kernel.wf`) declared a `SatMonoid` contract with three laws (`associative`, `commutative`, and an `identity` of 0) for an unsigned saturating add, then folded a `buffer<u64>` with that operation in a plain loop. Its source used `law`, `conform`, `buffer` and `traps` forms that the current spec does not define, so the listing is not reproduced here. `law` and `traps` appear last in the spec at v0.99 (`spec/kernel-spec-v0.99.md`), `conform` and `buffer` at v0.9 (`spec/kernel-spec-v0.9.md`), each the newest archived version that contains it. The current spec's `+sat` operator is the same saturating add; it states no laws.
 
 The writer states the laws. The checker discharges them against the operation table's semantics, where unsigned saturating add is associative as table data rather than writer folklore. Only then does the optimizer use them, reassociating the obvious fold into four independent, block-interleaved accumulators seeded with the proved identity. From the committed assembly, the four parallel saturating chains:
 
@@ -406,8 +406,8 @@ Scanner kernels (word counting, token classification, run detection) carry per-b
 The historical word-count kernel (`research/experiments/port-study/wc-chunk-summary/chunk_wc.wf`) keeps every predicate in `Bool`: each byte's
 class is one comparison (`>= 9`, `<= 13`, `== 32`) and the whitespace state is
 built from `Bool` conjunctions and disjunctions, with no integer flag. Its source
-used `index<u8>`, `ige<u8>` and `band<Bool>` spellings the current spec does not
-accept, so the listing is not reproduced here.
+used `index<u8>`, `ige<u8>` and `band<Bool>` spellings; `ige<` appears last in the spec at v0.22 (`spec/kernel-spec-v0.22.md`), and the other two in no archived spec. The current spec does not
+define them, so the listing is not reproduced here.
 
 The committed assembly shows the result: full 16-byte vector lanes (`movi.16b`, `cmeq.16b`, `and.16b`, and peers) where the integer-flag version of the same logic capped at width 2 by interleave 4.
 
