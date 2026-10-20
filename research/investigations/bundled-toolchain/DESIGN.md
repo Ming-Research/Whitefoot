@@ -676,8 +676,8 @@ the owner's rulings are on the board, and Windows packaging is its own work.
   clang are read from the former comment and clang's documented defaults, not
   measured here; confirm by compiling that file to assembly with each clang.
   Probing the runtime's frames is a separate piece of work for every platform,
-  with an audit of their sizes; it is not done here and is tracked as its own
-  item.
+  with an audit of their sizes; it is not done here and is tracked as the item
+  runtime-c-stack-probe.
 - **Safety qualification outstanding:** post-LTO probing, aligned and variable
   frames, unwinding and stack-ledger correspondence; Apple inline support; exact
   Apple helper ABI and deployment availability. The completed arm64 non-LTO
