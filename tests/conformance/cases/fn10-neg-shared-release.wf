@@ -1,0 +1,5 @@
+fn walk(n: u64) -> result: u64 pure {
+  let owner = shared_new::<u64>(value: n);
+  let view = &owner;
+  return musttail walk(n: n);
+}

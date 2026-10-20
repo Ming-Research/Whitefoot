@@ -1,9 +1,9 @@
 # Design tree change log
 
-Newest first. One entry per approved change of the tree: a dated title,
-`Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-the owner's agent instructions own the form. Older entries also record refused amendments,
-a mechanism since retired.
+Newest first. One entry per change of the tree: a dated title, `Nodes:`
+naming every node changed and `Summary:`; the owner's agent instructions own
+the form. Older entries also record refused amendments, a mechanism since
+retired, and carry an `Owner-approved:` line, a field since retired.
 
 ## 2026-10-13 Release packages carry their own clang, and macOS stack probing follows the clang in use
 
@@ -13,6 +13,21 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: The compiler ran /usr/bin/clang, so a host without it, or with another LLVM version, could not build programs or got code nobody tested. A new toolchain-resolution node makes a packaged installation (a clang beside the compiler, or a toolchain manifest at the package root) use the packaged clang for every compile, link, LTO run and capability probe, with no fallback to the host clang; Linux packages use the packaged ld.lld, macOS packages the system SDK and Apple linker with the packaged libLTO, and the build cache key includes the toolchain identity. The resource-exhaustion floor now gives every generated function the selected backend's stack-probe attribute: on macOS a capability probe tries Apple's probe function with the clang in use and otherwise emits inline page-by-page probing at a 4096-byte interval, never a function without probing, because upstream LLVM 22.1.8 accepts only inline probing on Apple silicon; refused were deciding by vendor string, Apple's function everywhere, requiring inline on Apple clang now, disabling probing, a hand-written probe function, and an interval without a method. Downstream releases replace the deferral of a bundled clang with a release-workflow option, off by default, that produces `-bundled` Linux x86-64 and macOS arm64 packages (148 MB and 140 MB compressed) and publishes them only after acceptance on three hosts.
 
+## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark ready and, once the gate on both platforms passes, tell the coordinator 'to merge'" (translated), on the card "approve the new decision in the design-tree node 'compiler verification' that the final gate step retries when the GitHub API errs?" (translated), whose first revision at head 3782dfbc2 listed retrying each failed query up to five times with doubling waits, listing again up to four times while an expected job has no entry, failing at once on a job that did not succeed, and the two refused alternatives; and then option A, "approve" (translated), on the card "may the final gate step skip cancelled jobs rather than count them as results?" (translated), at head a653fb527, which added that cancelled jobs are left out because they belong to a superseded or stopped run. The revision merged here differs from a653fb527 only by the merge of main.
+
+Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
+
+## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
+
+Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item.
+
+Summary: Semantic tail-transfer eligibility and backend cleanup emission read one cycle-safe type-release classification instead of separate lists in the checker, the IR and the backend, which had diverged and let a KeySet's release pass as empty; the parallel mode's broader storage-reclaim question derives from the same shapes and stays conservative. Release-action emptiness follows the actions a type can execute, so a constant-zero Array, Slots or Ring contributes no element action while its element type keeps its linearity obligation. A KeySet returns its runtime-held storage on release and a ConcurrentHashMap releases its held values and then returns its storage, independently of their declared fields.
 ## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
 
 Nodes: compiler/range-judgment
