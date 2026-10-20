@@ -44,8 +44,10 @@ jobs:
               # slab_new uses the initial capacity as the free-list end marker again.
               perl -0pi -e 's/free_head: ceiling\);/free_head: capacity);/' lib/std/collections/slab/slab.wf ;;
             no-grow)
-              # slab_reserve reports Ok without growing the backing.
-              perl -0pi -e 's/  grow\(cell: &slab\^\.cells, capacity: capacity\);\n//' lib/std/collections/slab/slab.wf ;;
+              # slab_reserve grows to the current capacity, so it reports Ok
+              # without growing the backing. Removing the call outright is
+              # rejected by the checker, which is not a run-time catch.
+              perl -0pi -e 's/grow\(cell: &slab\^\.cells, capacity: capacity\);/grow(cell: &slab^.cells, capacity: current);/' lib/std/collections/slab/slab.wf ;;
             no-ceiling)
               # slab_reserve accepts requests above the ceiling.
               perl -0pi -e 's/  if capacity > ceiling \{\n    return Err<unit, unit>\(error: unit\);\n  \}\n//' lib/std/collections/slab/slab.wf ;;
