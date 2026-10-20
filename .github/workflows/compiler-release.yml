@@ -65,9 +65,13 @@
 # A push that changes this file, package-acceptance.yml or .github/toolchain runs it as a dry run: it builds, smoke-tests
 # and packages the pushed commit as a bundled package, runs that package's
 # acceptance and keeps the files as a workflow artifact, publishing nothing,
-# so a change to the release path runs before it reaches main. Only a manual
-# dispatch publishes, a bundled release and a lightweight one alike: no push,
-# merge or schedule makes a release.
+# so a change to the release path runs before it reaches main. The push dry
+# run exercises the bundled path only; `-f dry_run=true` on a dispatch runs
+# the lightweight path, or with `-f bundle_toolchain=true` the bundled one,
+# the same way and publishes nothing, so a change to the lightweight path
+# is run by dispatching that. Only a manual dispatch without `dry_run`
+# publishes, a bundled release and a lightweight one alike: no push, merge or
+# schedule makes a release.
 name: compiler-release
 
 on:
@@ -83,6 +87,10 @@ on:
         default: false
       bundle_toolchain:
         description: Include the pinned clang/lld subset, qualifying exact archives before publishing
+        type: boolean
+        default: false
+      dry_run:
+        description: Build and package, in either mode, and publish nothing
         type: boolean
         default: false
   push:
@@ -140,6 +148,7 @@ jobs:
           # A push dry run takes the bundled path, the one with acceptance
           # jobs, so a change to it is qualified before anything is published.
           BUNDLE_TOOLCHAIN: ${{ inputs.bundle_toolchain || github.event_name == 'push' }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
@@ -163,6 +172,9 @@ jobs:
               echo "::error::$commit is not on main; an unmerged commit gets an experiment release"
               exit 1
             fi
+          fi
+          if [ "$DRY_RUN" = true ]; then
+            publish=false
           fi
           tag="$prefix${commit:0:12}"
           spec=$(git show "$commit:spec/kernel-spec.md" | sed -n '1s/^# Kernel Specification //p')
@@ -620,11 +632,18 @@ jobs:
           sudo apt-get install libc6-dev libgcc-13-dev libstdc++6 zlib1g libxml2 libicu74 liblzma5
           This test host does not establish a minimum supported Linux distribution."
           fi
+          retention="A release is removed 30 days after it is published unless it is the newest of main; make it again with"
+          if [ "$BUNDLE" = true ]; then
+            case "$TAG" in
+              wf-exp-*) ;;
+              *) retention="A bundled release of a main commit is not removed by age; it can be made again with" ;;
+            esac
+          fi
           notes="The Whitefoot compiler at $COMMIT (specification $SPEC), for projects that pin it.$kind
           Its gate run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GATE_RUN
 
           $toolchain_notes
-          A release is removed 30 days after it is published unless it is the newest of main; make it again with
+          $retention
           gh workflow run compiler-release.yml -R $GITHUB_REPOSITORY $again"
           gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --target "$COMMIT" \
             --prerelease --title "whitefootc $TAG (specification $SPEC)" --notes "$notes"

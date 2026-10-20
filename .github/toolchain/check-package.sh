@@ -2,15 +2,16 @@
 # No native tool qualifies an LLVM/Whitefoot package across isolated Linux and
 # SDK-bearing macOS hosts. This shared workflow runner applies the same witness,
 # inventory, link-mode and falsifier checks to the exact release archive bytes.
-# Caller supplies an archive, maintained witness, disposable work directory,
-# and one host mode: linux-absent, linux-wrong-major, or macos.
+# Caller supplies an archive, the directory of maintained witnesses
+# (tests/package-fixtures), a disposable work directory, and one host mode:
+# linux-absent, linux-wrong-major, or macos.
 set -euo pipefail
 if [ "$#" -ne 4 ]; then
-  echo 'usage: check-package.sh ARCHIVE WITNESS WORK-DIRECTORY MODE' >&2
+  echo 'usage: check-package.sh ARCHIVE FIXTURES WORK-DIRECTORY MODE' >&2
   exit 2
 fi
 archive="$1"
-witness="$2"
+fixtures="$2"
 work="$3"
 mode="$4"
 case "$mode" in linux-absent|linux-wrong-major|macos) ;; *) exit 2 ;; esac
@@ -37,9 +38,14 @@ tar -xzf "$archive" -C "$package"
 # The witness, tests/package-fixtures/waiting.wf, is reduced from the
 # backend test WAITING_PROGRAM: an owned enum crosses a direct waiting call
 # and a bound spawn whose result is used, so the build must lower coroutines.
-# It exits 0; 1 or 2 identifies a wrong observed result.
-cp "$witness" "$work/waiting.wf"
+# It exits 0; 1 or 2 identifies a wrong observed result. The second witness,
+# stack-exhaustion.wf, holds a frame larger than a guard page in every
+# activation of a recursion deeper than the entry's stack. The gate builds and
+# runs both with its own toolchain (compiler/tests/programs/package_fixtures.rs).
+cp "$fixtures/waiting.wf" "$work/waiting.wf"
+cp "$fixtures/stack-exhaustion.wf" "$work/stack-exhaustion.wf"
 witness="$work/waiting.wf"
+stack_witness="$work/stack-exhaustion.wf"
 
 python3 - "$package" <<'PY'
 import hashlib, json, pathlib, re, sys
@@ -257,6 +263,16 @@ if [ "$mode" = macos ]; then
 fi
 run ordinary-build "$compiler" -o "$work/ordinary" "$witness"
 run ordinary-run "$work/ordinary"
+# Stack exhaustion ends in the floor's abort and its one record only if every
+# large frame is probed into the guard, so this observes the probing method the
+# packaged clang selected (inline page walk on macOS, where the package's clang
+# rejects Apple's helper): an unprobed frame would end in a host fault with no
+# record. SIGABRT is status 134 to the shell, also under strace.
+run stack-build "$compiler" -o "$work/stack" "$stack_witness"
+stack_status=0
+run stack-run "$work/stack" || stack_status=$?
+test "$stack_status" -eq 134
+test "$(cat "$logs/stack-run.txt")" = '{"resource":"stack"}'
 run full-lto-build "$compiler" --full-lto -o "$work/full-lto" "$witness"
 run full-lto-run "$work/full-lto"
 for kind in objects fragments; do

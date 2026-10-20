@@ -1,13 +1,17 @@
 # A bundled native toolchain for Whitefoot's first external release
 
-Status: packaging, toolchain resolution and Darwin probe implementation
-selected; arm64 non-LTO candidate evidence is recorded below. External-package
-acceptance remains outstanding.
+Status: implemented. Packaging, toolchain resolution and the Darwin probe
+selection are in this repository; the qualification runs below record the
+upstream probe candidate and the later runs on the implementation, and the
+bundled release path runs its exact-archive acceptance (Linux with no clang and
+with another clang major, macOS with every host clang denied execution) on each
+push that changes the release path and before any publication. Still open, in
+the last section: probing of the runtime's C functions, other architectures
+and LLVM versions, minimum host versions, and Windows.
 The owner has committed to bundling clang and lld at the gate's LLVM major and
 to preserving macOS stack probing with upstream LLVM. This document records
-those implementation choices, the qualified arm64 non-LTO probe candidate and
-the remaining package acceptance checks; it does not claim a qualified release
-package.
+those implementation choices and the evidence for them; publishing a bundled
+release is a separate, manual act.
 
 ## Question and fixed requirements
 
@@ -162,8 +166,9 @@ AArch64: the non-Windows constructor does not use `no-stack-arg-probe` to
 suppress an explicit method. Do not add a module-wide method that silently
 re-enables this negative control. Check ordinary small-frame code, entry and
 worker recursion boundaries, helper definitions, fragments, and post-LTO code.
-Review C runtime prologues and SDK calls separately: adding an IR attribute
-does not automatically instrument runtime C translation units. Keep the
+Runtime C prologues and SDK calls are outside this work: adding an IR
+attribute does not instrument the runtime's C translation units (see
+"Runtime C frames" at the end). Keep the
 floor's classification band unchanged unless a separately justified geometry
 change is required; passing a wider band is not containment evidence.
 The floor comment currently describes probe stride as the host page size;
@@ -516,7 +521,8 @@ Apple-produced IR. Helper-failure reproduction and probe ablation remain
 explicit test adapters, separate from normal emission. Preserve the same
 containment, native-probe and recursion-boundary criteria above; the completed
 experiment cannot replace a floor/ledger/runtime group or gate run for the new
-implementation. Qualification of that implementation is pending.
+implementation; the gate runs those on both platforms, and the later runs below
+record the implementation itself.
 
 ### Later runs on the implementation
 
@@ -543,6 +549,13 @@ removed afterwards.
   on PATH, and macOS with every host clang denied execution by a sandbox
   profile (denial proven first) all built and ran the waiting fixture through
   ordinary, full-LTO and cached builds; nothing was published.
+- The same acceptance now also builds and runs a second fixture, a recursion
+  whose every frame is larger than a guard page and that is deeper than the
+  entry's stack. With the packaged clang it must end in the floor's abort and
+  its one record, which on macOS observes the inline probe method on the whole
+  package path. The gate builds and runs both fixtures with its own toolchain,
+  so a language change that breaks one fails the gate. Their results on a
+  revision are in that revision's checks.
 
 ## Recommended ordered delivery plan
 
@@ -584,8 +597,9 @@ removed afterwards.
    hashes, CI artifacts/results and every remaining platform limitation.
    Failed or unverified required checks, including macOS host-clang denial,
    block publication rather than turning a workflow artifact into qualification.
-   This integration is proposed implementation; no acceptance run of these
-   compiler-selected final bundles has been recorded here.
+   This integration is implemented in `package-acceptance.yml` and
+   `.github/toolchain/check-package.sh`; the later runs above record its
+   results.
 7. **Integrate the release contract and review.** Add `bundle_toolchain`, a
    boolean release input defaulting to false. False preserves today's small
    releases, tags, asset names and host-clang prerequisites. True produces
@@ -598,11 +612,10 @@ removed afterwards.
    Bring downstream-release decisions, release notes/manifest and consumer
    extraction guidance current. File Whitefoot-kit/Firn changes to their
    responsible sessions. Run independent review and the exact-revision gate.
-   Obtain owner approvals, then record approvals and prepare the release for
-   owner-authorized delivery.
+   Publishing a bundled release is a manual dispatch that the owner agrees to
+   first; nothing publishes it automatically.
 
-The proposed opt-in dispatch retains the existing commit/gate and experiment
-rules. Replace `COMMIT` with the revision qualified by the gate:
+The opt-in dispatch retains the existing commit/gate and experiment rules. Replace `COMMIT` with the revision qualified by the gate:
 
 ```sh
 gh workflow run compiler-release.yml -R Ming-Research/Whitefoot \
@@ -626,17 +639,18 @@ it does not require publishing a tag to make acceptance possible. The acceptance
 artifact belongs to those exact bytes, and an unverified required check blocks
 publication.
 
-These are proposed release-integration commands, not invocations run in this
-investigation. Bundling remains opt-in while the existing lightweight release
+These are the release workflow's documented commands; this investigation
+published nothing. Bundling remains opt-in while the existing lightweight release
 path keeps its consumers unchanged. A consumer selecting a bundled asset must
 extract its complete tree and invoke `bin/whitefootc`; update those downstream
 consumers in their own repositories. No upstream or downstream repository is
 changed by this investigation.
 
-## Owner decisions needed before implementation
+## Decisions put to the owner before implementation
 
-These questions refine the two settled commitments; bundling and keeping
-probes are not being reopened.
+These questions refined the two settled commitments; bundling and keeping
+probes were not reopened. The table gives the recommendations as presented;
+the owner's rulings are on the board, and Windows packaging is its own work.
 
 | Question | Options and recommendation | Ground and confidence |
 | --- | --- | --- |
@@ -646,29 +660,38 @@ probes are not being reopened.
 | Does macOS acceptance mean no dependency on an executable host clang while retaining CLT/Xcode's SDK and ld? | **A: yes; prove invocation denial and retain the system SDK/linker (recommended)**. B: require literally no host clang files, using an isolated CI image retaining only the necessary Apple development components. | Ordinary CLT includes clang. PATH hiding cannot prove either option. A is testable in principle; the isolation mechanism remains unverified. 4/5 for the boundary, 2/5 for hosted enforcement. |
 | Should capability probes become packaged constants now? | A: generate facts and bind them to exact artifacts. **B: keep the three syntax/ABI runtime probes against sibling clang, plus the Darwin method probe (recommended)**. | This preserves the existing semantic consumer check without a second fact-production pipeline. No startup-cost measurement justifies changing it. 4/5. |
 
-## Unverified work and findings disposition
+## Open work and findings disposition
 
-- **Execution boundary:** the first hosted qualification artifacts were read;
-  the owner supplied the corrected run's complete passing result, recorded above
-  with its narrow scope. Qualification of the compiler-selected implementation
-  and both release commitments remains pending. No build, test, compiler
-  invocation, download or measurement ran on this workstation.
-- **Safety qualification outstanding:** the implementation's floor/ledger/runtime
-  groups and exact-revision gate, post-LTO probing, aligned/variable frames,
-  unwinding and stack-ledger correspondence; Apple inline support; exact Apple
-  helper ABI/deployment availability; runtime C prologue coverage. The completed
-  arm64 non-LTO candidate experiment does not establish these wider claims.
+- **Execution boundary:** this investigation's author ran no build, test,
+  compiler invocation, download or measurement on a workstation; every result
+  cited is a CI run. The checks of the revision that merges, including the
+  exact-archive acceptance, are the PR's.
+- **Runtime C frames:** the floor's probing covers the functions the compiler
+  generates. The runtime's own C translation units are compiled by the same
+  clang but get a probe only if that compiler adds one by default: Apple's clang
+  does (the compiler's former comment says so), upstream clang adds none
+  unless asked, so a large C frame (`compiler/src/backend/completion/file_posix.c`
+  holds a 32 KiB array in one function) is unprobed under the Linux gate's
+  clang and under the packaged upstream clang on macOS. The two claims about
+  clang are read from the former comment and clang's documented defaults, not
+  measured here; confirm by compiling that file to assembly with each clang.
+  Probing the runtime's frames is a separate piece of work for every platform,
+  with an audit of their sizes; it is not done here and is tracked as its own
+  item.
+- **Safety qualification outstanding:** post-LTO probing, aligned and variable
+  frames, unwinding and stack-ledger correspondence; Apple inline support; exact
+  Apple helper ABI and deployment availability. The completed arm64 non-LTO
+  experiment and the package witnesses do not establish these wider claims.
   They belong in probe qualification, not a suppression workaround.
-- **Package qualification outstanding:** archive member/dependency inventories,
-  final compressed sizes, minimum OS/glibc/CLT versions, resource layouts,
-  macOS libLTO/system-ld compatibility, symlinks and macOS distribution signing
-  behavior, Windows SDK/CRT/DLL requirements, and the complete retained-license
-  inventory. These belong in packaging CI before a public support claim.
-- **Acceptance mechanics outstanding:** macOS invocation-denial feasibility,
-  a native Intel macOS runner if that target is promised, and the reduced
-  maintained coroutine witness. No Linux container result can establish the
-  Darwin floor behavior.
-- **Found along the way, included in the proposed work:** macOS's helper-only
-  native recognizer; macOS libLTO dependency; release-workflow comments claiming
+- **Package qualification outstanding:** minimum OS, glibc and CLT versions
+  (the Linux acceptance host is Ubuntu 24.04 and sets no minimum), macOS
+  distribution signing behavior, Windows SDK/CRT/DLL requirements. These
+  belong in packaging CI before a public support claim.
+- **Acceptance mechanics outstanding:** a native Intel macOS runner if that
+  target is promised. No Linux container result can establish the Darwin floor
+  behavior; the macOS job does.
+- **Found along the way, done in this work:** macOS's helper-only native
+  recognizer; macOS libLTO dependency; release-workflow comments claiming
   build-time capability facts despite the current runtime probes; native cache
-  identity and consumer extraction assumptions. No unrelated repair was made.
+  identity and consumer extraction assumptions; the weekly cleanup treating a
+  bundled release like a lightweight one.

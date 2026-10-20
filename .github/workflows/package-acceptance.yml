@@ -163,6 +163,7 @@ jobs:
           set -euo pipefail
           test -f .github/toolchain/check-package.sh
           test -f tests/package-fixtures/waiting.wf
+          test -f tests/package-fixtures/stack-exhaustion.wf
           mkdir -p "$RUNNER_TEMP/package-$MODE/logs"
           status=0
           # XML/ICU/LZMA/zlib/C++ are recorded host shared-library prerequisites
@@ -171,7 +172,7 @@ jobs:
           # compiler or /usr/lib/llvm tree is mounted.
           docker run --rm --platform linux/amd64 \
             --mount "type=bind,src=$PWD/candidate/whitefootc-linux-x86_64-bundled.tar.gz,dst=/input/package.tar.gz,readonly" \
-            --mount "type=bind,src=$PWD/tests/package-fixtures/waiting.wf,dst=/input/waiting.wf,readonly" \
+            --mount "type=bind,src=$PWD/tests/package-fixtures,dst=/input/fixtures,readonly" \
             --mount "type=bind,src=$PWD/.github/toolchain/check-package.sh,dst=/input/check-package.sh,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/package-$MODE,dst=/output" \
             --env "MODE=$MODE" ubuntu:24.04 /bin/bash -c '
@@ -183,7 +184,7 @@ jobs:
               if [ "$MODE" = linux-wrong-major ]; then
                 apt-get install -y --no-install-recommends clang-18
               fi
-              bash /input/check-package.sh /input/package.tar.gz /input/waiting.wf /output "$MODE"
+              bash /input/check-package.sh /input/package.tar.gz /input/fixtures /output "$MODE"
             ' > "$RUNNER_TEMP/package-$MODE/logs/container.txt" 2>&1 || status=$?
           cat "$RUNNER_TEMP/package-$MODE/logs/container.txt"
           exit "$status"
@@ -194,7 +195,7 @@ jobs:
           MODE: ${{ matrix.mode }}
           COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
-          printf 'Linux %s: exact candidate %s passed inventory, coroutine IR, ordinary/full/ThinLTO, cold/warm caches, relocation and completeness checks. Successful clang/lld executions are traced; host calls are zero.\n' \
+          printf 'Linux %s: exact candidate %s passed inventory, coroutine IR, ordinary/full/ThinLTO, cold/warm caches, stack exhaustion, relocation and completeness checks. Successful clang/lld executions are traced; host calls are zero.\n' \
             "$MODE" "$COMMIT" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Linux command, inventory and execution logs
@@ -231,9 +232,10 @@ jobs:
           set -euo pipefail
           test -f .github/toolchain/check-package.sh
           test -f tests/package-fixtures/waiting.wf
+          test -f tests/package-fixtures/stack-exhaustion.wf
           bash .github/toolchain/check-package.sh \
             "$PWD/candidate/whitefootc-macos-arm64-bundled.tar.gz" \
-            "$PWD/tests/package-fixtures/waiting.wf" "$RUNNER_TEMP/package-macos" macos
+            "$PWD/tests/package-fixtures" "$RUNNER_TEMP/package-macos" macos
           cat "$RUNNER_TEMP/package-macos/logs/result.txt" >> "$GITHUB_OUTPUT"
 
       - name: Record qualification and the isolation boundary
