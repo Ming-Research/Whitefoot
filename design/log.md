@@ -5,14 +5,6 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
-
-Nodes: compiler/verification
-
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark ready and, once the gate on both platforms passes, tell the coordinator 'to merge'" (translated), on the card "approve the new decision in the design-tree node 'compiler verification' that the final gate step retries when the GitHub API errs?" (translated), whose first revision at head 3782dfbc2 listed retrying each failed query up to five times with doubling waits, listing again up to four times while an expected job has no entry, failing at once on a job that did not succeed, and the two refused alternatives; and then option A, "approve" (translated), on the card "may the final gate step skip cancelled jobs rather than count them as results?" (translated), at head a653fb527, which added that cancelled jobs are left out because they belong to a superseded or stopped run. The revision merged here differs from a653fb527 only by the merge of main.
-
-Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
-
 ## 2026-10-13 An allocation that does not fit the heap names its type, layout, limit and call
 
 Nodes: compiler/diagnostic-rendering
@@ -20,6 +12,14 @@ Nodes: compiler/diagnostic-rendering
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision Ming-Research/Whitefoot#474 (head bdde071c2) adds: when an allocation does not fit the heap, the error names the type, its layout, the exceeded limit and the call position in the source?" (translated).
 
 Summary: A target layout failure caused by a runtime allocation now names the payload type, its size and alignment, the violated target limit with its value, and the nearest writer-written call requiring the allocation, found through the call origins lowering already records, because a writer can repair a source-valid program only from those; an unlocated allocation category, guessing the call from source text or symbol names, and moving target representability into source acceptance were rejected, the last because STOR-6 places it after checking. Allocation obligations are checked before the program-wide layout walk so the failure keeps its allocation; every check still runs before emission and the failure cites no source-language rule.
+
+## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark ready and, once the gate on both platforms passes, tell the coordinator 'to merge'" (translated), on the card "approve the new decision in the design-tree node 'compiler verification' that the final gate step retries when the GitHub API errs?" (translated), whose first revision at head 3782dfbc2 listed retrying each failed query up to five times with doubling waits, listing again up to four times while an expected job has no entry, failing at once on a job that did not succeed, and the two refused alternatives; and then option A, "approve" (translated), on the card "may the final gate step skip cancelled jobs rather than count them as results?" (translated), at head a653fb527, which added that cancelled jobs are left out because they belong to a superseded or stopped run. The revision merged here differs from a653fb527 only by the merge of main.
+
+Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
 
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
