@@ -13,15 +13,15 @@ use whitefoot::{
     CheckOutcome, CheckVerdict, CompilationFailure, CompilerLimits, DISPATCH_LEDGER_PREFIX,
     DiagnosticFormat, FLOOR_STACK_BYTES, FORK_CAPSULE_HEADER, FORK_CAPSULE_SOURCE,
     FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, LOCK_LEDGER_PREFIX,
-    ModuleEntry,
-    ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
-    OverlapLowering, RESTRICTED_CHILD_COMPILE_ARGUMENTS, RecursionBudget, SCHED_CORE_HEADER,
-    SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER,
-    SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, SourceInput, WINDOWS_RUNTIME_HEADER,
-    build_module_entry_for_emission, check, check_module_program, check_with_cache,
-    clang_executable, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
-    form_module_program_graph, module_verdict, render_driver_failure, render_module_interface,
-    running_compiler_identity, split_module, stack_ledger,
+    ModuleEntry, ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM,
+    ORDINARY_VALUES_SOURCE, OverlapLowering, RESTRICTED_CHILD_COMPILE_ARGUMENTS, RecursionBudget,
+    SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
+    SCHED_PRIM_HEADER, SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, SourceInput,
+    WINDOWS_RUNTIME_HEADER, build_module_entry_for_emission, check, check_module_program,
+    check_with_cache, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
+    form_module_program_graph, module_verdict, prepare_toolchain, render_driver_failure,
+    render_module_interface, resolved_toolchain, running_compiler_identity, split_module,
+    stack_ledger,
 };
 
 // `HOST_LINK_LIBRARIES` is here rather than above because its one reader is
@@ -354,6 +354,7 @@ fn run(arguments: &[String]) -> Result<(), Stop> {
         // actualization lines — what the lowering did with each permission it
         // was handed — exist only where actualization was asked for, so `--par`
         // adds lines to this ledger rather than changing any of them.
+        prepare_toolchain().map_err(Stop::toolchain)?;
         let (module, ledger) = compile_for_emission(
             &inputs,
             CompilerLimits::default(),
@@ -376,6 +377,7 @@ fn run(arguments: &[String]) -> Result<(), Stop> {
             .map_err(Stop::Compilation)?;
             return Ok(());
         }
+        prepare_toolchain().map_err(Stop::toolchain)?;
         let (module, _) = compile_for_emission(
             &inputs,
             CompilerLimits::default(),
@@ -524,6 +526,7 @@ fn run_module_program(
     if options.par_ledger {
         // As for a source bundle, the ledger goes to stdout and the build
         // reads no cache, so every line describes this compilation.
+        prepare_toolchain().map_err(Stop::toolchain)?;
         let (module, ledger, _) = build_module_entry_for_emission(
             &graph,
             &inputs,
@@ -540,6 +543,7 @@ fn run_module_program(
         return Ok(Some(module));
     }
     let front_end = std::time::Instant::now();
+    prepare_toolchain().map_err(Stop::toolchain)?;
     let (module, _, reused) = build_module_entry_for_emission(
         &graph,
         &inputs,
@@ -862,8 +866,10 @@ fn print_stack_ledger(llvm: &str) -> Result<Vec<String>, String> {
     let result = (|| {
         std::fs::write(&module, llvm)
             .map_err(|error| format!("cannot write the ledger module: {error}"))?;
+        let toolchain = resolved_toolchain()?;
         #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-        let status = Command::new(clang_executable())
+        let status = toolchain
+            .command()
             .arg("-x")
             .arg("ir")
             .arg(&module)
@@ -874,7 +880,7 @@ fn print_stack_ledger(llvm: &str) -> Result<Vec<String>, String> {
             .arg("-Wno-override-module")
             .args(HOST_OPTIMIZATION_ARGUMENTS)
             .status()
-            .map_err(|error| format!("cannot start {}: {error}", clang_executable()))?;
+            .map_err(|error| format!("cannot start {}: {error}", toolchain.clang().display()))?;
         if !status.success() {
             return Err(format!("clang exited with {status}"));
         }
@@ -978,7 +984,7 @@ fn compile_executable(
             );
         }
         let linking = std::time::Instant::now();
-        let mut command = Command::new(clang_executable());
+        let mut command = resolved_toolchain()?.link_command();
         unit_arguments(&mut command, &directory);
         for relative_path in &compiled {
             let restricted = restricted_child_arguments(relative_path);
@@ -986,7 +992,7 @@ fn compile_executable(
                 // Per-unit flags must not disable ordinary runtime checks or
                 // sanitizers. Compile only the child closure separately.
                 let object = directory.join(relative_path).with_extension("o");
-                let mut child = Command::new(clang_executable());
+                let mut child = resolved_toolchain()?.command();
                 unit_arguments(&mut child, &directory);
                 child.args(HOST_OPTIMIZATION_ARGUMENTS).args(restricted);
                 if full_lto {
@@ -1167,7 +1173,7 @@ fn link_cached_objects(
         std::process::id()
     ));
     let linking = std::time::Instant::now();
-    let mut command = Command::new(clang_executable());
+    let mut command = resolved_toolchain()?.link_command();
     command
         .args(TARGET_COMPILE_ARGUMENTS)
         .args(HOST_OPTIMIZATION_ARGUMENTS)
@@ -1185,11 +1191,12 @@ fn link_cached_objects(
             .arg(cache_argument);
     }
     #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    let status = command
-        .arg("-o")
-        .arg(&partial)
-        .status()
-        .map_err(|error| format!("cannot start {}: {error}", clang_executable()))?;
+    let status = command.arg("-o").arg(&partial).status().map_err(|error| {
+        format!(
+            "cannot start {}: {error}",
+            command.get_program().to_string_lossy()
+        )
+    })?;
     report.link = linking.elapsed();
     if !status.success() {
         let _ = std::fs::remove_file(&partial);
@@ -1261,7 +1268,7 @@ fn cached_object<'text>(
             .map(|()| true)
             .map_err(|error| format!("cannot write {}: {error}", object.display()));
     }
-    let mut command = Command::new(clang_executable());
+    let mut command = resolved_toolchain()?.command();
     let stdin = configure(&mut command);
     command
         .args(HOST_OPTIMIZATION_ARGUMENTS)
@@ -1274,9 +1281,12 @@ fn cached_object<'text>(
             Stdio::null()
         });
     #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("cannot start {}: {error}", clang_executable()))?;
+    let mut child = command.spawn().map_err(|error| {
+        format!(
+            "cannot start {}: {error}",
+            command.get_program().to_string_lossy()
+        )
+    })?;
     if let Some(text) = stdin {
         child
             .stdin
@@ -1298,17 +1308,9 @@ fn cached_object<'text>(
     Ok(false)
 }
 
-/// The host compiler's identity: its path and its own version report.
+/// The resolved native consumer and its linker/SDK selections.
 fn host_compiler_identity() -> Result<[u8; 32], String> {
-    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    let version = Command::new(clang_executable())
-        .arg("--version")
-        .output()
-        .map_err(|error| format!("cannot start {}: {error}", clang_executable()))?;
-    let mut identity = clang_executable().as_bytes().to_vec();
-    identity.push(0);
-    identity.extend_from_slice(&version.stdout);
-    Ok(content_digest(&identity))
+    resolved_toolchain()?.cache_identity()
 }
 
 fn link(command: &mut Command, llvm: &str, output: &Path) -> Result<(), String> {
@@ -1324,7 +1326,12 @@ fn link(command: &mut Command, llvm: &str, output: &Path) -> Result<(), String> 
         .arg(output)
         .stdin(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("cannot start {}: {error}", clang_executable()))?;
+        .map_err(|error| {
+            format!(
+                "cannot start {}: {error}",
+                command.get_program().to_string_lossy()
+            )
+        })?;
     child
         .stdin
         .take()

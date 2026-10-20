@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-13 Release packages carry their own clang, and macOS stack probing follows the clang in use
+
+Nodes: compiler/toolchain-resolution, compiler/resource-exhaustion-floor, compiler/downstream-releases
+
+Summary: The compiler ran /usr/bin/clang, so a host without it, or with another LLVM version, could not build programs or got code nobody tested. A new toolchain-resolution node makes a packaged installation (a clang beside the compiler, or a toolchain manifest at the package root) use the packaged clang for every compile, link, LTO run and capability probe, with no fallback to the host clang; Linux packages use the packaged ld.lld, macOS packages the system SDK and Apple linker with the packaged libLTO, and the build cache key includes the toolchain identity. The resource-exhaustion floor now gives every generated function the selected backend's stack-probe attribute: on macOS a capability probe tries Apple's probe function with the clang in use and otherwise emits inline page-by-page probing at a 4096-byte interval, never a function without probing, because upstream LLVM 22.1.8 accepts only inline probing on Apple silicon; refused were deciding by vendor string, Apple's function everywhere, requiring inline on Apple clang now, disabling probing, a hand-written probe function, and an interval without a method. Downstream releases replace the deferral of a bundled clang with a release-workflow option, off by default, that produces `-bundled` Linux x86-64 and macOS arm64 packages (148 MB and 140 MB compressed) and publishes them only after acceptance on three hosts, and the weekly removal keeps a bundled release of a main commit past 30 days without letting it take the newest release's place (refused: the 30-day rule unchanged, and a longer separate window). The floor states that its probing covers generated functions and that the runtime's own C frames are a known gap with their own work item (refused: claiming containment for them from the generated-code qualification).
+
 ## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
 
 Nodes: compiler/verification

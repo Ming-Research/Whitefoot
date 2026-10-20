@@ -7,11 +7,16 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The host clang used by the driver, runtime probes and native test helpers.
+mod resolution;
+pub use resolution::{Toolchain, resolved_toolchain};
+
+/// The source-build default retained by native test helpers.
+/// Production commands use [`resolved_toolchain`] instead.
 pub const fn clang_executable() -> &'static str {
     if cfg!(target_os = "windows") {
         "clang"
@@ -26,6 +31,7 @@ pub(crate) struct ToolchainFacts {
     pub(crate) preserve_none: bool,
     pub(crate) no_capture_attribute: &'static str,
     pub(crate) coro_end_result: &'static str,
+    pub(crate) darwin_stack_probe_helper: bool,
 }
 
 impl ToolchainFacts {
@@ -38,27 +44,109 @@ impl ToolchainFacts {
         }
     }
 
-    fn probe() -> Self {
-        let Ok(directory) = ProbeDirectory::new() else {
-            return Self {
-                preserve_none: false,
-                no_capture_attribute: "nocapture",
-                coro_end_result: "i1",
-            };
-        };
-        Self {
-            preserve_none: preserve_none_supported(&directory.0),
-            no_capture_attribute: no_capture_attribute(&directory.0),
-            coro_end_result: coro_end_result(&directory.0),
+    fn probe(toolchain: &Toolchain) -> Result<Self, String> {
+        if toolchain.packaged {
+            // A failed loader/version launch is not evidence that a newer
+            // optional LLVM spelling is unsupported.
+            toolchain.cache_identity()?;
         }
+        let conservative = Self {
+            preserve_none: false,
+            no_capture_attribute: "nocapture",
+            coro_end_result: "i1",
+            darwin_stack_probe_helper: false,
+        };
+        let directory = match ProbeDirectory::new() {
+            Ok(directory) => directory,
+            Err(error) if toolchain.packaged => {
+                return Err(format!(
+                    "cannot create the bundled clang capability-probe directory: {error}"
+                ));
+            }
+            Err(_) => return Ok(conservative),
+        };
+        let required = |result: io::Result<bool>, name: &str| match result {
+            Ok(accepted) => Ok(accepted),
+            Err(error) if toolchain.packaged => Err(format!(
+                "cannot run bundled clang capability probe {name} with {}: {error}",
+                toolchain.clang().display()
+            )),
+            Err(_) => Ok(false),
+        };
+        Ok(Self {
+            preserve_none: required(
+                preserve_none_supported(toolchain, &directory.0),
+                "preserve_nonecc",
+            )?,
+            no_capture_attribute: if required(
+                no_capture_supported(toolchain, &directory.0),
+                "captures(none)",
+            )? {
+                "captures(none)"
+            } else {
+                "nocapture"
+            },
+            coro_end_result: if required(
+                coro_end_void_supported(toolchain, &directory.0),
+                "llvm.coro.end",
+            )? {
+                "void"
+            } else {
+                "i1"
+            },
+            // Other hosts keep their existing attribute and run no additional
+            // command. Unknown support on Darwin retains inline page probing.
+            darwin_stack_probe_helper: {
+                #[cfg(target_os = "macos")]
+                {
+                    required(
+                        darwin_stack_probe_helper_supported(toolchain, &directory.0),
+                        "__chkstk_darwin",
+                    )?
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    false
+                }
+            },
+        })
     }
 }
 
-/// Lazily probes all three facts once per process; concurrent emitters wait
-/// for the same value, including conservative fallbacks when clang cannot run.
+fn probed_facts() -> Result<&'static ToolchainFacts, String> {
+    static FACTS: OnceLock<Result<ToolchainFacts, String>> = OnceLock::new();
+    FACTS
+        .get_or_init(|| ToolchainFacts::probe(resolved_toolchain()?))
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+/// Settle resolution and probes before any emission reads the infallible facts.
+/// Source builds retain their conservative probe-launch fallback; packaged
+/// resolution, scratch and launch errors stop with a toolchain diagnostic.
+#[doc(hidden)]
+pub fn prepare_toolchain() -> Result<(), String> {
+    probed_facts().map(|_| ())
+}
+
+/// Internal invariant: every production path prepares before reading facts.
+///
+/// `backend::emitter::emit_module` prepares before its stack attributes and
+/// the private `FunctionEmitter` read reference/environment attributes or
+/// coroutine forms. `frames::frame_runtime_declarations` is visible only to
+/// that emitter module and is called only from `emit_module`.
+/// `handler_words::prepare_dispatch_layout` prepares before its private
+/// `census` constructs a `FunctionEmitter` and calls `plan_dispatch`, which
+/// reaches the private `dispatch::convention`. `FunctionEmitter::new` is
+/// private to the emitter and has no other production construction path.
+///
+/// `driver::build_module_entry_for_emission` prepares before reading facts for
+/// the entry-module cache key. The driver's `compile_selected` reaches the
+/// two prepared backend entries above; target-neutral lowering reads no facts.
+/// Each preparation propagates failure before these reads, and the shared
+/// `OnceLock` retains that result, so packaged failures never reach the expect.
 pub(crate) fn facts() -> &'static ToolchainFacts {
-    static FACTS: OnceLock<ToolchainFacts> = OnceLock::new();
-    FACTS.get_or_init(ToolchainFacts::probe)
+    probed_facts().expect("emission must check prepare_toolchain before accessing LLVM facts")
 }
 
 /// Owns only a freshly created directory. The process ID separates concurrent
@@ -98,22 +186,17 @@ impl Drop for ProbeDirectory {
 /// of either form (Apple clang 21), and a call outside a coroutine can crash
 /// code generation. Verification is requested explicitly, since release
 /// builds of clang 18 to 20 skip it on IR input by default.
-fn coro_end_result(directory: &Path) -> &'static str {
-    const OLD: &str = "i1";
-    const NEW: &str = "void";
+fn coro_end_void_supported(toolchain: &Toolchain, directory: &Path) -> io::Result<bool> {
     let probe = directory.join("coro_end_probe.ll");
-    if fs::write(
+    fs::write(
         &probe,
         "declare void @llvm.coro.end(ptr, i1, token)\n\n\
          define void @probe() {\n  \
          call void @llvm.coro.end(ptr null, i1 false, token none)\n  ret void\n}\n",
-    )
-    .is_err()
-    {
-        return OLD;
-    }
+    )?;
     #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    let accepted = Command::new(clang_executable())
+    let accepted = toolchain
+        .command()
         .args([
             "-x",
             "ir",
@@ -124,9 +207,8 @@ fn coro_end_result(directory: &Path) -> &'static str {
         ])
         .arg(directory.join("coro_end_probe.verified.ll"))
         .arg(&probe)
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if accepted { NEW } else { OLD }
+        .output()?;
+    probe_status(toolchain, accepted.status)
 }
 
 /// Whether the host toolchain probed at run time accepts a
@@ -137,25 +219,22 @@ fn coro_end_result(directory: &Path) -> &'static str {
 /// a two-function module with the convention and a `musttail` call between
 /// them is handed to the assembler `whitefootc` runs. Where it is refused,
 /// or no assembler can be run, the lowering uses the C convention.
-#[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-fn preserve_none_supported(directory: &Path) -> bool {
+fn preserve_none_supported(toolchain: &Toolchain, directory: &Path) -> io::Result<bool> {
     let probe = directory.join("preserve_none_probe.ll");
-    if fs::write(
+    fs::write(
         &probe,
         "define internal preserve_nonecc i64 @q(i64 %a) {\n  ret i64 %a\n}\n\n\
          define preserve_nonecc i64 @p(i64 %a) {\n  \
          %r = musttail call preserve_nonecc i64 @q(i64 %a)\n  ret i64 %r\n}\n",
-    )
-    .is_err()
-    {
-        return false;
-    }
-    Command::new(clang_executable())
+    )?;
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+    let accepted = toolchain
+        .command()
         .args(["-x", "ir", "-c", "-o"])
         .arg(directory.join("preserve_none_probe.o"))
         .arg(&probe)
-        .output()
-        .is_ok_and(|output| output.status.success())
+        .output()?;
+    probe_status(toolchain, accepted.status)
 }
 
 /// Which spelling of the no-capture parameter attribute the host toolchain
@@ -167,26 +246,55 @@ fn preserve_none_supported(directory: &Path) -> bool {
 /// when it is refused. The old spelling is also the fallback where no
 /// assembler can be run at all, because every LLVM that has the new one still
 /// auto-upgrades the old.
-fn no_capture_attribute(directory: &Path) -> &'static str {
-    const OLD: &str = "nocapture";
+fn no_capture_supported(toolchain: &Toolchain, directory: &Path) -> io::Result<bool> {
     const NEW: &str = "captures(none)";
     let probe = directory.join("captures_probe.ll");
-    if fs::write(
+    fs::write(
         &probe,
         format!("define void @p(ptr {NEW} %v) {{\n  ret void\n}}\n"),
-    )
-    .is_err()
-    {
-        return OLD;
-    }
+    )?;
     #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    let accepted = Command::new(clang_executable())
+    let accepted = toolchain
+        .command()
         .args(["-x", "ir", "-c", "-o"])
         .arg(directory.join("captures_probe.o"))
         .arg(&probe)
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if accepted { NEW } else { OLD }
+        .output()?;
+    probe_status(toolchain, accepted.status)
+}
+
+/// Some Darwin LLVM consumers accept the helper spelling in IR but reject it
+/// during native prologue lowering. Generate an actual large, live frame:
+/// passing its address to an unknown callee prevents optimization from
+/// deleting or shrinking the allocation. No link or execution is needed.
+#[cfg(target_os = "macos")]
+fn darwin_stack_probe_helper_supported(toolchain: &Toolchain, directory: &Path) -> io::Result<bool> {
+    let probe = directory.join("darwin_stack_probe.ll");
+    fs::write(
+        &probe,
+        "declare void @consume(ptr)\n\n\
+         define void @probe() #0 {\n  \
+         %frame = alloca [65536 x i8], align 16\n  \
+         call void @consume(ptr %frame)\n  ret void\n}\n\n\
+         attributes #0 = { \"probe-stack\"=\"__chkstk_darwin\" }\n",
+    )?;
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+    let accepted = toolchain
+        .command()
+        .args(["-x", "ir", "-O2", "-c", "-o"])
+        .arg(directory.join("darwin_stack_probe.o"))
+        .arg(&probe)
+        .output()?;
+    probe_status(toolchain, accepted.status)
+}
+
+fn probe_status(toolchain: &Toolchain, status: std::process::ExitStatus) -> io::Result<bool> {
+    if toolchain.packaged && !matches!(status.code(), Some(0 | 1)) {
+        return Err(io::Error::other(format!(
+            "capability probe terminated with {status}"
+        )));
+    }
+    Ok(status.success())
 }
 
 #[cfg(test)]
@@ -226,7 +334,21 @@ mod tests {
 
     #[test]
     fn runtime_facts_match_host_clang() {
+        prepare_toolchain().expect("prepare host toolchain before reading emission facts");
         let facts = facts();
+        #[cfg(target_os = "macos")]
+        {
+            let toolchain = resolved_toolchain().expect("prepared source-build toolchain");
+            assert!(!toolchain.packaged, "native tests use the source-build default");
+            assert_eq!(toolchain.clang(), Path::new("/usr/bin/clang"));
+            // Apple clang's native large-frame lowering supports its helper.
+            // This also rejects an always-false capability probe: matching
+            // emitter text to the same false fact would not expose that bug.
+            assert!(
+                facts.darwin_stack_probe_helper,
+                "the macOS source-build default /usr/bin/clang must lower __chkstk_darwin"
+            );
+        }
         let directory = ProbeDirectory::new().expect("create verification directory");
         let chosen = coroutine_module(facts.coro_end_result, facts.no_capture_attribute);
         // The probes' own fallback stands where clang cannot run; this test
