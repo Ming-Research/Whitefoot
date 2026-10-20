@@ -1,0 +1,25 @@
+fn reset(part: &[Slots<u8, 8>]) -> result: unit writes(part) contract {
+  requires part^.len >= 1_u64;
+} {
+  doc "The declared write reaches the supplied range's first element.";
+  set part^[0_u64] = slots_new::<u8, 8>();
+  return unit;
+}
+
+fn probe(rows: &[Slots<u8, 8>], i: u64, j: u64, k: u64) -> result: u8 writes(rows) contract {
+  requires i < j;
+  requires j < rows^.len;
+  requires k < rows^[i].len;
+} {
+  doc "ENT-5 and OWN-7: tail is formed from the endpoints i and j before j is rebound to i. Its captured end still covers row i, so the call writes row i and kills the length fact on row i; the later read needs that fact and fails OP-4. Judging the write with the rebound end would wrongly keep the fact.";
+  let tail = &rows^[i..j];
+  set j = i;
+  reset(part: tail);
+  let value = rows^[i][k];
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checking probe must refuse the proof, because the captured range still covers row i.";
+  return std::process::exit_status(code: 0_u8);
+}
