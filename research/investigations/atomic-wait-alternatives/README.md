@@ -1,39 +1,155 @@
-# Acquiring atomic targets or cancelling, and starting work while holding them
+# Acquiring atomic targets with a deadline, and starting work while holding them
 
-## Status and decision sought
+## Status and outcome
 
-Design study, 2026-10-13. These are proposals for the owner, not selected
-language rules or implemented capabilities. The inspected checkout is
-`53809df17f85c5cff8d23a6764c34c820bc70efe`, with Kernel Specification v0.149.
-Only this document is changed. No program, compiler, test, benchmark, or
-measurement was run; the examples received source inspection only. Firn's
-four-driver hang is evidence supplied with the request, not a run reproduced
-here. Redis compatibility requirements below are the requirements supplied
-by the owner, not an independent Redis audit.
+Design study, 2026-10-13, with a withdrawal model added after the owner's
+direction (status board item `firn-req-wait-key-or-flag`). The study was
+written against checkout `53809df17f85c5cff8d23a6764c34c820bc70efe`, with
+Kernel Specification v0.149; the model follows the runtime as merged into
+this branch at v0.151. No rule is changed here; the specification,
+checker, lowering and runtime work is status board item
+`atomic-until-impl`. Firn's four-driver hang is evidence supplied with the
+request, not a run reproduced here. Redis compatibility requirements below
+are the requirements supplied by the owner, not an independent Redis audit.
 
-Recommend two small, orthogonal extensions:
+The study compared ways to let a waiting atomic statement give up
+([Gap 1 candidates](#gap-1-candidates)) and ways to start a timer while a
+statement holds its targets ([Gap 2 candidates](#gap-2-candidates)). It
+recommended a cancellation watch (G1-A) and expression `spawn` under a hold
+(G2-A). The owner selected neither as written:
 
-1. **Cancellable acquisition:** an explicit `CancelWatch` can end an atomic
-   statement's acquisition/guard wait, choosing a separate branch with no
-   target bindings. Cancellation cannot interrupt a body already admitted.
-2. **Start without joining under a hold:** permit the existing expression
-   statement `spawn f(...);` inside an atomic body. The child belongs to the
-   containing function activation; every exit releases the atomic targets
-   before joining it. Keep `let x = spawn f(...);` forbidden there, because
-   its use/block-exit join can occur while targets are held.
+1. **Gap 1: a deadline, not a watch.** An atomic statement takes an
+   optional `until <Instant>` and a mandatory `else` branch. It either
+   takes effect before the deadline or takes the `else` branch with no
+   target binding and no target effect. One form ends both waits: for a
+   unit another statement holds, and for a false guard. This is G1-A's
+   outcome structure and withdrawal obligation with the runtime's existing
+   timer as the only trigger. A cancellation watch may later be added as a
+   second argument beside the deadline without changing this form. See
+   [Selected form](#selected-form-deadline-acquisition).
+2. **Gap 2: not pursued.** Firn's busy-script timing no longer needs a
+   timer started under the hold: the script stores its start instant in an
+   atomic value, and a waiting command computes its deadline as that
+   instant plus the threshold. The Gap 2 sections remain as the comparison
+   made, not as a proposal in progress.
 
-The second recommendation does **not** require the child to be unable to
-reach the parent's targets. Value-only arguments already exclude borrowed
-target references. A child can queue for an aliased shared object safely if
-the parent never joins it under the hold. Proving identity separation from
-ordinary effect rows would not work: by-value handles have no such effect
-entries, and different handles may name one object.
-
-The pending single-driver progress option A remains a separate owner
-decision. Neither recommendation silently adopts it. With current WAIT-2,
-an indefinitely computing context can invalidate the progress premise; with
-the proposed option A, these forms need the bounded regime described in
+The single-driver progress question remains a separate decision; see
 [Progress and embedded targets](#progress-and-embedded-targets).
+
+## Selected form: deadline acquisition
+
+```wf
+// store: &Shared<Store>; deadline: std::time::Instant, computed before.
+atomic s = &store^ when ready(s: s) until deadline {
+  // admitted before the deadline: every target held, guard true
+  return Found(value: s^.value);
+} else {
+  // the deadline passed first: nothing taken, no binding of s here
+  return Busy();
+}
+```
+
+The form is a proposal for the specification step, uncompiled. Its
+semantic commitments, as the owner selected them, are:
+
+- The deadline is an absolute `std::time::Instant`, the same kind as
+  `sleep_until` and the deadlines of host reads and writes. The guard reads
+  no clock, so the rule that a guard reaches no self-changing host handle
+  [SHARE-2] is unchanged.
+- The statement has two outcomes: admission (every target held, the guard
+  true, the block executed at one point [SHARE-3]) or withdrawal, after
+  which the `else` branch runs with no target binding in scope. Which comes
+  first when admission and expiry race is an input of the execution
+  [WAIT-2]; both are valid. An admitted block is never interrupted, so
+  nothing is rolled back.
+- A statement without `until` compiles to the same code as today. A
+  statement with `until` that needs no wait registers no timer.
+
+Two consequences follow for the specification step; both are proposals:
+
+- **The deadline ends a wait; it does not pre-empt an available
+  admission.** A statement whose targets are free and whose guard is true
+  is admitted without reading the clock, even when its deadline has
+  already passed. Otherwise the no-wait path would sample the clock on
+  every execution, against the zero-cost commitment above. C++
+  `std::timed_mutex::try_lock_until` with a past time point behaves the
+  same way: it acquires an available mutex. Once the statement has waited
+  and the timer has fired, it is not admitted; it withdraws.
+- **A statement with `until` takes every group before its guard.** Today
+  a group the guard does not read may be taken lazily at its first use in
+  the block (design node `compiler/waiting-contexts/state-locks`). A block
+  that waited for such a group after admission would take effect after its
+  deadline, or would need rollback. G1-A's text already required the same
+  eager acquisition for its form.
+
+### Withdrawal obligations in today's runtime
+
+A statement can wait in five places today (from
+`compiler/src/backend/completion/bridge.c`, `keyed_table.c` and
+`concurrent_map.c` as merged here). Withdrawal must leave each one exactly
+as if the statement had never arrived:
+
+| Wait | What the waiter may own when the deadline passes | What withdrawal must do |
+|---|---|---|
+| First ordinary object: parked on the object's queue | A queue link; a wake (the unlocker popped it and left the object free); a hand-off (after `WF_SHARED_HANDOFF` vain wakes the unlocker made it the holder) | Unlink; release a handed-off object as an ordinary quiet unlock; pass a wake on to the next queued context when the object is free |
+| Later ordinary object: a claim on its own stack | A claim link, which refuses parking newcomers, or a granted claim | Unlink the claim (and hand back the reservation slot if its record is the queue tail); release a granted object |
+| Guard false: parked on a watch | A watch link; a notification; a reservation that refuses newcomers holding nothing | Unlink the watch; pass a notification on as a retry that wrote nothing does; clear a reservation and wake the queue head when the object is free |
+| Map entries: spinning on cell lock bits | Cell locks already taken | Release the taken cells in reverse order; nothing is queued |
+| Whole map: ticket lock, then the gate | A ticket in `hold_next` / `hold_serving`, possibly being served | A ticket cannot be abandoned: a withdrawing waiter either keeps spinning until served and then releases at once, or the ticket lock gains a skip mark. This is an implementation choice for `atomic-until-impl`, not modelled below |
+
+In every row the units already taken are released in reverse order, as a
+quiet unlock that starts no wake sweep, since the statement wrote nothing.
+Timers do not reach these waits today: `wf_driver_expire_wait` returns at
+once for a context without a completion record, and shared and watch parks
+set none. The implementation therefore needs a record (or an equivalent
+link) for a timed atomic park, armed at the first wait.
+
+### Withdrawal model
+
+`withdrawal_model.py` in this directory enumerates every interleaving of a
+small configuration and checks the protocol of the table's first three
+rows. It models lock units taken in one order: the first by parking, later
+ones by claims; unlock gives a unit to the oldest claim, else wakes or
+hands it to the queue head (the reservation owner first), both choices
+explored; a false guard registers a watch, releases quietly and parks; a
+write notifies the oldest watch whose test holds, optionally with a
+reservation. Each operation on a unit is one step, as it runs under the
+unit's lock. The timer firing is a separate step that only marks the timed
+context expired and makes it runnable; its links stay until its own
+withdrawal step, so every grant, hand-off, wake and notification that
+races with the firing is explored.
+
+Configurations: one or two units; the timed statement with and without a
+guard; together with a writer that makes the guard true, an untimed
+guarded statement, an untimed newcomer, and (with two units) a holder of
+the second unit alone, which makes the timed statement wait on a claim
+while it holds the first unit.
+
+Checked in every reachable state and every final state:
+
+- admission only with every unit held and the guard true, and never after
+  the timer fired;
+- the `else` branch only after the timer fired, and then no body effect;
+- every final state has every context completed, every unit free, and no
+  queue, claim or watch link, notification or reservation left;
+- from every reachable state a final state is reachable, so no wake, grant,
+  notification or reservation is lost.
+
+A coverage count shows that the races are reached: the timer firing while
+the timed statement holds a unit, waits on a claim, owns a notification,
+owns a reservation, and has been woken. Each of six deliberately broken
+protocols must fail at least one configuration: keeping the units taken,
+leaving the links, dropping a wake, keeping a notification, keeping a
+reservation, and admitting after expiry.
+
+RESULTS-PLACEHOLDER
+
+What the model does not cover: map entries and whole-map tickets (rows four
+and five), lazily taken groups (excluded by the eager rule above), a
+notification sweep's cutoff by the writer's clock sample, and more than one
+timed statement at a time. It shows the protocol is consistent at this
+scale; it is not a proof of the C implementation, which `atomic-until-impl`
+tests directly.
 
 ## Sources and current semantic boundary
 
@@ -180,7 +296,7 @@ invariant-at-exit and effect-row checks unless explicitly changed. Fragments
 use `answer`, `slot`, `ready` and `read_slot` only as surrounding program
 names; complete recommended examples appear later.
 
-### G1-A: cancellable acquisition with a separate outcome — recommended
+### G1-A: cancellable acquisition with a separate outcome — basis of the selected form
 
 ```wf
 atomic slot = &data^[key] cancel &watch {
@@ -406,7 +522,9 @@ option A does not fix the semantic race. Reject as a complete solution.
 
 ## Gap 2 candidates
 
-### G2-A: expression spawn inside an atomic body — recommended
+Not pursued; see [Status and outcome](#status-and-outcome).
+
+### G2-A: expression spawn inside an atomic body — recommended in the study, not pursued
 
 ```wf
 atomic slot = &data^[key] {
@@ -1019,6 +1137,13 @@ weak-CPU target and a declared resource/energy budget before it can pass;
 an x86 result alone never establishes it.
 
 ## Proposed rule changes, confidence and unresolved questions
+
+This section records the study's proposal before the owner's direction. The
+selected form replaces `cancel &watch` with `until <Instant>`, so the PRE-2
+row becomes a timer registration with no watch, and the WAIT-1/WAIT-3 spawn
+row is not pursued. The uncertainty items about map withdrawal (7), grammar
+(8) and the ordinary-object boundary of `CancelWatch` (13) carry over, the
+last as the boundary of `Instant`.
 
 No rule is changed by this document. If selected, the amendment would need
 the following behavior changes together, with conformance and diagnostics:
