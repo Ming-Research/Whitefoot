@@ -543,7 +543,41 @@ impl Reasoning<'_, '_, '_> {
             }
         }
         if let Some(view) = views.get(&origin) {
-            return self.prove_in_origin_view(context, goal, ordinary, view);
+            // TEMPORARY (lm-r1): differential check of the shared view.
+            let copy = ProofResult {
+                disposition: ordinary.disposition,
+                route: ordinary.route,
+                derivation: ordinary.derivation,
+                product_interval: None,
+            };
+            let shared = self.prove_in_origin_view(context, goal, ordinary, view);
+            if let Some(path) = std::env::var_os("WHITEFOOT_VERIFY_CONDITION_VIEWS") {
+                let fresh_view = self.origin_query_view(context, Some(expression));
+                let fresh = self.prove_in_origin_view(context, goal, copy, &fresh_view);
+                let verdict = if shared.disposition == fresh.disposition {
+                    "match"
+                } else {
+                    "MISMATCH"
+                };
+                let line = format!(
+                    "{verdict} truth={truth} shared={:?} fresh={:?} shared_route={:?} fresh_route={:?}\n",
+                    shared.disposition, fresh.disposition, shared.route, fresh.route
+                );
+                std::io::Write::write_all(
+                    &mut std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .expect("open the differential log"),
+                    line.as_bytes(),
+                )
+                .expect("write the differential log");
+                assert_eq!(
+                    shared.disposition, fresh.disposition,
+                    "shared condition view differs from a fresh origin view (truth {truth})"
+                );
+            }
+            return shared;
         }
         let view = self.origin_query_view(context, Some(expression));
         self.prove_in_origin_view(context, goal, ordinary, &view)

@@ -1,0 +1,89 @@
+# Temporary (status board item lm-r1): (1) the two new reuse-cache tests pass
+# with the fixes and fail without them; (2) the shared True/False condition
+# view agrees with a fresh origin view on every judgment of the test corpus.
+# Remove before the branch is ready.
+name: tmp-reuse-checks
+
+on:
+  push:
+    branches: [claude/redundant-test-r1]
+  workflow_dispatch:
+
+concurrency:
+  group: tmp-reuse-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  new-tests:
+    name: new tests (${{ matrix.tree }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        tree: [fixed, unfixed]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the host toolchain
+        run: |
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Revert the two fixes in the unfixed tree
+        if: matrix.tree == 'unfixed'
+        run: |
+          git checkout 4af10611b5651b4a20bba3fc24934d84c4225340 -- compiler/src/semantic/entailment/flow.rs compiler/src/semantic/entailment/state.rs
+          git diff --stat HEAD | cat
+      - name: Run the two new tests
+        run: |
+          set +e
+          perl .github/run-check.pl new-tests cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- affine_index_cache_misses_when_only_an_exclusion_differs an_appended_goal_an_exclusion_decides_recomputes_the_remembered_view 2>&1 | tee "$RUNNER_TEMP/new-tests.log"
+          status=${PIPESTATUS[0]}
+          echo "== tree ${{ matrix.tree }}: cargo test exit $status"
+          grep -E '^test |test result' "$RUNNER_TEMP/new-tests.log"
+          exit 0
+
+  differential:
+    name: shared condition view versus a fresh view
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Run the corpus with the differential check on
+        env:
+          WHITEFOOT_VERIFY_CONDITION_VIEWS: ${{ runner.temp }}/condition-views.log
+          WHITEFOOT_CHECK_TIMEOUT: 4800
+        run: |
+          set +e
+          make -C compiler test-corpus
+          echo "== test-corpus exit $?"
+          exit 0
+      - name: Summarize the differential log
+        if: always()
+        run: |
+          log="$RUNNER_TEMP/condition-views.log"
+          if [ -f "$log" ]; then
+            echo "comparisons: $(wc -l < "$log")"
+            echo "mismatches: $(grep -c '^MISMATCH' "$log" || true)"
+            cut -d' ' -f1-5 "$log" | sort | uniq -c | sort -rn | head -40
+          else
+            echo "no differential log was written"
+          fi
