@@ -38,7 +38,7 @@ jobs:
               if not line.startswith("{"):
                   continue
               case = json.loads(line)
-              if not wanted(case["id"]):
+              if "id" not in case or not wanted(case["id"]):
                   continue
               path = f"tests/conformance/cases/{case['id']}.wf"
               out = os.path.join(tempfile.mkdtemp(), "a.out")
