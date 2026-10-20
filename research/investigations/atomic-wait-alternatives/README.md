@@ -85,14 +85,15 @@ Two consequences follow for the specification step; both are proposals:
 ### Withdrawal obligations in today's runtime
 
 A statement can wait in five places today (from
-`compiler/src/backend/completion/bridge.c`, `keyed_table.c` and
-`concurrent_map.c` as merged here). Withdrawal must leave each one exactly
+`compiler/src/backend/completion/bridge.c`,
+`compiler/src/backend/keyed_table.c` and
+`compiler/src/backend/concurrent_map.c` as merged here). Withdrawal must leave each one exactly
 as if the statement had never arrived:
 
 | Wait | What the waiter may own when the deadline passes | What withdrawal must do |
 |---|---|---|
-| First ordinary object: parked on the object's queue | A queue link; a wake (the unlocker popped it and left the object free); a hand-off (after `WF_SHARED_HANDOFF` vain wakes the unlocker made it the holder) | Unlink; release a handed-off object as an ordinary quiet unlock; pass a wake on to the next queued context when the object is free |
-| Later ordinary object: a claim on its own stack | A claim link, which refuses parking newcomers, or a granted claim | Unlink the claim (and hand back the reservation slot if its record is the queue tail); release a granted object |
+| First ordinary object: parked on the object's queue | A queue link; a wake (the unlocker popped it and left the object free); a hand-off (after `WF_SHARED_HANDOFF` vain wakes the unlocker made it the holder), which a running statement may be borrowing | Unlink; release a handed-off object as an ordinary quiet unlock, after claiming it back and waiting for a borrower to give it back, as a resuming context does; pass a wake on to the next queued context when the object is free |
+| Later ordinary object: a claim on its own stack | A claim link, which refuses parking newcomers, possibly with the claims' turn set (`take_turn`); a granted claim; a borrowed hold (the oldest claim, or a take's first look when no claim waits, may borrow a hold an unlock handed to a parked context) | Unlink the claim (and hand back the reservation slot if its record is the queue tail); release a granted object; give a borrowed hold back to the context it was handed to |
 | Guard false: parked on a watch | A watch link; a notification; a reservation that refuses newcomers holding nothing | Unlink the watch; pass a notification on as a retry that wrote nothing does; clear a reservation and wake the queue head when the object is free |
 | Map entries: spinning on cell lock bits | Cell locks already taken | Release the taken cells in reverse order; nothing is queued |
 | Whole map: ticket lock, then the gate | A ticket in `hold_next` / `hold_serving`, possibly being served | A ticket cannot be abandoned: a withdrawing waiter either keeps spinning until served and then releases at once, or the ticket lock gains a skip mark. This is an implementation choice for `atomic-until-impl`, not modelled below |
@@ -108,10 +109,16 @@ link) for a timed atomic park, armed at the first wait.
 
 `withdrawal_model.py` in this directory enumerates every interleaving of a
 small configuration and checks the protocol of the table's first three
-rows. It models lock units taken in one order: the first by parking, later
-ones by claims; unlock gives a unit to the oldest claim, else wakes or
-hands it to the queue head (the reservation owner first), both choices
-explored; a false guard registers a watch, releases quietly and parks; a
+rows. It models lock units taken in one order. The first unit is taken by
+parking. A later unit is taken without parking: when free, by borrowing a
+hold handed to a parked context, or by a queued claim. When the last hold
+ends, the unlock follows `wf_shared_free_locked`: with the claims' turn set
+it grants the oldest claim; otherwise it wakes the first parked context the
+reservation admits, or hands it the unit (both choices explored), then
+grants the oldest claim if the unit is still free or sets the claims' turn.
+The oldest claim may borrow a pending hand-off, which ends the claims'
+turn; the borrower's unlock gives the hold back, and a handed context that
+resumes while it is borrowed claims it back and waits. A false guard registers a watch, releases quietly and parks; a
 write notifies the oldest watch whose test holds, optionally with a
 reservation. Each operation on a unit is one step, as it runs under the
 unit's lock. The timer firing is a separate step that only marks the timed
@@ -121,9 +128,11 @@ races with the firing is explored.
 
 Configurations: one or two units; the timed statement with and without a
 guard; together with a writer that makes the guard true, an untimed
-guarded statement, an untimed newcomer, and (with two units) a holder of
-the second unit alone, which makes the timed statement wait on a claim
-while it holds the first unit.
+guarded statement, an untimed newcomer, and (with two units) one or two
+holders of the second unit alone. One such holder makes the timed statement
+wait on a claim while it holds the first unit; with two, one parks behind
+the other, so the claims' turn, hand-offs to a parked context and borrowing
+of them are reached.
 
 Checked in every reachable state and every final state:
 
@@ -131,43 +140,30 @@ Checked in every reachable state and every final state:
   the timer fired;
 - the `else` branch only after the timer fired, and then no body effect;
 - every final state has every context completed, every unit free, and no
-  queue, claim or watch link, notification or reservation left;
+  queue, claim or watch link, pending hand-off, borrow, notification or
+  reservation left;
 - from every reachable state a final state is reachable, so no wake, grant,
   notification or reservation is lost.
 
 A coverage count shows that the races are reached: the timer firing while
-the timed statement holds a unit, waits on a claim, owns a notification,
-owns a reservation, and has been woken. Each of six deliberately broken
-protocols must fail at least one configuration: keeping the units taken,
-leaving the links, dropping a wake, keeping a notification, keeping a
-reservation, and admitting after expiry.
+the timed statement holds a unit, waits on a claim (also while the claims
+hold the turn), has a hand-off not yet taken up (also while a running
+statement borrows it), holds a borrowed unit, owns a notification, owns a
+reservation, and has been woken; a count of zero fails the run. Each of
+seven deliberately broken protocols must fail at least one configuration:
+keeping the units taken, keeping a hand-off not yet taken up, leaving the
+links, dropping a wake, keeping a notification, keeping a reservation, and
+admitting after expiry.
 
-Result (GitHub-hosted `ubuntu-24.04`, workflow run 39476508134, model at
-commit 188ac7ded, 13 s): the proposed protocol passes all 33
-configurations, 279,991 reachable states in total; the largest, two units
-with all five kinds of statement and the guarded timed statement, has
-131,878. Both outcomes occur: 295 final states with the body, 227 with
-`else`. The races are reached: the timer fires while the timed statement
-holds a unit (15,795 states), waits on a claim (3,195), owns a notification
-(19,161), owns a reservation (7,132), and has been woken (10,575). Each
-broken protocol fails. The model reports the first failing configuration and
-the violated check ("admitted after expiry" for the last row, a state with
-no step that is not final for the others); the cause column is deduced from
-the mutation, not read from a trace:
-
-| Broken protocol | First failing configuration | Cause |
-|---|---|---|
-| Keep the units taken | one unit, writer and timed guarded statement | a unit stays held; no completion |
-| Leave the links | the same | a later unlock hands the unit to the departed statement |
-| Drop a wake | one unit, writer, timed and untimed guarded statements | a parked statement is never woken while the unit is free |
-| Keep a notification | one unit, writer and timed guarded statement | the notification is never passed on |
-| Keep a reservation | the same | newcomers stay refused |
-| Admit after expiry | the same | the body runs after the timer fired |
+RESULTS-PLACEHOLDER
 
 What the model does not cover: map entries and whole-map tickets (rows four
 and five), lazily taken groups (excluded by the eager rule above), a
-notification sweep's cutoff by the writer's clock sample, and more than one
-timed statement at a time. It shows the protocol is consistent at this
+notification sweep's cutoff by the writer's clock sample, shared (read)
+holds, the count of vain wakes before a hand-off (`WF_SHARED_HANDOFF`; the
+model lets every unlock choose either), the spin and yield before parking,
+the claims' reservation slot, and more than one timed statement at a
+time. It shows the protocol is consistent at this
 scale; it is not a proof of the C implementation, which `atomic-until-impl`
 tests directly.
 

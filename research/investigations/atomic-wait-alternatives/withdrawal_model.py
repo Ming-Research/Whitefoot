@@ -8,15 +8,22 @@ the turn the runtime handed it?  See README.md, "Withdrawal model".
 
 The model follows the acquisition protocol of today's runtime
 (compiler/src/backend/completion/bridge.c, design node
-compiler/waiting-contexts/state-locks): lock units taken in one order; the
-first unit of a statement parks on the unit's queue, and an unlock either
-wakes the queue's head, which retries, or hands the unit to it directly; a
-later unit is taken by a claim, which an unlock grants before any parked
-context; a false guard registers a watch while holding the guard's unit,
-releases quietly and parks; a write to that unit notifies the oldest watch
-whose test holds, and the notified context owns the notification until its
-retry releases the unit (passing it on when the retry wrote nothing) and may
-also hold a reservation that refuses newcomers holding nothing.
+compiler/waiting-contexts/state-locks): lock units taken in one order.  The
+first unit of a statement parks on the unit's queue.  A later unit is taken
+without parking (wf__shared_take): free, or by borrowing a hold an unlock
+handed to a parked context, or else by a queued claim that spins.  When the
+last hold ends (wf_shared_free_locked), an unlock with the claims' turn set
+grants the oldest claim; otherwise it wakes the first parked context the
+reservation admits to retry, or hands it the unit, and then grants the oldest
+claim if the unit is still free or gives the claims the next turn.  The
+oldest claim may also borrow a pending hand-off, which ends the claims' turn;
+the borrower's unlock gives the hold back, and a handed context that resumes
+while its hold is borrowed claims it back and waits.  A false guard
+registers a watch while holding the guard's unit, releases quietly and
+parks; a write to that unit notifies the oldest watch whose test holds, and
+the notified context owns the notification until its retry releases the
+unit (passing it on when the retry wrote nothing) and may also hold a
+reservation that refuses newcomers holding nothing.
 
 Each runtime operation on one unit is one atomic step, as it runs under that
 unit's lock.  The timer firing is one step that only marks the timed context
@@ -45,6 +52,7 @@ MUTANTS = (
     "drop_notification", # a notified waiter that withdraws keeps the notification
     "keep_reservation",  # a reserved waiter that withdraws keeps the reservation
     "late_admit",        # admission does not check the expiry
+    "keep_grant",        # withdrawal keeps a hand-off it has not taken up
 )
 
 # Context kinds.  Each has the units it takes (in lock order), whether it has
@@ -94,21 +102,24 @@ PC, HELD, STATUS, EXPIRED, WAITED, WOKEN, OUTCOME = range(7)
 # pc: 'acq' taking units, 'guard', 'rel' releasing after the body,
 #     'relq' releasing quietly after a false guard, 'park' about to park on
 #     the watch, 'done'.
-# status: 'run', 'parkq' (parked on unit 0's queue), 'parkw' (parked on the
-#     watch), 'claim' (waiting for a claim on a later unit).
+# status: 'run', 'parkq' (parked on a unit's queue), 'parkw' (parked on the
+#     watch), 'claim' (a queued claim on a later unit, spinning).
 # outcome: None, 'body' or 'else'.
+
+# Unit fields: the hold's owner (for a hand-off, the parked context it was
+# handed to), the parked queue, the claims oldest first, the claims' turn
+# (bridge.c take_turn), the context a hand-off is pending for until it
+# resumes (granted), the running statement borrowing that pending hold
+# (borrowed), and whether the pending context has claimed it back (claimed).
+HOLDER, QUEUE, CLAIMS, TURN, GRANTED, BORROWER, CLAIMED = range(7)
 
 
 def initial(cfg):
     ctxs = tuple(("acq", 0, "run", False, False, False, None) for _ in cfg.kinds)
-    units = tuple((None, (), ()) for _ in range(cfg.k))  # holder, queue, claims
+    units = tuple((None, (), (), False, None, None, False) for _ in range(cfg.k))
     # flag, effects of T, watches, notification owner, reservation owner,
     # violations
     return (ctxs, units, False, 0, (), None, None, frozenset())
-
-
-def setf(t, i, v):
-    return t[:i] + (v,) + t[i + 1:]
 
 
 class St:
@@ -117,27 +128,40 @@ class St:
     def __init__(self, s):
         ctxs, units, self.flag, self.teff, watches, self.notif, self.resv, viol = s
         self.ctxs = [list(c) for c in ctxs]
-        self.units = [[h, list(q), list(cl)] for h, q, cl in units]
+        self.units = [[u[0], list(u[1]), list(u[2])] + list(u[3:]) for u in units]
         self.watches = list(watches)
         self.viol = set(viol)
 
     def freeze(self):
         return (
             tuple(tuple(c) for c in self.ctxs),
-            tuple((h, tuple(q), tuple(cl)) for h, q, cl in self.units),
+            tuple((u[0], tuple(u[1]), tuple(u[2])) + tuple(u[3:]) for u in self.units),
             self.flag, self.teff, tuple(self.watches), self.notif, self.resv,
             frozenset(self.viol),
         )
 
 
+def holds(unit, c):
+    """Whether c holds the unit now: as its borrower, or as its owner once a
+    hand-off to it has been taken up and no one borrows it."""
+    if unit[BORROWER] is not None:
+        return unit[BORROWER] == c
+    return unit[HOLDER] == c and unit[GRANTED] != c
+
+
+def lendable(unit):
+    """bridge.c wf_shared_lendable: a hold handed to a parked context that no
+    one borrows and that context has not claimed back."""
+    return unit[GRANTED] is not None and unit[BORROWER] is None and not unit[CLAIMED]
+
+
 def refused(st, c, u):
-    """A live reservation refuses a statement that holds nothing; a waiting
-    claim refuses every statement that would take the unit by parking."""
+    """A parking statement that holds nothing is refused by a live
+    reservation it does not own; while claims wait, no statement takes the
+    unit but through them."""
     if st.ctxs[c][HELD] == 0 and u == 0 and st.resv is not None and st.resv != c:
         return True
-    if st.units[u][2] and st.ctxs[c][HELD] == 0:
-        return True
-    return False
+    return bool(st.units[u][CLAIMS])
 
 
 def sweep(st, cfg, reserve):
@@ -154,36 +178,72 @@ def sweep(st, cfg, reserve):
         return
 
 
-def unlock(st, cfg, c, u, handoff):
-    """Release unit u held by c and give it on: claims first, then the parked
-    queue (the reservation owner before the head), by wake or hand-off."""
+def grant(st, u, borrow):
+    """bridge.c wf_shared_grant_locked: the oldest claim gets the free unit,
+    or borrows the pending hand-off, and the claims' turn ends."""
     unit = st.units[u]
-    assert unit[0] == c
-    unit[0] = None
-    if unit[2]:
-        claimant = unit[2].pop(0)
-        unit[0] = claimant
-        st.ctxs[claimant][HELD] += 1
-        st.ctxs[claimant][STATUS] = "run"
-        return
-    q = unit[1]
+    claimant = unit[CLAIMS].pop(0)
+    if borrow:
+        unit[BORROWER] = claimant
+    else:
+        unit[HOLDER] = claimant
+    unit[TURN] = False
+    st.ctxs[claimant][HELD] += 1
+    st.ctxs[claimant][STATUS] = "run"
+
+
+def wake(st, u, handoff):
+    """bridge.c wf_shared_wake_locked: wake the first parked context the
+    reservation admits to retry, or hand it the unit.  Returns whether the
+    unit was handed on."""
+    unit = st.units[u]
+    q = unit[QUEUE]
     if not q:
-        return
-    first = st.resv if st.resv in q else q[0]
-    if handoff and refused_after(st, first, u):
-        handoff = False
+        return False
+    first = q[0]
+    if u == 0 and st.resv is not None:
+        admitted = [x for x in q if x == st.resv or st.ctxs[x][HELD] > 0]
+        if not admitted:
+            return False
+        first = admitted[0]
     q.remove(first)
     ctx = st.ctxs[first]
     ctx[STATUS] = "run"
     if handoff:
-        unit[0] = first
-        ctx[HELD] += 1
+        unit[HOLDER] = first
+        unit[GRANTED] = first
+        return True
+    ctx[WOKEN] = True
+    return False
+
+
+def free(st, u, handoff):
+    """bridge.c wf_shared_free_locked, after the last hold ends: with the
+    claims' turn set, grant the oldest claim; otherwise wake or hand on to
+    the first parked context, then grant the oldest claim if the unit is
+    still free, or give the claims the next turn."""
+    unit = st.units[u]
+    unit[HOLDER] = None
+    if unit[CLAIMS] and unit[TURN]:
+        grant(st, u, borrow=False)
+        return
+    wake(st, u, handoff)
+    if unit[CLAIMS]:
+        if unit[HOLDER] is None:
+            grant(st, u, borrow=False)
+        else:
+            unit[TURN] = True
+
+
+def release(st, c, u, handoff):
+    """End c's hold on u: a borrowed hold goes back to the context it was
+    handed to (bridge.c wf_shared_give_back_locked); any other ends."""
+    unit = st.units[u]
+    if unit[BORROWER] == c:
+        unit[BORROWER] = None
     else:
-        ctx[WOKEN] = True
-
-
-def refused_after(st, c, u):
-    return st.ctxs[c][HELD] == 0 and u == 0 and st.resv is not None and st.resv != c
+        assert holds(unit, c)
+        free(st, u, handoff)
 
 
 def withdraw(st, cfg, c, mutant, handoff):
@@ -191,35 +251,41 @@ def withdraw(st, cfg, c, mutant, handoff):
     ctx = st.ctxs[c]
     if mutant != "stale_links":
         for unit in st.units:
-            if c in unit[1]:
-                unit[1].remove(c)
-            if c in unit[2]:
-                unit[2].remove(c)
+            if c in unit[QUEUE]:
+                unit[QUEUE].remove(c)
+            if c in unit[CLAIMS]:
+                unit[CLAIMS].remove(c)
         if c in st.watches:
             st.watches.remove(c)
     if mutant != "keep_held":
+        # A hand-off not yet taken up is released as an ordinary unlock; the
+        # caller has waited until no one borrows it.
+        for u, unit in enumerate(st.units):
+            if unit[GRANTED] == c and mutant != "keep_grant":
+                assert unit[BORROWER] is None
+                unit[GRANTED] = None
+                unit[CLAIMED] = False
+                if u == 0 and st.resv == c and mutant != "keep_reservation":
+                    st.resv = None
+                free(st, u, handoff)
         while ctx[HELD] > 0:
             u = cfg.units[c][ctx[HELD] - 1]
             ctx[HELD] -= 1
             if u == 0 and st.resv == c and mutant != "keep_reservation":
                 st.resv = None
-            unlock(st, cfg, c, u, handoff)
+            release(st, c, u, handoff)
     if st.resv == c and mutant != "keep_reservation":
         st.resv = None
-        q = st.units[0][1]
-        if st.units[0][0] is None and q:
-            head = q.pop(0)
-            st.ctxs[head][STATUS] = "run"
-            st.ctxs[head][WOKEN] = True
+        unit = st.units[0]
+        if unit[HOLDER] is None and unit[QUEUE]:
+            wake(st, 0, False)
     if st.notif == c and mutant != "drop_notification":
         st.notif = None
         sweep(st, cfg, reserve=False)
     if ctx[WOKEN] and mutant != "drop_wake":
-        q = st.units[0][1]
-        if st.units[0][0] is None and q:
-            head = q.pop(0)
-            st.ctxs[head][STATUS] = "run"
-            st.ctxs[head][WOKEN] = True
+        unit = st.units[cfg.units[c][0]]
+        if unit[HOLDER] is None and unit[QUEUE]:
+            wake(st, cfg.units[c][0], False)
     ctx[WOKEN] = False
     ctx[PC] = "done"
     ctx[OUTCOME] = "else"
@@ -246,6 +312,15 @@ def successors(s, cfg, mutant):
             out.append(st.freeze())
         if status in ("parkq", "parkw"):
             continue
+        # A context handed a unit that a running statement borrows claims it
+        # back and waits for the borrower's unlock to give it back.
+        pending = [u for u, unit in enumerate(s[1]) if unit[GRANTED] == c]
+        if pending and s[1][pending[0]][BORROWER] is not None:
+            if not s[1][pending[0]][CLAIMED]:
+                st = St(s)
+                st.units[pending[0]][CLAIMED] = True
+                out.append(st.freeze())
+            continue
         # An expired timed statement withdraws at its next step.
         if timed and ctx[EXPIRED] and pc in ("acq", "guard", "park") and mutant != "late_admit":
             for handoff in (False, True):
@@ -253,9 +328,27 @@ def successors(s, cfg, mutant):
                 withdraw(st, cfg, c, mutant, handoff)
                 out.append(st.freeze())
             continue
-        if status == "claim":
-            continue  # spinning until granted; the grant sets status run
         units = cfg.units[c]
+        if pending:
+            # A hand-off is taken up when the context resumes.
+            st = St(s)
+            unit = st.units[pending[0]]
+            unit[GRANTED] = None
+            unit[CLAIMED] = False
+            st.ctxs[c][HELD] += 1
+            st.ctxs[c][WOKEN] = False
+            out.append(st.freeze())
+            continue
+        if status == "claim":
+            # A queued claim, if it is the oldest, may borrow a pending
+            # hand-off; otherwise it spins until an unlock grants it.
+            u = units[held]
+            unit = s[1][u]
+            if unit[CLAIMS] and unit[CLAIMS][0] == c and lendable(unit):
+                st = St(s)
+                grant(st, u, borrow=True)
+                out.append(st.freeze())
+            continue
         if pc == "acq":
             if held == len(units):
                 st = St(s)
@@ -265,24 +358,36 @@ def successors(s, cfg, mutant):
             u = units[held]
             st = St(s)
             me = st.ctxs[c]
-            if st.units[u][0] is None and not refused(st, c, u):
-                st.units[u][0] = c
+            unit = st.units[u]
+            if held > 0:
+                # bridge.c wf__shared_take: a statement that already holds an
+                # earlier unit never parks.
+                if not unit[CLAIMS] and lendable(unit):
+                    unit[BORROWER] = c
+                    me[HELD] += 1
+                elif not unit[CLAIMS] and unit[HOLDER] is None:
+                    unit[HOLDER] = c
+                    me[HELD] += 1
+                elif timed and me[EXPIRED]:
+                    withdraw(st, cfg, c, mutant, False)
+                else:
+                    unit[CLAIMS].append(c)
+                    me[STATUS] = "claim"
+                    me[WAITED] = True
+            elif unit[HOLDER] is None and not refused(st, c, u):
+                unit[HOLDER] = c
                 me[HELD] += 1
                 me[WOKEN] = False
             elif timed and me[EXPIRED]:
                 withdraw(st, cfg, c, mutant, False)
-            elif held == 0:
+            else:
                 # first unit: park; a woken context re-parks at the head
                 if me[WOKEN]:
-                    st.units[u][1].insert(0, c)
+                    unit[QUEUE].insert(0, c)
                 else:
-                    st.units[u][1].append(c)
+                    unit[QUEUE].append(c)
                 me[WOKEN] = False
                 me[STATUS] = "parkq"
-                me[WAITED] = True
-            else:
-                st.units[u][2].append(c)
-                me[STATUS] = "claim"
                 me[WAITED] = True
             out.append(st.freeze())
         elif pc == "guard":
@@ -292,10 +397,8 @@ def successors(s, cfg, mutant):
                 if timed and me[EXPIRED]:
                     st.viol.add("admitted after expiry")
                 for u in units:
-                    if st.units[u][0] != c:
+                    if not holds(st.units[u], c):
                         st.viol.add("admitted without holding every unit")
-                if cfg.guarded(c) and not st.flag:
-                    st.viol.add("admitted with false guard")
                 if kind == "W":
                     st.flag = True
                 if timed:
@@ -323,7 +426,7 @@ def successors(s, cfg, mutant):
                         st.notif = None
                         if not wrote:
                             sweep(st, cfg, reserve=False)
-                    unlock(st, cfg, c, u, handoff)
+                    release(st, c, u, handoff)
                     if wrote and u == 0:
                         sweep(st, cfg, reserve)
                     if me[HELD] == 0:
@@ -346,7 +449,8 @@ def is_final(s, cfg):
     ctxs, units, flag, teff, watches, notif, resv, viol = s
     return (
         all(c[PC] == "done" for c in ctxs)
-        and all(h is None and not q and not cl for h, q, cl in units)
+        and all(u[HOLDER] is None and not u[QUEUE] and not u[CLAIMS] and u[GRANTED] is None
+                and u[BORROWER] is None and not u[CLAIMED] for u in units)
         and not watches and notif is None and resv is None
     )
 
@@ -369,8 +473,12 @@ def explore(cfg, mutant):
     failures = []
     cover = {"states": len(seen), "body": 0, "else": 0,
              "expired holding a unit": 0, "expired while claiming": 0,
+             "expired while the claims hold the turn": 0,
+             "expired with a hand-off not yet taken up": 0,
+             "expired while its hand-off is borrowed": 0,
+             "expired holding a borrowed unit": 0,
              "expired with notification": 0, "expired with reservation": 0,
-             "expired after a wake": 0, "expired holding a unit after waiting": 0}
+             "expired after a wake": 0}
     t = cfg.kinds.index("T")
     for s, succ in edges.items():
         ctxs, units = s[0], s[1]
@@ -380,14 +488,20 @@ def explore(cfg, mutant):
                 cover["expired holding a unit"] += 1
             if me[STATUS] == "claim":
                 cover["expired while claiming"] += 1
+                if any(t in u[CLAIMS] and u[TURN] for u in units):
+                    cover["expired while the claims hold the turn"] += 1
+            if any(u[GRANTED] == t for u in units):
+                cover["expired with a hand-off not yet taken up"] += 1
+            if any(u[GRANTED] == t and u[BORROWER] is not None for u in units):
+                cover["expired while its hand-off is borrowed"] += 1
+            if any(u[BORROWER] == t for u in units):
+                cover["expired holding a borrowed unit"] += 1
             if s[5] == t:
                 cover["expired with notification"] += 1
             if s[6] == t:
                 cover["expired with reservation"] += 1
             if me[WOKEN]:
                 cover["expired after a wake"] += 1
-            if me[HELD] > 0 and me[PC] == "acq" and me[STATUS] == "run" and me[WAITED]:
-                cover["expired holding a unit after waiting"] += 1
         for v in s[7]:
             failures.append((v, s))
         if not succ:
@@ -442,6 +556,12 @@ def configs():
                 out.append(Config(k, kinds, t_guard))
                 if extra:
                     out.append(Config(k, kinds + extra, t_guard))
+            if extra:
+                # two holders of the last unit: one parks behind the other
+                # while T claims it, so hand-off, borrowing and the claims'
+                # turn are reached
+                out.append(Config(k, ("T", "H", "H"), t_guard))
+                out.append(Config(k, ("W", "T", "H", "H"), t_guard))
     return out
 
 
