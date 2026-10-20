@@ -62,16 +62,19 @@
 # host uses that same major, which Whitefoot-kit installs from the manifest's
 # linux_llvm_major (compiler/downstream-releases).
 #
-# A push that changes this file, package-acceptance.yml or .github/toolchain runs it as a dry run: it builds, smoke-tests
-# and packages the pushed commit as a bundled package, runs that package's
-# acceptance and keeps the files as a workflow artifact, publishing nothing,
-# so a change to the release path runs before it reaches main. The push dry
-# run exercises the bundled path only; `-f dry_run=true` on a dispatch runs
-# the lightweight path, or with `-f bundle_toolchain=true` the bundled one,
-# the same way and publishes nothing, so a change to the lightweight path
-# is run by dispatching that. Only a manual dispatch without `dry_run`
-# publishes, a bundled release and a lightweight one alike: no push, merge or
-# schedule makes a release.
+# A push that changes this file, package-acceptance.yml, .github/toolchain or
+# the witness programs in tests/package-fixtures runs it as a dry run: it
+# builds, smoke-tests and packages the pushed commit as a bundled package, runs
+# that package's acceptance and keeps the files as a workflow artifact,
+# publishing nothing, so a change to the release path runs before it reaches
+# main. The push dry run exercises the bundled path only; `-f dry_run=true` on
+# a dispatch runs the lightweight path, or with `-f bundle_toolchain=true` the
+# bundled one, the same way and publishes nothing, so a change to the
+# lightweight path is run by dispatching that. A dry run stops before the
+# publish job, so the upload of the assembled files and the publish job's
+# download and release creation run only in a real dispatch. Only a manual
+# dispatch without `dry_run` publishes, a bundled release and a lightweight one
+# alike: no push, merge or schedule makes a release.
 name: compiler-release
 
 on:
@@ -98,6 +101,7 @@ on:
       - .github/workflows/compiler-release.yml
       - .github/workflows/package-acceptance.yml
       - .github/toolchain/**
+      - tests/package-fixtures/**
 
 permissions:
   contents: write

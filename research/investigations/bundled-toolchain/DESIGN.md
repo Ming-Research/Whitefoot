@@ -666,6 +666,11 @@ the owner's rulings are on the board, and Windows packaging is its own work.
   compiler invocation, download or measurement on a workstation; every result
   cited is a CI run. The checks of the revision that merges, including the
   exact-archive acceptance, are the PR's.
+- **Lightweight publication handoff:** a dry run stops before the publish job,
+  so the lightweight path's upload of the assembled files, the publish job's
+  download of them and the release creation are exercised only by a real
+  dispatch. The bundled path's dry runs reach the same publish job only to skip
+  it. The first approved lightweight release is the observation.
 - **Runtime C frames:** the floor's probing covers the functions the compiler
   generates. The runtime's own C translation units are compiled by the same
   clang but get a probe only if that compiler adds one by default: Apple's clang
