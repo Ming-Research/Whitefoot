@@ -229,7 +229,7 @@ WHITEFOOT_BUDGET_REPORT_ONLY=other WHITEFOOT_TIME_BUDGET_RECORD=$work/unnamed-re
 grep -q '^  ENFORCED: over took' "$work/unnamed-record"
 perl "$runner" --budget-verdict "$work/unnamed-record" > "$work/unnamed-verdict.log" 2>&1 || status=$?
 test "$status" -eq 1
-WHITEFOOT_BUDGET_REPORT_ONLY=nowhere WHITEFOOT_TIME_BUDGET_RECORD=$work/nowhere-record \
+WHITEFOOT_BUDGET_REPORT_ONLY=unlisted WHITEFOOT_TIME_BUDGET_RECORD=$work/nowhere-record \
     perl "$work/run-host.pl" linux "$runner" unlisted true > "$work/nowhere.log" 2>&1
 grep -q '^  ENFORCED: unlisted has no linux budget' "$work/nowhere-record"
 
