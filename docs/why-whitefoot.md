@@ -99,7 +99,7 @@ Safety in Whitefoot is load-bearing infrastructure, not the mission statement, a
 
 **Job 2: the safety machinery is the aliasing machinery.** This is the part a performance engineer cares about. The ownership and exclusivity rules that make the language safe are the same facts an optimizer needs.
 
-- An exclusive borrow (`&uniq`) means no other access path exists, which is exactly `noalias`, held universally, with no interior-mutability holes and no `unsafe` to falsify it.
+- An exclusive borrow means no other access path exists, which is exactly `noalias`, held universally, with no interior-mutability holes and no `unsafe` to falsify it.
 - Race-freedom keeps those facts sound. A data race would let another thread observe or mutate memory in ways that falsify the compiler's reasoning after the fact. A language that guarantees race-freedom carries its aliasing facts through concurrency.
 
 So the usual intuition inverts. "Safety costs speed, and I buy speed back with `unsafe`" stops holding, because the thing that makes the program safe is a thing that makes it fast. Sections 3 and 5 show it: the statically proved capacity contract that protects the output buffer deletes the bounds checks, and the exclusive borrow that prevents the aliasing bug unlocks guard-free vectorization.
@@ -112,14 +112,14 @@ neither applies, the source is rejected—never repaired with an executable proo
 fallback.
 
 The proof cost is source explicitness. Consider the relation that bounds a
-running byte sum:
+running byte sum (a loop fragment, not a complete program; `weights` is a `&[u8]` parameter):
 
-```whitefoot
+```
 for (
   i in 0_u64..count,
   invariant per_byte: sum <= 255_u32 * i
 ) {
-  let w = deref(weights)[i];
+  let w = weights^[i];
   let wide = cvt::<u8, u32>(w);
   set sum = sum + wide;
 }
@@ -168,32 +168,7 @@ pre-transfer state. The callee receives those facts at body entry without a
 runtime prologue, storage slot, `llvm.assume`, or fallback edge. The sole
 `command fn main` has no contract and cannot be called from source.
 
-Worked example: a base64 encoder, the two-buffer shape every codec has, one shared input, one exclusive output, and a capacity relation between them. The committed source:
-
-```
-fn encode['r](out: &uniq 'r buffer<u8>, src: own buffer<u8>) -> written: own u64
-    reads('r), writes('r) contract {
-  define out_len = len<u8>(deref(out));
-  define src_len = len<u8>(src);
-  define out_groups = ishr.wrap<u64>(out_len, 2_u32);
-  define covered_src = out_groups *wrap 3_u64;
-  requires ile<u64>(src_len, covered_src);
-} {
-  ...
-  loop @full {
-    ...
-    let b0 = src[i];
-    ...
-    set deref(out)[o] = c0;
-    ...
-    set i = i +wrap 3_u64;
-    set o = o +wrap 4_u64;
-  }
-  ...
-}
-```
-
-One line of contract says the output can hold `4 * ceil(len_of(src)/3)` bytes, spelled as an overflow-safe comparison. The body is the obvious indexed loop: three reads, four table lookups, four writes per iteration.
+Worked example: a base64 encoder, the two-buffer shape every codec has, one shared input, one exclusive output, and a capacity relation between them. The historical experiment (`research/experiments/port-study/base64/`) wrote the encoder with a `buffer` spelling and a `loop @label` form, which the current spec does not accept, so its source is not reproduced here. Its contract was one line: the output holds `4 * ceil(len(src)/3)` bytes, spelled as an overflow-safe comparison. The body was the obvious indexed loop: three reads, four table lookups, four writes per iteration.
 
 Before the proof tier (committed `b64.s`, the checked build), every read and write in the loop carries its compare-and-branch. This is what "everything is checked" costs:
 
@@ -265,7 +240,7 @@ The floor claim lands in one experiment. In Whitefoot the obvious shape plus one
 ## 4. Effect rows the optimizer can trust across an opaque boundary
 
 Every Whitefoot signature declares its effects: `pure`, or a row of
-`reads('r)`, `writes('r)`, `allocates(...)`, `traps`. The checker verifies the
+`reads('r)`, `writes('r)`, `allocates(...)`. The checker verifies the
 row in both directions, so it is a checked fact rather than an aspiration. The
 retired experiment lowered suitable rows to function attributes. The current
 compiler emits no effect-derived attributes, and v0.17 has no termination
@@ -277,8 +252,8 @@ The committed experiment isolates that boundary. A pure mixing function compiles
 
 ```
 fn mix(x: own i64) -> mixed: own i64 pure {
-  let a: own i64 = imul.wrap<i64>(x, 2862933555777941757_i64);
-  let b: own i64 = iadd.wrap<i64>(a, 3037000493_i64);
+  let a: own i64 = x *wrap 2862933555777941757_i64;
+  let b: own i64 = a +wrap 3037000493_i64;
   ...
 }
 
@@ -332,7 +307,7 @@ LBB0_2:
 	b.ne	LBB0_2
 ```
 
-Whitefoot's `&uniq acc, & addend` emits `noalias`/`readonly` on the parameters by construction, and the loop keeps everything in registers:
+Whitefoot's exclusive reference parameters `acc` and `addend` emit `noalias`/`readonly` on the parameters by construction, and the loop keeps everything in registers:
 
 ```
 _accumulate:                     ; Whitefoot, from the borrow modes
@@ -350,28 +325,9 @@ On the additive variant of this kernel the same fact changes the complexity clas
 
 **Second, the half Rust cannot reach.** Rust's `&mut Cols` gives LLVM `noalias` on the reference parameter, but the `Vec` data pointers loaded through it are fresh pointers the optimizer treats as possibly overlapping each other. That is exactly where real numeric kernels live: multiple columns, loaded from one struct, read and written in one loop.
 
-The committed kernel is a struct-of-arrays update, eight `u64` columns, two written, six read, the obvious loop:
+The historical kernel (`research/experiments/`, written before the current spec) is a struct-of-arrays update: eight `u64` columns in one struct, two written, six read, in the obvious loop. Its source used a `buffer<u64>` column type and `index<u64>` element access, both retired, so the listing is not reproduced here. The current spec has no such type; its fixed-capacity column form is `Array<u64, N>`, read and written by subscript.
 
-```
-struct Cols {
-  a: buffer<u64>;  b: buffer<u64>;  c: buffer<u64>;  d: buffer<u64>;
-  e: buffer<u64>;  f: buffer<u64>;  g: buffer<u64>;  h: buffer<u64>;
-}
-
-fn kernel['r](s: &uniq 'r Cols) -> completed: own unit reads('r), writes('r), traps {
-  ...
-  loop @l {
-    ...
-    let xa: own u64 = index<u64>(deref(s).a, i);
-    let xc: own u64 = index<u64>(deref(s).c, i);
-    ...
-    set index<u64>(deref(s).a, i) = t4;
-    ...
-  }
-}
-```
-
-Because `buffer` values are single-owner and `&uniq` loans are exclusive with
+Because the historical buffer columns were single-owner and its exclusive loans had
 singleton provenance, the retired experiment emitted per-column alias scopes on
 the loaded pointers. The identical program in Rust (committed alongside, same
 semantics, three shapes) vectorized through loop versioning: LLVM emitted a
@@ -423,34 +379,7 @@ The retired optimizer experiment additionally consumed it for reassociation.
 D7 removes that source syntax and assumes no laws of supplied behavior. The
 following listing and measurement are historical evidence for a possible
 future proof consumer, not an active writer form or compiler capability.
-The committed historical kernel:
-
-```
-contract SatMonoid {
-  fn combine(x: own u64, y: own u64) -> combined: own u64 pure;
-  law associative(combine);
-  law commutative(combine);
-  law identity(combine, 0_u64);
-}
-
-fn satadd(x: own u64, y: own u64) -> sum: own u64 pure {
-  return iadd.sat<u64>(x, y);
-}
-
-conform u64 : SatMonoid {
-  combine = satadd;
-}
-
-fn reduce(b: own buffer<u64>) -> total: own u64 traps {
-  doc "The obvious reduction shape: sequential fold with the user op.";
-  ...
-  loop @l {
-    ...
-    set acc = satadd(x: acc, y: x);
-    ...
-  }
-}
-```
+The historical kernel declared a `SatMonoid` contract with three laws (`associative`, `commutative`, and an `identity` of 0) for an unsigned saturating add, then folded a `buffer<u64>` with that operation in a plain loop. Its source used `law`, `conform`, `buffer` and `traps` forms that the current spec does not accept, so the listing is not reproduced here. The current spec's `+sat` operator is the same saturating add; it states no laws.
 
 The writer states the laws. The checker discharges them against the operation table's semantics, where unsigned saturating add is associative as table data rather than writer folklore. Only then does the optimizer use them, reassociating the obvious fold into four independent, block-interleaved accumulators seeded with the proved identity. From the committed assembly, the four parallel saturating chains:
 
@@ -483,18 +412,11 @@ A smaller mechanism with an outsized codegen swing, and an honest framing: this 
 
 Scanner kernels (word counting, token classification, run detection) carry per-byte boolean state across loop iterations. Express that state as an integer flag (`0`/`1` in a `u64`) and LLVM's vectorizer carries a full-width integer recurrence, vectorizing at width 2. Express it as a genuine 1-bit boolean combined with boolean operations, and the recurrence stays `i1`, so the same loop vectorizes at width 16.
 
-The committed word-count kernel keeps every predicate in `Bool`:
-
-```
-    let c: own u8 = index<u8>(b, i);
-    let ge9: own Bool = ige<u8>(c, 9_u8);
-    let le13: own Bool = ile<u8>(c, 13_u8);
-    let inrange: own Bool = band<Bool>(ge9, le13);
-    let sp32: own Bool = ieq<u8>(c, 32_u8);
-    let issp: own Bool = bor<Bool>(inrange, sp32);
-    let notsp: own Bool = bnot<Bool>(issp);
-    let starts: own Bool = band<Bool>(prevspace, notsp);
-```
+The historical word-count kernel keeps every predicate in `Bool`: each byte's
+class is one comparison (`>= 9`, `<= 13`, `== 32`) and the whitespace state is
+built from `Bool` conjunctions and disjunctions, with no integer flag. Its source
+used `index<u8>`, `ige<u8>` and `band<Bool>` spellings the current spec does not
+accept, so the listing is not reproduced here.
 
 The committed assembly shows the result: full 16-byte vector lanes (`movi.16b`, `cmeq.16b`, `and.16b`, and peers) where the integer-flag version of the same logic capped at width 2 by interleave 4.
 
@@ -575,7 +497,7 @@ Enforcing it buys three things back.
 - Effect rows make the architecture readable at a glance. Grep the signatures and you find exactly one `writes('world)` in the system, and the checker verified every row (§ 4). "Where can state change?" becomes a query, not an investigation.
 - Read-only deep code is the precondition for the parallel fan-out story.
 
-Second example: struct-of-arrays is the default layout for bulk data, and § 5's `Cols` is the shape as it looks in source. Contiguous per-field columns are what the cache and the vectorizer want; per-node heap objects with headers and refcounts are what object-oriented habit wants. The AI has no such habit, so the language teaches SoA as the norm. The catalog is empirical, not ideological. Where measurement shows the paired layout wins, as it did for hash-table key/value slots, where splitting keys from values doubled the cache misses per insert, the catalog pins that instead. Patterns encode measured layout decisions.
+Second example: struct-of-arrays is the default layout for bulk data, and § 5's historical kernel is that shape: eight columns held in one struct, each element reached by subscript. Contiguous per-field columns are what the cache and the vectorizer want; per-node heap objects with headers and refcounts are what object-oriented habit wants. The AI has no such habit, so the language teaches SoA as the norm. The catalog is empirical, not ideological. Where measurement shows the paired layout wins, as it did for hash-table key/value slots, where splitting keys from values doubled the cache misses per insert, the catalog pins that instead. Patterns encode measured layout decisions.
 
 The one line that justifies the whole part: whatever is representable eventually gets written. A language that leaves the slow architecture representable has scheduled its own performance regressions; one that removes it makes the fast shape the path of least resistance, and the only path.
 
