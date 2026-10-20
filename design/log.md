@@ -5,6 +5,14 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-12 Conditions the checker decides are rejected
+
+Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
+
+Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card lm-r1-spec-v0136, "approve this group of specification and design-tree changes: a condition test whose result the checker can already derive is rejected as an error, and the diagnostic gives the deletion? (Whitefoot#393, head commit 5f2abebc7a58)" (translated); on 2026-10-13 the owner chose option A on the card lm-r1-post-approval-card, "approve the design-tree decisions and specification example changes Whitefoot#393 added after the previous approval (head commit 82fdda25e)" (translated), approving the decisions added and changed at that head.
+
+Summary: A new node rejects an `if` or `value_if` condition when every fact its selected branch establishes at entry is already derivable, with a repair that deletes the test and its dead branch; it judges a generic body once at its own parameters' symbolic instance and admits a condition in a contradictory state. It rejects judging only the goal origins and a language facility for a program to check its own final result, since the harness can compare the output. The acceptance-records decision adds the redundancy judgment to the obligations the structural checker records. The proof-query-context decision keeps reusing a closed view when goals are appended, after checking them for newly derivable contradictions, so the redundancy queries share preparation without changing a judgment.
+
 ## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
 
 Nodes: compiler/verification
@@ -13,13 +21,6 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
 
-## 2026-10-12 Conditions the checker decides are rejected
-
-Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
-
-Owner-approved: On the shared status board on 2026-10-12, written in Chinese, the owner chose option A, "approve" (translated), on the card lm-r1-spec-v0136, "approve this group of specification and design-tree changes: a condition test whose result the checker can already derive is rejected as an error, and the diagnostic gives the deletion? (Whitefoot#393, head commit 5f2abebc7a58)" (translated); on 2026-10-13 the owner chose option A on the card lm-r1-post-approval-card, "approve the design-tree decisions and specification example changes Whitefoot#393 added after the previous approval (head commit 82fdda25e)" (translated), approving the decisions added and changed at that head.
-
-Summary: A new node rejects an `if` or `value_if` condition when every fact its selected branch establishes at entry is already derivable, with a repair that deletes the test and its dead branch; it judges a generic body once at its own parameters' symbolic instance and admits a condition in a contradictory state. It rejects judging only the goal origins and a language facility for a program to check its own final result, since the harness can compare the output. The acceptance-records decision adds the redundancy judgment to the obligations the structural checker records. The proof-query-context decision keeps reusing a closed view when goals are appended, after checking them for newly derivable contradictions, so the redundancy queries share preparation without changing a judgment.
 ## 2026-10-13 One release classification decides whether release does work, and key sets and concurrent hash maps release runtime storage
 
 Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waiting/shared-objects/keyed-tables
