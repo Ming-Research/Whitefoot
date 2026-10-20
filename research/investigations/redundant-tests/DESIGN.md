@@ -58,7 +58,8 @@ MSR-4's affine steps, because S1 establishes it as an L0 fact and later L0
 consumers read it there; `op5-pos-redundant-comparison-not-l0` admits a test
 whose goal an affine certificate proves but whose comparison is not an L0
 fact, so its query reads the ordinary closed state only and never falls back
-to the origin-transport view that the goal origins use. Whether the comparison
+to the origin-transport view that the goal origins use
+(`op5-pos-redundant-comparison-transport`). Whether the comparison
 origin should instead count as derivable when MSR-4 discharges it is an open
 choice for the owner: it would reject more tests, and its soundness depends on
 every reader of the lost L0 fact re-deriving it through MSR-4.
