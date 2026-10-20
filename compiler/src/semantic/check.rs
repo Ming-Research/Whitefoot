@@ -1563,7 +1563,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .lock_ledger_sources(&functions, &executable_functions);
 
         Ok(CheckedProgramData {
-            captured_places: self.types.captured_places.snapshot(),
             nominals: self.types.nominals.clone(),
             nominal_confinement: self
                 .types

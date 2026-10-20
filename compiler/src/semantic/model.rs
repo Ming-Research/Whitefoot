@@ -3491,8 +3491,6 @@ pub(crate) struct CheckedEffects {
 
 #[derive(Debug)]
 pub(crate) struct CheckedProgramData {
-    #[allow(dead_code)]
-    pub(crate) captured_places: super::places::CapturedPlaces,
     pub(crate) nominals: Vec<CheckedNominal>,
     /// [BLK-4, DIAG-2] retained confinement for each complete nominal,
     /// including phantom brands. Structural types carry their region and

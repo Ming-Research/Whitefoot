@@ -98,13 +98,6 @@ impl CapturedPlaceTable {
         support
     }
 
-    pub(crate) fn snapshot(&self) -> CapturedPlaces {
-        self.entries
-            .lock()
-            .expect("offset-place table lock")
-            .retained
-            .clone()
-    }
 }
 
 /// The written clause (a) place, before capture, identified by its proof path.

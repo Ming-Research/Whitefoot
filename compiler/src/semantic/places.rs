@@ -27,7 +27,7 @@
 mod offsets;
 
 pub(crate) use offsets::{
-    CapturedPlaceId, CapturedPlaceTable, CapturedPlaces, FormalOffsetId, tracked_offset_place,
+    CapturedPlaceId, CapturedPlaceTable, FormalOffsetId, tracked_offset_place,
 };
 
 use crate::DeclarationId;
