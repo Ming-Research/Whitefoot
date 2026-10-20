@@ -63,7 +63,7 @@ The full timeline, with sources, is in the
 | Sep 22-23 | Query, then call the chunk at zero allowance, at every site | stencil W4 22% faster; records W1 31% slower from placement | withdrawn |
 | Sep 29 | Static call grain with a recursion exemption | Snowghost setup ecma262 W4 10.4 to 0.28 s | adopted, provisional |
 | Sep 29 | Recursion budget spent only at group calls | style ecma262 W4 1.04x to 3.10x; apollo11 still 1.14x | adopted |
-| Oct 6 | 64-byte function alignment | placement invariance on tested hosts; records up to 14% slower on one EPYC | adopted |
+| Oct 6 | 64-byte function alignment | placement invariance on tested hosts; records 5-14% slower on one EPYC | adopted |
 | Oct 8 | Exemption only for recursion that offers its own calls | Snowghost edit W4 3,128 to 274 us on the 14900K | adopted |
 | Oct 9 | Conditional calls in groups | no edit speedup alone | adopted |
 | Oct 9 | Small loops skip query and splitter | micro W4 1,075 to 108 ms; unqualified | merged into stage 3 |
@@ -481,12 +481,14 @@ it cites; each row's source has the full measurement.
 - **Sep 13, work unit 10,000 and runtime extents**: the former rejected
   (chain-pull W4 15.4 to 30.4 ms), the latter provisional (chain-pull W2
   +51%) ([compute model](../compute-model/DESIGN.md)).
-- **Sep 14-21, frontier on scatter** (PR #78): off made W8 packing 0.57 to
-  1.27 ms; no change.
+- **Sep 14-21, frontier on scatter** (commit `8f532d6fe`, which PR #78
+  carries; [compute model](../compute-model/DESIGN.md#joined-phase-result-2026-09-21)):
+  with the frontier off, W8 packing was 0.569 ms and became 1.273 ms; no
+  change adopted.
 - **Sep 21-23, captures and frame fitting**: rescue-only pruning; exact
   layout fitting.
-- **Sep 22, read-only Box-array lengths in prices**: hash helper W4 10.5
-  to 2.8 ms, 5% more CPU.
+- **Sep 22, read-only Box-array lengths in prices**: hash helper W4 10.494
+  to 2.821 ms, 5.2% more process CPU ([compute model](../compute-model/DESIGN.md#matched-helper-result-2026-09-22-utc)).
 - **Sep 22-23, zero-allowance dispatch** (PR #89): stencil W4 0.78x
   single-site; general version records W1 +31% on Xeon; withdrawn
   ([reassessment](../compute-model/DESIGN.md#general-dispatch-reassessment)).
@@ -498,8 +500,9 @@ it cites; each row's source has the full measurement.
 - **Sep 29, segmented storage**: parallel small allocations W2 1.15 s
   against 0.71 s sequential.
 - **Oct 6, function alignment** (`e7f103600`): placement-invariant on tested
-  hosts; records 5-14% slower on EPYC 9V74
-  ([code placement](../code-placement/DESIGN.md)).
+  hosts; records 5-14% slower on EPYC 9V74: the inverses of the 0.954 and
+  0.877 ratios for widths 1 and 2 in that table, which reads below 1 where
+  the aligned image is slower ([code placement](../code-placement/DESIGN.md)).
 - **Oct 8, indexed reductions** (PR #274, #290): histogram W8 2.4x on the
   14900K; 0 of Snowghost's 32 candidate loops permitted as written.
 - **Oct 8, recursion exemption narrowed** (PR #278): Snowghost edit W4
