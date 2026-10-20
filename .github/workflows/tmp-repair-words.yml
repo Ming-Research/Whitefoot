@@ -41,7 +41,7 @@ jobs:
       - name: Diagnostic tests
         env:
           WHITEFOOT_CHECK_TIMEOUT: 1500
-        run: perl .github/run-check.pl repair-words-diagnostic cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib driver::tests::
+        run: 'perl .github/run-check.pl repair-words-diagnostic cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib driver::tests::'
 
       - name: Effect and derivation tests
         env:
