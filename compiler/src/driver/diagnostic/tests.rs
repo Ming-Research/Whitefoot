@@ -233,12 +233,13 @@ fn main() -> status: std::process::ExitStatus pure {
   conjunct: 0
   selector: ensures.wf:1:42 "result: i32"
   relation: 0 = value
+  relation_at_return: 0_i32 == value
   disposition: Unproved
   mechanical_fix: the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"#
     );
     assert_eq!(
         failure.render(DiagnosticFormat::Json),
-        r#"{"rule":"FN-9","kind":"UndischargedPostcondition","category":"Source","stage":"Semantics","at":{"file":"ensures.wf","line":5,"column":5},"bytes":{"start":118,"end":131},"source":"    return 0_i32;","detail":{"concrete_function":"unproved","postcondition":{"at":{"file":"ensures.wf","line":2,"column":3},"bytes":{"start":71,"end":95},"text":"ensures result == value;"},"conjunct":0,"selector":{"at":{"file":"ensures.wf","line":1,"column":42},"bytes":{"start":41,"end":52},"text":"result: i32"},"relation":"0 = value","disposition":"Unproved","mechanical_fix":"the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"}}"#
+        r#"{"rule":"FN-9","kind":"UndischargedPostcondition","category":"Source","stage":"Semantics","at":{"file":"ensures.wf","line":5,"column":5},"bytes":{"start":118,"end":131},"source":"    return 0_i32;","detail":{"concrete_function":"unproved","postcondition":{"at":{"file":"ensures.wf","line":2,"column":3},"bytes":{"start":71,"end":95},"text":"ensures result == value;"},"conjunct":0,"selector":{"at":{"file":"ensures.wf","line":1,"column":42},"bytes":{"start":41,"end":52},"text":"result: i32"},"relation":"0 = value","relation_at_return":"0_i32 == value","disposition":"Unproved","mechanical_fix":"the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"}}"#
     );
 }
 

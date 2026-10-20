@@ -975,6 +975,11 @@ impl<'unit> TypeContext<'unit> {
                     conjunct: proof.relation_ordinal,
                     selector: self.declarations.node_location(&proof.selector)?,
                     relation: exit.residual.clone(),
+                    relation_at_return: self.relation_at_return(
+                        &proof.block,
+                        &proof.selector,
+                        &exit.statement,
+                    )?,
                     disposition,
                     mechanical_fix: if self
                         .declarations
@@ -1010,5 +1015,136 @@ impl<'unit> TypeContext<'unit> {
             }
         }
         Ok(editable)
+    }
+
+    /// The `ensures` clause at `block` with its result replaced by the value
+    /// the `return` at `statement` delivers, read from the written source so
+    /// the writer sees `20_u64 < 10_u64` rather than the normalized form.
+    fn relation_at_return(
+        &self,
+        block: &NodePath,
+        selector: &NodePath,
+        statement: &NodePath,
+    ) -> Result<Option<String>, CheckStop> {
+        let tree = &self.declarations.tree;
+        let (Some(clause), Some(selector), Some(statement)) = (
+            tree.node_with_path(block),
+            tree.node_with_path(selector),
+            tree.node_with_path(statement),
+        ) else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        let Some(value) = tree.first_child_with(statement, Production::Expr)? else {
+            return Ok(None);
+        };
+        Ok(clause_at_return(
+            &tree.source_spelling(clause)?,
+            &tree.source_spelling(selector)?,
+            &tree.source_spelling(value)?,
+        ))
+    }
+}
+
+/// The written `ensures` clause body with the selector's result name replaced
+/// by the returned value. A routed clause (`when ...`) or a selector that is
+/// not `name: type` has no such reading, so it yields `None`.
+fn clause_at_return(clause: &str, selector: &str, value: &str) -> Option<String> {
+    let (name, _) = selector.split_once(':')?;
+    let name = name.trim();
+    if !is_word(name) {
+        return None;
+    }
+    let body = clause
+        .trim()
+        .strip_prefix("ensures")?
+        .trim_start()
+        .strip_suffix(';')?
+        .trim();
+    if body.is_empty() || body.starts_with("when ") {
+        return None;
+    }
+    // A compound value keeps its grouping: `(a + b) < 10_u64`.
+    let value = if is_word(value.trim()) {
+        value.trim().to_owned()
+    } else {
+        format!("({})", value.trim())
+    };
+    let mut out = String::with_capacity(body.len() + value.len());
+    let mut previous = None;
+    let mut words = body.char_indices().peekable();
+    while let Some((start, character)) = words.next() {
+        if !is_word_character(character) {
+            out.push(character);
+            if !character.is_whitespace() {
+                previous = Some(character);
+            }
+            continue;
+        }
+        let mut end = start + character.len_utf8();
+        while let Some(&(index, next)) = words.peek() {
+            if !is_word_character(next) {
+                break;
+            }
+            end = index + next.len_utf8();
+            words.next();
+        }
+        let word = &body[start..end];
+        // A projection `x.result` names another field, not the result.
+        if word == name && previous != Some('.') {
+            out.push_str(&value);
+        } else {
+            out.push_str(word);
+        }
+        previous = word.chars().last();
+    }
+    Some(out)
+}
+
+fn is_word_character(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+fn is_word(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(is_word_character)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clause_at_return;
+
+    #[test]
+    fn the_written_clause_takes_the_returned_value_for_its_result() {
+        assert_eq!(
+            clause_at_return("ensures result < 10_u64;", "result: u64", "20_u64").as_deref(),
+            Some("20_u64 < 10_u64"),
+        );
+        assert_eq!(
+            clause_at_return("ensures result == value;", "result: i32", "0_i32").as_deref(),
+            Some("0_i32 == value"),
+        );
+    }
+
+    #[test]
+    fn a_compound_value_keeps_its_grouping_and_a_projection_is_not_the_result() {
+        assert_eq!(
+            clause_at_return("ensures result + 1 <= n;", "result: u64", "a + b").as_deref(),
+            Some("(a + b) + 1 <= n"),
+        );
+        assert_eq!(
+            clause_at_return("ensures result < rows.result;", "result: u64", "7_u64").as_deref(),
+            Some("7_u64 < rows.result"),
+        );
+    }
+
+    #[test]
+    fn a_routed_clause_or_a_selector_without_a_plain_name_has_no_reading() {
+        assert_eq!(
+            clause_at_return("ensures when Ok(value: r): r < 3_u64;", "when Ok(value: r)", "x"),
+            None,
+        );
+        assert_eq!(
+            clause_at_return("ensures result < 10_u64;", "Ok(value: r)", "x"),
+            None,
+        );
     }
 }

@@ -630,6 +630,10 @@ pub struct UndischargedPostconditionDetail {
     pub selector: SemanticLocation,
     /// The instantiated normalized relation at the selected exit.
     pub relation: String,
+    /// The written clause with its result name replaced by the returned
+    /// expression, as the writer reads it at this `return`; absent when the
+    /// clause is routed or its result is not a plain name.
+    pub relation_at_return: Option<String>,
     /// The exact non-discharged disposition.
     pub disposition: PostconditionProofDisposition,
     /// The repair [DIAG-1], selected by the disposition.

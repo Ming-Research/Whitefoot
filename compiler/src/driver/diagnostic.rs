@@ -784,6 +784,7 @@ impl FieldList for UndischargedPostconditionDetail {
             conjunct,
             selector,
             relation,
+            relation_at_return,
             disposition,
             mechanical_fix,
         });
