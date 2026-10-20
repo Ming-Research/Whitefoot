@@ -264,6 +264,20 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
 }
 
 #[test]
+fn hash_map_scan_reports_every_member_of_a_million_under_churn_and_growth() {
+    // Firn's witness for the resumable scan; the program checks coverage,
+    // completion and mid-pass growth itself and exits nonzero on any miss.
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/hash-map-scan-witness.wf",
+        include_bytes!("../../../tests/programs/containers/hash-map-scan-witness.wf"),
+    )];
+    let output = build_program(&compile_sources(&sources)).run_with_workers(None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[test]
 fn priority_queue_orders_and_preserves_every_owner_in_both_lowering_modes() {
     let sources: [(&str, &[u8]); 1] = [(
         "containers/priority-queue-program.wf",

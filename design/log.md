@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-20 HashMap keeps pairs in slots on home-bucket chains and scans from a hash-space cursor
+
+Nodes: language/data-model/hash-map-storage
+
+Summary: The ordinary HashMap could not offer a resumable bounded scan, because linear probing's rebuild repositions keys relative to any physical cursor and the [hash-scan study](../research/investigations/hash-scan/DESIGN.md#why-a-physical-bucket-cursor-is-insufficient-for-todays-linear-probing) found pairs present throughout a pass that a bucket cursor never reports. Pairs now stay in a slot array with a free list, and a power-of-two array of chain heads, indexed by the top bits of the hash after one odd multiplication, links each key into the chain of its home bucket; capacity counts slots, a full map doubles up to its ceiling, and growth relinks words without moving owners, which retires the occupancy-only migration and the three-quarter and vacated-bucket growth rules. `hash_map_scan` resumes from a position in the mixed hash space and lends whole chains of up to limit home buckets, so its limit is a hint as Redis 7.2.16's COUNT is. Refused: a physical cursor over linear probing, and moving every owner into a fresh backing on growth. The stable-identifier directory stays the fallback if the before-and-after comparison detects a regression or the [hold criterion](../research/investigations/hash-scan/DESIGN.md#hold-criterion-set-before-measurement) fails.
+
 ## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
 
 Nodes: compiler/verification
