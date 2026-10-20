@@ -225,10 +225,12 @@ build time apart from test and program execution.
   `compute-bench.yml` on request, which are experiments and never a gate.
 - Compiler releases: `compiler-release.yml`, dispatched when a downstream
   project needs a main commit, publishes that commit's compiler as release
-  `wf-<12 hex digits>`, or an unmerged commit's as experiment release
-  `wf-exp-<12 hex digits>`, and `compiler-release-cleanup.yml` removes
-  releases older than 30 days each week, keeping the newest of main; each
-  file's header gives the commands and contents
+  `wf-<12 hex digits>`, with `bundle_toolchain` as
+  `wf-<12 hex digits>-bundled`, which carries clang and lld, or an unmerged
+  commit's as experiment release `wf-exp-<12 hex digits>`, and
+  `compiler-release-cleanup.yml` removes releases older than 30 days each
+  week, keeping the newest lightweight release of main and every bundled
+  release of main; each file's header gives the commands and contents
   ([downstream releases](design/compiler/downstream-releases.md)).
 Every build, check, test and measurement runs in CI, never on a
 contributor's workstation. A focused result the existing workflows do not
