@@ -5204,7 +5204,10 @@ pub(crate) fn close(
 /// and ledger, old derivability and retained proofs therefore stay identical;
 /// only a new goal with both signs can change ENT-4's contradiction. Check
 /// that suffix without constructing proofs, and run ordinary closure if one
-/// exists, preserving its ordered minimum-depth contradiction selection.
+/// exists, preserving its ordered minimum-depth contradiction selection. A
+/// new goal that an exclusion decides in either sign also runs it: only a
+/// fresh closure materializes that sign and its proof as an opaque fact, and
+/// a later snapshot or origin view reads the opaque facts and proofs.
 /// Already contradictory views also reclose after appending: a new goal may
 /// supply a better retained contradiction. Incomplete old trees and metadata
 /// changes cannot use this argument and keep the ordinary cache miss.
@@ -5225,8 +5228,11 @@ fn view_survives_appended_goals(view: &ClosedView, key: &ClosedViewKey, goals: &
     }
     (old.goal_count..key.goal_count).all(|index| {
         let goal = GoalId(u32::try_from(index).expect("ENT goal inventory fits u32"));
-        !view.closed.derives_goal(goal, GoalSign::Positive, goals)
-            || !view.closed.derives_goal(goal, GoalSign::Negative, goals)
+        (!view.closed.derives_goal(goal, GoalSign::Positive, goals)
+            || !view.closed.derives_goal(goal, GoalSign::Negative, goals))
+            && [GoalSign::Positive, GoalSign::Negative]
+                .into_iter()
+                .all(|sign| view.closed.exclusion_goal(goal, sign, goals).is_none())
     })
 }
 

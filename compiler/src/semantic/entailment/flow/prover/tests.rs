@@ -1125,6 +1125,66 @@ fn affine_caches_share_signed_only_views_and_reject_new_numeric_premises() {
     });
 }
 
+/// An exclusion shares every L0 store with the state it extends, yet it
+/// tightens the closed bounds the lazy index memoizes: excluding the upper
+/// endpoint 5 of `x <= 5` closes `x <= 4`. Reusing the index across the two
+/// states would answer from the looser bound.
+#[test]
+fn affine_index_cache_misses_when_only_an_exclusion_differs() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let x = cache_measure(analyzer, 0);
+        let _ = analyzer.vocabulary.measure_atom(x, &affine);
+        let mut plain = FactState::new();
+        cache_bound(analyzer, &mut plain, x, ZERO, 5);
+        let (before, index) =
+            assert_affine_index_matches_rebuild(analyzer, ProofContext::new(&plain, &affine));
+        assert_eq!(before.tight_bound(x, ZERO), Some(5));
+
+        let expression = analyzer
+            .reasoning()
+            .intern_goal_expression(GoalExpression::Datum(GoalDatum::Place {
+                root: BindingId(0),
+                projections: Vec::new(),
+                ty: CheckedType::Integer(IntegerType::U64),
+                admission: GoalAdmission::default(),
+            }));
+        let values: std::sync::Arc<[i128]> = [5].into();
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S17, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::IntegerExclusion {
+                detail: Box::new(ExclusionProof {
+                    projection: Some((x, 0)),
+                    expression,
+                    values: std::sync::Arc::clone(&values),
+                    conclusion: ExclusionConclusion::Set,
+                    event: Some(event),
+                    parents: Vec::new(),
+                }),
+            });
+        let mut excluded = plain.clone();
+        excluded.establish_exclusion(Exclusion::from_view(
+            expression,
+            values,
+            Some((x, 0)),
+            proof,
+            &analyzer.vocabulary.goals,
+        ));
+        let (after, rebuilt) =
+            assert_affine_index_matches_rebuild(analyzer, ProofContext::new(&excluded, &affine));
+        assert_eq!(after.tight_bound(x, ZERO), Some(4));
+        assert!(
+            !Rc::ptr_eq(&index, &rebuilt),
+            "the exclusion changes the closed bounds the index memoizes"
+        );
+    });
+}
+
 #[test]
 fn affine_cache_reads_current_parents_for_equal_bounds_with_different_proofs() {
     with_analyzer(|analyzer| {

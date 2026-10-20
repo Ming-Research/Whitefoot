@@ -790,10 +790,12 @@ struct AffineL0Postings {
 
 /// The retained L0 inputs of one function-local affine query.
 ///
-/// Equal retained stores and term revision give exactly the same numeric
-/// closure: signed-goal reconstruction adds no L0 relation [ENT-4]. Keeping
-/// the stores alive forces an L0 or source-proof edit to copy them, so a view
-/// that adds only signed facts may reuse the index. The index keeps pair
+/// Equal retained stores, exclusions and term revision give exactly the same
+/// numeric closure: signed-goal reconstruction adds no L0 relation [ENT-4],
+/// while an exclusion tightens closed bounds past an excluded endpoint
+/// without touching the stores, so it is part of the key. Keeping the stores
+/// alive forces an L0 or source-proof edit to copy them, so a view that adds
+/// only signed facts may reuse the index. The index keeps pair
 /// identities and bounds, never proof IDs; every selected parent is read from
 /// the current closure, preserving its witness even if signed reconstruction
 /// changed the closure's term inventory or implicit-proof materialization.
@@ -802,6 +804,7 @@ struct AffineL0Content {
     bounds: Rc<super::state::BoundStore>,
     distinct: Rc<super::state::WordHashSet<super::state::DistinctKey>>,
     distinct_proofs: Rc<WordHashMap<super::state::DistinctKey, DerivationId>>,
+    exclusions: Vec<Exclusion>,
     terms: usize,
     term_revision: usize,
     ledger: usize,
@@ -820,6 +823,7 @@ impl AffineL0Content {
             bounds: Rc::clone(&facts.bounds),
             distinct: Rc::clone(&facts.distinct),
             distinct_proofs: Rc::clone(&facts.distinct_proofs),
+            exclusions: facts.exclusions.clone(),
             terms: std::ptr::from_ref(terms) as usize,
             term_revision: terms.revision(),
             ledger: std::ptr::from_ref(ledger) as usize,
@@ -832,6 +836,7 @@ impl AffineL0Content {
         Rc::ptr_eq(&self.bounds, &other.bounds)
             && Rc::ptr_eq(&self.distinct, &other.distinct)
             && Rc::ptr_eq(&self.distinct_proofs, &other.distinct_proofs)
+            && self.exclusions == other.exclusions
             && self.terms == other.terms
             && self.term_revision == other.term_revision
             && self.ledger == other.ledger
