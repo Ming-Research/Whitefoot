@@ -9,7 +9,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 
 Nodes: compiler/verification, compiler/merge-base-compiler-cache
 
-Summary: The paired performance comparison builds the main line's compiler as its baseline, a cold build of about 110 s that overran its 115 s budget on about one run in four and turned unrelated pull requests red. The owner chose on 2026-10-13 to cache that compiler per main commit and toolchain, with an exact key and no prefix restore, and on 2026-10-14 to make the baseline build report-only, because it builds the main line's own code that no pull request changes. The cache misses after each runner image change, so the first pull request after one builds cold; that build is recorded but does not fail the verdict. The cache stores only the binary, its checksum and its commit, because a restored target directory of another commit would give the comparison the wrong baseline. The candidate build keeps its own enforced budget.
+Summary: The paired performance comparison builds the main line's compiler as its baseline, a cold build of about 110 s that overran its 115 s budget on about one run in four and turned unrelated pull requests red. The owner chose on 2026-10-13 to cache that compiler per main commit and toolchain, with an exact key and no prefix restore, and on 2026-10-14 to make the baseline build report-only, because it builds the main line's own code that no pull request changes. The cache misses after each runner image change, so the first pull request after one builds cold; that build is recorded but does not fail the verdict. The candidate build keeps its own enforced budget.
 
 ## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
 

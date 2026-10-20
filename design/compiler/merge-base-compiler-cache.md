@@ -2,4 +2,4 @@ Decision: The merge-base compiler that the paired performance comparison builds 
 
 Rejected:
 - prefix restore keys over the Cargo target directory: rejected because a prefix match would return another commit's build state, and the key would then not name the bytes restored (inferred from the key scheme; not observed in a run).
-- raising the baseline budget to 135 s instead of caching: rejected because the two cold builds observed on a single runner image pair took 126.8 s and 127.0 s, so the budget would need a new raise with each image change (inferred from those two runs).
+- raising the baseline budget to 135 s instead of reporting it only: rejected because a fixed number must be raised again whenever a cold build drifts past it, while the owner ruled the baseline is the main line's own code that no pull request changes, so its overrun is reported and never fails a pull request (owner ruling on the baseline-budget card).
