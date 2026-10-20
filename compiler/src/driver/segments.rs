@@ -132,6 +132,8 @@ pub(super) fn check(
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use super::{aligns, check, ranges, starts_segment};
     use crate::driver::{
         CompilationFailureKind, CompilerLimits, DiagnosticFormat, canonical_syntax, derive_syntax,
@@ -347,6 +349,84 @@ mod tests {
         assert_eq!(
             ranges(b"pkg: []; other: [];\nentry run = pkg;\n", true),
             vec![0..20, 20..37]
+        );
+    }
+
+    /// The corpus sources the equivalence test reads: the flat `.wf` programs
+    /// of the conformance cases and of `tests/programs`, and every `.wfg`
+    /// graph file beneath them. Nested `.wf` files are module records, which
+    /// the module path segments by its own entry points.
+    fn corpus_sources() -> Vec<(PathBuf, bool)> {
+        fn collect(directory: &Path, flat: bool, found: &mut Vec<(PathBuf, bool)>) {
+            let entries = std::fs::read_dir(directory)
+                .unwrap_or_else(|error| panic!("cannot read {}: {error}", directory.display()));
+            for entry in entries {
+                let path = entry
+                    .unwrap_or_else(|error| panic!("cannot read {}: {error}", directory.display()))
+                    .path();
+                if path.is_dir() {
+                    collect(&path, false, found);
+                    continue;
+                }
+                match path.extension().and_then(|extension| extension.to_str()) {
+                    Some("wf") if flat => found.push((path, false)),
+                    Some("wfg") => found.push((path, true)),
+                    _ => {}
+                }
+            }
+        }
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("compiler package must live directly under the repository root");
+        let mut found = Vec::new();
+        for root in [
+            repository.join("tests").join("conformance").join("cases"),
+            repository.join("tests").join("programs"),
+        ] {
+            collect(&root, true, &mut found);
+        }
+        found.sort();
+        found
+    }
+
+    /// `aligns` lets a whole derivation stand for its independent segments, so
+    /// it must never certify a source whose segments would reject. The
+    /// oracle is the unshortened segment pass, run on every corpus source
+    /// whose whole derivation succeeds and aligns.
+    #[test]
+    fn an_aligned_whole_derivation_leaves_every_corpus_segment_derivable() {
+        let limits = CompilerLimits::default();
+        let mut read = 0_usize;
+        let mut aligned = 0_usize;
+        let mut disagreements = Vec::new();
+        for (path, graph) in corpus_sources() {
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+            let name = if graph { "modules.wfg" } else { "corpus.wf" };
+            let Ok(bundle) =
+                SourceBundle::with_limits(&[SourceInput::new(name, &bytes)], limits.source)
+            else {
+                continue;
+            };
+            read += 1;
+            let Ok(parsed) = derive_syntax(&bundle, limits, graph, false) else {
+                continue;
+            };
+            if !aligns(&bundle, &parsed, graph) {
+                continue;
+            }
+            aligned += 1;
+            if let Err(failure) = check(&bundle, limits, graph) {
+                disagreements.push(format!("{}: {failure}", path.display()));
+            }
+        }
+        assert!(
+            disagreements.is_empty(),
+            "{aligned} of {read} corpus sources aligned; these segments reject: {disagreements:#?}"
+        );
+        assert!(
+            aligned * 2 > read,
+            "only {aligned} of {read} corpus sources aligned, too few to witness the equivalence"
         );
     }
 }
