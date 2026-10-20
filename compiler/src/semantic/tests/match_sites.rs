@@ -287,6 +287,79 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
+fn a_match_missing_one_variant_and_repeating_another_reports_the_missing_site() {
+    // The repeated arm is an ERR-2 rejection at the node already recorded as
+    // incomplete; both are ERR-2, so the recorded site stays the first event.
+    let source = r#"enum Flag {
+  A();
+  B();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let flag = Flag::A();
+  match flag {
+    A() => {
+    }
+    A() => {
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_sites(
+        source,
+        "Flag",
+        &[(
+            "match flag {\n    A() => {\n    }\n    A() => {\n    }\n  }",
+            &["B"],
+        )],
+    );
+}
+
+#[test]
+fn a_later_match_repeating_a_variant_does_not_replace_the_recorded_site() {
+    let source = r#"enum Flag {
+  A();
+  B();
+}
+
+fn first(flag: Flag) -> result: u64 pure {
+  match flag {
+    A() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn second(flag: Flag) -> result: u64 pure {
+  match flag {
+    A() => {
+      return 1_u64;
+    }
+    A() => {
+      return 2_u64;
+    }
+    B() => {
+      return 3_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_sites(
+        source,
+        "Flag",
+        &[(
+            "match flag {\n    A() => {\n      return 0_u64;\n    }\n  }",
+            &["B"],
+        )],
+    );
+}
+
+#[test]
 fn generic_instances_report_the_written_match_once() {
     let source = r#"enum Shade {
   Red();
