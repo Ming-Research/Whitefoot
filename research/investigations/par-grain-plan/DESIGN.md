@@ -387,21 +387,34 @@ On the status board on 2026-10-09 the owner chose B, demand-driven hand-out
 with static prices only as advice ("choose B", translated). The stages
 become: the suite and baseline (started), a first experiment, loops and
 calls, recursion, threads and topology, and the single decision pass, in
-that order of dependence; the three questions below are separate cards.
+that order of dependence. The three sub-questions it left open were settled
+later; see the rulings below.
 
-### What remains for the owner to decide
+### The owner's rulings on the three sub-questions
 
-1. **How "worth handing out" is learned**: a runtime clock (Fable; strongest
-   bound, needs a clock on targets that have one) or compiler-modelled work
-   credits (Astra; no clock, but depends on a cost model surviving
-   optimization).
-2. **Recursion**: keep a cut with a sequential clone below it (Fable; protects
-   nanosecond recursion) or remove the depth budget and keep latent
-   continuations (Astra; reaches deep work, costs retained state).
-3. **The first experiment**: Fable's demand-gate prototype (tests that
-   lazy hand-out keeps today's speedups) or Astra's no-hand-out experiment
-   (tests that the bookkeeping is affordable at all). They test different
-   premises; both are small, and running both is possible.
+The owner settled the three questions the two studies left open. Each ruling
+is recorded on its card or on the item that carries the stage.
+
+1. **How "worth handing out" is learned**: no runtime clock. Loops estimate
+   with the run-time range length; calls use the static granularity. This
+   keeps neither Fable's clock-learning nor Astra's compiler work credits as
+   the rule. The estimate is reopened only when a real program shows it
+   wrong. Card: gran-par-s3-clock (option A), stage gran-par-s3.
+2. **Recursion**: keep a cut with a sequential clone below it, as Fable
+   proposed. Below the cut no hand-out is considered and the sequential
+   version runs. A stolen task gets a fresh depth budget, and a budget is
+   topped up on demand, a bounded number of times. Astra's removal of the
+   depth budget is not adopted. Recorded on item coord-wfbl-03-27.
+3. **The first experiment**: both. Fable's demand-gate prototype (does lazy
+   hand-out keep today's speedups) and Astra's no-hand-out experiment (is the
+   bookkeeping affordable at all) test different premises and are both small.
+   Recorded on item coord-wfbl-03-27.
+
+The stages that follow are in the item coord-wfbl-03-27: the suite and
+baseline, a first experiment, loops and calls, recursion, threads and
+topology, and the single decision pass. Stage 6 is an internal refactoring
+that changes no behavior, and the owner has moved it to the backlog; the
+line stops at stage 5.
 
 ## Appendix: history of interventions
 
