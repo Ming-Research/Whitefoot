@@ -1,0 +1,41 @@
+# Temporary acceptance probe: one real test program run changed back to a direct spawn must fail Clippy. Removed after the run.
+name: tmp clippy accept probe
+
+on:
+  push:
+    branches: [coord-wfbl-10-06]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          rustup default stable
+          rustup component add clippy
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Change one real test program run back to a direct spawn
+        run: |
+          sed -i '0,/\.bounded_output()/s//.output()/' compiler/src/backend/tests/loop_split.rs
+          git diff --stat
+
+      - name: Clippy must refuse the direct spawn
+        run: |
+          set +e
+          cargo clippy --manifest-path compiler/Cargo.toml --all-targets --locked --offline -- -D warnings > probe.log 2>&1
+          code=$?
+          set -e
+          grep -n "disallowed" probe.log | head -20
+          test "$code" -ne 0
+          grep -q "disallowed_methods" probe.log
+          grep -q "loop_split.rs" probe.log
