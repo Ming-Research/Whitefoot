@@ -168,22 +168,7 @@ fn windows_forms(
     // A device path names no directory of a volume: InvalidPath, 14.
     let device = run(program, elsewhere, &[OsStr::new("\\\\.\\NUL")], native);
     assert_eq!(device.status.code(), Some(14), "route {native}: {device:?}");
-    windows_unc(program, elsewhere, native, data);
     windows_links(program, fixture, elsewhere, native);
-}
-
-/// A UNC path, through the administrative share of the data directory's
-/// drive on this host.
-#[cfg(windows)]
-fn windows_unc(program: &CompiledProgram, elsewhere: &Path, native: bool, data: &Path) {
-    let spelled = data.to_str().expect("a textual fixture path");
-    let (drive, rooted) = spelled.split_at(2);
-    let share = format!("\\\\localhost\\{}${rooted}", &drive[..1]);
-    assert!(
-        Path::new(&share).is_dir(),
-        "the host reaches its own administrative share: {share}"
-    );
-    publishes(program, elsewhere, OsStr::new(&share), native, data);
 }
 
 /// The links a host-path lookup follows [PRE-2], as the last component and as
@@ -293,7 +278,50 @@ fn host_paths_from_bytes_open_in_both_encodings() {
 
         let output = run(&program, fixture.path(), &[], native);
         assert_eq!(output.status.code(), Some(0), "route {native}: {output:?}");
+
+        // The same two lookups by UNC path, through the administrative share
+        // of the fixture's drive: the file by a UTF-8 window, the directory by
+        // a native one. The program renames nothing, which a directory handle
+        // on a share does not support.
+        #[cfg(windows)]
+        {
+            let unc_file = unc_share(&configured);
+            let unc_directory = unc_share(&directory);
+            assert!(
+                unc_file.is_file() && unc_directory.is_dir(),
+                "the host reaches its own administrative share: {unc_file:?}"
+            );
+            std::fs::write(
+                fixture.path().join("utf8.path"),
+                unc_file.to_str().expect("a textual share path").as_bytes(),
+            )
+            .expect("write the UNC file path");
+            std::fs::write(
+                fixture.path().join("native.path"),
+                native_bytes(&unc_directory),
+            )
+            .expect("write the UNC directory path");
+            let output = run(&program, fixture.path(), &[], native);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "UNC, route {native}: {output:?}"
+            );
+        }
     }
+}
+
+/// A drive-absolute fixture path as the UNC path of the host's administrative
+/// share for its drive: `C:\x` is `\\localhost\C$\x`.
+#[cfg(windows)]
+fn unc_share(path: &Path) -> std::path::PathBuf {
+    let spelled = path.to_str().expect("a textual fixture path");
+    let (drive, rooted) = spelled.split_at(2);
+    assert!(
+        drive.ends_with(':'),
+        "a drive-absolute fixture path: {spelled}"
+    );
+    std::path::PathBuf::from(format!("\\\\localhost\\{}${rooted}", &drive[..1]))
 }
 
 /// The runtime's handle credit total is the descriptor limit less 64, so a
