@@ -261,13 +261,17 @@ existing operational ceilings.
 
 ## Linker-layout result
 
-CI run `38424605911` confirmed the address-bias hypothesis with the same C
-source: the default-linker build recovered `caller_loop` and `main` in every
-DWARF hot-leaf sample, while the `-fuse-ld=lld` build, whose executable load
-segment has a `0x1000` difference between virtual address and file offset,
-recovered neither in any sample. The failure therefore follows LLD's default
-segment layout under this perf (6.17) and its DWARF unwinder, not Whitefoot
-code generation.
+CI run `38424605911` showed, with the same C source, that the failure follows
+the linker's segment layout: the default-linker build recovered `caller_loop`
+and `main` in every DWARF hot-leaf sample, while the `-fuse-ld=lld` build,
+whose executable load segment has a `0x1000` difference between virtual
+address and file offset, recovered neither in any sample. The failure
+therefore follows LLD's default segment layout under this perf (6.17) and its
+DWARF unwinder, not Whitefoot code generation. The run's raw-dump diagnostics
+for the three DWARF recordings (Whitefoot, the default-linker control and the
+LLD control) timed out, so it does not show which lookup fails or which
+component performs it. The address-bias mechanism above remains a hypothesis;
+the layout dependence is what was measured.
 
 CI run `38426537112` measured revision
 `4f03db37578935aa60f5761d96760d36594d6d0b`, which keeps `uwtable` and adds
