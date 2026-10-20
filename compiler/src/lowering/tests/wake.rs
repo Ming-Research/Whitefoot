@@ -572,7 +572,8 @@ fn scratch_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progre
   let scratch = box_slots_new::<u8>(capacity: 8_u64);
   let room = scratch.inner.len;
   let covered = progress^.written >= sequence;
-  return band(covered, room == 0_u64);
+  let empty = room == 0_u64;
+  return band(covered, empty);
 }
 
 fn within_ready(progress: &Progress, limit: Pair) -> ready: Bool reads(progress.written) {
@@ -589,6 +590,11 @@ fn within_ready(progress: &Progress, limit: Pair) -> ready: Bool reads(progress.
 /// comes from the second guard's own helper and not from the surrounding
 /// program.
 fn control_and_refused_guard(refused: &str, locals: &str) -> String {
+    let locals = if locals.is_empty() {
+        String::new()
+    } else {
+        format!("  {locals}\n")
+    };
     format!(
         r#"{MULTI_STATEMENT_HELPERS}{REFUSED_HELPERS}fn main() -> status: std::process::ExitStatus pure waits {{
   let clear = None<u64>();
@@ -596,8 +602,7 @@ fn control_and_refused_guard(refused: &str, locals: &str) -> String {
   let initial = Progress(written: 0_u64, unrelated: 0_u64, failure: clear, stopping: no);
   let state = shared_new::<Progress>(value: initial);
   let sequence = 19_u64;
-  {locals}
-  atomic p = &state when reply_ready(progress: p, sequence: sequence) {{
+{locals}  atomic p = &state when reply_ready(progress: p, sequence: sequence) {{
     set p^.unrelated = 1_u64;
   }}
   atomic q = &state when {refused} {{
