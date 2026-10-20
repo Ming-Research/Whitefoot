@@ -104,8 +104,8 @@ Source: [branch and main boundary](../AGENTS.md#branch-and-main-boundary).
   report shows the affected rules, their before/after behavior and the
   decision card that selected each or why it needed none. Conformance changes
   explain what changed and their selection ground. A PR marked ready has the
-  owner's approval of every specification change it carries, recorded in
-  `spec/log.md`.
+  owner's approval of every specification change it carries and a
+  `spec/log.md` entry naming its rules.
 
 Existing checks: `git diff --check` for patch whitespace; `make static` for
 repository invariants, specification archives (immutability and amendment
