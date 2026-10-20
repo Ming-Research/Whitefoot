@@ -10,6 +10,12 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
+## 2026-10-20 v0.152: host paths are opened through an explicit authority
+
+Rules: changed PRE-2
+
+Summary: PRE-2 declares the opaque unconstructible `HostPaths`, the enum `PathEncoding` and six waiting opens, `open_host_read`, `open_host_directory_read` and `open_host_directory`, each with a `_bytes` form taking a byte window and an encoding, and adds `Inputs.host_paths`, which is `Some` on a POSIX or Windows host and `None` on every other host. A host-path open looks its path up as the host does: on a POSIX host as `openat` from the given directory, an absolute path ignoring it and each `..` selecting the parent of what the components before it reached; on a Windows host in the Win32 dialect by a seven-row table, a relative path below its base opening from the base's handle. Every link the lookup reaches is followed, no entry is created, a refusal keeps the host's code (`NotFound`, `NotDirectory`, `PermissionDenied`), a path the host cannot take is `InvalidPath`, a read open of a directory is `IsDirectory`, and the two halves of an existing directory come from one lookup and spend two handle credits. PRE-2 also states two rules the implementation already followed: `open_read` is not confined below its root, and the single-name opens refuse a link at the name. Selection ground: Firn must open a configuration file named on its command line, and an included file and an existing data directory whose paths are read from configuration bytes, while a function holding only a directory still selects only entries below it; widening `RelativePath` and a path open on every directory were refused because either lets a directory parameter authorize paths that ignore it.
+
 ## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
 
 Rules: changed PROV-6, STOR-3, SHARE-1
