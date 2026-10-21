@@ -234,7 +234,7 @@ def save(path, samples):
     os.replace(path + ".tmp", path)
 
 
-def collect(repo, workflows, since, path, limit):
+def collect(repo, workflows, since, path, limit, until=None):
     """Add the jobs of finished runs to the samples file; a rerun skips known jobs."""
     try:
         with open(path) as handle:
@@ -255,7 +255,8 @@ def collect(repo, workflows, since, path, limit):
         return found
     for workflow in workflows:
         runs = lines("--method", "GET", "--paginate", f"repos/{repo}/actions/workflows/{workflow}/runs",
-                     "-f", "per_page=100", "-f", "status=completed", "-f", f"created=>={since}",
+                     "-f", "per_page=100", "-f", "status=completed",
+                     "-f", f"created={since}..{until}" if until else f"created=>={since}",
                      "--jq", ".workflow_runs[] | {id, head_sha, head_branch, run_attempt, conclusion, created_at} | tojson")
         runs = [r for r in runs if r["conclusion"] in ("success", "failure")]
         if runs:
@@ -410,7 +411,8 @@ def main():
     fetch = sub.add_parser("collect")
     fetch.add_argument("--repo", required=True)
     fetch.add_argument("--workflow", action="append", required=True)
-    fetch.add_argument("--since", required=True, help="YYYY-MM-DD")
+    fetch.add_argument("--since", required=True, help="YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ")
+    fetch.add_argument("--until", help="newest run created, same forms; default now")
     fetch.add_argument("--limit", type=int, default=400, help="newest runs per workflow")
     fetch.add_argument("--samples", required=True)
     for name in ("table", "replay"):
@@ -429,7 +431,7 @@ def main():
     if args.self_test:
         return self_test()
     if args.command == "collect":
-        return collect(args.repo, args.workflow, args.since, args.samples, args.limit)
+        return collect(args.repo, args.workflow, args.since, args.samples, args.limit, args.until)
     if args.command is None:
         parser.error("name a command or --self-test")
     rows = flatten(load(args.samples))
