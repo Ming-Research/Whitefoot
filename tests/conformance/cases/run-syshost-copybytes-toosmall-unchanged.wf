@@ -21,7 +21,7 @@ fn sentinel_status(bytes: &[u8], failure: u8) -> result: u8 reads(bytes) {
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "The ordinary byte-copy library operation reports CopyTooSmall with the needed length and preserves the prefilled destination on refusal. Invalid ranges are separately rejected by its source requires clauses.";
-  let Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   close_directory(factory: &entry_factory, directory: move unused_cwd);
