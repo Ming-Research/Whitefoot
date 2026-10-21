@@ -157,7 +157,7 @@ jobs:
           def rename_held():
               changed = 0
               for path in src.rglob('*'):
-                  if path.suffix not in ('.wf', '.wfm') or 'deps' in path.relative_to(src).parts: continue
+                  if path.suffix not in ('.wf', '.wfm') or '.git' in path.relative_to(src).parts: continue
                   text = path.read_text(); new = re.sub(r'\bheld\b', 'held_n', text)
                   if new != text: path.write_text(new); changed += 1
               return changed
