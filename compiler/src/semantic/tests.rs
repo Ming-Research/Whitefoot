@@ -58,6 +58,7 @@ mod integer_matches;
 mod integer_negation;
 mod loop_invariants;
 mod loop_permission;
+mod match_sites;
 mod operation_table;
 mod options;
 mod ordinary_effects;
@@ -906,12 +907,13 @@ fn nominal_diagnostics_retain_required_lists_and_repairs() {
             declared_fields: vec!["a".to_owned(), "b".to_owned()],
         },
     );
-    assert_rule(
-        include_bytes!("../../../tests/conformance/cases/err2-neg-missing-variant.wf"),
-        SemanticRule::Err2,
-        SemanticIssueKind::NonExhaustiveMatch {
-            missing_variants: vec!["Blue".to_owned()],
-        },
+    match_sites::assert_sites(
+        include_str!("../../../tests/conformance/cases/err2-neg-missing-variant.wf"),
+        "Color",
+        &[(
+            "match c {\n    Red() => {\n      return 1_i32;\n    }\n    Green() => {\n      return 2_i32;\n    }\n  }",
+            &["Blue"],
+        )],
     );
     assert_rule(
         b"struct Pair {\n  x: i32;\n  x: i32;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",

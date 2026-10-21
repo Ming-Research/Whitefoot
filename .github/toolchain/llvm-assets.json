@@ -1,0 +1,15 @@
+{
+  "llvm_version": "22.1.8",
+  "llvm_tag": "llvmorg-22.1.8",
+  "checksum_source": "https://github.com/llvm/llvm-project/releases/expanded_assets/llvmorg-22.1.8",
+  "platforms": {
+    "linux-x86_64": {
+      "asset": "LLVM-22.1.8-Linux-X64.tar.xz",
+      "sha256": "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384"
+    },
+    "macos-arm64": {
+      "asset": "LLVM-22.1.8-macOS-ARM64.tar.xz",
+      "sha256": "f260f4f7c0d430828a81ae8a3826a1d63fc0963ec2459489308cc23b1f7eab4f"
+    }
+  }
+}
