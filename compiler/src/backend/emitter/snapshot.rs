@@ -83,12 +83,11 @@ fn element(program: &IrProgram, ty: IrType) -> Result<IrType, BackendFailure> {
     program.element(element).ok_or(BackendFailure::InvalidIr)
 }
 
-/// The HashMap export reads a slot node's second field as its slot and the
-/// key and value of that slot's second variant; any other layout is refused
+/// The HashMap export reads a bucket's third variant as its filled pair, key
+/// and value, and every other variant as empty; any other layout is refused
 /// here rather than exported as an empty map.
-fn hash_node(program: &IrProgram, node: IrType) -> Result<(), BackendFailure> {
-    let fields = structure(program, node)?;
-    let [_, IrType::Nominal(slot)] = fields[..] else {
+fn hash_bucket(program: &IrProgram, bucket: IrType) -> Result<(), BackendFailure> {
+    let IrType::Nominal(slot) = bucket else {
         return Err(BackendFailure::InvalidIr);
     };
     let IrNominalKind::Enum { variants } =
@@ -97,7 +96,13 @@ fn hash_node(program: &IrProgram, node: IrType) -> Result<(), BackendFailure> {
         return Err(BackendFailure::InvalidIr);
     };
     match &variants[..] {
-        [vacant, filled] if vacant.fields().is_empty() && filled.fields().len() == 2 => Ok(()),
+        [vacant, deleted, filled]
+            if vacant.fields().is_empty()
+                && deleted.fields().is_empty()
+                && filled.fields().len() == 2 =>
+        {
+            Ok(())
+        }
         _ => Err(BackendFailure::InvalidIr),
     }
 }
@@ -198,9 +203,9 @@ impl Descriptors<'_> {
                         if stable.starts_with("std.collections.hash_map.HashMap<") {
                             shape = 9;
                             tag = 0x30;
-                            let node = element(self.program, unbox(self.program, types[0])?)?;
-                            hash_node(self.program, node)?;
-                            element_ptr = format!("@{}", self.descriptor(node)?);
+                            let bucket = element(self.program, unbox(self.program, types[0])?)?;
+                            hash_bucket(self.program, bucket)?;
+                            element_ptr = format!("@{}", self.descriptor(bucket)?);
                         } else if stable.starts_with("std.collections.ordered_map.OrderedMap<") {
                             shape = 10;
                             tag = 0x31;

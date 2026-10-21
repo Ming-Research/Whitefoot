@@ -57,17 +57,24 @@ disjoint from the Slab's cells under the ordinary effect-path rules.
 capacity. `hash_map_put` returns `HashMapInserted` or `HashMapReturned`, whose
 fields are `reason` and `pair`: `HashMapReplaced` returns the old complete pair
 after installing the offered pair, and `HashMapFull` returns the offered pair.
-`hash_map_try_put` keeps the current capacity. `hash_map_put` first doubles the
-capacity of a map below its ceiling whose slots are all taken, from none to
-one, saturating at the ceiling; removals return slots for reuse, so a map that
-removes as often as it inserts does not grow. `hash_map_reserve` raises
-capacity in place, is a no-op at or below current capacity and refuses requests
-above the ceiling; `hash_map_rehash` rebuilds the chain heads. `hash_map_scan`
-resumes from a cursor and visits the chains of at most `limit` home buckets per
-call, `limit` at least one: zero starts a pass and ends it, a pair present
-throughout a pass is lent at least once whatever happens between calls, and a
-pair may be lent again. The last chain is never cut, so a call can lend more
-than `limit` pairs. Capacity refusal is not an allocation-failure outcome.
+`hash_map_try_put` keeps the current capacity. The bucket count is zero or a
+power of two, and capacity counts the pairs a map holds before it rebuilds:
+three quarters of its buckets, rounded up, and at most the ceiling, which
+bounds the pairs a map holds. `hash_map_put` first rebuilds a map whose
+capacity is below its ceiling once its filled buckets and the buckets removals
+vacated number its capacity or more: at the same bucket count when fewer than
+half its capacity, rounded down, are filled, and otherwise from zero buckets to
+two or at twice its buckets; a map whose capacity has reached its ceiling is
+not rebuilt, so its vacated buckets remain until `hash_map_rehash`.
+`hash_map_reserve` is a no-op at or below current capacity and refuses requests
+above the ceiling; `hash_map_rehash` rebuilds at the same bucket count.
+`hash_map_scan` resumes from a cursor and lends the pairs homed in at most
+`limit` buckets per call, `limit` at least one: zero starts a pass and ends it,
+a pair present throughout a pass is lent at least once whatever happens between
+calls, a pair may be lent again after the map changes, and a pass over an
+unchanged map lends each pair once. Keys that share a home or crowd adjacent
+homes lengthen a call, so a call can lend more than `limit` pairs. Capacity
+refusal is not an allocation-failure outcome.
 
 `hash_map_lookup` and `hash_map_each` borrow stored pairs for callbacks.
 `hash_map_edit` permits its callback to change the value while reading the key,

@@ -367,10 +367,9 @@ static void snap_encode(snap_writer *writer, const wf_snapshot_type *root,
                 frame->data = snap_pointer(frame->data + cells->offset);
                 frame->length = snap_length(cells->type->element, frame->data);
                 uint64_t pairs = 0;
-                const wf_snapshot_field *slot = &type->element->fields[1];
                 for (uint64_t i = 0; i < frame->length; ++i) {
-                    const unsigned char *node = snap_element(cells->type->element, frame->data, i);
-                    if (snap_tag(node + slot->offset, slot->type) == 1) ++pairs;
+                    const unsigned char *bucket = snap_element(cells->type->element, frame->data, i);
+                    if (snap_tag(bucket, type->element) == 2) ++pairs;
                 }
                 snap_body_word(writer, pairs, 8);
                 break;
@@ -401,15 +400,14 @@ static void snap_encode(snap_writer *writer, const wf_snapshot_type *root,
         if (frame->at == frame->length) { --depth; continue; }
         if (type->shape == WF_SNAPSHOT_HASH) {
             const wf_snapshot_type *slots = type->fields[0].type->element;
-            const unsigned char *node = snap_element(slots, frame->data, frame->at++);
-            const wf_snapshot_field *slot = &type->element->fields[1];
-            const unsigned char *filled = node + slot->offset;
-            if (snap_tag(filled, slot->type) != 1) continue;
-            const wf_snapshot_field *fields = slot->type->variants[1].fields;
+            const unsigned char *bucket = snap_element(slots, frame->data, frame->at++);
+            const wf_snapshot_type *slot = type->element;
+            if (snap_tag(bucket, slot) != 2) continue;
+            const wf_snapshot_field *fields = slot->variants[2].fields;
             snap_push(writer, stack, &depth, capacity, fields[1].type,
-                      filled + fields[1].offset, 0);
+                      bucket + fields[1].offset, 0);
             snap_push(writer, stack, &depth, capacity, fields[0].type,
-                      filled + fields[0].offset, 0);
+                      bucket + fields[0].offset, 0);
         } else if (frame->fields != NULL) {
             const wf_snapshot_field *field = &frame->fields[frame->at++];
             snap_push(writer, stack, &depth, capacity, field->type,
@@ -548,7 +546,7 @@ static void snap_parse_push(wf_snapshot_owner *owner, const wf_snapshot_type *ty
 
 static const wf_snapshot_type *snap_pair_type(const wf_snapshot_type *type, unsigned n) {
     if (type->shape == WF_SNAPSHOT_HASH)
-        return type->element->fields[1].type->variants[1].fields[n].type;
+        return type->element->variants[2].fields[n].type;
     const wf_snapshot_type *entry = type->element->fields[1].type->element;
     return entry->fields[0].type->fields[n].type;
 }

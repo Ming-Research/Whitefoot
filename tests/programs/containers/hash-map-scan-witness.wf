@@ -114,7 +114,7 @@ fn witness_remove(map: &HashMap<u64, u64, ceiling>, key: u64, keys: &WitnessKeys
 }
 
 fn witness_pass() -> failures: u64 pure {
-  doc "Firn's witness for the resumable scan: one million members are scanned over many separate calls of at most 64 home buckets each, and between calls sixteen churn keys are inserted and the four oldest churn keys removed, which grows the map from 2^20 to 2^21 slots partway through the pass. Every member is present throughout, so every member must be reported at least once, the pass must finish, and the map must have grown during it.";
+  doc "Firn's witness for the resumable scan: one million members are scanned over many separate calls of at most 64 home buckets each, and between calls thirty-two churn keys are inserted and the four oldest churn keys removed, which grows the map from 2^21 to 2^22 buckets, capacity 1572864 to 3145728, partway through the pass. Every member is present throughout, so every member must be reported at least once, the pass must finish, and the map must have grown during it.";
   let keys = WitnessKeys(seed: 0_u64);
   let failures = 0_u64;
   let map = hash_map_new::<u64, u64, ceiling>(capacity: 8_u64);
@@ -123,19 +123,19 @@ fn witness_pass() -> failures: u64 pure {
     set failures = failures +wrap refused;
   }
   let filled_capacity = hash_map_capacity::<u64, u64, ceiling>(map: &map);
-  if filled_capacity != 1048576_u64 {
+  if filled_capacity != 1572864_u64 {
     set failures = failures +wrap 1_u64;
   }
   let hits = box_slots_new::<u8>(capacity: members);
   witness_pad(cells: &hits, target: members);
   let fresh = members;
   let oldest = members;
-  let cursor = hash_map_scan::<u64, u64, Box<Slots<u8>>, fn witness_mark, ceiling>(map: &map, cursor: 0_u64, limit: 64_u64, env: &hits);
+  let cursor = hash_map_scan::<WitnessKey, u64, Box<Slots<u8>>, fn witness_mark, ceiling>(map: &map, cursor: 0_u64, limit: 64_u64, key_env: &keys, visit_env: &hits);
   for @pass (call in 0_u64..1048576_u64) {
     if cursor == 0_u64 {
       break @pass;
     }
-    for (step in 0_u64..16_u64) {
+    for (step in 0_u64..32_u64) {
       let refused = witness_put(map: &map, key: fresh, keys: &keys);
       set failures = failures +wrap refused;
       set fresh = fresh +wrap 1_u64;
@@ -145,7 +145,7 @@ fn witness_pass() -> failures: u64 pure {
       set failures = failures +wrap missing;
       set oldest = oldest +wrap 1_u64;
     }
-    set cursor = hash_map_scan::<u64, u64, Box<Slots<u8>>, fn witness_mark, ceiling>(map: &map, cursor: cursor, limit: 64_u64, env: &hits);
+    set cursor = hash_map_scan::<WitnessKey, u64, Box<Slots<u8>>, fn witness_mark, ceiling>(map: &map, cursor: cursor, limit: 64_u64, key_env: &keys, visit_env: &hits);
   }
   if cursor != 0_u64 {
     set failures = failures +wrap 1_u64;
@@ -158,7 +158,7 @@ fn witness_pass() -> failures: u64 pure {
     }
   }
   let grown_capacity = hash_map_capacity::<u64, u64, ceiling>(map: &map);
-  if grown_capacity != 2097152_u64 {
+  if grown_capacity != 3145728_u64 {
     set failures = failures +wrap 1_u64;
   }
   let churn = fresh -wrap oldest;

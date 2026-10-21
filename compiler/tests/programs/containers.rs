@@ -260,19 +260,19 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
     )];
     // The observer counts every Box allocation, at any capacity (a capacity-0
     // Box shares the empty header and is counted at its release or first
-    // growth), and every positive `grow`. Each HashMap allocates two
-    // backings: slot nodes, which carry the chain and free-list links, and
-    // home-bucket heads. Growth reallocates the nodes, and allocates a fresh
-    // head array only when the power-of-two bucket count changes; a rehash
-    // clears the heads in place. Per case: scalars 6 (two maps, one reserve
-    // with a new bucket count), wrapping 4 (one reserve), cycle 2, growth 12
-    // (8 -> 16 -> 32, 3 -> 6, and a map at its ceiling that never grows),
-    // edit 2, owned 14 (one map growing 1 -> 2 on the same two buckets, plus
-    // ten payload/query child Boxes and the Box returned by the borrowed edit
-    // callback), units 7 (growth 0 -> 1 -> 2 -> 3), resumable scan 32
-    // (8 -> 512 under 300 insertions; an empty map; 8 -> 512 again with
-    // insertions behind the cursor; a colliding map): 79.
-    execute_container_program("hash-map", &sources, 79, 0, false);
+    // growth). Each map allocates one backing at creation and one at every
+    // rebuild. Map backings per case: scalars 4 (a map and its reserve and
+    // rehash, a zero-ceiling map), wrapping 3 (rehash, reserve), cycle 2,
+    // edit 1, owned 1 (two buckets already hold its ceiling of two), units 4
+    // (zero buckets, then two, then four, and a rehash), growth 10 (capacity
+    // 6 doubled and rebuilt at the same count, 3 doubled, two of capacity 12,
+    // one doubled and one rebuilt at the same count, and a map at its ceiling
+    // that is not rebuilt), resumable scan 17 (16 -> 512 buckets under 300
+    // insertions and one rehash; an empty map; 16 -> 1024 with insertions
+    // after part of a pass; a colliding map; a wrapping map). With ten
+    // payload/query child Boxes and the Box returned by the borrowed edit
+    // callback: 53.
+    execute_container_program("hash-map", &sources, 53, 0, false);
 }
 
 #[test]
@@ -318,14 +318,9 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
     // eight index growth backings and fifteen payload Boxes: 116 total.
     // Capacity/refusal, retirement and zero capacity add nine backings;
     // direct indexed heapify adds one; the nodrop SlabEdit result adds one
-    // backing and two payload Boxes: 129 with the linear-probing map. Each of
-    // the eleven maps (two per trace, three in the capacity section) now
-    // allocates one more backing (+11), and each trace's index, growing
-    // 0 -> 1 -> 2 -> 4 -> 8 to its ceiling, takes 2 + 1 + 2 + 2 events where
-    // four rebuilds took four (+3 per trace, +12): 152.
-    // The source model independently checks
+    // backing and two payload Boxes. The source model independently checks
     // dictionary membership, sorted expiration and exact owner identities.
-    execute_container_program("indexed-membership", &sources, 152, 0, false);
+    execute_container_program("indexed-membership", &sources, 129, 0, false);
 }
 
 #[test]
