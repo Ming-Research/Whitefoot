@@ -13,6 +13,19 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: A new node records that `whitefootc --format` replaces, in place and all or nothing, every source whose bytes differ from its FORM-2 rendering, over the sources `--check` takes or a module graph, while checking and compilation keep rejecting non-canonical input, because the canonical bytes are fixed by derivation and a FORM-2 rejection reports only the first difference; that its bytes come from one rendering function that stops after grammar derivation, so a program with semantic errors can still be formatted, while the FORM-2 judgment walks the derivation on its own and shares only the layout derivation, with a corpus test holding the judgment and the rendering together; and that graph formatting forms the module program as `--check --graph` does and reports any other failure as `--check` would. Refused: formatting during checking, a formatter script per downstream project, and writing canonical bytes to standard output.
 
+## 2026-10-20 The merge-base compiler is cached per main commit, and its cold build is report-only
+
+Nodes: compiler/verification, compiler/merge-base-compiler-cache
+
+Summary: The paired performance comparison builds the main line's compiler as its baseline, a cold build of about 110 s that overran its 115 s budget on about one run in four and turned unrelated pull requests red. The owner chose on 2026-10-13 to cache that compiler per main commit and toolchain, with an exact key and no prefix restore, and on 2026-10-14 to make the baseline build report-only, because it builds the main line's own code that no pull request changes. The cache misses after each runner image change, so the first pull request after one builds cold; that build is recorded but does not fail the verdict. The candidate build keeps its own enforced budget.
+
+## 2026-10-13 One compilation lists every non-exhaustive match
+
+Nodes: compiler/rejection-payloads
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the decision that Whitefoot#444 (one compilation lists every non-exhaustive match) adds to the design tree?" (translated), shown at head commit 4cca9198f.
+
+Summary: A non-exhaustive match records its edit site and the same structural walk continues over the written arms and later functions, reporting the first established event with every recorded site, because ERR-2 promises site-enumerated edit lists and one site per compile costs an agent a round per match when adding a variant, instead of stopping at the first site. Missing arms contribute no path or guessed binding, pending sites fail before proof analysis or receipt publication, and a same-node rejection under an earlier-defined rule still wins under DIAG-1; re-running with masked matches or a second checker and narrowing ERR-2 to the first site are rejected.
 ## 2026-10-13 Release packages carry their own clang, and macOS stack probing follows the clang in use
 
 Nodes: compiler/toolchain-resolution, compiler/resource-exhaustion-floor, compiler/downstream-releases
