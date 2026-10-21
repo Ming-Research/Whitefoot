@@ -10,6 +10,17 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/verification
 
 Summary: The time-budget decision said a model with fewer than 20 recorded runs has no column, while the budget table has carried a column for one Intel Xeon model since the owner added it, valued at the larger of the row's largest class budget and the model's own runs by the rule. The tree now says so: such a column exists only when the owner adds it and takes that value, because a few runs can show that a class needs more time but not that it needs less, instead of the model's own runs alone or the unmapped-model fallback alone. The recompute tool applies this value to every such column, so the tree states what the table and the tool already do; no budget value changes. The grounds are in the [time-budget investigation](../research/investigations/test-economy/time-budgets.md#xeon-platinum-8573c-column-candidate-compiler-budget-and-cached-baseline-compiler-2026-10-13), which also records the recompute of the Linux columns.
+## 2026-10-13 Rejection text spells source constructs as the writer wrote them
+
+Nodes: compiler/rejection-payloads, compiler/diagnostic-rendering
+
+Summary: Proof-goal places share the one canonical place renderer; a computed call argument or range endpoint is spelled by the source text retained at that occurrence, kept out of proof identities, and a binding rewritten since then still prints `?`, replacing the earlier refusal to invent an expression for a computed index with refusals of invented text and of a rewritten binding's current name; a callee keeps the alias or `pkg::` prefix written at the call with its generic arguments. A normalized relation keeps its mathematical form and writes each constant as a legal literal or exact literal expression, because normalization can produce a negative bound from unsigned operands. A failed postcondition keeps `relation` and adds `clause`, the written comparison with each result datum replaced by the returned value, because normalization can reverse and fold what the writer wrote. Text-format list items that are strings are double-quoted, because a string can contain the list separator.
+
+## 2026-10-21 Safety claims are stated on one checked page
+
+Nodes: language/safety-claims
+
+Summary: The safety claims were spread over the README, the constitution, the specification and articles, with no place that connected each claim to the rules and cases behind it. A new node puts them on one page whose rows cite specification rules and conformance cases, with the limits quoted from the specification and the trusted base sized, and `make static` holds every citation to the specification and the manifest and the presence of each limit, because a page nothing reads drifts, which the refused rule-to-ground ledger already showed. Tagging cases in the manifest, generating the page from the manifest, leaving the page unchecked and holding the size figures to the checkout are rejected.
 
 ## 2026-10-20 Programs open host paths through an explicit authority no program can construct, and an open of an existing directory never creates one
 
