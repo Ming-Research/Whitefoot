@@ -355,7 +355,8 @@ def self_test():
         + [("stage/six", "Big CPU", 4000 + 100 * i, 9 + i // 3, 0) for i in range(15)]    # 15 runs, logged twice
         + [("stage/seven", "Big CPU", 5000, 14, 0)] * 25                                    # 55 s
         + [("stage/seven", "Small CPU", 3000, 14, 0)] * 25                                  # 35 s
-        + [("stage/eight", "Big CPU", 7000, 15, 0)] * 25)                                   # 77 s -> 80; the others no run
+        + [("stage/eight", "Big CPU", 7000, 15, 0)] * 25                                    # 77 s -> 80
+        + [("stage/eight", "Thin CPU", 4000, 15, 0)] * 3)                                   # 3 runs: 45 s by the rule
     # A rerun attempt lists the earlier attempts' jobs again under new job ids,
     # with the same run, stage and time; they count once. A job whose CPU model
     # was not logged is not sampled.
@@ -384,7 +385,8 @@ def self_test():
     # Two classes have enough runs, 55 s and 35 s by the rule: the class
     # without runs takes the larger of them, not the smaller.
     assert table.cells("stage/seven") == {"big-1": "55", "small-2": "35", "thin-3": "55", "macos": "70", "windows": "-"}
-    # A class without a run keeps its value, the owner's column takes the row's largest.
+    # A class without a run keeps its value; the owner's column takes the row's
+    # recomputed 80 s, not its own three runs' 45 s.
     assert table.cells("stage/eight") == {"big-1": "80", "small-2": "45", "thin-3": "80", "macos": "50", "windows": "-"}
     out = table.text().split("\n")
     old = table_text.split("\n")
