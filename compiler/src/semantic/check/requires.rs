@@ -81,6 +81,7 @@ fn definition_offset(
     value: &CheckedExpression,
     definitions: &[ClauseDefinition],
     offsets: &DefinitionOffsets,
+    places: &super::super::places::CapturedPlaceTable,
 ) -> Option<(CheckedExpression, CapturedTerm)> {
     match value {
         CheckedExpression::Binding {
@@ -105,7 +106,20 @@ fn definition_offset(
         CheckedExpression::Constant(CheckedValue::ConstGeneric { declaration, .. }) => {
             Some((value.clone(), CapturedTerm::Const(*declaration)))
         }
-        _ => None,
+        _ => {
+            let place = super::super::places::tracked_offset_place(value)?;
+            if !matches!(value.ty(), CheckedType::Integer(_)) {
+                return None;
+            }
+            let id = places.intern(place.clone());
+            let term = match place.root {
+                super::super::places::PlaceRoot::Binding(binding) if place.path.is_empty() => {
+                    CapturedTerm::Binding(binding)
+                }
+                _ => CapturedTerm::Place(id),
+            };
+            Some((value.clone(), term))
+        }
     }
 }
 
@@ -191,13 +205,20 @@ pub(super) struct ClausePlaces {
 
 impl ClausePlaces {
     /// Records one checked definition, in written order.
-    pub(super) fn define(&mut self, binding: BindingId, value: &CheckedExpression) {
+    pub(super) fn define(
+        &mut self,
+        binding: BindingId,
+        value: &CheckedExpression,
+        captured_places: &super::super::places::CapturedPlaceTable,
+    ) {
         let mut places = Vec::new();
         collect_clause_places(value, &mut places);
         for place in &mut places {
             expand_definition_offsets(place, &self.offsets);
         }
-        if let Some(offset) = definition_offset(value, &self.definitions, &self.offsets) {
+        if let Some(offset) =
+            definition_offset(value, &self.definitions, &self.offsets, captured_places)
+        {
             self.offsets.insert(binding, offset);
         }
         let mut uses = Vec::new();
@@ -529,7 +550,7 @@ impl<'unit> Checker<'_, 'unit> {
                 &expanded_bindings,
             )?;
             expanded_bindings.insert(*binding, expanded);
-            clause_places.define(*binding, value);
+            clause_places.define(*binding, value, &self.types.captured_places);
         }
 
         // [ENT-2, FN-8] a requirement forms its places at body entry, in the
@@ -1786,7 +1807,7 @@ impl<'unit> TypeContext<'unit> {
     /// content is measured [OP-14]. Everywhere else it is the ordinary field
     /// of that name, as it is in an expression.
     fn clause_trailing_measure(
-        &mut self,
+        &self,
         check_context: &CheckContext<'_>,
         suffixes: &[NodeId],
         base: CheckedType,
@@ -1895,6 +1916,9 @@ impl<'unit> TypeContext<'unit> {
                         GoalProjection::FormalSubscript { ordinal } => {
                             GoalProjection::FormalPage { ordinal }
                         }
+                        GoalProjection::FormalPlaceSubscript { ordinal, place, ty } => {
+                            GoalProjection::FormalPlacePage { ordinal, place, ty }
+                        }
                         _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
                     }
                 } else {
@@ -1952,16 +1976,14 @@ impl<'unit> TypeContext<'unit> {
     /// clause (b) place is itself a clause (a) or clause (c) term, because the
     /// place's identity is decided over its offsets." A clause is no
     /// evaluation, so the offset carries no occurrence of its own: [ENT-2]
-    /// makes two places one term when "their canonical source spellings are
-    /// byte-identical", which is exactly what keys this projection, and
-    /// [ENT-5] puts the offset's own support into every enclosing term so a
-    /// write to it kills them all.
+    /// identifies the substituted place by its proof root and ordered steps,
+    /// using each offset's current-place identity. [ENT-5] puts the offset's
+    /// own support into every enclosing term so a write to it kills them all.
     ///
     /// A parameter offset is kept as the formal it names, because a caller
     /// substitutes its own actual there [FN-8, CALL-6]; a literal and a const
-    /// are values and need no substitution. Any other tracked-place offset,
-    /// one with projections or a definition, is admitted but not represented
-    /// here and is reported as the compiler capability it is [DIAG-1]; an
+    /// are values and need no substitution. Field and dereference offsets
+    /// retain their complete projected parameter identity; an
     /// element read never reaches here, because a subscript that ends a
     /// clause place is refused first.
     fn clause_subscript_projection(
@@ -2034,15 +2056,16 @@ impl<'unit> TypeContext<'unit> {
                 .declarations
                 .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
         };
-        if !self
+        let suffixes = self
             .declarations
             .tree
-            .children_with(place, Production::Psuffix)?
-            .is_empty()
-        {
-            return self
-                .declarations
-                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+            .children_with(place, Production::Psuffix)?;
+        for step in &suffixes {
+            if self.declarations.tree.subscript_offset(*step)?.is_some() {
+                return self
+                    .declarations
+                    .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+            }
         }
         let pbase = self
             .declarations
@@ -2057,7 +2080,7 @@ impl<'unit> TypeContext<'unit> {
                 .declarations
                 .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
         };
-        if class == DeclarationClass::NamedConst {
+        if class == DeclarationClass::NamedConst && suffixes.is_empty() {
             let constant = self
                 .constants
                 .get(&declaration)
@@ -2083,19 +2106,110 @@ impl<'unit> TypeContext<'unit> {
         let local = bindings
             .get(&declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        match expanded_bindings.get(&local.binding) {
-            Some(ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
-                ordinal,
-                projections,
-                ..
-            })) if projections.is_empty() && local.mode == CheckedMode::Own => Ok((
+        let Some(ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
+            ordinal,
+            projections,
+            ty,
+            ..
+        })) = expanded_bindings.get(&local.binding)
+        else {
+            return self
+                .declarations
+                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+        };
+        let parameter_reference = bindings.values().any(|binding| {
+            binding.mode.is_reference()
+                && matches!(expanded_bindings.get(&binding.binding),
+                    Some(ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
+                        ordinal: candidate, projections, ..
+                    })) if candidate == ordinal && projections.is_empty())
+        });
+        let mut projections = projections.clone();
+        // A definition has already expanded its reference caret, whereas a
+        // direct reference parameter still writes that caret in the source.
+        if parameter_reference
+            && !local.mode.is_reference()
+            && matches!(projections.first(), Some(GoalProjection::Deref))
+        {
+            projections.remove(0);
+        }
+        let mut suffixes = suffixes.as_slice();
+        if local.mode.is_reference() {
+            let Some((&caret, remaining)) = suffixes.split_first() else {
+                return self
+                    .declarations
+                    .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+            };
+            if !matches!(
+                self.declarations.tree.place_suffix(caret)?,
+                crate::syntax::views::PlaceSuffix::Dereference
+            ) {
+                return self
+                    .declarations
+                    .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+            }
+            suffixes = remaining;
+        }
+        // Measure-valued offsets retain their existing unsupported result:
+        // the checked measure member needs more than an ordinary field path.
+        if self
+            .clause_trailing_measure(
+                check_context,
+                suffixes,
+                *ty,
+                false,
+                bindings,
+                expanded_bindings,
+            )?
+            .is_some()
+        {
+            return self
+                .declarations
+                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+        }
+        let (members, ty, _) = self.clause_member_projections(
+            check_context,
+            suffixes,
+            *ty,
+            false,
+            bindings,
+            expanded_bindings,
+        )?;
+        projections.extend(members);
+        if !matches!(ty, CheckedType::Integer(_))
+            || projections.iter().any(|projection| {
+                !matches!(
+                    projection,
+                    GoalProjection::Deref
+                        | GoalProjection::Field(_)
+                        | GoalProjection::Payload { .. }
+                )
+            })
+        {
+            return self
+                .declarations
+                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+        }
+        if projections.is_empty() && !parameter_reference {
+            return Ok((
                 GoalProjection::FormalSubscript { ordinal: *ordinal },
                 element,
-            )),
-            _ => self
-                .declarations
-                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix),
+            ));
         }
+        let captured = self.captured_places.intern_formal(
+            projections
+                .iter()
+                .map(|projection| projection.place_step())
+                .collect(),
+        );
+        Ok((
+            GoalProjection::FormalPlaceSubscript {
+                ordinal: *ordinal,
+                place: captured,
+                ty,
+            },
+            element,
+        ))
     }
     fn build_clause_place(
         &mut self,

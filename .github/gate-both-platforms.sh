@@ -84,7 +84,7 @@ judge() {
     absent=0
     failed=0
     for group in $groups; do
-        for os in ubuntu-24.04 macos-15; do
+        for os in ${GATE_PLATFORMS:-ubuntu-24.04 macos-15}; do
             name="$group ($os)"
             found=$(awk -F '\t' -v name="$name" '$2 == name && !seen { seen = 1; print "x" $3 }' "$work/sorted.tsv")
             if [ -z "$found" ]; then

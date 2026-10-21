@@ -110,6 +110,7 @@ fn execute_container_program(
     name: &str,
     sources: &[(&str, &[u8])],
     expected_allocations: usize,
+    expected_status: i32,
     check_observer_controls: bool,
 ) {
     let modes = [
@@ -125,7 +126,7 @@ fn execute_container_program(
         // Exercise ordinary deallocation as well as the observed image below:
         // the ledger quarantines released allocations to distinguish identities.
         let output = build_program(&llvm).run_with_workers(None);
-        assert_eq!(output.status.code(), Some(0), "{context}: {output:?}");
+        assert_eq!(output.status.code(), Some(expected_status), "{context}: {output:?}");
         assert!(output.stdout.is_empty(), "{context}: {output:?}");
         assert!(output.stderr.is_empty(), "{context}: {output:?}");
 
@@ -158,7 +159,7 @@ fn execute_container_program(
             ],
         );
         let output = observed_program.run_with_workers(None);
-        assert_eq!(output.status.code(), Some(0), "{context}: {output:?}");
+        assert_eq!(output.status.code(), Some(expected_status), "{context}: {output:?}");
         assert!(output.stderr.is_empty(), "{context}: {output:?}");
         assert_eq!(
             output.stdout,
@@ -213,7 +214,9 @@ fn grow_vector_executes_and_releases_every_allocation_in_both_lowering_modes() {
         "containers/grow-vector-program.wf",
         include_bytes!("../../../tests/programs/containers/grow-vector-program.wf"),
     )];
-    execute_container_program("grow-vector", &sources, 25, true);
+    // 100 plus the lengths 2, 3, 0, 2 and 3 the program reads after its
+    // appends, inserts and drain [MSR-1].
+    execute_container_program("grow-vector", &sources, 25, 110, true);
 }
 
 #[test]
@@ -228,9 +231,14 @@ fn slab_operations_and_memberships_release_every_owner_in_both_lowering_modes() 
             include_bytes!("../../../tests/programs/containers/slab-program.wf"),
         ),
     ];
-    // Seven total backings, nine operation payloads (four affine and five
-    // nodrop), and three payloads in the two membership protocols.
-    execute_container_program("slab", &sources, 19, false);
+    // Original cases: seven backing/header events, nine operation payloads
+    // (four affine and five nodrop), and three membership payloads: 19.
+    // Growth adds four nodrop payload Boxes and seven backing/header events:
+    // live tickets construct at two and grow to four; the free-list case does
+    // the same; ceiling refusal retains one backing; empty-to-three growth
+    // consumes one shared header and allocates one backing. Equal, smaller and
+    // above-ceiling reserve requests allocate nothing. Total: 19 + 4 + 7 = 30.
+    execute_container_program("slab", &sources, 30, 0, false);
 }
 
 #[test]
@@ -241,7 +249,7 @@ fn deque_wrap_rebase_and_consumption_release_every_owner_in_both_lowering_modes(
     )];
     // Six scalar, two affine, three nodrop and two zero-sized backings;
     // three affine and five nodrop payloads. Every rebase creates a new backing.
-    execute_container_program("deque", &sources, 21, false);
+    execute_container_program("deque", &sources, 21, 0, false);
 }
 
 #[test]
@@ -264,7 +272,7 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
     // 11 (growth 0 -> 1 -> 2 -> 3), resumable scan 48 (8 -> 512 under 300
     // insertions; an empty map; 8 -> 512 again with insertions behind the
     // cursor; a colliding map): 114.
-    execute_container_program("hash-map", &sources, 114, false);
+    execute_container_program("hash-map", &sources, 114, 0, false);
 }
 
 #[test]
@@ -291,7 +299,7 @@ fn priority_queue_orders_and_preserves_every_owner_in_both_lowering_modes() {
     // oracle sorts a separate array and checks each owner identity. The native
     // ledger additionally observes actual releases, including growth, refused
     // owner retry, zero capacity and zero-sized u64-max logical capacity.
-    execute_container_program("priority-queue", &sources, 63, false);
+    execute_container_program("priority-queue", &sources, 63, 0, false);
 }
 
 #[test]
@@ -317,7 +325,7 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
     // four rebuilds took four (+7 per trace, +28): 179.
     // The source model independently checks
     // dictionary membership, sorted expiration and exact owner identities.
-    execute_container_program("indexed-membership", &sources, 179, false);
+    execute_container_program("indexed-membership", &sources, 179, 0, false);
 }
 
 #[test]
@@ -330,5 +338,5 @@ fn ordered_map_mutations_match_sorted_oracle_and_preserve_every_owner_in_both_lo
     // Boxes. The additional owning map checks leaf and internal replacement
     // below its ceiling: three nodes and thirty-six payloads add 39 to the
     // original 64-allocation public mutation and traversal chain.
-    execute_container_program("ordered-map", &sources, 103, false);
+    execute_container_program("ordered-map", &sources, 103, 0, false);
 }

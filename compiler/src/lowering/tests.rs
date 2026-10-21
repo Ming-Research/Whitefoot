@@ -2658,11 +2658,9 @@ fn element_taken_back() -> result: u64 pure waits {
   let slots = slots_new::<Shared<u64>, 4>();
   place_back(window: &slots, value: move cell);
   let seen = 0_u64;
-  if 0_u64 < slots.len {
-    atomic state = &slots[0_u64] {
-      let taken = take_back(window: &slots);
-      set seen = state^;
-    }
+  atomic state = &slots[0_u64] {
+    let taken = take_back(window: &slots);
+    set seen = state^;
   }
   return seen;
 }

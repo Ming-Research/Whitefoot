@@ -106,8 +106,10 @@ fn concrete_generic_struct_enum_and_const_nominal_instances_execute() {
         );
     }
 
+    // The program exits with the u8 a generic struct carried in an Option
+    // payload, 19; every check it still makes fails with status 1.
     let output = compile_and_run(&llvm);
-    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.status.code(), Some(19), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }
