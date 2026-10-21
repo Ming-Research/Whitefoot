@@ -10,6 +10,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/verification
 
 Summary: The hosted gate stops adding macOS for ready pull requests, the main line and manual runs, and its final job requires every group green on Linux alone. The hosted macOS runners take five jobs at a time; with several ready pull requests at once, a run's macOS jobs waited about 43 minutes for a runner while five ran and ten more queued, and merges waited behind them. The change is provisional: macOS returns, in a form still to be chosen, before the first release, whose release workflow still requires a gate run with macOS jobs on the released commit. The decision on a failed scope query no longer mentions dropping macOS.
+
 ## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
 
 Nodes: compiler/verification
