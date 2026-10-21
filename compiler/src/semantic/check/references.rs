@@ -1367,7 +1367,7 @@ impl<'unit> Checker<'_, 'unit> {
             let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
             self.check_place_offset(offset_node, &offset)?;
             let captured = self.body.note_capture(
-                Checker::captured_of(offset_node, &offset.expression)
+                self.captured_of(offset_node, &offset.expression)
                     .unwrap_or(CapturedValue::unknown()),
                 bindings,
             );
@@ -1729,7 +1729,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let mut probe = bindings.clone();
                 let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
                 self.check_place_offset(offset_node, &offset)?;
-                let Some(captured) = Checker::captured_of(offset_node, &offset.expression) else {
+                let Some(captured) = self.captured_of(offset_node, &offset.expression) else {
                     return self
                         .types
                         .declarations
@@ -1939,7 +1939,7 @@ impl<'unit> Checker<'_, 'unit> {
             let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
             self.check_place_offset(offset_node, &offset)?;
             let captured = self.body.note_capture(
-                Checker::captured_of(offset_node, &offset.expression)
+                self.captured_of(offset_node, &offset.expression)
                     .unwrap_or(CapturedValue::unknown()),
                 bindings,
             );
@@ -2304,10 +2304,17 @@ impl<'unit> Checker<'_, 'unit> {
             CapturedTerm::Binding(binding) | CapturedTerm::Superseded(binding) => {
                 bindings.values().find(|local| local.binding == binding)?
             }
-            CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Opaque => {
+            CapturedTerm::Literal(_)
+            | CapturedTerm::Const(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => {
                 return None;
             }
         };
+        if local.mode != super::super::model::CheckedMode::Own {
+            return None;
+        }
         let holds_call_value =
             matches!(captured.term, CapturedTerm::Binding(_)) && local.call_value;
         if !holds_call_value && !self.body.call_value_captures.contains(&captured.capture) {
@@ -2734,6 +2741,90 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<(), CheckStop> {
         self.invalidate_references_with_separation(bindings, written, event, None)
     }
+    /// [REF-1, ENT-5] a captured offset stops naming its current source
+    /// when any support member changes. A holder replacement reaches only
+    /// that holder; an ordinary storage write resolves reference support.
+    /// Neither operation changes the storage an existing reference captured.
+    pub(super) fn supersede_reference_offsets(
+        &self,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        written: &ResolvedPlace,
+        holder_only: bool,
+    ) {
+        let superseded = bindings
+            .values()
+            .flat_map(|local| local.reference.iter().chain(&local.commit_target))
+            .flat_map(|reference| reference.paths.iter().chain(&reference.anchors))
+            .flat_map(ResolvedPlace::spelled_indices)
+            .filter_map(|(_, term)| {
+                let overwritten = self.captured_places.support(term).iter().any(|read| {
+                    if written.root == read.root && written.path.is_empty() {
+                        return true;
+                    }
+                    // A holder replacement writes no referent storage.
+                    if holder_only {
+                        return false;
+                    }
+                    let mut targets = match read.root {
+                        PlaceRoot::Binding(binding) => bindings
+                            .values()
+                            .find(|local| local.binding == binding)
+                            .and_then(|local| local.reference.as_ref())
+                            .map(|reference| reference.paths.clone())
+                            .unwrap_or_else(|| {
+                                vec![ResolvedPlace {
+                                    path: Vec::new(),
+                                    ..read.clone()
+                                }]
+                            }),
+                        PlaceRoot::Constant(_) => vec![ResolvedPlace {
+                            path: Vec::new(),
+                            ..read.clone()
+                        }],
+                    };
+                    targets
+                        .iter_mut()
+                        .for_each(|target| target.path.extend(&read.path));
+                    targets
+                        .iter()
+                        .any(|target| places_overlap(&UnprovedSeparations, target, written))
+                });
+                overwritten.then_some(term)
+            })
+            .collect::<Vec<_>>();
+        for reference in bindings.values_mut().flat_map(|local| {
+            local
+                .reference
+                .iter_mut()
+                .chain(local.commit_target.iter_mut())
+        }) {
+            for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
+                for term in &superseded {
+                    if let CapturedTerm::Binding(binding) = term {
+                        path.supersede_binding(*binding);
+                    } else {
+                        path.supersede_term(*term);
+                    }
+                }
+            }
+        }
+
+        // [REF-1] a reference keeps the index value its formation read, so a
+        // write of that binding leaves the reference valid but ends the
+        // binding's spelling as a name for its index. [EFF-1] A parameter no
+        // longer holds its call value.
+        if written.path.is_empty()
+            && let PlaceRoot::Binding(binding) = written.root
+        {
+            for local in bindings
+                .values_mut()
+                .filter(|local| local.binding == binding)
+            {
+                local.call_value = false;
+            }
+        }
+    }
+
     /// The event site fixes the proof context. Preserving a bystander is an
     /// optional question until a later use demands this validity fact.
     pub(super) fn invalidate_references_with_separation(
@@ -2744,30 +2835,7 @@ impl<'unit> TypeContext<'unit> {
         site: Option<&crate::NodePath>,
     ) -> Result<(), CheckStop> {
         HandleWatch::observe(bindings, written);
-        // [REF-1] a reference keeps the index value its formation read, so a
-        // write of that binding leaves the reference valid but ends the
-        // binding's spelling as a name for its index. [EFF-1] A parameter no
-        // longer holds its call value.
-        if written.path.is_empty()
-            && let PlaceRoot::Binding(binding) = written.root
-        {
-            for reference in bindings.values_mut().flat_map(|local| {
-                local
-                    .reference
-                    .iter_mut()
-                    .chain(local.commit_target.iter_mut())
-            }) {
-                for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
-                    path.supersede_binding(binding);
-                }
-            }
-            for local in bindings
-                .values_mut()
-                .filter(|local| local.binding == binding)
-            {
-                local.call_value = false;
-            }
-        }
+        self.supersede_reference_offsets(bindings, written, false);
         let include_equal = matches!(
             event,
             InvalidationEvent::PrefixMoved | InvalidationEvent::PrefixReleased
@@ -2941,8 +3009,8 @@ mod tests {
                 let local = LocalBinding {
                     binding: BindingId(0),
                     declaration: id,
-                    mode: CheckedMode::Reference,
-                    ty: CheckedType::Unit,
+                    mode: CheckedMode::Own,
+                    ty: CheckedType::Integer(crate::semantic::model::IntegerType::U64),
                     live: true,
                     loop_depth: 0,
                     compiler_updated: false,
@@ -2960,6 +3028,10 @@ mod tests {
                 place.path.push(PlaceStep::Field(2));
                 assert_eq!(checker.captured_parameter(capture, &bindings), expected.0);
                 assert_eq!(checker.is_atomic_binder(id), expected.1);
+                // [EFF-1] an offset is a value parameter, while an effect
+                // root is a reference parameter: exercise each in its mode.
+                bindings.get_mut(&id).unwrap().mode = CheckedMode::Reference;
+                assert_eq!(checker.captured_parameter(capture, &bindings), None);
                 let paths = checker
                     .effect_paths_for_place(declarations.tree.root(), &place, &bindings)
                     .unwrap_or_else(|_| panic!("the place projects without a stop"))
@@ -2991,6 +3063,14 @@ mod tests {
                     checker.captured_parameter(superseded, &bindings),
                     expected.0
                 );
+                // Recorded call-value captures do not turn a reference
+                // parameter into an admitted value-parameter offset.
+                for mode in [CheckedMode::Reference, CheckedMode::Range, CheckedMode::Run] {
+                    bindings.get_mut(&id).unwrap().mode = mode;
+                    assert_eq!(checker.captured_parameter(capture, &bindings), None);
+                    assert_eq!(checker.captured_parameter(superseded, &bindings), None);
+                }
+                bindings.get_mut(&id).unwrap().mode = CheckedMode::Own;
                 checker.body.call_value_captures.clear();
                 bindings.clear();
                 assert_eq!(checker.captured_parameter(capture, &bindings), None);
@@ -3192,8 +3272,85 @@ mod tests {
             other_formation.paths[0]
                 .spelled_indices()
                 .collect::<Vec<_>>(),
-            [(CaptureId::source(1), BindingId(1))]
+            [(CaptureId::source(1), CapturedTerm::Binding(BindingId(1)))]
         );
+    }
+
+    /// [REF-1, ENT-5] a `set` target's selected payload storage, held while
+    /// its right-hand side is checked, captures its projected offset like a
+    /// reference does: a write of the offset's support ends that offset's
+    /// spelling there too. A holder-only replacement and a write of another
+    /// field leave it current.
+    #[test]
+    fn a_support_write_supersedes_a_projected_offset_in_a_set_payload_target() {
+        use crate::semantic::places::{CaptureId, CapturedTerm, CapturedValue};
+        crate::resolution::with_each_declaration_role(|resolved| {
+            let declarations = DeclarationInventory {
+                resolved,
+                ledger_line_starts: Default::default(),
+                no_heap: false,
+                tree: TreeView::new(resolved.syntax()).unwrap(),
+            };
+            let types = TypeContext::new(&declarations);
+            // `set t[s.k].Some.value = ...`: t is BindingId(0), s BindingId(1).
+            let field = |ordinal: u32| {
+                let mut place = ResolvedPlace::binding(BindingId(1));
+                place.path.push(PlaceStep::Field(ordinal));
+                place
+            };
+            let id = types.captured_places.intern(field(0));
+            let mut target = ResolvedPlace::binding(BindingId(0));
+            target.push_subscript(CapturedValue::new(
+                CaptureId::source(0),
+                CapturedTerm::Place(id),
+            ));
+            target.path.push(PlaceStep::Payload {
+                variant: 0,
+                field: 0,
+            });
+            let declaration = DeclarationId::from_index(0).unwrap();
+            let fresh = || {
+                HashMap::from([(
+                    declaration,
+                    LocalBinding {
+                        binding: BindingId(0),
+                        declaration,
+                        mode: CheckedMode::Own,
+                        ty: CheckedType::Integer(crate::semantic::model::IntegerType::U64),
+                        live: true,
+                        loop_depth: 0,
+                        compiler_updated: false,
+                        reference: None,
+                        commit_target: Some(ReferenceInfo::formed_paths(
+                            ReferenceKind::Single,
+                            vec![target.clone()],
+                        )),
+                        refinement_witnesses: Vec::new(),
+                        handle_watch: None,
+                        call_value: false,
+                        read_only_state: false,
+                    },
+                )])
+            };
+            let offset_term = |bindings: &HashMap<DeclarationId, LocalBinding>| {
+                let target = bindings[&declaration].commit_target.as_ref().unwrap();
+                assert!(target.is_valid(), "superseding writes no referent storage");
+                let [PlaceStep::Index(value), PlaceStep::Payload { .. }] =
+                    target.paths[0].path.as_slice()
+                else {
+                    panic!("the target keeps its subscript and payload steps");
+                };
+                value.term
+            };
+
+            let mut bindings = fresh();
+            types.supersede_reference_offsets(&mut bindings, &field(1), false);
+            assert_eq!(offset_term(&bindings), CapturedTerm::Place(id));
+            types.supersede_reference_offsets(&mut bindings, &field(0), true);
+            assert_eq!(offset_term(&bindings), CapturedTerm::Place(id));
+            types.supersede_reference_offsets(&mut bindings, &field(0), false);
+            assert_eq!(offset_term(&bindings), CapturedTerm::SupersededPlace(id));
+        });
     }
 
     /// [REF-1] classify when a contribution retains its entering shape and

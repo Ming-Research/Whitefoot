@@ -537,6 +537,17 @@ impl SemanticLocation {
     }
 }
 
+/// One source match that omits declared enum variants [ERR-2].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonExhaustiveMatchSite {
+    /// The canonical match node and its complete source extent.
+    pub location: SemanticLocation,
+    /// The enum's source name, rather than a backend instance identity.
+    pub enum_name: String,
+    /// Declared variants with no written arm, in declaration order.
+    pub missing_variants: Vec<String>,
+}
+
 /// One non-discharged static source obligation disposition [ENT-6].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StaticObligationDisposition {
@@ -1048,6 +1059,19 @@ pub enum SemanticIssueKind {
     },
     /// A contract predicate is not exactly `own Bool`.
     InvalidPredicateCondition,
+    /// [OP-5] the fixed automatic derivation decides an `if` or `value_if`
+    /// condition: every fact the selected branch would establish is already
+    /// derivable, so the test and its dead branch are a redundant source form.
+    RedundantCondition {
+        /// The rendered condition.
+        residual: String,
+        /// The truth the condition is decided to have.
+        decided: String,
+        /// The source facts of the proofs that decided it.
+        facts: Vec<String>,
+        /// The repair [DIAG-1]: delete the test and its dead branch.
+        mechanical_fix: String,
+    },
     /// A conditional was written in a form GRAM-6 does not admit for its
     /// class: a Bool-scrutinee `match`, an empty `else`, or an `else` block
     /// holding exactly one `if`.
@@ -1452,6 +1476,9 @@ pub enum SemanticIssueKind {
     NonExhaustiveMatch {
         /// Declared variants with no arm, in declaration order.
         missing_variants: Vec<String>,
+        /// Every recorded site in traversal order, including the primary
+        /// site, with each canonical source node listed once across instances.
+        other_sites: Vec<NonExhaustiveMatchSite>,
     },
     /// An enum selection repeats a declared variant.
     DuplicateMatchVariant {

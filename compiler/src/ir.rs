@@ -2024,6 +2024,8 @@ pub enum IrSourceArgument {
 /// reevaluated to produce this metadata, and it adds no executable read.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IrSourceCall {
+    /// Exact checked source occurrence, retained only for diagnostic location.
+    pub(crate) origin: crate::NodePath,
     pub(crate) result: IrValueId,
     pub(crate) arguments: Vec<IrSourceArgument>,
     /// A direct borrow result's checked candidate. Absence says nothing about

@@ -89,7 +89,9 @@ Source: [specification and test integrity](../AGENTS.md#specification-and-test-i
   follow the maximum of at least the 20 most recent runs plus 10%, rounded up
   to 5 s, with a 10 s floor; models with fewer runs have no column. Unknown
   models use the stage's largest Linux value with a recorded note. macOS
-  overruns are report-only; Linux and Windows overruns and missing rows on any host fail the verdict. A raised
+  overruns and the stages named in `WHITEFOOT_BUDGET_REPORT_ONLY` are
+  report-only; other Linux and Windows overruns and missing rows on any host
+  fail the verdict. A raised
   budget has the owner's decision; a change that makes a stage much faster
   lowers its budget.
   An overrun reported as runner variance names what the change adds to that
@@ -104,8 +106,8 @@ Source: [branch and main boundary](../AGENTS.md#branch-and-main-boundary).
   report shows the affected rules, their before/after behavior and the
   decision card that selected each or why it needed none. Conformance changes
   explain what changed and their selection ground. A PR marked ready has the
-  owner's approval of every specification change it carries, recorded in
-  `spec/log.md`.
+  owner's approval of every specification change it carries and a
+  `spec/log.md` entry naming its rules.
 
 Existing checks: `git diff --check` for patch whitespace; `make static` for
 repository invariants, specification archives (immutability and amendment

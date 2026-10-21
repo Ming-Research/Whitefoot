@@ -26,9 +26,5 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 2_u8);
   }
   let next = separator +wrap 1_u8;
-  if next == '-'_u8 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
-  return exit_status(code: 0_u8);
+  return exit_status(code: next);
 }

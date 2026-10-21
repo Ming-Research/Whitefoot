@@ -111,6 +111,13 @@ completion criterion were refused.
   not establish competitiveness against optimized native implementations; the
   bounded 2026-09-22 control that permits native vectorization on two fixtures
   is retained beside the bundle.
+- [`hash-map-compare/`](hash-map-compare/README.md) — the ordinary `HashMap`
+  before and after a library change: two compilers that differ only in
+  `lib/std/collections/hash_map/`, paired base/candidate/twin rounds over
+  seven operations at three sizes, judged from distribution-free 95% intervals
+  once the twin resolves each cell, plus deterministic memory cells and the
+  candidate's scan hold times. Run on request by `hash-map-bench.yml`, on a
+  hosted runner or the i9-14900K; never a gate. No result is recorded yet.
 
 ## Completed current-compiler bounded research
 
