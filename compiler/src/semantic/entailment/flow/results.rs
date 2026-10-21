@@ -1395,14 +1395,14 @@ fn unread() -> result: Outcome pure {
   None();
 }
 
-fn probe(flag: Bool) -> result: u64 pure {
+fn probe(flag: Bool, inner: Bool) -> result: u64 pure {
   let dead = Outcome::None();
   let dead_copy = dead;
   let live = Outcome::Some(value: 7_u64);
   let copied = live;
   set live = copied;
   let delivered = if flag {
-    let nested = if flag {
+    let nested = if inner {
       give copied;
     } else {
       give live;
