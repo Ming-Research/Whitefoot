@@ -83,8 +83,8 @@ fn a_non_bool_condition_is_a_gram6_rejection_at_the_condition() {
 
 #[test]
 fn checked_value_initializers_retain_their_source_production_kind() {
-    let source = br#"fn main() -> status: std::process::ExitStatus pure {
-  let flag = True();
+    let source = br#"fn examine(choice: Bool) -> result: unit pure {
+  let flag = choice;
   let from_if = if flag {
     give 1_i32;
   } else {
@@ -99,6 +99,12 @@ fn checked_value_initializers_retain_their_source_production_kind() {
       give 0_i32;
     }
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let choice = True();
+  examine(choice: choice);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -106,7 +112,15 @@ fn checked_value_initializers_retain_their_source_production_kind() {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("value initializer kinds must check: {outcome:?}");
         };
-        let body = &checked.data.functions[0].body.as_deref().expect("WF body");
+        let body = &checked
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "examine")
+            .expect("examine")
+            .body
+            .as_deref()
+            .expect("WF body");
         let CheckedStatement::ValueMatchLet { kind, .. } = &body[1] else {
             panic!("second statement must be the value-if initializer");
         };

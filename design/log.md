@@ -1,9 +1,110 @@
 # Design tree change log
 
-Newest first. One entry per approved change of the tree: a dated title,
-`Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
-the owner's agent instructions own the form. Older entries also record refused amendments,
-a mechanism since retired.
+Newest first. One entry per change of the tree: a dated title, `Nodes:`
+naming every node changed and `Summary:`; the owner's agent instructions own
+the form. Older entries also record refused amendments, a mechanism since
+retired, and carry an `Owner-approved:` line, a field since retired.
+
+## 2026-10-21 Syntax diagnostics are segmented per top-level declaration, expected tokens come from the parse stack, and repair hints stay where they compile
+
+Nodes: compiler, compiler/diagnostic-rendering, compiler/diagnostic-repairs, compiler/incremental-compilation, language/grammar
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the specification and design logs, mark it ready and merge it through the coordinator after the gate on both platforms (if main advances, the version is main plus one and the rules are unchanged)" (translated), on the card "approve the grammar-diagnostic rules of specification v0.150 and the design-tree change in PR Whitefoot#430 at head commit 832bdd593?" (translated); it carries out the owner's 2026-10-13 rulings on the cards "report the first error of each top-level declaration instead of one per compilation" and "list only the tokens that can follow at the failure position" (translated). The revision merged here differs from 832bdd593 by the merge of main and the renumbering of the specification from v0.150 to v0.154, because main reached v0.153 first.
+
+Summary: The grammar node records three decisions: syntax errors are reported per top-level declaration segment rather than by whole-source recovery or one error per compilation, the module-graph file's line records parse through a diagnostic-only production, and expected tokens are computed from the parse stack rather than the grammar-wide FOLLOW set, each with its refused alternative. Diagnostic rendering keeps every rule, coordinate and expected-token set of a module rejection as structured data so cached and rechecked runs give the same ordered syntax diagnostics. Repair hints list up to eight accessible same-role names for an unresolved qualified name, offer hoisting an inner call into a `define` only in a definition's initializer where the operation is contract-admitted and never in a requires or ensures clause, and limit the disjunction repair to requires. The compiler node fixes the front end's segmentation and phase order by DIAG-1, leaving implementation order only for semantic rejections after name resolution, and incremental compilation checks the whole program's front end before judging modules concurrently and reuses the successful parses.
+
+## 2026-10-21 Accepted programs run under host sanitizers in CI
+
+Nodes: compiler/sanitized-builds
+
+Summary: No emitted Whitefoot code had ever run under a sanitizer: the compiler linked with fixed clang arguments and the tests linked through their own recipe, and clang adds no sanitizer attribute to LLVM input, so even a sanitized link would have left the emitted definitions unchecked. A new node adds `whitefootc --sanitize address|thread`, which puts the sanitizer's attribute in the emitted definitions' shared attribute group and the sanitizer's arguments in every runtime compile and link and in the native-cache keys, keeping the fork-child closure uninstrumented; and a Linux workflow on the gate's revisions that runs the corpus target's programs and every running conformance case, also built with the `--par` lowering, under AddressSanitizer with UndefinedBehaviorSanitizer and under ThreadSanitizer, where any report fails the job and blocks the merge; AddressSanitizer's notice that it leaves the runtime's 1 GiB thread stacks uncleaned at a call that does not return, which the first full run wrote once with every case passing, counts as no report. The node also states what a clean run does not cover: accesses inside memory the runtime maps and divides itself, such as the pool holding waiting contexts' frames. Because an accepted program has no memory error, undefined behavior or data race, a report is a soundness defect found independently of the checker. Refused: instrumenting only the harness link, an environment variable selecting the runtime, a gate group, which platform-specific qualification stays apart from, judging cases by exit status alone, and leak detection.
+
+## 2026-10-13 A write asks separation questions only against support on the same containing place
+
+Nodes: compiler/checker-facts
+
+Summary: A new decision has fact invalidation submit index and range separation questions only between a write and live support positions with the same containing place, through the ordinary proof families in that write's context, because the specification keeps a fact whose support is provably disjoint from the write even when no earlier call or reference check asked that question, instead of relying only on separations asked elsewhere or comparing unrelated bases. Each live item's support is collected once and identical positions are removed before path resolution; proved answers are shared across that write's supports only, keyed by the subscripts' current binding identity, instead of being published as immutable captured relations; and no support is pruned because it would be kept anyway, since its numeric separation may protect another support that cannot ask the question. Measured: Halo's check time is 1.021 times main's, under the 1.03 rejection line set beforehand. Known limit, not decided here: a support whose containing place differs from the write's only in index steps is not asked, so such a fact can still be removed although OWN-7 proves the places disjoint; this is the follow-up item wf-disjoint-write-outer-index.
+
+## 2026-10-13 Every emitted function carries unwind tables and the Linux LTO link keeps code at its file offset, so profilers recover callers
+
+Nodes: compiler/profiler-unwinding
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve two compiler decisions: every generated function carries an unwind table (uwtable), and the Linux LTO link passes -z separate-code to LLD, so that perf can recover callers along Whitefoot call stacks? (Whitefoot#461, head commit 5f99db772)" (translated); later on 2026-10-13 the owner chose option A on the card "approve the rewording of one rejection reason in the unwind node (Whitefoot#461, head 639a831cd): only the wording narrows, no decision changes?" (translated), approving the rejection reason as narrowed to perf 6.17, the witness and the LLD-linked C control.
+
+Summary: A new node records two decisions that let a sampling profiler's DWARF unwinder walk Whitefoot call stacks. Every emitted function carries `uwtable`, so a leaf that cannot unwind by exception still has a frame-description entry; and the Linux LTO link passes `-z separate-code` to LLD, so the code segment's virtual address equals its file offset, because under LLD's default layout perf 6.17 recovered no caller. In the witness, `uwtable` gave the hot leaf its frame-description entry and raised the samples recovering the resume function from 83 to 85 percent to 88 to 89 percent at 208 bytes of `.eh_frame`; `-z separate-code` then raised the samples reaching resume and the thread entry from none above resume to 100 percent, at 992 bytes (1.2 percent) of executable. Keeping frame pointers and documenting the limitation instead were rejected. The reason for the second decision separates the measured layout dependence from the inferred lookup mechanism, which is not yet reproduced; the decisions are unchanged.
+
+## 2026-10-13 Field- and dereference-subscript terms carry captured place and formal offset identities
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision added for how subscripts with a field or a dereference record their identity? (#454, head commit ef598ae35)" (translated).
+
+Summary: A subscript such as `table^[s^.k]`, `nodes^[n^.parent_slot]` or `nodes^[r^]` is identified by a captured place id (its root and field or dereference steps) or, in a contract, a formal offset id (a parameter-relative suffix), both interned in one compilation-owned table shared by the checker's parts. While its support is unchanged the id stands for the current value with its complete support; a write or rebinding of any support place degrades it to an immutable capture with no support. At a call the actual's path is joined to the formal's remaining suffix and interned again. Small copyable ids let parallel checking and contract substitution share one identity and support without conflating sibling fields, captured and later values, or formal and body names; refused were root-only identity (which cannot separate `n.a` from `n.b`), embedding the recursive path in every capture, and per-part identity and support tables.
+## 2026-10-13 An allocation that does not fit the heap names its type, layout, limit and call
+
+Nodes: compiler/diagnostic-rendering
+
+Summary: A target layout failure caused by a runtime allocation now names the payload type, its size and alignment, the violated target limit with its value, and the nearest writer-written call requiring the allocation, found through the call origins lowering already records, because a writer can repair a source-valid program only from those; an unlocated allocation category, guessing the call from source text or symbol names, and moving target representability into source acceptance were rejected, the last because STOR-6 places it after checking. Allocation obligations are checked before the program-wide layout walk so the failure keeps its allocation; every check still runs before emission and the failure cites no source-language rule.
+
+## 2026-10-13 Rebinding a reference variable is its own invalidation event
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: pointing a reference variable elsewhere becomes its own kind of event that invalidates proof facts? (Ming-Research/Whitefoot#439, head b1ee96910)" (translated).
+
+Summary: A new decision makes a reference rebinding a distinct invalidation event that removes only the facts spelled through or reached through that reference variable, and loop summaries carry the event unchanged, because the specification says a rebinding writes no storage, instead of synthesizing a whole write of the variable and removing facts by its function-wide provenance list, which removed facts established through other names on the old or new target.
+
+## 2026-10-13 A Slab reserves capacity up to its type limit without disturbing handles
+
+Nodes: language/data-model/slab-storage
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve: the new decision and the two rewordings take effect; write the design-tree approval record, mark ready, run the gate on both platforms, merge through the coordinator's queue and release to Firn" (translated), on the card "approve the Slab storage design node's changes (Whitefoot#448, head commit 2c2890351119)?" (translated), whose background listed the new reservation decision, its three refused alternatives and the two rewordings.
+
+Summary: A Slab may reserve capacity explicitly up to its type limit through the ordinary window growth, so existing slots, indices and generations stay and old handles remain valid while a value's address may change; the free list's end marker becomes the type limit instead of the initial capacity, which growth would turn into a valid index. A request beyond the limit returns Err without mutation and a sufficient capacity returns Ok without shrinking, as HashMap reservation does. Fixed capacity after construction, rebuilding the slot records on growth and promising stable value addresses were refused. The first decision now says the Slab uses (not reserves) one backing and keeps slot indices, and the refused dense-array alternative is refused for changing another value's slot index.
+
+## 2026-10-21 The gate runs on Linux only for now
+
+Nodes: compiler/verification
+
+Summary: The hosted gate stops adding macOS for ready pull requests, the main line and manual runs, and its final job requires every group green on Linux alone. The hosted macOS runners take five jobs at a time; with several ready pull requests at once, a run's macOS jobs waited about 43 minutes for a runner while five ran and ten more queued, and merges waited behind them. The change is provisional: macOS returns, in a form still to be chosen, before the first release, whose release workflow still requires a gate run with macOS jobs on the released commit. The decision on a failed scope query no longer mentions dropping macOS.
+
+## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
+
+Nodes: compiler/verification
+
+Summary: The hosted gate and the I/O host checks no longer run for a push to a draft pull request's branch or for a draft's opening or reopening; they run for the main line, a ready pull request's pushes, a hand-started run and the event of marking a pull request ready, which skips when the head already has a successful manual run of the same workflow. With the draft pushes gone, every run that checks a revision runs both platforms, so the Linux-only run is retired and the earlier refusal of both platforms on every push is restated for the case that no longer holds. The gate also fails while a `tmp-` workflow file exists in the checked head, and the performance comparison skips a draft as the design-readiness job already does. The run record of a week shows 122 checked runs on 40 branches other than the main line, up to 10 on one branch ([measurements](../research/investigations/test-economy/time-budgets.md#gate-at-ready-not-at-each-draft-push)); the author now gets results from a temporary workflow while writing.
+
+## 2026-10-20 Conditions the checker decides are rejected
+
+Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
+
+Summary: A new node rejects an `if` or `value_if` condition when every fact its selected branch establishes at entry is already derivable, with a repair that deletes the test and its dead branch; it judges a generic body once at its own parameters' symbolic instance and admits a condition in a contradictory state. It rejects judging only the goal origins and a language facility for a program to check its own final result, since the harness can compare the output. The acceptance-records decision adds the redundancy judgment to the obligations the structural checker records. The proof-query-context decision keeps reusing a closed view when goals are appended, after checking them for newly derivable contradictions, so the redundancy queries share preparation without changing a judgment.
+## 2026-10-20 The merge-base compiler is cached per main commit, and its cold build is report-only
+
+Nodes: compiler/verification, compiler/merge-base-compiler-cache
+
+Summary: The paired performance comparison builds the main line's compiler as its baseline, a cold build of about 110 s that overran its 115 s budget on about one run in four and turned unrelated pull requests red. The owner chose on 2026-10-13 to cache that compiler per main commit and toolchain, with an exact key and no prefix restore, and on 2026-10-14 to make the baseline build report-only, because it builds the main line's own code that no pull request changes. The cache misses after each runner image change, so the first pull request after one builds cold; that build is recorded but does not fail the verdict. The candidate build keeps its own enforced budget.
+
+## 2026-10-13 One compilation lists every non-exhaustive match
+
+Nodes: compiler/rejection-payloads
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the decision that Whitefoot#444 (one compilation lists every non-exhaustive match) adds to the design tree?" (translated), shown at head commit 4cca9198f.
+
+Summary: A non-exhaustive match records its edit site and the same structural walk continues over the written arms and later functions, reporting the first established event with every recorded site, because ERR-2 promises site-enumerated edit lists and one site per compile costs an agent a round per match when adding a variant, instead of stopping at the first site. Missing arms contribute no path or guessed binding, pending sites fail before proof analysis or receipt publication, and a same-node rejection under an earlier-defined rule still wins under DIAG-1; re-running with masked matches or a second checker and narrowing ERR-2 to the first site are rejected.
+## 2026-10-13 Release packages carry their own clang, and macOS stack probing follows the clang in use
+
+Nodes: compiler/toolchain-resolution, compiler/resource-exhaustion-floor, compiler/downstream-releases
+
+Summary: The compiler ran /usr/bin/clang, so a host without it, or with another LLVM version, could not build programs or got code nobody tested. A new toolchain-resolution node makes a packaged installation (a clang beside the compiler, or a toolchain manifest at the package root) use the packaged clang for every compile, link, LTO run and capability probe, with no fallback to the host clang; Linux packages use the packaged ld.lld, macOS packages the system SDK and Apple linker with the packaged libLTO, and the build cache key includes the toolchain identity. The resource-exhaustion floor now gives every generated function the selected backend's stack-probe attribute: on macOS a capability probe tries Apple's probe function with the clang in use and otherwise emits inline page-by-page probing at a 4096-byte interval, never a function without probing, because upstream LLVM 22.1.8 accepts only inline probing on Apple silicon; refused were deciding by vendor string, Apple's function everywhere, requiring inline on Apple clang now, disabling probing, a hand-written probe function, and an interval without a method. Downstream releases replace the deferral of a bundled clang with a release-workflow option, off by default, that produces `-bundled` Linux x86-64 and macOS arm64 packages (148 MB and 140 MB compressed) and publishes them only after acceptance on three hosts, and the weekly removal keeps a bundled release of a main commit past 30 days without letting it take the newest release's place (refused: the 30-day rule unchanged, and a longer separate window). The floor states that its probing covers generated functions and that the runtime's own C frames are a known gap with their own work item (refused: claiming containment for them from the generated-code qualification).
+
+## 2026-10-13 The final gate job retries GitHub API errors and skips cancelled jobs
+
+Nodes: compiler/verification
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the design-tree change log, mark ready and, once the gate on both platforms passes, tell the coordinator 'to merge'" (translated), on the card "approve the new decision in the design-tree node 'compiler verification' that the final gate step retries when the GitHub API errs?" (translated), whose first revision at head 3782dfbc2 listed retrying each failed query up to five times with doubling waits, listing again up to four times while an expected job has no entry, failing at once on a job that did not succeed, and the two refused alternatives; and then option A, "approve" (translated), on the card "may the final gate step skip cancelled jobs rather than count them as results?" (translated), at head a653fb527, which added that cancelled jobs are left out because they belong to a superseded or stopped run. The revision merged here differs from a653fb527 only by the merge of main.
+
+Summary: The final job "Gate on both platforms" failed one pull request four times while every group was green, twice on HTTP 502 or 504 answers and twice on listings that lacked jobs which had passed, and on this branch a duplicate run cancelled one second after the run it duplicated had finished a job made that cancellation the latest entry. The job now retries each GitHub query up to five times with doubling waits, lists runs and jobs again up to four times while an expected job has no entry, leaves cancelled jobs out, and fails at once on any job whose latest completed run did not succeed and on a job still absent after the last listing. Refused: trusting one listing and re-running the whole run on an API error, and listing again after a failure.
 
 ## 2026-10-13 An atomic target named only in proofs is held from statement entry
 

@@ -12,9 +12,6 @@ pub(super) const QUALIFIED_CONSTANTS: &[RepairPair] = &[
 
 fn main() -> status: std::process::ExitStatus pure {
   let wanted = pkg::limit;
-  if wanted != 7_u32 {
-    return std::process::exit_status(code: 1_u8);
-  }
   return std::process::exit_status(code: 0_u8);
 }
 "#,
@@ -27,9 +24,6 @@ fn main() -> status: std::process::ExitStatus pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let wanted = limit;
-  if wanted != 7_u32 {
-    return std::process::exit_status(code: 1_u8);
-  }
   return std::process::exit_status(code: 0_u8);
 }
 "#],

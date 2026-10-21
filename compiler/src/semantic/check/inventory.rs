@@ -228,6 +228,7 @@ impl Checker<'_, '_> {
             functions[id.0 as usize] = Some(checked);
             cursor += 1;
         }
+        self.analysis.match_diagnostics.finish(Ok(()))?;
         self.check_effect_rows()?;
         functions
             .into_iter()

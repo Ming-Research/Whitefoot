@@ -17,7 +17,7 @@ pub(super) const POSTCONDITION_PLACES: &[RepairPair] = &[
         rejected: br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: Option<u64> reads(rows) contract {
   ensures when Some(value: v): v <= rows^[i].len;
 } {
-  if rows^[0_u64].len > 9_u64 {
+  if rows^[0_u64].len > 0_u64 {
     return None<u64>();
   }
   return Some<u64>(value: 0_u64);
@@ -37,7 +37,7 @@ fn main() -> status: std::process::ExitStatus pure {
   requires i < rows^.len;
   ensures when Some(value: v): v <= rows^[i].len;
 } {
-  if rows^[0_u64].len > 9_u64 {
+  if rows^[0_u64].len > 0_u64 {
     return None<u64>();
   }
   return Some<u64>(value: 0_u64);
@@ -50,7 +50,7 @@ fn main() -> status: std::process::ExitStatus pure {
             br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: Option<u64> reads(rows) contract {
   ensures when Some(value: v): v <= rows^[i].len;
 } {
-  if rows^[0_u64].len > 9_u64 {
+  if rows^[0_u64].len > 0_u64 {
     return None<u64>();
   }
   if i < rows^.len {
@@ -180,11 +180,7 @@ fn main() -> status: std::process::ExitStatus pure {
 } {
   let fresh = slots_new::<u8, 8>();
   place_back(window: rows, value: move fresh);
-  if i < rows^.len {
-    return 0_u64;
-  }
-  loop {
-  }
+  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

@@ -179,8 +179,14 @@ enum Exclusion {
 /// source.
 fn manifest_allows_exclusion(exclusion: Exclusion, expectation: Option<&Expectation>) -> bool {
     match (exclusion, expectation) {
-        (Exclusion::Underived, Some(Expectation::Reject(_))) => true,
+        (
+            Exclusion::Underived,
+            Some(Expectation::Reject(_) | Expectation::RejectDiagnostics(_)),
+        ) => true,
         (Exclusion::Noncanonical, Some(Expectation::Reject(rule))) => rule.starts_with("FORM-"),
+        (Exclusion::Noncanonical, Some(Expectation::RejectDiagnostics(diagnostics))) => {
+            diagnostics.iter().all(|diagnostic| diagnostic.rule.starts_with("FORM-"))
+        }
         _ => false,
     }
 }
@@ -211,6 +217,30 @@ fn manifest_exclusions_cover_only_the_declared_failure_edges() {
     assert!(!manifest_allows_exclusion(
         Exclusion::Noncanonical,
         Some(&semantic_reject)
+    ));
+    let diagnostic = |rule: &str| conformance_manifest::DiagnosticExpectation {
+        rule: rule.to_owned(),
+        coordinate: conformance_manifest::DiagnosticCoordinate {
+            source_ordinal: 0,
+            byte_start: 0,
+            byte_end: 0,
+        },
+        expected: None,
+    };
+    let form_list = Expectation::RejectDiagnostics(vec![diagnostic("FORM-2")]);
+    let mixed_list =
+        Expectation::RejectDiagnostics(vec![diagnostic("FORM-2"), diagnostic("GRAM-3")]);
+    assert!(manifest_allows_exclusion(
+        Exclusion::Underived,
+        Some(&mixed_list)
+    ));
+    assert!(manifest_allows_exclusion(
+        Exclusion::Noncanonical,
+        Some(&form_list)
+    ));
+    assert!(!manifest_allows_exclusion(
+        Exclusion::Noncanonical,
+        Some(&mixed_list)
     ));
     assert!(!manifest_allows_exclusion(Exclusion::Underived, None));
     assert!(!manifest_allows_exclusion(Exclusion::Noncanonical, None));
