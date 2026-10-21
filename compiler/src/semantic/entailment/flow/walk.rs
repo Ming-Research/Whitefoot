@@ -396,22 +396,7 @@ impl Analyzer<'_, '_> {
             self.vocabulary
                 .proof_event(FlowEventKind::PostconditionReceiverWrite, Some(node_path))
         });
-        if !result.is_empty() {
-            let live = self.reasoning().event_live_bounds(state, &target_kills);
-            let separations = EventSeparations {
-                ledger: &state.separations,
-                live: &live,
-            };
-            for result in &mut result {
-                self.reasoning()
-                    .apply_kills_one(&separations, &mut result.facts, &target_kills);
-            }
-        }
-        if let Some(target_event) = target_event {
-            self.apply_kills_each(state, &target_kills, |_, _| target_event);
-        } else {
-            self.apply_kills(state, &target_kills);
-        }
+        self.apply_kills_with_pending_results(state, &target_kills, &mut result, target_event);
         // [MSR-3] the placement's second half, after the target's own kills:
         // the committed place's measures are the datums minted before them.
         if commit_reached
