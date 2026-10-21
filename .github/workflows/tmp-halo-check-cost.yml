@@ -188,7 +188,7 @@ jobs:
                   if why: end = f'cannot fix {where}: {why}'; break
                   notes.append('EFF-2 ' + where)
               elif m.group(4) == 'GRAM-10':
-                  why = fix_match_fields(m.group(1), int(m.group(2)), r.stdout[m.end():m.end() + 400])
+                  why = fix_match_fields(m.group(1), int(m.group(2)), r.stdout[m.end():m.end() + 4000])
                   if why: end = f'cannot fix {where}: {why}'; break
                   notes.append('GRAM-10 ' + where)
               elif m.group(4) == 'FORM-3' and 'found: "held"' in r.stdout[m.end():m.end() + 1500] and not any(x.startswith('held') for x in notes):
