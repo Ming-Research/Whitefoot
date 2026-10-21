@@ -163,6 +163,9 @@ read.
   `spec/log.md` holds its change log.
 - Whitefoot-kit's [writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md): writer
   problems, usable forms, examples, applicability and costs, for agents.
+- `docs/safety-claims.md`: each safety claim with the specification rules and
+  conformance cases it rests on, what the specification does not promise, and
+  the trusted base; not a claim the specification does not state.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
   explanatory essays; not a work queue or invented measurements.
 - `docs/articles/`: one idea each for readers outside the project, every
@@ -198,7 +201,8 @@ build time apart from test and program execution.
   format and lint checks: repository invariants, the specification
   archives, the README and its translation changed together, prose
   integrity, guidance references, Rust sources under `compiler/src/` over
-  4,000 lines listed in `.github/oversized-sources.txt`, and the design
+  4,000 lines listed in `.github/oversized-sources.txt`, the safety claims
+  page against the specification and the conformance manifest, and the design
   tree's form, read through the `design/skill` submodule.
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime; `make check-groups`

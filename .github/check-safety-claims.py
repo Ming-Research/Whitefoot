@@ -337,11 +337,11 @@ MANIFEST_FIXTURE = "\n".join([
 
 
 FIXTURE_ROWS = {
-    "No memory corruption": ("OP-4", "`op4-neg`", "`op4-pos`", ""),
-    "No data races": ("CAP-1", "", "", "`ownership-tests`"),
-    "No uninitialized reads": ("OP-4", "`op4-neg`", "`op4-pos`", ""),
-    "No silent overflow": ("OP-4", "`op4-neg`", "`op4-pos`", ""),
-    "No runtime traps": ("OWN-1", "`own1-neg`", "`own1-run`", ""),
+    "No memory corruption": [("OP-4", "`op4-neg`", "`op4-pos`", "")],
+    "No data races": [("OWN-1", "`own1-neg`", "`own1-run`", ""), ("CAP-1", "", "", "`ownership-tests`")],
+    "No uninitialized reads": [("OP-4", "`op4-neg`", "`op4-pos`", "")],
+    "No silent overflow": [("OP-4", "`op4-neg`", "`op4-pos`", "")],
+    "No runtime traps": [("OWN-1", "`own1-neg`", "`own1-run`", "")],
 }
 
 
@@ -349,11 +349,12 @@ def page_fixture(rows=None):
     rows = {**FIXTURE_ROWS, **(rows or {})}
     sections = ["# Safety claims", "", "## Claims", ""]
     for title in CLAIMS:
-        rule, rejects, accepts, other = rows[title]
         sections += [f"### {title}", "",
                      "| Rule | Contribution | Rejecting cases | Accepting cases | Other evidence |",
-                     "|---|---|---|---|---|",
-                     f"| `{rule}` | text | {rejects} | {accepts} | {other} |", ""]
+                     "|---|---|---|---|---|"]
+        sections += [f"| `{rule}` | text | {rejects} | {accepts} | {other} |"
+                     for rule, rejects, accepts, other in rows[title]]
+        sections.append("")
     sections += ["## Not claimed", "",
                  "| Topic | Specification | Rule |", "|---|---|---|",
                  "| Resources | “leaves resource   availability outside it” | `SCOPE-3` |", "",
@@ -398,7 +399,7 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(self.findings(), [])
 
     def test_unknown_rule(self):
-        page = page_fixture({"No data races": ("NOPE-9", "", "", "`ownership-tests`")})
+        page = page_fixture({"No data races": [("NOPE-9", "", "", "`ownership-tests`")]})
         self.assertOne(self.findings(page=page), "NOPE-9 is not defined")
 
     def test_deleted_case(self):
@@ -422,16 +423,16 @@ class ClaimTests(unittest.TestCase):
         self.assertTrue(any("own1-neg declares" in f for f in findings), findings)
 
     def test_accepting_column_names_a_rejection(self):
-        page = page_fixture({"No runtime traps": ("OWN-1", "`own1-neg`", "`own1-neg`", "")})
+        page = page_fixture({"No runtime traps": [("OWN-1", "`own1-neg`", "`own1-neg`", "")]})
         findings = self.findings(page=page)
         self.assertTrue(any("own1-neg declares reject, not accept or run" in f for f in findings), findings)
 
     def test_claim_without_a_rejecting_case(self):
-        page = page_fixture({"No memory corruption": ("OP-4", "", "`op4-pos`", "")})
+        page = page_fixture({"No memory corruption": [("OP-4", "", "`op4-pos`", "")]})
         self.assertOne(self.findings(page=page), "claim 'No memory corruption' names no rejecting case")
 
     def test_row_without_evidence(self):
-        page = page_fixture({"No data races": ("CAP-1", "", "", "")})
+        page = page_fixture({"No data races": [("OWN-1", "`own1-neg`", "`own1-run`", ""), ("CAP-1", "", "", "")]})
         findings = self.findings(page=page)
         self.assertTrue(any("CAP-1 names no case and no other evidence" in f for f in findings), findings)
 

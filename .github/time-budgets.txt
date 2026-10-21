@@ -34,6 +34,7 @@ spec-prose-integrity            10         10         10         10     -
 guidance                        10         10         10         10     -
 source-size                     10         10         10         10     -
 design-lint                     10         10         10         15     -
+safety-claims                   10         10         10         10     -
 conformance                     10         10         10         10     -
 performance-instrument          10         10         10         10     -
 compiler/lint                   55         60         40         75     -
