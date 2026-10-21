@@ -17,7 +17,7 @@ fn trim(chain: Shared<Chain>) -> result: u64 pure waits {
   let got = 0_u64;
   atomic s = &chain {
     if s^.head.v < 16_u64 {
-      set s^.head.next = None;
+      set s^.head.next = None<Box<Link>>();
       set got = inspect(link: &s^.head);
     }
   }

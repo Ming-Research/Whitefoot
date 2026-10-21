@@ -425,8 +425,11 @@ jobs:
               "https://github.com/Ming-Research/$repo" "$work/$repo"
             git -C "$work/$repo" log -1 --format="$repo %H"
           done
+          # Names only: a string literal keeps its text, whose length a
+          # fixed-size text constant states.
           find "$work" -type f \( -name '*.wf' -o -name '*.wfm' \) -print0 | xargs -0 perl -pi -e \
-            's/\bheld\b/trial_held/g; s/\bnot\b/trial_not/g; s/\bunchanged\b/trial_unchanged/g; s/\bOpen\b/TrialOpen/g'
+            'BEGIN { %r = (held => "trial_held", not => "trial_not", unchanged => "trial_unchanged", Open => "TrialOpen") }
+             s{("(?:[^"\\]|\\.)*")|\b(held|not|unchanged|Open)\b}{defined $1 ? $1 : $r{$2}}ge'
           same_accepted=0
           same_rejected=0
           differ=0
