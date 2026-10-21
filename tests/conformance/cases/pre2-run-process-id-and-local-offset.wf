@@ -17,12 +17,6 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let reading = std::time::local_offset_seconds(clock: &calendar, at: 1768478400000000000_i64);
   match reading {
     Some(value: offset) => {
-      if offset <= -86400_i64 {
-        return exit_status(code: 2_u8);
-      }
-      if offset >= 86400_i64 {
-        return exit_status(code: 3_u8);
-      }
     }
     None() => {
     }

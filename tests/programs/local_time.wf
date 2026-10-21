@@ -22,9 +22,7 @@ fn local_time_send(factory: &std::io::HandleFactory, output: &std::io::OutputStr
   }
   let line = slots_new::<u8, 24>();
   if negative {
-    if line.len < line.cap {
-      place_back(window: &line, value: 45_u8);
-    }
+    place_back(window: &line, value: 45_u8);
   }
   for @emit (index in 0_u64..count) {
     let back = count -wrap index;
