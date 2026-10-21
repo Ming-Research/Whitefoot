@@ -640,9 +640,10 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// Whether `entry` is `access` or a proper prefix of it [EFF-1].
     ///
-    /// [EFF-2] states the relation as "the body accesses storage at or below
-    /// its path", and an effect path is a root formal plus a complete step
-    /// list, so "below" is exactly the prefix order on those steps.
+    /// [EFF-2] exhibits a declared entry by "an access at or below its path"
+    /// of an admitted category, and an effect path is a root formal plus a
+    /// complete step list, so "below" is exactly the prefix order on those
+    /// steps.
     pub(super) fn effect_path_covers(entry: &CheckedStatePath, access: &CheckedStatePath) -> bool {
         if entry.root != access.root {
             return false;
