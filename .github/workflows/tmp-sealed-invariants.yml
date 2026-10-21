@@ -1,10 +1,9 @@
 # Temporary: the focused checks of the sealed type invariant work (the
-# compiler build and lint, the type-invariant, fact-source and repair unit
-# tests, every conformance case's verdict with each failing case listed),
-# this round's cases checked with the compilers they fail on, the trial
-# compile of the downstream programs with the branch's compiler and the
-# base's, and the repository-level static checks and the change-log check
-# against the branch's fork point. Removed before the branch is ready.
+# compiler build and lint, every unit test after main's merge, every
+# conformance case's verdict with each failing case listed),
+# the trial compile of the downstream programs with the branch's compiler
+# and the base's, and the repository-level static checks and the change-log
+# check against the branch's fork point. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -40,11 +39,10 @@ jobs:
           rustup component add clippy
           perl .github/run-check.pl sealed-lint cargo clippy --manifest-path compiler/Cargo.toml \
             --all-targets --locked --offline -- -D warnings
-      - name: Run the type-invariant, fact-source and repair unit tests
+      - name: Run every unit test, since main's merge reaches the whole checker
         run: |
           perl .github/run-check.pl sealed-unit cargo test --manifest-path compiler/Cargo.toml \
-            --profile gate --locked --offline --lib -- \
-            type_invariant entailment_sources sealing invariant_payload pinned_repairs
+            --profile gate --locked --offline --lib
       - name: Reach every conformance verdict and list each failing case
         if: always()
         run: |
@@ -82,65 +80,6 @@ jobs:
           perl .github/run-check.pl tmp-design-ready make --no-print-directory design-ready \
             DESIGN_REVIEW_BASE="$base"
 
-  # This round's cases with the compilers they fail on: the head the first
-  # review saw, and the pushed head without the widening of debts whose
-  # offsets read a written field. A case that does not end within two
-  # minutes is stopped.
-  before:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: reviewed-head
-            commit: f997714d31528e0f8e2c98b510d1e39de8ebe861
-            # The other cases of this round ran with it in run 39568749252.
-            cases: >-
-              type11-neg-segment-element-write-keeps-debt
-          # The pushed head with the widening row for written offsets
-          # [TYPE-11.S3] switched off, which the negative case must need.
-          - label: head-without-offset-widening
-            commit: head
-            cases: >-
-              type11-neg-field-offset-moved-before-restored
-              type11-pos-field-offset-restored-before-moved
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install the host toolchain
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          rustup default stable
-      - name: Build the compiler of ${{ matrix.label }}
-        run: |
-          if [ "${{ matrix.commit }}" = head ]; then
-            git worktree add "$RUNNER_TEMP/before" HEAD
-            perl -0777 -pi -e 's/(self\.seal_offset_kills\(separations, states, events\);)/if false { $1 }/ or die "the widening call is gone\n"' \
-              "$RUNNER_TEMP/before/compiler/src/semantic/entailment/flow/events.rs"
-            git -C "$RUNNER_TEMP/before" diff --stat
-          else
-            git fetch --depth=1 origin ${{ matrix.commit }}
-            git worktree add "$RUNNER_TEMP/before" FETCH_HEAD
-          fi
-          cargo fetch --locked --manifest-path "$RUNNER_TEMP/before/compiler/Cargo.toml"
-          perl .github/run-check.pl before-build cargo build \
-            --manifest-path "$RUNNER_TEMP/before/compiler/Cargo.toml" \
-            --profile gate --locked --offline --bin whitefootc
-      - name: Check this round's cases with it
-        env:
-          WHITEFOOT_CHECK_TIMEOUT: "120"
-        run: |
-          set +e
-          for case in ${{ matrix.cases }}; do
-            echo "== $case"
-            perl .github/run-check.pl before-check "$RUNNER_TEMP/before/compiler/target/gate/whitefootc" \
-              --check "tests/conformance/cases/$case.wf"
-            echo "exit $?"
-          done
   # The trial compile: each module of the downstream programs checked with
   # the branch's compiler and the base's, one module at a time so that one
   # rejection hides no other, then Firn's entry composed, which also judges
@@ -177,7 +116,7 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Build the branch's compiler and the base's
         run: |
-          git fetch --depth=1 origin 48b990f05ba32c2763dfcc441a94a00e2ee03cbd
+          git fetch --depth=1 origin 971c893278979a4e3430d119bf96138ba9b960aa
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
           if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
             # A decided condition counts as discharged in both compilers,
