@@ -139,15 +139,62 @@ pub(crate) enum CapturedTerm {
 }
 
 /// The immutable value one index step or range endpoint captured [REF-1].
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy)]
 pub(crate) struct CapturedValue {
     pub(crate) capture: CaptureId,
     pub(crate) term: CapturedTerm,
+    /// Diagnostic source extent only; never part of value or proof identity.
+    pub(crate) source: Option<NodeId>,
+}
+
+impl std::fmt::Debug for CapturedValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CapturedValue")
+            .field("capture", &self.capture)
+            .field("term", &self.term)
+            .finish()
+    }
+}
+
+impl PartialEq for CapturedValue {
+    fn eq(&self, other: &Self) -> bool {
+        (self.capture, self.term) == (other.capture, other.term)
+    }
+}
+
+impl Eq for CapturedValue {}
+
+impl std::hash::Hash for CapturedValue {
+    fn hash<Hasher: std::hash::Hasher>(&self, state: &mut Hasher) {
+        std::hash::Hash::hash(&(self.capture, self.term), state);
+    }
+}
+
+impl PartialOrd for CapturedValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CapturedValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.capture, self.term).cmp(&(other.capture, other.term))
+    }
 }
 
 impl CapturedValue {
     pub(crate) const fn new(capture: CaptureId, term: CapturedTerm) -> Self {
-        Self { capture, term }
+        Self {
+            capture,
+            term,
+            source: None,
+        }
+    }
+
+    pub(crate) const fn with_source(mut self, source: NodeId) -> Self {
+        self.source = Some(source);
+        self
     }
 
     /// The offset of a write at an element position this version cannot name
@@ -187,7 +234,10 @@ impl CapturedValue {
     pub(crate) const fn goal_identity(self) -> Self {
         match self.term {
             CapturedTerm::Literal(_) | CapturedTerm::Const(_) => {
-                Self::new(VALUE_DETERMINED_CAPTURE, self.term)
+                Self {
+                    capture: VALUE_DETERMINED_CAPTURE,
+                    ..self
+                }
             }
             // ENT-2 compares a current binding or projected proof path.
             // The occurrence is dropped here, not in `provably_same`:
@@ -195,9 +245,10 @@ impl CapturedValue {
             // overlap relation over-approximates it, and a binding's two
             // reads may still straddle a write when the question is which
             // storage each selects.
-            CapturedTerm::Binding(_) | CapturedTerm::Place(_) => {
-                Self::new(SPELLING_DETERMINED_CAPTURE, self.term)
-            }
+            CapturedTerm::Binding(_) | CapturedTerm::Place(_) => Self {
+                capture: SPELLING_DETERMINED_CAPTURE,
+                ..self
+            },
             // The binding's spelling now names a later value, and only the
             // occurrence still names the one this capture read.
             CapturedTerm::Superseded(_)
@@ -1327,6 +1378,11 @@ impl SeparationOracle for UnprovedSeparations {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BindingSummary {
     pub(crate) ty: Option<CheckedType>,
+    /// Diagnostic selectors need the range kind whose type is its element.
+    /// No proof or acceptance judgment reads this presentation flag.
+    pub(crate) range: bool,
+    /// Diagnostic spelling omits an indexed atomic binder's own selector.
+    pub(crate) indexed_atomic: bool,
     /// Every target established for this holder during the final structural
     /// walk. This function-wide inventory is not its target at a particular use.
     pub(crate) reference_paths: Vec<ResolvedPlace>,
@@ -1487,6 +1543,7 @@ impl PlaceMap {
         for parameter in &function.parameters {
             let summary = map.summary_mut(parameter.binding);
             summary.ty = Some(parameter.ty);
+            summary.range = parameter.mode.is_range();
             if parameter.mode.is_reference() {
                 summary.reference = true;
                 summary.reference_paths = vec![ResolvedPlace::binding(parameter.binding)];
@@ -1591,6 +1648,12 @@ impl PlaceMap {
         for statement in statements {
             match statement {
                 CheckedStatement::Let { binding, value, .. } => {
+                    let range = match named_place(value).map(|named| named.form) {
+                        Some(NamingForm::Range) => true,
+                        Some(NamingForm::Binding(named)) => self.summary(named)
+                            .is_some_and(|summary| summary.range),
+                        _ => false,
+                    };
                     let names_reference = match named_place(value).map(|named| named.form) {
                         Some(NamingForm::Borrow | NamingForm::Range) => true,
                         Some(NamingForm::Binding(named)) => self.is_reference(named),
@@ -1598,6 +1661,7 @@ impl PlaceMap {
                     };
                     let summary = self.summary_mut(*binding);
                     summary.ty = Some(value.ty());
+                    summary.range = range;
                     summary.reference |= names_reference;
                 }
                 CheckedStatement::DestructuringLet { bindings, .. } => {
@@ -1619,6 +1683,7 @@ impl PlaceMap {
                 } => {
                     let summary = self.summary_mut(*binding);
                     summary.ty = Some(*result_type);
+                    summary.range = result_mode.is_range();
                     summary.reference |= result_mode.is_reference();
                     self.collect_arm_bindings(arms);
                 }
@@ -1640,6 +1705,11 @@ impl PlaceMap {
                         let summary = self.summary_mut(*binding);
                         summary.ty = Some(*state);
                         summary.reference = true;
+                        summary.indexed_atomic = matches!(
+                            target.kind,
+                            super::model::CheckedTargetKind::MapEntry(_)
+                                | super::model::CheckedTargetKind::MapSet(_)
+                        );
                         if summary.reference_paths.is_empty() {
                             summary.reference_paths = vec![ResolvedPlace::binding(*binding)];
                         }
@@ -1656,6 +1726,7 @@ impl PlaceMap {
             for binder in &arm.binders {
                 let summary = self.summary_mut(binder.binding);
                 summary.ty = Some(binder.ty);
+                summary.range = binder.mode.is_range();
                 summary.reference |= binder.mode.is_reference();
             }
             self.collect_block_bindings(&arm.body);
@@ -1670,6 +1741,39 @@ mod tests {
         PlaceRoot, PlaceStep, ResolvedPlace, SeparationOracle, UnprovedSeparations, WindowPart,
     };
     use crate::semantic::model::{BindingId, CheckedLoopId, CheckedMeasure, CheckedType};
+
+    #[test]
+    fn diagnostic_source_does_not_change_capture_identity() {
+        use std::hash::{Hash, Hasher};
+
+        let first = crate::syntax::NodeId::from_index(1).unwrap();
+        let second = crate::syntax::NodeId::from_index(2).unwrap();
+        for original in [
+            CapturedValue::unknown(),
+            literal(7, 3),
+            binding(8, 4),
+            opaque(9),
+        ] {
+            let left = original.with_source(first);
+            let right = original.with_source(second);
+            assert_eq!(original, left);
+            assert_eq!(left, right);
+            assert_eq!(left.cmp(&right), std::cmp::Ordering::Equal);
+            assert_eq!(left.provably_same(right), original.provably_same(original));
+            let hash = |value: CapturedValue| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                value.hash(&mut hasher);
+                hasher.finish()
+            };
+            assert_eq!(hash(original), hash(left));
+            assert_eq!(hash(left), hash(right));
+            assert_eq!(format!("{original:?}"), format!("{left:?}"));
+            assert_eq!(left.goal_identity(), right.goal_identity());
+            assert_eq!(original.goal_identity(), left.goal_identity());
+            assert_eq!(left.goal_identity().source, Some(first));
+            assert_eq!(right.goal_identity().source, Some(second));
+        }
+    }
 
     fn literal(capture: u32, value: u64) -> CapturedValue {
         CapturedValue::new(CaptureId::source(capture), CapturedTerm::Literal(value))
