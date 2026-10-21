@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use super::requires::{ClauseKind, ExpandedClauseDatum, ExpandedClauseExpression};
 use super::*;
 use crate::semantic::goal::{
-    CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalProjection, GoalTemplate,
+    CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
+    GoalTemplate,
 };
 use crate::semantic::model::CheckedAffineInvariant;
 use crate::semantic::postcondition::{
@@ -225,8 +226,8 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<(), CheckStop> {
         let mut data = Vec::new();
         typed_binder_data(&template.goal.root, &mut data);
-        for (projections, ty) in data {
-            if !self.types.instance_independent_datum(nominal, projections, ty)? {
+        for datum in data {
+            if !self.types.instance_independent_datum(nominal, &datum)? {
                 return self.types.declarations.issue_node(
                     SemanticRule::Type11,
                     invariant,
@@ -794,7 +795,7 @@ impl TypeContext<'_> {
         };
         let ExpandedClauseExpression::Operation {
             row:
-                crate::semantic::goal::GoalOperation::Integer {
+                GoalOperation::Integer {
                     operation,
                     operand_type,
                 },
@@ -847,29 +848,27 @@ impl TypeContext<'_> {
         })
     }
 
-    /// [TYPE-11, FN-2] whether the binder datum at `projections` from a value
-    /// of `nominal`, of type `ty`, reads the same data at every instance of a
-    /// generic struct: each field it selects has a declared type that names
-    /// no type parameter or is followed at once by the datum's final measure
-    /// member, and the datum is a fragment integer.
+    /// [TYPE-11, FN-2] whether one binder datum of a value of `nominal`
+    /// reads the same data at every instance of a generic struct: each field
+    /// it selects has a declared type that names no type parameter or is
+    /// followed at once by the datum's final measure member, and the datum
+    /// is a fragment integer.
     fn instance_independent_datum(
         &self,
         nominal: NominalId,
-        projections: &[GoalProjection],
-        ty: CheckedType,
+        datum: &BinderDatum<'_>,
     ) -> Result<bool, CheckStop> {
-        if !matches!(ty, CheckedType::Integer(_)) {
+        if !matches!(datum.ty, CheckedType::Integer(_)) {
             return Ok(false);
         }
+        // A measure written as the last projection measures the place the
+        // projection reaches before it, as a measure row's operand does.
+        let (steps, measured) = match datum.projections.split_last() {
+            Some((GoalProjection::Measure(_), steps)) => (steps, true),
+            _ => (datum.projections, datum.measured),
+        };
         let mut current = CheckedType::Nominal(nominal);
-        for (index, projection) in projections.iter().enumerate() {
-            let measured = |position: usize| {
-                position + 1 == projections.len()
-                    && matches!(projections.get(position), Some(GoalProjection::Measure(_)))
-            };
-            if measured(index) {
-                return Ok(true);
-            }
+        for (index, projection) in steps.iter().enumerate() {
             let CheckedType::Nominal(owner) = current else {
                 return Ok(false);
             };
@@ -879,7 +878,8 @@ impl TypeContext<'_> {
                         .get(*field as usize)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?
                         .ty;
-                    if !measured(index + 1) && self.names_type_parameter(declared)? {
+                    let measured_next = measured && index + 1 == steps.len();
+                    if !measured_next && self.names_type_parameter(declared)? {
                         return Ok(false);
                     }
                     declared
@@ -1063,8 +1063,33 @@ impl TypeContext<'_> {
                 for constant in const_arguments {
                     constants.push(self.instantiate_const(*constant, substitution)?);
                 }
+                let row = match *row {
+                    GoalOperation::ArrayMeasure {
+                        measure,
+                        element,
+                        length,
+                    } => GoalOperation::ArrayMeasure {
+                        measure,
+                        element,
+                        length: self.instantiate_const(length, substitution)?,
+                    },
+                    GoalOperation::ContainerMeasure {
+                        measure,
+                        measured,
+                        element,
+                        constant,
+                    } => GoalOperation::ContainerMeasure {
+                        measure,
+                        measured,
+                        element,
+                        constant: constant
+                            .map(|constant| self.instantiate_const(constant, substitution))
+                            .transpose()?,
+                    },
+                    row => row,
+                };
                 GoalExpression::Operation {
-                    row: *row,
+                    row,
                     type_arguments: type_arguments.clone(),
                     const_arguments: constants,
                     result: *result,
@@ -1188,24 +1213,56 @@ fn affine_invariant(template: &TypeInvariantTemplate) -> CheckedAffineInvariant 
     }
 }
 
-/// Each distinct projection from parameter zero that `expression` reads,
-/// with the type of the datum it reaches.
-fn typed_binder_data<'goal>(
-    expression: &'goal GoalExpression,
-    data: &mut Vec<(&'goal [GoalProjection], CheckedType)>,
-) {
+/// One binder datum a type invariant reads: the projection from parameter
+/// zero, the datum's type, and whether a measure row reads the measure of
+/// the place the projection reaches.
+struct BinderDatum<'goal> {
+    projections: &'goal [GoalProjection],
+    ty: CheckedType,
+    measured: bool,
+}
+
+/// Each binder datum `expression` reads.
+fn typed_binder_data<'goal>(expression: &'goal GoalExpression, data: &mut Vec<BinderDatum<'goal>>) {
     match expression {
         GoalExpression::Datum(GoalDatum::Parameter {
             ordinal: 0,
             projections,
             ty,
-        }) => {
-            if !data.iter().any(|(known, _)| *known == projections.as_slice()) {
-                data.push((projections, *ty));
-            }
-        }
+        }) => data.push(BinderDatum {
+            projections,
+            ty: *ty,
+            measured: false,
+        }),
         GoalExpression::Datum(_) => {}
-        GoalExpression::Operation { arguments, .. } => {
+        GoalExpression::Operation {
+            row,
+            result,
+            arguments,
+            ..
+        } => {
+            let measure = matches!(
+                row,
+                GoalOperation::ArrayMeasure { .. }
+                    | GoalOperation::BufferMeasure { .. }
+                    | GoalOperation::ContainerMeasure { .. }
+            );
+            if measure
+                && let [
+                    GoalExpression::Datum(GoalDatum::Parameter {
+                        ordinal: 0,
+                        projections,
+                        ..
+                    }),
+                ] = arguments.as_slice()
+            {
+                data.push(BinderDatum {
+                    projections,
+                    ty: *result,
+                    measured: true,
+                });
+                return;
+            }
             for argument in arguments {
                 typed_binder_data(argument, data);
             }

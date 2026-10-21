@@ -59,6 +59,11 @@ jobs:
             perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check "$2"
             echo "exit $?"
           }
+          # The same with the temporary sealing instrument's trace.
+          trace() {
+            echo "== trace of $1"
+            WHITEFOOT_DEBUG_SEALING=1 ./compiler/target/gate/whitefootc --check "$2" 2>&1 | head -400
+          }
           for case in range2-pos-module-boxed-dispatch-backedge type11-pos-loop-reference-restored \
             type11-pos-generic-arena type11-neg-generic-arena-writer-exit \
             type11-neg-generic-type-parameter-datum; do
@@ -203,7 +208,60 @@ jobs:
             let got = inspect(link: &head);
             return got;
           }" "$main"
-          for name in follow-none walk-const cover-after-move; do
-            echo "== source of $name"
-            cat -n "$probe/$name.wf"
+          # same_length's body-entry instance under a loop with no write,
+          # and range2's follow with its slot over the other measure.
+          write loop-same "$module" 'fn probe(m: &Module, i: u64) -> result: u64 reads(m) contract {
+            requires i < m^.code.inner.len;
+          } {
+            loop {
+              let x = m^.brtab.inner[i];
+              return x;
+            }
+          }' "$main"
+          write follow-code "$module" 'fn follow(m: &Module, pc0: u64) -> result: u64 reads(m) contract {
+            requires pc0 < m^.code.inner.len;
+          } {
+            let pc = pc0;
+            loop (
+              invariant slot: pc < m^.code.inner.len
+            ) {
+              let target = m^.brtab.inner[pc];
+              if pc == target {
+                return pc;
+              }
+              set pc = target;
+              continue;
+            }
+          }' "$main"
+          # The loop cursor with its write just before the rebinding, and
+          # with an uncounted loop.
+          write walk-rebind "$link" "$inspect" "fn walk() -> result: u64 pure {
+          $build
+            for (i in 0_u64..2_u64) {
+              let bumped = cursor^.v + 1_u64;
+              match cursor^.next {
+                Some(value: child) => {
+                  set cursor^.v = 0_u64;
+                  set cursor = &child^.inner;
+                }
+                None() => {
+                  break;
+                }
+              }
+            }
+            let got = inspect(link: &head);
+            return got;
+          }" "$main"
+          write walk-loop "$link" "$inspect" "fn walk() -> result: u64 pure {
+          $build
+            loop {
+              let bumped = cursor^.v + 1_u64;
+              set cursor^.v = 0_u64;
+          $step
+            }
+            let got = inspect(link: &head);
+            return got;
+          }" "$main"
+          for name in follow-none follow-written walk-const; do
+            trace "$name" "$probe/$name.wf"
           done
