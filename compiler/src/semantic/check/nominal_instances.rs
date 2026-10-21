@@ -1892,6 +1892,7 @@ impl<'unit> TypeContext<'unit> {
             .entry(template.declaration)
             .or_default()
             .push(NominalInstance { id, substitution });
+        self.attach_type_invariants(id)?;
         Ok(id)
     }
     /// One declaration's constructors, read off its symbolic instance

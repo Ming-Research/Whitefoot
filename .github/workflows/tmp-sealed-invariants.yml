@@ -1,7 +1,7 @@
 # Temporary: the focused checks of the sealed type invariant work (the
-# compiler build, the type-invariant and fact-source unit tests, every
-# conformance case's verdict with each failing case listed, and the full
-# diagnostics of the cases still open with probes that separate their
+# compiler build, the type-invariant, fact-source and repair unit tests,
+# every conformance case's verdict with each failing case listed, and the
+# full diagnostics of the cases still open with probes that separate their
 # causes). Removed before the branch is ready.
 name: tmp-sealed-invariants
 
@@ -32,11 +32,11 @@ jobs:
         run: |
           perl .github/run-check.pl sealed-build cargo build --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --bin whitefootc
-      - name: Run the type-invariant and fact-source unit tests
+      - name: Run the type-invariant, fact-source and repair unit tests
         run: |
           perl .github/run-check.pl sealed-unit cargo test --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --lib -- \
-            type_invariant entailment_sources sealing invariant_payload
+            type_invariant entailment_sources sealing invariant_payload pinned_repairs
       - name: Reach every conformance verdict and list each failing case
         if: always()
         run: |
@@ -50,94 +50,160 @@ jobs:
           grep -E '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
           grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
           exit "$status"
-      - name: Print the open cases' diagnostics and probe the loop case
+      - name: Print the open cases' diagnostics and probe their causes
         if: always()
         run: |
           set +e
-          for case in type11-neg-loop-reference-cover range2-pos-module-boxed-dispatch-backedge \
-            type11-pos-enum-payload-failure-helper type11-pos-enum-generated-route-refines-written \
-            type11-pos-loop-reference-restored; do
-            echo "== $case"
-            perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check \
-              "tests/conformance/cases/$case.wf"
+          check() {
+            echo "== $1"
+            perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check "$2"
             echo "exit $?"
+          }
+          for case in range2-pos-module-boxed-dispatch-backedge type11-pos-loop-reference-restored \
+            type11-pos-generic-arena type11-neg-generic-arena-writer-exit \
+            type11-neg-generic-type-parameter-datum; do
+            check "$case" "tests/conformance/cases/$case.wf"
           done
           probe="$RUNNER_TEMP/probe"
           mkdir -p "$probe"
-          # The loop case's follow alone, and with a read of a binder datum
-          # of same_length before the loop, inside it, or of the other datum.
-          for variant in none before inside other; do
+          module='struct Module {
+            code: Box<Array<u8>>;
+            brtab: Box<Array<u64>>;
+            invariant same_length(m): m.code.inner.len == m.brtab.inner.len;
+            invariant(m): forall targets(k in 0_u64..m^.brtab.inner.len): m^.brtab.inner[k] < m^.code.inner.len;
+          }'
+          main='fn main() -> status: std::process::ExitStatus pure {
+            return std::process::exit_status(code: 0_u8);
+          }'
+          # A probe is the given items, separated by one blank line as the
+          # canonical form requires.
+          write() {
+            name="$1"
+            shift
+            : > "$probe/$name.wf"
+            first=1
+            for item in "$@"; do
+              [ "$first" = 1 ] || echo >> "$probe/$name.wf"
+              first=0
+              printf '%s\n' "$item" >> "$probe/$name.wf"
+            done
+            check "$name" "$probe/$name.wf"
+          }
+          # range2's follow, alone and with a read of a binder datum of
+          # same_length before the loop, inside it, or of the other datum,
+          # and with the relation written as a requirement.
+          for variant in none before inside other written; do
+            before=""; inside=""; written=""
             case "$variant" in
-              none) before=""; inside="" ;;
-              before) before="  let n = m^.code.inner.len;"; inside="" ;;
-              inside) before=""; inside="    let n = m^.code.inner.len;" ;;
-              other) before="  let n = m^.brtab.inner.len;"; inside="" ;;
+              before) before="  let n = m^.code.inner.len;" ;;
+              inside) inside="    let n = m^.code.inner.len;" ;;
+              other) before="  let n = m^.brtab.inner.len;" ;;
+              written) written="  requires m^.code.inner.len == m^.brtab.inner.len;" ;;
             esac
-            {
-              echo 'struct Module {'
-              echo '  code: Box<Array<u8>>;'
-              echo '  brtab: Box<Array<u64>>;'
-              echo '  invariant same_length(m): m.code.inner.len == m.brtab.inner.len;'
-              echo '  invariant(m): forall targets(k in 0_u64..m^.brtab.inner.len): m^.brtab.inner[k] < m^.code.inner.len;'
-              echo '}'
-              echo 'fn follow(m: &Module, pc0: u64) -> result: u64 reads(m) contract {'
-              echo '  requires pc0 < m^.brtab.inner.len;'
-              echo '} {'
-              echo '  let pc = pc0;'
-              [ -n "$before" ] && echo "$before"
-              echo '  loop ('
-              echo '    invariant slot: pc < m^.brtab.inner.len'
-              echo '  ) {'
-              echo '    let target = m^.brtab.inner[pc];'
-              [ -n "$inside" ] && echo "$inside"
-              echo '    if pc == target {'
-              echo '      return pc;'
-              echo '    }'
-              echo '    set pc = target;'
-              echo '    continue;'
-              echo '  }'
-              echo '}'
-              echo 'fn main() -> status: std::process::ExitStatus pure {'
-              echo '  return std::process::exit_status(code: 0_u8);'
-              echo '}'
-            } > "$probe/follow-$variant.wf"
-            echo "== follow-$variant"
-            perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check \
-              "$probe/follow-$variant.wf"
-            echo "exit $?"
+            follow="fn follow(m: &Module, pc0: u64) -> result: u64 reads(m) contract {
+          ${written:+$written
+          }  requires pc0 < m^.brtab.inner.len;
+          } {
+            let pc = pc0;
+          ${before:+$before
+          }  loop (
+              invariant slot: pc < m^.brtab.inner.len
+            ) {
+              let target = m^.brtab.inner[pc];
+          ${inside:+$inside
+          }    if pc == target {
+                return pc;
+              }
+              set pc = target;
+              continue;
+            }
+          }"
+            write "follow-$variant" "$module" "$follow" "$main"
           done
           # Each instance alone, with no loop: the range invariant's at an
           # element read, and same_length's from body entry.
-          for variant in range same; do
-            {
-              echo 'struct Module {'
-              echo '  code: Box<Array<u8>>;'
-              echo '  brtab: Box<Array<u64>>;'
-              echo '  invariant same_length(m): m.code.inner.len == m.brtab.inner.len;'
-              echo '  invariant(m): forall targets(k in 0_u64..m^.brtab.inner.len): m^.brtab.inner[k] < m^.code.inner.len;'
-              echo '}'
-              if [ "$variant" = range ]; then
-                echo 'fn probe(m: &Module, pc: u64) -> result: u8 reads(m) contract {'
-                echo '  requires pc < m^.brtab.inner.len;'
-                echo '} {'
-                echo '  let target = m^.brtab.inner[pc];'
-                echo '  let op = m^.code.inner[target];'
-                echo '  return op;'
-                echo '}'
-              else
-                echo 'fn probe(m: &Module, i: u64) -> result: u64 reads(m) contract {'
-                echo '  requires i < m^.code.inner.len;'
-                echo '} {'
-                echo '  let x = m^.brtab.inner[i];'
-                echo '  return x;'
-                echo '}'
-              fi
-              echo 'fn main() -> status: std::process::ExitStatus pure {'
-              echo '  return std::process::exit_status(code: 0_u8);'
-              echo '}'
-            } > "$probe/alone-$variant.wf"
-            echo "== alone-$variant"
-            perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check \
-              "$probe/alone-$variant.wf"
-            echo "exit $?"
+          write alone-range "$module" 'fn probe(m: &Module, pc: u64) -> result: u8 reads(m) contract {
+            requires pc < m^.brtab.inner.len;
+          } {
+            let target = m^.brtab.inner[pc];
+            let op = m^.code.inner[target];
+            return op;
+          }' "$main"
+          write alone-same "$module" 'fn probe(m: &Module, i: u64) -> result: u64 reads(m) contract {
+            requires i < m^.code.inner.len;
+          } {
+            let x = m^.brtab.inner[i];
+            return x;
+          }' "$main"
+          # The loop cursor case: a read at the header with a constant
+          # restoring write, with a guarded write, with no write, and the
+          # same body with no loop; then a write after the cursor moves.
+          link='struct Link {
+            v: u64;
+            next: Option<Box<Link>>;
+            invariant small(link): link.v < 16_u64;
+          }'
+          inspect='fn inspect(link: &Link) -> result: u64 reads(link.v) {
+            let got = link^.v;
+            return got;
+          }'
+          build='  let end = None<Box<Link>>();
+            let tail = Link(v: 15_u64, next: move end);
+            let boxed = box_new::<Link>(value: move tail);
+            let more = Some<Box<Link>>(value: move boxed);
+            let head = Link(v: 2_u64, next: move more);
+            let cursor = &head;'
+          step='    match cursor^.next {
+                Some(value: child) => {
+                  set cursor = &child^.inner;
+                }
+                None() => {
+                  break;
+                }
+              }'
+          for variant in const guard none; do
+            case "$variant" in
+              const) update='    set cursor^.v = 0_u64;' ;;
+              guard) update='    if bumped < 16_u64 {
+                set cursor^.v = bumped;
+              } else {
+                set cursor^.v = 0_u64;
+              }' ;;
+              none) update='' ;;
+            esac
+            walk="fn walk() -> result: u64 pure {
+          $build
+            for (i in 0_u64..2_u64) {
+              let bumped = cursor^.v + 1_u64;
+          ${update:+$update
+          }$step
+            }
+            let got = inspect(link: &head);
+            return got;
+          }"
+            write "walk-$variant" "$link" "$inspect" "$walk" "$main"
+          done
+          write walk-straight "$link" "$inspect" "fn walk() -> result: u64 pure {
+          $build
+            let bumped = cursor^.v + 1_u64;
+            if bumped == 16_u64 {
+              set cursor^.v = 0_u64;
+            } else {
+              set cursor^.v = bumped;
+            }
+            let got = inspect(link: &head);
+            return got;
+          }" "$main"
+          write cover-after-move "$link" "$inspect" "fn walk() -> result: u64 pure {
+          $build
+            for (i in 0_u64..1_u64) {
+          $step
+              set cursor^.v = 31_u64;
+            }
+            let got = inspect(link: &head);
+            return got;
+          }" "$main"
+          for name in follow-none walk-const cover-after-move; do
+            echo "== source of $name"
+            cat -n "$probe/$name.wf"
           done

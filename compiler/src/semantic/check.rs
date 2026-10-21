@@ -631,6 +631,10 @@ struct TypeContext<'unit> {
     behavior: behavior::BehaviorInventory,
     /// [TYPE-11] each struct's formed type invariants, in declaration order.
     type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
+    /// [TYPE-11, FN-2] each generic struct's type invariants, formed once
+    /// over its symbolic instance; every instance takes them under its own
+    /// substitution as it is declared.
+    generic_type_invariants: HashMap<DeclarationId, Vec<type_invariants::TypeInvariantTemplate>>,
     range_type_invariants: HashMap<NominalId, Vec<super::range_facts::CheckedRangeClause>>,
     /// [EFF-2] the paths each checked body writes, by function. A row may
     /// declare a wider path than any of these; a repair that offers to
@@ -3440,19 +3444,27 @@ impl<'unit> TypeContext<'unit> {
         value: CheckedConst,
         signature: &FunctionSignature,
     ) -> Result<CheckedConst, CheckStop> {
+        self.instantiate_const(value, &signature.substitution)
+    }
+    /// One const under `substitution` [FN-2]: a parameter it binds reads its
+    /// argument, and a derived const combines its instantiated operands.
+    fn instantiate_const(
+        &mut self,
+        value: CheckedConst,
+        substitution: &GenericSubstitution,
+    ) -> Result<CheckedConst, CheckStop> {
         Ok(match value {
             CheckedConst::Value(_) => value,
-            CheckedConst::Parameter(declaration) => signature
-                .substitution
-                .const_argument(declaration)
-                .unwrap_or(value),
+            CheckedConst::Parameter(declaration) => {
+                substitution.const_argument(declaration).unwrap_or(value)
+            }
             CheckedConst::Derived(id) => {
                 let derived = self.derived_const(id)?;
-                let left = self.instantiate_goal_const(derived.left, signature)?;
-                let right = self.instantiate_goal_const(derived.right, signature)?;
-                // The owning instance body was accepted, so the same
-                // evaluation already succeeded at its source node; a failure
-                // here is a trusted-invariant breach, not a source verdict.
+                let left = self.instantiate_const(derived.left, substitution)?;
+                let right = self.instantiate_const(derived.right, substitution)?;
+                // The owning instance was formed, so the same evaluation
+                // already succeeded at its source node; a failure here is a
+                // trusted-invariant breach, not a source verdict.
                 self.combine_const(derived.operation, left, right)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?
             }
@@ -3958,6 +3970,7 @@ impl<'unit> TypeContext<'unit> {
             derived_consts: Default::default(),
             behavior: Default::default(),
             type_invariants: Default::default(),
+            generic_type_invariants: Default::default(),
             range_type_invariants: Default::default(),
             exhibited_writes: Default::default(),
             exhibited_rows: Default::default(),

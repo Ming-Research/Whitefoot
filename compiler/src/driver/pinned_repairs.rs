@@ -3290,11 +3290,10 @@ fn main() -> status: std::process::ExitStatus pure waits {
     // unproved.
     // -------------------------------------------------------------------
     RepairPair {
-        name: "type-invariant-on-a-generic-struct.wf",
-        rejected: br#"struct Pair<T> {
-  first: u64;
-  second: u64;
-  invariant ordered(pair): pair.first <= pair.second;
+        name: "range-type-invariant-on-a-generic-struct.wf",
+        rejected: br#"struct Zeroes<T> {
+  cells: Array<u64, 1>;
+  invariant(z): forall zero(k in 0_u64..z^.cells.len): z^.cells[k] == 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -3306,7 +3305,35 @@ fn main() -> status: std::process::ExitStatus pure {
             "]: InvalidTypeInvariant\n",
             "\n  mechanical_fix: declare the invariant on a struct without generics, or state the relation as a `requires` and `ensures` pair on each function that takes the value\n",
         ],
-        repaired: &[br#"struct Pair {
+        repaired: &[br#"struct Zeroes {
+  cells: Array<u64, 1>;
+  invariant(z): forall zero(k in 0_u64..z^.cells.len): z^.cells[k] == 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariant-over-a-type-parameter-field.wf",
+        rejected: br#"struct Pair<T: Int> {
+  first: T;
+  second: T;
+  invariant ordered(pair): pair.first <= pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: relate only fields whose declared types name no type parameter, such as `u64` fields, or the `len` of a field whose type names one, such as a `Slots<T, 8>` field\n",
+        ],
+        repaired: &[
+            br#"struct Pair<T: Int> {
   first: u64;
   second: u64;
   invariant ordered(pair): pair.first <= pair.second;
@@ -3315,7 +3342,18 @@ fn main() -> status: std::process::ExitStatus pure {
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
-"#],
+"#,
+            br#"struct Pair<T: Int> {
+  items: Slots<T, 8>;
+  used: u64;
+  invariant ordered(pair): pair.used <= pair.items.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
     },
     RepairPair {
         name: "propagation-leaves-a-type-invariant-false.wf",
@@ -3390,6 +3428,93 @@ fn main() -> status: std::process::ExitStatus pure {
   let bad = Err<u8, unit>(error: unit);
   let r = step(t: &table, outcome: bad);
   let got = peek(t: &table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#],
+    },
+    RepairPair {
+        name: "a-cursor-moves-before-its-write-is-restored.wf",
+        rejected: br#"struct Link {
+  v: u64;
+  next: Option<Box<Link>>;
+  invariant small(link): link.v < 16_u64;
+}
+
+fn inspect(link: &Link) -> result: u64 reads(link.v) {
+  let got = link^.v;
+  return got;
+}
+
+fn walk() -> result: u64 pure {
+  let end = None<Box<Link>>();
+  let tail = Link(v: 1_u64, next: move end);
+  let boxed = box_new::<Link>(value: move tail);
+  let more = Some<Box<Link>>(value: move boxed);
+  let head = Link(v: 2_u64, next: move more);
+  let cursor = &head;
+  for (i in 0_u64..1_u64) {
+    set cursor^.v = 31_u64;
+    match cursor^.next {
+      Some(value: child) => {
+        set cursor = &child^.inner;
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  let got = inspect(link: &head);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = walk();
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "]: UnrestoredTypeInvariant\n",
+            "\n  mechanical_fix: a write that may have broken a type invariant at or below `head` went through a position or reference that changed before the invariant was restored, so no relation names it any more: restore the invariant before that position or reference changes, or replace `head` whole with a value a construction or a call returns before this hand-off\n",
+        ],
+        repaired: &[br#"struct Link {
+  v: u64;
+  next: Option<Box<Link>>;
+  invariant small(link): link.v < 16_u64;
+}
+
+fn inspect(link: &Link) -> result: u64 reads(link.v) {
+  let got = link^.v;
+  return got;
+}
+
+fn walk() -> result: u64 pure {
+  let end = None<Box<Link>>();
+  let tail = Link(v: 1_u64, next: move end);
+  let boxed = box_new::<Link>(value: move tail);
+  let more = Some<Box<Link>>(value: move boxed);
+  let head = Link(v: 2_u64, next: move more);
+  let cursor = &head;
+  for (i in 0_u64..1_u64) {
+    set cursor^.v = 31_u64;
+    set cursor^.v = 15_u64;
+    match cursor^.next {
+      Some(value: child) => {
+        set cursor = &child^.inner;
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  let got = inspect(link: &head);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = walk();
   let code = cvt.wrap::<u64, u8>(got);
   return std::process::exit_status(code: code);
 }

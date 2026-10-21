@@ -23,6 +23,7 @@ use crate::semantic::postcondition::{
 use crate::FixedTerminal;
 
 const TYPE11_DROP_THE_GENERICS: &str = "declare the invariant on a struct without generics, or state the relation as a `requires` and `ensures` pair on each function that takes the value";
+const TYPE11_INSTANCE_INDEPENDENT_DATA: &str = "relate only fields whose declared types name no type parameter, such as `u64` fields, or the `len` of a field whose type names one, such as a `Slots<T, 8>` field";
 const TYPE11_DROP_OPAQUE: &str = "declare the invariant on a struct that is not `opaque`";
 const TYPE11_RENAME_THE_INVARIANT: &str = "give each type invariant of the struct its own name";
 const TYPE11_STATE_ONE_COMPARISON: &str = "state the invariant as one comparison between two sides, such as `table.next < table.slots.len`; write two invariants for a conjunction";
@@ -63,19 +64,9 @@ impl<'unit> Checker<'_, 'unit> {
             let Some(first) = invariants.first().copied() else {
                 continue;
             };
-            if tree
+            let generic = tree
                 .first_child_with(template.node, Production::Generics)?
-                .is_some()
-            {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Type11,
-                    first,
-                    SemanticIssueKind::InvalidTypeInvariant {
-                        reason: "its struct declares generics",
-                        mechanical_fix: TYPE11_DROP_THE_GENERICS,
-                    },
-                );
-            }
+                .is_some();
             if tree.has_fixed(template.node, FixedTerminal::Opaque)? {
                 return self.types.declarations.issue_node(
                     SemanticRule::Type11,
@@ -109,10 +100,20 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
             }
-            let nominal = self
-                .types
-                .source_nominal_instance(template.declaration, &GenericSubstitution::default())
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            // [FN-2] a generic struct's invariants are formed once, over its
+            // symbolic instance, where each parameter stands for itself.
+            let checkpoint = generic.then(|| self.types.view.clone());
+            let nominal = if generic {
+                let substitution = Checker::symbolic_nominal_substitution(
+                    &template.generic_parameters,
+                    &template.region_parameters,
+                )?;
+                self.ensure_source_nominal_instance(check_context, template_index, substitution)?
+            } else {
+                self.types
+                    .source_nominal_instance(template.declaration, &GenericSubstitution::default())
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            };
             let mut names = Vec::with_capacity(invariants.len());
             let mut formed = Vec::with_capacity(invariants.len());
             for invariant in invariants {
@@ -146,6 +147,16 @@ impl<'unit> Checker<'_, 'unit> {
                 }
                 names.push(name.clone());
                 if let Some(range) = range {
+                    if generic {
+                        return self.types.declarations.issue_node(
+                            SemanticRule::Type11,
+                            invariant,
+                            SemanticIssueKind::InvalidTypeInvariant {
+                                reason: "it is a range type invariant and its struct declares generics",
+                                mechanical_fix: TYPE11_DROP_THE_GENERICS,
+                            },
+                        );
+                    }
                     let clause = self.form_range_type_invariant(
                         check_context,
                         template.declaration,
@@ -160,13 +171,35 @@ impl<'unit> Checker<'_, 'unit> {
                         .push(clause);
                     continue;
                 }
-                formed.push(self.form_type_invariant(
+                let one = self.form_type_invariant(
                     check_context,
                     template.declaration,
                     invariant,
                     name,
                     nominal,
-                )?);
+                )?;
+                if generic {
+                    self.admit_generic_type_invariant(invariant, nominal, &one)?;
+                }
+                formed.push(one);
+            }
+            if let Some(checkpoint) = checkpoint {
+                self.types.select_view(checkpoint);
+                self.types
+                    .generic_type_invariants
+                    .insert(template.declaration, formed);
+                let instances = self
+                    .types
+                    .nominals_by_declaration
+                    .get(&template.declaration)
+                    .into_iter()
+                    .flatten()
+                    .map(|instance| instance.id)
+                    .collect::<Vec<_>>();
+                for instance in instances {
+                    self.types.attach_type_invariants(instance)?;
+                }
+                continue;
             }
             if !formed.is_empty()
                 && let Some(record) = self.types.nominals.get_mut(nominal.0 as usize)
@@ -175,6 +208,34 @@ impl<'unit> Checker<'_, 'unit> {
                 record.affine_invariants = formed.iter().map(affine_invariant).collect();
             }
             self.types.type_invariants.insert(nominal, formed);
+        }
+        Ok(())
+    }
+
+    /// [TYPE-11, FN-2] in a struct that declares generics, a binder datum
+    /// reads the same data at every instance: each field its projection
+    /// selects has a declared type that names no type parameter, or is
+    /// followed at once by the datum's final measure member, and the datum
+    /// is a fragment integer.
+    fn admit_generic_type_invariant(
+        &self,
+        invariant: NodeId,
+        nominal: NominalId,
+        template: &TypeInvariantTemplate,
+    ) -> Result<(), CheckStop> {
+        let mut data = Vec::new();
+        typed_binder_data(&template.goal.root, &mut data);
+        for (projections, ty) in data {
+            if !self.types.instance_independent_datum(nominal, projections, ty)? {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Type11,
+                    invariant,
+                    SemanticIssueKind::InvalidTypeInvariant {
+                        reason: "a binder datum reads a field whose declared type names a type parameter",
+                        mechanical_fix: TYPE11_INSTANCE_INDEPENDENT_DATA,
+                    },
+                );
+            }
         }
         Ok(())
     }
@@ -785,6 +846,255 @@ impl TypeContext<'_> {
             normalized,
         })
     }
+
+    /// [TYPE-11, FN-2] whether the binder datum at `projections` from a value
+    /// of `nominal`, of type `ty`, reads the same data at every instance of a
+    /// generic struct: each field it selects has a declared type that names
+    /// no type parameter or is followed at once by the datum's final measure
+    /// member, and the datum is a fragment integer.
+    fn instance_independent_datum(
+        &self,
+        nominal: NominalId,
+        projections: &[GoalProjection],
+        ty: CheckedType,
+    ) -> Result<bool, CheckStop> {
+        if !matches!(ty, CheckedType::Integer(_)) {
+            return Ok(false);
+        }
+        let mut current = CheckedType::Nominal(nominal);
+        for (index, projection) in projections.iter().enumerate() {
+            let measured = |position: usize| {
+                position + 1 == projections.len()
+                    && matches!(projections.get(position), Some(GoalProjection::Measure(_)))
+            };
+            if measured(index) {
+                return Ok(true);
+            }
+            let CheckedType::Nominal(owner) = current else {
+                return Ok(false);
+            };
+            current = match (projection, &self.nominal(owner)?.kind) {
+                (GoalProjection::Field(field), CheckedNominalKind::Struct { fields }) => {
+                    let declared = fields
+                        .get(*field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                        .ty;
+                    if !measured(index + 1) && self.names_type_parameter(declared)? {
+                        return Ok(false);
+                    }
+                    declared
+                }
+                (GoalProjection::Deref, CheckedNominalKind::Box { referent, .. }) => *referent,
+                _ => return Ok(false),
+            };
+        }
+        Ok(true)
+    }
+
+    /// Whether `ty` names a type parameter: is one, or holds one as an
+    /// element, a source instance's type argument or a prelude type's
+    /// argument.
+    fn names_type_parameter(&self, ty: CheckedType) -> Result<bool, CheckStop> {
+        Ok(match ty {
+            CheckedType::Generic(_) | CheckedType::GenericInt(_) | CheckedType::GenericFloat(_) => {
+                true
+            }
+            CheckedType::Array { element, .. }
+            | CheckedType::Buffer { element }
+            | CheckedType::Window { element, .. }
+            | CheckedType::Segments { element }
+            | CheckedType::Entries { element } => {
+                self.names_type_parameter(self.element_type(element)?)?
+            }
+            CheckedType::Nominal(id) => match self.prelude_type(id) {
+                Some(PreludeType::Option(value)) => self.names_type_parameter(value)?,
+                Some(PreludeType::Result(value, error)) => {
+                    self.names_type_parameter(value)? || self.names_type_parameter(error)?
+                }
+                Some(_) => false,
+                None => {
+                    let arguments = self
+                        .source_nominal_instance_entry(id)?
+                        .map(|(_, substitution)| substitution.bindings().to_vec())
+                        .unwrap_or_default();
+                    let mut names = false;
+                    for (_, argument) in arguments {
+                        if let super::generics::GenericArgument::Type(argument) = argument
+                            && self.names_type_parameter(argument)?
+                        {
+                            names = true;
+                            break;
+                        }
+                    }
+                    names
+                }
+            },
+            CheckedType::Unit
+            | CheckedType::Bool
+            | CheckedType::Integer(_)
+            | CheckedType::Float(_)
+            | CheckedType::KeySet => false,
+        })
+    }
+
+    /// [TYPE-11, FN-2] gives an instance of a generic struct the invariants
+    /// formed over its symbolic instance, each read at the instance's own
+    /// const arguments. A derived const argument, which only a generic
+    /// schema writes, forms no constant term [ENT-2], so that schema reads
+    /// no invariant that names it; each concrete instance is checked on its
+    /// own and reads every one.
+    pub(super) fn attach_type_invariants(&mut self, id: NominalId) -> Result<(), CheckStop> {
+        let Some((template, substitution)) = self.source_nominal_instance_entry(id)? else {
+            return Ok(());
+        };
+        let declaration = self
+            .nominal_templates
+            .get(template)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .declaration;
+        let Some(templates) = self.generic_type_invariants.get(&declaration) else {
+            return Ok(());
+        };
+        let (templates, substitution) = (templates.clone(), substitution.clone());
+        let mut formed = Vec::with_capacity(templates.len());
+        for template in &templates {
+            if let Some(instance) = self.instantiate_type_invariant(template, &substitution)? {
+                formed.push(instance);
+            }
+        }
+        if formed.is_empty() {
+            return Ok(());
+        }
+        let record = self
+            .nominals
+            .get_mut(id.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        record.type_invariant = true;
+        record.affine_invariants = formed.iter().map(affine_invariant).collect();
+        self.type_invariants.insert(id, formed);
+        Ok(())
+    }
+
+    /// One invariant formed over a generic struct's symbolic instance, at
+    /// the instance `substitution` names: each const generic it reads is the
+    /// instance's argument, and so is the constant of each measured type it
+    /// reads a measure of. A measure reads only its type's shape and constant
+    /// [MSR-1], so an element type stays as formed. `None` when an argument
+    /// it reads is a derived const.
+    fn instantiate_type_invariant(
+        &mut self,
+        template: &TypeInvariantTemplate,
+        substitution: &GenericSubstitution,
+    ) -> Result<Option<TypeInvariantTemplate>, CheckStop> {
+        let Some(goal) = self.instantiate_invariant_goal(&template.goal.root, substitution)? else {
+            return Ok(None);
+        };
+        let mut relation = template.relation.clone();
+        for term in &mut relation.operands {
+            for datum in std::iter::once(&mut term.datum).chain(term.parameter.as_mut()) {
+                match datum {
+                    RelationDatum::Literal { value, .. } => {
+                        let Some(instance) = self.instantiate_invariant_value(value, substitution)?
+                        else {
+                            return Ok(None);
+                        };
+                        *value = instance;
+                    }
+                    RelationDatum::Measure(_, place) => {
+                        place.ty = match place.ty {
+                            CheckedType::Array { element, length } => CheckedType::Array {
+                                element,
+                                length: self.instantiate_const(length, substitution)?,
+                            },
+                            CheckedType::Window {
+                                shape,
+                                element,
+                                capacity: Some(capacity),
+                            } => CheckedType::Window {
+                                shape,
+                                element,
+                                capacity: Some(self.instantiate_const(capacity, substitution)?),
+                            },
+                            ty => ty,
+                        };
+                    }
+                    RelationDatum::Result { .. }
+                    | RelationDatum::Parameter { .. }
+                    | RelationDatum::NamedConst { .. } => {}
+                }
+            }
+        }
+        Ok(Some(TypeInvariantTemplate {
+            clause: template.clause.clone(),
+            goal: GoalTemplate::new(goal),
+            relation,
+        }))
+    }
+
+    fn instantiate_invariant_goal(
+        &mut self,
+        expression: &GoalExpression,
+        substitution: &GenericSubstitution,
+    ) -> Result<Option<GoalExpression>, CheckStop> {
+        Ok(Some(match expression {
+            GoalExpression::Datum(GoalDatum::Literal(value)) => {
+                match self.instantiate_invariant_value(value, substitution)? {
+                    Some(value) => GoalExpression::Datum(GoalDatum::Literal(value)),
+                    None => return Ok(None),
+                }
+            }
+            GoalExpression::Datum(datum) => GoalExpression::Datum(datum.clone()),
+            GoalExpression::Operation {
+                row,
+                type_arguments,
+                const_arguments,
+                result,
+                arguments,
+            } => {
+                let mut operands = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    let Some(operand) = self.instantiate_invariant_goal(argument, substitution)?
+                    else {
+                        return Ok(None);
+                    };
+                    operands.push(operand);
+                }
+                let mut constants = Vec::with_capacity(const_arguments.len());
+                for constant in const_arguments {
+                    constants.push(self.instantiate_const(*constant, substitution)?);
+                }
+                GoalExpression::Operation {
+                    row: *row,
+                    type_arguments: type_arguments.clone(),
+                    const_arguments: constants,
+                    result: *result,
+                    arguments: operands,
+                }
+            }
+        }))
+    }
+
+    /// [MSR-6] a const generic's value at an instance: its concrete
+    /// argument, or the const parameter of its own that the instance passes
+    /// on; `None` for a derived const. Every other value is unchanged.
+    fn instantiate_invariant_value(
+        &mut self,
+        value: &CheckedValue,
+        substitution: &GenericSubstitution,
+    ) -> Result<Option<CheckedValue>, CheckStop> {
+        let CheckedValue::ConstGeneric { declaration, ty } = value else {
+            return Ok(Some(value.clone()));
+        };
+        Ok(
+            match self.instantiate_const(CheckedConst::Parameter(*declaration), substitution)? {
+                CheckedConst::Value(bits) => Some(CheckedValue::Integer { ty: *ty, bits }),
+                CheckedConst::Parameter(declaration) => {
+                    Some(CheckedValue::ConstGeneric { declaration, ty: *ty })
+                }
+                CheckedConst::Derived(_) => None,
+            },
+        )
+    }
 }
 
 /// [TYPE-11] the predicate over the parameter at `ordinal`: its value, or
@@ -875,6 +1185,31 @@ fn affine_invariant(template: &TypeInvariantTemplate) -> CheckedAffineInvariant 
         goal: template.goal.root.clone(),
         data,
         relation: template.relation.clone(),
+    }
+}
+
+/// Each distinct projection from parameter zero that `expression` reads,
+/// with the type of the datum it reaches.
+fn typed_binder_data<'goal>(
+    expression: &'goal GoalExpression,
+    data: &mut Vec<(&'goal [GoalProjection], CheckedType)>,
+) {
+    match expression {
+        GoalExpression::Datum(GoalDatum::Parameter {
+            ordinal: 0,
+            projections,
+            ty,
+        }) => {
+            if !data.iter().any(|(known, _)| *known == projections.as_slice()) {
+                data.push((projections, *ty));
+            }
+        }
+        GoalExpression::Datum(_) => {}
+        GoalExpression::Operation { arguments, .. } => {
+            for argument in arguments {
+                typed_binder_data(argument, data);
+            }
+        }
     }
 }
 
