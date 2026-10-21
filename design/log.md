@@ -10,6 +10,12 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/verification/documentation-examples
 
 Summary: A claim in user documentation must stay bound to the program it describes. Complete programs in `docs/guide/` and both READMEs sit in ```whitefoot blocks whose info string states the outcome (accepted as `--check` does, `run exit=N`, or `reject RULE`), matching the annotation Whitefoot-kit already uses; a Rust test in the corpus integration target checks every block through the same entry `--check` uses and the existing build-and-run support, reporting every failing block; and an optional ```whitefoot-output block after a rejection is compared byte for byte, because the rejection text is part of the example and changes only when its author changes it. Refused: a Python extractor (the compiler is checked through cargo test), treating unmarked blocks as programs (articles hold fragments and output), and checking every file under `docs/` with the current compiler (15 article and essay programs disagree with it by the articles' own convention of naming their compiler revision; recorded on the first-release articles item).
+## 2026-10-21 Safety claims are stated on one checked page
+
+Nodes: language/safety-claims
+
+Summary: The safety claims were spread over the README, the constitution, the specification and articles, with no place that connected each claim to the rules and cases behind it. A new node puts them on one page whose rows cite specification rules and conformance cases, with the limits quoted from the specification and the trusted base sized, and `make static` holds every citation to the specification and the manifest and the presence of each limit, because a page nothing reads drifts, which the refused rule-to-ground ledger already showed. Tagging cases in the manifest, generating the page from the manifest, leaving the page unchecked and holding the size figures to the checkout are rejected.
+
 ## 2026-10-20 Programs open host paths through an explicit authority no program can construct, and an open of an existing directory never creates one
 
 Nodes: language/system-interface/host-paths
