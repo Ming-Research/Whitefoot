@@ -906,6 +906,15 @@ pub enum SemanticIssueKind {
         /// Repair naming that part.
         mechanical_fix: String,
     },
+    /// [SHARE-1] a linear state type has its own handle type as a part.
+    SharedStateHoldsOwnHandle {
+        /// First such part, in declaration order through handle states.
+        part: String,
+        /// The handle type the state would hold.
+        handle: String,
+        /// Repair naming that part.
+        mechanical_fix: String,
+    },
     /// [SHARE-1] frozen content cannot be moved or consumed.
     FrozenContentConsume {
         /// Read or retain the content instead of consuming it.

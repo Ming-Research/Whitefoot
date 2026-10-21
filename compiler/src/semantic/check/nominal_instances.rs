@@ -643,6 +643,56 @@ impl<'unit> Checker<'_, 'unit> {
                 .ok_or(SemanticCompilerFailure::CounterOverflow)?;
         }
         self.validate_frozen_instances()?;
+        self.validate_shared_instances()?;
+        Ok(())
+    }
+
+    /// [SHARE-1] an object whose state is linear holds no handle to itself:
+    /// each such concrete state type, followed through the state behind every
+    /// handle it holds, has no part that is its own handle type, since a
+    /// handle the object held would keep its count from reaching the last
+    /// `shared_close`. A symbolic state is checked again at each concrete
+    /// instance.
+    fn validate_shared_instances(&self) -> Result<(), CheckStop> {
+        for id in &self.types.view.nominals {
+            let CheckedNominalKind::Shared {
+                state,
+                shape: CheckedShared::Object,
+            } = self.types.nominal(*id)?.kind
+            else {
+                continue;
+            };
+            if self.types.owns_modifier_linear_node(state)?.is_none() {
+                continue;
+            }
+            let Some(part) = self.types.first_own_handle_part(state, *id)? else {
+                continue;
+            };
+            let (template, substitution) = self.types.source_nominal_instances[id.0 as usize]
+                .as_ref()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let template = &self.types.nominal_templates[*template];
+            let key = template
+                .generic_parameters
+                .first()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                .key();
+            let site = self
+                .types
+                .behavior_binding_site(template.node, key, substitution)?;
+            let handle = self.types.checked_type_name(CheckedType::Nominal(*id))?;
+            return self.types.declarations.issue_node(
+                SemanticRule::Share1,
+                site,
+                SemanticIssueKind::SharedStateHoldsOwnHandle {
+                    mechanical_fix: format!(
+                        "keep `{part}` out of the state: hold the `{handle}` outside the object, or give the inner object a state type of its own"
+                    ),
+                    part,
+                    handle,
+                },
+            );
+        }
         Ok(())
     }
 
