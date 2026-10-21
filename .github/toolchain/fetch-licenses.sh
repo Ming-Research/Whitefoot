@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The LLVM release archives may omit component licenses entirely. Download the
-# four components' license texts from the exact source tag and check each one
-# independently; the trim scripts copy them into the package. A bundle that also
-# ships a runtime library of another LLVM project (the Windows bundle's libc++
-# and libunwind) names its extra components after the directory.
+# license texts of llvm, clang, lld and compiler-rt from the exact source tag
+# and check each one independently; the trim scripts copy them into the package.
+# A bundle that also ships a runtime library of another LLVM project (the
+# Windows bundle's libc++ and libunwind) names its extra components after the
+# directory.
 # Usage: fetch-licenses.sh LLVM_TAG DIRECTORY [EXTRA_COMPONENT...]
 set -euo pipefail
 if [ "$#" -lt 2 ]; then
