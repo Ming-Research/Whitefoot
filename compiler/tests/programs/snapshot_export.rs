@@ -154,7 +154,8 @@ fn capture_exports_the_pairs_of_a_hash_map_value() {
     assert_eq!(captured.status.code(), Some(0), "{captured:?}");
     assert!(captured.stderr.is_empty(), "{captured:?}");
     // The program puts keys 1 to 5, each with its key plus 100, then removes
-    // key 3, so its slot is vacant; the export holds exactly the other four.
+    // key 3, so its slot holds a deleted marker; the export skips it and
+    // holds exactly the other four.
     let expected = BTreeMap::from([(1, 101), (2, 102), (4, 104), (5, 105)]);
     assert_eq!(decode_hash_map(&captured.stdout), (7, expected));
 }
