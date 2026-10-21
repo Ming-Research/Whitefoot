@@ -37,6 +37,7 @@ import re
 import statistics
 import subprocess
 import sys
+import time
 
 MINIMUM_RUNS = 20
 DEFAULT_WINDOW = 50
@@ -212,11 +213,15 @@ def replay(rows, table, since, size, every, slowdowns, keep=()):
 
 
 def gh(*args):
-    done = subprocess.run(["gh", "api", "--allow-escape-sequences", *args],
-                          capture_output=True, text=True)
-    if done.returncode:
-        raise SystemExit(f"gh api {' '.join(args)}: {done.stderr.strip()}")
-    return done.stdout
+    """Output of `gh api`; a server error (HTTP 5xx) is retried a few times."""
+    for attempt in range(1, 5):
+        done = subprocess.run(["gh", "api", "--allow-escape-sequences", *args],
+                              capture_output=True, text=True)
+        if done.returncode == 0:
+            return done.stdout
+        if "HTTP 5" not in done.stderr or attempt == 4:
+            raise SystemExit(f"gh api {' '.join(args)}: {done.stderr.strip()}")
+        time.sleep(3 * attempt)
 
 
 def lines(*args):
