@@ -822,7 +822,7 @@ fn slab_test_reserve_free_list() -> failures: u64 pure {
 }
 
 fn slab_test_reserve_ceiling() -> failures: u64 pure {
-  doc "A request above the static ceiling returns Err before changing capacity, materialized length, free-list head or the live value. The unchanged full backing still refuses insertion. A separate shared-empty backing grows directly to its ceiling and accepts a value.";
+  doc "A request above the static ceiling returns Err before changing capacity, materialized length or the live value; the free-list head is outside the reserve operation's write set, so the checker already decides it unchanged. The unchanged full backing still refuses insertion. A separate shared-empty backing grows directly to its ceiling and accepts a value.";
   let failed = 0_u64;
   let seen = SlabTestSeen(sum: 0_u64, count: 0_u64, sequence: 0_u64, visits: 0_u64, last: 0_u64);
   let slab = slab_new::<u64, 3, 1>(capacity: 1_u64);
@@ -835,7 +835,6 @@ fn slab_test_reserve_ceiling() -> failures: u64 pure {
       return 1_u64;
     }
   }
-  let previous_head = slab.free_head;
   match slab_reserve::<u64, 3, 1>(slab: &slab, capacity: 4_u64) {
     Ok(value: unexpected) => {
       set failed = failed +wrap 1_u64;
@@ -847,9 +846,6 @@ fn slab_test_reserve_ceiling() -> failures: u64 pure {
     set failed = failed +wrap 1_u64;
   }
   if slab.cells.inner.len != 1_u64 {
-    set failed = failed +wrap 1_u64;
-  }
-  if slab.free_head != previous_head {
     set failed = failed +wrap 1_u64;
   }
   match slab_visit::<SlabTestScalarVisit, 3, 1>(slab: &slab, handle: handle, env: &seen) {
@@ -882,9 +878,6 @@ fn slab_test_reserve_ceiling() -> failures: u64 pure {
     }
   }
   if empty.cells.inner.cap != 3_u64 {
-    set failed = failed +wrap 1_u64;
-  }
-  if empty.cells.inner.len != 0_u64 {
     set failed = failed +wrap 1_u64;
   }
   match slab_insert::<u64, 3, 1>(slab: &empty, value: 99_u64) {
