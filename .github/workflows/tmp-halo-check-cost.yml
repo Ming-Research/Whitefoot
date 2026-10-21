@@ -56,7 +56,7 @@ jobs:
             base: 7d9118eba
             rounds: 5
             main_rounds: 5
-            adapt_max: 200
+            adapt_max: 300
           # Firn whole program, at the revision the 10-13 measurement used.
           - label: firn
             repo: Firn-wf
@@ -65,7 +65,7 @@ jobs:
             base: 7d9118eba
             rounds: 5
             main_rounds: 5
-            adapt_max: 150
+            adapt_max: 400
     steps:
       - uses: actions/checkout@v4
         with:
@@ -100,7 +100,36 @@ jobs:
           notes = []; end = 'cap reached'
           def block_end(lines, start, indent):
               return next((n for n in range(start, len(lines)) if lines[n].startswith(indent + '}') and not lines[n].startswith(indent + ' ')), None)
+          def fix_else_if(path, number, decided):
+              lines = (src / path).read_text().split('\n'); i = number - 1
+              m = re.match(r'^(\s*)\} else if (.*) \{$', lines[i])
+              if not m: return None
+              indent = m.group(1)
+              j = block_end(lines, i + 1, indent)
+              if j is None: return 'else-if: no closing line at the same indent'
+              if decided == 'True':
+                  # Keep the then block as the final else; drop the rest of the chain.
+                  k = j
+                  while lines[k] != indent + '}':
+                      k = block_end(lines, k + 1, indent)
+                      if k is None: return 'else-if: chain does not close'
+                  lines[i:k + 1] = [indent + '} else {'] + lines[i + 1:j] + [indent + '}']
+              else:
+                  # Drop the then block; the next link (or the closing brace) follows the previous block.
+                  lines[i:j + 1] = [lines[j]]
+              (src / path).write_text('\n'.join(lines))
+              return ''
+          def fix_effect_row(path, number, text):
+              expected = re.search(r'expected_row: (.*)', text); found = re.search(r'found_row: (.*)', text)
+              if not expected or not found: return 'no rows in the diagnostic'
+              lines = (src / path).read_text().split('\n'); i = number - 1
+              if found.group(1) not in lines[i]: return 'found row is not on the reported line'
+              lines[i] = lines[i].replace(found.group(1), expected.group(1), 1)
+              (src / path).write_text('\n'.join(lines))
+              return None
           def fix_redundant(path, number, decided):
+              chain = fix_else_if(path, number, decided)
+              if chain is not None: return chain or None
               lines = (src / path).read_text().split('\n'); i = number - 1
               m = re.match(r'^(\s*)if (.*) \{$', lines[i])
               if not m: return f'not a statement-form if: {lines[i]!r}'
@@ -142,6 +171,10 @@ jobs:
                   why = fix_redundant(m.group(1), int(m.group(2)), d.group(1) if d else '?') if d else 'no decided value'
                   if why: end = f'cannot fix {where}: {why}'; break
                   notes.append('OP-5 ' + where)
+              elif m.group(4) == 'EFF-2':
+                  why = fix_effect_row(m.group(1), int(m.group(2)), r.stdout[m.end():m.end() + 2500])
+                  if why: end = f'cannot fix {where}: {why}'; break
+                  notes.append('EFF-2 ' + where)
               elif m.group(4) == 'FORM-3' and 'found: "held"' in r.stdout[m.end():m.end() + 1500] and not any(x.startswith('held') for x in notes):
                   notes.append(f'held renamed in {rename_held()} files')
               else:
