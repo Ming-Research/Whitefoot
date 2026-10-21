@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/verification
 
 Summary: The time-budget decision said a model with fewer than 20 recorded runs has no column, while the budget table has carried a column for one Intel Xeon model since the owner added it, valued at the larger of the row's largest class budget and the model's own runs by the rule. The tree now says so: such a column exists only when the owner adds it and takes that value, because a few runs can show that a class needs more time but not that it needs less, instead of the model's own runs alone or the unmapped-model fallback alone. The recompute tool applies this value to every such column, so the tree states what the table and the tool already do; no budget value changes. The grounds are in the [time-budget investigation](../research/investigations/test-economy/time-budgets.md#xeon-platinum-8573c-column-candidate-compiler-budget-and-cached-baseline-compiler-2026-10-13), which also records the recompute of the Linux columns.
+## 2026-10-21 Documentation examples are complete programs whose stated outcome the gate checks
+
+Nodes: compiler/verification/documentation-examples
+
+Summary: A claim in user documentation must stay bound to the program it describes. Complete programs in `docs/guide/` and both READMEs sit in ```whitefoot blocks whose info string states the outcome (accepted as `--check` does, `run exit=N`, or `reject RULE`), matching the annotation Whitefoot-kit already uses; a Rust test in the corpus integration target checks every block through the same entry `--check` uses and the existing build-and-run support, reporting every failing block; and an optional ```whitefoot-output block after a rejection is compared byte for byte, because the rejection text is part of the example and changes only when its author changes it. Refused: a Python extractor (the compiler is checked through cargo test), treating unmarked blocks as programs (articles hold fragments and output), and checking every file under `docs/` with the current compiler (15 article and essay programs disagree with it by the articles' own convention of naming their compiler revision; recorded on the first-release articles item).
 
 ## 2026-10-21 Exchange's equality allowance covers slots whose containing paths differ only in index steps
 
