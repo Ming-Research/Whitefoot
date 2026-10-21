@@ -503,6 +503,36 @@ checker one more question per conditional test), and attributing it would
 need a main without OP-5, which does not exist. Firn runs 8.2% faster after
 the merge with fewer join pairs and cells, so the merge did not add work there.
 
+### Re-measurement after the second merge of main (`b59f94622`)
+
+Main advanced 192 commits (changes under `semantic/entailment`, `semantic/places`
+and `resolution`, among others) and was merged again without a textual
+conflict. The same method and adapted Halo source ran on the merged head
+`da79abd12` ([run](https://github.com/Ming-Research/Whitefoot/actions/runs/39649159705),
+EPYC 7763; adaptation: `pkg::test` 2 fixes, `pkg::vm` 132, every exit code 0).
+Here prebranch is the head before this merge (`44f33c996`) and main is
+`b59f94622` (with the #431 regression).
+
+| Workload | rounds | base s | prebranch s | main s | branch s | branch/base | branch/prebranch |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Halo `pkg::test` (base `d837678c6905`) | 3 (main 1) | 2.05 | 2.08 | 604.56 | 2.07 | 0.995 (0.958–1.035) | 0.990 (0.981–1.015) |
+| Halo `pkg::vm` (base `7d9118eba`) | 5 | 16.56 | 9.46 | 11.94 | 9.70 | 0.587 (0.581–0.596) | 1.025 (0.994–1.045) |
+
+| Counter | base | prebranch | main | branch |
+|---|---:|---:|---:|---:|
+| `pkg::vm` joins / pairs / cells | 25,170 / 1,122,732 / 8.29M | 28,568 / 1,176,621 / 9.61M | 290,038 / 1,554,023 / 14.03M | 28,568 / 1,176,621 / 9.61M |
+| `pkg::test` joins / pairs / cells | 827 / 641,730 / 4.14M | 827 / 565,698 / 4,584,143 | not counted | 827 / 565,698 / 4,584,254 |
+
+The second merge left the work unchanged: on `pkg::vm` the branch's join,
+pair and cell counts equal the pre-merge head's exactly and its CPU ratio to
+that head (1.025) has an interval that contains 1; on `pkg::test` the pair
+count is equal and the cell count differs by 111 (0.002%). Against the unfixed
+merged main the branch is 0.812 on `pkg::vm` (9.70 s against 11.94 s) and
+`pkg::test` stays at 2 s against 605 s. Main's own counters on `pkg::vm` equal
+those of the first merge, so the 192 intervening commits did not move the
+unfixed workload either. Firn was not timed again: its source adaptation takes
+more than an hour, and the Firn figures above stand for the first merge.
+
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
 record, ENT-5, the checker-facts decisions, and the directly affected fact-state
