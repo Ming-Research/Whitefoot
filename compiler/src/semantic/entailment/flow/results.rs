@@ -921,6 +921,7 @@ impl Reasoning<'_, '_, '_> {
 impl Reasoning<'_, '_, '_> {
     pub(super) fn kill_result_evidence(
         &mut self,
+        separations: &dyn SeparationOracle,
         state: &mut ProofFlowState,
         events: &[KillEvent],
     ) {
@@ -949,10 +950,9 @@ impl Reasoning<'_, '_, '_> {
                     place: written,
                     relocation,
                     ..
-                } => {
-                    self.input
-                        .write_kills_support(&state.separations, &place, written, *relocation)
-                }
+                } => self
+                    .input
+                    .write_kills_support(separations, &place, written, *relocation),
             }) {
                 return false;
             }
@@ -963,7 +963,7 @@ impl Reasoning<'_, '_, '_> {
             for result in held.values_mut().flatten() {
                 self.vocabulary
                     .refresh_result_from_snapshot(result, &ordinary);
-                self.apply_kills_one(&state.separations, &mut result.facts, events);
+                self.apply_kills_one(separations, &mut result.facts, events);
             }
         }
         state.results = held;
