@@ -24,10 +24,11 @@
 //! writer cannot act on, and a writer trial recorded a writer running `head
 //! -c` on their own program to decode them.
 //!
-//! Stops that are not source rejections -- resource ceilings, invocation
-//! envelopes, internal invariants, target layout, backend -- carry
-//! compiler-facing payloads with no writer repair. They keep their stage
-//! value's `Debug` text as one `payload` field.
+//! Allocation target-layout stops retain a source position and a `reason`
+//! naming the payload layout and violated target limit, with no language rule
+//! or source repair. Other non-source stops -- resource ceilings, invocation
+//! envelopes, internal invariants, and remaining target/backend failures --
+//! keep their stage value's `Debug` text as one compiler-facing `payload` field.
 
 use core::fmt::{self, Write as _};
 
@@ -179,6 +180,21 @@ impl Record {
     /// Rebinds a segment-local record to its original source coordinate.
     pub(super) fn relocate(&mut self, bundle: &SourceBundle, coordinate: SyntaxCoordinate) {
         self.at = Place::resolve(bundle, coordinate, Anchor::Start);
+    }
+
+    /// A target-stage stop may still name the checked source allocation that
+    /// requires the failed representation, without claiming a language rule.
+    pub(super) fn target_layout(
+        message: String,
+        bundle: &SourceBundle,
+        coordinate: Option<SyntaxCoordinate>,
+    ) -> Self {
+        Self {
+            kind: Some("TargetLayout".to_owned()),
+            at: coordinate.and_then(|at| Place::resolve(bundle, at, Anchor::Start)),
+            detail: vec![("reason", Value::Text(message))],
+            expected: None,
+        }
     }
 
     /// The payload fields in the text rendering, one `label: value` per line.

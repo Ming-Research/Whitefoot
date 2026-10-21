@@ -13,6 +13,12 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: The grammar node records three decisions: syntax errors are reported per top-level declaration segment rather than by whole-source recovery or one error per compilation, the module-graph file's line records parse through a diagnostic-only production, and expected tokens are computed from the parse stack rather than the grammar-wide FOLLOW set, each with its refused alternative. Diagnostic rendering keeps every rule, coordinate and expected-token set of a module rejection as structured data so cached and rechecked runs give the same ordered syntax diagnostics. Repair hints list up to eight accessible same-role names for an unresolved qualified name, offer hoisting an inner call into a `define` only in a definition's initializer where the operation is contract-admitted and never in a requires or ensures clause, and limit the disjunction repair to requires. The compiler node fixes the front end's segmentation and phase order by DIAG-1, leaving implementation order only for semantic rejections after name resolution, and incremental compilation checks the whole program's front end before judging modules concurrently and reuses the successful parses.
 
+## 2026-10-13 An allocation that does not fit the heap names its type, layout, limit and call
+
+Nodes: compiler/diagnostic-rendering
+
+Summary: A target layout failure caused by a runtime allocation now names the payload type, its size and alignment, the violated target limit with its value, and the nearest writer-written call requiring the allocation, found through the call origins lowering already records, because a writer can repair a source-valid program only from those; an unlocated allocation category, guessing the call from source text or symbol names, and moving target representability into source acceptance were rejected, the last because STOR-6 places it after checking. Allocation obligations are checked before the program-wide layout walk so the failure keeps its allocation; every check still runs before emission and the failure cites no source-language rule.
+
 ## 2026-10-13 Rebinding a reference variable is its own invalidation event
 
 Nodes: compiler/checker-facts
