@@ -1,7 +1,7 @@
 #!/bin/sh
-# Decide whether a run of gate.yml or io-hosts.yml checks its revision. Prints
-# `run=` and `reason=` lines for $GITHUB_OUTPUT; both workflows call it, so they
-# make one decision.
+# Decide whether a run of gate.yml, io-hosts.yml or sanitizers.yml checks its
+# revision. Prints `run=` and `reason=` lines for $GITHUB_OUTPUT; every one of
+# them calls it, so they make one decision.
 #
 # A run checks what is about to merge: a push to main, a push to a branch with
 # an open ready pull request, the opening or reopening of a ready pull
@@ -30,11 +30,11 @@
 # opening's run decides run=false once the pull request's head has moved; this
 # assumes every move of the branch is a push that starts a run, which a push
 # made with a workflow's own token would not. The run has a concurrency group
-# apart from the pushes' (gate.yml, io-hosts.yml), so it never cancels a push
-# run. A ready pull request's reopening always runs: a push while it was closed
-# was skipped as having no open pull request, so no other run may check its
-# head. A ready pull request from a fork is not asked: no push to the fork
-# starts a run here, so its opening always runs.
+# apart from the pushes' (gate.yml, io-hosts.yml, sanitizers.yml), so it never
+# cancels a push run. A ready pull request's reopening always runs: a push
+# while it was closed was skipped as having no open pull request, so no other
+# run may check its head. A ready pull request from a fork is not asked: no
+# push to the fork starts a run here, so its opening always runs.
 #
 # It reads GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_REF, GITHUB_REF_NAME,
 # GITHUB_REPOSITORY, GITHUB_REPOSITORY_OWNER, GITHUB_RUN_ID and
