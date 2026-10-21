@@ -103,7 +103,7 @@ fn main() -> status: std::process::ExitStatus pure {
         // The whole payload, so the field labels the record prints are pinned
         // with the sentence they carry.
         sentences: &[
-            "\n  expected: [IDENT]\n  found: \"Limit\"\n  mechanical_fix: an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape",
+            "\n  expected: [\"IDENT\"]\n  found: \"Limit\"\n  mechanical_fix: an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape",
         ],
     },
     Probe {
@@ -779,7 +779,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "EFF-2",
         sentences: &[
             "]: EffectMismatch\n",
-            "\n  expected_row: reads(data.len)\n  found_row: pure\n  missing: [reads(data.len)]\n  extra: []\n  mechanical_fix: declare the row as `reads(data.len)`, which covers every access the body makes and no other\n",
+            "\n  expected_row: reads(data.len)\n  found_row: pure\n  missing: [\"reads(data.len)\"]\n  extra: []\n  mechanical_fix: declare the row as `reads(data.len)`, which covers every access the body makes and no other\n",
         ],
     },
     Probe {
@@ -804,7 +804,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: writes(stats.count)\n  found_row: writes(stats.count), writes(stats.total)\n  missing: []\n  extra: [writes(stats.total)]\n",
+            "\n  expected_row: writes(stats.count)\n  found_row: writes(stats.count), writes(stats.total)\n  missing: []\n  extra: [\"writes(stats.total)\"]\n",
         ],
     },
     Probe {
@@ -1357,7 +1357,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "GRAM-8",
         sentences: &[
             "]: InvalidConstructionFields\n",
-            "\n  constructor: Wrap<u64>\n  declared_fields: [value]\n",
+            "\n  constructor: Wrap<u64>\n  declared_fields: [\"value\"]\n",
         ],
     },
     // [FORM-8] one canonical region spelling: each position a region can
