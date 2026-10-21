@@ -1,0 +1,601 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias HashMap = std::collections::hash_map::HashMap;
+alias HashMapConsume = std::collections::hash_map::HashMapConsume;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias HashMapPut = std::collections::hash_map::HashMapPut;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias OutputStream = std::io::OutputStream;
+alias exit_status = std::process::exit_status;
+alias hash_map_each = std::collections::hash_map::hash_map_each;
+alias hash_map_free = std::collections::hash_map::hash_map_free;
+alias hash_map_len = std::collections::hash_map::hash_map_len;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+
+const ceiling: u64 = 4194304_u64;
+
+const spread: u64 = 11400714819323198485_u64;
+
+const stride: u64 = 1000003_u64;
+
+const target_ops: u64 = 262144_u64;
+
+const line_end: Array<u8, 1> =[10_u8];
+
+struct BenchKeys {
+  doc "The hash environment, which the hash does not read: the hash is a fixed mix of the key alone.";
+  unused: u64;
+}
+
+struct Tally {
+  doc "What the timed operations observed: found counts lookups and removals that found their key, sum adds the values they saw, and extra collects what the slow control's extra lookups saw, kept apart so the check is the same in every arm.";
+  found: u64;
+  sum: u64;
+  extra: u64;
+}
+
+struct Sample {
+  ns: u64;
+  ops: u64;
+  check: u64;
+  extra: u64;
+}
+
+fn bench_mix(key: u64) -> mixed: u64 pure {
+  doc "The splitmix64 finalizer, a bijection whose output bits are uniformly distributed for any distinct inputs.";
+  let a_shift = ishr.wrap(key, 30_u32);
+  let a = ixor(key, a_shift);
+  let b = a *wrap 13787848793156543929_u64;
+  let c_shift = ishr.wrap(b, 27_u32);
+  let c = ixor(b, c_shift);
+  let d = c *wrap 10723151780598845931_u64;
+  let e_shift = ishr.wrap(d, 31_u32);
+  return ixor(d, e_shift);
+}
+
+fn bench_hash(env: &BenchKeys, key: &u64) -> result: u64 reads(key) {
+  let value = key^;
+  return bench_mix(key: value);
+}
+
+fn bench_equal(env: &BenchKeys, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
+  return left^ == right^;
+}
+
+binding BenchKey : HashMapKey<u64, BenchKeys> {
+  hash = bench_hash;
+  equal = bench_equal;
+}
+
+fn bench_consume(env: &Tally, key: u64, value: u64) -> result: unit pure {
+  return unit;
+}
+
+binding BenchConsume : HashMapConsume<u64, u64, Tally> {
+  consume = bench_consume;
+}
+
+fn bench_read(env: &Tally, key: &u64, value: &u64) -> result: u64 reads(value), writes(env) {
+  set env^.found = env^.found +wrap 1_u64;
+  set env^.sum = env^.sum +wrap value^;
+  return value^;
+}
+
+fn bench_reread(env: &Tally, key: &u64, value: &u64) -> result: u64 reads(value), writes(env) {
+  set env^.extra = env^.extra +wrap value^;
+  return value^;
+}
+
+fn bench_visit(env: &Tally, key: &u64, value: &u64) -> result: unit reads(value), writes(env) {
+  set env^.found = env^.found +wrap 1_u64;
+  set env^.sum = env^.sum +wrap value^;
+  return unit;
+}
+
+fn bench_revisit(env: &Tally, key: &u64, value: &u64) -> result: unit reads(value), writes(env) {
+  set env^.extra = env^.extra +wrap value^;
+  return unit;
+}
+
+fn key_of(index: u64) -> key: u64 pure {
+  doc "The key of index: one multiplication by an odd constant, so distinct indexes give distinct keys.";
+  return index *wrap spread;
+}
+
+fn order(step: u64, size: u64) -> index: u64 pure contract {
+  requires size > 0_u64;
+} {
+  doc "The index visited at step: a permutation of 0..size that is unrelated to insertion order, since stride is a prime above every admitted size.";
+  let scaled = step *wrap stride;
+  return scaled % size;
+}
+
+fn slow_turn(mask: u64, step: u64) -> repeat: Bool pure {
+  doc "Whether the slow control adds its extra work at step: when every bit of mask is set in step. The slow control passes 3, every fourth step; every other run passes all ones, which no step below 2^64 - 1 matches. The mask is data, so every run executes the same loops; a run-time Bool would let the compiler split each loop into a copy with and a copy without the repetition, which can differ in more than the repetition.";
+  let phase = iand(step, mask);
+  return phase == mask;
+}
+
+fn reps_for(size: u64) -> reps: u64 pure contract {
+  requires size > 0_u64;
+} {
+  doc "Batches per sample, so that a sample makes at least target_ops operations.";
+  let whole = target_ops / size;
+  let rest = target_ops % size;
+  if rest == 0_u64 {
+    return whole;
+  }
+  return whole +wrap 1_u64;
+}
+
+fn put_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys) -> refused: u64 reads(keys), writes(map) {
+  doc "Puts the pair of index; 0 when it was inserted, 1 when the map returned a pair.";
+  let key = key_of(index: index);
+  let outcome = hash_map_put::<BenchKey, u64, ceiling>(map: map, key: key, value: index, env: keys);
+  match outcome {
+    HashMapInserted() => {
+      return 0_u64;
+    }
+    HashMapReturned(reason: why, pair: returned) => {
+      return 1_u64;
+    }
+  }
+}
+
+fn remove_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys) -> found: u64 reads(keys), writes(map) {
+  doc "Removes the pair of index; 1 when it was present, 0 when not.";
+  let probe = key_of(index: index);
+  let removed = hash_map_remove::<BenchKey, u64, ceiling>(map: map, key: &probe, env: keys);
+  match removed {
+    Some(value: gone) => {
+      return 1_u64;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn lookup_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, tally: &Tally) -> result: unit reads(map), reads(keys), writes(tally) {
+  let probe = key_of(index: index);
+  let seen = hash_map_lookup::<BenchKey, u64, Tally, u64, fn bench_read, ceiling>(map: map, key: &probe, key_env: keys, visit_env: tally);
+  return unit;
+}
+
+fn relookup_one(decoy: &HashMap<u64, u64, ceiling>, step: u64, size: u64, keys: &BenchKeys, tally: &Tally) -> result: unit reads(decoy), reads(keys), writes(tally) contract {
+  requires size > 0_u64;
+} {
+  doc "The slow control's extra operation: one lookup in the decoy, a second map of size pairs that no timed operation touches, of the key half the permutation away from step; its result goes to extra. Lookups in the measured map were not a reliable slowdown on a hosted runner: at 10,000 pairs, 25% more of them measured no slower, or faster, for a reason not established. A lookup in another map cannot share the measured map's cache lines.";
+  let half = size / 2_u64;
+  let far = step +wrap half;
+  let index = order(step: far, size: size);
+  let probe = key_of(index: index);
+  let seen = hash_map_lookup::<BenchKey, u64, Tally, u64, fn bench_reread, ceiling>(map: decoy, key: &probe, key_env: keys, visit_env: tally);
+  set tally^.extra = tally^.extra +wrap 1_u64;
+  return unit;
+}
+
+fn fill(map: &HashMap<u64, u64, ceiling>, size: u64, keys: &BenchKeys) -> refused: u64 reads(keys), writes(map) {
+  doc "Puts the pairs of indexes 0..size in order.";
+  let refused = 0_u64;
+  for (index in 0_u64..size) {
+    let one = put_one(map: map, index: index, keys: keys);
+    set refused = refused +wrap one;
+  }
+  return refused;
+}
+
+fn grown(size: u64, keys: &BenchKeys) -> map: HashMap<u64, u64, ceiling> reads(keys) {
+  doc "A map of size pairs built the way a writer who does not know the size builds it: from capacity zero by insertion.";
+  let map = hash_map_new::<u64, u64, ceiling>(capacity: 0_u64);
+  let refused = fill(map: &map, size: size, keys: keys);
+  return move map;
+}
+
+fn release_map(map: HashMap<u64, u64, ceiling>) -> result: unit pure {
+  let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
+  hash_map_free::<BenchConsume, ceiling>(map: move map, env: &tally);
+  return unit;
+}
+
+fn build_sample(decoy: &HashMap<u64, u64, ceiling>, size: u64, capacity: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(decoy), reads(keys), writes(clock) contract {
+  requires size > 0_u64;
+  requires capacity <= 1000000_u64;
+} {
+  doc "Builds reps maps of size pairs, each from the given capacity, timing construction and every put; releasing each map is outside the interval. The slow control adds a lookup in the decoy at every fourth put.";
+  let reps = reps_for(size: size);
+  let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
+  let total = 0_u64;
+  let check = 0_u64;
+  for (rep in 0_u64..reps) {
+    let started = now(clock: clock);
+    let map = hash_map_new::<u64, u64, ceiling>(capacity: capacity);
+    for (index in 0_u64..size) {
+      let refused = put_one(map: &map, index: index, keys: keys);
+      set check = check +wrap refused;
+      let repeat = slow_turn(mask: mask, step: index);
+      if repeat {
+        relookup_one(decoy: decoy, step: index, size: size, keys: keys, tally: &tally);
+      }
+    }
+    let ended = now(clock: clock);
+    let elapsed = nanoseconds_from(earlier: started, later: ended);
+    set total = total +wrap elapsed;
+    let length = hash_map_len::<u64, u64, ceiling>(map: &map);
+    set check = check +wrap length;
+    release_map(map: move map);
+  }
+  let ops = reps *wrap size;
+  let extra = tally.extra;
+  return Sample(ns: total, ops: ops, check: check, extra: extra);
+}
+
+fn lookup_sample(map: &HashMap<u64, u64, ceiling>, decoy: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(map), reads(decoy), reads(keys), writes(clock) contract {
+  requires size > 0_u64;
+} {
+  doc "Looks up reps times the keys of offset + order(step) for every step below size, in one interval: offset zero finds every key of a map holding indexes 0..size, offset size finds none.";
+  let reps = reps_for(size: size);
+  let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
+  let started = now(clock: clock);
+  for (rep in 0_u64..reps) {
+    for (step in 0_u64..size) {
+      let position = order(step: step, size: size);
+      let index = offset +wrap position;
+      lookup_one(map: map, index: index, keys: keys, tally: &tally);
+      let repeat = slow_turn(mask: mask, step: step);
+      if repeat {
+        relookup_one(decoy: decoy, step: step, size: size, keys: keys, tally: &tally);
+      }
+    }
+  }
+  let ended = now(clock: clock);
+  let ns = nanoseconds_from(earlier: started, later: ended);
+  let ops = reps *wrap size;
+  let check = tally.found +wrap tally.sum;
+  let extra = tally.extra;
+  return Sample(ns: ns, ops: ops, check: check, extra: extra);
+}
+
+fn remove_sample(decoy: &HashMap<u64, u64, ceiling>, size: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(decoy), reads(keys), writes(clock) contract {
+  requires size > 0_u64;
+} {
+  doc "Builds reps maps of size pairs outside the interval and times removing every pair of each in order(step) order; the slow control adds a lookup in the decoy at every fourth step.";
+  let reps = reps_for(size: size);
+  let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
+  let total = 0_u64;
+  let check = 0_u64;
+  for (rep in 0_u64..reps) {
+    let map = grown(size: size, keys: keys);
+    let started = now(clock: clock);
+    for (step in 0_u64..size) {
+      let index = order(step: step, size: size);
+      let found = remove_one(map: &map, index: index, keys: keys);
+      set check = check +wrap found;
+      let repeat = slow_turn(mask: mask, step: step);
+      if repeat {
+        relookup_one(decoy: decoy, step: step, size: size, keys: keys, tally: &tally);
+      }
+    }
+    let ended = now(clock: clock);
+    let elapsed = nanoseconds_from(earlier: started, later: ended);
+    set total = total +wrap elapsed;
+    let length = hash_map_len::<u64, u64, ceiling>(map: &map);
+    set check = check +wrap length;
+    release_map(map: move map);
+  }
+  let ops = reps *wrap size;
+  let extra = tally.extra;
+  return Sample(ns: total, ops: ops, check: check, extra: extra);
+}
+
+fn churn_sample(map: &HashMap<u64, u64, ceiling>, decoy: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(decoy), reads(keys), writes(map), writes(clock) contract {
+  requires size > 0_u64;
+} {
+  doc "With the map holding indexes oldest..oldest + size, reps times size steps each remove the oldest pair and put the next new one, so the map keeps size pairs; the slow control adds a lookup in the decoy at every fourth step.";
+  let reps = reps_for(size: size);
+  let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
+  let ops = reps *wrap size;
+  let check = 0_u64;
+  let started = now(clock: clock);
+  for (step in 0_u64..ops) {
+    let leaving = oldest +wrap step;
+    let found = remove_one(map: map, index: leaving, keys: keys);
+    set check = check +wrap found;
+    let arriving = leaving +wrap size;
+    let refused = put_one(map: map, index: arriving, keys: keys);
+    set check = check +wrap refused;
+    let repeat = slow_turn(mask: mask, step: step);
+    if repeat {
+      relookup_one(decoy: decoy, step: step, size: size, keys: keys, tally: &tally);
+    }
+  }
+  let ended = now(clock: clock);
+  let ns = nanoseconds_from(earlier: started, later: ended);
+  let length = hash_map_len::<u64, u64, ceiling>(map: map);
+  set check = check +wrap length;
+  let extra = tally.extra;
+  return Sample(ns: ns, ops: ops, check: check, extra: extra);
+}
+
+fn each_sample(map: &HashMap<u64, u64, ceiling>, size: u64, mask: u64, clock: &Clock) -> sample: Sample reads(map), writes(clock) contract {
+  requires size > 0_u64;
+} {
+  doc "Visits every pair reps times in one interval, eight times the other cells' batches since a visit costs so little; the slow control makes every fourth pass run twice.";
+  let batches = reps_for(size: size);
+  let reps = batches *wrap 8_u64;
+  let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
+  let started = now(clock: clock);
+  for (rep in 0_u64..reps) {
+    hash_map_each::<u64, u64, Tally, fn bench_visit, ceiling>(map: map, env: &tally);
+    let repeat = slow_turn(mask: mask, step: rep);
+    if repeat {
+      hash_map_each::<u64, u64, Tally, fn bench_revisit, ceiling>(map: map, env: &tally);
+    }
+  }
+  let ended = now(clock: clock);
+  let ns = nanoseconds_from(earlier: started, later: ended);
+  let ops = reps *wrap size;
+  let check = tally.found +wrap tally.sum;
+  let extra = tally.extra;
+  return Sample(ns: ns, ops: ops, check: check, extra: extra);
+}
+
+fn arg_number(args: &std::text::Args, position: u64) -> result: Option<u64> reads(args) {
+  doc "The invocation argument at position read as a decimal number of one to 18 digits, or None.";
+  match std::text::arg_get(args: args, position: position) {
+    Ok(value: host) => {
+      let digits = array_filled::<u8, 18>(value: 0_u8);
+      match std::text::host_copy_bytes(value: &host, destination: &digits[0_u64..18_u64], start: 0_u64, end: 18_u64) {
+        Ok(value: length) => {
+          if length == 0_u64 {
+            return None<u64>();
+          }
+          let total = 0_u64;
+          for @digit (at in 0_u64..length) {
+            let byte = digits[at];
+            if byte < 48_u8 {
+              return None<u64>();
+            }
+            if byte > 57_u8 {
+              return None<u64>();
+            }
+            let digit = byte - 48_u8;
+            let value = cvt::<u8, u64>(digit);
+            set total = total *wrap 10_u64;
+            set total = total +wrap value;
+          }
+          return Some<u64>(value: total);
+        }
+        Err(error: short) => {
+          return None<u64>();
+        }
+      }
+    }
+    Err(error: missing) => {
+      return None<u64>();
+    }
+  }
+}
+
+fn put_decimal(line: &Slots<u8, 256>, value: u64) -> result: unit writes(line) {
+  doc "Appends value in decimal and one tab to the line, as much as fits.";
+  let digits = slots_new::<u8, 20>();
+  let rest = value;
+  loop @split {
+    let low = rest % 10_u64;
+    let glyph = cvt.wrap::<u64, u8>(low);
+    let shown = glyph +wrap 48_u8;
+    if digits.len < digits.cap {
+      place_back(window: &digits, value: shown);
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @split;
+    }
+  }
+  loop @emit {
+    if digits.len == 0_u64 {
+      break @emit;
+    }
+    let shown = take_back(window: &digits);
+    if line^.len < line^.cap {
+      place_back(window: line, value: shown);
+    }
+  }
+  if line^.len < line^.cap {
+    place_back(window: line, value: 9_u8);
+  }
+  return unit;
+}
+
+fn write_line(factory: &HandleFactory, output: &OutputStream, line: &Slots<u8, 256>) -> result: u8 writes(line), writes(factory), writes(output) waits {
+  doc "Ends the line's last field with a newline instead of a tab and writes the whole line; 0 when written, 1 when the output refused it.";
+  if line^.len > 0_u64 {
+    let dropped = take_back(window: line);
+  }
+  if line^.len < line^.cap {
+    place_back(window: line, value: 10_u8);
+  }
+  let length = line^.len;
+  let source = &line^[0_u64..length];
+  let sent = 0_u64;
+  let unbounded = None<Instant>();
+  let cancel = std::time::cancel_never();
+  loop @send {
+    if sent < length {
+    } else {
+      break @send;
+    }
+    match std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: unbounded, cancel: &cancel) {
+      Ok(value: endpoint) => {
+        set sent = endpoint;
+      }
+      Err(error: failure) => {
+        std::time::close_cancel_watch(watch: move cancel);
+        return 1_u8;
+      }
+    }
+  }
+  std::time::close_cancel_watch(watch: move cancel);
+  return 0_u8;
+}
+
+fn emit(factory: &HandleFactory, output: &OutputStream, operation: u64, size: u64, index: u64, sample: &Sample) -> result: u8 reads(sample), writes(factory), writes(output) waits {
+  doc "Prints one sample row: operation, size, sample index, operations, nanoseconds, check and extra, separated by tabs.";
+  let line = slots_new::<u8, 256>();
+  put_decimal(line: &line, value: operation);
+  put_decimal(line: &line, value: size);
+  put_decimal(line: &line, value: index);
+  let ops = sample^.ops;
+  let ns = sample^.ns;
+  let check = sample^.check;
+  let extra = sample^.extra;
+  put_decimal(line: &line, value: ops);
+  put_decimal(line: &line, value: ns);
+  put_decimal(line: &line, value: check);
+  put_decimal(line: &line, value: extra);
+  return write_line(factory: factory, output: output, line: &line);
+}
+
+fn run_timed(operation: u64, size: u64, samples: u64, mask: u64, clock: &Clock, factory: &HandleFactory, output: &OutputStream) -> failed: u8 writes(clock), writes(factory), writes(output) waits contract {
+  requires size > 0_u64;
+  requires size <= 1000000_u64;
+} {
+  doc "Runs one timed cell: sample zero is the warmup and samples 1..samples are measured; the driver drops sample zero. A map that the samples only read, or keep at size pairs, is built once, outside every interval; the cells that build their own maps leave it empty. Every run also builds the decoy, which only the slow control's extra lookups read, so all arms allocate alike.";
+  let keys = BenchKeys(unused: 0_u64);
+  let map = hash_map_new::<u64, u64, ceiling>(capacity: 0_u64);
+  let hit = operation == 3_u64;
+  let miss = operation == 4_u64;
+  let churn = operation == 6_u64;
+  let each = operation == 7_u64;
+  let looked = bor(hit, miss);
+  let kept = bor(churn, each);
+  let shared = bor(looked, kept);
+  if shared {
+    let refused = fill(map: &map, size: size, keys: &keys);
+  }
+  let decoy = grown(size: size, keys: &keys);
+  let oldest = 0_u64;
+  let failed = 0_u8;
+  let count = samples +wrap 1_u64;
+  for (index in 0_u64..count) {
+    let sample = Sample(ns: 0_u64, ops: 0_u64, check: 0_u64, extra: 0_u64);
+    if operation == 1_u64 {
+      set sample = build_sample(decoy: &decoy, size: size, capacity: size, mask: mask, keys: &keys, clock: clock);
+    }
+    if operation == 2_u64 {
+      set sample = build_sample(decoy: &decoy, size: size, capacity: 0_u64, mask: mask, keys: &keys, clock: clock);
+    }
+    if operation == 3_u64 {
+      set sample = lookup_sample(map: &map, decoy: &decoy, size: size, offset: 0_u64, mask: mask, keys: &keys, clock: clock);
+    }
+    if operation == 4_u64 {
+      set sample = lookup_sample(map: &map, decoy: &decoy, size: size, offset: size, mask: mask, keys: &keys, clock: clock);
+    }
+    if operation == 5_u64 {
+      set sample = remove_sample(decoy: &decoy, size: size, mask: mask, keys: &keys, clock: clock);
+    }
+    if operation == 6_u64 {
+      set sample = churn_sample(map: &map, decoy: &decoy, size: size, oldest: oldest, mask: mask, keys: &keys, clock: clock);
+      set oldest = oldest +wrap sample.ops;
+    }
+    if operation == 7_u64 {
+      set sample = each_sample(map: &map, size: size, mask: mask, clock: clock);
+    }
+    let written = emit(factory: factory, output: output, operation: operation, size: size, index: index, sample: &sample);
+    set failed = ior(failed, written);
+  }
+  release_map(map: move map);
+  release_map(map: move decoy);
+  return failed;
+}
+
+fn run_memory(size: u64, meter: &std::process::MemoryMeter, factory: &HandleFactory, output: &OutputStream) -> failed: u8 writes(meter), writes(factory), writes(output) waits {
+  doc "The memory cell: one map built from capacity zero to size pairs, printed as a row whose nanosecond field holds the heap bytes in use before building, whose check holds the bytes the built map retains, and whose extra holds its length. The peak during building comes from the allocation observer, outside this program.";
+  let keys = BenchKeys(unused: 0_u64);
+  let before = std::process::heap_in_use(meter: meter);
+  let map = grown(size: size, keys: &keys);
+  let after = std::process::heap_in_use(meter: meter);
+  let length = hash_map_len::<u64, u64, ceiling>(map: &map);
+  release_map(map: move map);
+  let retained = after -wrap before;
+  let sample = Sample(ns: before, ops: size, check: retained, extra: length);
+  return emit(factory: factory, output: output, operation: 8_u64, size: size, index: 0_u64, sample: &sample);
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "bench OPERATION SIZE SAMPLES SLOW. OPERATION 1 presized insertion, 2 insertion from capacity zero, 3 lookup hit, 4 lookup miss, 5 removal, 6 alternating removal and insertion, 7 full iteration, 8 memory; SIZE 1..1000000; SAMPLES 1..1000; SLOW 1 adds the slow control's extra work, 0 does not. Status 2 for invalid arguments and 1 when output failed; the driver checks every row's check field against its expected value.";
+  let Inputs(args: args, cwd: directory, stdout: output, handles: factory, clock: clock, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  let operation = 0_u64;
+  let size = 0_u64;
+  let samples = 0_u64;
+  let slow_flag = 2_u64;
+  match arg_number(args: &args, position: 1_u64) {
+    Some(value: read) => {
+      set operation = read;
+    }
+    None() => {
+    }
+  }
+  match arg_number(args: &args, position: 2_u64) {
+    Some(value: read) => {
+      set size = read;
+    }
+    None() => {
+    }
+  }
+  match arg_number(args: &args, position: 3_u64) {
+    Some(value: read) => {
+      set samples = read;
+    }
+    None() => {
+    }
+  }
+  match arg_number(args: &args, position: 4_u64) {
+    Some(value: read) => {
+      set slow_flag = read;
+    }
+    None() => {
+    }
+  }
+  if operation == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if operation > 8_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if samples == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if samples > 1000_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if slow_flag > 1_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let mask = 18446744073709551615_u64;
+  if slow_flag == 1_u64 {
+    set mask = 3_u64;
+  }
+  if size > 0_u64 {
+    if size <= 1000000_u64 {
+      if operation == 8_u64 {
+        let failed = run_memory(size: size, meter: &meter, factory: &factory, output: &output);
+        return exit_status(code: failed);
+      }
+      let failed = run_timed(operation: operation, size: size, samples: samples, mask: mask, clock: &clock, factory: &factory, output: &output);
+      return exit_status(code: failed);
+    }
+  }
+  return exit_status(code: 2_u8);
+}
