@@ -1,5 +1,12 @@
 # Type invariants through enum payloads
 
+> Superseded in part: [sealed type invariants](../sealed-invariants/DESIGN.md)
+> carry a struct's invariant into every payload a handed-off value owns,
+> which retires the routed type-invariant requirements and postconditions
+> this note designs and their vacuity rule; the recursion and value-carrier
+> sections still describe rules in force. Historical design evidence; the
+> active specification owns the normative text.
+
 Status: direction selected by the owner on 2026-10-12 (board item on type
 invariants through `Result` at function boundaries, option A). This note
 records the soundness argument written before implementation, the scope
