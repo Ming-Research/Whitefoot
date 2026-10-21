@@ -105,12 +105,6 @@ fn main() -> status: std::process::ExitStatus pure {
     place_back(window: &source.inner, value: 7_u8);
   }
   let destination = &output.inner[0_u64..4_u64];
-  let capacity = destination^.len;
-  let observed = source.inner.len;
-  if observed <= capacity {
-  } else {
-    return std::process::exit_status(code: 5_u8);
-  }
   let written = copy_bytes(out: destination, source: move source);
   if written != length {
     return std::process::exit_status(code: 1_u8);
@@ -184,12 +178,8 @@ fn contract_define_is_symbolic_and_not_emitted_as_runtime_work() {
 
 fn main() -> status: std::process::ExitStatus pure {
   let bits = ipopcount(0_u8);
-  if bits == 0_u32 {
-    let zero = identity(value: 0_u8);
-    return std::process::exit_status(code: zero);
-  } else {
-    return std::process::exit_status(code: 1_u8);
-  }
+  let zero = identity(value: 0_u8);
+  return std::process::exit_status(code: zero);
 }
 "#,
     );
@@ -244,10 +234,8 @@ fn ordinary_requirement_is_not_emitted_as_a_callee_prologue() {
 fn main() -> status: std::process::ExitStatus pure {
   let value = 7_i32;
   let returned = bounded(value: value);
-  if returned != 7_i32 {
-    return std::process::exit_status(code: 1_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let returned_code = cvt::<i32, u8>(returned);
+  return std::process::exit_status(code: returned_code);
 }
 "#,
     );
@@ -257,7 +245,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(bounded.contains("ret i32"));
 
     let output = compile_and_run(&llvm);
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(7), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }

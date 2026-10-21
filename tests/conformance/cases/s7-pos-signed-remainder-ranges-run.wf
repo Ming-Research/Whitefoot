@@ -7,9 +7,6 @@ fn main() -> status: ExitStatus pure {
   let left = left_seed % 41_i32;
   let right = right_seed % 3_i32;
   let sum = left + right;
-  if sum == 42_i32 {
-    return exit_status(code: 0_u8);
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  let code = cvt::<i32, u8>(sum);
+  return exit_status(code: code);
 }

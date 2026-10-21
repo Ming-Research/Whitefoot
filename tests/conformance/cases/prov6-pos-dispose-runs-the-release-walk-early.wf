@@ -13,8 +13,6 @@ fn main() -> status: ExitStatus pure {
   release_now(cell: move first);
   let second = box_slots_new::<u8>(capacity: 4_u64);
   release_now(cell: move second);
-  if size == 0_u64 {
-    return exit_status(code: 0_u8);
-  }
-  return exit_status(code: 1_u8);
+  let code = cvt::<u64, u8>(size);
+  return exit_status(code: code);
 }
