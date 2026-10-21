@@ -10,6 +10,17 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/system-interface/host-paths
 
 Summary: A program opens a file or an existing directory at a host path, absolute or relative to a directory it holds, only through `std::fs::HostPaths`, a fieldless value that `Inputs.host_paths` supplies on POSIX and Windows hosts and no program can construct, because Firn must open a configuration file named on its command line and an included file and data directory whose paths are read from configuration bytes while a function given only a directory half gains no new authority; widening the relative path type and giving every directory a path open were refused, since either lets a directory parameter authorize more paths that ignore it. Six opens take a host string or a byte window with a stated encoding, follow every link, resolve `..` as the host does and never create an entry, instead of the create-if-missing directory open, which hides a misconfigured data directory; the single-name opens below a directory keep refusing a link at the name. The directory pair comes from one lookup and takes two credits, a byte window is copied into a bounded runtime block, and a Windows host path is UTF-16 code units looked up in the Win32 dialect, a relative path whose normalized form begins with the base's reported spelling opening from the base's handle so a rename of the base cannot redirect it. A host without a host filesystem supplies no authority. The study is research/investigations/host-paths/DESIGN.md.
+## 2026-10-21 The gate runs on Linux only for now
+
+Nodes: compiler/verification
+
+Summary: The hosted gate stops adding macOS for ready pull requests, the main line and manual runs, and its final job requires every group green on Linux alone. The hosted macOS runners take five jobs at a time; with several ready pull requests at once, a run's macOS jobs waited about 43 minutes for a runner while five ran and ten more queued, and merges waited behind them. The change is provisional: macOS returns, in a form still to be chosen, before the first release, whose release workflow still requires a gate run with macOS jobs on the released commit. The decision on a failed scope query no longer mentions dropping macOS.
+
+## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
+
+Nodes: compiler/verification
+
+Summary: The hosted gate and the I/O host checks no longer run for a push to a draft pull request's branch or for a draft's opening or reopening; they run for the main line, a ready pull request's pushes, a hand-started run and the event of marking a pull request ready, which skips when the head already has a successful manual run of the same workflow. With the draft pushes gone, every run that checks a revision runs both platforms, so the Linux-only run is retired and the earlier refusal of both platforms on every push is restated for the case that no longer holds. The gate also fails while a `tmp-` workflow file exists in the checked head, and the performance comparison skips a draft as the design-readiness job already does. The run record of a week shows 122 checked runs on 40 branches other than the main line, up to 10 on one branch ([measurements](../research/investigations/test-economy/time-budgets.md#gate-at-ready-not-at-each-draft-push)); the author now gets results from a temporary workflow while writing.
 
 ## 2026-10-20 Conditions the checker decides are rejected
 

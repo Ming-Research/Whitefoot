@@ -10,15 +10,19 @@
 # jobs that record performance live in `io-bench.yml` and run on demand.
 #
 # These checks run on the revisions gate.yml checks, decided the same way by
-# .github/gate-scope.sh: a push to main, a push to a branch with an open pull
-# request, the opening or reopening of a pull request, and a manual run. Any
-# other push ends after the first job with both checks skipped.
+# .github/gate-scope.sh: a push to main, a push to a branch with an open ready
+# pull request, the opening or reopening of a ready pull request, the event of
+# marking one ready, which skips when its head already has a successful manual
+# run of this workflow, and a manual run. Any other push, a draft pull
+# request's included, ends after the first job with both checks skipped; the
+# author starts this workflow by hand once, after the review has passed
+# (AGENTS.md, "Checks").
 name: io-hosts
 
 on:
   push:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -27,13 +31,14 @@ permissions:
   pull-requests: read
 
 # Pushes to one branch share a group, so a later push cancels the run of an
-# earlier head. The opening or reopening of a pull request and a manual run
-# each have a group of their own, marked before the ref so that no branch name
-# can reach it: an opening in the push group, created a few seconds after the
-# pull request, could cancel the push run of a newer head and leave it
-# unchecked, and a push that skips must not cancel a manual run.
+# earlier head. The opening or reopening of a pull request, the event of
+# marking one ready and a manual run each have a group of their own, marked
+# before the ref so that no branch name can reach it: an opening in the push
+# group, created a few seconds after the pull request, could cancel the push
+# run of a newer head and leave it unchecked, and a push that skips must not
+# cancel a manual run.
 concurrency:
-  group: io-hosts-${{ github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
+  group: io-hosts-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
   cancel-in-progress: true
 
 env:
