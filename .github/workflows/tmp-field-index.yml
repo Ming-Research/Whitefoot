@@ -1,0 +1,68 @@
+# Temporary: review-3 fix (field-valued support indices) on the branch head.
+# Checks the new field-index cases with the candidate and with the compiler
+# before the fix (1b3b63720), and runs the entailment unit tests.
+# Remove this file before the branch is ready.
+name: tmp-field-index
+
+on:
+  push:
+    branches: [claude/disjoint-write-facts]
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: |
+          rustup default stable
+          cargo --version
+
+      - name: Build candidate and pre-fix compilers
+        run: |
+          set -eu
+          echo "candidate=$(git rev-parse HEAD)"
+          git worktree add "$RUNNER_TEMP/prefix" 1b3b637204c4e2c5b50035aaf1741d349d16c45e
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/prefix/compiler/Cargo.toml"
+          perl .github/run-check.pl build-candidate \
+            cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
+          perl .github/run-check.pl build-prefix \
+            cargo build --manifest-path "$RUNNER_TEMP/prefix/compiler/Cargo.toml" --profile gate --locked --offline --bin whitefootc
+          cp compiler/target/gate/whitefootc "$RUNNER_TEMP/whitefootc-candidate"
+          cp "$RUNNER_TEMP/prefix/compiler/target/gate/whitefootc" "$RUNNER_TEMP/whitefootc-prefix"
+
+      - name: Verdicts of the PR cases, before and after the fix
+        run: |
+          set +e
+          set -u
+          status=0
+          for tag in prefix candidate; do
+            echo "== $tag =="
+            for f in tests/conformance/cases/ent5-*disjoint*.wf tests/conformance/cases/ent5-neg-overlapping-*.wf; do
+              "$RUNNER_TEMP/whitefootc-$tag" --check "$f" >"$RUNNER_TEMP/out.txt" 2>&1
+              code=$?
+              echo "$code $f"
+              if [ "$code" != 0 ]; then head -n 3 "$RUNNER_TEMP/out.txt" | sed 's/^/    /'; fi
+            done
+          done
+          pos=tests/conformance/cases/ent5-pos-disjoint-field-index-write.wf
+          neg=tests/conformance/cases/ent5-neg-overlapping-field-index-write.wf
+          "$RUNNER_TEMP/whitefootc-prefix" --check "$pos" >/dev/null 2>&1
+          [ $? != 0 ] || { echo "FAIL: pre-fix compiler accepts the positive field-index case"; status=1; }
+          "$RUNNER_TEMP/whitefootc-candidate" --check "$pos" >/dev/null 2>&1
+          [ $? = 0 ] || { echo "FAIL: candidate rejects the positive field-index case"; status=1; }
+          "$RUNNER_TEMP/whitefootc-candidate" --check "$neg" >/dev/null 2>&1
+          [ $? != 0 ] || { echo "FAIL: candidate accepts the overlapping field-index case"; status=1; }
+          exit $status
+
+      - name: Entailment unit tests on the candidate
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "3000"
+        run: |
+          perl .github/run-check.pl entailment-tests \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib entailment

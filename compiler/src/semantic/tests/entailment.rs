@@ -1798,6 +1798,15 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                                 matches!(term, TermKind::Place(place, IntegerType::U64)
                                     if *place == crate::semantic::places::ResolvedPlace::binding(binding))
                             }
+                            // The validator holds no place table, so it names a
+                            // field-valued offset by its shape: a place term with
+                            // a path below its root.
+                            CapturedTerm::Place(_)
+                                if captured.capture == CaptureId::SpellingDetermined =>
+                            {
+                                matches!(term, TermKind::Place(place, IntegerType::U64)
+                                    if !place.path.is_empty())
+                            }
                             CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) | CapturedTerm::Place(_) | CapturedTerm::SupersededPlace(_) => matches!(
                                 term,
                                 TermKind::IndexCapture { capture } if *capture == captured.capture

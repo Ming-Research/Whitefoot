@@ -1367,23 +1367,7 @@ impl Reasoning<'_, '_, '_> {
             .vocabulary
             .terms
             .interned(&TermKind::Measure(CheckedMeasure::Length, window.clone()))?;
-        let offset = match (index.capture, index.term) {
-            // A place's term identity reads a binding offset by its spelling,
-            // whose current value is the binding's own term [ENT-2].
-            (CaptureId::SpellingDetermined, CapturedTerm::Binding(binding)) => {
-                self.vocabulary.terms.interned(&TermKind::Place(
-                    ResolvedPlace::binding(binding),
-                    IntegerType::U64,
-                ))
-            }
-            (CaptureId::SpellingDetermined, CapturedTerm::Place(id)) => {
-                self.vocabulary.terms.interned(&TermKind::Place(
-                    self.input.context.captured_places.get(id),
-                    IntegerType::U64,
-                ))
-            }
-            _ => self.captured_index_term(index),
-        }?;
+        let offset = self.captured_index_term(index)?;
         let affine_offset = match index.capture {
             CaptureId::Source(_) | CaptureId::ContractRead { .. } => {
                 states.affine.indices.get(&index.capture).cloned()
