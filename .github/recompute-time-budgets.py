@@ -285,8 +285,8 @@ def self_test():
     assert parse_log("no stages here") == (None, [])
 
     # The rule, exactly: 110.00 s is 110 s, not 115 s; 59.95 rounds to 60 and
-    # 60.005 to 65; the floor is 10 s.
-    assert [budget_for(m) for m in (32370, 10000, 5450, 5455, 500)] == [360, 110, 60, 65, 10]
+    # 60.005 to 65; the floor is 10 s (a 1 s stage would round to 5 s).
+    assert [budget_for(m) for m in (32370, 10000, 5450, 5455, 100)] == [360, 110, 60, 65, 10]
 
     table_text = "\n".join([
         "# comment", "cpu big-1  Big CPU", "cpu small-2  Small CPU", "cpu thin-3  Thin CPU", "",
@@ -311,7 +311,7 @@ def self_test():
         + [("stage/one", "Small CPU", 8000, 5, 0)] * 10                                     # 10 runs: too few
         + [("stage/one", "Thin CPU", 12000, 6, 0)]                                          # one run: 120 s
         + [("stage/two", "Big CPU", 5000, 7, 0)] * 25                                       # kept as is
-        + [("stage/four", "Small CPU", 500, 8, 0)] * 25))                                    # floor: 10 s
+        + [("stage/four", "Small CPU", 100, 8, 0)] * 25))                                    # floor: 10 s
     table = Table(table_text)
     report = recompute(table, rows, 50, keep=("stage/two",))
     cells = table.cells("stage/one")
