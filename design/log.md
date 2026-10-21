@@ -10,6 +10,13 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/system-interface, language/system-interface/clocks, language/system-interface/handle-factory, language/waiting/shared-objects
 
 Summary: Four decisions are added or widened. `process_id: Option<u64>` is an ordinary `Inputs` field, because the identifier is fixed for the run like the driver count and a target without processes needs a total answer (refused: a nullary pure function, a read through the memory meter or the stop signals, a bare `u64` with zero for missing). `local_offset_seconds` reads the wall clock, with the offset bounded to less than a day by two postconditions on `Some` and `None` otherwise, because the zone rule is host state that changes between reads and the bound lets a caller add it with no overflow check (refused: a nullary function and the Windows zone API, which ignores `TZ`). The open-files limit is read and raised through the handle factory, because a raise changes the factory's credit budget and must be ordered with acquisitions through it, and a request above the soft limit, the hard limit included, goes to the host, which refuses what it will not set. `HandleFactory` joins the self-changing host handles that an atomic statement's guard cannot reach, because another process can change the limit with no write that wakes a guard (refused: keeping factories readable in guards and waking on a raise). Evidence is the conformance and corpus cases that compare the identifier with the child's, the offset with the C library at fixed instants in several zones, and the limit under `ulimit`.
+## 2026-10-13 An atomic target named only in proofs is held from statement entry
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: an atomic target that appears only in proofs takes its lock at statement entry? (Ming-Research/Whitefoot#434, head 5811a8c89)" (translated).
+
+Summary: The lock-order decision's entry-acquired groups gain the groups of targets with no executable use in the guard and block, acquired with every earlier group, because once proofs are erased such a target has no first use to acquire at and entry acquisition keeps the hold SHARE-1 requires, instead of omitting its lock; "before the guard" is reworded to "before the guard or block" without changing the choice. The checker now counts invariant and `use` mentions toward SHARE-2's naming rule.
 
 ## 2026-10-13 The compiler offers an explicit formatting request
 
