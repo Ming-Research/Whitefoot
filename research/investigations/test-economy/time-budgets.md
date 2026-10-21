@@ -1096,13 +1096,16 @@ in the column the owner added for a model with too few runs (the Xeon column,
 `OWNER_COLUMNS` in the script), where it takes the larger of the row's
 recomputed class values and the column's own runs by the rule, the treatment
 that column received on 2026-10-13. `--keep` leaves rows alone. Its
-self-test runs in `make repository-invariants`; a temporary workflow ran the
-self-test against deliberately faulty copies of the script (margin, minimum run
-count, floor, rounding, failed runs counted, owner-column rule, slowdown
-scaling, window, repeated attempts counted, jobs without a CPU model, largest
-class taken as smallest, recompute period, first day judged, logged budget,
-and a cell with too few runs outside the owner's column recomputed like it)
-and each was rejected.
+self-test runs in `make repository-invariants`, checks that `OWNER_COLUMNS` are
+classes of the real table, and runs `recompute` with the shipped owner columns
+and window; a temporary workflow ran the self-test against nineteen
+deliberately faulty copies of the script (margin, minimum run count, floor,
+rounding, failed runs counted, owner-column rule, slowdown scaling, window,
+repeated attempts counted, jobs without a CPU model, largest class taken as
+smallest, recompute period, first day judged, logged budget, a cell with too
+few runs outside the owner's column recomputed like it, no owner column, a
+misspelled owner column, no default owner column in `recompute`, and a changed
+default window) and each was rejected.
 
 **New budgets.** Rows recomputed with the 50 newest runs per class (the Linux
 columns only; macOS and Windows are untouched). The three unit-group rows
