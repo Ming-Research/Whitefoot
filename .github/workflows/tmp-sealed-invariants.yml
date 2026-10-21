@@ -125,7 +125,10 @@ jobs:
   # already rejects can hide a new failure behind the old one. A function
   # reports only its first failure, and the base's redundant-test rule
   # [OP-5] stops many functions first, so a second pass runs both compilers
-  # with that rule's check of conditions switched off. The programs predate
+  # with that rule's check of conditions switched off, each printing every
+  # condition it decides, and compares those lists too: a condition only
+  # the branch decides is a test the branch's instances make redundant. The
+  # programs predate
   # the base's reserved words `held`, `not` and `unchanged` and its prelude
   # variant `Open`, so their copies rename each before either compiler
   # reads them.
@@ -152,10 +155,13 @@ jobs:
           git fetch --depth=1 origin 48b990f05ba32c2763dfcc441a94a00e2ee03cbd
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
           if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
-            # A decided condition counts as discharged in both compilers.
+            # A decided condition counts as discharged in both compilers,
+            # and each compiler prints it where it judges the function.
             for tree in "$GITHUB_WORKSPACE" "$RUNNER_TEMP/base"; do
               perl -0777 -pi -e 's/(Self::Condition\(index\) => entailment\s*\.conditions\s*\.get\(index\)\s*)\.is_some_and\(\|outcome\| outcome\.decided\.is_none\(\)\)/$1.is_some()/ or die "the condition discharge is gone\n"' \
                 "$tree/compiler/src/semantic/obligations.rs"
+              perl -0777 -pi -e 's/(\n            if answer\.discharged\(entailment\) \{\n                continue;\n            \})/\n            if let RecordAnswer::Condition(condition) = answer {\n                if let Some(outcome) = entailment.conditions.get(condition).filter(|outcome| outcome.decided.is_some()) {\n                    eprintln!("trial decided condition: {:?} {:?} {:?}", self.declarations.source_location(&outcome.node_path).ok(), outcome.decided, outcome.residual);\n                }\n            }$1/ or die "the acceptance loop is gone\n"' \
+                "$tree/compiler/src/semantic/check/acceptance.rs"
               git -C "$tree" diff --stat
             done
           fi
@@ -186,6 +192,7 @@ jobs:
           same_rejected=0
           differ=0
           tasks_differ=0
+          decided_differ=0
           branch="$PWD/compiler/target/gate/whitefootc"
           base="$RUNNER_TEMP/base/compiler/target/gate/whitefootc"
           # One line per failing task of a rejected verdict: its subject,
@@ -224,7 +231,16 @@ jobs:
               { grep '^{' "$work/logs/$label.$compiler" | jq -R -r "$tasks"
                 grep -v '^{' "$work/logs/$label.$compiler" | grep -E 'error\[' ; } \
                 | sort -u > "$work/logs/$label.$compiler.tasks"
+              grep '^trial decided condition: ' "$work/logs/$label.$compiler" | sort -u \
+                > "$work/logs/$label.$compiler.decided"
             done
+            if ! cmp -s "$work/logs/$label.branch.decided" "$work/logs/$label.base.decided"; then
+              decided_differ=$((decided_differ + 1))
+              echo "---- $label: conditions only the branch decides"
+              comm -23 "$work/logs/$label.branch.decided" "$work/logs/$label.base.decided"
+              echo "---- $label: conditions only the base decides"
+              comm -13 "$work/logs/$label.branch.decided" "$work/logs/$label.base.decided"
+            fi
             mine=$(cat "$work/logs/$label.branch.exit")
             theirs=$(cat "$work/logs/$label.base.exit")
             seconds=$(sed -n 's/^== END [^:]*: \([0-9.]*\) s.*/\1/p' "$work/logs/$label.branch" | tr '\n' ' ')
@@ -267,7 +283,10 @@ jobs:
           done
           graph firn "$work/Firn-wf/firn"
           judge "firn composed" "$work/Firn-wf/firn" --graph modules.wfg --check-modules
-          echo "pass ${{ matrix.pass }}: accepted by both $same_accepted, rejected by both with the same tasks $same_rejected, verdicts that differ $differ, task lists that differ $tasks_differ"
+          echo "pass ${{ matrix.pass }}: accepted by both $same_accepted, rejected by both with the same tasks $same_rejected, verdicts that differ $differ, task lists that differ $tasks_differ, lists of decided conditions that differ $decided_differ"
+          for side in branch base; do
+            echo "$side decided conditions: $(cat "$work"/logs/*."$side".decided | wc -l) over every judgment"
+          done
           for side in branch base; do
             cat "$work"/logs/*."$side".tasks | sed -n 's/.* \[\([^]]*\)\] .*/\1/p' | sort | uniq -c \
               | sed "s/^/$side tasks by rule: /"
