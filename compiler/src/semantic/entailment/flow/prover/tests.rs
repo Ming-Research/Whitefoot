@@ -58,7 +58,6 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
         held_parameters: Vec::new(),
         held_calls: Vec::new(),
         requirement_places: Vec::new(),
-        routed_requirements: Vec::new(),
         postconditions: Vec::new(),
         range_facts: Default::default(),
         body: None,

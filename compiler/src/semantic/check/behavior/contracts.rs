@@ -412,9 +412,8 @@ fn ensures_available_on_route(published: &InterfaceEnsures, promised: &Interface
         (true, true) => {
             published.ordinal == promised.ordinal
                 && match (published.selector.route, promised.selector.route) {
-                    // A generated type invariant and a written promise name
-                    // the same concrete field even though only the written
-                    // clause retains resolver-owned selector metadata.
+                    // Two resolved routes name one concrete field exactly
+                    // when they agree.
                     (Some(actual), Some(formal)) => actual == formal,
                     (None, None) => {
                         published.variant == promised.variant && published.field == promised.field
@@ -616,7 +615,6 @@ impl<'unit> DeclarationInventory<'unit> {
             held_parameters: signature.checked_held_parameters()?,
             held_calls: Vec::new(),
             requirement_places,
-            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,

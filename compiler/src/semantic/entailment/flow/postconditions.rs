@@ -900,7 +900,6 @@ impl Reasoning<'_, '_, '_> {
         block: &crate::NodePath,
         relation_ordinal: u32,
         parents: Option<Vec<DerivationId>>,
-        vacuous: bool,
     ) -> PostconditionAggregate {
         if self.input.function.formal_hypothesis || self.input.function.body.is_none() {
             let node = self.vocabulary.derivations.intern(
@@ -918,7 +917,7 @@ impl Reasoning<'_, '_, '_> {
                 derivation: Some(node),
             };
         }
-        let Some(parents) = parents.filter(|parents| vacuous || !parents.is_empty()) else {
+        let Some(parents) = parents.filter(|parents| !parents.is_empty()) else {
             return PostconditionAggregate {
                 discharged: false,
                 derivation: None,
@@ -2721,7 +2720,6 @@ impl Judging<'_, '_, '_> {
                     .expect("postcondition relation ordinal exceeds u32"),
                 summary: None,
                 exits: Vec::new(),
-                vacuous: postcondition.selector.vacuous_when_unselected(),
                 aggregate: aggregate(),
             })
             .collect();
@@ -2740,13 +2738,9 @@ impl Judging<'_, '_, '_> {
                         .flatten()
                 })
                 .collect::<Option<Vec<_>>>();
-            // [TYPE-11] a routed relation a type invariant generates holds
-            // vacuously where no exit selects it: no value the instance
-            // returns holds its variant.
-            let vacuous = self.output.postconditions[index].vacuous;
             self.output.postconditions[index].aggregate = self
                 .reasoning()
-                .retain_postcondition_aggregate(&block, relation_ordinal, parents, vacuous);
+                .retain_postcondition_aggregate(&block, relation_ordinal, parents);
         }
     }
 

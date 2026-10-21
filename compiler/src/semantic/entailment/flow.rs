@@ -1459,7 +1459,6 @@ fn run_seeded(
             .reasoning()
             .establish_requirement_affine_images(requirement, ordinal, &mut state);
     }
-    analyzer.establish_routed_requirements(&mut state);
     analyzer.seal_body_entry(&mut state);
     let body_disposition = {
         let closed = close(
@@ -2252,7 +2251,6 @@ mod indexed_goal_kill_tests {
             held_parameters: Vec::new(),
             held_calls: Vec::new(),
             requirement_places: Vec::new(),
-            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
@@ -2496,7 +2494,6 @@ mod range_argument_kill_tests {
             held_parameters: Vec::new(),
             held_calls: Vec::new(),
             requirement_places: Vec::new(),
-            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,

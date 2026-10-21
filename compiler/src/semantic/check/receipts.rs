@@ -571,7 +571,6 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         held_parameters,
         held_calls,
         requirement_places,
-        routed_requirements,
         postconditions,
         range_facts,
         body,
@@ -588,7 +587,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         "{formal_hypothesis:?}\n{id:?}\n{declaration:?}\n{module:?}\n{name:?}\n{symbol:?}\n\
          {function_actuals:?}\n{region_parameters:?}\n{parameters:?}\n{result_mode:?}\n\
          {result:?}\n{declared_state_writes:?}\n{declared_state_reads:?}\n{requirements:?}\n\
-         {requirement_places:?}\n{held_parameters:?}\n{held_calls:?}\n{routed_requirements:?}\n\
+         {requirement_places:?}\n{held_parameters:?}\n{held_calls:?}\n\
          {postconditions:?}\n{range_facts:?}\n{body:?}\n{reference_origins:?}\n\
          {body_disposition:?}\n{call_separations:?}\n{permission_separation_queries:?}\n\
          {waiting:?}"
@@ -616,7 +615,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         })
         .collect::<Vec<_>>();
     format!(
-        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
+        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
         function.formal_hypothesis,
         function.symbol,
         function.module,
@@ -627,7 +626,6 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         function.declared_state_reads,
         function.requirements,
         function.held_parameters,
-        function.routed_requirements,
         function.function_actuals,
         function.range_facts.requirements,
         function.range_facts.postconditions,
@@ -1012,7 +1010,6 @@ impl<'unit> DeclarationInventory<'unit> {
                     relation_ordinal: u32::try_from(ordinal).ok()?,
                     summary: None,
                     exits: Vec::new(),
-                    vacuous: postcondition.selector.vacuous_when_unselected(),
                     aggregate: PostconditionAggregate {
                         discharged: true,
                         derivation: None,

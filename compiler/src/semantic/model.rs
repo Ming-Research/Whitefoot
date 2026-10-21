@@ -2515,10 +2515,6 @@ pub(crate) enum CheckedExpression {
         /// Filled from the complete phase-A inventory before entailment runs,
         /// in callee `requires_clause` source order.
         requirements: Vec<super::goal::CheckedCallRequirement>,
-        /// [TYPE-11] the callee's requirements over its parameters' enum
-        /// payloads, each owed in its argument's conditional context for its
-        /// route [ENT-5]; filled with `requirements`.
-        routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
         result: CheckedType,
         /// For a borrow-mode result admitted under the reborrow extension:
         /// the caller-side storage the result borrow is conservatively rooted
@@ -3266,10 +3262,6 @@ pub(crate) struct CheckedFunction {
     /// at body entry in the state holding the requirements before it, where
     /// its subscripts owe [OP-4]. A hypothetical premise set forms none.
     pub(crate) requirement_places: Vec<Vec<CheckedExpression>>,
-    /// [TYPE-11] the type invariants of each struct a parameter's enum
-    /// carries in a variant field, each restricted to that variant, in
-    /// parameter order and then variant, field and declaration order.
-    pub(crate) routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
     /// Verified-relation surfaces in `ensures_clause` source order. H1
     /// constructs this metadata; the shared entailment flow proves every
     /// clause at every selected exit.

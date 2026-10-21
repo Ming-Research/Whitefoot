@@ -35,7 +35,6 @@ fn separate_fields_retain_distinct_route_identities_and_verified_summaries() {
         for proof in &function.entailment.postconditions {
             assert!(proof.aggregate.discharged);
             assert!(proof.summary.is_some());
-            assert!(!proof.vacuous);
         }
     });
 }

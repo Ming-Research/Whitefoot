@@ -2333,7 +2333,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             held_parameters: signature.checked_held_parameters()?,
             held_calls: std::mem::take(&mut self.body.checked_held_calls),
             requirement_places,
-            routed_requirements: Vec::new(),
             postconditions,
             range_facts: std::mem::take(&mut self.body.range_facts),
             body: (!declaration_only || supplied_release).then_some(checked.statements),
@@ -2427,12 +2426,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     ) -> Result<(), CheckStop> {
         let requirements = functions
             .iter()
-            .map(|checked| {
-                (
-                    checked.function.requirements.clone(),
-                    checked.function.routed_requirements.clone(),
-                )
-            })
+            .map(|checked| checked.function.requirements.clone())
             .collect::<Vec<_>>();
         for checked in functions {
             if !self.types.view.contains_function(checked.function.id) {
@@ -2449,7 +2443,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
         statements: &mut [CheckedStatement],
-        requirements: &[CalleeRequirements],
+        requirements: &[Vec<CheckedRequirement>],
     ) -> Result<(), CheckStop> {
         for statement in statements {
             match statement {
@@ -2557,7 +2551,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
         expression: &mut CheckedExpression,
-        requirements: &[CalleeRequirements],
+        requirements: &[Vec<CheckedRequirement>],
     ) -> Result<(), CheckStop> {
         match expression {
             CheckedExpression::UserCall {
@@ -2568,7 +2562,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 goal_regions,
                 formal_contract,
                 requirements: call_requirements,
-                routed_requirements: call_routed_requirements,
                 ..
             } => {
                 for argument in arguments.iter_mut() {
@@ -2587,13 +2580,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 if let Some(effects) = formal_effects {
                     effects.allocates = signature.declared_effects.allocates;
                 }
-                let (callee_requirements, callee_routed) = requirements
+                let callee_requirements = requirements
                     .get(function.0 as usize)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                // [TYPE-11] the routed requirements are the selected actual's
-                // own: a formal's parameter types equal its actual's, so the
-                // two carry the same ones.
-                call_routed_requirements.clone_from(callee_routed);
                 let boundary = match formal_contract {
                     Some(boundary) => boundary.requirements.as_slice(),
                     None => callee_requirements.as_slice(),
@@ -3981,10 +3970,3 @@ impl<'unit> TypeContext<'unit> {
         }
     }
 }
-
-/// One callee's requirement templates: its written and type-invariant
-/// requirements, and its routed type-invariant requirements [FN-8, TYPE-11].
-type CalleeRequirements = (
-    Vec<CheckedRequirement>,
-    Vec<super::postcondition::CheckedRoutedRequirement>,
-);

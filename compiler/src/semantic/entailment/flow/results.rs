@@ -514,222 +514,13 @@ impl Analyzer<'_, '_> {
     }
 }
 
-impl Analyzer<'_, '_> {
-    /// [TYPE-11, ENT-3.S4] each routed requirement enters the body in its
-    /// parameter's own conditional context for its route, never as an
-    /// ordinary fact: the condition is that the argument holds the route's
-    /// variant, and a contradictory invariant stays local to that context.
-    pub(super) fn establish_routed_requirements(&mut self, state: &mut ProofFlowState) {
-        let function = self.input.function;
-        for requirement in &function.routed_requirements {
-            let Some(parameter) = function.parameters.get(requirement.subject as usize) else {
-                continue;
-            };
-            let Some(route) = self
-                .input
-                .payload_routes(parameter.ty)
-                .into_iter()
-                .find(|route| {
-                    route.route.variant == requirement.route.variant
-                        && route.route.field == requirement.route.field
-                })
-            else {
-                continue;
-            };
-            let results = [self
-                .reasoning()
-                .payload_root_term(requirement.payload, &[], None)];
-            let returns = [Some(PostconditionReturnDatum::ResultPayload {
-                ty: requirement.payload,
-            })];
-            let Some(relation) = self.reasoning().instantiate_relation_template(
-                &requirement.relation,
-                &results,
-                &returns,
-            ) else {
-                continue;
-            };
-            let event = self
-                .vocabulary
-                .proof_event(FlowEventKind::S4, Some(&requirement.clause));
-            let context = self.reasoning().result_context(route);
-            let held = state.results.entry(parameter.binding).or_default();
-            if !held.iter().any(|result| route.holds(result)) {
-                held.push(context);
-                held.sort_by_key(|result| (result.route.variant, result.route.field));
-            }
-            if let Some(result) = held.iter_mut().find(|result| route.holds(result)) {
-                result
-                    .facts
-                    .establish(&relation, &mut self.vocabulary.derivations, event);
-            }
-        }
-    }
-}
-
-impl Analyzer<'_, '_> {
-    /// [TYPE-11, FN-8] the goal one routed requirement poses at a call and
-    /// the facts it is judged in: the invariant over the place below the
-    /// argument's payload step, and the ordinary facts with the argument's
-    /// context for the route, each private root term standing for that
-    /// place's corresponding term [ENT-5]. An argument with no context for
-    /// the route contributes the ordinary facts alone.
-    ///
-    /// A bare binding is the root its context is selected onto. Any other
-    /// argument, a field or element read or a moved field, is rooted where
-    /// the call's ordinary requirements root it: `image`, the argument's
-    /// admitted pre-transfer image [FN-8], or, when that image cannot carry
-    /// the payload step, the argument's own occurrence-local value, which
-    /// no fact names.
-    pub(super) fn routed_requirement_goal(
-        &mut self,
-        call: &crate::NodePath,
-        argument: &CheckedExpression,
-        image: Option<GoalExpression>,
-        requirement: &crate::semantic::postcondition::CheckedRoutedRequirement,
-        state: &ProofFlowState,
-    ) -> (ConcreteGoal, FactState) {
-        let binding = match argument {
-            CheckedExpression::Binding { binding, .. } => Some(*binding),
-            _ => None,
-        };
-        let step = GoalProjection::Payload {
-            variant: requirement.route.tag,
-            field: requirement.route.field,
-        };
-        let root = match binding {
-            Some(binding) => PayloadGoalRoot::Binding(binding),
-            None => PayloadGoalRoot::Image(
-                image
-                    .filter(|image| {
-                        matches!(
-                            image,
-                            GoalExpression::Datum(
-                                GoalDatum::Place { .. } | GoalDatum::EvaluatedValue { .. }
-                            )
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        GoalExpression::Datum(GoalDatum::EvaluatedValue {
-                            function: self.input.function.id,
-                            occurrence: EvaluatedValueOccurrence::CallArgument {
-                                call: call.clone(),
-                                argument: requirement.subject,
-                            },
-                            captured_type: argument.ty(),
-                            projections: Vec::new(),
-                            ty: argument.ty(),
-                        })
-                    }),
-            ),
-        };
-        let goal = ConcreteGoal::new(payload_goal(&requirement.goal.root, &root, step));
-        let context = self.capture_result(call, argument, state).into_iter().find(|result| {
-            result.route.variant == requirement.route.variant
-                && result.route.field == requirement.route.field
-        });
-        let (Some(binding), Some(context)) = (binding, context) else {
-            return (goal, state.facts.clone());
-        };
-        let facts = self
-            .reasoning()
-            .payload_place_facts(call, &context, binding, &state.facts);
-        (goal, facts)
-    }
-}
-
-/// What a routed requirement's payload step is taken below at a call.
-enum PayloadGoalRoot {
-    /// A bare binding argument, the place its context is selected onto.
-    Binding(BindingId),
-    /// Any other argument's admitted image or occurrence-local value: a
-    /// place or an evaluated-value datum.
-    Image(GoalExpression),
-}
-
-/// [TYPE-11] a type invariant's predicate over parameter zero, read over
-/// the place `step` reaches below `root` instead.
-fn payload_goal(
-    expression: &GoalExpression,
-    root: &PayloadGoalRoot,
-    step: GoalProjection,
-) -> GoalExpression {
-    match expression {
-        GoalExpression::Datum(GoalDatum::Parameter {
-            ordinal: 0,
-            projections,
-            ty,
-        }) => match root {
-            PayloadGoalRoot::Binding(binding) => GoalExpression::Datum(GoalDatum::Place {
-                root: *binding,
-                projections: std::iter::once(step)
-                    .chain(projections.iter().copied())
-                    .collect(),
-                ty: *ty,
-                admission: GoalAdmission::default(),
-            }),
-            // Each step is appended as an ordinary requirement's projection
-            // is appended to its admitted actual [FN-8]; only the last
-            // step's type is the datum's.
-            PayloadGoalRoot::Image(image) => std::iter::once(step)
-                .chain(projections.iter().copied())
-                .try_fold(image.clone(), |datum, projection| {
-                    datum.with_projection(projection, *ty)
-                })
-                .expect("a place or evaluated value takes every projection"),
-        },
-        GoalExpression::Datum(datum) => GoalExpression::Datum(datum.clone()),
-        GoalExpression::Operation {
-            row,
-            type_arguments,
-            const_arguments,
-            result,
-            arguments,
-        } => GoalExpression::Operation {
-            row: *row,
-            type_arguments: type_arguments.clone(),
-            const_arguments: const_arguments.clone(),
-            result: *result,
-            arguments: arguments
-                .iter()
-                .map(|argument| payload_goal(argument, root, step))
-                .collect(),
-        },
-    }
-}
-
 impl Reasoning<'_, '_, '_> {
-    /// [TYPE-11, ENT-5] one context's facts with each private root term
-    /// replaced by the corresponding term of the place below `binding`'s
-    /// payload step for the context's route, over the current ordinary
-    /// facts. The result is a scratch state for one judgment; nothing in it
-    /// becomes an ordinary fact.
-    fn payload_place_facts(
-        &mut self,
-        statement: &crate::NodePath,
-        result: &ResultEvidence,
-        binding: BindingId,
-        ordinary: &FactState,
-    ) -> FactState {
-        let mut result = result.clone();
-        self.vocabulary.refresh_result(&mut result, ordinary);
-        let step = PlaceStep::Payload {
-            variant: result.route.tag,
-            field: result.route.field,
-        };
-        let pairs = self.payload_receiver_pairs(&result, binding, Some(step));
-        self.vocabulary
-            .substitute_result_facts(statement, &result.facts, &pairs)
-    }
-
     /// Each private root term of `result`'s payload with the corresponding
-    /// term of the receiving place: `binding` itself, or the place `step`
-    /// reaches below it, extended by the root term's projection.
+    /// term of the receiving binding, extended by the root term's projection.
     fn payload_receiver_pairs(
         &mut self,
         result: &ResultEvidence,
         binding: BindingId,
-        step: Option<PlaceStep>,
     ) -> Vec<(TermId, TermId)> {
         let mut roots = Vec::new();
         for term in self.vocabulary.terms.ids() {
@@ -749,7 +540,7 @@ impl Reasoning<'_, '_, '_> {
             let place = ResolvedPlace {
                 atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(binding),
-                path: step.into_iter().chain(path.iter().cloned()).collect(),
+                path: path.clone(),
             };
             let receiver = match measure {
                 None => Some(self.vocabulary.terms.intern(TermKind::Place(place, ty))),
@@ -894,7 +685,7 @@ impl Reasoning<'_, '_, '_> {
     ) {
         let mut result = result.clone();
         self.vocabulary.refresh_result(&mut result, &state.facts);
-        let pairs = self.payload_receiver_pairs(&result, binding, None);
+        let pairs = self.payload_receiver_pairs(&result, binding);
         let selected = self
             .vocabulary
             .substitute_result_facts(statement, &result.facts, &pairs);
@@ -1115,7 +906,6 @@ mod tests {
             held_parameters: Vec::new(),
             held_calls: Vec::new(),
             requirement_places: Vec::new(),
-            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
