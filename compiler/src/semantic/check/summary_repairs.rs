@@ -12,6 +12,9 @@ pub(super) struct SummaryRepairInputs<'a> {
     pub(super) callees: &'a [EntailmentCallee],
     pub(super) contract_queries: &'a [CheckedContractQuery],
     pub(super) binding_names: &'a [String],
+    /// Whether the original analysis of the caller judged its source
+    /// conditions [OP-5]; the replay judges the same ones.
+    pub(super) judge_conditions: bool,
 }
 
 impl Checker<'_, '_> {
@@ -28,6 +31,7 @@ impl Checker<'_, '_> {
             callees,
             contract_queries: &self.analysis.contract_queries,
             binding_names,
+            judge_conditions: !self.types.is_generic_instance(caller),
         };
         self.types
             .explain_unavailable_summary(stop, caller, functions, &inputs)
@@ -148,6 +152,8 @@ impl TypeContext<'_> {
         let const_parameter_types = self.const_generic_types().collect();
         let copy_type_parameters = self.copy_type_parameters();
         let context = EntailmentContext {
+            captured_places: &self.captured_places,
+            judge_conditions: inputs.judge_conditions,
             declarations: self.declarations.resolved.declarations(),
             callees: inputs.callees,
             constants: &self.checked_constants,

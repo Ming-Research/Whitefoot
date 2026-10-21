@@ -2094,6 +2094,10 @@ fn record_uses_contradiction(entailment: &FunctionEntailment, target: usize) -> 
         // ordinary state; the observer checks it after term formation too.
         RecordAnswer::SourceProof(_) => Vec::new(),
         RecordAnswer::Uninhabited => return true,
+        // [OP-5] a contradictory entering state leaves a condition undecided,
+        // and the outcome keeps no derivation to tell that from a genuinely
+        // undecided one, so a restored summary never explains a condition.
+        RecordAnswer::Condition(_) => return true,
     };
     let mut seen = HashSet::new();
     while let Some(parent) = parents.pop() {
@@ -2136,7 +2140,7 @@ impl Reasoning<'_, '_, '_> {
             restored.contradiction.set(true);
             return;
         };
-        let mut vocabulary = self.vocabulary.clone();
+        let mut vocabulary = self.vocabulary.explanation_copy();
         // Queries lazily mint affine measure images through interior
         // mutability. Their atoms belong to the cloned vocabulary too:
         // retaining them in the walked state would reuse private identities.
@@ -2164,7 +2168,6 @@ impl Reasoning<'_, '_, '_> {
 /// The terms, goals, affine atoms and derivation ledger every judgment is
 /// stated in, with the canonical records keyed by them and the ordinals that
 /// number the ledger's retained roots.
-#[derive(Clone)]
 struct Vocabulary {
     terms: TermTable,
     goals: GoalTable,
@@ -2224,6 +2227,40 @@ struct Vocabulary {
     header_relation_roots: u32,
     loop_induction_roots: u32,
     fact_preservation_roots: u32,
+}
+
+impl Vocabulary {
+    /// A private copy that explains an already failed judgment. It owns its
+    /// tables, atoms and ledger, so what its queries mint never reaches this
+    /// vocabulary; the memo caches start empty, because a query memo is
+    /// only ever a shortcut and a cache the copy built could not be kept.
+    fn explanation_copy(&self) -> Self {
+        Self {
+            terms: self.terms.clone(),
+            goals: self.goals.clone(),
+            derivations: self.derivations.clone(),
+            origin_queries: origin_transport::OriginQueryCache::default(),
+            affine_l0_cache: None,
+            affine_models: Vec::new(),
+            affine_atoms: self.affine_atoms.clone(),
+            measure_terms_seen: self.measure_terms_seen.clone(),
+            measure_terms_scanned: self.measure_terms_scanned,
+            product_atoms: self.product_atoms.clone(),
+            handle_images: self.handle_images.clone(),
+            invariant_targets: self.invariant_targets.clone(),
+            unsigned_divisions: self.unsigned_divisions.clone(),
+            power_atoms: self.power_atoms.clone(),
+            encountered_counted: self.encountered_counted,
+            completed_counted_roots: self.completed_counted_roots,
+            s12_roots: self.s12_roots,
+            contract_call_roots: self.contract_call_roots,
+            delivery_give_roots: self.delivery_give_roots.clone(),
+            delivery_join_roots: self.delivery_join_roots,
+            header_relation_roots: self.header_relation_roots,
+            loop_induction_roots: self.loop_induction_roots,
+            fact_preservation_roots: self.fact_preservation_roots,
+        }
+    }
 }
 
 /// What the analysis publishes: every judgment's outcome, the retained

@@ -252,8 +252,7 @@ impl Reasoning<'_, '_, '_> {
         if templates.is_empty() || output.facts.all_derivable {
             return;
         }
-        let mut vocabulary = self.vocabulary.clone();
-        vocabulary.affine_l0_cache = None;
+        let mut vocabulary = self.vocabulary.explanation_copy();
         let mut explanation = Reasoning {
             input: self.input,
             vocabulary: &mut vocabulary,

@@ -189,8 +189,7 @@ impl Judging<'_, '_, '_> {
         let lost_header = if disposition == CallGoalDisposition::Unproved
             && !written.lost_headers.is_empty()
         {
-            let mut vocabulary = self.vocabulary.clone();
-            vocabulary.affine_l0_cache = None;
+            let mut vocabulary = self.vocabulary.explanation_copy();
             let mut explanation = Reasoning {
                 input: self.input,
                 vocabulary: &mut vocabulary,

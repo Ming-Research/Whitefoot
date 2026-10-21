@@ -1451,6 +1451,7 @@ impl<'unit> Checker<'_, 'unit> {
                             callees,
                             contract_queries: &self.analysis.contract_queries,
                             binding_names: &checked.binding_names,
+                            judge_conditions: true,
                         },
                     )
                 })?;

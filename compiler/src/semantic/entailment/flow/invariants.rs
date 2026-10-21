@@ -14,8 +14,7 @@ impl Reasoning<'_, '_, '_> {
         goals: &[ProofGoal<'_>],
     ) -> Option<super::super::LostHeaderRelationNote> {
         state.lost_headers.iter().find_map(|loss| {
-            let mut vocabulary = self.vocabulary.clone();
-            vocabulary.affine_l0_cache = None;
+            let mut vocabulary = self.vocabulary.explanation_copy();
             let mut explanation = Reasoning {
                 input: self.input,
                 vocabulary: &mut vocabulary,

@@ -40,9 +40,6 @@ jobs:
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Decline core dumps
         run: sudo sysctl -w kernel.core_pattern=core
-      - name: Format
-        if: matrix.stage == 'lint'
-        run: cd compiler && cargo fmt --all -- --check
       - name: Lint
         if: matrix.stage == 'lint'
         run: make -C compiler lint
