@@ -72,7 +72,7 @@ jobs:
           git fetch --no-tags origin main
           cells() {
             git show "$1":.github/time-budgets.txt \
-              | awk 'NF == 7 && $1 != "label" { print $1, $2, $3, $4, $5, $6, $7 }'
+              | awk 'NF == 7 && $1 !~ /^#/ && $1 != "label" { print $1, $2, $3, $4, $5, $6, $7 }'
           }
           cells origin/main > "$RUNNER_TEMP/main.cells"
           cells HEAD > "$RUNNER_TEMP/head.cells"
