@@ -13,6 +13,12 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: A new node records that `whitefootc --format` replaces, in place and all or nothing, every source whose bytes differ from its FORM-2 rendering, over the sources `--check` takes or a module graph, while checking and compilation keep rejecting non-canonical input, because the canonical bytes are fixed by derivation and a FORM-2 rejection reports only the first difference; that its bytes come from one rendering function that stops after grammar derivation, so a program with semantic errors can still be formatted, while the FORM-2 judgment walks the derivation on its own and shares only the layout derivation, with a corpus test holding the judgment and the rendering together; and that graph formatting forms the module program as `--check --graph` does and reports any other failure as `--check` would. Refused: formatting during checking, a formatter script per downstream project, and writing canonical bytes to standard output.
 
+## 2026-10-21 Safety claims are stated on one checked page
+
+Nodes: language/safety-claims
+
+Summary: The safety claims were spread over the README, the constitution, the specification and articles, with no place that connected each claim to the rules and cases behind it. A new node puts them on one page whose rows cite specification rules and conformance cases, with the limits quoted from the specification and the trusted base sized, and `make static` holds every citation to the specification and the manifest and the presence of each limit, because a page nothing reads drifts, which the refused rule-to-ground ledger already showed. Tagging cases in the manifest, generating the page from the manifest, leaving the page unchecked and holding the size figures to the checkout are rejected.
+
 ## 2026-10-20 Programs open host paths through an explicit authority no program can construct, and an open of an existing directory never creates one
 
 Nodes: language/system-interface/host-paths
