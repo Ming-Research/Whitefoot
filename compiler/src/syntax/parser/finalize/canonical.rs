@@ -228,6 +228,7 @@ fn mismatch_issue(
             location: CanonicalLocation::SourceBytes(coordinate),
             expected,
             found,
+            mechanical_fix: None,
         });
     };
     if terminal_top_item(topology, left)? != terminal_top_item(topology, right)? {
@@ -235,14 +236,27 @@ fn mismatch_issue(
             location: CanonicalLocation::SourceBytes(coordinate),
             expected,
             found,
+            mechanical_fix: None,
         });
     }
     let owner = lowest_common_ancestor(topology, left, right, work)?;
     let path = node_path(topology, owner, limits, work)?;
+    let interior_lines = found
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        .saturating_sub(1);
+    let mechanical_fix = found
+        .split('\n')
+        .skip(1)
+        .take(interior_lines)
+        .any(|line| line.bytes().all(|byte| byte == b' '))
+        .then_some(crate::diagnostic_repairs::BLANK_LINE_FIX);
     Ok(CanonicalIssue {
         location: CanonicalLocation::SourceNode(path, coordinate),
         expected,
         found,
+        mechanical_fix,
     })
 }
 

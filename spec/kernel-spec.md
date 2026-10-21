@@ -1,4 +1,4 @@
-# Kernel Specification v0.153
+# Kernel Specification v0.155
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -131,8 +131,8 @@ An out-of-range integer, a leading-zero integer, a noncanonical float spelling, 
 ## 3. Grammar
 
 [GRAM-1] The grammar is deterministic and unambiguous.
-Raw lexical formation scans each source independently from byte offset zero and partitions it into tokens and trivia without normalization, decoding a value, or consulting grammar position, name lookup, the operation table, or another source.
-At each cursor it takes exactly the following maximal form; no token or trivia crosses a source boundary.
+Raw lexical formation partitions each diagnostic segment [DIAG-1] independently into tokens and trivia without normalization, decoding a value, or consulting grammar position, name lookup, the operation table, or another segment.
+At each cursor it takes exactly the following maximal form; every token and trivia item is contained in its segment.
 
 - One or more ASCII space bytes form one trivia item.
 One LF byte forms one trivia item.
@@ -219,11 +219,14 @@ capability_bound:= "copy" | "drop"
 param_list   := param ("," param)*
 param        := IDENT ":" (type | "&" (type | "[" type "]"))
 graph_file   := package_decl* module_row+ entry_decl*
+graph_segment:= (package_decl | module_row | entry_decl)*
 package_decl := "package" IDENT "=" STRING ";"
 module_row   := module_path ":" "[" (module_path ("," module_path)*)? "]" ";"
 module_path  := ("pkg" | "std" | IDENT) ("::" IDENT)*
 entry_decl   := "entry" IDENT "=" module_path (";" | "{" "no_heap" ";" "}")
 ```
+
+The `graph_segment` production is the diagnostic entry defined by [DIAG-1]; complete graph records derive `graph_file` [MOD-1].
 
 A `heap_decl` is admitted at most once in a source bundle and only as the first `item` of its first source record [PROG-2]; a second `heap_decl`, or one at any later item position, is a hard error citing GRAM-2 at that `heap_decl` node, and a module program admits none [MOD-9].
 Its two fixed atoms compete with no other `item` arm, so the decision is strong-LL(2) on the first token alone [GRAM-1].
@@ -383,7 +386,19 @@ Field names are redundant-explicit facts (the TYPE-5 class): checked, never chos
 The name-only-when-two-same-typed-fields alternative is a context-dependent spelling and is rejected [META-2].
 
 [GRAM-9] Flat (three-address) computation.
-Every call argument, construct field value, infix operand, subscript offset, and lower or upper endpoint of a `for_stmt` is an `atom` [GRAM-5]; a `call` or constructor `call` in an atom position does not derive under the grammar and is a hard error citing GRAM-9.
+The atom-only positions are the following production occurrences under [GRAM-4, GRAM-5].
+
+| Production | Atom-only occurrence |
+| --- | --- |
+| `atom_list` | Every list element |
+| `fieldinit` | The value after `":"` |
+| `infix_tail` | The right operand |
+| `psuffix` | The subscript offset or slice lower endpoint |
+| `range_tail` | The slice upper endpoint |
+| `for_binding` | Both endpoints |
+| `range_binder` | Both endpoints |
+
+A `call` or constructor `call` in an atom-only position does not derive under the grammar and is a hard error citing GRAM-9.
 A computed value is forwarded to another operation only by binding it with a preceding `let` (whose mode and type are derived [TYPE-5]) and referencing the binding.
 Nesting and let-splitting are not two spellings of one computation; there is no expression-nesting alternative [FORM-1].
 `borrow_expr` is an `atom`, so references passed as arguments need no binding and [REF-1] is untouched.
@@ -1783,9 +1798,9 @@ An interface function declaration has at most one definition among its module's 
 A struct, enum, interface, binding or const that an interface record declares has that one definition, used by every record of the module; a declaration of the same name in an implementation record is a redeclaration [TYPE-6].
 
 [MOD-8] A module's source verdict covers every judgment on its records and depends only on them, the graph, the prelude and the interfaces of the modules it may name; it never depends on another module's implementation records.
-A module program's source check judges the verdict of every module of its own package and of every package it binds [MOD-11], in the bound unit's module order, and then each named entry's composition; a standard library module's verdict is judged with the library [MOD-10].
+A module program's source check completes the frontend stages of [DIAG-1], then judges the verdict of every module of its own package and of every package it binds [MOD-11], in the bound unit's module order, and then each named entry's composition; a standard library module's verdict is judged with the library [MOD-10].
 An interface function declaration without a definition is pending: callers use its written boundary as they use every callee's [FN-8, FN-9], and it blocks only composition, lowering and publication.
-A program composes when every selected module's verdict holds, every declared function has its definition, which is a body in its module's implementation records or the definition the build supplies for a host function [PRE-2], every required concrete instance checks [FN-2, FN-6] and every target requirement of its entry holds [MOD-9]. Composition judges the selected modules' verdicts in the bound unit's module order [MOD-2, MOD-10] before its own conditions and reports the first rejection. A rejection raised while checking a required concrete instance is reported at its template's source, in the module that declares the template, and names a call that requested the instance.
+A program composes when every selected module's verdict holds, every declared function has its definition, which is a body in its module's implementation records or the definition the build supplies for a host function [PRE-2], every required concrete instance checks [FN-2, FN-6] and every target requirement of its entry holds [MOD-9]. After the frontend stages of [DIAG-1], composition judges the selected modules' verdicts in the bound unit's module order [MOD-2, MOD-10] before its own conditions and reports the first rejection. A rejection raised while checking a required concrete instance is reported at its template's source, in the module that declares the template, and names a call that requested the instance.
 
 [MOD-9] A named entry selects one public, ordinary, nongeneric function by its full path, and a build may select any ordinary nongeneric function of a registered module as an unnamed entry; the build calls the selected function under [PROG-3], and an entry naming no such function is a hard error citing MOD-9, at a named entry's `entry_decl`.
 An entry's `no_heap` states the no-heap requirement over that entry's execution closure [STOR-8]; entries of one graph share its modules and proofs and impose no requirement on one another.
@@ -1823,7 +1838,7 @@ This form requires the empty root `NodePath` and carries no source-local byte in
 
 `SourceCoordinate` is `(source_ordinal, byte_start, byte_end)` in the bound [PROG-2] unit.
 Its byte interval is checked, half-open, and contained in that exact source.
-End of source is the zero-width interval whose two offsets equal the source byte length.
+The end of a source or diagnostic segment has the zero-width interval whose two offsets equal its source-local ending byte offset.
 `NodePath` is the sequence of zero-based child ordinals from the finalized compilation-unit root; the root path is the empty sequence.
 Every source-backed node has one checked source-local extent.
 In `SourceNode`, the rule-selected coordinate lies within that extent (`node_start <= byte_start <= byte_end <= node_end`) but need not equal the complete extent; the path identifies the existing offending or owning node while the coordinate identifies its exact offending subinterval or boundary.
@@ -1831,9 +1846,25 @@ In `SourceNode`, the rule-selected coordinate lies within that extent (`node_sta
 A diagnostic never fabricates a node or node path.
 A nested-place rejection additionally renders the offending access-path segment.
 
-The frontend selects defects stage by stage.
-Each stage scans every source in source-ordinal order and byte order, stops at its first defect, and the next stage begins only if the preceding stage succeeds for every source.
-The stage order is: raw lexical formation; terminal membership; grammar derivation; then canonical [FORM-2] rendering.
+The frontend partitions each writer source record [PROG-2, MOD-2] and each graph record [MOD-1] into diagnostic segments using its raw bytes; compiler-owned declaration records follow [PRE-1].
+A line begins at byte offset zero or immediately after LF.
+A declaration start is a line whose column-zero maximal lower word is a fixed terminal in the FIRST set of `item` [GRAM-2].
+A graph-record start is a line whose column-zero maximal lower word satisfies a first-terminal predicate of `package_decl`, `module_row`, or `entry_decl` [GRAM-2].
+The maximal lower word is the complete `[a-z][a-z0-9_]*` byte sequence at that position; its boundary is the next byte outside that set or source end.
+For a source record the segment boundaries are source start, each declaration start, and source end; for a graph record they are source start, each graph-record start, and source end.
+Each distinct pair of adjacent boundaries delimits one segment, and an empty source has one empty segment.
+Thus bytes before the first declaration or graph-record start form a segment of their own.
+
+Each segment runs raw lexical formation, terminal membership, and grammar derivation in that order.
+Each stage scans that segment in byte order, reports its first defect, and admits the next stage only on success.
+Source-record segments derive `program`; graph-record segments derive `graph_segment` [GRAM-2].
+Every segment is judged independently, and each segment whose completed judgment rejects the source contributes exactly one rejection.
+Once every segment has a completed language judgment, the frontend reports these rejections together, ordered by source ordinal and then byte offset.
+A non-language failure while judging a segment is the sole reported stop and replaces all accumulated segment source rejections.
+The end of a segment acts as `SOURCE_END` during its lexical formation and grammar derivation and uses the boundary coordinate defined above.
+Success of every segment admits the complete source's grammar derivation, which retains its ordinary start production and selects its first defect in source order.
+Success of every complete derivation admits one canonical [FORM-2] rendering stage over the complete ordered source bundle; this stage reports only its first defect in source-ordinal and byte order.
+Success of canonical rendering admits the semantic stages below, which retain their single-rejection selection.
 Within one grammar decision, production definitions rank by their first appearance in this specification, and alternatives rank left to right as written.
 Numbered rules rank by their first appearance in this specification.
 
@@ -1851,23 +1882,26 @@ A backslash followed by an ASCII byte other than `\`, `n`, `t`, `r`, `u`, or the
 If the actual byte sequence beginning at a backslash's follower does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, that follower instead cites [FORM-2] and spans only its first byte; if the follower begins a valid non-ASCII scalar, [FORM-5] spans the backslash and that scalar's complete UTF-8 encoding.
 A raw ASCII byte outside the permitted interior set cites [FORM-5] and spans that byte.
 At any other cursor inside a quoted candidate, if the actual byte sequence beginning there does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, [FORM-2] spans its first byte; a valid non-ASCII scalar instead cites [FORM-5] and spans its complete UTF-8 encoding.
-If no unescaped closing quote occurs and no earlier defect applies, the unterminated quoted candidate cites [FORM-5] and spans from its opening quote through end of source.
-Terminal membership uses the complete context-free predicate set required by [GRAM-1]; a token with no matching predicate cites [FORM-3] or [FORM-5], whichever rule owns the rejected spelling.
-Every lexical, terminal-membership, or grammar rejection uses `SourceBytes`; its coordinate is the exact interval above, the exact offending token interval, or the zero-width end-of-source interval defined above.
+If no unescaped closing quote occurs and no earlier defect applies, the unterminated quoted candidate cites [FORM-5] and spans from its opening quote through end of segment.
+Terminal membership uses the complete context-free predicate set required by [GRAM-1]; a token with no matching predicate cites [FORM-3], [FORM-5] or [GRAM-1], whichever rule owns the rejected spelling, [GRAM-1] owning the operator-form spellings.
+Every lexical, terminal-membership, or grammar rejection uses `SourceBytes`; its coordinate is the exact interval above, the exact offending token interval, or the zero-width segment-end interval defined above.
 
 Every grammar production and external terminal predicate is owned by the numbered rule containing its unique definition.
 A source-EBNF decision is a `|`, `?`, `*`, or the continuation decision of `+`.
 Its stable identity is the zero-based ordinal of its production by first definition in this specification followed by the zero-based EBNF child-index path from that production's root.
 Its arms retain source order; a consuming arm precedes an exit arm.
-The strong-LL(2) analysis required by [GRAM-1] supplies every arm's `SELECT_2` rows.
-Every predicate in a row retains its source-EBNF provenance and whether it came from inside that arm or from the arm's caller continuation.
+The strong-LL(2) analysis required by [GRAM-1] supplies every arm's recognition `SELECT_2` rows.
+For diagnostics, an arm's contextual `SELECT_2` rows are the two-terminal prefixes of that arm followed by the pending continuation of the actual production instances at the frontier.
+That continuation consists of the remaining sequence children and repetition continuations at each enclosing EBNF occurrence, followed by the continuation of each actual caller instance out to the segment's start production.
+Each completed continuation is padded with `SOURCE_END`.
+Every predicate in a contextual row retains its source-EBNF provenance and whether it came from inside that arm or from its continuation.
 Lookahead is padded to two positions with `SOURCE_END`.
 
 Recognition selects an arm only when that arm has a full two-position row match.
 Two matching arms are a [GRAM-1] specification defect, not a precedence rule.
-Whenever no row matches, the diagnostic machine computes each arm's score: the greatest proper-prefix length, zero or one, by which any of that arm's rows accepts the actual two-position lookahead.
+Whenever no recognition row matches, the diagnostic machine uses the contextual rows to compute each arm's score: the greatest proper-prefix length, zero or one, by which any of that arm's rows accepts the actual two-position lookahead.
 Let `m` be the greatest score at that frontier.
-The failure boundary is the actual lookahead token at position `m`, or the zero-width end-of-source coordinate when that position is `SOURCE_END`.
+The failure boundary is the actual lookahead token at position `m`, or the zero-width segment-end coordinate when that position is `SOURCE_END`.
 The maximal-prefix rows are every row with score `m`.
 The expected-terminal set is the distinct predicates at position `m` in those rows, ordered by their first terminal occurrence in the grammar; written terminals precede `SOURCE_END`.
 A direct terminal mismatch is the same calculation with one row and has a singleton expected set.
@@ -1882,8 +1916,17 @@ Its coordinate is the complete interval from the first IDENT through the second 
 An allowed suffix would already be one maximal OPNAME token, while a field place cannot be called or given targs.
 This bounded diagnostic window may include already recognized tokens, performs no operation-table or name lookup, consumes nothing, and does not enlarge recognition's two-token lookahead.
 2.
-If source-EBNF provenance reaches or would next enter an `atom` occurrence in `atom_list`, `fieldinit`, an `infix` operand, the subscript offset, or either endpoint of a `for_stmt`, and the two actual tokens at the start of that occurrence are `(IDENT, "(")`, `(IDENT, "::")`, `("pkg", "::")`, `("std", "::")`, `(OPNAME, "(")`, `(OPNAME, "::")`, `(TYPEID, "(")`, `(TYPEID, "<")`, or `(TYPEID, "::")`, the rejection cites [GRAM-9]; in an infix-operand occurrence, a two-token start whose second token is an `infix_op` or `compare_op` token — the forbidden nested-infix start — likewise cites [GRAM-9].
-These are exactly the `call` and constructor `call` starts forbidden in an atom-only position; no name lookup participates.
+If source-EBNF provenance reaches or would next enter an atom-only position of [GRAM-9], and the two actual tokens at the start of that occurrence match a row in the following table, the rejection cites [GRAM-9].
+
+| First token predicate | Permitted second token predicates |
+| --- | --- |
+| `IDENT` or `OPNAME` | `"("` or `"::"` |
+| `"pkg"` or `"std"` | `"::"` |
+| `TYPEID` | `"("`, `"<"`, or `"::"` |
+| `"musttail"` or `"spawn"` | `IDENT`, `OPNAME`, `TYPEID`, `"pkg"`, or `"std"` |
+
+These are exactly the `call` and constructor `call` starts forbidden in an atom-only position; the second-token predicates after a call marker are `FIRST(callee)` under [GRAM-5], and no name lookup participates.
+In an infix-operand occurrence, a two-token start whose second token is an `infix_op` or `compare_op` token — the forbidden nested-infix start — likewise cites [GRAM-9].
 Its coordinate is the complete interval from the first through the second token of that forbidden call or construct start.
 If the frontier is a decision of a `call` that an `expr` or `affine_factor` derives, or of that call's `callee` or `callee_path`, the tokens from the call's first token form `("pkg" | "std" | IDENT) "::" IDENT ("::" IDENT)*` through a final IDENT that is either the last token the call consumed or the frontier's first lookahead token, and the actual token after that final IDENT is neither `(` nor `::`, the path continues no call and the rejection cites [MOD-5]; its coordinate is the complete interval from the first token of that path through its final IDENT, its expected-terminal set is replaced by `::` and `(`, and no name lookup participates.
 3.
@@ -1911,7 +1954,7 @@ At `program`'s `item*`, after any complete item prefix, if the first actual toke
 If no attribution row applies and exactly one arm has a score strictly greater than every other arm, diagnostic traversal descends into that arm only when every next expected predicate in that arm's maximal-prefix rows came from inside the arm rather than from its caller continuation.
 Otherwise the current frontier is the stopping point.
 A tie is never guessed.
-Traversal through the selected arm follows the same source EBNF and repeats this procedure.
+Traversal through the selected arm follows the same source EBNF, retains the actual caller continuation, and repeats this procedure.
 It cannot cross from a completed arm into its continuation, make a failed row valid, insert, delete, recover, or skip a token, or create a derivation or node.
 It is used only after recognition has failed; reaching a successful end instead of a stopping point is a compiler-invariant failure.
 
@@ -1934,7 +1977,7 @@ After canonical FORM-2 succeeds for every source, semantic diagnostic selection 
 An empty or define-only block uses `SourceNode` at that complete `contract_block`; no declaration, route reservation, or use role inside such a rejected block is classified or counted.
 Grammar already fixes each admitted block's definitions-before-requirements-before-postconditions structure and excludes every statement form, so no second structural-entry filter exists.
 Only complete unit-wide FN-8 admission permits the remaining resolution stages, each complete over the unit before the next begins: the [GRAM-2] heap-declaration position of a source bundle; the module forms, one scan in source order judging [MOD-4]'s alias placement, [MOD-9]'s heap declaration of a module program, [MOD-6]'s `public` and `readonly` placement and [MOD-7]'s function item forms; ordinary role classification and declaration inventory, whose event order also reports each refused alias target [MOD-4, MOD-5]; lexical resolution, including qualified references [MOD-5]; [MOD-6]'s closure of public signatures, in source order of the offending use; and [MOD-7]'s correspondence of each definition with its interface declaration, in definition source order.
-A module program's graph records are formed first [MOD-1]. A graph record, when read, passes the lexical, grammar and canonical stages and has its locations' form and its repeated names judged [MOD-11]; the walk then judges its bindings in written order, each binding's reached directory, cycle and repeated package, reading a newly reached package's graph record and walking its bindings before the next binding; after the walk each graph's rows and entries are judged in package order. The first rejection in this order is reported, and no module record is read before every graph forms.
+A module program's graph records are formed first [MOD-1]. A graph record, when read, passes the lexical, grammar and canonical stages and has its locations' form and its repeated names judged [MOD-11]; the walk then judges its bindings in written order, each binding's reached directory, cycle and repeated package, reading a newly reached package's graph record and walking its bindings before the next binding; after the walk each graph's rows and entries are judged in package order. Each graph's segment rejections are reported as defined above; after segment success the first rejection in this graph-formation order is reported. After every graph forms, module records are read in [MOD-2]'s order and all their segment rejections are aggregated by the segment-reporting rule above before those records proceed to later stages.
 Within an admitted routed `ensures_clause`, the route's leading lookup and [FN-9] route-admission subjudgment occur before lexical resolution of that clause expression; every unrelated block and event retains the ordinary global ordering.
 Poison declarations and partial resolution are forbidden.
 An early FN-8 rejection outranks every inventory or resolution rejection; inventory still outranks resolution even when the later-stage event has an earlier source coordinate.
@@ -2076,10 +2119,10 @@ A whole-unit requirement with no offending source declaration uses `BundleRoot` 
 Post-resolution semantic rejection never uses `SourceBytes`, fabricates a node, or carries an expected-terminal set.
 
 Two or more simultaneously established post-resolution semantic rejections whose immediate offending source premise is the same use of the same canonical node are one rejection event, and that event cites the established rule whose definition appears first in this specification; a rule whose own text states that it forms no candidate in that situation [FN-1] is not among the established rules, and the event's location follows the cited rule.
-The order among rejection events at distinct nodes is implementation-defined.
-One compiler executable invoked on the identical bound unit with identical options and sufficient resources must use one stable deterministic traversal and produce the same first rejection event.
+The order among post-resolution semantic rejection events at distinct nodes is implementation-defined.
+For those events, one compiler executable invoked on the identical bound unit with identical options and sufficient resources must use one stable deterministic traversal and produce the same first rejection event.
 Selection may not depend on allocation identity, unordered-container iteration, worker scheduling, or backend traversal.
-Different conforming implementations may report different first established rejection events at distinct nodes; the same-node citation above is fixed for every conforming implementation, and neither freedom changes the accepted-program set or checked-program authority.
+Different conforming implementations may report different first established post-resolution semantic rejection events at distinct nodes; the same-node citation above is fixed for every conforming implementation, and neither freedom changes the accepted-program set or checked-program authority.
 
 Semantic success is failure-atomic at its publication boundary.
 Private scratch judgments may be constructed in any deterministic order, but no checked program, lowering input, optimization fact, partially accepted declaration, or other semantic authority is published unless every applicable source-side numbered-rule judgment through complete-unit semantic checking succeeds.
@@ -2428,6 +2471,8 @@ An implementation may hold less than a statement's states, or hold them together
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, built-in-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
+These compiler-owned declaration records are language-defined declaration data, not writer source records [PROG-2], and the compiler validates each complete record against this rule.
+
 The prelude's opaque structs [TYPE-2] are the five storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handles `Shared` and `SharedRead`, the frozen-object handle `Frozen`, the concurrent hash map `ConcurrentHashMap` and the key set `KeySet` [SHARE-1], the `Entries` a target over a key set names [SHARE-2], and the decision-cell handle `DecisionCell` defined below. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
 
 ```
@@ -2716,7 +2761,23 @@ The self-changing host handles are the host handles of this table. Through each,
 
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
-A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
+A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`. `open_file`, `open_directory`, `open_append` and `open_directory_write` open the entry their name denotes only when that entry is not a symbolic link; for an entry that is one, each returns `Err` and opens no object, the link's target included.
+`open_read` opens the file that the host's lookup of path from root selects, the host resolving its `..` components and symbolic links, so that file need not be below root.
+`HostPaths` is the authority to look up host paths, which the six host-path opens `open_host_read`, `open_host_read_bytes`, `open_host_directory_read`, `open_host_directory_read_bytes`, `open_host_directory` and `open_host_directory_bytes` take; no host function returns one. When the invocation [PROG-3] supplies `Inputs`, its `host_paths` field is `Some` containing a `HostPaths` on a POSIX host and on a Windows host, and `None` on every other host.
+A host-path open's path is a sequence of native code units: a byte on a POSIX host, and on a Windows host a UTF-16 code unit, whose native bytes are its two bytes, low byte first. It is the code units whose native bytes `host_copy_bytes` copies from its `HostString`, or those that the bytes of `path` from `start` to `end` denote in its encoding: with `NativeBytes` the bytes are the native bytes of the code units, unpaired UTF-16 surrogates included, and with `Utf8` they are UTF-8 text, whose code units are its bytes on a POSIX host and its UTF-16 encoding on a Windows host. For an empty path, a path holding a zero code unit, a window whose code units number at least the host's limit — `PATH_MAX` on a POSIX host and 32767 on a Windows host — a `NativeBytes` window of odd length on a Windows host, and a `Utf8` window that is not UTF-8 text, the open returns `InvalidPath`, a runtime-synthesized condition, and looks nothing up. Otherwise, on a POSIX host it looks the path up as POSIX `openat` does with base's directory as its starting directory: a path beginning with `/` starts at the host's root directory and ignores base, every other path starts at base, each `..` component selects the parent of the directory that the components before it reached after following their symbolic links, and every symbolic link the lookup reaches, its last component included, is followed. On a Windows host, where `\` and `/` are both separators, it looks the path up in the Win32 path dialect by the first matching row of the following table, and every symbolic link and junction the lookup reaches, its last component included, is followed.
+
+| Windows path form | Lookup |
+|---|---|
+| Extended: begins `\\?\` | The rest of the path as written, below the host's `\??\` namespace, without normalization |
+| Device: two separators, then `.` or `?`, then a separator or the end | None; the open returns `InvalidPath` carrying `ERROR_INVALID_NAME` and origin 1 |
+| UNC: begins with two separators | The normalized path |
+| Drive-absolute: a letter, `:` and a separator | The normalized path |
+| Drive-relative: a letter and `:` | The rest after `:`, as a relative path, when base is on that drive; otherwise the normalized path, starting at the current directory the host held for that drive when the invocation started |
+| Root-relative: begins with one separator | The path normalized after the root of base's drive or share |
+| Relative: every other path | The path normalized after base |
+
+The normalized form of a path is the one the host's `GetFullPathNameW` produces from it: each `/` becomes `\`, each `.` component is removed, each `..` component removes the component before it but never the drive or share root, and the last component loses its trailing periods and spaces; a relative or root-relative path is normalized after the path the host reports for base when the open looks it up. A relative path, or a drive-relative path on base's drive, whose normalized form begins with the path the host reports for base, compared code unit for code unit, and then ends or continues after a separator is looked up from base's directory object by the components after base, so a rename of base or of a directory above it does not change what it opens; every other normalized path, one that spells base in another letter case included, is looked up by its full spelling, and one the host normalizes to a device path returns `InvalidPath` carrying `ERROR_INVALID_NAME` and origin 1. The open creates no entry, changes no process state such as the working directory, and makes one lookup of the path; a host refusal of the lookup or the open is `Err` carrying the host's code and origin 1 — on a POSIX host `ENOENT` as `NotFound`, `ENOTDIR` as `NotDirectory`, and `EACCES` and `EPERM` as `PermissionDenied`, and on a Windows host `ERROR_FILE_NOT_FOUND` and `ERROR_PATH_NOT_FOUND` as `NotFound`, `ERROR_DIRECTORY` as `NotDirectory`, and `ERROR_ACCESS_DENIED` as `PermissionDenied`.
+`open_host_read` and `open_host_read_bytes` open a regular file; for a directory they open they return `IsDirectory`, and for another kind of object they open `Unsupported`, each a runtime-synthesized condition that closes what was opened. The other four open an existing directory and never create one; for an object that is not a directory they return `NotDirectory`. `open_host_directory` and `open_host_directory_bytes` return the read and write halves of the one directory the lookup opened, which close separately, and spend two handle credits; when either half cannot be obtained, the open returns `Err`, holds neither half and spends no credit. A directory a host-path open returns is an ordinary `DirectoryRead` or `Directory`, below which the name rule above holds.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
 `TcpConnection`, `AcceptedConnection`, `Directory` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 A `SocketAddress` is one IPv4 address or one IPv6 address together with a port. `socket_address_v4` gives the IPv4 address whose four octets in written order are `a` to `d`, `socket_address_v6` gives the IPv6 address whose eight 16-bit groups in written order are `a` to `h`, and each gives `port` as its port. The peer `tcp_accept` returns and the address `local_address` returns are the host's report of one endpoint in that same form: its family is the family the host reports, so an IPv4 peer that the host reports through an IPv6 listener as an IPv4-mapped address is an IPv6 address, and an IPv6 report keeps its address and port without its scope identifier or flow label. `socket_address_ip` returns `Ipv4` carrying the four octets of an IPv4 address, or `Ipv6` carrying the eight groups of an IPv6 address, in written order, and `socket_address_port` returns the port. For all arguments, `socket_address_ip` of `socket_address_v4(a: a, b: b, c: c, d: d, port: p)` returns `Ipv4(a: a, b: b, c: c, d: d)`, `socket_address_ip` of `socket_address_v6` returns `Ipv6` with that call's eight groups in the same order, and `socket_address_port` of either returns `p`. Reading an address reads only that value.
@@ -3063,9 +3124,38 @@ public enum ListStop {
   ListFailed(public error: IoError);
 }
 
+public opaque nocopy struct HostPaths {
+}
+
+public enum PathEncoding {
+  NativeBytes();
+  Utf8();
+}
+
 public fn relative_path(value: HostString) -> result: Result<RelativePath, PathError> pure doc "Returns value as a path relative to a directory, or PathInvalid when it cannot name one.";
 
-public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens the file at path below root for reading.";
+public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens for reading the file that the host's lookup of path from root selects [PRE-2].";
+
+public fn open_host_read(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<ReadFile, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens for reading the existing regular file that path names, looked up from base as a host path [PRE-2].";
+
+public fn open_host_read_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<ReadFile, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens for reading the existing regular file that the bytes of path from start to end name in encoding, looked up from base as a host path [PRE-2].";
+
+public fn open_host_directory_read(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<DirectoryRead, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens the read half of the existing directory that path names, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory_read_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<DirectoryRead, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens the read half of the existing directory that the bytes of path from start to end name in encoding, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<Directory, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens both halves of the existing directory that path names, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<Directory, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens both halves of the existing directory that the bytes of path from start to end name in encoding, looked up from base as a host path, never creating a directory [PRE-2].";
 
 public fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) waits contract {
   requires start <= end;
@@ -3232,6 +3322,7 @@ alias InputStream = pkg::io::InputStream;
 alias OutputStream = pkg::io::OutputStream;
 alias Args = pkg::text::Args;
 alias Directory = pkg::fs::Directory;
+alias HostPaths = pkg::fs::HostPaths;
 alias Clock = pkg::time::Clock;
 alias WallClock = pkg::time::WallClock;
 
@@ -3264,6 +3355,7 @@ public struct Inputs {
   public wall_clock: WallClock;
   public stops: StopSignals;
   public memory_meter: MemoryMeter;
+  public host_paths: Option<HostPaths>;
 }
 
 public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
