@@ -91,7 +91,7 @@ fn uniform_map(size: u64, keys: &HoldKeys) -> map: HashMap<u64, u64, ceiling> re
     let key = index *wrap spread;
     let outcome = hash_map_put::<HoldKey, u64, ceiling>(map: &map, key: key, value: index, env: keys);
   }
-  return map;
+  return move map;
 }
 
 fn same_map(size: u64, keys: &HoldKeys) -> map: HashMap<u64, u64, ceiling> reads(keys) {
@@ -101,7 +101,7 @@ fn same_map(size: u64, keys: &HoldKeys) -> map: HashMap<u64, u64, ceiling> reads
     let key = index *wrap spread;
     let outcome = hash_map_put::<HoldSameKey, u64, ceiling>(map: &map, key: key, value: index, env: keys);
   }
-  return map;
+  return move map;
 }
 
 fn release_map(map: HashMap<u64, u64, ceiling>) -> result: unit pure {

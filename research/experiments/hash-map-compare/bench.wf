@@ -140,7 +140,7 @@ fn reps_for(size: u64) -> reps: u64 pure contract {
 
 fn put_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys) -> refused: u64 reads(keys), writes(map) {
   doc "Puts the pair of index; 0 when it was inserted, 1 when the map returned a pair.";
-  let key = key_of(index);
+  let key = key_of(index: index);
   let outcome = hash_map_put::<BenchKey, u64, ceiling>(map: map, key: key, value: index, env: keys);
   match outcome {
     HashMapInserted() => {
@@ -154,7 +154,7 @@ fn put_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys) -> re
 
 fn replace_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, tally: &Tally) -> result: unit reads(keys), writes(map), writes(tally) {
   doc "The slow control's repeated put: the key is present, so the put replaces its value and returns the old pair, whose value goes to extra.";
-  let key = key_of(index);
+  let key = key_of(index: index);
   let outcome = hash_map_put::<BenchKey, u64, ceiling>(map: map, key: key, value: index, env: keys);
   match outcome {
     HashMapInserted() => {
@@ -169,7 +169,7 @@ fn replace_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, t
 
 fn remove_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys) -> found: u64 reads(keys), writes(map) {
   doc "Removes the pair of index; 1 when it was present, 0 when not.";
-  let probe = key_of(index);
+  let probe = key_of(index: index);
   let removed = hash_map_remove::<BenchKey, u64, ceiling>(map: map, key: &probe, env: keys);
   match removed {
     Some(value: gone) => {
@@ -182,13 +182,13 @@ fn remove_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys) ->
 }
 
 fn lookup_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, tally: &Tally) -> result: unit reads(map), reads(keys), writes(tally) {
-  let probe = key_of(index);
+  let probe = key_of(index: index);
   let seen = hash_map_lookup::<BenchKey, u64, Tally, u64, fn bench_read, ceiling>(map: map, key: &probe, key_env: keys, visit_env: tally);
   return unit;
 }
 
 fn relookup_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, tally: &Tally) -> result: unit reads(map), reads(keys), writes(tally) {
-  let probe = key_of(index);
+  let probe = key_of(index: index);
   let seen = hash_map_lookup::<BenchKey, u64, Tally, u64, fn bench_reread, ceiling>(map: map, key: &probe, key_env: keys, visit_env: tally);
   set tally^.extra = tally^.extra +wrap 1_u64;
   return unit;
@@ -208,7 +208,7 @@ fn grown(size: u64, keys: &BenchKeys) -> map: HashMap<u64, u64, ceiling> reads(k
   doc "A map of size pairs built the way a writer who does not know the size builds it: from capacity zero by insertion.";
   let map = hash_map_new::<u64, u64, ceiling>(capacity: 0_u64);
   let refused = fill(map: &map, size: size, keys: keys);
-  return map;
+  return move map;
 }
 
 fn release_map(map: HashMap<u64, u64, ceiling>) -> result: unit pure {
