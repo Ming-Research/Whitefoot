@@ -35,9 +35,38 @@ public enum ListStop {
   ListFailed(public error: IoError);
 }
 
+public opaque nocopy struct HostPaths {
+}
+
+public enum PathEncoding {
+  NativeBytes();
+  Utf8();
+}
+
 public fn relative_path(value: HostString) -> result: Result<RelativePath, PathError> pure doc "Returns value as a path relative to a directory, or PathInvalid when it cannot name one.";
 
-public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens the file at path below root for reading.";
+public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens for reading the file that the host's lookup of path from root selects [PRE-2].";
+
+public fn open_host_read(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<ReadFile, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens for reading the existing regular file that path names, looked up from base as a host path [PRE-2].";
+
+public fn open_host_read_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<ReadFile, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens for reading the existing regular file that the bytes of path from start to end name in encoding, looked up from base as a host path [PRE-2].";
+
+public fn open_host_directory_read(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<DirectoryRead, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens the read half of the existing directory that path names, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory_read_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<DirectoryRead, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens the read half of the existing directory that the bytes of path from start to end name in encoding, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<Directory, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens both halves of the existing directory that path names, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<Directory, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens both halves of the existing directory that the bytes of path from start to end name in encoding, looked up from base as a host path, never creating a directory [PRE-2].";
 
 public fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) waits contract {
   requires start <= end;

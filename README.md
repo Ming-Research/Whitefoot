@@ -55,6 +55,10 @@ It still can:
   definitions, libc and the operating system
   ([SCOPE-3](spec/kernel-spec.md#1-scope-and-conformance)).
 
+[Safety claims](docs/safety-claims.md) states each claim above with the
+specification rules and conformance cases it rests on, quotes what the
+specification does not promise, and sizes the trusted base.
+
 Other systems prove the same absence of runtime errors in other ways. SPARK,
 a subset of Ada for high-integrity software, uses SMT solvers in an analysis
 separate from compilation: the Ada compiler builds a program whether or not it
