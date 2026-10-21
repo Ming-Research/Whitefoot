@@ -6,15 +6,16 @@
 # EPYC 9V45) to 127 s (the PR head on the same base, same CPU class), and
 # 173 s (main on 10-14, EPYC 7763) to 194 s (main after the merge, EPYC 7763).
 #
-# Comparison: in one job on one host, interleaved rounds of four cold builds
-# with the build order rotated each round:
+# Comparison: in one job on one host, six interleaved rounds of three cold
+# builds with the build order rotated each round:
 #   base  main before the merge (first parent of the merge commit)
 #   twin  a second checkout of base: its ratio to base is this run's noise
 #   cand  the merge commit
-#   prod  the merge commit without the PR's two test modules and the edits
-#         to the two test index files, i.e. the PR's production code only
 # Result that rejects "the PR lengthens the build": the cand/base ratios of
 # all rounds lie within the spread of the twin/base ratios.
+# Round 1 of the first run (the fourth variant, the PR's production code
+# alone, failed to compile and is dropped): cand/base 1.028, 1.012, 0.962
+# and twin/base 0.978, 0.979, 0.928 on three hosts, base built first.
 
 name: tmp-unit-build-pairs
 
@@ -61,7 +62,7 @@ jobs:
           grep -m 1 'model name' /proc/cpuinfo
           df -h .
 
-      - name: Prepare the four trees
+      - name: Prepare the three trees
         run: |
           cand=d1f2a19d2ae599512b51a19ea622cd3377e34366
           git cat-file -p "$cand" | sed -n '1,4p'
@@ -72,23 +73,17 @@ jobs:
           for v in base twin; do
             git worktree add --detach "$RUNNER_TEMP/$v" "$base"
           done
-          for v in cand prod; do
-            git worktree add --detach "$RUNNER_TEMP/$v" "$cand"
-          done
-          cd "$RUNNER_TEMP/prod"
-          git checkout "$base" -- compiler/src/semantic/tests.rs compiler/src/driver/diagnostic/tests.rs
-          git rm -q -f compiler/src/semantic/tests/match_sites.rs compiler/src/driver/diagnostic/tests/match_sites.rs
-          git status --short
+          git worktree add --detach "$RUNNER_TEMP/cand" "$cand"
 
       - name: Interleaved cold builds
         run: |
           set -eu
           ulimit -c 0
-          variants=(base cand twin prod)
+          variants=(base cand twin)
           : > "$RUNNER_TEMP/walls.txt"
-          for round in 1 2 3; do
-            for k in 0 1 2 3; do
-              v=${variants[$(( (k + round - 1) % 4 ))]}
+          for round in 1 2 3 4 5 6; do
+            for k in 0 1 2; do
+              v=${variants[$(( (k + round - 1) % 3 ))]}
               tree="$RUNNER_TEMP/$v"
               rm -rf "$tree/compiler/target"
               start=$(date +%s%N)
@@ -116,14 +111,17 @@ jobs:
               walls.setdefault(int(rnd), {})[v] = int(ms) / 1000.0
           print("### cold unit test build, seconds (host ${{ matrix.host }})")
           print()
-          print("| round | base | twin | cand | prod |")
-          print("|---|---|---|---|---|")
+          print("| round | base | twin | cand |")
+          print("|---|---|---|---|")
           for rnd in sorted(walls):
               w = walls[rnd]
-              print("| %d | %s |" % (rnd, " | ".join("%.1f" % w[v] if v in w else "-" for v in ("base", "twin", "cand", "prod"))))
+              print("| %d | %s |" % (rnd, " | ".join("%.1f" % w[v] if v in w else "-" for v in ("base", "twin", "cand"))))
           print()
-          for v in ("twin", "cand", "prod"):
+          t95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447}
+          for v in ("twin", "cand"):
               ratios = [walls[r][v] / walls[r]["base"] for r in sorted(walls) if v in walls[r] and "base" in walls[r]]
-              if ratios:
-                  print("%s/base per round: %s; mean %.3f" % (v, ", ".join("%.3f" % x for x in ratios), statistics.mean(ratios)))
+              if len(ratios) > 1:
+                  mean = statistics.mean(ratios)
+                  half = t95.get(len(ratios) - 1, 2.0) * statistics.stdev(ratios) / len(ratios) ** 0.5
+                  print("%s/base per round: %s; mean %.3f, 95%% interval %.3f to %.3f" % (v, ", ".join("%.3f" % x for x in ratios), mean, mean - half, mean + half))
           EOF
