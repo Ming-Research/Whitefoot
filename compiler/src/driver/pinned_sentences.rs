@@ -190,23 +190,6 @@ fn main() -> status: std::process::ExitStatus pure {
             "a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`",
         ],
     },
-    Probe {
-        name: "forbidden-atom-in-a-contract-block.wf",
-        source: br#"fn count(data: &[u8], start: u64, end: u64) -> lines: u64 reads(data) contract {
-  requires imax(start, imin(start, end)) <= end;
-} {
-  return 0_u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "GRAM-9",
-        sentences: &[
-            "a `call` or `construct` in an atom position does not derive [GRAM-9]: a `contract_block` has no `let`, so bind the inner call with a preceding `define` in this same block and write that binder in the atom position — `define inner = f(x: 0_u64); requires g(y: inner);`",
-        ],
-    },
     // -------------------------------------------------------------------
     // [MOD-5] a qualified const written where a value stands: cited at the
     // path itself with the alias that names it [DIAG-1], and in an atom

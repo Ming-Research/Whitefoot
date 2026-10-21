@@ -1,6 +1,7 @@
 #!/bin/sh
-# Feed .github/gate-scope.sh the events gate.yml and io-hosts.yml receive,
-# with a stand-in `gh` that answers from fixtures, and check each decision.
+# Feed .github/gate-scope.sh the events gate.yml, io-hosts.yml and
+# sanitizers.yml receive, with a stand-in `gh` that answers from fixtures, and
+# check each decision.
 # A stand-in that fails marks the events that must decide without a query. The
 # stand-in reads its arguments as gh does: only --paginate returns every page
 # of a list, and fields given with -f reach a list only under --method GET, so
