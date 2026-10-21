@@ -293,7 +293,7 @@ fn check_example(example: &Example, body: &str, expected_output: Option<&str>) -
                 )];
             }
         };
-        let program = build_program(&module);
+        let program = build_program(&crate::support::sanitized(module));
         let output = program.run_with_settings(None, &[]);
         return if output.status.code() == Some(i32::from(*status)) {
             Vec::new()
