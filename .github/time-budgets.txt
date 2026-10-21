@@ -89,8 +89,8 @@ linux-runtime-tsan              10         10         10         10          -  
 # Provisional until 20 runs are recorded on a class: 1.5 times the first run's
 # slowest job (conformance 276 s, programs 315 s, on epyc-7763). The two
 # conformance rows of epyc-7763 follow the rule since 2026-10-21 (39 and 50
-# runs); no other class has 20 runs of them yet (5 to 16), and the programs
-# rows have fewer than 20 on every class.
+# runs); no other class has 20 runs of them yet (5 to 16, in the research
+# record), and the programs rows have fewer than 20 on every class.
 compiler/corpus-asan-conformance 320        415        415        415         -      -
 compiler/corpus-asan-programs   475        475        475        475         -      -
 compiler/corpus-tsan-conformance 335        415        415        415         -      -

@@ -1096,7 +1096,9 @@ every attempt of the unit job, and are left as that section set them. Cells
 whose budget is 10 s and stays 10 s are omitted. The `programs` sanitizer rows
 have fewer than 20 runs in every class and keep their provisional 475 s. The
 last four rows are the `conformance` sanitizer cells of the two classes with
-fewer than 20 runs; they keep their provisional 415 s.
+fewer than 20 runs; they keep their provisional 415 s. The xeon-8573c column,
+not part of this change, has 5 runs of each of these two rows and keeps 415 s
+too.
 
 | stage | class | runs | median s | max s | old | new |
 |---|---|---:|---:|---:|---:|---:|
