@@ -47,7 +47,7 @@ jobs:
           grep -m 1 'model name' /proc/cpuinfo
           cd compiler
           perl ../.github/run-check.pl emit-ir cargo rustc --lib --profile test --locked --offline -- \
-            --emit=llvm-ir -C codegen-units=1 -C no-prepopulate-passes -C opt-level=0
+            --emit=llvm-ir -C codegen-units=1 -C no-prepopulate-passes -C opt-level=0 -C symbol-mangling-version=legacy
           find target -name '*.ll' -size +1M -exec ls -l {} +
 
       - name: Count lines per function path

@@ -38,6 +38,16 @@ def block(title, pred):
     print('\n###', title, '- paths', len(sel), 'copies', sum(c for _, c, _ in sel), 'lines', sum(l for l, _, _ in sel))
 for pat in ('with_resolved_semantics_inputs', 'with_semantics', 'with_resolved_semantics', 'with_semantics_dark', 'with_resolution', 'semantic::tests'):
     block(pat, lambda k, p=pat: p in k)
+def prefix(k, n):
+    return '::'.join(k.split('::')[:n])
+for depth in (3, 4):
+    agg = collections.Counter(); cp = collections.Counter()
+    for k in count:
+        agg[prefix(k, depth)] += lines[k]; cp[prefix(k, depth)] += count[k]
+    print(f'\n### top 40 prefixes of depth {depth} by lines (lines, copies, prefix)\n```text')
+    for k, l in agg.most_common(40):
+        print(f'{l:9d} {cp[k]:6d}  {k[:130]}')
+    print('```')
 print('\n### top 60 paths by total lines (lines, copies, path)\n```text')
 for l, c, k in sorted(((lines[k], count[k], k) for k in count), reverse=True)[:60]:
     print(f'{l:9d} {c:6d}  {k[:150]}')
