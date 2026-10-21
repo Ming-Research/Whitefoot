@@ -13,6 +13,12 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: A new node records that `whitefootc --format` replaces, in place and all or nothing, every source whose bytes differ from its FORM-2 rendering, over the sources `--check` takes or a module graph, while checking and compilation keep rejecting non-canonical input, because the canonical bytes are fixed by derivation and a FORM-2 rejection reports only the first difference; that its bytes come from one rendering function that stops after grammar derivation, so a program with semantic errors can still be formatted, while the FORM-2 judgment walks the derivation on its own and shares only the layout derivation, with a corpus test holding the judgment and the rendering together; and that graph formatting forms the module program as `--check --graph` does and reports any other failure as `--check` would. Refused: formatting during checking, a formatter script per downstream project, and writing canonical bytes to standard output.
 
+## 2026-10-13 Rejection text spells source constructs as the writer wrote them
+
+Nodes: compiler/rejection-payloads, compiler/diagnostic-rendering
+
+Summary: Proof-goal places share the one canonical place renderer; a computed call argument or range endpoint is spelled by the source text retained at that occurrence, kept out of proof identities, and a binding rewritten since then still prints `?`, replacing the earlier refusal to invent an expression for a computed index with refusals of invented text and of a rewritten binding's current name; a callee keeps the alias or `pkg::` prefix written at the call with its generic arguments. A normalized relation keeps its mathematical form and writes each constant as a legal literal or exact literal expression, because normalization can produce a negative bound from unsigned operands. A failed postcondition keeps `relation` and adds `clause`, the written comparison with each result datum replaced by the returned value, because normalization can reverse and fold what the writer wrote. Text-format list items that are strings are double-quoted, because a string can contain the list separator.
+
 ## 2026-10-21 Safety claims are stated on one checked page
 
 Nodes: language/safety-claims
