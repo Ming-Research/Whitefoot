@@ -1231,8 +1231,16 @@ impl FunctionEmitter<'_, '_> {
 
     /// Whether `object` is a handle to a shared object, not to a table.
     fn is_object_handle(&self, object: IrValueId) -> Result<bool, BackendFailure> {
-        Ok(matches!(self.value_type(object), Some(IrType::Nominal(nominal))
-            if matches!(self.nominal(nominal)?.kind(), IrNominalKind::Shared { shape: IrShared::Object, .. })))
+        let Some(IrType::Nominal(nominal)) = self.value_type(object) else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            self.nominal(nominal)?.kind(),
+            IrNominalKind::Shared {
+                shape: IrShared::Object,
+                ..
+            }
+        ))
     }
 
     pub(super) fn emit_shared_take(

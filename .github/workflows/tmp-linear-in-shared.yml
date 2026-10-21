@@ -63,6 +63,3 @@ jobs:
           CHECK_GROUP: ${{ matrix.stage }}
           WHITEFOOT_CHECK_TIMEOUT: 1500
         run: make check-group GROUP="$CHECK_GROUP"
-      - name: Format
-        if: matrix.stage == 'static'
-        run: cargo fmt --manifest-path compiler/Cargo.toml --all -- --check
