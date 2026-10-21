@@ -81,18 +81,28 @@ printf '@echo off\r\n"%%~2"\r\n>"%%~1" echo %%errorlevel%%\r\n' > "$work/tools/r
 # document. The download is the one thing the guide does that a candidate that
 # is not published yet cannot do; the check requires the block to name the
 # release's assets and copies the candidate's files in its place.
+# The container holds no Rust, so the gate's documentation example test cannot
+# run the package's compiler there and this reader stands in for it. It reads
+# only column-zero fences of exactly three backticks, and stops at any other
+# fence form (tildes, four or more backticks, indentation, a list or quote
+# marker) rather than skipping a block the guide's convention allows.
 python -I - "$guide" "$work" <<'PYGUIDE'
 import pathlib, re, sys
 guide, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+fence_like = re.compile(r'[\s>]*(?:[-*+]|\d+[.)])?\s*(?:`{3,}|~{3,})')
 blocks, lines, open_info = [], guide.read_text().splitlines(), None
-for line in lines:
+for number, line in enumerate(lines, 1):
     if open_info is None:
-        match = re.fullmatch(r'```(\S.*)', line)
+        if fence_like.match(line) and not re.fullmatch(r'```(?!`).*', line):
+            sys.exit('unsupported fence form at line %d of the guide: %r' % (number, line))
+        match = re.fullmatch(r'```(?!`)(.*)', line)
         if match:
-            open_info, body = match.group(1), []
+            open_info, body = match.group(1).strip(), []
     elif line == '```':
         blocks.append((open_info, '\n'.join(body) + '\n'))
         open_info = None
+    elif re.match(r'`{3,}', line):
+        sys.exit('unsupported fence form at line %d of the guide: %r' % (number, line))
     else:
         body.append(line)
 assert open_info is None, 'unclosed fence in the guide'

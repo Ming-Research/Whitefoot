@@ -76,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [download-block, missing-expand, checksum, exit-code, rejection-text]
+        case: [download-block, missing-expand, checksum, exit-code, rejection-text, tilde-fence, indented-fence]
     defaults:
       run:
         shell: bash
@@ -111,6 +111,10 @@ jobs:
               replace_once('return exit_status(code: 1_u8);', 'return exit_status(code: 3_u8);')
           elif case == 'rejection-text':
               replace_once('disposition: Unproved', 'disposition: Proved')
+          elif case == 'tilde-fence':
+              replace_once('```powershell\n$release_tag', '~~~powershell\n$release_tag')
+          elif case == 'indented-fence':
+              replace_once('```powershell\n$env:PATH', '  ```powershell\n$env:PATH')
           elif case == 'checksum':
               lines = sums.read_text().splitlines()
               for number, line in enumerate(lines):
@@ -141,6 +145,7 @@ jobs:
             checksum) want 'whitefootc-windows-x86_64-bundled.zip: FAILED'; unwanted 'Verified package files' ;;
             exit-code) want 'Exit (install-from-guide): 0'; unwanted 'Verified package files' ;;
             rejection-text) want 'Exit (guide-rejected): 1'; want 'Proved'; unwanted 'Exit (stack-build)' ;;
+            tilde-fence|indented-fence) want 'unsupported fence form'; unwanted 'Exit (install-from-guide)' ;;
           esac
           echo "The check failed at the stage this case breaks."
       - name: Upload the logs
