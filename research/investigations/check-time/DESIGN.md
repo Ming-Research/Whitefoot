@@ -863,14 +863,12 @@ obligations).
 
 ## Firn total checking comparison: prior criterion
 
-**Question, fixed before any acquisition on the 14900K.** Does the
-redundant-condition rejection rule (Whitefoot#393) add to Firn's total
-checking time the amount the owner's criterion starts from, 1.6 seconds, less
-the reduction that the integer-`match` change (Whitefoot#424) brings? The
-criterion (item `lm-r1`) requires the rule's overhead now to be at least 0.5
-seconds below 1.6 seconds, and by more than the run's noise. The rule and
-integer `match` are both on `main`, so a pair of compilers that differs only
-by the rule can now be built from `main`.
+**Question, fixed before any acquisition on the 14900K.** With integer
+`match` (Whitefoot#424) in `main`, does the redundant-condition rejection rule
+(Whitefoot#393) add to Firn's total checking time at least 0.5 seconds less
+than 1.6 seconds, and less by more than the run's noise? The criterion is the
+owner's (item `lm-r1`). The rule and integer `match` are both on `main`, so a
+pair of compilers that differs only by the rule can now be built from `main`.
 
 **Where 1.6 seconds comes from, and its limit.** It is the difference between
 8.02 seconds with the rule and 6.41 seconds without it on one hosted runner,
@@ -930,12 +928,17 @@ taskset -c 2 "$compiler" --check --graph apps/firn/modules.wfg --entry firn
 in the source revision's checkout, under the CI heavy-command wrapper, with no
 compiler cache and no work counters. The timed interval is the compiler
 process alone, from before launch until `wait` returns. First one sample per
-variant, whose durations are inspected before continuing. Then one excluded
-warmup per variant and seven measured rounds, rotating the variant order
-between rounds. A command that fails, a missing observation, a timeout, a
-round fewer than seven, or a stdout other than exactly `firn: accepted`
-invalidates the acquisition: no numbers, no criterion. The workflow's exit
-status says only whether the acquisition is valid.
+variant: it confirms that every variant prints `firn: accepted` and decides
+whether a reference pair is voided; its durations are printed and gate
+nothing. Then one excluded warmup per variant and the measured rounds,
+rotating the variant order between rounds. A command that fails, a missing
+observation, a timeout, a matrix with fewer rounds than required, or a stdout
+other than exactly `firn: accepted` invalidates the acquisition: no numbers, no
+criterion. The workflow's exit status says only whether the acquisition is
+valid. The number of measured rounds is the environment variable
+`FIRN_TIME_ROUNDS`; the workflow fixes it at seven, and only a seven-round
+matrix evaluates the criterion. A complete matrix of another round count is
+valid and reports its numbers but no criterion.
 
 **Calculation and falsifier.** For each variant report the median, minimum and
 maximum of its seven measured times. For each pair, the overhead is
@@ -945,17 +948,20 @@ this run's noise. The criterion, on pair `now`, with margin
 
 > `m ≥ 0.5` seconds, and `m >` the twin range of pair `now`.
 
-Otherwise it is not met. The twin range is an absolute range in seconds, not a
-percentage or a confidence interval. Because 1.6 seconds is a hosted runner's
-figure and the 14900K is faster, the report also gives, from the same run,
-`O(then) − O(now)` with both twin ranges and whether the difference exceeds the
-larger of them: the integer-`match` change's reduction as measured on this
-machine. A pass shows, on this input and machine, that the rule's overhead is
-at most 1.1 seconds and below 1.6 seconds by more than the noise; it does not
-establish the 1.6-second claim itself. A run with fewer than seven rounds
-reports its numbers but evaluates no criterion. The revisions, the claimed
-overhead and the required reduction are workflow inputs, so the same workflow
-measures other revision pairs.
+Otherwise it is not met. The twin range is an absolute range in seconds, the
+owner's noise measure for this criterion: it is not compared with a recorded
+noise floor of the 14900K and the difference of medians has no confidence
+interval. Because 1.6 seconds is a hosted runner's figure and the 14900K is
+faster, the report also gives, from the same run, `O(then) − O(now)` with both
+twin ranges and whether the difference exceeds the larger of them. That
+difference contains every change between the two pairs (integer `match`, later
+changes to the rule and the checker, and `lib/std`), so it is a same-machine
+reference for the 1.6-second figure and is not attributed to integer `match`. A
+pass shows, on this input and machine, that the rule's overhead is at most 1.1
+seconds and below 1.6 seconds by more than the noise; it does not establish the
+1.6-second claim itself. The revisions, the claimed overhead and the required
+reduction are workflow inputs, so the same workflow measures other revision
+pairs.
 
 **Lifecycle and current evidence.** The workflow and its helper are
 permanent, manually dispatched, and not a gate dependency. This section was
