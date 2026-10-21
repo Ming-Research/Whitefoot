@@ -238,7 +238,7 @@ Rust has no channel for this. An optimizer facing a Rust call inlines it or prov
 
 The committed experiment isolates that boundary. A pure mixing function compiles into its own object file, so the caller's compiler never sees the body:
 
-Historical listing, abridged from `research/experiments/effect-attrs-channel/kernel.wf`. It uses the retired `imul.wrap<i64>` and `iadd.wrap<i64>` spellings, which the current spec does not define; the current spec writes `*wrap` and `+wrap`. `imul.wrap`, `iadd.wrap` and `ige<` appear last in the spec at v0.22 (`spec/kernel-spec-v0.22.md`), and the effect row `traps` at v0.36 (`spec/kernel-spec-v0.36.md`), each the newest archived version that contains the spelling:
+Historical listing, abridged from `research/experiments/effect-attrs-channel/kernel.wf`. It uses the retired `imul.wrap<i64>` and `iadd.wrap<i64>` spellings, which the current spec does not define; the current spec writes `*wrap` and `+wrap`. `imul.wrap`, `iadd.wrap` and `ige<` appear last in the spec at v0.22 (`spec/kernel-spec-v0.22.md`), and the effect row `traps` at v0.39 (`spec/kernel-spec-v0.39.md`), each the newest archived version that contains the spelling:
 
 ```
 fn mix (x: own i64) -> own i64 pure {
@@ -369,7 +369,7 @@ The retired optimizer experiment additionally consumed it for reassociation.
 D7 removes that source syntax and assumes no laws of supplied behavior. The
 following listing and measurement are historical evidence for a possible
 future proof consumer, not an active writer form or compiler capability.
-The historical kernel (`research/experiments/checked-law-channel/kernel.wf`) declared a `SatMonoid` contract with three laws (`associative`, `commutative`, and an `identity` of 0) for an unsigned saturating add, then folded a `buffer<u64>` with that operation in a plain loop. Its source used `law`, `conform`, `buffer` and `traps` forms that the current spec does not define, so the listing is not reproduced here. `conform` appears last in the spec at v0.55 (`spec/kernel-spec-v0.55.md`), `buffer` at v0.59 (`spec/kernel-spec-v0.59.md`), and the effect row `traps` at v0.36 (`spec/kernel-spec-v0.36.md`), each the newest archived version that contains the spelling. The current spec's `+sat` operator is the same saturating add; it states no laws.
+The historical kernel (`research/experiments/checked-law-channel/kernel.wf`) declared a `SatMonoid` contract with three laws (`associative`, `commutative`, and an `identity` of 0) for an unsigned saturating add, then folded a `buffer<u64>` with that operation in a plain loop. Its source used `law`, `conform`, `buffer` and `traps` forms that the current spec does not define, so the listing is not reproduced here. `conform` and `law` appear last in the spec at v0.55 (`spec/kernel-spec-v0.55.md`), `buffer` at v0.59 (`spec/kernel-spec-v0.59.md`), and the effect row `traps` at v0.39 (`spec/kernel-spec-v0.39.md`), each the newest archived version that contains the spelling. The current spec's `+sat` operator is the same saturating add; it states no laws.
 
 The writer states the laws. The checker discharges them against the operation table's semantics, where unsigned saturating add is associative as table data rather than writer folklore. Only then does the optimizer use them, reassociating the obvious fold into four independent, block-interleaved accumulators seeded with the proved identity. From the committed assembly, the four parallel saturating chains:
 
