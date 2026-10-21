@@ -860,3 +860,110 @@ timing covers these three inputs on one machine. Meeting the criterion at
 640 arms needs a join that enumerates only the pairs default values cannot
 reconstruct (correlated zero bounds and disequalities are its open
 obligations).
+
+## Firn total checking comparison: prior criterion
+
+**Question, fixed before any acquisition on the 14900K.** With integer
+`match` (Whitefoot#424) in `main`, does the redundant-condition rejection rule
+(Whitefoot#393) add to Firn's total checking time at least 0.5 seconds less
+than 1.6 seconds, and less by more than the run's noise? The criterion is the
+owner's (item `lm-r1`). The rule and integer `match` are both on `main`, so a
+pair of compilers that differs only by the rule can now be built from `main`.
+
+**Where 1.6 seconds comes from, and its limit.** It is the difference between
+8.02 seconds with the rule and 6.41 seconds without it on one hosted runner,
+as the owner's criterion records. No file in this repository holds those raw
+runs. [The recovery argument](../redundant-tests/EXACT-RECOVERY.md) records a
+different supplied pair for the same check, 8.72 and 6.11 seconds, also
+without raw artifacts. Neither is a measurement made here, and a hosted
+runner's seconds do not transfer to the 14900K. The comparison below
+therefore measures the overhead again, on the machine that will decide it, and
+reports the historical pair on that machine as a reference.
+
+[The historical Firn workflow](https://github.com/Ming-Research/Whitefoot/blob/30169c91105990913b11f7c07dc4e49f63de6997/.github/workflows/op5-cost.yml)
+timed main's compiler `58743a931a5ec6244864d37041fd1a7c1c5a145d` and the rule
+branch's compiler on those revisions' Firn sources. It ran each cell once
+without work counters, on a hosted `ubuntu-24.04` runner, with the gate Cargo
+profile and `CARGO_INCREMENTAL=0`, and with no warmup, repeated rounds, twin
+control or CPU pinning. Its command checks the whole Firn entry. This
+comparison keeps the command and the profile and changes the machine, the
+pinning, the repetitions and the revisions.
+
+**Variants.** Two pairs. In a pair, `base` is a compiler without the rule,
+`rule` is one with it, and `twin` is a byte-for-byte copy of `base`'s
+executable; all three check the same Firn source, taken from one revision's
+`apps/firn`. Compiler identity and source identity are separate inputs.
+
+| Pair | `base` | `rule` | Firn source |
+|---|---|---|---|
+| `now` (the criterion uses this pair) | `aa667568707c6c10ff6d5a294feb45e85e83694d`, `main` before Whitefoot#393, with integer `match` | `bf7e033330a450b4e4fd848f69c2f35d6580f874`, `main` after Whitefoot#393 | `apps/firn` at `bf7e033330a450b4e4fd848f69c2f35d6580f874` |
+| `then` (reference) | `58743a931a5ec6244864d37041fd1a7c1c5a145d`, the `main` of the historical measurement | `82fdda25ecb15171568f8b7dd3f033c47f5ab6f7`, the rule branch's head at that measurement | `apps/firn` at `82fdda25ecb15171568f8b7dd3f033c47f5ab6f7` |
+
+`bf7e03333` is `aa6675687` plus one first-parent merge, Whitefoot#393 (read with
+`git log --first-parent`), and the two revisions' `lib/std` trees are identical
+(`git rev-parse <revision>:lib/std`). Each compiler embeds its own `lib/std`
+through `compiler/src/library.rs` and no root override exists, so in pair
+`now` the difference between `base` and `rule` is the rule and its
+specification amendment, and the source is the same for both. Pair `then`
+differs from pair `now` also in `lib/std` and in the many commits between its
+two compilers; it reproduces the historical figure and does not isolate the
+rule. If a pair `then` compiler's sample run completes without printing
+exactly `firn: accepted` and exiting with status 0 (an older compiler that
+does not accept the newer source, for example), the pair is voided: the report
+states that compiler's exit status and first output and omits the pair. This
+does not affect pair `now`, whose every failure invalidates the acquisition. A
+voided pair says the pair is not measurable; it is not a verdict on the source.
+
+**Acquisition.** Run only through the `14900k` CI runner, one compiler process
+at a time, pinned to logical CPU 2, through
+`.github/workflows/firn-check-time.yml`. The workflow refuses a busy host.
+Each distinct compiler revision is built with the gate Cargo profile and
+`CARGO_INCREMENTAL=0` in a fresh target directory; builds are outside the
+measurements. The twin's bytes are verified against `base`. Every check is
+
+```sh
+taskset -c 2 "$compiler" --check --graph apps/firn/modules.wfg --entry firn
+```
+
+in the source revision's checkout, under the CI heavy-command wrapper, with no
+compiler cache and no work counters. The timed interval is the compiler
+process alone, from before launch until `wait` returns. First one sample per
+variant: it confirms that every variant prints `firn: accepted` and decides
+whether a reference pair is voided; its durations are printed and gate
+nothing. Then one excluded warmup per variant and the measured rounds,
+rotating the variant order between rounds. A command that fails, a missing
+observation, a timeout, a matrix with fewer rounds than required, or a stdout
+other than exactly `firn: accepted` invalidates the acquisition: no numbers, no
+criterion. The workflow's exit status says only whether the acquisition is
+valid. The number of measured rounds is the environment variable
+`FIRN_TIME_ROUNDS`; the workflow fixes it at seven, and only a seven-round
+matrix evaluates the criterion. A complete matrix of another round count is
+valid and reports its numbers but no criterion.
+
+**Calculation and falsifier.** For each variant report the median, minimum and
+maximum of its seven measured times. For each pair, the overhead is
+`O = median(rule) − median(base)`, and the twin range is `max(twin) − min(twin)`,
+this run's noise. The criterion, on pair `now`, with margin
+`m = 1.6 − O(now)` seconds:
+
+> `m ≥ 0.5` seconds, and `m >` the twin range of pair `now`.
+
+Otherwise it is not met. The twin range is an absolute range in seconds, the
+owner's noise measure for this criterion: it is not compared with a recorded
+noise floor of the 14900K and the difference of medians has no confidence
+interval. Because 1.6 seconds is a hosted runner's figure and the 14900K is
+faster, the report also gives, from the same run, `O(then) − O(now)` with both
+twin ranges and whether the difference exceeds the larger of them. That
+difference contains every change between the two pairs (integer `match`, later
+changes to the rule and the checker, and `lib/std`), so it is a same-machine
+reference for the 1.6-second figure and is not attributed to integer `match`. A
+pass shows, on this input and machine, that the rule's overhead is at most 1.1
+seconds and below 1.6 seconds by more than the noise; it does not establish the
+1.6-second claim itself. The revisions, the claimed overhead and the required
+reduction are workflow inputs, so the same workflow measures other revision
+pairs.
+
+**Lifecycle and current evidence.** The workflow and its helper are
+permanent, manually dispatched, and not a gate dependency. This section was
+written before any 14900K acquisition. The only run so far is a hosted-runner
+link test of one warmup and one round, whose numbers measure nothing.
