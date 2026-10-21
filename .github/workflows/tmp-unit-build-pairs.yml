@@ -1,27 +1,24 @@
 # Temporary (coord-wfbl-04-04): removed before the branch is ready.
 #
-# Question: does the merge of Whitefoot#444 lengthen the cold build of the
-# unit group's test binary, `cargo test --profile gate --lib --no-run`?
-# The gate's compiler/test-build-unit stage went 109 s (main before the merge,
-# EPYC 9V45) to 127 s (the PR head on the same base, same CPU class), and
-# 173 s (main on 10-14, EPYC 7763) to 194 s (main after the merge, EPYC 7763).
+# Question: which part of the merge of Whitefoot#444 lengthens the cold build
+# of the unit group's test binary, `cargo test --profile gate --lib --no-run`?
 #
-# Comparison: in one job on one host, five interleaved rounds of four cold
-# builds with the build order rotated each round:
-#   base  main before the merge (first parent of the merge commit)
+# Earlier runs, three EPYC 7763 hosts each, cold builds rotated in one job,
+# first round dropped, ratios to base (main before the merge, 154 s):
+#   twin (second checkout of base)   1.012, 0.999, 1.002   noise
+#   cand (the merge commit)          1.040, 1.039, 1.035   about +6 s
+#   prod (merge commit without the PR's two test modules, the one edited
+#         test restored)             1.004, 1.005, 1.006   no detected change
+# so the difference is in the PR's tests, not its checker or diagnostics code.
+#
+# This run splits the tests, six builds per round, order rotated each round:
+#   base  main before the merge
 #   twin  a second checkout of base: its ratio to base is this run's noise
 #   cand  the merge commit
-#   prod  the merge commit without the PR's two test modules and with the
-#         PR's edit to the one existing test restored: the PR's production
-#         code alone
-# Result that rejects "the PR lengthens the build": the cand/base ratios of
-# all rounds lie within the spread of the twin/base ratios.
-#
-# First run (three hosts, six rounds, base/twin/cand): twin/base stayed within
-# 1% of 1 after the first round, cand/base 1.003 to 1.053 on every later
-# round of the two hosts that finished their logs (EPYC 9V74, EPYC 7763).
-# This run attributes that difference: prod/base near cand/base puts it in
-# the production code, near 1 in the tests.
+#   sem   the merge commit without the driver test module
+#   drv   the merge commit without the semantic test module, the edited
+#         existing test restored
+# Reading: the variant whose ratio to base is near cand's holds the cost.
 
 name: tmp-unit-build-pairs
 
@@ -68,23 +65,28 @@ jobs:
           grep -m 1 'model name' /proc/cpuinfo
           df -h .
 
-      - name: Prepare the four trees
+      - name: Prepare the five trees
         run: |
+          set -eu
           cand=d1f2a19d2ae599512b51a19ea622cd3377e34366
-          git cat-file -p "$cand" | sed -n '1,4p'
           base=$(git rev-parse "$cand^1")
           echo "cand=$cand base=$base"
-          git log --oneline -1 "$cand"
-          git log --oneline -1 "$base"
           for v in base twin; do
             git worktree add --detach "$RUNNER_TEMP/$v" "$base"
           done
-          for v in cand prod; do
+          for v in cand sem drv; do
             git worktree add --detach "$RUNNER_TEMP/$v" "$cand"
           done
-          cd "$RUNNER_TEMP/prod"
-          sed -i '/^mod match_sites;$/d' compiler/src/semantic/tests.rs compiler/src/driver/diagnostic/tests.rs
-          git rm -q -f compiler/src/semantic/tests/match_sites.rs compiler/src/driver/diagnostic/tests/match_sites.rs
+
+          # sem: no driver test module.
+          cd "$RUNNER_TEMP/sem"
+          sed -i '/^mod match_sites;$/d' compiler/src/driver/diagnostic/tests.rs
+          git rm -q -f compiler/src/driver/diagnostic/tests/match_sites.rs
+
+          # drv: no semantic test module; the one edited existing test back.
+          cd "$RUNNER_TEMP/drv"
+          sed -i '/^mod match_sites;$/d' compiler/src/semantic/tests.rs
+          git rm -q -f compiler/src/semantic/tests/match_sites.rs
           python3 -I - <<'PY'
           p = "compiler/src/semantic/tests.rs"
           s = open(p, encoding="utf-8").read()
@@ -102,18 +104,21 @@ jobs:
           )
           open(p, "w", encoding="utf-8").write(s[:a] + new + s[b:])
           PY
-          git status --short
-          git diff --stat HEAD | tail -3
+
+          for v in sem drv; do
+            echo "== $v"
+            git -C "$RUNNER_TEMP/$v" status --short
+          done
 
       - name: Interleaved cold builds
         run: |
           set -eu
           ulimit -c 0
-          variants=(prod base cand twin)
+          variants=(sem base drv cand twin)
           : > "$RUNNER_TEMP/walls.txt"
           for round in 1 2 3 4 5; do
-            for k in 0 1 2 3; do
-              v=${variants[$(( (k + round - 1) % 4 ))]}
+            for k in 0 1 2 3 4; do
+              v=${variants[$(( (k + round - 1) % 5 ))]}
               tree="$RUNNER_TEMP/$v"
               rm -rf "$tree/compiler/target"
               start=$(date +%s%N)
@@ -139,19 +144,17 @@ jobs:
           walls = {}
           for rnd, v, ms in rows:
               walls.setdefault(int(rnd), {})[v] = int(ms) / 1000.0
+          names = ("base", "twin", "cand", "sem", "drv")
           print("### cold unit test build, seconds (host ${{ matrix.host }})")
           print()
-          print("| round | base | twin | cand | prod |")
-          print("|---|---|---|---|---|")
+          print("| round | " + " | ".join(names) + " |")
+          print("|---" * (len(names) + 1) + "|")
           for rnd in sorted(walls):
               w = walls[rnd]
-              print("| %d | %s |" % (rnd, " | ".join("%.1f" % w[v] if v in w else "-" for v in ("base", "twin", "cand", "prod"))))
+              print("| %d | %s |" % (rnd, " | ".join("%.1f" % w[v] if v in w else "-" for v in names)))
           print()
-          t95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447}
-          for v in ("twin", "cand", "prod"):
-              ratios = [walls[r][v] / walls[r]["base"] for r in sorted(walls) if v in walls[r] and "base" in walls[r]]
+          for v in names[1:]:
+              ratios = [walls[r][v] / walls[r]["base"] for r in sorted(walls)[1:] if v in walls[r] and "base" in walls[r]]
               if len(ratios) > 1:
-                  mean = statistics.mean(ratios)
-                  half = t95.get(len(ratios) - 1, 2.0) * statistics.stdev(ratios) / len(ratios) ** 0.5
-                  print("%s/base per round: %s; mean %.3f, 95%% interval %.3f to %.3f" % (v, ", ".join("%.3f" % x for x in ratios), mean, mean - half, mean + half))
+                  print("%s/base, rounds 2 on: %s; mean %.3f" % (v, ", ".join("%.3f" % x for x in ratios), statistics.mean(ratios)))
           EOF
