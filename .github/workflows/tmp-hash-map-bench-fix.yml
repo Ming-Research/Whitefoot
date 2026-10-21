@@ -1,0 +1,65 @@
+# Temporary: compiles the fixed measurement programs with a compiler built
+# from this branch (which holds the current main) merged with the open scan
+# change (claude/hash-scan-resume), the compiler the comparison will meet once
+# that change lands. wf-hash-map-bench-fix removes this file before the full
+# check.
+name: tmp-hash-map-bench-fix
+
+on:
+  push:
+    branches: [wf-hash-map-bench-fix]
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge the scan change
+        run: |
+          git config user.name ci
+          git config user.email ci@example.invalid
+          git merge --no-edit origin/claude/hash-scan-resume
+          git log --oneline -3
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+
+      - name: Build the compiler
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+
+      - name: Compile the measurement programs
+        run: |
+          wfc="$PWD/compiler/target/gate/whitefootc"
+          out="$RUNNER_TEMP/images"
+          mkdir -p "$out"
+          directory=research/experiments/hash-map-compare
+          status=0
+          for program in bench hold; do
+            echo "== $program.wf"
+            code=0
+            "$wfc" "$directory/$program.wf" -o "$out/$program" || code=$?
+            echo "exit $code for $program.wf"
+            if [ "$code" -ne 0 ]; then status=1; fi
+          done
+          echo "== peak image"
+          code=0
+          make -s -C "$directory" peak ROOT="$PWD" WFC="$wfc" BUILD="$out/peak" || code=$?
+          echo "exit $code for the peak image"
+          if [ "$code" -ne 0 ]; then status=1; fi
+          exit "$status"
