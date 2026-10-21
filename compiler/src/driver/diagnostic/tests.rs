@@ -201,7 +201,7 @@ fn a_supplied_requirement_is_quoted_from_its_declaring_record() {
 "#;
     let detail = stop("walk.wf", host).detail();
     assert!(
-        detail.contains("requires_clause: std/fs/module.wfm:70:3 \"requires end <= name^.len;\"\n"),
+        detail.contains("requires_clause: std/fs/module.wfm:99:3 \"requires end <= name^.len;\"\n"),
         "{detail}"
     );
 }

@@ -31,7 +31,7 @@ fn publish_report(factory: &std::io::HandleFactory, output: &std::io::OutputStre
 
 fn main(inputs: std::process::Inputs) -> status: ExitStatus pure waits {
   doc "A bump allocator is one window used with place_back as allocation and a range reference as the run it hands out [OP-13]. One constant-capacity Slots of 256 slots lives in this activation's frame, two runs are carved off its back, one of them is filled and read back, and the window's measures read before and after each carve, among them the free slots a take of 1024 slots would exceed, are published one byte each (the 256 opening free slots as two bytes, low first) for the harness to compare.";
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &factory, directory: move unused_cwd);

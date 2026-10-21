@@ -1,4 +1,4 @@
-# Kernel Specification v0.155
+# Kernel Specification v0.156
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2771,7 +2771,23 @@ The self-changing host handles are the host handles of this table. Through each,
 
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
-A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
+A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`. `open_file`, `open_directory`, `open_append` and `open_directory_write` open the entry their name denotes only when that entry is not a symbolic link; for an entry that is one, each returns `Err` and opens no object, the link's target included.
+`open_read` opens the file that the host's lookup of path from root selects, the host resolving its `..` components and symbolic links, so that file need not be below root.
+`HostPaths` is the authority to look up host paths, which the six host-path opens `open_host_read`, `open_host_read_bytes`, `open_host_directory_read`, `open_host_directory_read_bytes`, `open_host_directory` and `open_host_directory_bytes` take; no host function returns one. When the invocation [PROG-3] supplies `Inputs`, its `host_paths` field is `Some` containing a `HostPaths` on a POSIX host and on a Windows host, and `None` on every other host.
+A host-path open's path is a sequence of native code units: a byte on a POSIX host, and on a Windows host a UTF-16 code unit, whose native bytes are its two bytes, low byte first. It is the code units whose native bytes `host_copy_bytes` copies from its `HostString`, or those that the bytes of `path` from `start` to `end` denote in its encoding: with `NativeBytes` the bytes are the native bytes of the code units, unpaired UTF-16 surrogates included, and with `Utf8` they are UTF-8 text, whose code units are its bytes on a POSIX host and its UTF-16 encoding on a Windows host. For an empty path, a path holding a zero code unit, a window whose code units number at least the host's limit — `PATH_MAX` on a POSIX host and 32767 on a Windows host — a `NativeBytes` window of odd length on a Windows host, and a `Utf8` window that is not UTF-8 text, the open returns `InvalidPath`, a runtime-synthesized condition, and looks nothing up. Otherwise, on a POSIX host it looks the path up as POSIX `openat` does with base's directory as its starting directory: a path beginning with `/` starts at the host's root directory and ignores base, every other path starts at base, each `..` component selects the parent of the directory that the components before it reached after following their symbolic links, and every symbolic link the lookup reaches, its last component included, is followed. On a Windows host, where `\` and `/` are both separators, it looks the path up in the Win32 path dialect by the first matching row of the following table, and every symbolic link and junction the lookup reaches, its last component included, is followed.
+
+| Windows path form | Lookup |
+|---|---|
+| Extended: begins `\\?\` | The rest of the path as written, below the host's `\??\` namespace, without normalization |
+| Device: two separators, then `.` or `?`, then a separator or the end | None; the open returns `InvalidPath` carrying `ERROR_INVALID_NAME` and origin 1 |
+| UNC: begins with two separators | The normalized path |
+| Drive-absolute: a letter, `:` and a separator | The normalized path |
+| Drive-relative: a letter and `:` | The rest after `:`, as a relative path, when base is on that drive; otherwise the normalized path, starting at the current directory the host held for that drive when the invocation started |
+| Root-relative: begins with one separator | The path normalized after the root of base's drive or share |
+| Relative: every other path | The path normalized after base |
+
+The normalized form of a path is the one the host's `GetFullPathNameW` produces from it: each `/` becomes `\`, each `.` component is removed, each `..` component removes the component before it but never the drive or share root, and the last component loses its trailing periods and spaces; a relative or root-relative path is normalized after the path the host reports for base when the open looks it up. A relative path, or a drive-relative path on base's drive, whose normalized form begins with the path the host reports for base, compared code unit for code unit, and then ends or continues after a separator is looked up from base's directory object by the components after base, so a rename of base or of a directory above it does not change what it opens; every other normalized path, one that spells base in another letter case included, is looked up by its full spelling, and one the host normalizes to a device path returns `InvalidPath` carrying `ERROR_INVALID_NAME` and origin 1. The open creates no entry, changes no process state such as the working directory, and makes one lookup of the path; a host refusal of the lookup or the open is `Err` carrying the host's code and origin 1 — on a POSIX host `ENOENT` as `NotFound`, `ENOTDIR` as `NotDirectory`, and `EACCES` and `EPERM` as `PermissionDenied`, and on a Windows host `ERROR_FILE_NOT_FOUND` and `ERROR_PATH_NOT_FOUND` as `NotFound`, `ERROR_DIRECTORY` as `NotDirectory`, and `ERROR_ACCESS_DENIED` as `PermissionDenied`.
+`open_host_read` and `open_host_read_bytes` open a regular file; for a directory they open they return `IsDirectory`, and for another kind of object they open `Unsupported`, each a runtime-synthesized condition that closes what was opened. The other four open an existing directory and never create one; for an object that is not a directory they return `NotDirectory`. `open_host_directory` and `open_host_directory_bytes` return the read and write halves of the one directory the lookup opened, which close separately, and spend two handle credits; when either half cannot be obtained, the open returns `Err`, holds neither half and spends no credit. A directory a host-path open returns is an ordinary `DirectoryRead` or `Directory`, below which the name rule above holds.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
 The budget the invocation's factory draws on starts with c(n) credits on a POSIX host, where n is the soft open-files limit when the invocation starts and c(n) = max(0, min(n, 2^20) - 64), and with 4096 credits on every other host.
 The open-files limit is the host's per-process limit on the files a process may hold open. `open_files_limit` and `raise_open_files_limit` read and change it by the following table, where a limit the host reports as unlimited reads as 2^64 - 1, a refusal by the host is `Err` carrying the host's code and origin 11 and changes nothing, and each reading is an input of the execution [WAIT-2].
@@ -3134,9 +3150,38 @@ public enum ListStop {
   ListFailed(public error: IoError);
 }
 
+public opaque nocopy struct HostPaths {
+}
+
+public enum PathEncoding {
+  NativeBytes();
+  Utf8();
+}
+
 public fn relative_path(value: HostString) -> result: Result<RelativePath, PathError> pure doc "Returns value as a path relative to a directory, or PathInvalid when it cannot name one.";
 
-public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens the file at path below root for reading.";
+public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens for reading the file that the host's lookup of path from root selects [PRE-2].";
+
+public fn open_host_read(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<ReadFile, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens for reading the existing regular file that path names, looked up from base as a host path [PRE-2].";
+
+public fn open_host_read_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<ReadFile, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens for reading the existing regular file that the bytes of path from start to end name in encoding, looked up from base as a host path [PRE-2].";
+
+public fn open_host_directory_read(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<DirectoryRead, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens the read half of the existing directory that path names, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory_read_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<DirectoryRead, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens the read half of the existing directory that the bytes of path from start to end name in encoding, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<Directory, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens both halves of the existing directory that path names, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<Directory, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens both halves of the existing directory that the bytes of path from start to end name in encoding, looked up from base as a host path, never creating a directory [PRE-2].";
 
 public fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) waits contract {
   requires start <= end;
@@ -3303,6 +3348,7 @@ alias InputStream = pkg::io::InputStream;
 alias OutputStream = pkg::io::OutputStream;
 alias Args = pkg::text::Args;
 alias Directory = pkg::fs::Directory;
+alias HostPaths = pkg::fs::HostPaths;
 alias Clock = pkg::time::Clock;
 alias WallClock = pkg::time::WallClock;
 
@@ -3335,6 +3381,7 @@ public struct Inputs {
   public wall_clock: WallClock;
   public stops: StopSignals;
   public memory_meter: MemoryMeter;
+  public host_paths: Option<HostPaths>;
   public process_id: Option<u64>;
 }
 
