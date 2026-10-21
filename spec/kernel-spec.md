@@ -471,7 +471,7 @@ Each event changes the debts as its row states, in the walk's event order [ENT-5
 
 | event | change to the debts |
 |---|---|
-| a write at place w: a [SET-1] commit, an [OP-12] update's target, each target of a `swap` [OP-11] | adds (a, I) for each anchor a strictly above w and each affine invariant I of a whose read set at a the write reaches under [ENT-5]'s kill judgment; when w passes through a cover `R.**` and R owns an anchor, adds that cover |
+| a write at place w: a [SET-1] commit, an [OP-12] update's target, each target of a `swap` [OP-11] | adds (a, I) for each anchor a strictly above w and each affine invariant I of a whose read set at a the write reaches under [ENT-5]'s kill judgment; when w passes through a cover `R.**` and an affine invariant of a struct value R owns reads a binder datum through a value of the referent type the cover's description retains [REF-1] strictly below its anchor, adds that cover |
 | a call's projected write through its reference argument i [EFF-5] | the row above, for the anchors strictly above argument i's referent: the callee leaves the referent sealed [TYPE-11.S4] |
 | a [SET-1] commit or [OP-12] update at w whose right-hand side is a hand-off [TYPE-11.S4], a call result or a construction | after the write's own row, removes each debt proved at or below w |
 | a continuation of a value from place p into a complete own local binding y: `let y = p;`, `let y = move p;`, a by-value `match` binder, a destructuring binder [PROV-6], the `Ok` binder of `propagate` [ERR-3], and a [SET-1] commit `set y = p;` or `set y = move p;` | takes each debt that may be at or below p, rebased by replacing p's steps with y; removes each debt proved at or below y; then adds the taken debts |

@@ -313,7 +313,45 @@ impl Input<'_, '_> {
             return false;
         }
         visited.push(ty);
-        let owned: Vec<CheckedType> = match ty {
+        self.owned_types(ty)
+            .into_iter()
+            .any(|ty| self.owns_anchor(ty, visited))
+    }
+
+    /// [TYPE-11.S3] whether an affine invariant of a struct value that a
+    /// value of type `ty` owns reads a binder datum through a value of type
+    /// `target` strictly below its anchor. Only such an invariant can read a
+    /// place at or below a reference's current target from an anchor that
+    /// the reference's cover hides above that target.
+    fn reads_through(&self, ty: CheckedType, target: CheckedType) -> bool {
+        let mut pending = self.owned_types(ty);
+        let mut visited = Vec::new();
+        while let Some(owned) = pending.pop() {
+            if visited.contains(&owned) {
+                continue;
+            }
+            visited.push(owned);
+            let reads = self.affine_invariants(owned).iter().any(|invariant| {
+                invariant.data.iter().any(|datum| {
+                    let mut at = Some(owned);
+                    datum_steps(datum).any(|step| {
+                        at = at.and_then(|ty| self.sealed_step_type(ty, &step));
+                        at == Some(target)
+                    })
+                })
+            });
+            if reads {
+                return true;
+            }
+            pending.extend(self.owned_types(owned));
+        }
+        false
+    }
+
+    /// The types of the values a value of type `ty` owns one step below it
+    /// [TYPE-11.S1].
+    fn owned_types(&self, ty: CheckedType) -> Vec<CheckedType> {
+        match ty {
             CheckedType::Nominal(nominal) => {
                 match self
                     .context
@@ -341,8 +379,7 @@ impl Input<'_, '_> {
                 .into_iter()
                 .collect(),
             _ => Vec::new(),
-        };
-        owned.into_iter().any(|ty| self.owns_anchor(ty, visited))
+        }
     }
 
     /// [TYPE-11.S1, ENT-5] whether a write at `written` reaches the read set
@@ -407,15 +444,19 @@ impl Input<'_, '_> {
                 }
             }
         }
-        // A write through a cover `R.**` may reach an anchor the cover hides
-        // whenever R owns one, so it adds that cover.
+        // The anchor at the reference's current target and those below it
+        // were named above. One the cover `R.**` hides strictly above that
+        // target reads the written place only through a value of the
+        // target's type, so the write adds the cover only when an invariant
+        // of a struct value R owns reads through that type.
         if let Some(position) = written
             .path
             .iter()
             .position(|step| matches!(step, PlaceStep::Descendant(_)))
             && position < limit
+            && let PlaceStep::Descendant(target) = written.path[position]
             && let Some(ty) = types[position]
-            && self.owns_anchor(ty, &mut Vec::new())
+            && self.reads_through(ty, target.ty)
         {
             debts.add(Debt {
                 anchor: ResolvedPlace {

@@ -227,7 +227,15 @@ commit, each of a `swap`'s two targets [OP-11], an [OP-12] update target,
 and each projected `writes` path of a call [EFF-5] — and for every anchor a
 that is a strict prefix of w, or that w's cover may reach, and every
 invariant I of a's type with `a.Rd(I)` overlapping w [OWN-7]: add the debt
-`(a, I)` with this event. A `grow` or `grow_paged` relocation write applies [ENT-5]'s
+`(a, I)` with this event. When w passes through a cover `R.**`, the anchors at and
+below the reference's current target are named through that target's
+identity [REF-1]; an anchor the cover hides strictly above the target reads
+w only through a value of the target's referent type, so the debt for the
+hidden anchors is the cover itself, added only when an invariant of a struct
+value R owns reads through that type. A write through a cursor over a list
+or tree whose invariants read only their own node's fields therefore adds
+no cover, and point 4 under the owner's points restores it through the
+cursor. A `grow` or `grow_paged` relocation write applies [ENT-5]'s
 relocation table: it adds a debt only where `a.Rd(I)` overlaps storage that
 does not survive the relocation (a capacity word, not the length or filled
 elements) [OP-10]. Anchors at or below w are handled by the rule of the event (T3,
@@ -338,9 +346,10 @@ an anchor and the debt is not restored, that position becomes `[?]`; when
 the anchor was reached only through a reference whose path set REF-1
 summarizes by a cover, the debt is anchored at that cover. Widening only
 coarsens a debt: the widened anchor overlaps everything the old one did.
-(A finer anchor for linked-structure cursors is proposed under
-[points for the owner](#points-for-the-owner); it is not part of this
-rule.)
+(The finer anchor for linked-structure cursors proposed under
+[points for the owner](#points-for-the-owner), point 4, was adopted: a
+debt written through a cursor is anchored at its current target identity,
+and only one not restored when the cursor moves widens to the cover.)
 
 T10 **Swap.** For `swap(first: &f, second: &s)`: a debt *proved* at or below
 f (equal steps, equal captured offsets) is moved onto s, rebased, and one
