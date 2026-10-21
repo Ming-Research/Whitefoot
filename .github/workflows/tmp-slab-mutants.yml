@@ -1,0 +1,93 @@
+# Temporary: isolates the free-list case of the slab program test. The
+# live-handles check (exit 6) is neutralised in the test program, so a
+# library mutant can reach the free-list check (exit 7) on its own. The
+# control keeps the unmutated library and must pass. Removed before the
+# branch is ready.
+name: tmp-slab-mutants
+
+on:
+  push:
+    branches: [claude/slab-reserve]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  mutant:
+    name: mutant ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [free-list-isolated, control]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Apply the edits
+        run: |
+          # Both jobs: the live-handles check can no longer return exit 6.
+          perl -0pi -e 's/if reserve_live_failures != 0_u64 \{/if reserve_live_failures > 1000000_u64 {/' tests/programs/containers/slab-program.wf
+          if git diff --quiet -- tests/programs/containers/slab-program.wf; then
+            echo "::error::the test program edit did not apply"
+            exit 1
+          fi
+          if [ "${{ matrix.name }}" = free-list-isolated ]; then
+            # slab_new uses the initial capacity as the free-list end marker again.
+            perl -0pi -e 's/free_head: ceiling\);/free_head: capacity);/' lib/std/collections/slab/slab.wf
+            if git diff --quiet -- lib/std/collections/slab/slab.wf; then
+              echo "::error::the library mutant did not apply"
+              exit 1
+            fi
+          else
+            if ! git diff --quiet -- lib; then
+              echo "::error::the control must not change the library"
+              exit 1
+            fi
+          fi
+          git diff
+
+      - name: Run the slab program test
+        run: |
+          out="$RUNNER_TEMP/mutant.log"
+          set +e
+          (cd compiler && perl ../.github/run-check.pl "mutant-${{ matrix.name }}" cargo test --profile gate --test corpus --locked --offline -- slab_operations_and_memberships --nocapture) > "$out" 2>&1
+          code=$?
+          set -e
+          grep -E 'panicked|left:|right:|test result|must compile' "$out" | head -20 || true
+          if [ "${{ matrix.name }}" = control ]; then
+            if [ "$code" -ne 0 ]; then
+              echo "::error::the control failed, so the edited test program is broken"
+              exit 1
+            fi
+            echo "::notice::the control passed"
+            exit 0
+          fi
+          if [ "$code" -eq 0 ]; then
+            echo "::error::the mutant survived: the test passed"
+            exit 1
+          fi
+          if grep -q 'must compile' "$out"; then
+            echo "::error::the mutant failed to compile, not at run time"
+            exit 1
+          fi
+          if ! grep -qF 'left: Some(7)' "$out"; then
+            echo "::error::the mutant did not fail with exit 7 of the free-list case"
+            exit 1
+          fi
+          echo "::notice::the free-list case alone failed with exit 7"
