@@ -5,6 +5,14 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-13 Every emitted function carries unwind tables and the Linux LTO link keeps code at its file offset, so profilers recover callers
+
+Nodes: compiler/profiler-unwinding
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve two compiler decisions: every generated function carries an unwind table (uwtable), and the Linux LTO link passes -z separate-code to LLD, so that perf can recover callers along Whitefoot call stacks? (Whitefoot#461, head commit 5f99db772)" (translated); later on 2026-10-13 the owner chose option A on the card "approve the rewording of one rejection reason in the unwind node (Whitefoot#461, head 639a831cd): only the wording narrows, no decision changes?" (translated), approving the rejection reason as narrowed to perf 6.17, the witness and the LLD-linked C control.
+
+Summary: A new node records two decisions that let a sampling profiler's DWARF unwinder walk Whitefoot call stacks. Every emitted function carries `uwtable`, so a leaf that cannot unwind by exception still has a frame-description entry; and the Linux LTO link passes `-z separate-code` to LLD, so the code segment's virtual address equals its file offset, because under LLD's default layout perf 6.17 recovered no caller. In the witness, `uwtable` gave the hot leaf its frame-description entry and raised the samples recovering the resume function from 83 to 85 percent to 88 to 89 percent at 208 bytes of `.eh_frame`; `-z separate-code` then raised the samples reaching resume and the thread entry from none above resume to 100 percent, at 992 bytes (1.2 percent) of executable. Keeping frame pointers and documenting the limitation instead were rejected. The reason for the second decision separates the measured layout dependence from the inferred lookup mechanism, which is not yet reproduced; the decisions are unchanged.
+
 ## 2026-10-13 Field- and dereference-subscript terms carry captured place and formal offset identities
 
 Nodes: compiler/checker-facts
