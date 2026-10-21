@@ -188,13 +188,6 @@ jobs:
           C
           sed -i 's/$/\r/' "$work/wer-off.cmd"
           "$LLVM_MINGW_ROOT/bin/clang.exe" --target=x86_64-w64-windows-gnu -O1 "$work/src/exp.c" -o "$work/out/exp.exe"
-          # The same programs on the runner itself, for comparison.
-          for mode in overflow-small-abort overflow-abort overflow-fastfail; do
-            start=$(date +%s)
-            status=0
-            timeout 300 "$work/out/exp.exe" "$mode" > /dev/null 2>&1 || status=$?
-            echo "== host-$mode: status $status after $(( $(date +%s) - start )) s"
-          done
           name=exit-timing
           docker run --detach --name "$name" --isolation process \
             --mount "type=bind,src=$(cygpath -w "$work"),dst=C:\\work" \
@@ -216,3 +209,39 @@ jobs:
             timed "$mode-wer-off" 'C:\work\out\exp.exe' "$mode"
           done
           docker rm -f "$name" > /dev/null
+
+  # The same programs on the runner itself. Each mode is its own step with its
+  # own limit, because a process held in crash handling cannot be killed and
+  # would otherwise take the whole job's log with it.
+  host-exit:
+    name: Exit timing on the runner (${{ matrix.mode }})
+    runs-on: windows-2022
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [overflow-small-abort, overflow-exit, overflow-fastfail, overflow-abort]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned llvm-mingw
+        run: |
+          root=$(bash .github/toolchain/fetch-llvm-mingw.sh .github/toolchain/llvm-assets.json "$RUNNER_TEMP/archives" "$RUNNER_TEMP/mingw" | tail -n 1)
+          echo "LLVM_MINGW_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Build the program
+        run: |
+          work=$(cygpath -m "$RUNNER_TEMP/exit-timing")
+          mkdir -p "$work/out"
+          sed -n '/^          cat > "\$work\/src\/exp.c" <<.C.$/,/^          C$/p' .github/workflows/tmp-windows-pkg.yml | sed '1d;$d;s/^          //' > "$work/exp.c"
+          wc -l "$work/exp.c"
+          "$LLVM_MINGW_ROOT/bin/clang.exe" --target=x86_64-w64-windows-gnu -O1 "$work/exp.c" -o "$work/out/exp.exe"
+      - name: Run the mode
+        timeout-minutes: 6
+        run: |
+          work=$(cygpath -m "$RUNNER_TEMP/exit-timing")
+          start=$(date +%s)
+          status=0
+          "$work/out/exp.exe" "${{ matrix.mode }}" > /dev/null 2>&1 || status=$?
+          echo "== host ${{ matrix.mode }}: status $status after $(( $(date +%s) - start )) s"
