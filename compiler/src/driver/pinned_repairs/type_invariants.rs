@@ -1,9 +1,9 @@
 //! [TYPE-11] a struct's type invariants: their formation, a hand-off
 //! before a broken invariant is restored, after the identity a debt was
-//! restorable through changed, with no relation naming its anchor, or of
-//! an element whose instance is unproved beside a lost position, a
-//! construction that does not establish one, and an atomic block that
-//! leaves one unproved.
+//! restorable through changed, with no relation naming its anchor, of an
+//! element whose instance is unproved beside a lost position, or of a value
+//! an atomic block's target owns, a construction that does not establish
+//! one, and an atomic block that leaves one unproved.
 
 use super::RepairPair;
 
@@ -484,6 +484,243 @@ fn handed(at: u64) -> result: u64 pure contract {
 
 fn main() -> status: std::process::ExitStatus pure {
   let got = handed(at: 1_u64);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "an-atomic-block-hands-off-an-unproved-field.wf",
+        rejected: br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn peek(state: Shared<State>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic s = &state {
+    set got = lookup(index: &s^.single);
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let initial = State(single: seed);
+  let state = shared_new::<State>(value: initial);
+  let first = shared_share::<State>(shared: &state);
+  let got = peek(state: move first);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "]: UnrestoredTypeInvariant\n",
+            "\n  mechanical_fix: `s^.single.value < 16_u64` is not proved: a value an atomic block's target owns carries no type invariant from the block's entry, so prove it before this hand-off, such as by checking the fields it relates, or replace `s^.single` whole with a value a construction or a call returns\n",
+        ],
+        repaired: &[
+            br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn peek(state: Shared<State>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic s = &state {
+    if s^.single.value < 16_u64 {
+      set got = lookup(index: &s^.single);
+    }
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let initial = State(single: seed);
+  let state = shared_new::<State>(value: initial);
+  let first = shared_share::<State>(shared: &state);
+  let got = peek(state: move first);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+            br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn peek(state: Shared<State>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic s = &state {
+    set s^.single = Index(value: 3_u64);
+    set got = lookup(index: &s^.single);
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let initial = State(single: seed);
+  let state = shared_new::<State>(value: initial);
+  let first = shared_share::<State>(shared: &state);
+  let got = peek(state: move first);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "an-atomic-block-hands-off-a-whole-container.wf",
+        rejected: br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  items: Array<Index, 4>;
+}
+
+fn first(items: &Array<Index, 4>) -> result: u64 reads(items) {
+  let got = items^[0_u64].value;
+  return got;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn peek(state: Shared<State>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic s = &state {
+    set got = first(items: &s^.items);
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let items = array_filled::<Index, 4>(value: seed);
+  let initial = State(items: items);
+  let state = shared_new::<State>(value: initial);
+  let first = shared_share::<State>(shared: &state);
+  let got = peek(state: move first);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "]: UnrestoredTypeInvariant\n",
+            "\n  mechanical_fix: a value an atomic block's target owns carries no type invariant from the block's entry, and no relation names each one at or below `s^.items`, so they cannot be proved: hand off one field or element whose invariants the body proves, or replace `s^.items` whole with a value a construction or a call returns before this hand-off\n",
+        ],
+        repaired: &[
+            br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  items: Array<Index, 4>;
+}
+
+fn first(items: &Array<Index, 4>) -> result: u64 reads(items) {
+  let got = items^[0_u64].value;
+  return got;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn peek(state: Shared<State>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic s = &state {
+    if s^.items[0_u64].value < 16_u64 {
+      set got = lookup(index: &s^.items[0_u64]);
+    }
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let items = array_filled::<Index, 4>(value: seed);
+  let initial = State(items: items);
+  let state = shared_new::<State>(value: initial);
+  let first = shared_share::<State>(shared: &state);
+  let got = peek(state: move first);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+            br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  items: Array<Index, 4>;
+}
+
+fn first(items: &Array<Index, 4>) -> result: u64 reads(items) {
+  let got = items^[0_u64].value;
+  return got;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn peek(state: Shared<State>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic s = &state {
+    let seed = Index(value: 3_u64);
+    set s^.items = array_filled::<Index, 4>(value: seed);
+    set got = first(items: &s^.items);
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let items = array_filled::<Index, 4>(value: seed);
+  let initial = State(items: items);
+  let state = shared_new::<State>(value: initial);
+  let first = shared_share::<State>(shared: &state);
+  let got = peek(state: move first);
   let code = cvt.wrap::<u64, u8>(got);
   return std::process::exit_status(code: code);
 }
