@@ -240,8 +240,9 @@ build time apart from test and program execution.
   `compute-regression.yml` on ready PRs that touch measured inputs (paired
   WF-to-WF timing; a draft shows it skipped; each push to `main` there only
   builds and caches that commit's compiler for later PRs' merge-base
-  baselines), and `io-bench.yml` and
-  `compute-bench.yml` on request, which are experiments and never a gate.
+  baselines), and `io-bench.yml`, `compute-bench.yml` and
+  `firn-check-time.yml` (Firn's check on the 14900K runner) on request, which
+  are experiments and never a gate.
 - Compiler releases: `compiler-release.yml`, dispatched when a downstream
   project needs a main commit, publishes that commit's compiler as release
   `wf-<12 hex digits>`, with `bundle_toolchain` as
