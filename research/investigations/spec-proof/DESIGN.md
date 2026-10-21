@@ -50,7 +50,8 @@ discharge, is 210 KB of it.
 Read for this study: sections 1 and 4 to 7 (types, ownership, storage,
 operations), 8 to 14 (functions, effects, calls, sharing, parallelism) and 15
 to 17 (facts and discharge), each by its own reader, with every key line
-checked against the text. Line numbers are those of v0.153.
+checked against the text. Line numbers are those of v0.153, archived as
+[`spec/kernel-spec-v0.153.md`](../../../spec/kernel-spec-v0.153.md).
 
 | Claim | Rules it rests on | Invariant a proof must carry |
 |---|---|---|
@@ -355,7 +356,7 @@ Precedents with measured sizes:
 |---|---|---|---|---|
 | Cedar, all components (2024) | 1,673 lines of Lean | 5,714 lines of Lean | not stated | [cedar-vgd] |
 | Cedar's validator soundness | 532 lines | 4,686 lines | 18 person-days for the proof | [cedar-vgd] [cedar-blog] |
-| WebAssembly 1.0 in Isabelle (semantics, type system, soundness, interpreter, checker) | about 8,600 non-comment lines in all | | | [ctwasm] |
+| WebAssembly 1.0 in Isabelle (semantics, type system, soundness, interpreter, checker) | about 8,600 non-comment, non-whitespace lines in all | | | [ctwasm] |
 
 Proof size grows faster than the size of what it is about: over 15,018
 lemmas of seL4 and the Archive of Formal Proofs, proof size grew with the
@@ -550,17 +551,17 @@ Read for this study on 2026-10-21; figures are as the sources state them.
   tests are up to date"; the validator proof, 4,686 lines, took 18
   person-days.
 - [cedar-vgd] C. Disselkoen et al., "How We Built Cedar: A
-  Verification-Guided Approach", FSE 2024 industry track,
+  Verification-Guided Approach", FSE Companion 2024, industry track,
   <https://arxiv.org/abs/2407.01688>: Table 1 (Lean model 1,673 lines, Lean
   proofs 5,714 lines, Rust 15,693 lines; validator model 532, proofs 4,686);
   proofs found 4 validator bugs, differential and property-based testing 21
   more.
 - [compcert] X. Leroy, "A formally verified compiler back-end", Journal of
   Automated Reasoning, 2009, <https://arxiv.org/abs/0902.2137>.
-- [ctwasm] J. Renner, S. Cauligi, D. Stefan, "CT-Wasm: Type-Driven Secure
-  Cryptography for the Web Ecosystem", POPL 2019, arXiv:1808.01348: inherits
-  about 8,600 non-comment, non-blank lines of Isabelle from Watt's
-  mechanization.
+- [ctwasm] C. Watt, J. Renner, N. Popescu, S. Cauligi, D. Stefan, "CT-Wasm:
+  Type-Driven Secure Cryptography for the Web Ecosystem", POPL 2019,
+  arXiv:1808.01348: inherits "~8,600 lines of non-comment, non-whitespace
+  Isabelle code" from Watt's mechanization.
 - [iris-lean] "Iris in Lean", arXiv:2609.24252, 2026, and the Iris workshop
   2026 slides: the core library ported, some features still missing.
 - [jscert] M. Bodin et al., "A Trusted Mechanised JavaScript Specification",
