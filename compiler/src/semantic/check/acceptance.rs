@@ -988,7 +988,13 @@ impl<'unit> TypeContext<'unit> {
             location,
             kind: SemanticIssueKind::UndischargedCallRequirement(Box::new(
                 crate::UndischargedCallRequirementDetail {
-                    concrete_callee: self.render_function_instance(signature)?,
+                    concrete_callee: self.render_called_function(
+                        signature,
+                        self.declarations
+                            .tree
+                            .node_with_path(&outcome.node_path)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    )?,
                     requires_clause,
                     instantiated_goal: outcome.rendered_goal.clone(),
                     disposition,
@@ -1123,6 +1129,7 @@ impl<'unit> TypeContext<'unit> {
                     conjunct: proof.relation_ordinal,
                     selector: self.declarations.node_location(&proof.selector)?,
                     relation: exit.residual.clone(),
+                    clause: exit.clause.clone(),
                     disposition,
                     mechanical_fix: if let Some(note) = &exit.lost_header {
                         self.lost_header_repair(function, note)?

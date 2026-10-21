@@ -861,6 +861,7 @@ impl Analyzer<'_, '_> {
                     None,
                     judgment.reached,
                     std::slice::from_ref(&result),
+                    &[scrutinee],
                 );
                 self.declare(*binding);
                 if let Some(success) = result.iter().find(|result| result.success) {
@@ -1283,6 +1284,7 @@ impl Analyzer<'_, '_> {
                     affine_result.as_ref(),
                     judgment.reached,
                     &results,
+                    &returned,
                 );
                 self.apply_kills(state, &events);
                 false

@@ -42,6 +42,7 @@ pub(super) fn run_pairs() {
         .chain(super::cell_consumption::CELL_CONSUMPTION)
         .chain(super::content_moves::CONTENT_MOVES)
         .chain(super::prelude_opaque::PRELUDE_OPAQUE)
+        .chain(super::proof_place_spellings::PROOF_PLACE_SPELLINGS)
         .chain(super::qualified_constants::QUALIFIED_CONSTANTS)
         .chain(super::recursive_effects::RECURSIVE_EFFECTS)
         .chain(super::rewritten_effect_indices::REWRITTEN_EFFECT_INDICES)
