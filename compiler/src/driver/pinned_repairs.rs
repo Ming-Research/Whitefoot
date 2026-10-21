@@ -3356,8 +3356,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FN-9",
         sentences: &[
-            "]: UndischargedPostcondition\n",
-            "\n  mechanical_fix: the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies\n",
+            "]: UnrestoredTypeInvariant\n",
+            "\n  mechanical_fix: `t^.next < t^.slots.len` is not restored since a write that may have broken it: restore it before this hand-off, writing the fields it relates so the body shows it holds, or replace `t^` whole with a value a construction or a call returns\n",
         ],
         repaired: &[br#"struct Table {
   slots: Slots<u64, 8>;

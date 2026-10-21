@@ -1286,7 +1286,8 @@ pub(super) fn analyze_candidate(
 /// Runs one [FN-4] declaration-level implication query through the same S4
 /// premise establishment and AUTO proof entry as an ordinary call goal. The
 /// synthetic function has no body: its parameters are alpha-renamed contract
-/// datums, and no hypothetical premise escapes this query as a body fact.
+/// datums, each holding its body-entry type invariant instances, and no
+/// hypothetical premise escapes this query as a body fact.
 pub(super) fn contract_implies(
     function: &CheckedFunction,
     context: &EntailmentContext<'_>,
@@ -1310,6 +1311,10 @@ pub(super) fn contract_implies(
             .reasoning()
             .establish_requirement_affine_images(requirement, ordinal, &mut state);
     }
+    // [FN-4] the formal and the actual share the implicit requirement and
+    // postcondition [TYPE-11], so every datum the query ranges over, an
+    // entry state, an exit state or a result, holds its entry instances.
+    analyzer.seal_body_entry(&mut state);
     let Some(goal) = analyzer.input.body_goal_expression(goal) else {
         return FunctionEntailment::default();
     };

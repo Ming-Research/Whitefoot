@@ -1,7 +1,8 @@
 # Temporary: the focused checks of the sealed type invariant work (the
-# compiler build, the type-invariant and fact-source unit tests, and every
-# conformance case's verdict with each failing case listed). Removed before
-# the branch is ready.
+# compiler build, the type-invariant and fact-source unit tests, every
+# conformance case's verdict with each failing case listed, and the full
+# diagnostics of the cases still open with probes that separate their
+# causes). Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -49,3 +50,94 @@ jobs:
           grep -E '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
           grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
           exit "$status"
+      - name: Print the open cases' diagnostics and probe the loop case
+        if: always()
+        run: |
+          set +e
+          for case in type11-neg-loop-reference-cover range2-pos-module-boxed-dispatch-backedge \
+            type11-pos-enum-payload-failure-helper type11-pos-enum-generated-route-refines-written \
+            type11-pos-loop-reference-restored; do
+            echo "== $case"
+            perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check \
+              "tests/conformance/cases/$case.wf"
+            echo "exit $?"
+          done
+          probe="$RUNNER_TEMP/probe"
+          mkdir -p "$probe"
+          # The loop case's follow alone, and with a read of a binder datum
+          # of same_length before the loop, inside it, or of the other datum.
+          for variant in none before inside other; do
+            case "$variant" in
+              none) before=""; inside="" ;;
+              before) before="  let n = m^.code.inner.len;"; inside="" ;;
+              inside) before=""; inside="    let n = m^.code.inner.len;" ;;
+              other) before="  let n = m^.brtab.inner.len;"; inside="" ;;
+            esac
+            {
+              echo 'struct Module {'
+              echo '  code: Box<Array<u8>>;'
+              echo '  brtab: Box<Array<u64>>;'
+              echo '  invariant same_length(m): m.code.inner.len == m.brtab.inner.len;'
+              echo '  invariant(m): forall targets(k in 0_u64..m^.brtab.inner.len): m^.brtab.inner[k] < m^.code.inner.len;'
+              echo '}'
+              echo 'fn follow(m: &Module, pc0: u64) -> result: u64 reads(m) contract {'
+              echo '  requires pc0 < m^.brtab.inner.len;'
+              echo '} {'
+              echo '  let pc = pc0;'
+              [ -n "$before" ] && echo "$before"
+              echo '  loop ('
+              echo '    invariant slot: pc < m^.brtab.inner.len'
+              echo '  ) {'
+              echo '    let target = m^.brtab.inner[pc];'
+              [ -n "$inside" ] && echo "$inside"
+              echo '    if pc == target {'
+              echo '      return pc;'
+              echo '    }'
+              echo '    set pc = target;'
+              echo '    continue;'
+              echo '  }'
+              echo '}'
+              echo 'fn main() -> status: std::process::ExitStatus pure {'
+              echo '  return std::process::exit_status(code: 0_u8);'
+              echo '}'
+            } > "$probe/follow-$variant.wf"
+            echo "== follow-$variant"
+            perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check \
+              "$probe/follow-$variant.wf"
+            echo "exit $?"
+          done
+          # Each instance alone, with no loop: the range invariant's at an
+          # element read, and same_length's from body entry.
+          for variant in range same; do
+            {
+              echo 'struct Module {'
+              echo '  code: Box<Array<u8>>;'
+              echo '  brtab: Box<Array<u64>>;'
+              echo '  invariant same_length(m): m.code.inner.len == m.brtab.inner.len;'
+              echo '  invariant(m): forall targets(k in 0_u64..m^.brtab.inner.len): m^.brtab.inner[k] < m^.code.inner.len;'
+              echo '}'
+              if [ "$variant" = range ]; then
+                echo 'fn probe(m: &Module, pc: u64) -> result: u8 reads(m) contract {'
+                echo '  requires pc < m^.brtab.inner.len;'
+                echo '} {'
+                echo '  let target = m^.brtab.inner[pc];'
+                echo '  let op = m^.code.inner[target];'
+                echo '  return op;'
+                echo '}'
+              else
+                echo 'fn probe(m: &Module, i: u64) -> result: u64 reads(m) contract {'
+                echo '  requires i < m^.code.inner.len;'
+                echo '} {'
+                echo '  let x = m^.brtab.inner[i];'
+                echo '  return x;'
+                echo '}'
+              fi
+              echo 'fn main() -> status: std::process::ExitStatus pure {'
+              echo '  return std::process::exit_status(code: 0_u8);'
+              echo '}'
+            } > "$probe/alone-$variant.wf"
+            echo "== alone-$variant"
+            perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check \
+              "$probe/alone-$variant.wf"
+            echo "exit $?"
+          done

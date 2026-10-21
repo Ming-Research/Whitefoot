@@ -229,10 +229,11 @@ that is a strict prefix of w, or that w's cover may reach, and every
 invariant I of a's type with `a.Rd(I)` overlapping w [OWN-7]: add the debt
 `(a, I)` with this event. When w passes through a cover `R.**`, the anchors at and
 below the reference's current target are named through that target's
-identity [REF-1]; an anchor the cover hides strictly above the target reads
-w only through a value of the target's referent type, so the debt for the
-hidden anchors is the cover itself, added only when an invariant of a struct
-value R owns reads through that type. A write through a cursor over a list
+identity [REF-1], R itself included when it is the target; an anchor the
+cover hides strictly above the target, R included otherwise, reads w only
+through a value of the target's referent type, so the debt for the hidden
+anchors is the cover itself, added only when an invariant of R or of a
+struct value R owns reads through that type. A write through a cursor over a list
 or tree whose invariants read only their own node's fields therefore adds
 no cover, and point 4 under the owner's points restores it through the
 cursor. A `grow` or `grow_paged` relocation write applies [ENT-5]'s
@@ -408,6 +409,14 @@ established over the term the read binds (`let v = indexes[i].value;`
 gives `v < 16`). An instance is a fact like any other: a later write that
 overlaps its support kills it [ENT-5], and the same write adds the debt
 (T2), so the fact cannot be re-established until the debt is restored.
+Two points read sealed values without a statement read. At a selected
+return, a written postcondition is judged with the instance at each anchor
+of a value or written referent the return hands back that its datums read
+through: T7 has just required each of them sealed, so a clause that
+restates the invariant of a forwarded call result's payload holds. At body
+entry, the instance at each parameter of the struct and at each referent of
+a reference parameter to it is established (T1), the fact the caller's
+hand-off proved.
 
 ## Result 1: restoration obligations are never lost
 
@@ -760,9 +769,17 @@ gain nothing, because no generated postcondition is published any more:
 the result's sealedness is type-based, not a summary.
 
 **Function-kind parameters.** Sealedness is the same for a formal signature
-and every actual, since it is read from the parameter and result types, so
-[FN-4]'s refinement check needs no change; a call through a formal uses the
-formal's row for T6, as every other effect judgment does [EFF-2].
+and every actual, since it is read from the parameter and result types; a
+call through a formal uses the formal's row for T6, as every other effect
+judgment does [EFF-2]. [FN-4]'s refinement queries lose the generated
+clauses that formal and actual used to share, so a formal `ensures` that
+restates a result's invariant would no longer follow from an actual that
+writes none. Each query therefore takes, beside its written premise set,
+the body-entry instances (T1) at every datum it ranges over: the
+parameters for the `requires` query, and the entry states, exit states and
+selected result datums for the `ensures` query. Both sides owe and receive
+these instances alike, so the check still compares only what the two
+signatures write.
 
 ## Rejection and diagnostics
 
@@ -833,6 +850,7 @@ Rules to change, with the intended behavior (not final text):
 | TYPE-11 | Define validity through owned parts (fields, `Box`, the held variant's payload, live elements and slots, map entries, shared and frozen states); define anchors, read sets, debts and the hand-off list; restoration at hand-offs replaces the per-site requirement list; admit generic structs under the datum condition; replace the field-writability clause by the owner's choice (read set, or none); diagnostics name the breaking events. The direct-enum-payload bullet is subsumed and removed. |
 | FN-8 | The generated type-invariant requirements become the hand-off of each argument (value or referent): discharged by sealedness or by restoration proof. Body entry establishes every parameter value and referent as sealed (T1). |
 | FN-9 | The generated postconditions become exit hand-offs: each written reference parameter's referent restored at every exit, below its top level too; results sealed. The routed enum-payload postconditions and their vacuity rule are subsumed. |
+| FN-4 | Each refinement query also takes the body-entry instances at the data it ranges over, in place of the generated clauses formal and actual shared. |
 | ENT-3 | New source T13 (instance at a sealed anchor when its datum is read, including the one-datum copy form); S4 covers parameters through T13 rather than as generated requirements. |
 | ENT-5 | Debt state: T2 on exactly the write events this rule kills on, including the relocation table; restoration attempts in the pre-kill closure (T8.2); widening (T9); join union and edge instances before intersection (T11); loop headers as least fixed points (T12). |
 | ENT-2 | Optional: an S5 post-write image for a subscripted target with captured offsets, so `set c[i].f = x;` can restore without a reference. |
@@ -848,7 +866,7 @@ Rules to change, with the intended behavior (not final text):
 | DIAG-2 | Drop "type-invariant-generated" from the postconditions a component member receives as induction hypotheses: sealedness is type-based and needs none. |
 
 Rules that need no change in behavior: OWN-1, OWN-7, REF-1, REF-2, REF-3,
-WIN-3, EFF-2, FN-4 and FN-6. EFF-5 keeps its contract-read footprint and
+WIN-3, EFF-2 and FN-6. EFF-5 keeps its contract-read footprint and
 only rewords "the type invariants its parameters take". The decisions in the design tree's checks
 and proofs node that change are the type-invariant scope decision (owed at
 hand-offs, kept by any module), the enum-payload rule and its deferral (both

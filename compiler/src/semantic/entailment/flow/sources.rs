@@ -2880,6 +2880,19 @@ impl Reasoning<'_, '_, '_> {
         let Some(expression) = self.input.body_requirement_goal(requirement) else {
             return;
         };
+        self.establish_affine_images(expression, Some(ordinal), state);
+    }
+
+    /// The affine images of one goal established as an S4 goal is: a
+    /// requirement's, rooted at its ordinal, or a sealed type invariant
+    /// instance's [ENT-3.S18], kept while a proof uses it. An instance
+    /// established again over the same images adds none.
+    pub(super) fn establish_affine_images(
+        &mut self,
+        expression: GoalExpression,
+        requirement: Option<usize>,
+        state: &mut ProofFlowState,
+    ) {
         let goal = self.intern_goal_expression(expression);
         let mut members = vec![(goal, GoalSign::Positive)];
         members.extend(self.signed_boolean_decomposition(goal, GoalSign::Positive, &state.facts));
@@ -2895,22 +2908,34 @@ impl Reasoning<'_, '_, '_> {
             else {
                 continue;
             };
+            if requirement.is_none()
+                && state
+                    .affine
+                    .facts
+                    .iter()
+                    .any(|fact| fact.inequality == inequality)
+            {
+                continue;
+            }
             let parent = state
                 .facts
                 .opaque_proofs
                 .get(&(self.vocabulary.goals.canonical(goal), sign))
                 .copied()
-                .expect("every S4 decomposition member is established");
+                .expect("every established decomposition member has its proof");
             let parent = self.vocabulary.derivations.intern(
                 super::super::state::DerivationNode::RequirementAffineImage { goal, sign, parent },
             );
-            self.vocabulary.derivations.add_root(
-                DerivationRootKind::RequirementAffineImage {
-                    requirement: u32::try_from(ordinal).expect("requirement ordinal exceeds u32"),
-                    member: u32::try_from(member).expect("decomposition ordinal exceeds u32"),
-                },
-                parent,
-            );
+            if let Some(ordinal) = requirement {
+                self.vocabulary.derivations.add_root(
+                    DerivationRootKind::RequirementAffineImage {
+                        requirement: u32::try_from(ordinal)
+                            .expect("requirement ordinal exceeds u32"),
+                        member: u32::try_from(member).expect("decomposition ordinal exceeds u32"),
+                    },
+                    parent,
+                );
+            }
             state.affine.facts.push(ActiveAffineFact {
                 inequality,
                 evidence: AffineFactEvidence::Derivation(parent),

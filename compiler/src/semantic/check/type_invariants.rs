@@ -865,8 +865,6 @@ fn construct_goal(
     }
 }
 
-/// [TYPE-11] the predicate over an atomic statement's binder: parameter
-/// zero's place is the place the binder names.
 /// [TYPE-11.S1] one formed invariant as the sealing rules read it: its
 /// predicate over parameter zero, and the projection of each binder datum.
 fn affine_invariant(template: &TypeInvariantTemplate) -> CheckedAffineInvariant {
@@ -876,6 +874,7 @@ fn affine_invariant(template: &TypeInvariantTemplate) -> CheckedAffineInvariant 
         clause: template.clause.clone(),
         goal: template.goal.root.clone(),
         data,
+        relation: template.relation.clone(),
     }
 }
 
@@ -900,6 +899,8 @@ fn binder_data(expression: &GoalExpression, data: &mut Vec<Vec<GoalProjection>>)
     }
 }
 
+/// [TYPE-11] the predicate over an atomic statement's binder: parameter
+/// zero's place is the place the binder names.
 fn binder_goal(expression: &GoalExpression, binding: BindingId) -> Option<GoalExpression> {
     match expression {
         GoalExpression::Datum(GoalDatum::Parameter {

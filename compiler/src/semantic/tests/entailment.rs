@@ -1632,11 +1632,11 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 let event = summary
                     .derivations
                     .node_event(*parent)
-                    .expect("an S4 image keeps its established-goal source");
-                assert_eq!(
+                    .expect("an S4 or S18 image keeps its established-goal source");
+                assert!(matches!(
                     summary.derivations.events[event.0 as usize].kind,
-                    FlowEventKind::S4
-                );
+                    FlowEventKind::S4 | FlowEventKind::S18
+                ));
                 DerivationConclusion::RequirementAffineImage
             }
             DerivationNode::UnsignedDivisionProduct {

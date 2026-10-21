@@ -353,7 +353,8 @@ pub(crate) enum DerivationNode {
     TransportedHeaderRelation {
         detail: Box<TransportedHeaderRelation>,
     },
-    /// The fixed affine projection of an established S4 ordering leaf.
+    /// The fixed affine projection of an established S4 ordering leaf, or of
+    /// a sealed type invariant instance's [ENT-3.S18].
     RequirementAffineImage {
         goal: GoalId,
         sign: GoalSign,

@@ -942,11 +942,15 @@ pub(super) fn constant_construction_invariant(text: &str) -> String {
 
 /// [TYPE-11.S4] a hand-off of `anchor`'s value while a write since the
 /// hand-off that delivered it may have broken `goal`; `None` when the debt
-/// forms no instance, as a cover or an unknown position does.
+/// forms no instance, as a cover or an unknown position does. `widened`
+/// says the debt lost the identity it was restorable through [TYPE-11.S3].
 pub(super) fn unrestored_type_invariant(goal: Option<&str>, anchor: &str, widened: bool) -> String {
     match goal {
         Some(goal) if !widened => format!(
             "`{goal}` is not restored since a write that may have broken it: restore it before this hand-off, writing the fields it relates so the body shows it holds, or replace `{anchor}` whole with a value a construction or a call returns"
+        ),
+        _ if widened => format!(
+            "a write that may have broken a type invariant at or below `{anchor}` went through a position or reference that changed before the invariant was restored, so no relation names it any more: restore the invariant before that position or reference changes, or replace `{anchor}` whole with a value a construction or a call returns before this hand-off"
         ),
         _ => format!(
             "a write reached `{anchor}` through a position or reference that no relation can name any more, so its type invariants cannot be restored: replace `{anchor}` whole with a value a construction or a call returns before this hand-off, or make the write through a place the body still names"

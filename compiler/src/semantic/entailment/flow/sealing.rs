@@ -11,6 +11,21 @@ use super::super::super::places::places_overlap;
 use super::super::{CalleeSealing, SealingFailure, SealingRule};
 use super::*;
 
+/// [TYPE-11.S7] one binder datum a read selects.
+struct ReadAnchor {
+    /// The anchor at each resolved member of the read place.
+    members: Vec<ResolvedPlace>,
+    /// The invariant's position among the affine invariants of `ty`.
+    index: usize,
+    /// The anchors' struct.
+    ty: CheckedType,
+    /// The datum's projection from the anchor.
+    datum: Vec<GoalProjection>,
+    /// What the instance reads its binder data from; `None` when the read
+    /// forms no term to read them from.
+    image: Option<GoalExpression>,
+}
+
 /// One debt [TYPE-11.S2]: an anchor shape with one affine invariant of its
 /// struct, or a cover standing for every anchor at or below its place.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,10 +120,35 @@ impl Debts {
     }
 }
 
-/// [TYPE-11.S2] whether `debt` may be at or below `place`.
+/// The position of the cover step `**` of `place` [REF-1]; a summary has at
+/// most one.
+fn cover_step(place: &ResolvedPlace) -> Option<usize> {
+    place
+        .path
+        .iter()
+        .position(|step| matches!(step, PlaceStep::Descendant(_)))
+}
+
+/// [TYPE-11.S2] the fewest and the most steps the places `left` and
+/// `right` may have, compared as their step counts are: exactly, unless one
+/// passes through a cover step the other does not share, which stands for
+/// any number of steps, none included [REF-1].
+fn step_counts(left: &ResolvedPlace, right: &ResolvedPlace) -> [(usize, usize); 2] {
+    let shared = match (cover_step(left), cover_step(right)) {
+        (Some(at), Some(other)) => at == other && left.path[at] == right.path[other],
+        _ => false,
+    };
+    [left, right].map(|place| match cover_step(place) {
+        Some(_) if !shared => (place.path.len() - 1, usize::MAX),
+        _ => (place.path.len(), place.path.len()),
+    })
+}
+
+/// [TYPE-11.S2] whether `debt` may be at or below `place`: its anchor may
+/// have at least the place's number of steps and may overlap it.
 fn may_be_at_or_below(oracle: &dyn SeparationOracle, debt: &Debt, place: &ResolvedPlace) -> bool {
-    (debt.invariant.is_none() || debt.anchor.path.len() >= place.path.len())
-        && places_overlap(oracle, &debt.anchor, place)
+    let [(_, most), (least, _)] = step_counts(&debt.anchor, place);
+    (debt.invariant.is_none() || most >= least) && places_overlap(oracle, &debt.anchor, place)
 }
 
 /// [TYPE-11.S2] whether `debt` is proved at or below `place`: its anchor has
@@ -129,11 +169,38 @@ fn may_denote(
     match debt.invariant {
         None => places_overlap(oracle, &debt.anchor, anchor),
         Some(own) => {
+            let [(least, most), (other_least, other_most)] = step_counts(&debt.anchor, anchor);
             own == invariant
-                && debt.anchor.path.len() == anchor.path.len()
+                && least <= other_most
+                && other_least <= most
                 && places_overlap(oracle, &debt.anchor, anchor)
         }
     }
+}
+
+/// [REF-1] the members of one resolution that no other member covers. A
+/// member without a cover step that begins with the prefix R of another
+/// member's cover `R.**` and ends with that member's suffix lies within the
+/// cover, whose current target identity names it as well while that
+/// target is current.
+fn uncovered(members: Vec<ResolvedPlace>) -> Vec<ResolvedPlace> {
+    let covered = |member: &ResolvedPlace| {
+        cover_step(member).is_none()
+            && members.iter().any(|cover| {
+                cover_step(cover).is_some_and(|at| {
+                    let suffix = &cover.path[at + 1..];
+                    cover.root == member.root
+                        && member.path.len() >= at + suffix.len()
+                        && member.path.starts_with(&cover.path[..at])
+                        && member.path.ends_with(suffix)
+                })
+            })
+    };
+    members
+        .iter()
+        .filter(|member| !covered(member))
+        .cloned()
+        .collect()
 }
 
 /// Whether an offset of `place` reads the current value of `binding`.
@@ -318,13 +385,13 @@ impl Input<'_, '_> {
             .any(|ty| self.owns_anchor(ty, visited))
     }
 
-    /// [TYPE-11.S3] whether an affine invariant of a struct value that a
-    /// value of type `ty` owns reads a binder datum through a value of type
-    /// `target` strictly below its anchor. Only such an invariant can read a
-    /// place at or below a reference's current target from an anchor that
-    /// the reference's cover hides above that target.
+    /// [TYPE-11.S3] whether an affine invariant of a value of type `ty`, or
+    /// of a struct value it owns, reads a binder datum through a value of
+    /// type `target` strictly below its anchor. Only such an invariant can
+    /// read a place at or below a reference's current target from an anchor
+    /// that the reference's cover hides above that target.
     fn reads_through(&self, ty: CheckedType, target: CheckedType) -> bool {
-        let mut pending = self.owned_types(ty);
+        let mut pending = vec![ty];
         let mut visited = Vec::new();
         while let Some(owned) = pending.pop() {
             if visited.contains(&owned) {
@@ -420,8 +487,12 @@ impl Input<'_, '_> {
             return;
         }
         let types = self.sealed_prefix_types(written);
-        for depth in 0..limit.min(written.path.len()) {
-            let Some(ty) = types[depth] else {
+        let cover = cover_step(written);
+        for (depth, ty) in types.iter().enumerate().take(limit.min(written.path.len())) {
+            // A cover's prefix R is the reference's current target, whose
+            // anchor is named through its identity one step below, or lies
+            // above that target, where the cover stands for it.
+            let Some(ty) = ty.filter(|_| cover != Some(depth)) else {
                 continue;
             };
             let invariants = self.affine_invariants(ty);
@@ -446,13 +517,10 @@ impl Input<'_, '_> {
         }
         // The anchor at the reference's current target and those below it
         // were named above. One the cover `R.**` hides strictly above that
-        // target reads the written place only through a value of the
-        // target's type, so the write adds the cover only when an invariant
-        // of a struct value R owns reads through that type.
-        if let Some(position) = written
-            .path
-            .iter()
-            .position(|step| matches!(step, PlaceStep::Descendant(_)))
+        // target, R included, reads the written place only through a value
+        // of the target's type, so the write adds the cover only when an
+        // invariant of R or of a struct value R owns reads through that type.
+        if let Some(position) = cover
             && position < limit
             && let PlaceStep::Descendant(target) = written.path[position]
             && let Some(ty) = types[position]
@@ -478,7 +546,7 @@ impl Input<'_, '_> {
         if resolved.is_empty() {
             vec![place.clone()]
         } else {
-            resolved
+            uncovered(resolved)
         }
     }
 
@@ -530,7 +598,7 @@ impl Input<'_, '_> {
                 self.resolve_sealed(&place.proof_place())
             }
             _ => named_place(expression)
-                .map(|named| named.resolve(&self.places, true))
+                .map(|named| uncovered(named.resolve(&self.places, true)))
                 .unwrap_or_default(),
         }
     }
@@ -565,8 +633,19 @@ impl Input<'_, '_> {
     /// `anchor`, each binder datum read from the anchor's image.
     fn sealed_instance(&self, anchor: &ResolvedPlace, index: usize) -> Option<GoalExpression> {
         let ty = (*self.sealed_prefix_types(anchor).last()?)?;
-        let invariant = self.affine_invariants(ty).get(index)?;
         let image = self.sealed_image(anchor, ty)?;
+        self.instance_over(&image, ty, index)
+    }
+
+    /// [TYPE-11.S1] the instance of the affine invariant at `index` of the
+    /// struct `ty`, each binder datum read from `image`.
+    fn instance_over(
+        &self,
+        image: &GoalExpression,
+        ty: CheckedType,
+        index: usize,
+    ) -> Option<GoalExpression> {
+        let invariant = self.affine_invariants(ty).get(index)?;
         substitute_binder(&invariant.goal, &|projections, datum_ty| {
             let mut datum = image.clone();
             for projection in projections {
@@ -576,20 +655,17 @@ impl Input<'_, '_> {
         })
     }
 
-    /// [TYPE-11.S7] each anchor whose binder datum the read `expression`
-    /// selects, with the invariant's position and the datum's projection.
-    fn read_anchors(
+    /// Each anchor whose binder datum the resolved read place `place`
+    /// selects, with the invariant's position, the anchor's struct and the
+    /// datum's projection.
+    fn place_anchors(
         &self,
-        expression: &CheckedExpression,
-    ) -> Vec<(ResolvedPlace, usize, Vec<GoalProjection>)> {
-        let places = self.sealed_places(expression);
-        let [place] = places.as_slice() else {
-            return Vec::new();
-        };
+        place: &ResolvedPlace,
+    ) -> Vec<(ResolvedPlace, usize, CheckedType, Vec<GoalProjection>)> {
         let types = self.sealed_prefix_types(place);
         let mut anchors = Vec::new();
-        for depth in 0..place.path.len() {
-            let Some(ty) = types[depth] else {
+        for (depth, ty) in types.iter().enumerate().take(place.path.len()) {
+            let Some(ty) = *ty else {
                 continue;
             };
             for (index, invariant) in self.affine_invariants(ty).iter().enumerate() {
@@ -602,6 +678,7 @@ impl Input<'_, '_> {
                                 path: place.path[..depth].to_vec(),
                             },
                             index,
+                            ty,
                             datum.clone(),
                         ));
                     }
@@ -609,6 +686,79 @@ impl Input<'_, '_> {
             }
         }
         anchors
+    }
+
+    /// [TYPE-11.S7] each binder datum the read `expression` selects at every
+    /// resolved member of its place. The instance reads its binder data from
+    /// the one member's anchor, or, for a read that resolves through a
+    /// reference to several members, from the place the read spells through
+    /// that reference, which names the one member it reads [ENT-2, REF-1].
+    fn read_anchors(&self, expression: &CheckedExpression) -> Vec<ReadAnchor> {
+        let places = self.sealed_places(expression);
+        let Some((first, rest)) = places.split_first() else {
+            return Vec::new();
+        };
+        let spelled = if rest.is_empty() {
+            None
+        } else {
+            self.read_place_path(expression)
+        };
+        let mut anchors = Vec::new();
+        for (anchor, index, ty, datum) in self.place_anchors(first) {
+            let steps = first.path.len() - anchor.path.len();
+            let mut members = vec![anchor];
+            for place in rest {
+                let found = self.place_anchors(place).into_iter().find(
+                    |(other, other_index, other_ty, other_datum)| {
+                        *other_index == index
+                            && *other_ty == ty
+                            && *other_datum == datum
+                            && place.path.len() - other.path.len() == steps
+                    },
+                );
+                if let Some((other, ..)) = found {
+                    members.push(other);
+                }
+            }
+            if members.len() != places.len() {
+                continue;
+            }
+            let image = if rest.is_empty() {
+                self.sealed_image(&members[0], ty)
+            } else {
+                spelled
+                    .as_ref()
+                    .and_then(|spelled| self.spelled_image(spelled, &datum, ty))
+            };
+            anchors.push(ReadAnchor {
+                members,
+                index,
+                ty,
+                datum,
+                image,
+            });
+        }
+        anchors
+    }
+
+    /// The image of the anchor whose binder datum `datum` a read spelled as
+    /// `spelled` selects: that spelling without the datum's own steps.
+    fn spelled_image(
+        &self,
+        spelled: &ResolvedPlace,
+        datum: &[GoalProjection],
+        ty: CheckedType,
+    ) -> Option<GoalExpression> {
+        let keep = spelled.path.len().checked_sub(datum.len())?;
+        if !spelled.path[keep..].iter().copied().eq(datum_steps(datum)) {
+            return None;
+        }
+        let image = ResolvedPlace {
+            atomic_aliases: spelled.atomic_aliases.clone(),
+            root: spelled.root,
+            path: spelled.path[..keep].to_vec(),
+        };
+        self.goal_place_datum(&image, ty)
     }
 
     /// [TYPE-11.S3] the debts a continuation from `from` into `onto` takes:
@@ -1041,14 +1191,18 @@ impl Analyzer<'_, '_> {
         if !self.input.sealing {
             return;
         }
-        for (anchor, index, _) in self.input.read_anchors(expression) {
-            if !self.sealed_anchor(&anchor, index, state) {
+        for read in self.input.read_anchors(expression) {
+            if !self.sealed_members(&read, state) {
                 continue;
             }
-            let Some(goal) = self.input.sealed_instance(&anchor, index) else {
+            let Some(goal) = read
+                .image
+                .as_ref()
+                .and_then(|image| self.input.instance_over(image, read.ty, read.index))
+            else {
                 continue;
             };
-            self.establish_sealed_instance(&anchor, index, goal, state);
+            self.establish_instance(Some(read.ty), read.index, goal, state);
         }
     }
 
@@ -1064,30 +1218,29 @@ impl Analyzer<'_, '_> {
         if !self.input.sealing || self.input.read_place_path(value).is_some() {
             return;
         }
-        for (anchor, index, datum) in self.input.read_anchors(value) {
-            let Some(ty) = self
-                .input
-                .sealed_prefix_types(&anchor)
-                .last()
-                .copied()
-                .flatten()
-            else {
+        for read in self.input.read_anchors(value) {
+            let Some(invariant) = self.input.affine_invariants(read.ty).get(read.index) else {
                 continue;
             };
-            let Some(invariant) = self.input.affine_invariants(ty).get(index) else {
-                continue;
-            };
-            if invariant.data.len() != 1 || !self.sealed_anchor(&anchor, index, state) {
+            if invariant.data.len() != 1 || !self.sealed_members(&read, state) {
                 continue;
             }
             let goal = substitute_binder(&invariant.goal, &|projections, datum_ty| {
-                (projections == datum.as_slice())
+                (projections == read.datum.as_slice())
                     .then(|| goal_binding_place(binding, Vec::new(), datum_ty))
             });
             if let Some(goal) = goal {
-                self.establish_sealed_instance(&anchor, index, goal, state);
+                self.establish_instance(Some(read.ty), read.index, goal, state);
             }
         }
+    }
+
+    /// [TYPE-11.S7] the premises of the instance a read selects, at the
+    /// anchor of each member of its place.
+    fn sealed_members(&self, read: &ReadAnchor, state: &ProofFlowState) -> bool {
+        read.members
+            .iter()
+            .all(|anchor| self.sealed_anchor(anchor, read.index, state))
     }
 
     /// [TYPE-11.S7] the premises of an instance at `anchor`: no debt may
@@ -1112,19 +1265,33 @@ impl Analyzer<'_, '_> {
         goal: GoalExpression,
         state: &mut ProofFlowState,
     ) {
-        let clause = self
+        let ty = self
             .input
             .sealed_prefix_types(anchor)
             .last()
             .copied()
-            .flatten()
+            .flatten();
+        self.establish_instance(ty, index, goal, state);
+    }
+
+    /// [ENT-3.S18] establishes `goal`, the instance of the affine invariant at
+    /// `index` of the struct `ty`, with S4's affine images.
+    fn establish_instance(
+        &mut self,
+        ty: Option<CheckedType>,
+        index: usize,
+        goal: GoalExpression,
+        state: &mut ProofFlowState,
+    ) {
+        let clause = ty
             .and_then(|ty| self.input.affine_invariants(ty).get(index))
             .map(|invariant| invariant.clause.clone());
         let event = self
             .vocabulary
             .proof_event(FlowEventKind::S18, clause.as_ref());
         self.judging()
-            .establish_body_goal(goal, &mut state.facts, event);
+            .establish_body_goal(goal.clone(), &mut state.facts, event);
+        self.reasoning().establish_affine_images(goal, None, state);
     }
 
     /// [TYPE-11.S3] the widening row for a kill batch that writes or ends
@@ -1445,7 +1612,13 @@ impl Analyzer<'_, '_> {
             if transport == CallTransport::ReadOnlyReference || writes.is_empty() {
                 continue;
             }
-            for (referent, _) in self.input.argument_referents(argument) {
+            let referents = self
+                .input
+                .argument_referents(argument)
+                .into_iter()
+                .map(|(referent, _)| referent)
+                .collect();
+            for referent in uncovered(referents) {
                 let written_places = if transport.writes_element_storage() {
                     vec![element_write_place(
                         referent.clone(),
