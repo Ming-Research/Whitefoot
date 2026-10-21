@@ -1,4 +1,4 @@
-# Kernel Specification v0.158
+# Kernel Specification v0.159
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -700,7 +700,7 @@ A struct-typed const is laid out as one read-only static aggregate in the nomina
 
 [OWN-1] Every value has exactly one owner.
 A type has two capabilities, copy and drop, and its class is read from them: a type with both is *copy*, a type with drop alone is *affine*, and a type with neither is *linear* [PROV-6]; no type has copy without drop.
-Primitives (TYPE-1) have both. Every other type has a capability exactly when every part it owns has it [PROV-6] — its owned fields, its variant payload fields, its `Box` content, and the elements of a storage shape — and its declaration does not remove it [GRAM-2]: `nocopy` removes copy, and `nodrop` removes drop and copy with it. A tag-only enum and a struct of copy fields are therefore copy, `Bool` being the canonical case; the prelude declares `Slots`, `Ring`, `Segments`, `Paged` and `Box` `nocopy` [PRE-1] and the host modules declare every host handle `nocopy` or `nodrop` [PRE-2], so a type owning one of them is not copy, and an `Array` has the capabilities of its element type [TYPE-9].
+Primitives (TYPE-1) have both. Every other type has a capability exactly when every part it owns has it [PROV-6] — its owned fields, its variant payload fields, its `Box` content, the elements of a storage shape, and the state of a `Shared<T>` handle — and its declaration does not remove it [GRAM-2]: `nocopy` removes copy, and `nodrop` removes drop and copy with it. A tag-only enum and a struct of copy fields are therefore copy, `Bool` being the canonical case; the prelude declares `Slots`, `Ring`, `Segments`, `Paged` and `Box` `nocopy` [PRE-1] and the host modules declare every host handle `nocopy` or `nodrop` [PRE-2], so a type owning one of them is not copy, and an `Array` has the capabilities of its element type [TYPE-9].
 A type parameter has the capabilities its bound grants [PROV-6], so a generic nominal's class is decided at each instance from its arguments.
 An affine or linear place rooted in a live own-mode binding is consumed exactly once by an explicit `move p`, including an own-place match scrutinee [OWN-13], a propagation operand [ERR-3], and the `move place` of a destructuring consume [PROV-6].
 A bare `place` expression used as an owned affine or linear value is a hard error, and `move p` on a copy value is a hard error (copy values are used bare — one spelling per meaning, FORM-1), each with a repair [DIAG-1].
@@ -809,10 +809,10 @@ A binding whose value is linear [PROV-6] takes no compiler-derived release on su
 This rule states the liveness premise [SET-1] rechecks after a right-hand side, and the premise [OWN-11] reads at a backedge; it adds no scope-exit action and removes none.
 
 [PROV-6] Linearity is a property of the type, closed under ownership.
-A type is linear, lacking the drop capability [OWN-1], exactly when its declaration carries the `nodrop` modifier [GRAM-2] or it owns, at any depth, a linear type; a struct, an enum, a storage shape or a `Box` [TYPE-9] owning a linear part is linear, and every other type is copy or affine by [OWN-1].
+A type is linear, lacking the drop capability [OWN-1], exactly when its declaration carries the `nodrop` modifier [GRAM-2] or it owns, at any depth, a linear type; a struct, an enum, a storage shape, a `Box` [TYPE-9] or a `Shared<T>` handle [SHARE-1] owning a linear part is linear, and every other type is copy or affine by [OWN-1].
 Linearity is a property of the type and not of a scope.
 This rule refines [OWN-1]'s classification and replaces none of it: a copy value is never linear, and a value this rule does not make linear keeps exactly the disposition [OWN-1] and [STOR-3] give it.
-A type owns its fields, its enum variant payloads, its `Box` content [TYPE-9], and the elements of a storage shape it is [TYPE-9]; a `Frozen<T>` handle owns no `T`, the value its field `inner` names being held by its frozen object [SHARE-1].
+A type owns its fields, its enum variant payloads, its `Box` content [TYPE-9], and the elements of a storage shape it is [TYPE-9]; a `Shared<T>` handle owns its state's type `T`, because the handle whose close is last receives the state [SHARE-1], and that ownership adds no edge to its executable release graph; a `SharedRead<T>` or `Frozen<T>` handle owns no `T`, the value being held by its object [SHARE-1].
 A full `Array` has the same element-type ownership closure as a window [WIN-1]: if T is linear then `Array<T, N>` is linear, including when N is zero; a zero extent changes the executed element count, not this type-level judgment.
 A written type argument is owned through the field, payload, or element position it lands in and never by the type that writes it.
 
@@ -2378,7 +2378,7 @@ A program that needs two host operations ordered passes both through one owner w
 Each context executes its own constructs one at a time, in the order they define, and a call that is not spawned executes in its caller's context in that order.
 A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
 A context waits at a waiting host call until the host has produced its outcome, at an atomic statement until the statement takes effect [SHARE-3], and at a join until the joined context has completed [WAIT-3].
-Which of several outstanding operations completes first, how the host effects of different contexts interleave, the order of shared effects [SHARE-3], the positions of byte sequences, the extents of map scans, the bytes a release of a map's reserve reports and the bytes `key_set_bytes` reports [SHARE-1], and the invocation's runtime driver count and process identifier [PRE-2] are inputs of the execution: two executions that receive the same inputs in the same order execute every context identically.
+Which of several outstanding operations completes first, how the host effects of different contexts interleave, the order of shared effects [SHARE-3], the order in which the handles of one object end [SHARE-1], the positions of byte sequences, the extents of map scans, the bytes a release of a map's reserve reports and the bytes `key_set_bytes` reports [SHARE-1], and the invocation's runtime driver count and process identifier [PRE-2] are inputs of the execution: two executions that receive the same inputs in the same order execute every context identically.
 The snapshot creation result, child termination, collection outcomes and unconstrained traversal orders of [SNAP-2, SNAP-3] are also inputs of the execution. A snapshot child executes one supplied encoder under [SNAP-3] and creates no Whitefoot context or source continuation.
 Where a context executes, and whether two contexts execute at the same time, are not observable.
 While every context, from every point of its execution, reaches in finitely many steps its completion or a wait, each context that does not wait, or waits for a host outcome that has been produced or for a context that has completed, eventually takes its next step, and each atomic statement that has begun, and that has no guard or whose guard is true in its targets' states at every point from some point on, eventually takes effect. The waiting cancellation-state update [PRE-2] has the same progress guarantee as an unguarded atomic statement; a firing that makes a guard persistently true is covered by this guarantee for guarded statements.
@@ -2400,7 +2400,8 @@ The starting context joins the started one, waiting there until it has completed
 A value of either prelude type `Shared<T>` or `SharedRead<T>` [PRE-1] is a handle to a shared object, which holds one value of type `T`, its state.
 `shared_new` moves its argument into a new shared object and returns a handle to it, `shared_map_new` returns a handle to a new shared object whose state is a concurrent hash map whose every entry is `None`, sized for its argument's number of `Some` entries, and `shared_share` returns a further handle to the object its argument names.
 `shared_read` returns a `SharedRead<T>` retaining the same object as its `Shared<T>` argument, and `shared_read_share` returns a further `SharedRead<T>` retaining the object its argument names. There is no conversion from a `SharedRead<T>` handle to a `Shared<T>` handle.
-Releasing a handle [OWN-1, STOR-3] releases that handle. An object's state is released when its last handle has been released and no atomic statement on it is executing.
+`shared_close` consumes its `Shared<T>` argument [OWN-1] and ends that handle. Releasing a handle [OWN-1, STOR-3] ends that handle. The handles of one object end in one total order [WAIT-2]. When the last to end is a close, that close returns `Some` holding the object's state, which then belongs to its caller, and every other close returns `None`. When the last to end is a release, the state is released once no atomic statement on the object is executing.
+A `Shared<T>` whose `T` is linear is linear [PROV-6], so each of its handles ends in a close. A type argument for `T` that is linear has no part, at any depth of field, payload field, element, `Box` content or the state of a `Shared` handle, that is that `Shared<T>`, since a handle its own object held would keep the object's last close from being reached; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part a depth-first walk of the type's parts in declaration order reaches, the walk visiting each type once [DIAG-1]. A type argument is judged at a generic function's symbolic instance, under the classes its type parameters have there [PROV-6], and again at each concrete instance [FN-2].
 The state of a shared object is storage of no binding and belongs to no context [WAIT-2]. Paths into it start at it [REF-1], and the targets of an atomic statement [SHARE-2] are the only forms that form one.
 A value of the prelude type `Frozen<T>` [PRE-1] is a handle to a frozen object, which holds one value of type `T`, read as the handle's readonly field `inner`. `frozen_new` moves its argument into a new frozen object and returns a handle to it, and `frozen_share` returns a further handle to the object its argument names; no operation writes a frozen object's value, so it is the value `frozen_new` moved in for as long as the object lives.
 A type argument for `T` has no part, at any depth of field, payload field, element or `Box` content, that is a `Shared<U>`, a `SharedRead<U>`, a `DecisionCell` [PRE-1] or a host handle [PRE-2], so nothing a frozen object holds changes; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part a depth-first walk of the type's parts in declaration order reaches, the walk visiting each type once [DIAG-1].
@@ -2457,7 +2458,7 @@ The statement's footprint is its handle places and index atoms, read, together w
 
 [SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.
 Its guard and block execute with exclusive access to the states its targets name, and every read and write they make of those states takes effect at that point. When the statement has a guard, the guard is true in those states at that point.
-The shared effects are atomic statements, cancellation-state updates [PRE-2], and the `decision_cell_read`, `claim_written` and `claim_killed` calls [PRE-1]. They take effect in one total order [WAIT-2], respecting the source order of nonoverlapping constructs in each context and the order of effects whose calls have returned before another begins.
+The shared effects are atomic statements, cancellation-state updates [PRE-2], and the `shared_close`, `decision_cell_read`, `claim_written` and `claim_killed` calls [PRE-1]. They take effect in one total order [WAIT-2], respecting the source order of nonoverlapping constructs in each context and the order of effects whose calls have returned before another begins.
 Each decision-cell read or claim takes effect at its own point between its call and return, separate from the enclosing atomic statement's point. Its returned value is the cell's state immediately after that point. The enclosing statement's state accesses retain their single-point meaning above; the verdict publishes no intermediate contents of its targets.
 A decision-cell-free callable boundary has no `DecisionCell` in any parameter or result type, recursively through fields, payload fields, elements, `Box` content and shared or frozen content, and each callable boundary in its function-kind parameters and interface members is decision-cell-free. This judgment uses the concrete substitutions of [FN-2, FN-5] and visits each type and callable boundary once. It inspects declarations and no implementation body.
 A statement whose guard is false in its targets' states at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
@@ -2504,7 +2505,7 @@ opaque nocopy struct Box<T> {
   inner: T;
 }
 
-opaque nocopy struct Shared<T: drop> {
+opaque nocopy struct Shared<T> {
 }
 
 opaque nocopy struct SharedRead<T: drop> {
@@ -2683,9 +2684,9 @@ fn take_front<W, T>(window: &W) -> value: T writes(window) contract {
   ensures window^.head <= window^.cap;
 };
 fn swap<T>(first: &T, second: &T) -> result: unit writes(first), writes(second);
-fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
+fn shared_new<T>(value: T) -> result: Shared<T> pure;
 fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>> pure;
-fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
+fn shared_share<T>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 fn shared_read<T: drop>(shared: &Shared<T>) -> result: SharedRead<T> reads(shared);
 fn shared_read_share<T: drop>(shared: &SharedRead<T>) -> result: SharedRead<T> reads(shared);
 fn frozen_new<T: drop>(value: T) -> result: Frozen<T> pure;
@@ -2723,12 +2724,13 @@ fn decision_cell_share(cell: &DecisionCell) -> result: DecisionCell reads(cell);
 fn decision_cell_read(cell: &DecisionCell) -> result: DecisionState reads(cell);
 fn claim_written(cell: &DecisionCell) -> result: DecisionState reads(cell);
 fn claim_killed(cell: &DecisionCell) -> result: DecisionState reads(cell);
+fn shared_close<T>(shared: Shared<T>) -> result: Option<T> pure waits;
 ```
 
 The definition of `release` returns `unit` and releases its parameter under the ordinary leaving-edge rules [STOR-3, PROV-6].
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_bytes`, `key_set_read_key`, `free_empty`, `release`, `decision_cell_new`, `decision_cell_share`, `decision_cell_read`, `claim_written` and `claim_killed`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_bytes`, `key_set_read_key`, `free_empty`, `release`, `decision_cell_new`, `decision_cell_share`, `decision_cell_read`, `claim_written`, `claim_killed` and `shared_close`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the seven standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net`, `std::process` and `std::snapshot`, registered by these rows of the standard library's graph:
 
