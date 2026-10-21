@@ -128,6 +128,11 @@ impl LlvmModule {
         Ok(())
     }
 
+    /// Renders the text again after a change to the model.
+    pub(crate) fn rerender(&mut self) {
+        self.text = self.model.render();
+    }
+
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut bytes = vec![u8::from(self.threaded_layout)];
         bytes.extend(self.model.encode());

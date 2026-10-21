@@ -1,0 +1,106 @@
+# Temporary (wf-fr-sanitizer-check): confirms the emitted module is
+# instrumented and times a small batch of cases under each sanitizer before
+# the permanent workflow is sized. Removed before the branch is ready.
+name: tmp-sanitizer-probe
+
+on:
+  push:
+    branches: [wf-fr-sanitizer-check]
+
+concurrency:
+  group: tmp-sanitizer-probe
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  probe:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: emitted code is instrumented
+            kind: ir
+          - name: asan conformance 1/40
+            kind: corpus
+            target: test-corpus-asan
+            filter: the_corpus_reaches_its_declared_verdict
+            shard: 1/40
+          - name: tsan conformance 1/40
+            kind: corpus
+            target: test-corpus-tsan
+            filter: the_corpus_reaches_its_declared_verdict
+            shard: 1/40
+          - name: asan programs runs+parallel
+            kind: corpus
+            target: test-corpus-asan
+            filter: programs::runs programs::parallel
+          - name: tsan programs runs+parallel
+            kind: corpus
+            target: test-corpus-tsan
+            filter: programs::runs programs::parallel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo apt-get install -y --no-install-recommends "libclang-rt-$version-dev"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+          nproc
+          grep -m 1 'model name' /proc/cpuinfo
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Decline core dumps
+        run: sudo sysctl -w kernel.core_pattern=core
+      - name: Emitted code is instrumented
+        if: matrix.kind == 'ir'
+        run: |
+          set -eu
+          perl .github/run-check.pl tmp-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
+          wfc=compiler/target/gate/whitefootc
+          program=tests/programs/heap_run.wf
+          work="$RUNNER_TEMP/probe"
+          mkdir -p "$work"
+          "$wfc" --emit-llvm "$program" -o "$work/plain.ll"
+          for sanitizer in address thread; do
+            case $sanitizer in
+              address) flag=-fsanitize=address; symbol=__asan_ ;;
+              thread) flag=-fsanitize=thread; symbol=__tsan_ ;;
+            esac
+            "$wfc" --emit-llvm --sanitize "$sanitizer" "$program" -o "$work/$sanitizer.ll"
+            grep '^attributes #0' "$work/$sanitizer.ll"
+            /usr/bin/clang -x ir "$work/$sanitizer.ll" "$flag" -O2 -Wno-override-module -c -o "$work/$sanitizer.o"
+            /usr/bin/clang -x ir "$work/plain.ll" "$flag" -O2 -Wno-override-module -c -o "$work/plain-$sanitizer.o"
+            with=$(nm -u "$work/$sanitizer.o" | grep -c "$symbol" || true)
+            without=$(nm -u "$work/plain-$sanitizer.o" | grep -c "$symbol" || true)
+            echo "$sanitizer: $with $symbol references with the attribute, $without without"
+            nm -u "$work/$sanitizer.o" | grep "$symbol" | sort | uniq -c | head -20
+            "$wfc" --sanitize "$sanitizer" "$program" -o "$work/program-$sanitizer"
+            status=0; "$work/program-$sanitizer" || status=$?
+            echo "$sanitizer plain build exit: $status"
+            "$wfc" --sanitize "$sanitizer" --cache "$work/cache-$sanitizer" --fragments function "$program" -o "$work/fragments-$sanitizer"
+            status=0; "$work/fragments-$sanitizer" || status=$?
+            echo "$sanitizer fragment build exit: $status"
+            nm "$work/program-$sanitizer" | grep -c "$symbol" || true
+          done
+      - name: Sanitized cases
+        if: matrix.kind == 'corpus'
+        env:
+          WHITEFOOT_CONFORMANCE_SHARD: ${{ matrix.shard }}
+          WHITEFOOT_CHECK_TIMEOUT: 2400
+        run: |
+          [ -n "$WHITEFOOT_CONFORMANCE_SHARD" ] || unset WHITEFOOT_CONFORMANCE_SHARD
+          make -C compiler ${{ matrix.target }} SANITIZER_FILTER="${{ matrix.filter }}"

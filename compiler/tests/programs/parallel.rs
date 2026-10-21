@@ -170,7 +170,7 @@ fn tree_window_and_deep_spine_preserve_their_independent_results() {
                 },
             )
             .expect("pinned-budget tree must compile");
-            let pinned = build_program(&module);
+            let pinned = build_program(&crate::support::sanitized(module));
             for workers in ["1", "4"] {
                 let output = pinned.run_with_workers(Some(workers));
                 assert_eq!(
