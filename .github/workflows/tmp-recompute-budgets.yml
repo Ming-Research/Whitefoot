@@ -1,5 +1,6 @@
 # Temporary (wf-gate-budget-noise): removed before the branch is ready.
-# Round 5: a cell with too few runs keeps its value outside the owner's column.
+# Round 5: a cell with too few runs keeps its value outside the owner's column;
+# round 6: the self-test uses the shipped owner column and its default.
 # The quick workflow for .github/recompute-time-budgets.py: the repository
 # invariants that now include its self-test, and one run per deliberate fault
 # in a copy of the script, each of which the self-test must reject; and the
@@ -60,6 +61,10 @@ jobs:
           fault slowdown 'cs * (1 + slowdown) > limit' 'cs > limit'
           fault ordinary-thin-cell $'if column in owner_columns:\n                value = max' $'if True:\n                value = max'
           fault window 'ok[-size:]' 'ok[-3:]'
+          fault owner-none 'OWNER_COLUMNS = ("xeon-8573c",)' 'OWNER_COLUMNS = ()'
+          fault owner-misspelled 'OWNER_COLUMNS = ("xeon-8573c",)' 'OWNER_COLUMNS = ("xeon-8573",)'
+          fault owner-default 'owner_columns=OWNER_COLUMNS):' 'owner_columns=()):'
+          fault default-window 'DEFAULT_WINDOW = 50' 'DEFAULT_WINDOW = 5'
           fault repeated-attempts 'if key in seen or job["cpu"] is None:' 'if job["cpu"] is None:'
           fault no-cpu 'if key in seen or job["cpu"] is None:' 'if key in seen:'
           fault largest-class 'largest = max(new.values())' 'largest = min(new.values())'

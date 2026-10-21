@@ -45,6 +45,7 @@ MINIMUM_RUNS = 20
 # The columns the owner added for a model with fewer than MINIMUM_RUNS runs
 # (design/compiler/verification.md); an addition is the owner's decision.
 OWNER_COLUMNS = ("xeon-8573c",)
+BUDGETS = ".github/time-budgets.txt"
 DEFAULT_WINDOW = 50
 MARGIN_PERCENT = 10
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -325,9 +326,18 @@ def self_test():
     # 60.005 to 65; the floor is 10 s (a 1 s stage would round to 5 s).
     assert [budget_for(m) for m in (32370, 10000, 5450, 5455, 100)] == [360, 110, 60, 65, 10]
 
+    # The columns the shipped tool treats as the owner's exist in the real
+    # table; the synthetic table below names its thin column after the first,
+    # and `recompute` runs with its default, so a changed or emptied constant
+    # changes what is tested.
+    assert OWNER_COLUMNS, "no owner column"
+    with open(BUDGETS) as handle:
+        shipped = Table(handle.read())
+    assert set(OWNER_COLUMNS) <= set(shipped.classes), (OWNER_COLUMNS, list(shipped.classes))
+    owner = OWNER_COLUMNS[0]
     table_text = "\n".join([
-        "# comment", "cpu big-1  Big CPU", "cpu small-2  Small CPU", "cpu thin-3  Thin CPU", "",
-        "label        big-1  small-2  thin-3  macos  windows",
+        "# comment", "cpu big-1  Big CPU", "cpu small-2  Small CPU", f"cpu {owner}  Thin CPU", "",
+        f"label        big-1  small-2  {owner}  macos  windows",
         "stage/one    50     50       50      60     -",
         "stage/two    30     30       30      40     -",
         "stage/three  20     20       20      25     -",
@@ -368,32 +378,32 @@ def self_test():
     assert all(r["cpu"] for r in rows)
     assert sum(r["label"] == "stage/six" for r in rows) == 15
     table = Table(table_text)
-    report = recompute(table, rows, 50, keep=("stage/two",), owner_columns=("thin-3",))
+    report = recompute(table, rows, DEFAULT_WINDOW, keep=("stage/two",))
     cells = table.cells("stage/one")
     # 114.00 s * 1.1 = 125.4 -> 130. The 10-run class keeps its 50 s: ten runs
     # set no value. The owner's column, with one run of 120 s, takes the row's
     # recomputed class (130) or its own 120 s -> 135 if higher.
-    assert (cells["big-1"], cells["small-2"], cells["thin-3"]) == ("130", "50", "135"), cells
-    assert table.cells("stage/two") == {"big-1": "30", "small-2": "30", "thin-3": "30", "macos": "40", "windows": "-"}
-    assert table.cells("stage/three") == {"big-1": "20", "small-2": "20", "thin-3": "20", "macos": "25", "windows": "-"}
+    assert (cells["big-1"], cells["small-2"], cells[owner]) == ("130", "50", "135"), cells
+    assert table.cells("stage/two") == {"big-1": "30", "small-2": "30", owner: "30", "macos": "40", "windows": "-"}
+    assert table.cells("stage/three") == {"big-1": "20", "small-2": "20", owner: "20", "macos": "25", "windows": "-"}
     # A one-second stage rounds to the 10 s floor; the class without a run keeps 20.
     assert table.cells("stage/four")["small-2"] == "10" and table.cells("stage/four")["big-1"] == "20"
-    assert table.cells("stage/five") == {"big-1": "-", "small-2": "15", "thin-3": "-", "macos": "25", "windows": "-"}
+    assert table.cells("stage/five") == {"big-1": "-", "small-2": "15", owner: "-", "macos": "25", "windows": "-"}
     assert table.cells("stage/one")["macos"] == "60" and table.cells("stage/one")["windows"] == "-"
     # Counted once, 15 runs are too few; counted twice they would be 30.
-    assert table.cells("stage/six") == {"big-1": "40", "small-2": "40", "thin-3": "40", "macos": "50", "windows": "-"}
+    assert table.cells("stage/six") == {"big-1": "40", "small-2": "40", owner: "40", "macos": "50", "windows": "-"}
     # Two classes have enough runs, 55 s and 35 s by the rule: the class
     # without runs takes the larger of them, not the smaller.
-    assert table.cells("stage/seven") == {"big-1": "55", "small-2": "35", "thin-3": "55", "macos": "70", "windows": "-"}
+    assert table.cells("stage/seven") == {"big-1": "55", "small-2": "35", owner: "55", "macos": "70", "windows": "-"}
     # A class without a run keeps its value; the owner's column takes the row's
     # recomputed 80 s, not its own three runs' 45 s.
-    assert table.cells("stage/eight") == {"big-1": "80", "small-2": "45", "thin-3": "80", "macos": "50", "windows": "-"}
+    assert table.cells("stage/eight") == {"big-1": "80", "small-2": "45", owner: "80", "macos": "50", "windows": "-"}
     out = table.text().split("\n")
     old = table_text.split("\n")
     assert out[:6] == old[:6] and out[7:9] == old[7:9] and out[10:12] == old[10:12] and out[14:] == old[14:]
     assert all(len(line.split()) == len(before.split()) for line, before in zip(out, old))
     again = Table(table.text())
-    assert recompute(again, rows, 50, keep=("stage/two",), owner_columns=("thin-3",)) and again.text() == table.text()
+    assert recompute(again, rows, DEFAULT_WINDOW, keep=("stage/two",)) and again.text() == table.text()
     assert any(entry[0] == "stage/one" and entry[1] == "big-1" and entry[2] == 25 and entry[6] == 130 for entry in report)
 
     # A recorded series that is stable: no job is over its recomputed budget
@@ -434,7 +444,7 @@ def main():
     for name in ("table", "replay"):
         command = sub.add_parser(name)
         command.add_argument("--samples", required=True, nargs="+", help="samples files from collect")
-        command.add_argument("--budgets", default=".github/time-budgets.txt")
+        command.add_argument("--budgets", default=BUDGETS)
         command.add_argument("--window", type=int, default=DEFAULT_WINDOW)
         command.add_argument("--keep", action="append", default=[], help="a stage to leave untouched")
         if name == "table":
