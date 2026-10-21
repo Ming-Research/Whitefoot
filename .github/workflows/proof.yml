@@ -37,6 +37,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Name the time-budget record
+        run: echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
+
       # elan installs the release `proof/lean-toolchain` pins.
       - name: Install the pinned Lean toolchain
         working-directory: proof
@@ -53,3 +56,9 @@ jobs:
       - name: Proofs
         working-directory: proof
         run: perl ../.github/run-check.pl proof-build lake build
+
+      # run-check.pl appended every stage over its budget in
+      # .github/time-budgets.txt, or without one, to this record.
+      - name: Hold every stage to its time budget
+        if: always()
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"

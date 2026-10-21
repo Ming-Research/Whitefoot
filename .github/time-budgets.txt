@@ -71,6 +71,13 @@ linux-default-tsan              10         10         10         10          -  
 linux-deque-tsan                10         10         10         10          -      -
 linux-runtime-tsan              10         10         10         10          -      -
 
+# proof.yml: the Lean model's sentence coverage (building and running its
+# checker) and its proofs. Provisional until 20 runs are recorded: 1.5 times
+# the first run (coverage 13.6 s with the toolchain download, proofs 3.4 s,
+# on GitHub's ubuntu-24.04 runner).
+proof-coverage                  25         25         25         25          -      -
+proof-build                     10         10         10         10          -      -
+
 # sanitizers.yml: the corpus target under one sanitizer, building its test
 # binary, as one conformance shard of three or the rest of the target.
 # Provisional until 20 runs are recorded: 1.5 times the first run's slowest

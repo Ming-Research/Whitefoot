@@ -141,10 +141,10 @@ theorem exactForm_mem {op : ArithOp} {t : IntTy} {a b r : Int}
     (h : op.exactForm t a b = some r) : t.Mem r := by
   unfold exactForm at h
   by_cases hd : op.defined t a b = true
-  · rw [if_pos hd] at h
+  · rw [ite_eq_left hd] at h
     cases h
     exact of_decide_eq_true hd
-  · rw [if_neg hd] at h
+  · rw [ite_eq_right hd] at h
     cases h
 
 /-- Where its domain query holds, the exact form returns the wrap form's
@@ -153,7 +153,7 @@ theorem exactForm_eq_wrapForm {op : ArithOp} {t : IntTy} {a b : Int}
     (hd : op.defined t a b = true) : op.exactForm t a b = some (op.wrapForm t a b) := by
   have hm : t.Mem (op.math a b) := of_decide_eq_true hd
   unfold exactForm wrapForm
-  rw [if_pos hd, IntTy.wrap_of_mem hm]
+  rw [ite_eq_left hd, IntTy.wrap_of_mem hm]
 
 /-- The checked form returns `Ok` exactly where the exact form returns a result,
 and with the same value. -/
@@ -202,14 +202,14 @@ theorem exactForm_mem {op : UnaryOp} {t : IntTy} {x r : Int} (hs : t.signed = tr
     (hx : t.Mem x) (h : op.exactForm t x = some r) : t.Mem r := by
   unfold exactForm at h
   by_cases hd : op.defined t x = true
-  · rw [if_pos hd] at h
+  · rw [ite_eq_left hd] at h
     cases h
     have hne : x ≠ t.minVal := of_decide_eq_true hd
     cases op <;> cases t <;>
       simp [math, IntTy.Mem, IntTy.minVal, IntTy.maxVal, IntTy.bits, IntTy.signed]
         at hs hx hne ⊢ <;>
       (try split) <;> omega
-  · rw [if_neg hd] at h
+  · rw [ite_eq_right hd] at h
     cases h
 
 /-- On a signed type, where its domain query holds, the exact form returns the
@@ -219,7 +219,7 @@ theorem exactForm_eq_wrapForm {op : UnaryOp} {t : IntTy} {x : Int} (hs : t.signe
     op.exactForm t x = some (op.wrapForm t x) := by
   have hr : op.exactForm t x = some (op.math x) := by
     unfold exactForm
-    rw [if_pos hd]
+    rw [ite_eq_left hd]
   have hm : t.Mem (op.math x) := exactForm_mem hs hx hr
   rw [hr]
   unfold wrapForm
