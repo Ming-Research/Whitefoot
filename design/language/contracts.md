@@ -17,6 +17,7 @@ Rejected:
 - Let implementations declare wider rows than their bodies exhibit: rejected because it weakens exact effects for every function merely to express a binding guarantee already established by absence of writes.
 - Require a formal access covering the framed place whenever the actual writes through another parameter: rejected because the contract-read footprint separates that place at every call through the formal, so the condition only refused bindings that no accepted call could misuse.
 - Require stubs to perform a dummy write: rejected because conformance would introduce a runtime state change solely to justify an erased frame guarantee, and the pure Stop body already preserves that state.
+- Discharge frame equalities only for actuals that write nothing: rejected because Halo's reads-only host function writes its environment while leaving the stack unwritten, and it still could not restate the guarantee, since an entry clause is admitted only for written parameters.
 - Runtime dictionaries or callable values for container behavior: rejected because the selected map and queue need direct-call specialization without runtime storage or dispatch.
 - Checking actual rows for equality with the formal row: rejected because an actual that accesses only a declared subfield fits the caller's contract without dummy reads or a runtime adapter.
 - An owned function-formal result required to be fresh: rejected because it depended on the removed history of owned values and excluded ordinary ownership-returning functions from the common callable boundary.
