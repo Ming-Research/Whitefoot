@@ -661,6 +661,8 @@ impl Vocabulary {
             return;
         }
         self.affine_atoms.truncate(start);
+        // A reused atom index may have another range; discard model views too.
+        self.affine_models.clear();
         let kept = |term: AffineTermId| (term.index() as usize) < start;
         let kept_all = |terms: &[AffineCoefficient]| terms.iter().all(|each| kept(each.term()));
         self.product_atoms

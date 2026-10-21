@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn choose<const n: u64>() -> r: u64 pure {
+  doc "The symbolic const parameter carries its written unsigned bound.";
+  if 0_u64 <= n {
+    return n;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The checker judges every body.";
+  return exit_status(code: 0_u8);
+}
