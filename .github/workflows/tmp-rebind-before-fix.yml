@@ -1,0 +1,73 @@
+# Temporary (coord-wfbl-01-08): checks the seven rebinding cases with the
+# compiler as it stands on this branch and with the same tree minus the
+# rebinding fix, to show the four positives are rejected before the fix.
+# Removed before the full check.
+name: tmp-rebind-before-fix
+
+on:
+  push:
+    branches: [claude/rebind-facts]
+
+permissions:
+  contents: read
+
+jobs:
+  before-after:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Fetch locked compiler dependencies
+        run: |
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Build the compiler with the fix
+        run: |
+          perl .github/run-check.pl build-with-fix \
+            env CARGO_TARGET_DIR="$RUNNER_TEMP/with-fix" \
+            cargo build --profile gate --locked --offline \
+              --manifest-path compiler/Cargo.toml --bin whitefootc
+
+      # The fix commit's compiler/src change is five files under
+      # compiler/src/semantic/entailment/; reversing it leaves everything
+      # else on the branch, main's later checker changes included.
+      - name: Reverse the fix in the checker
+        run: |
+          fix=$(git log --format=%h --diff-filter=A -1 -- tests/conformance/cases/fn8-pos-direct-guard-survives-holder-rebinding.wf)
+          echo "fix commit: $fix"
+          git diff "$fix~1" "$fix" -- compiler/src | git apply -R
+          git diff --stat -- compiler/src
+
+      - name: Build the compiler without the fix
+        run: |
+          perl .github/run-check.pl build-without-fix \
+            env CARGO_TARGET_DIR="$RUNNER_TEMP/without-fix" \
+            cargo build --profile gate --locked --offline \
+              --manifest-path compiler/Cargo.toml --bin whitefootc
+
+      - name: Check the cases with each compiler
+        run: |
+          cases="
+          fn8-pos-direct-guard-survives-holder-rebinding
+          fn8-pos-new-target-guard-survives-holder-rebinding
+          fn8-pos-captured-alias-guard-survives-holder-rebinding
+          fn8-pos-opaque-guard-survives-holder-rebinding
+          fn8-pos-direct-guard-without-holder-rebinding
+          fn8-neg-old-holder-guard-through-original-target
+          fn8-neg-opaque-guard-before-holder-rebinding
+          "
+          for variant in without-fix with-fix; do
+            echo "== $variant =="
+            for case in $cases; do
+              status=0
+              "$RUNNER_TEMP/$variant/gate/whitefootc" --check \
+                "tests/conformance/cases/$case.wf" > "$RUNNER_TEMP/out.txt" 2>&1 || status=$?
+              echo "-- $case: exit $status"
+              cat "$RUNNER_TEMP/out.txt"
+            done
+          done
