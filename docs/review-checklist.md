@@ -89,7 +89,9 @@ Source: [specification and test integrity](../AGENTS.md#specification-and-test-i
   follow the maximum of at least the 20 most recent runs plus 10%, rounded up
   to 5 s, with a 10 s floor; models with fewer runs have no column. Unknown
   models use the stage's largest Linux value with a recorded note. macOS
-  overruns are report-only; Linux and Windows overruns and missing rows on any host fail the verdict. A raised
+  overruns and the stages named in `WHITEFOOT_BUDGET_REPORT_ONLY` are
+  report-only; other Linux and Windows overruns and missing rows on any host
+  fail the verdict. A raised
   budget has the owner's decision; a change that makes a stage much faster
   lowers its budget.
   An overrun reported as runner variance names what the change adds to that
