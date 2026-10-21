@@ -177,8 +177,8 @@ where linear probing reads one run of slots. A removal read the same and
 wrote a link word. H1 compared a map that fits the cache with one that does
 not, so its ratio measured the cache, not per-call work.
 
-The next round, recommended on the board's design card for this outcome and
-followed before its ruling, keeps every ruled rule:
+The next round, which the owner ruled on the board's design card for this
+outcome (option B, 2026-10-21), keeps every earlier ruled rule:
 
 - Each slot becomes a node holding the link word beside the pair, so a hit
   reads a head word and the nodes of its chain, and a removal rewrites words
@@ -187,9 +187,10 @@ followed before its ruling, keeps every ruled rule:
   pairs it adds a word to every slot, which would make the million-pair map
   16 bytes larger than linear probing's and the 10,000-pair map twice as
   large, while equality of a `u64` key is one comparison.
-- The stable-identifier directory is not taken: it keeps the linear-probing
-  table and adds a directory, so it is larger than the old map at every
-  size and adds a directory write to every insertion and removal.
+- The stable-identifier directory is not taken now: it keeps the
+  linear-probing table and adds a directory, so it is larger than the old
+  map at every size and adds a directory write to every insertion and
+  removal. It stays a fallback.
 - H1 is replaced, set here before the remeasurement: over uniform hashes,
   `u64` pairs and limit 64, the p99 of one call over 32,000,000 pairs is at
   most twice its p99 over 4,000,000. Both maps lie far beyond the 14900K's
