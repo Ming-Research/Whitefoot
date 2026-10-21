@@ -203,25 +203,41 @@ build time apart from test and program execution.
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime; `make check-groups`
   lists the groups. `gate.yml` and `io-hosts.yml` check a push to `main`, a
-  push to a branch with an open pull request, draft or ready, the opening or
-  reopening of a pull request and a manual run; any other push, to a branch
-  with no open pull request, skips their checks, so work that needs CI opens
-  its Draft pull request first. `gate.yml` runs the groups on Linux, and on
-  macOS as well for a pull request marked ready, the event of marking one
-  ready, `main` and a manual run; its job `Gate on both platforms` passes
-  only when every group is green on both for the revision. That job's
-  success on the exact revision to be merged, a head current with `main`, is
-  that revision's `make check`. It needs `python3`, `jq`, LLD on Linux
-  (`ld.lld`) and the `time` utility.
+  push to a branch with an open ready pull request, the opening or reopening
+  of a ready pull request, the event of marking one ready and a manual run;
+  any other push, a draft pull request's included, skips their checks, and
+  the event of marking a pull request ready skips them when its head already
+  has a successful manual run of the same workflow. `gate.yml` runs the groups
+  on Linux only while macOS is off (wf-gate-no-macos); its job `Gate on both
+  platforms` passes only when every group is green on Linux for the revision,
+  and its job `No temporary workflow` fails while a `tmp-` workflow file
+  exists in the checked head, and while it fails the correctness groups and
+  `Gate on both platforms` do not run. The success of `Gate on both platforms`
+  on the exact revision to be merged, a head current with `main`, is that
+  revision's `make check`. It needs `python3`, `jq`, LLD on Linux (`ld.lld`)
+  and the `time` utility.
+- Writing and the full check: a push to a draft pull request starts no gate,
+  so the result for what a change touches comes from a temporary workflow
+  (below). Once the review has passed, delete the `tmp-` file, merge `main`
+  into the branch, push, and start the full check on that head by hand:
+  `gh workflow run gate.yml --ref <branch>` and `gh workflow run io-hosts.yml
+  --ref <branch>`. Green on that head is the last run: marking the pull
+  request ready then starts no second gate or I/O run for it. A red is fixed
+  with a temporary workflow again, and the full check is started again once
+  the review has seen the fix; a push after a green needs its own run.
+  `compute-regression.yml` runs when the pull request is marked ready and
+  skips no earlier hand-started run.
 - `make design-ready` runs in `design-readiness.yml`.
 - CI only: `io-hosts.yml`, on the same revisions as the gate (Linux io_uring
   and Windows IOCP),
   `map-sanitizers.yml` on every push to a PR that changes the concurrent
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
-  `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
-  timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
-  experiments and never a gate.
+  `compute-regression.yml` on ready PRs that touch measured inputs (paired
+  WF-to-WF timing; a draft shows it skipped; each push to `main` there only
+  builds and caches that commit's compiler for later PRs' merge-base
+  baselines), and `io-bench.yml` and
+  `compute-bench.yml` on request, which are experiments and never a gate.
 - Compiler releases: `compiler-release.yml`, dispatched when a downstream
   project needs a main commit, publishes that commit's compiler as release
   `wf-<12 hex digits>`, with `bundle_toolchain` as
@@ -234,8 +250,9 @@ build time apart from test and program execution.
 Every build, check, test and measurement runs in CI, never on a
 contributor's workstation. A focused result the existing workflows do not
 give, such as one test filter or a compiler probe over a set of cases, comes
-from a temporary workflow on the work branch, removed before the branch is
-ready; such a step runs its command under `perl .github/run-check.pl`, for
+from a temporary workflow on the work branch: a file named `tmp-<name>.yml`
+that a push triggers, removed before the full check, which fails while one
+exists; such a step runs its command under `perl .github/run-check.pl`, for
 example `perl .github/run-check.pl <label> cargo test --manifest-path
 compiler/Cargo.toml --profile gate --locked --offline --lib <filter>`.
 
@@ -249,7 +266,10 @@ labeled stage with its budget in `.github/time-budgets.txt` without changing
 the command's status. Linux budgets are per CPU model: the maximum of at least
 its 20 most recent recorded runs plus 10%, rounded up to 5 s, with a 10 s floor.
 Models with fewer runs have no column; unknown models use the stage's largest
-Linux budget, with a note. macOS overruns are report-only; Windows rows keep their rule.
+Linux budget, with a note. macOS overruns are report-only, and so are the stages
+named in `WHITEFOOT_BUDGET_REPORT_ONLY` (comma-separated labels; the merge-base
+compiler build uses it, since its cache misses after a runner image change);
+Windows rows keep their rule.
 The final CI verdict fails on Linux and Windows overruns and on a missing row
 for any host. On a self-hosted runner, inspect an existing lock owner's PID
 instead of starting another heavy command, and after an uncatchable stop

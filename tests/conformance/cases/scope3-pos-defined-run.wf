@@ -2,12 +2,9 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "An accepted program has defined behavior and runs to normal exit [SCOPE-3].";
+  doc "An accepted program has defined behavior and runs to normal exit [SCOPE-3]; its exact sum is the exit status 42.";
   let a = 20_i32;
   let b = a + 22_i32;
-  if b == 42_i32 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = cvt::<i32, u8>(b);
+  return exit_status(code: code);
 }
