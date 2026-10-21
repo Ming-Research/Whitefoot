@@ -166,7 +166,8 @@ measured: its current main source names a local `held`, a keyword since
 v0.147, which the base compiler rejects.
 
 Whole conformance corpus: a temporary workflow ran `whitefootc --check` over
-the 3,044 single-file cases (module-form cases excluded) with the merge-base
+the 3,044 `.wf` files under `tests/conformance/cases` (2,826 single-file cases
+plus 218 member files of module-form cases, each checked alone) with the merge-base
 compiler (`23aefb63e`) and the candidate (`644892cd3`, then `7425067b2`), gate
 profile, `ubuntu-24.04` hosted runner, compiler CPU as user plus system time.
 Without a twin
