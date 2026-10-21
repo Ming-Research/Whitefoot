@@ -1,4 +1,9 @@
-fn copy_joined_payload(first: &Option<u64>, second: &Option<u64>, flag: Bool) -> result: u64 reads(first), reads(second) {
+struct PayloadReads {
+  direct: u64;
+  indirect: u64;
+}
+
+fn copy_joined_payload(first: &Option<u64>, second: &Option<u64>, flag: Bool) -> result: PayloadReads reads(first), reads(second) {
   doc "An alias formed before a dereferenced match shares its selected target; a captured payload binder also retains that identity for later borrow formation.";
   let selected = if flag {
     give first;
@@ -8,16 +13,13 @@ fn copy_joined_payload(first: &Option<u64>, second: &Option<u64>, flag: Bool) ->
   let kept = selected;
   match selected^ {
     None() => {
-      return 0_u64;
+      return PayloadReads(direct: 0_u64, indirect: 0_u64);
     }
     Some(value: inner) => {
       let captured = &inner^;
       let indirect = captured^;
       let direct = kept^.Some.value;
-      if direct != indirect {
-        return 0_u64;
-      }
-      return direct;
+      return PayloadReads(direct: direct, indirect: indirect);
     }
   }
 }
@@ -73,19 +75,31 @@ fn main() -> status: std::process::ExitStatus pure {
   let pick_first = True();
   let pick_second = False();
   let left = copy_joined_payload(first: &first, second: &absent, flag: pick_first);
-  if left != 7_u64 {
+  if left.direct != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if left.indirect != 7_u64 {
     return std::process::exit_status(code: 1_u8);
   }
   let right_absent = copy_joined_payload(first: &first, second: &absent, flag: pick_second);
-  if right_absent != 0_u64 {
+  if right_absent.direct != 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if right_absent.indirect != 0_u64 {
     return std::process::exit_status(code: 2_u8);
   }
   let left_absent = copy_joined_payload(first: &absent, second: &second, flag: pick_first);
-  if left_absent != 0_u64 {
+  if left_absent.direct != 0_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if left_absent.indirect != 0_u64 {
     return std::process::exit_status(code: 3_u8);
   }
   let right = copy_joined_payload(first: &absent, second: &second, flag: pick_second);
-  if right != 29_u64 {
+  if right.direct != 29_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if right.indirect != 29_u64 {
     return std::process::exit_status(code: 4_u8);
   }
   let kept_left = copy_joined_payload_after_rebind(first: &first, second: &absent, replacement: &absent, flag: pick_first);
