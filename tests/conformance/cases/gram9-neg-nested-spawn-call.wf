@@ -1,0 +1,12 @@
+fn weigh(value: u8) -> result: u8 pure waits {
+  return value;
+}
+
+fn forward(value: u8) -> result: u8 pure {
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let code = forward(value: spawn weigh(value: 0_u8));
+  return std::process::exit_status(code: code);
+}
