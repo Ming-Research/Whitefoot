@@ -60,38 +60,6 @@ on:
         description: The recorded noise floor, operation:size=spread items separated by commas, as an earlier run's summary printed it; empty means this run only measures the floor
         type: string
         default: ""
-  # Temporary for board item wf-hash-map-bench: lets tmp-hash-map-bench.yml
-  # run this workflow's own steps on a hosted runner. Removed with it before
-  # the branch is ready.
-  workflow_call:
-    inputs:
-      candidate:
-        type: string
-        required: true
-      base:
-        type: string
-        default: ""
-      runner:
-        type: string
-        default: github
-      cpu:
-        type: string
-        default: ""
-      sizes:
-        type: string
-        default: "1000,10000,1000000"
-      min_rounds:
-        type: string
-        default: "10"
-      max_rounds:
-        type: string
-        default: "40"
-      control:
-        type: string
-        default: none
-      floor:
-        type: string
-        default: ""
 
 defaults:
   run:
