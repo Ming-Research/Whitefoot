@@ -1185,8 +1185,6 @@ impl FunctionEmitter<'_, '_> {
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
 
-    /// Takes the object for a statement already holding an entry of one of
-    /// its state's tables, where the frame never suspends.
     /// [SHARE-1] `shared_close`'s count: the runtime counts one handle out
     /// with an acquire-release decrement and says whether it was the last.
     pub(super) fn emit_shared_count_out(
@@ -1243,6 +1241,8 @@ impl FunctionEmitter<'_, '_> {
         ))
     }
 
+    /// Takes the object for a statement already holding an entry of one of
+    /// its state's tables, where the frame never suspends.
     pub(super) fn emit_shared_take(
         &mut self,
         result: IrValueId,

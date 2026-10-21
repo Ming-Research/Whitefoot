@@ -1,0 +1,16 @@
+nodrop struct Ledger {
+  count: u64;
+}
+
+struct Ring<U> {
+  item: U;
+  next: Option<Shared<Ring<U>>>;
+}
+
+fn keep(ring: Ring<Ledger>) -> result: Ring<Ledger> pure {
+  return move ring;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

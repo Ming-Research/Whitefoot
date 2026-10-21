@@ -14,6 +14,7 @@ use super::super::model::{
     CheckedNumericType, CheckedShared, CheckedType, CheckedVariant, IntegerType, NominalId,
 };
 use super::generics::GenericSubstitution;
+use super::linearity::LinearityClass;
 use super::{
     CheckStop, Checker, ConstructorTemplate, NominalInstance, NominalTemplate, PreludeType,
 };
@@ -168,7 +169,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         self.ensure_implicit_prelude_nominals(check_context, node, substitution, false)?;
         self.types.reject_recursive_nominal_layouts()?;
-        self.validate_frozen_instances()
+        self.validate_object_instances(check_context)
     }
 
     /// Performs the ordinary nominal pre-scan for one function without
@@ -218,7 +219,7 @@ impl<'unit> Checker<'_, 'unit> {
         self.ensure_implicit_prelude_nominals(check_context, function, substitution, true)?;
         self.ensure_result_list_nominal(check_context, function, substitution)?;
         self.types.reject_recursive_nominal_layouts()?;
-        self.validate_frozen_instances()
+        self.validate_object_instances(check_context)
     }
 
     /// Interns the compiler-owned result-list nominal of a `fn_decl` that
@@ -642,18 +643,30 @@ impl<'unit> Checker<'_, 'unit> {
                 .checked_add(1)
                 .ok_or(SemanticCompilerFailure::CounterOverflow)?;
         }
+        self.validate_object_instances(check_context)
+    }
+
+    /// [SHARE-1] the judgments of a frozen object's value and of a linear
+    /// state, over every instance interned so far. Each pass that may intern
+    /// an instance, the function pre-scans included, runs them, so a symbolic
+    /// instance is judged at its function and again at each concrete one.
+    fn validate_object_instances(
+        &self,
+        check_context: &CheckContext<'_>,
+    ) -> Result<(), CheckStop> {
         self.validate_frozen_instances()?;
-        self.validate_shared_instances()?;
-        Ok(())
+        self.validate_shared_instances(check_context)
     }
 
     /// [SHARE-1] an object whose state is linear holds no handle to itself:
-    /// each such concrete state type, followed through the state behind every
-    /// handle it holds, has no part that is its own handle type, since a
-    /// handle the object held would keep its count from reaching the last
-    /// `shared_close`. A symbolic state is checked again at each concrete
-    /// instance.
-    fn validate_shared_instances(&self) -> Result<(), CheckStop> {
+    /// each such state type, followed through the state behind every handle
+    /// it holds, has no part that is its own handle type, since a handle the
+    /// object held would keep its count from reaching the last
+    /// `shared_close`.
+    fn validate_shared_instances(
+        &self,
+        check_context: &CheckContext<'_>,
+    ) -> Result<(), CheckStop> {
         for id in &self.types.view.nominals {
             let CheckedNominalKind::Shared {
                 state,
@@ -662,7 +675,9 @@ impl<'unit> Checker<'_, 'unit> {
             else {
                 continue;
             };
-            if self.types.owns_modifier_linear_node(state)?.is_none() {
+            // [PROV-6] a type parameter written with no bound is linear at
+            // the symbolic instance its function is checked at.
+            if self.types.linearity_class(check_context, state)? != LinearityClass::Linear {
                 continue;
             }
             let Some(part) = self.types.first_own_handle_part(state, *id)? else {

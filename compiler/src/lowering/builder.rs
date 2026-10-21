@@ -610,10 +610,7 @@ fn lower_function<'program>(
     }
     let overlaps = builder.overlaps();
     let mut lowered = builder.finish(symbol.to_owned(), overlaps, None)?;
-    // A compiler-owned row never suspends: `shared_close` waits in [WAIT-1]'s
-    // sense, its count taking a place in the shared effects' order, but it
-    // completes without a host wait, so it needs no resumable frame.
-    lowered.waits = function.waiting.waits && !compiler_owned;
+    lowered.waits = function.waiting.waits;
     lowered.source_signature = Some(IrSourceSignature {
         parameters: function
             .parameters
