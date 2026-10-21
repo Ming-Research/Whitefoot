@@ -10,6 +10,28 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/verification
 
 Summary: The time-budget decision said a model with fewer than 20 recorded runs has no column, while the budget table has carried a column for one Intel Xeon model since the owner added it, valued at the larger of the row's largest class budget and the model's own runs by the rule. The tree now says so: such a column exists only when the owner adds it and takes that value, because a few runs can show that a class needs more time but not that it needs less, instead of the model's own runs alone or the unmapped-model fallback alone. The recompute tool applies this value to every such column, so the tree states what the table and the tool already do; no budget value changes. The grounds are in the [time-budget investigation](../research/investigations/test-economy/time-budgets.md#xeon-platinum-8573c-column-candidate-compiler-budget-and-cached-baseline-compiler-2026-10-13), which also records the recompute of the Linux columns.
+## 2026-10-21 Exchange's equality allowance covers slots whose containing paths differ only in index steps
+
+Nodes: language/ownership/exchange
+
+Summary: A new decision records the relation under which `swap` tolerates equality: two equal-depth slots whose containing paths are identical step for step or differ only in index steps are the same slot or disjoint storage, so an exchange between two runtime-selected rows needs no proof that the rows are the same, instead of limiting the allowance to slots under one identical array or window. The specification states the relation the checker already applied; the checker is unchanged. Refused: tightening the checker to require one identical array or window.
+
+## 2026-10-13 An atomic target named only in proofs is held from statement entry
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: an atomic target that appears only in proofs takes its lock at statement entry? (Ming-Research/Whitefoot#434, head 5811a8c89)" (translated).
+
+Summary: The lock-order decision's entry-acquired groups gain the groups of targets with no executable use in the guard and block, acquired with every earlier group, because once proofs are erased such a target has no first use to acquire at and entry acquisition keeps the hold SHARE-1 requires, instead of omitting its lock; "before the guard" is reworded to "before the guard or block" without changing the choice. The checker now counts invariant and `use` mentions toward SHARE-2's naming rule.
+
+## 2026-10-13 The compiler offers an explicit formatting request
+
+Nodes: compiler/formatting-command
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the spec/log.md and design/log.md approval records, mark the pull request ready and run the gate on both platforms, renumber when its turn comes and report to the coordinator for merging" (translated), on the card "approve the specification and design-tree changes of Whitefoot#438 (head commit 6320188fc)? It gives the compiler a command that rewrites source files into the canonical layout" (translated), whose background quoted FORM-1 and FORM-2 before and after, stated that no rule was added or retired and no conformance verdict changed, and listed the three decisions of the new node. The revision merged here differs from 6320188fc by the merge of main, the renumbering of the specification from v0.149 to v0.156, because main reached v0.155 first, and the wording of the new node's second decision, which the later card fmt-render-single-fn replaced because the code walks the derivation twice (see Summary).
+
+Summary: A new node records that `whitefootc --format` replaces, in place and all or nothing, every source whose bytes differ from its FORM-2 rendering, over the sources `--check` takes or a module graph, while checking and compilation keep rejecting non-canonical input, because the canonical bytes are fixed by derivation and a FORM-2 rejection reports only the first difference; that its bytes come from one rendering function that stops after grammar derivation, so a program with semantic errors can still be formatted, while the FORM-2 judgment walks the derivation on its own and shares only the layout derivation, with a corpus test holding the judgment and the rendering together; and that graph formatting forms the module program as `--check --graph` does and reports any other failure as `--check` would. Refused: formatting during checking, a formatter script per downstream project, and writing canonical bytes to standard output.
+
 ## 2026-10-13 Rejection text spells source constructs as the writer wrote them
 
 Nodes: compiler/rejection-payloads, compiler/diagnostic-rendering

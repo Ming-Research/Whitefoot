@@ -10,6 +10,20 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
+## 2026-10-21 v0.157: swap's equality allowance admits equal-depth slots whose containing paths differ only in index steps
+
+Rules: changed OP-11
+
+Summary: OP-11 said two equal-depth slots satisfy swap's equality allowance only under one identical array or window, while the checker accepted slots whose containing paths are identical step for step or differ only in index steps, such as `rows^[i][k]` with `rows^[j][l]`. The relation is sound: equal row indices give the same slot or disjoint slots, different row indices give disjoint slots. OP-11 now states that relation, read as OWN-7 reads paths; the checker and every verdict are unchanged, and two accepted cases pin the boundary. Selection ground: the owner ruled on 2026-10-13 to state the relation the checker uses rather than narrow the checker, as the owner's 2026-09-26 ruling had settled the analogous range-separation gap. The amendment was written as v0.150 and renumbered to v0.157 as main advanced; the rule text did not change in the renumbering.
+
+## 2026-10-13 v0.156: an explicit formatting request outside acceptance
+
+Rules: changed FORM-1, FORM-2
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the spec/log.md and design/log.md approval records, mark the pull request ready and run the gate on both platforms, renumber when its turn comes and report to the coordinator for merging" (translated), on the card "approve the specification and design-tree changes of Whitefoot#438 (head commit 6320188fc)? It gives the compiler a command that rewrites source files into the canonical layout" (translated), whose background quoted FORM-1 and FORM-2 before and after, stated that no rule was added or retired and no conformance verdict changed, and listed the three decisions of the new node. The revision merged here differs from 6320188fc only by the merge of main and the renumbering of the specification from v0.149 to v0.156, because main reached v0.155 first.
+
+Summary: FORM-1 said the toolchain never auto-formats and FORM-2 that it never normalizes or rewrites input, which forbade any tool that writes the canonical rendering, so a writer could only repair one FORM-2 difference per compile. FORM-1 now says acceptance never formats input on the writer's behalf, and FORM-2 that a formatting request replacing a source with its rendering is a writer tool outside acceptance and changes no verdict. Non-canonical input is still rejected exactly as before; no conformance verdict changes. Selection ground: the canonical bytes are uniquely determined by derivation, so writing them is a convenience that cannot change what is accepted.
+
 ## 2026-10-21 v0.155: host paths are opened through an explicit authority
 
 Rules: changed PRE-2
