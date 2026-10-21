@@ -2979,7 +2979,7 @@ fn unsupported_heap_payloads_keep_their_layout_and_writer_allocation_in_text_and
             "fn main() -> status: std::process::ExitStatus pure {\n  let map = std::collections::hash_map::hash_map_new::<u64, std::process::MemoryMeter, 1>(capacity: 1_u64);\n  return std::process::exit_status(code: 0_u8);\n}\n",
             2,
             13,
-            48,
+            64,
         ),
     ] {
         let input = SourceInput::new(path, source.as_bytes());
@@ -2988,7 +2988,7 @@ fn unsupported_heap_payloads_keep_their_layout_and_writer_allocation_in_text_and
         let failure = compile(&[input], CompilerLimits::default())
             .expect_err("the ordinary heap guarantee is still eight bytes");
         if path == "meter-hash-map.wf" {
-            assert!(failure.detail().contains("HashMapSlot"), "{failure}");
+            assert!(failure.detail().contains("HashMapNode"), "{failure}");
         }
         let size = format!("payload size {size} bytes");
         assert_located_allocation_failure(

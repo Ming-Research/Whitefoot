@@ -135,6 +135,77 @@ Predictions, exploratory and not acceptance:
   one head word per bucket. If the comparison detects this, accepting it
   needs an owner card stating its size.
 
+### First comparison and the link word in the slot
+
+Measured on the 14900K on 2026-10-21 with `hash-map-bench.yml`, candidate
+Ming-Research/Whitefoot@11ea902e4c6e, base and instrument
+Ming-Research/Whitefoot@48b990f05ba3, clang 22.1.8, timed processes pinned
+to CPU 2. The floor came from run 39560615391 and the judged run is
+39561373318; no cell's spread exceeded its floor. Candidate-to-base time
+ratios with their 95% intervals:
+
+| cell | 1,000 | 10,000 | 1,000,000 |
+| --- | --- | --- | --- |
+| insert, presized | 0.67 [0.66, 0.69] | 0.43 [0.43, 0.44] | 0.46 [0.45, 0.46] |
+| insert, growing | unresolved | 0.98 [0.97, 1.00] | 0.71 [0.71, 0.72] |
+| lookup hit | 0.79 [0.78, 0.80] | 0.64 [0.63, 0.65] | 1.30 [1.29, 1.30] |
+| lookup miss | 0.66 [0.65, 0.66] | 0.43 [0.42, 0.43] | 0.81 [0.80, 0.81] |
+| remove | 1.19 [1.14, 1.21] | 0.73 [0.72, 0.74] | 1.20 [1.20, 1.22] |
+| remove then insert | 0.82 [0.82, 0.83] | 0.69 [0.68, 0.69] | 1.00 [1.00, 1.00] |
+| iterate | 0.23 [0.23, 0.24] | 0.14 [0.14, 0.15] | 0.10 [0.10, 0.10] |
+
+Retained bytes after building from capacity zero, candidate against base:
+41,008 against 49,168 at 1,000 pairs, 655,408 against 393,232 at 10,000 and
+41,943,088 against 50,331,664 at 1,000,000; peaks 45,120 against 73,760,
+720,960 against 589,856 and 46,137,408 against 75,497,504. The byte counts
+follow from the layouts: linear probing holds 24-byte slots and doubles at
+three quarters full, so 2,048, 16,384 and 2,097,152 slots; the chains held
+1,024, 16,384 and 1,048,576 slots of 24 bytes plus one link word and one
+head word each, plus one 16-byte header per backing. At 10,000 pairs both
+hold 16,384 slots, so the two words per slot show as a 1.67 ratio; at the
+other sizes the chains need half the slots.
+
+Hold: H1 failed (p99 1,185 ns at 1,000,000 pairs against 94 ns at 1,000,
+four times being 376 ns), H2 passed (at most 20 microseconds) and the three
+H3 chains passed.
+
+Diagnosis, inferred from the layout and not measured apart: the chain heads,
+the link words and the pairs lay in three separate arrays, so at a million
+pairs, beyond the 36 MB last-level cache, a hit read a head word, a slot
+and, past the first pair of its chain, a link word on a third cache line,
+where linear probing reads one run of slots. A removal read the same and
+wrote a link word. H1 compared a map that fits the cache with one that does
+not, so its ratio measured the cache, not per-call work.
+
+The next round, recommended on the board's design card for this outcome and
+followed before its ruling, keeps every ruled rule:
+
+- Each slot becomes a node holding the link word beside the pair, so a hit
+  reads a head word and the nodes of its chain, and a removal rewrites words
+  in nodes it has already read. No backing for links remains. Storing each
+  pair's hash in its node as well was considered and not taken: for `u64`
+  pairs it adds a word to every slot, which would make the million-pair map
+  16 bytes larger than linear probing's and the 10,000-pair map twice as
+  large, while equality of a `u64` key is one comparison.
+- The stable-identifier directory is not taken: it keeps the linear-probing
+  table and adds a directory, so it is larger than the old map at every
+  size and adds a directory write to every insertion and removal.
+- H1 is replaced, set here before the remeasurement: over uniform hashes,
+  `u64` pairs and limit 64, the p99 of one call over 8,000,000 pairs is at
+  most twice its p99 over 1,000,000. Both maps exceed the 14900K's 36 MB
+  last-level cache (about 42 MB and 335 MB), so nearly every pair is a
+  memory read in both; the factor allows the extra translation misses of the
+  larger map. A larger ratio means per-call work grows with the map. H2 and
+  H3 stay as written, judged at 1,000,000 pairs.
+
+Predictions for the remeasurement, exploratory and not acceptance: lookup
+hit and removal at 1,000,000 pairs faster than in the first comparison but
+possibly still slower than linear probing, which reads one cache line where
+a chain reads two; retained bytes 16 fewer at every size, the ratios
+otherwise unchanged, so the 10,000-pair memory cell still regresses and goes
+to the owner with its size; iteration slower than in the first comparison,
+32-byte nodes against 24-byte slots, and still faster than linear probing.
+
 ## What the two maps already provide
 
 The ordinary [HashMap interface](../../../lib/std/collections/hash_map/module.wfm)

@@ -320,15 +320,13 @@ fn pick_member(members: &HashMap<Key, unit, ceiling>, start: u64) -> found: Opti
   for @scan (step in 0_u64..buckets) {
     let offset = first +wrap step;
     let index = offset % buckets;
-    let slot = &members^.cells.inner[index];
+    let slot = &members^.cells.inner[index].slot;
     match slot^ {
       HashMapFilled(key: member, value: nothing) => {
         let copied = copy_key(key: member);
         return Some<Key>(value: move copied);
       }
       HashMapVacant() => {
-      }
-      HashMapDeleted() => {
       }
     }
   }
@@ -782,7 +780,7 @@ fn random_members(env: &Client, value: &Entry) -> kind: u64 reads(value), writes
           if remaining == 0_u64 {
             break @buckets;
           }
-          let slot = &set_of^.cells.inner[index];
+          let slot = &set_of^.cells.inner[index].slot;
           match slot^ {
             HashMapFilled(key: member, value: nothing) => {
               set env^.random = next_random(state: env^.random);
@@ -794,8 +792,6 @@ fn random_members(env: &Client, value: &Entry) -> kind: u64 reads(value), writes
               set remaining = remaining -wrap 1_u64;
             }
             HashMapVacant() => {
-            }
-            HashMapDeleted() => {
             }
           }
         }
@@ -1293,7 +1289,7 @@ fn combine(slots: &Entries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, f
           Members(members: set_of) => {
             let buckets = set_of^.cells.inner.len;
             for @buckets (index in 0_u64..buckets) {
-              let slot = &set_of^.cells.inner[index];
+              let slot = &set_of^.cells.inner[index].slot;
               match slot^ {
                 HashMapFilled(key: member, value: nothing) => {
                   let taken = False();
@@ -1322,8 +1318,6 @@ fn combine(slots: &Entries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, f
                   }
                 }
                 HashMapVacant() => {
-                }
-                HashMapDeleted() => {
                 }
               }
             }

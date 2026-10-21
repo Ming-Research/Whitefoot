@@ -5,8 +5,12 @@ public struct HashMapPair<K, V> {
 
 public enum HashMapSlot<K, V> {
   HashMapVacant();
-  HashMapDeleted();
   HashMapFilled(public key: K, public value: V);
+}
+
+public struct HashMapNode<K, V> {
+  public readonly next: u64;
+  public readonly slot: HashMapSlot<K, V>;
 }
 
 public enum HashMapReturnReason {
@@ -20,9 +24,8 @@ public enum HashMapPut<K, V> {
 }
 
 public struct HashMap<K, V, const ceiling: u64> {
-  public readonly cells: Box<Slots<HashMapSlot<K, V>>>;
+  public readonly cells: Box<Slots<HashMapNode<K, V>>>;
   public readonly length: u64;
-  public readonly links: Box<Slots<u64>>;
   public readonly heads: Box<Slots<u64>>;
   public readonly reuse: u64;
   public readonly shift: u32;
@@ -39,7 +42,7 @@ public interface HashMapConsume<K, V, E> {
 
 public fn hash_map_new<K, V, const ceiling: u64>(capacity: u64) -> result: HashMap<K, V, ceiling> pure contract {
   requires capacity <= ceiling;
-} doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Capacity counts the slots that can hold pairs; a separate power-of-two array of chain heads, rebuilt when growth changes the bucket count or on rehash, puts each key in the chain of its home bucket. A stored pair stays in its slot while it stays in the map, but no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite chain bounds hold even when they are inconsistent, provided callbacks return.";
+} doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Capacity counts the slots that can hold pairs; each slot carries the link word that chains it into its home bucket or the free list, and a separate power-of-two array of chain heads, rebuilt when growth changes the bucket count or on rehash, starts each chain. A stored pair stays in its slot while it stays in the map, but no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite chain bounds hold even when they are inconsistent, provided callbacks return.";
 
 public fn hash_map_len<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> length: u64 reads(map) doc "Reports the number of pairs the map holds.";
 

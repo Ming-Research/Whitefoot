@@ -1137,7 +1137,7 @@ fn random_field(fields: &HashMap<Key, Bytes, ceiling>, start: u64, client: &Clie
   for @scan (step in 0_u64..buckets) {
     let offset = first +wrap step;
     let index = offset % buckets;
-    let slot = &fields^.cells.inner[index];
+    let slot = &fields^.cells.inner[index].slot;
     match slot^ {
       HashMapFilled(key: field, value: stored) => {
         reply_text(client: client, text: &field^.bytes);
@@ -1147,8 +1147,6 @@ fn random_field(fields: &HashMap<Key, Bytes, ceiling>, start: u64, client: &Clie
         return True();
       }
       HashMapVacant() => {
-      }
-      HashMapDeleted() => {
       }
     }
   }
@@ -1167,7 +1165,7 @@ fn distinct_fields(fields: &HashMap<Key, Bytes, ceiling>, wanted: u64, client: &
     if remaining == 0_u64 {
       break @scan;
     }
-    let slot = &fields^.cells.inner[index];
+    let slot = &fields^.cells.inner[index].slot;
     match slot^ {
       HashMapFilled(key: field, value: stored) => {
         set client^.random = next_random(state: client^.random);
@@ -1182,8 +1180,6 @@ fn distinct_fields(fields: &HashMap<Key, Bytes, ceiling>, wanted: u64, client: &
         set remaining = remaining -wrap 1_u64;
       }
       HashMapVacant() => {
-      }
-      HashMapDeleted() => {
       }
     }
   }
