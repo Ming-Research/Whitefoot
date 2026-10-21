@@ -191,12 +191,14 @@ followed before its ruling, keeps every ruled rule:
   table and adds a directory, so it is larger than the old map at every
   size and adds a directory write to every insertion and removal.
 - H1 is replaced, set here before the remeasurement: over uniform hashes,
-  `u64` pairs and limit 64, the p99 of one call over 8,000,000 pairs is at
-  most twice its p99 over 1,000,000. Both maps exceed the 14900K's 36 MB
-  last-level cache (about 42 MB and 335 MB), so nearly every pair is a
-  memory read in both; the factor allows the extra translation misses of the
-  larger map. A larger ratio means per-call work grows with the map. H2 and
-  H3 stay as written, judged at 1,000,000 pairs.
+  `u64` pairs and limit 64, the p99 of one call over 32,000,000 pairs is at
+  most twice its p99 over 4,000,000. Both maps lie far beyond the 14900K's
+  36 MB last-level cache (about 168 MB and 1.34 GB: 2^22 and 2^25 slots of
+  40 bytes), so nearly every pair is a memory read in both, which a
+  million-pair map of about 42 MB, only a sixth larger than the cache, would
+  not ensure; the factor allows the extra translation misses of the larger
+  map. A larger ratio means per-call work grows with the map. H2 and H3 stay
+  as written, judged at 1,000,000 pairs.
 
 Predictions for the remeasurement, exploratory and not acceptance: lookup
 hit and removal at 1,000,000 pairs faster than in the first comparison but
