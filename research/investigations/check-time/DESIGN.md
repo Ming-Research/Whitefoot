@@ -964,6 +964,82 @@ reduction are workflow inputs, so the same workflow measures other revision
 pairs.
 
 **Lifecycle and current evidence.** The workflow and its helper are
-permanent, manually dispatched, and not a gate dependency. This section was
-written before any 14900K acquisition. The only run so far is a hosted-runner
-link test of one warmup and one round, whose numbers measure nothing.
+permanent, manually dispatched, and not a gate dependency. The criterion above
+was written before the acquisition below and is not changed by it. The
+acquisition's logs and artifact expire on 2026-11-04, so its numbers are
+recorded here.
+
+**Acquisition.** One dispatch of `firn-check-time.yml` at `main`
+`ed1a544b8072d30171ecd7bf3c8a3f6389110ff0`, with every input at its default (the
+two pairs in the table above, a claimed overhead of 1.6 seconds and a required
+reduction of 0.5 seconds), on 2026-10-21 UTC:
+[run 39545084595](https://github.com/Ming-Research/Whitefoot/actions/runs/39545084595),
+attempt 1, artifact `firn-check-time-39545084595-1`. Its manifest reports a
+valid acquisition: seven measured rounds after one warmup per variant, every
+check pinned with `taskset -c 2` and exiting 0 with exactly `firn: accepted`,
+and an idle host (load average 0.07 before the acquisition began). In the
+one-sample step every variant printed `firn: accepted`, so pair `then` is not
+voided.
+
+- Machine: the repository's `14900k` runner, Linux 7.0.0-38-generic, the
+  `performance` governor on all 32 logical CPUs; the manifest's `lscpu` table
+  shows logical CPU 2 (a P core) at 5000 MHz.
+- Toolchain: the compilers were built with Cargo and rustc 1.99.0 (rustc
+  commit `b940084d7`, 2026-09-28, LLVM 23.1.1) under the gate profile with
+  `CARGO_INCREMENTAL=0`, `--locked` and `--offline`. The manifest also records
+  clang and `ld.lld` 22.1.8, Python 3.14.4, `taskset` from util-linux 2.41.3
+  and Perl 5.40.1. The timed command is the compiler's `--check` alone.
+- Compilers: each twin is byte-identical to its `base` (SHA-256 prefixes
+  `450d7772…` for pair `now` and `c9af7a97…` for pair `then`); the `rule`
+  compilers are `e98b7c49…` (`now`) and `b7cc5755…` (`then`). The manifest
+  records the embedded `lib/std` tree as identical between the two compilers of
+  pair `now` and different between those of pair `then`.
+
+Seven measured times per variant, in seconds:
+
+| Variant | Median | Minimum | Maximum |
+|---|---:|---:|---:|
+| `now-base` | 4.718586211 | 4.705052916 | 4.765331122 |
+| `now-rule` | 5.668324101 | 5.645273389 | 5.686587427 |
+| `now-twin` | 4.736048862 | 4.692453209 | 4.776036746 |
+| `then-base` | 5.483771831 | 5.441058668 | 5.513405467 |
+| `then-rule` | 6.655721310 | 6.634152698 | 6.664488198 |
+| `then-twin` | 5.475532623 | 5.429744015 | 5.507870985 |
+
+| Pair | Overhead `O` | Twin range | `O` over the base median |
+|---|---:|---:|---:|
+| `now` | 0.949737890 s | 0.083583537 s | 20.1% (0.9497 / 4.7186) |
+| `then` | 1.171949479 s | 0.078126970 s | 21.4% (1.1719 / 5.4838) |
+
+The last column is computed from the medians above and is not in the run's
+report. The report's other numbers were recomputed from the raw table of
+individual times (`raw/times.csv`) and agree with it.
+
+**Result.** On pair `now`, `m = 1.6 − 0.949737890 = 0.650262110` seconds,
+which is at least 0.5 seconds and greater than the twin range of 0.083583537
+seconds: **the criterion is met**. The same-machine reference is
+`O(then) − O(now) = 0.222211589` seconds, which exceeds the larger of the two
+twin ranges (0.083583537 seconds), so the two pairs differ by more than this
+run's noise.
+
+**What the result does not show.**
+
+- The 1.6 seconds is a hosted runner's figure and the 14900K is faster: without
+  the rule the check takes 4.72 seconds (`now`) and 5.48 seconds (`then`, the
+  historical compilers) here against 6.41 seconds on the hosted runner. Pair
+  `then` measures an overhead of 1.172 seconds on this machine, 0.428 seconds
+  below 1.6 seconds before any change between the pairs, and the margin of
+  0.650 seconds is that 0.428 seconds plus the 0.222 seconds of the reference.
+  The run cannot say how much of the 0.428 seconds is the faster machine and
+  how much is the noise of the single hosted pair.
+- Measured against the historical compilers on this machine, pair `now` has an
+  overhead 0.222 seconds lower, which is below the 0.5 seconds the criterion
+  requires. The 0.5 seconds is reached only because the criterion measures from
+  the hosted runner's 1.6 seconds.
+- The 0.222 seconds contains every change between the pairs: integer `match`,
+  later changes to the rule and the checker, and `lib/std`. It is not
+  attributed to integer `match`, and this run has no check that could refute
+  such an attribution.
+- The run is one dispatch of seven rounds on one source and one machine. It was
+  not repeated and has no confidence interval; its noise is the twin range the
+  criterion names, not a recorded noise floor of the 14900K.
