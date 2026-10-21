@@ -2002,6 +2002,10 @@ fn probe(flag: Bool) -> result: u64 pure {
         let const_parameter_types = HashMap::new();
         let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            source_spellings: &HashMap::new(),
+            postcondition_clauses: &HashMap::new(),
+            postcondition_sources: &HashMap::new(),
+            type_spellings: &HashMap::new(),
             captured_places: &captured_places,
             judge_conditions: true,
             declarations: &[],

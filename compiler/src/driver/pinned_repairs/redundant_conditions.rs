@@ -1,7 +1,8 @@
 //! [OP-5] repairs of a condition the fixed derivation decides: the test and
 //! its dead branch are deleted and the selected branch is kept.
 
-use super::{CompilationFailureKind, CompilerLimits, RepairPair, compile, contradictory_successes};
+use super::harness::contradictory_successes;
+use super::{CompilationFailureKind, CompilerLimits, RepairPair, compile};
 use crate::SourceInput;
 
 pub(super) const REDUNDANT_CONDITIONS: &[RepairPair] = &[

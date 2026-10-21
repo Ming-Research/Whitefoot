@@ -1,0 +1,7 @@
+fn value() -> result: u32 pure {
+  return 0_u32 +wrap 1_u32 +wrap 2_u32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -12,14 +12,14 @@ use std::path::{Path, PathBuf};
 use super::json::{self, Value};
 
 /// The verdict space the corpus fixes:
-/// `accept | reject(rule, optional position) | run(exit) | unsupported`.
+/// `accept | reject(diagnostics, each with rule and position) | run(exit) | unsupported`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Verdict {
     /// The unit reached complete target-independent source acceptance.
     Accept,
-    /// The unit violates the named numbered rule, with its source and span
-    /// when the adapter has the complete diagnostic record.
-    Reject(Option<String>, Option<(String, Span)>),
+    /// The unit's reported source rejections in order, each with its rule
+    /// (absent for an uncited stop) and exact source coordinate.
+    Reject(Vec<RejectedDiagnostic>),
     /// The program ran to completion with this command status.
     Run(i32),
     /// A compiler or backend capability limit, distinct from source rejection.
@@ -38,6 +38,8 @@ pub enum Expectation {
     Accept,
     /// `{"kind":"reject","rule":R}`
     Reject(String),
+    /// `{"kind":"reject","diagnostics":[...]}` in source order.
+    RejectDiagnostics(Vec<DiagnosticExpectation>),
     /// `{"kind":"run","exit":N}`
     Run(i32),
     /// `{"kind":"unsupported","why":W}`
@@ -58,12 +60,57 @@ impl Expectation {
     pub fn matched_by(&self, verdict: &Verdict) -> bool {
         match (self, verdict) {
             (Self::Accept, Verdict::Accept) => true,
-            (Self::Reject(rule), Verdict::Reject(Some(cited), _)) => rule == cited,
+            (Self::Reject(rule), Verdict::Reject(reached)) => {
+                reached.len() == 1 && reached[0].rule.as_ref() == Some(rule)
+            }
+            (Self::RejectDiagnostics(expected), Verdict::Reject(reached)) => {
+                expected.len() == reached.len()
+                    && expected.iter().zip(reached).all(|(expected, reached)| {
+                        reached.rule.as_ref() == Some(&expected.rule)
+                            && reached.coordinate == Some(expected.coordinate)
+                            && expected.expected.as_ref().is_none_or(|terminals| {
+                                reached.expected.as_ref() == Some(terminals)
+                            })
+                    })
+            }
             (Self::Run(exit), Verdict::Run(reached)) => exit == reached,
             (Self::Unsupported, Verdict::Unsupported(_)) => true,
             _ => false,
         }
     }
+}
+
+/// The exact DIAG-1 source coordinate, independent of a compiler's tree.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiagnosticCoordinate {
+    /// Bundle-order source identity.
+    pub source_ordinal: u64,
+    /// Inclusive source-local byte offset.
+    pub byte_start: u64,
+    /// Exclusive source-local byte offset.
+    pub byte_end: u64,
+}
+
+/// One reported source rejection, with no attribution invented by the adapter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RejectedDiagnostic {
+    /// The reported numbered rule, absent for an uncited stop.
+    pub rule: Option<String>,
+    /// The exact coordinate, absent for a bundle-root rejection.
+    pub coordinate: Option<DiagnosticCoordinate>,
+    /// The reported grammar predicates, when a grammar failure carries them.
+    pub expected: Option<Vec<String>>,
+}
+
+/// One declared rejection; an absent expected set leaves its payload unchecked.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticExpectation {
+    /// The rule the specification selects.
+    pub rule: String,
+    /// The exact location the specification selects.
+    pub coordinate: DiagnosticCoordinate,
+    /// Optional exact expected-terminal evidence.
+    pub expected: Option<Vec<String>>,
 }
 
 /// A checked half-open byte interval in a case's single source record.
@@ -99,20 +146,67 @@ impl Span {
     }
 }
 
+/// One arranged byte string: exact bytes, or bytes that follow the absolute
+/// path of the invocation's initial directory and a `/`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ArrangedBytes {
+    /// `"<hex>"`: these bytes.
+    Exact(Vec<u8>),
+    /// `{"initial":"<hex>"}`: the initial directory's absolute path, `/`,
+    /// then these bytes.
+    BelowInitial(Vec<u8>),
+}
+
+impl ArrangedBytes {
+    /// The bytes this string denotes for an invocation whose initial
+    /// directory is `initial`.
+    pub fn resolve(&self, initial: &Path) -> Vec<u8> {
+        match self {
+            Self::Exact(bytes) => bytes.clone(),
+            Self::BelowInitial(suffix) => {
+                let mut bytes = initial.as_os_str().as_encoded_bytes().to_vec();
+                bytes.push(b'/');
+                bytes.extend_from_slice(suffix);
+                bytes
+            }
+        }
+    }
+
+    /// The bytes themselves, when they do not depend on the invocation.
+    #[cfg_attr(unix, allow(dead_code))]
+    pub fn exact(&self) -> Option<&[u8]> {
+        match self {
+            Self::Exact(bytes) => Some(bytes),
+            Self::BelowInitial(_) => None,
+        }
+    }
+}
+
+/// What one fixture places at its path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FixtureContent {
+    /// A regular file with these contents.
+    File(ArrangedBytes),
+    /// A directory.
+    Directory,
+    /// A symbolic link whose target is these exact bytes.
+    Link(Vec<u8>),
+}
+
 /// One fixture object placed under the invocation's initial directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fixture {
     /// The path's exact bytes, relative to the initial directory.
     pub path: Vec<u8>,
-    /// A regular file's exact contents, or `None` for a directory.
-    pub bytes: Option<Vec<u8>>,
+    /// What the fixture places there.
+    pub content: FixtureContent,
 }
 
 /// The invocation one `run` case needs.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Arrangement {
     /// The complete native argument vector, position 0 included.
-    pub argv: Option<Vec<Vec<u8>>>,
+    pub argv: Option<Vec<ArrangedBytes>>,
     /// The standard input body; absent means an empty standard input.
     pub stdin: Option<Vec<u8>>,
     /// Fixtures created under the initial directory before the invocation.
@@ -139,11 +233,17 @@ pub struct Case {
 
 impl Case {
     /// A rule-only case leaves the position unconstrained. An opted-in case
-    /// requires its own source and span from that same rejection.
+    /// requires its single rejection to carry the span in its one source
+    /// (bundle ordinal 0).
     pub fn matches_span(&self, verdict: &Verdict) -> bool {
         self.span.is_none_or(|expected| {
-            matches!(verdict, Verdict::Reject(_, Some((file, actual)))
-                if *file == self.logical_path() && *actual == expected)
+            matches!(verdict, Verdict::Reject(reached)
+                if reached.len() == 1
+                    && reached[0].coordinate == Some(DiagnosticCoordinate {
+                        source_ordinal: 0,
+                        byte_start: expected.start,
+                        byte_end: expected.end,
+                    }))
         })
     }
 
@@ -259,6 +359,29 @@ fn case(value: &Value) -> Result<Case, String> {
 fn expectation(value: &Value) -> Result<Expectation, String> {
     match value.get("kind").and_then(Value::string) {
         Some("accept") => Ok(Expectation::Accept),
+        Some("reject") if value.get("diagnostics").is_some() => {
+            let Value::Object(fields) = value else {
+                return Err("reject expectation must be an object".to_owned());
+            };
+            if fields.len() != 2 {
+                return Err("reject expectation needs exactly one of rule, diagnostics".to_owned());
+            }
+            let diagnostics = value
+                .get("diagnostics")
+                .and_then(Value::array)
+                .filter(|diagnostics| !diagnostics.is_empty())
+                .ok_or("reject diagnostics must be a nonempty array")?
+                .iter()
+                .map(diagnostic_expectation)
+                .collect::<Result<Vec<_>, _>>()?;
+            if diagnostics.windows(2).any(|pair| {
+                (pair[0].coordinate.source_ordinal, pair[0].coordinate.byte_start)
+                    > (pair[1].coordinate.source_ordinal, pair[1].coordinate.byte_start)
+            }) {
+                return Err("diagnostics must be in source ordinal and byte order".to_owned());
+            }
+            Ok(Expectation::RejectDiagnostics(diagnostics))
+        }
         Some("reject") => value
             .get("rule")
             .and_then(Value::string)
@@ -275,6 +398,119 @@ fn expectation(value: &Value) -> Result<Expectation, String> {
     }
 }
 
+fn diagnostic_expectation(value: &Value) -> Result<DiagnosticExpectation, String> {
+    let Value::Object(fields) = value else {
+        return Err("diagnostic must be an object".to_owned());
+    };
+    if fields.keys().any(|field| {
+        !matches!(field.as_str(), "rule" | "source_ordinal" | "byte_start" | "byte_end" | "expected")
+    }) {
+        return Err("diagnostic contains an unknown field".to_owned());
+    }
+    let integer = |field| {
+        value
+            .get(field)
+            .and_then(Value::integer)
+            .ok_or_else(|| format!("diagnostic {field} must be a nonnegative integer"))
+    };
+    let coordinate = DiagnosticCoordinate {
+        source_ordinal: integer("source_ordinal")?,
+        byte_start: integer("byte_start")?,
+        byte_end: integer("byte_end")?,
+    };
+    if coordinate.byte_start > coordinate.byte_end {
+        return Err("diagnostic byte_start must not exceed byte_end".to_owned());
+    }
+    let rule = value
+        .get("rule")
+        .and_then(Value::string)
+        .ok_or("diagnostic needs a rule")?
+        .to_owned();
+    let expected = value
+        .get("expected")
+        .map(|terminals| {
+            terminals
+                .array()
+                .filter(|terminals| !terminals.is_empty())
+                .ok_or("diagnostic expected must be a nonempty array")?
+                .iter()
+                .map(|terminal| {
+                    terminal
+                        .string()
+                        .map(ToOwned::to_owned)
+                        .ok_or_else(|| "diagnostic expected terminal must be a string".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    if expected.as_ref().is_some_and(|terminals| {
+        terminals.iter().enumerate().any(|(position, terminal)| {
+            terminal.is_empty() || terminals[..position].contains(terminal)
+        })
+    }) {
+        return Err("diagnostic expected must contain distinct nonempty terminal labels".to_owned());
+    }
+    Ok(DiagnosticExpectation {
+        rule,
+        coordinate,
+        expected,
+    })
+}
+
+#[test]
+fn diagnostic_expectations_detect_omissions_reordering_and_changed_payloads() {
+    let value = json::parse(
+        r#"{"kind":"reject","diagnostics":[{"rule":"GRAM-3","source_ordinal":0,"byte_start":10,"byte_end":11,"expected":["pure","reads","writes"]},{"rule":"FORM-1","source_ordinal":0,"byte_start":30,"byte_end":31}]}"#,
+    )
+    .expect("diagnostic manifest row");
+    let expected = expectation(&value).expect("valid diagnostic expectation");
+    let Expectation::RejectDiagnostics(diagnostics) = &expected else {
+        panic!("diagnostic-list expectation");
+    };
+    let reached = diagnostics
+        .iter()
+        .map(|diagnostic| RejectedDiagnostic {
+            rule: Some(diagnostic.rule.clone()),
+            coordinate: Some(diagnostic.coordinate),
+            expected: diagnostic.expected.clone(),
+        })
+        .collect::<Vec<_>>();
+    assert!(expected.matched_by(&Verdict::Reject(reached.clone())));
+    assert!(!expected.matched_by(&Verdict::Reject(reached[..1].to_vec())));
+    let mut extra = reached.clone();
+    extra.push(reached[1].clone());
+    assert!(!expected.matched_by(&Verdict::Reject(extra)));
+    let mut reordered = reached.clone();
+    reordered.reverse();
+    assert!(!expected.matched_by(&Verdict::Reject(reordered)));
+    let mut wrong_set = reached.clone();
+    wrong_set[0]
+        .expected
+        .as_mut()
+        .expect("expected set")
+        .push(";".to_owned());
+    assert!(!expected.matched_by(&Verdict::Reject(wrong_set)));
+    let legacy = Expectation::Reject("GRAM-3".to_owned());
+    assert!(legacy.matched_by(&Verdict::Reject(reached[..1].to_vec())));
+    assert!(!legacy.matched_by(&Verdict::Reject(reached)));
+}
+
+#[test]
+fn malformed_diagnostic_manifest_rows_are_rejected() {
+    for text in [
+        r#"{"kind":"reject","diagnostics":[]}"#,
+        r#"{"kind":"reject","diagnostics":[{}]}"#,
+        r#"{"kind":"reject","rule":"GRAM-3","diagnostics":[]}"#,
+        r#"{"kind":"reject","diagnostics":[{"rule":"GRAM-3","source_ordinal":0,"byte_start":2,"byte_end":1}]}"#,
+        r#"{"kind":"reject","diagnostics":[{"rule":"GRAM-3","source_ordinal":0,"byte_start":1,"byte_end":2,"expected":["pure","pure"]}]}"#,
+        r#"{"kind":"reject","diagnostics":[{"rule":"GRAM-3","source_ordinal":0,"byte_start":1,"byte_end":2,"ignored":1}]}"#,
+        r#"{"kind":"reject","diagnostics":[{"rule":"GRAM-3","source_ordinal":0,"byte_start":3,"byte_end":4},{"rule":"FORM-1","source_ordinal":0,"byte_start":1,"byte_end":2}]}"#,
+    ] {
+        let value = json::parse(text).expect("structurally valid JSON");
+        assert!(expectation(&value).is_err(), "admitted malformed row {text}");
+    }
+}
+
 fn arrangement(value: &Value) -> Result<Arrangement, String> {
     let argv = value
         .get("argv")
@@ -282,7 +518,7 @@ fn arrangement(value: &Value) -> Result<Arrangement, String> {
             argv.array()
                 .ok_or_else(|| "argv must be an array".to_owned())?
                 .iter()
-                .map(hex_bytes)
+                .map(arranged_bytes)
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
@@ -318,12 +554,29 @@ fn arrangement(value: &Value) -> Result<Arrangement, String> {
 
 fn fixture(value: &Value) -> Result<Fixture, String> {
     let path = hex_bytes(value.get("path").ok_or("fixture needs a path")?)?;
-    let bytes = match (value.get("bytes"), value.get("directory")) {
-        (Some(content), None) => Some(hex_bytes(content)?),
-        (None, Some(Value::True)) => None,
-        _ => return Err("fixture needs exactly one of bytes, directory".to_owned()),
+    let content = match (
+        value.get("bytes"),
+        value.get("directory"),
+        value.get("link"),
+    ) {
+        (Some(content), None, None) => FixtureContent::File(arranged_bytes(content)?),
+        (None, Some(Value::True), None) => FixtureContent::Directory,
+        (None, None, Some(target)) => FixtureContent::Link(hex_bytes(target)?),
+        _ => return Err("fixture needs exactly one of bytes, directory, link".to_owned()),
     };
-    Ok(Fixture { path, bytes })
+    Ok(Fixture { path, content })
+}
+
+/// Decodes one arranged byte string: a hex string, or an object whose one
+/// member `initial` holds the hex bytes that follow the initial directory.
+fn arranged_bytes(value: &Value) -> Result<ArrangedBytes, String> {
+    match value {
+        Value::Object(members) => match (members.len(), members.get("initial")) {
+            (1, Some(suffix)) => Ok(ArrangedBytes::BelowInitial(hex_bytes(suffix)?)),
+            _ => Err("an arranged byte object has exactly the member initial".to_owned()),
+        },
+        _ => Ok(ArrangedBytes::Exact(hex_bytes(value)?)),
+    }
 }
 
 /// Decodes one manifest byte string.
@@ -381,20 +634,24 @@ fn span_assertions_require_the_same_rejections_rule_source_and_interval() {
         reason: None,
         arrange: None,
     };
-    let verdict = |rule: &str, position| Verdict::Reject(Some(rule.to_owned()), position);
+    let verdict = |rule: &str, position: Option<(u64, Span)>| {
+        Verdict::Reject(vec![RejectedDiagnostic {
+            rule: Some(rule.to_owned()),
+            coordinate: position.map(|(source_ordinal, span)| DiagnosticCoordinate {
+                source_ordinal,
+                byte_start: span.start,
+                byte_end: span.end,
+            }),
+            expected: None,
+        }])
+    };
     let matches = |reached: &Verdict| case.expect.matched_by(reached) && case.matches_span(reached);
-    assert!(matches(&verdict(
-        "PROV-6",
-        Some(("sample.wf".to_owned(), span))
-    )));
+    assert!(matches(&verdict("PROV-6", Some((0, span)))));
     for reached in [
         verdict("PROV-6", None),
-        verdict("PROV-6", Some(("another.wf".to_owned(), span))),
-        verdict(
-            "PROV-6",
-            Some(("sample.wf".to_owned(), Span { start: 20, end: 26 })),
-        ),
-        verdict("TYPE-5", Some(("sample.wf".to_owned(), span))),
+        verdict("PROV-6", Some((1, span))),
+        verdict("PROV-6", Some((0, Span { start: 20, end: 26 }))),
+        verdict("TYPE-5", Some((0, span))),
         Verdict::Accept,
     ] {
         assert!(!matches(&reached), "{reached:?}");

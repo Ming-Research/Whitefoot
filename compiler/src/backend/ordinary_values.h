@@ -106,6 +106,9 @@ WF_RESULT_UNION(wf_stop_result, uint8_t, wf_io_error);
 WF_RESULT_UNION(wf_open_result, wf_value, wf_io_error);
 WF_RESULT_UNION(wf_connect_result, wf_connection, wf_io_error);
 WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
+/* `Directory`, its read and write halves in declaration order. */
+typedef struct { wf_value read; wf_value write; } wf_directory_pair;
+WF_RESULT_UNION(wf_directory_result, wf_directory_pair, wf_io_error);
 #undef WF_RESULT_UNION
 /* `Instant` has its declared u64 field's representation. `Option<Instant>`:
  * one payload-carrying variant keeps the product layout,
@@ -118,12 +121,19 @@ typedef struct { uint8_t tag; uint64_t value; } wf_optional_bytes;
 typedef struct { uint8_t tag; uint8_t value; uint8_t error; } wf_sleep_result;
 _Static_assert(sizeof(wf_sleep_result) == 3, "ordinary sleep Result layout");
 #define WF_OPTION_SOME 1u
+/* `Option<HostPaths>`: one payload-carrying variant keeps the product
+ * layout, the tag and then the opaque value at its 16-byte alignment. */
+typedef struct { uint8_t tag; wf_value value; } wf_optional_value;
+/* `PathEncoding`'s variants in the order `fs/module.wfm` declares them. */
+#define WF_PATH_ENCODING_NATIVE_BYTES 0u
+#define WF_PATH_ENCODING_UTF8 1u
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
- * `Directory`. */
+ * `Directory` and `host_paths` is an `Option<HostPaths>`. */
 typedef struct {
     wf_value args;
     uint64_t drivers;
     wf_value cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, stops, memory_meter;
+    wf_optional_value host_paths;
 } wf_inputs;
 
 _Static_assert(sizeof(wf_value) == 32 && _Alignof(wf_value) == 16, "ordinary opaque layout");
@@ -140,6 +150,9 @@ _Static_assert(sizeof(wf_close_result) == 16, "ordinary close Result layout");
 _Static_assert(sizeof(wf_open_result) == 48, "ordinary open Result layout");
 _Static_assert(sizeof(wf_connect_result) == 80, "ordinary connect Result layout");
 _Static_assert(sizeof(wf_accepted_connection) == 96, "ordinary AcceptedConnection layout");
+_Static_assert(offsetof(wf_directory_pair, write) == 32 && sizeof(wf_directory_pair) == 64,
+               "ordinary Directory layout");
+_Static_assert(sizeof(wf_directory_result) == 80, "ordinary Directory Result layout");
 _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
                offsetof(wf_accept_result, err.error) == 4 &&
                sizeof(wf_accept_result) == 112, "ordinary accept Result layout");
@@ -151,7 +164,10 @@ _Static_assert(offsetof(wf_deadline, value) == 8 && sizeof(wf_deadline) == 16,
                "ordinary Option<Instant> layout");
 _Static_assert(offsetof(wf_inputs, drivers) == 32 &&
                offsetof(wf_inputs, cwd_read) == 48 &&
-               sizeof(wf_inputs) == 368, "ordinary Inputs layout");
+               offsetof(wf_inputs, host_paths) == 368 &&
+               sizeof(wf_inputs) == 416, "ordinary Inputs layout");
+_Static_assert(offsetof(wf_optional_value, value) == 16 && sizeof(wf_optional_value) == 48,
+               "ordinary Option<HostPaths> layout");
 _Static_assert(offsetof(wf_optional_bytes, value) == 8 && sizeof(wf_optional_bytes) == 16,
                "ordinary Option<u64> layout");
 
@@ -190,6 +206,7 @@ WF_RESULT_OFFSETS(wf_stop_result, 1, 4);
 WF_RESULT_OFFSETS(wf_open_result, 16, 4);
 WF_RESULT_OFFSETS(wf_connect_result, 16, 4);
 WF_RESULT_OFFSETS(wf_accept_result, 16, 4);
+WF_RESULT_OFFSETS(wf_directory_result, 16, 4);
 #undef WF_RESULT_OFFSETS
 
 /* A host function's link name is its standard library identity [MOD-10],
@@ -216,6 +233,26 @@ void wf__body_host_utf8_len(wf_utf8_result *result, const wf_value *value);
 void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value, wf_view *destination, uint64_t start, uint64_t end);
 void wf__body_relative_path(wf_value_result *result, const wf_value *value);
 void wf__body_open_read(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_value *path);
+/* The six host-path opens [PRE-2]; `encoding` is a `PathEncoding` tag. */
+void wf__body_open_host_read(wf_open_result *result, wf_value *factory, const wf_value *paths,
+                             const wf_value *base, const wf_value *path);
+void wf__body_open_host_read_bytes(wf_open_result *result, wf_value *factory, const wf_value *paths,
+                                   const wf_value *base, const wf_view *path, uint64_t start,
+                                   uint64_t end, uint8_t encoding);
+void wf__body_open_host_directory_read(wf_open_result *result, wf_value *factory,
+                                       const wf_value *paths, const wf_value *base,
+                                       const wf_value *path);
+void wf__body_open_host_directory_read_bytes(wf_open_result *result, wf_value *factory,
+                                             const wf_value *paths, const wf_value *base,
+                                             const wf_view *path, uint64_t start, uint64_t end,
+                                             uint8_t encoding);
+void wf__body_open_host_directory(wf_directory_result *result, wf_value *factory,
+                                  const wf_value *paths, const wf_value *base,
+                                  const wf_value *path);
+void wf__body_open_host_directory_bytes(wf_directory_result *result, wf_value *factory,
+                                        const wf_value *paths, const wf_value *base,
+                                        const wf_view *path, uint64_t start, uint64_t end,
+                                        uint8_t encoding);
 void wf__body_read_at(wf_read_result *result, wf_value *factory, wf_value *file, wf_view *destination, uint64_t file_offset, uint64_t start, uint64_t end);
 void wf__body_write_once(wf_write_result *result, wf_value *factory, wf_value *output, const wf_view *source, uint64_t start, uint64_t end, const wf_deadline *deadline, const wf_cancel_handle *cancel);
 void wf__body_exit_status(wf_value *result, uint8_t code);
