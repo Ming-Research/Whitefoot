@@ -5,6 +5,14 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-13 The compiler offers an explicit formatting request
+
+Nodes: compiler/formatting-command
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the spec/log.md and design/log.md approval records, mark the pull request ready and run the gate on both platforms, renumber when its turn comes and report to the coordinator for merging" (translated), on the card "approve the specification and design-tree changes of Whitefoot#438 (head commit 6320188fc)? It gives the compiler a command that rewrites source files into the canonical layout" (translated), whose background quoted FORM-1 and FORM-2 before and after, stated that no rule was added or retired and no conformance verdict changed, and listed the three decisions of the new node. The revision merged here differs from 6320188fc by the merge of main, the renumbering of the specification from v0.149 to v0.156, because main reached v0.155 first, and the wording of the new node's second decision, which the later card fmt-render-single-fn replaced because the code walks the derivation twice (see Summary).
+
+Summary: A new node records that `whitefootc --format` replaces, in place and all or nothing, every source whose bytes differ from its FORM-2 rendering, over the sources `--check` takes or a module graph, while checking and compilation keep rejecting non-canonical input, because the canonical bytes are fixed by derivation and a FORM-2 rejection reports only the first difference; that its bytes come from one rendering function that stops after grammar derivation, so a program with semantic errors can still be formatted, while the FORM-2 judgment walks the derivation on its own and shares only the layout derivation, with a corpus test holding the judgment and the rendering together; and that graph formatting forms the module program as `--check --graph` does and reports any other failure as `--check` would. Refused: formatting during checking, a formatter script per downstream project, and writing canonical bytes to standard output.
+
 ## 2026-10-13 Rejection text spells source constructs as the writer wrote them
 
 Nodes: compiler/rejection-payloads, compiler/diagnostic-rendering
