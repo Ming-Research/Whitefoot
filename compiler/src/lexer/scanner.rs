@@ -544,7 +544,13 @@ fn increment_with_limit(
 
 fn raw_issue(source: &SourceBundle, source_id: SourceId, issue: RawIssue) -> LexOutcome {
     match produced_span(source, source_id, issue.start, issue.end) {
-        Ok(span) => LexOutcome::SourceIssue(SourceIssue::new(span, issue.kind)),
+        Ok(span) => LexOutcome::SourceIssue(SourceIssue {
+            span,
+            kind: issue.kind,
+            mechanical_fix: source
+                .file(source_id)
+                .and_then(|file| super::repairs::raw_fix(file.bytes(), issue.start, issue.kind)),
+        }),
         Err(failure) => LexOutcome::CompilerFailure(failure),
     }
 }
