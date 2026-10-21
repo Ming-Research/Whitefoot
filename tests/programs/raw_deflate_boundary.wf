@@ -133,22 +133,17 @@ fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> 
 } {
   doc "Appends as much of one static message as the destination range reference still holds.";
   let spare = destination^.len;
-  let admitted = filled <= spare;
   let length = text^.len;
-  if admitted {
-    for @append (at in filled..spare) {
-      let taken = at -wrap filled;
-      let done = taken >= length;
-      if done {
-        return at;
-      }
-      let byte = text^[taken];
-      set destination^[at] = byte;
+  for @append (at in filled..spare) {
+    let taken = at -wrap filled;
+    let done = taken >= length;
+    if done {
+      return at;
     }
-    return spare;
-  } else {
-    return filled;
+    let byte = text^[taken];
+    set destination^[at] = byte;
   }
+  return spare;
 }
 
 fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) -> result: u64 reads(source), writes(destination) {

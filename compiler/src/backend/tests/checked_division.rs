@@ -1,9 +1,20 @@
 use super::{compile, compile_and_run};
 
+/// Every checked division and remainder reaches its operands through the
+/// parameters of `quotient_of` and `remainder_of`, so each success value and
+/// each error is observed at run time rather than decided from literals.
 #[test]
 fn guards_every_integer_error_before_llvm() {
-    let template = r#"fn main() -> status: std::process::ExitStatus pure {
-  let quotient = 84_$TYPE /checked 2_$TYPE;
+    let template = r#"fn quotient_of(numerator: $TYPE, denominator: $TYPE) -> result: Result<$TYPE, DivError> pure {
+  return numerator /checked denominator;
+}
+
+fn remainder_of(numerator: $TYPE, denominator: $TYPE) -> result: Result<$TYPE, DivError> pure {
+  return numerator %checked denominator;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let quotient = quotient_of(numerator: 84_$TYPE, denominator: 2_$TYPE);
   match quotient {
     Ok(value: quotient_value) => {
       if quotient_value == 42_$TYPE {
@@ -15,7 +26,7 @@ fn guards_every_integer_error_before_llvm() {
       return std::process::exit_status(code: 2_u8);
     }
   }
-  let remainder = 85_$TYPE %checked 43_$TYPE;
+  let remainder = remainder_of(numerator: 85_$TYPE, denominator: 43_$TYPE);
   match remainder {
     Ok(value: remainder_value) => {
       if remainder_value == 42_$TYPE {
@@ -27,7 +38,7 @@ fn guards_every_integer_error_before_llvm() {
       return std::process::exit_status(code: 4_u8);
     }
   }
-  let divide_zero = 42_$TYPE /checked 0_$TYPE;
+  let divide_zero = quotient_of(numerator: 42_$TYPE, denominator: 0_$TYPE);
   match divide_zero {
     Ok(value: divide_zero_value) => {
       return std::process::exit_status(code: 5_u8);
@@ -42,7 +53,7 @@ fn guards_every_integer_error_before_llvm() {
       }
     }
   }
-  let remainder_zero = 42_$TYPE %checked 0_$TYPE;
+  let remainder_zero = remainder_of(numerator: 42_$TYPE, denominator: 0_$TYPE);
   match remainder_zero {
     Ok(value: remainder_zero_value) => {
       return std::process::exit_status(code: 7_u8);
@@ -72,7 +83,7 @@ $SIGNED_CASES  return std::process::exit_status(code: 0_u8);
     ] {
         let signed_cases = if signed {
             format!(
-                r#"  let divide_overflow = {minimum}_{ty} /checked -1_{ty};
+                r#"  let divide_overflow = quotient_of(numerator: {minimum}_{ty}, denominator: -1_{ty});
   match divide_overflow {{
     Ok(value: divide_overflow_value) => {{
       return std::process::exit_status(code: 9_u8);
@@ -87,7 +98,7 @@ $SIGNED_CASES  return std::process::exit_status(code: 0_u8);
       }}
     }}
   }}
-  let remainder_overflow = {minimum}_{ty} %checked -1_{ty};
+  let remainder_overflow = remainder_of(numerator: {minimum}_{ty}, denominator: -1_{ty});
   match remainder_overflow {{
     Ok(value: remainder_overflow_value) => {{
       return std::process::exit_status(code: 11_u8);

@@ -1016,7 +1016,7 @@ fn crossed_ordinary_tcp_halves_keep_the_other_directions_live() {
             }
         }
         .expect("ordinary construction and cleanup of crossed halves must compile");
-        let program = build_program(&llvm);
+        let program = build_program(&crate::support::sanitized(llvm));
         for native_ring in [true, false] {
             let mut child = program.spawn_on_route(native_ring, &[]);
             let mut accept = || {

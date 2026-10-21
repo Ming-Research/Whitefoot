@@ -1,7 +1,72 @@
-//! Internal measure identity across affine header formation [RANGE-2].
+//! Internal storage and measure identity, and retained range proof receipts.
 
 use super::*;
 use crate::semantic::tests::with_semantics;
+
+#[test]
+fn retaining_another_alias_case_unions_certificate_sites_for_that_loop_only() {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let crate::SemanticOutcome::Complete(program) = outcome else {
+            panic!("the fixture must check: {outcome:?}");
+        };
+        let data = &program.data;
+        let functions: Vec<_> = data.functions.iter().collect();
+        let main = data
+            .executable_functions()
+            .find(|function| function.name == "main")
+            .unwrap();
+        let prelude = BTreeSet::new();
+        let mut walker = Walker::new(
+            &functions,
+            &data.nominals,
+            &data.elements,
+            main,
+            Vec::new(),
+            &data.constants,
+            JudgmentScope::Concrete,
+            &prelude,
+        );
+        let path = |component| NodePath {
+            components: vec![component],
+        };
+        let first = CertifiedLoop {
+            id: CheckedLoopId(0),
+            node: path(0),
+            writes: vec![path(1)],
+            reads: vec![path(2)],
+        };
+        let other = CertifiedLoop {
+            id: CheckedLoopId(1),
+            node: path(3),
+            writes: vec![path(4)],
+            reads: vec![path(5)],
+        };
+        walker.retain_certificate(first);
+        walker.retain_certificate(other.clone());
+        walker.retain_certificate(CertifiedLoop {
+            id: CheckedLoopId(0),
+            node: path(0),
+            writes: vec![path(6), path(1), path(6)],
+            reads: vec![path(7), path(2), path(7)],
+        });
+        assert_eq!(
+            walker.certified,
+            vec![
+                CertifiedLoop {
+                    id: CheckedLoopId(0),
+                    node: path(0),
+                    writes: vec![path(1), path(6)],
+                    reads: vec![path(2), path(7)],
+                },
+                other,
+            ]
+        );
+    });
+}
 
 /// [RANGE-2] Replacing an Array with its copied value must change element
 /// identity even when the copied container was already materialized.

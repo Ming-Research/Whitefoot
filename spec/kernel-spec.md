@@ -1,4 +1,4 @@
-# Kernel Specification v0.151
+# Kernel Specification v0.154
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -334,7 +334,7 @@ The `^` alternative of `psuffix` follows a `place` whose selected kind is a refe
 The `compare_op` alternatives are the value equalities `==` and `!=` [OP-16] and the four integer orderings of [OP-1], and form `infix` expressions exactly as the `infix_op` arithmetic does; a `call` writes its type arguments after the `::` delimiter, `cvt::<u8, u32>(w)`, so that `IDENT "<"` begins a comparison and never a type-argument list, while a constructor `call` and a `type` write theirs bare.
 There is no `while`.
 Conditional control is type-driven with one form per class: a Bool condition takes `if`/`else`, an enum or integer scrutinee takes `match`, and each is the sole legal form for its class — a `match` whose scrutinee has type `Bool` is a hard error citing GRAM-6 at the scrutinee `expr` node, with a repair [DIAG-1].
-An `if` condition must have exact value mode and type `own Bool` under exactly the [OP-5] condition judgment, TYPE-7 exclusivity included; every other condition failure cites GRAM-6 at the condition `expr` node.
+An `if` condition must have exact value mode and type `own Bool` under exactly the [OP-5] condition judgment, TYPE-7 exclusivity included; every other exact-mode or exact-type failure of a condition cites GRAM-6 at the condition `expr` node, and its source redundancy is [OP-5]'s judgment.
 An `if_stmt` `else` whose block is empty is a hard error citing GRAM-6 at that `if_stmt` node, with a repair [DIAG-1]; a `value_if`'s undelivering else is [GIVE-1]'s rejection, not this one.
 An `else` whose block contains exactly one `if_stmt` and nothing else is a hard error citing GRAM-6 at that nested `if_stmt` node, with a repair [DIAG-1]; in a `value_if` whose else block is exactly one else-free `if_stmt`, the branch cannot deliver, [GIVE-1] owns the rejection, and GRAM-6 forms no candidate there, so no repair demands a chain form that could not be spelled.
 A conditional value is a `let`-initializer `match` or `if` [GRAM-7, GIVE-1].
@@ -819,14 +819,14 @@ For a copy operand, each bound field is copied and the source remains live and u
 For an affine or linear operand, the statement is the destructuring consume: one consuming use of the operand [OWN-1], with no surviving residual and no derived release of the consumed value's own storage [STOR-3].
 An own-place `match` [OWN-13] is the enum form of the same destructuring.
 
-The release graph of a type `T` has as its nodes the types reachable from `T` through the parts each node owns: its owned fields, enum variant payloads, `Box` content, and the elements of every storage shape [TYPE-9].
-A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, is reached in that graph only as the content of its `Box` [TYPE-9], so the `Box` is the leaf every owner's edge lands on and no such shape is ever a node of an owner other than its own cell.
-A type's release action is non-empty by the least fixed point of two clauses: a `Box` or `Paged` [TYPE-9], a `Shared<T>`, `SharedRead<T>` or `Frozen<T>` handle [SHARE-1], or a `DecisionCell` handle [PRE-1], is non-empty, and any type owning a non-empty type is non-empty [STOR-3].
-The graph has an edge from a node to a sub-node exactly when that sub-node's release action is non-empty.
-One walk performs the compiler-derived release, and it visits exactly the nodes of that graph in [STOR-3]'s order — every owned field of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, every element of an `Array` and every slot of a window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
-A field, payload, or element whose release action is empty is never visited, and a container's elements are visited before its backing is released, so a release of a full container needs no emptiness premise.
-A type whose release graph has a cycle makes that walk's depth a runtime quantity rather than a compile-time constant, and is admitted: the derived release of such a type is one release action per node type, entering itself where the graph closes, and the walk's depth is the value's own.
-Every judgment of this rule that reads the graph reads each node once, which terminates on a cyclic graph and is exactly the node set this version's release actions need.
+The type-ownership closure of a type `T` contains `T` and every type transitively owned under this rule; linearity reads this closure [OWN-1].
+A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, is reached in that closure only as the content of its `Box` [TYPE-9].
+A type's release action is non-empty by the least fixed point of these clauses: a `Box` or `Paged` [TYPE-9], a `Shared<T>`, `SharedRead<T>` or `Frozen<T>` handle, a `ConcurrentHashMap<V>` or `KeySet` [SHARE-1], or a `DecisionCell` handle [PRE-1], is non-empty; a struct or enum owning a non-empty field or variant payload is non-empty; and a storage shape with a non-empty element type is non-empty when its type has no constant extent or that extent is not statically zero. A symbolic type parameter is non-empty exactly when its written capability bound [FN-2] does not grant `copy`.
+The executable release graph of `T`, used by [STOR-3, FN-10], starts at `T` and contains precisely these edges: a node has an edge to each owned field, variant payload or `Box` content whose release action is non-empty, and a storage-shape node has an edge to its element type exactly when that element contributes non-empty release by the storage-shape clause above.
+One walk performs the compiler-derived release, following those executable edges for the components present in the value in [STOR-3]'s order — owned fields of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, the initialized elements of an `Array` or window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
+A release of a full container needs no emptiness premise [STOR-3].
+A type whose executable release graph has a cycle makes that walk's depth a runtime quantity rather than a compile-time constant, and is admitted: the derived release of such a type is one release action per node type, entering itself where the graph closes, and the walk's depth is the value's own.
+Every compile-time judgment of this rule reads each type once in its corresponding type-ownership closure or executable release graph, so its traversal terminates on cyclic type descriptions.
 
 A consume of a proper sub-place of a value one of whose remaining parts is linear is a partial consume [WIN-3].
 A partial consume is a hard error citing PROV-6 at the complete consumed `place`, naming the residual linear part, with a repair [DIAG-1].
@@ -841,7 +841,7 @@ An instantiation whose argument's class does not satisfy the written bound is a 
 A type parameter with no bound is linear at the one symbolic instance its body is checked at [FN-2], so a body that lets such a parameter's value reach a scope exit receives this rule's own not-consumed rejection there, naming the absent bound in place of a `nodrop` declaration.
 The bound is a capability filter: it supplies no function-kind argument, selects no behavior, and creates no bound-satisfaction judgment other than this one [FN-2, FN-3].
 
-The checked program retains, before lowering [DIAG-2], each type's linearity class, each release edge's release graph, each struct destructuring's binder list, and each declaration bound that was checked.
+The checked program retains, before lowering [DIAG-2], each type's linearity class, each release edge's executable release graph, each struct destructuring's binder list, and each declaration bound that was checked.
 
 ## 6. Storage
 
@@ -901,18 +901,20 @@ An external-resource termination under [SCOPE-3] likewise creates no source edge
 No exit duplicates an action already carried by an inner scope edge.
 
 The release action of a type is compiler-owned semantic data selected by that type, not a fixed enumeration of memory-reclamation actions.
-Which components of a value that action visits, and in which order, is [PROV-6]'s release graph and its one walk; the per-type actions below are the leaves that walk runs.
+Which components of a value that action visits, and in which order, is [PROV-6]'s executable release graph and its one walk; the per-type actions below are the leaves that walk runs.
 A `Box<T>` release runs its content's compiler-derived release; when [STOR-1] places that content in an allocated cell, the release then runs one compiler-derived heap free of that cell.
 An `Array` release is each element's compiler-derived release in ascending index order and no storage reclamation of its own.
 A `Slots` or `Ring` release is each element's compiler-derived release over its window in ascending logical index order and no storage reclamation of its own.
 A `Paged` release visits its initialized elements in [PROV-6]'s order and frees each allocated page; the containing cell, including its directory, is freed by the `Box` action above.
 A `Shared<T>`, `SharedRead<T>` or `Frozen<T>` release is [SHARE-1]'s handle release.
 A `DecisionCell` release is [PRE-1]'s handle release.
+A `KeySet` release returns the storage the runtime holds for that set [SHARE-1].
+A `ConcurrentHashMap<V>` release releases every value its entries hold [SHARE-1], then returns the storage the runtime holds for that map.
 A `const` item [CONST-2] is never released.
 Every other frame-resident owned value [STOR-1] has no release action of its own.
 
-A host handle [PRE-2] has no fields, so its release is empty; a shared or frozen handle takes [SHARE-1]'s handle release; a decision-cell handle takes [PRE-1]'s handle release; and every other opaque struct [TYPE-2] takes the release of the fields it owns [PROV-6] under this rule, the storage shapes and `Box` taking the actions above.
-An opaque struct's `nodrop` modifier, and only the ordinary ownership closure of [PROV-6], requires explicit consumption.
+A host handle [PRE-2] has no fields, so its release is empty. An opaque type with a per-type action above takes that action; every other opaque struct [TYPE-2] takes the release of the fields it owns [PROV-6] under this rule.
+An opaque struct's `nodrop` modifier, and only the type-ownership closure of [PROV-6], requires explicit consumption.
 No source declaration, annotation, attribute, contract, or binding attaches a finalizer or any other user-defined action to a value's release.
 
 A successful [SET-1] assignment derives no finalizer or cleanup edge and no release beyond the old value's own: a copy target's previous value needs none, and an affine target's previous value takes the release [WIN-3] states.
@@ -1119,6 +1121,17 @@ The implicit-read case already owned by [TYPE-7] is exclusive: when `e` uses a r
 Every other exact-mode or exact-type failure is a hard error citing OP-5 at the selected `expr` node, with `SourceCoordinate` equal to that expression node's complete checked half-open source extent.
 An `if` condition is executed control flow [GRAM-6], while a contract predicate, invariant relation, and `proof_use` are erased proof syntax [FN-8, FN-9, INV-1, PRF-1].
 This judgment alone creates no runtime check or effect.
+
+The source redundancy judgment applies to the condition `expr` of every `if_stmt` and `value_if`, including each `else if` link [GRAM-6, GRAM-7].
+Its query point is after the condition's ordinary evaluation, obligations, effects and fact publications and before its branch-entry facts [ENT-3.S1].
+A nongeneric body is judged at its ordinary instance; a generic body is judged once at the symbolic instance of its own parameters under their written bounds [FN-2], and a concrete-instance recheck does not judge it again.
+In a contradictory entering state [ENT-4] this judgment admits the condition; structural reachability remains [FN-1]'s judgment.
+A condition with neither a goal origin nor a comparison origin [ENT-3] has no derivable truth, and this judgment admits it.
+In a noncontradictory entering state, a condition with a goal origin or a comparison origin is decided True when every fact the then-block's entry would establish [ENT-3.S1] is already derivable there: each member of its goal-origin set [ENT-3], direct before expanded, is discharged by the Signed Goal query [ENT-6], whose numeric steps are [MSR-4]'s disposition in the [ENT-4.OT] view, and its comparison origin, when it has one, is derivable in the closed L0 state [ENT-4].
+It is decided False when every fact the else-block's entry or the false edge would establish is derivable: the Signed Goal query discharges `bnot` of each member, and the comparison origin's exact negation [ENT-4] is derivable in the closed L0 state.
+The queries use no `proof_use` and publish nothing; True is tried first, and a condition that neither truth decides is admitted.
+Deleting a decided test and its dead branch therefore removes no fact a later goal could use.
+A decided condition is a redundant source form and is a hard error citing OP-5 at its complete `expr` node, with `SourceCoordinate` equal to that node's complete checked half-open source extent, residual `RedundantCondition`, the condition and its decided truth, and a repair [DIAG-1] that names the deciding facts and directs removal of the test and its dead branch while retaining the selected branch's execution and delivery [GIVE-1].
 
 [OP-6] Exact numeric conversion has one partial value function `C(Src,Dst,x)` and one total Boolean domain predicate `D(Src,Dst,x)` over all 100 ordered pairs of the ten numeric primitives.
 Both endpoints are written type arguments [TYPE-5]; an endpoint may be a numeric primitive or a symbolic type parameter whose [FN-2] bound is `Int` or `Float`.
@@ -2350,7 +2363,7 @@ A value of the prelude type `Frozen<T>` [PRE-1] is a handle to a frozen object, 
 A type argument for `T` has no part, at any depth of field, payload field, element or `Box` content, that is a `Shared<U>`, a `SharedRead<U>`, a `DecisionCell` [PRE-1] or a host handle [PRE-2], so nothing a frozen object holds changes; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part a depth-first walk of the type's parts in declaration order reaches, the walk visiting each type once [DIAG-1].
 A path that ends at or passes through `inner` is a readonly path [TYPE-2] and is never moved or consumed [OWN-1], a `move` or consuming use of one being a hard error citing SHARE-1 at the `place`, with a repair [DIAG-1]; reading it reads the frozen object's value, which is storage of no binding and belongs to no context [WAIT-2], needs no atomic statement, and is admitted wherever a read of the handle is, an atomic statement's guard and block included.
 Releasing a handle releases that handle, and the object's value is released when its last handle has been released [STOR-3].
-A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, which holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`. A map is only ever the state of a shared object [TYPE-9]. Releasing a map releases every value its entries hold.
+A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, which holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`. A map is only ever the state of a shared object [TYPE-9]. Its release is [STOR-3]'s map action.
 `map_count` returns how many entries of the map its argument names are `Some`.
 Each execution gives every sequence of bytes a position, a `u64`, the same in every map; which position each sequence has is an input of the execution [WAIT-2].
 `map_scan` with cursor `c` takes an extent `e`, an integer greater than `c` and at most two to the 64th, which is an input of the execution and which an implementation may choose by `count`; `count` states nothing else. It inserts into its key set, as `key_set_insert` does, each key whose entry in the map is `Some` and whose position `p` satisfies `c <= p < e`, in increasing order of position and, among keys of one position, in lexicographic order of their bytes as unsigned values with a proper prefix first; it returns `e` modulo two to the 64th, so `0` exactly when `e` is two to the 64th.
@@ -3520,7 +3533,7 @@ A path [REF-1] is exact when it has no `R.**` cover, each of its index and page 
 A `&T` reference variable is exact at a point when no `set` in its function body rebinds it, reachable or not, and its path set there is one exact path.
 A range-reference variable of either kind [REF-4] is a range alias when its `let` initializer [REF-1] is a bare range-reference variable, its source, and no `set` in its function body rebinds either of the two, reachable or not; a range alias's identifying variable is its source's identifying variable when its source is itself a range alias, and its source otherwise.
 The proof path of a place written through a reference variable exact at that point is that path followed by the place's steps below the variable's `^`; the proof path of a place written through a range alias is that of the same place written through the range alias's identifying variable; the proof path of every other place is its root declaration event [TYPE-6, DIAG-1] with its canonical source spelling [FORM-2], so a place written through a rebound reference variable, through one whose path set is not one exact path, or through a range-reference variable that is no range alias, whose `len` is the value its formation captured [REF-4], is identified through that variable.
-Two places are the same term exactly when their proof paths have the same root declaration event and the same steps in order, where two index steps are the same when they are one literal or const value, when they read one binding to which no assignment has intervened since either was formed, or when they are one formation's evaluation, two page steps that end a page-reference borrow are the same when they are one formation's evaluation [REF-4], and segment steps, page steps of direct run-selecting places [OP-4] and every page step followed by a further step, including one a call's substitution appends below a page reference, compare as index steps; a fresh binding legally reusing an expired spelling is a distinct term, and places with distinct proof paths are distinct terms even when they resolve to overlapping storage.
+Two places are the same term exactly when their proof paths have the same root declaration event and the same steps in order, where two index steps are the same when they are one literal or const value, when they read one binding to which no assignment has intervened since either was formed, when they are one formation's evaluation, or when they read one tracked field or dereference term to which no write of its support places has intervened since either was formed, two page steps that end a page-reference borrow are the same when they are one formation's evaluation [REF-4], and segment steps, page steps of direct run-selecting places [OP-4] and every page step followed by a further step, including one a call's substitution appends below a page reference, compare as index steps; a fresh binding legally reusing an expired spelling is a distinct term, and places with distinct proof paths are distinct terms even when they resolve to overlapping storage.
 These conditions keep apart two places one declaration event could otherwise name: a rebound variable names one storage before a rebinding and another after it, and a rebound parameter or `atomic_stmt` binder also roots the path of every reference formed from it.
 A range alias forms no range and its source is never rebound, so throughout the range alias's scope, which its source's scope encloses, both name the one formation the source holds and its captured `len`.
 Term identity thus under-approximates aliasing, while kills [ENT-5] use [OWN-7]'s resolved-place overlap relation and over-approximate it.
@@ -4311,7 +4324,7 @@ An unproved result exhausts the whole set; a proved result may stop at the first
 `AUTO` does not recurse, saturate newly derived residuals, search for a multiplier outside the two integer-tightening factors fixed above, choose a subset larger than two published affine premises, or publish an intermediate result.
 Consequently an author can determine from this rule alone whether a target is automatic: a derivation outside these exact shapes requires the explicit [PRF-1] `proof_use` list rather than compiler probing.
 
-An [FN-8] Signed Goal query first applies the ordinary positive and negative [ENT-4] disposition to its complete root.
+A Signed Goal query [FN-8, OP-5] first applies the ordinary positive and negative [ENT-4] disposition to its complete root.
 When neither sign is ordinarily derivable, its one remaining positive-proof route recursively follows exactly [ENT-4]'s fixed Boolean introduction table over the already-written goal tree: positive `band` and negative `bor` require every child in source order; negative `band` and positive `bor` visit every child in source order and retain the first successful witness; and `bnot` checks its sole child under the opposite sign.
 Visits use [ENT-4.OT]'s live definition links in the same query view.
 `bxor` has no introduction route.
@@ -4340,11 +4353,11 @@ Every step reads the origin-transport query view formed by [ENT-4.OT].
 Step 2 applies exactly when the submitted goal has an exact signed identity in [ENT-2]'s finite universe; a normalized affine relation with no opaque goal skips it.
 Step 6 visits its candidates in compiler-owned source-allocation order, measure terms and tracked field places before own integer bindings; when closed L0 has the tightest bound `m - r <= c` relating a candidate m to the goal's right-hand term r, it submits the one exact residual target to `AUTO` and composes a success transitively with that L0 bridge.
 Step 7 applies exactly when the normalized affine target is `q <= k`, with one atom q of coefficient one and a constant k, and q is the quotient image of a captured division [ENT-3.S7], which is unique because each division's result is a fresh atom [ENT-6]; with that division's captured dividend image a and divisor image d, it submits the one target `a - (k + 1)*d <= -1`, formed in checked `i128` arithmetic, to `AUTO`.
-An unavailable image or an unrepresentable candidate is skipped without suppressing a later candidate; a goal no step discharges is unproved and is rejected by its owning rule.
+An unavailable image or an unrepresentable candidate is skipped without suppressing a later candidate; a goal no step discharges is unproved, and its consumer applies its owning rule.
 
-The consumers are exactly [OP-4] subscript bounds, [OP-2] integer domain, [OP-6] conversion domain, [FN-8] requirements, [FN-9] normal-result relations, and [INV-1] invariant targets.
+The consumers are exactly [OP-4] subscript bounds, [OP-2] integer domain, [OP-6] conversion domain, [OP-5] condition redundancy, [FN-8] requirements, [FN-9] normal-result relations, and [INV-1] invariant targets.
 Each keeps its own normalization — which proposition it forms from its source node — and none keeps a route grant of its own: an operation adds a goal, never a route.
-A rejection for a goal that no step discharges names its disposition, `refuted` or `unproved` [ENT-4], and carries a repair [DIAG-1]; an [INV-1] target that no step discharges is refuted when this disposition derives the negation of one of its bounds, and unproved otherwise.
+A rejection for a required goal that no step discharges names its disposition, `refuted` or `unproved` [ENT-4], and carries a repair [DIAG-1]; an [INV-1] target that no step discharges is refuted when this disposition derives the negation of one of its bounds, and unproved otherwise; [OP-5] states its own result judgment, under which a discharged query rejects.
 Each family paragraph below states its normalization and then submits.
 
 A derivation outside these exact automatic families requires the explicit [PRF-1] `proof_use` list; this rule admits no additional automatic candidates.
@@ -4698,13 +4711,8 @@ fn main() -> status: ExitStatus pure {
       return move failed;
     }
   }
-  let expected = v == 42_i32;
-  if expected {
-  } else {
-    let failed = exit_status(code: 1_u8);
-    return move failed;
-  }
-  let success = exit_status(code: 0_u8);
+  let code = cvt::<i32, u8>(v);
+  let success = exit_status(code: code);
   return move success;
 }
 ```

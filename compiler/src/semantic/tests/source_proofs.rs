@@ -1416,7 +1416,11 @@ fn caller(enabled: Bool, a: u8, a_limit: u8, b: u8, b_limit: u8, c: u8, c_limit:
 
 /// A predecessor that closes to L0 contradiction contributes no runtime state
 /// to a join. In particular, its write cannot erase the live predecessor's
-/// exact value image, published name, or canonical affine theorem.
+/// exact value image, published name, or canonical affine theorem. The
+/// contradictory predecessor is the break out of a zero-trip counted loop,
+/// whose body entry is contradictory, joined with the loop's live exhaustion
+/// edge: an `if` edge contradicting a noncontradictory state is a decided
+/// condition [OP-5].
 #[test]
 fn a_contradictory_predecessor_is_neutral_to_an_affine_join() {
     let source = format!(
@@ -1441,14 +1445,14 @@ fn retain(a: u8, a_limit: u8, b: u8, b_limit: u8, c: u8, c_limit: u8) -> result:
   let value = first_sum + right;
   let first_limit_sum = left_limit + middle_limit;
   let limit = first_limit_sum + right_limit;
-  if a < a {{
+  invariant total: value <= limit {{
+    use (left <= left_limit);
+    use (middle <= middle_limit);
+    use (right <= right_limit);
+  }}
+  for (unreached in 0_u64..0_u64) {{
     set value = 0_u32;
-  }} else {{
-    invariant total: value <= limit {{
-      use (left <= left_limit);
-      use (middle <= middle_limit);
-      use (right <= right_limit);
-    }}
+    break;
   }}
   need(value: value, limit: limit);
   return unit;

@@ -277,15 +277,9 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let second_end = copy_name(args: &args, position: 3_u64, destination: &second[0_u64..64_u64]);
   let outcome = 99_u8;
   if folder_end > 0_u64 {
-    if folder_end <= 64_u64 {
-      if first_end > 0_u64 {
-        if first_end <= 64_u64 {
-          if second_end > 0_u64 {
-            if second_end <= 64_u64 {
-              set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, folder: &folder[0_u64..folder_end], first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
-            }
-          }
-        }
+    if first_end > 0_u64 {
+      if second_end > 0_u64 {
+        set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, folder: &folder[0_u64..folder_end], first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
       }
     }
   }

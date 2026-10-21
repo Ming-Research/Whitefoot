@@ -1,0 +1,182 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias HandleFactory = std::io::HandleFactory;
+alias OutputStream = std::io::OutputStream;
+alias args_count = std::text::args_count;
+alias exit_status = std::process::exit_status;
+alias instant_after = std::time::instant_after;
+alias now = std::time::now;
+alias sleep_until = std::time::sleep_until;
+
+fn hot_leaf(seed: u32) -> result: u32 pure {
+  let a = seed;
+  let b = seed +wrap 2654435769_u32;
+  let c = ixor(seed, 2246822519_u32);
+  let d = seed +wrap 3266489917_u32;
+  for @mixing (round in 0_u64..1000000_u64) {
+    let a_rotated = irotl(a, 7_u32);
+    let a_crossed = ixor(a_rotated, d);
+    let a_scaled = a_crossed *wrap 1664525_u32;
+    let a_next = a_scaled +wrap b;
+    let b_rotated = irotl(b, 11_u32);
+    let b_crossed = ixor(b_rotated, a_next);
+    let b_scaled = b_crossed *wrap 22695477_u32;
+    let b_next = b_scaled +wrap c;
+    let c_rotated = irotl(c, 13_u32);
+    let c_crossed = ixor(c_rotated, b_next);
+    let c_scaled = c_crossed *wrap 1103515245_u32;
+    let c_next = c_scaled +wrap d;
+    let d_rotated = irotl(d, 17_u32);
+    let d_crossed = ixor(d_rotated, c_next);
+    let d_scaled = d_crossed *wrap 747796405_u32;
+    let d_next = d_scaled +wrap a_next;
+    let c_fold = irotr(c_next, 3_u32);
+    let a_final = ixor(a_next, c_fold);
+    let d_fold = irotr(d_next, 5_u32);
+    let b_final = ixor(b_next, d_fold);
+    let a_fold = irotr(a_final, 9_u32);
+    let c_final = c_next +wrap a_fold;
+    let b_fold = irotr(b_final, 15_u32);
+    let d_final = d_next +wrap b_fold;
+    let e_rotated = irotl(a_final, 19_u32);
+    let e_crossed = ixor(e_rotated, d_final);
+    let e_scaled = e_crossed *wrap 2891336453_u32;
+    let e_next = e_scaled +wrap b_final;
+    let f_rotated = irotl(b_final, 23_u32);
+    let f_crossed = ixor(f_rotated, e_next);
+    let f_scaled = f_crossed *wrap 277803737_u32;
+    let f_next = f_scaled +wrap c_final;
+    let g_rotated = irotl(c_final, 29_u32);
+    let g_crossed = ixor(g_rotated, f_next);
+    let g_scaled = g_crossed *wrap 1597334677_u32;
+    let g_next = g_scaled +wrap d_final;
+    let h_rotated = irotl(d_final, 3_u32);
+    let h_crossed = ixor(h_rotated, g_next);
+    let h_scaled = h_crossed *wrap 3812015801_u32;
+    let h_next = h_scaled +wrap e_next;
+    let g_fold = irotr(g_next, 7_u32);
+    let e_final = ixor(e_next, g_fold);
+    let h_fold = irotr(h_next, 11_u32);
+    let f_final = ixor(f_next, h_fold);
+    let e_fold = irotr(e_final, 13_u32);
+    let g_final = g_next +wrap e_fold;
+    let f_fold = irotr(f_final, 17_u32);
+    let h_final = h_next +wrap f_fold;
+    let i_rotated = irotl(e_final, 5_u32);
+    let i_crossed = ixor(i_rotated, h_final);
+    let i_scaled = i_crossed *wrap 3266489917_u32;
+    let i_next = i_scaled +wrap f_final;
+    let j_rotated = irotl(f_final, 9_u32);
+    let j_crossed = ixor(j_rotated, i_next);
+    let j_scaled = j_crossed *wrap 2246822519_u32;
+    let j_next = j_scaled +wrap g_final;
+    let k_rotated = irotl(g_final, 15_u32);
+    let k_crossed = ixor(k_rotated, j_next);
+    let k_scaled = k_crossed *wrap 747796405_u32;
+    let k_next = k_scaled +wrap h_final;
+    let l_rotated = irotl(h_final, 21_u32);
+    let l_crossed = ixor(l_rotated, k_next);
+    let l_scaled = l_crossed *wrap 2891336453_u32;
+    let l_next = l_scaled +wrap i_next;
+    let k_fold = irotr(k_next, 19_u32);
+    let i_final = ixor(i_next, k_fold);
+    let l_fold = irotr(l_next, 23_u32);
+    let j_final = ixor(j_next, l_fold);
+    let i_fold = irotr(i_final, 29_u32);
+    let k_final = k_next +wrap i_fold;
+    let j_fold = irotr(j_final, 3_u32);
+    let l_final = l_next +wrap j_fold;
+    set a = i_final;
+    set b = j_final;
+    set c = k_final;
+    set d = l_final;
+  }
+  let first_pair = ixor(a, b);
+  let second_pair = ixor(c, d);
+  return first_pair +wrap second_pair;
+}
+
+fn ordinary(seed: u32, depth: u8) -> result: u32 pure {
+  if depth > 0_u8 {
+    let descendant_seed = seed +wrap 1013904223_u32;
+    let descendant_depth = depth -wrap 1_u8;
+    let descendant = ordinary(seed: descendant_seed, depth: descendant_depth);
+    let following_seed = ixor(descendant, seed);
+    let following_leaf = hot_leaf(seed: following_seed);
+    let combined = ixor(following_leaf, descendant);
+    return combined +wrap 2654435769_u32;
+  }
+  let leaf_value = hot_leaf(seed: seed);
+  return ixor(leaf_value, seed);
+}
+
+fn awaitable_loop(clock: &Clock, batches: u64, seed: u32) -> result: u32 writes(clock) waits {
+  let started = now(clock: clock);
+  let deadline = instant_after(instant: started, nanoseconds: 20000000_u64);
+  let cancellation = std::time::cancel_never();
+  let sleep_result = sleep_until(deadline: deadline, cancel: &cancellation);
+  std::time::close_cancel_watch(watch: move cancellation);
+  match sleep_result {
+    Ok(value: slept) => {
+    }
+    Err(error: cancelled) => {
+      return 0_u32;
+    }
+  }
+  let checksum = seed;
+  for @batch_work (batch in 0_u64..batches) {
+    let next_checksum = ordinary(seed: checksum, depth: 1_u8);
+    set checksum = next_checksum;
+  }
+  return checksum;
+}
+
+fn publish_checksum(factory: &HandleFactory, output: &OutputStream, source: &[u8]) -> result: u8 reads(source), writes(factory), writes(output) waits contract {
+  requires source^.len == 4_u64;
+} {
+  let sent = 0_u64;
+  loop @publish {
+    if sent < 4_u64 {
+    } else {
+      break @publish;
+    }
+    let cancellation_watch = std::time::cancel_never();
+    let no_deadline = None<std::time::Instant>();
+    let published = std::io::write_once(factory: factory, output: output, source: source, start: sent, end: 4_u64, deadline: no_deadline, cancel: &cancellation_watch);
+    std::time::close_cancel_watch(watch: move cancellation_watch);
+    match published {
+      Ok(value: next) => {
+        set sent = next;
+      }
+      Err(error: output_error) => {
+        return 1_u8;
+      }
+    }
+  }
+  return 0_u8;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: invocation, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: monotonic, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let invocation_arguments = args_count(args: &invocation);
+  let batch_count = 100_u64;
+  if invocation_arguments > 1_u64 {
+    set batch_count = invocation_arguments -wrap 1_u64;
+  }
+  let seed_value = cvt.wrap::<u64, u32>(invocation_arguments);
+  let completed_checksum = awaitable_loop(clock: &monotonic, batches: batch_count, seed: seed_value);
+  let checksum_bytes = array_filled::<u8, 4>(value: 0_u8);
+  set checksum_bytes[0_u64] = cvt.wrap::<u32, u8>(completed_checksum);
+  let second_byte_word = ishr.wrap(completed_checksum, 8_u32);
+  set checksum_bytes[1_u64] = cvt.wrap::<u32, u8>(second_byte_word);
+  let third_byte_word = ishr.wrap(completed_checksum, 16_u32);
+  set checksum_bytes[2_u64] = cvt.wrap::<u32, u8>(third_byte_word);
+  let fourth_byte_word = ishr.wrap(completed_checksum, 24_u32);
+  set checksum_bytes[3_u64] = cvt.wrap::<u32, u8>(fourth_byte_word);
+  let output_status = publish_checksum(factory: &entry_factory, output: &out, source: &checksum_bytes[0_u64..4_u64]);
+  return exit_status(code: output_status);
+}

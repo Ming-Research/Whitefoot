@@ -1,0 +1,45 @@
+fn pad_sum(values: &Array<u64, 7168>) -> result: u64 reads(values) {
+  let total = 0_u64;
+  for (index in 0_u64..7168_u64) {
+    let item = values^[index];
+    set total = total +wrap item;
+  }
+  return total;
+}
+
+fn spine(depth: u64, v: u64, i: u8) -> result: u64 pure {
+  let pad = array_filled::<u64, 7168>(value: v);
+  let wide = cvt::<u8, u64>(i);
+  set pad[wide] = depth;
+  let done = depth == 0_u64;
+  if done {
+    return pad_sum(values: &pad);
+  }
+  let below = depth -wrap 1_u64;
+  let a = spine(depth: below, v: v, i: i);
+  let b = pad_sum(values: &pad);
+  return a +wrap b;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let count = 0_u64;
+  set count = std::text::args_count(args: &args);
+  match cvt.checked::<u64, u8>(count) {
+    Ok(value: idx) => {
+      let depth = count *wrap 200000_u64;
+      let r = spine(depth: depth, v: 3_u64, i: idx);
+      let ok = r > 0_u64;
+      if ok {
+        return std::process::exit_status(code: 0_u8);
+      }
+      return std::process::exit_status(code: 1_u8);
+    }
+    Err(error: e) => {
+      return std::process::exit_status(code: 9_u8);
+    }
+  }
+}

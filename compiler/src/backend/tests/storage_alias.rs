@@ -165,7 +165,12 @@ fn ring_head_read_can_share_an_owner_with_a_back_append() {
   return observed;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let report = array_filled::<u8, 18>(value: 255_u8);
   let window = box_ring_new::<u8>(capacity: 17_u64);
   place_back(window: &window.inner, value: 7_u8);
   for (
@@ -180,9 +185,7 @@ fn main() -> status: std::process::ExitStatus pure {
       if window.inner.head != i {
         return std::process::exit_status(code: 2_u8);
       }
-      if window.inner.len != 2_u64 {
-        return std::process::exit_status(code: 3_u8);
-      }
+      set report[i] = cvt::<u64, u8>(window.inner.len);
       if window.inner[0_u64] != 7_u8 {
         return std::process::exit_status(code: 4_u8);
       }
@@ -204,13 +207,21 @@ fn main() -> status: std::process::ExitStatus pure {
   if final_value != 7_u8 {
     return std::process::exit_status(code: 8_u8);
   }
-  if window.inner.head != 16_u64 {
-    return std::process::exit_status(code: 9_u8);
+  set report[16_u64] = cvt::<u64, u8>(window.inner.head);
+  set report[17_u64] = cvt::<u64, u8>(window.inner.len);
+  let report_bytes = &report[0_u64..18_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 18_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 3_u8);
+    }
   }
-  if window.inner.len != 0_u64 {
-    return std::process::exit_status(code: 10_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
@@ -246,13 +257,19 @@ fn main() -> status: std::process::ExitStatus pure {
         );
     }
     // The same Box reaches both formals. A stale head produces code 1 or 2;
-    // corrupt boundary or element updates produce codes 3 through 10; an
-    // unexpectedly full window produces code 11. The IR
+    // corrupt element or head updates produce codes 4 through 8, a failed
+    // write code 3; an unexpectedly full window produces code 11. The
+    // program writes the remaining boundary words: the
+    // Ring length after each of the 16 appends, then the head and length
+    // after the final `take_back`. The IR
     // assertions additionally catch metadata UB even when an unchanged-value
     // head rewrite happens not to change this native execution's result.
+    let mut boundaries = vec![2_u8; 16];
+    boundaries.extend([16, 0]);
     for module in [&llvm, &super::owned_places::retain_calls(&llvm)] {
         let output = compile_and_run(module);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(output.stdout, boundaries, "{output:?}");
     }
 }
 
@@ -294,9 +311,7 @@ fn main() -> status: std::process::ExitStatus pure {
   if window.inner.len != 18_u64 {
     return std::process::exit_status(code: 3_u8);
   }
-  if sink.inner.len != 18_u64 {
-    return std::process::exit_status(code: 4_u8);
-  }
+  let sink_length = cvt::<u64, u8>(sink.inner.len);
   for (i in 0_u64..18_u64) {
     if window.inner[i] != 0_u64 {
       return std::process::exit_status(code: 5_u8);
@@ -305,7 +320,7 @@ fn main() -> status: std::process::ExitStatus pure {
       return std::process::exit_status(code: 6_u8);
     }
   }
-  return std::process::exit_status(code: 0_u8);
+  return std::process::exit_status(code: sink_length);
 }
 "#;
     let llvm = compile(source);
@@ -335,11 +350,12 @@ fn main() -> status: std::process::ExitStatus pure {
     // readonly, and only its narrow row keeps its loads unscoped and sink's
     // stores unexcluded. Native execution checks every appended value of
     // the shared window (codes 1/5) and of sink (2/6), and both final
-    // lengths (3/4). The metadata absence, not a predicted native
+    // lengths: the window's (code 3) and sink's, which is the exit status
+    // and must be 18. The metadata absence, not a predicted native
     // miscompile, detects a scope whose read row does not cover its loads.
     for module in [&llvm, &super::owned_places::retain_calls(&llvm)] {
         let output = compile_and_run(module);
-        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(output.status.code(), Some(18), "{output:?}");
     }
 }
 

@@ -17,13 +17,9 @@ fn raise(gauge: &Gauge, step: u8) -> result: unit writes(gauge) contract {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Raises 50 by 100 after checking the room.";
+  doc "Raises 50 by 100 with the initial field proving the room.";
   let gauge = Gauge(small: 50_u8);
   let kept = gauge.small;
-  if kept <= 100_u8 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   raise(gauge: &gauge, step: 100_u8);
   let small = gauge.small;
   if small == 150_u8 {

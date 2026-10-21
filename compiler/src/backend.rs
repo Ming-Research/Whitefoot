@@ -5,6 +5,7 @@ pub(crate) mod emission;
 pub(crate) mod emitter;
 mod fragments;
 mod runtime;
+mod sanitizer;
 mod stack_ledger;
 mod storage;
 
@@ -31,11 +32,16 @@ pub use emitter::{
     module_requires_heap_runtime, module_requires_parallel_runtime,
 };
 pub use fragments::{FragmentGranularity, SplitFailure, split_module};
+pub use sanitizer::Sanitizer;
 pub use stack_ledger::{Architecture, stack_ledger};
 
 /// Byte offset of a shared object's state from its runtime header; equals
 /// `WF_SHARED_STATE_OFFSET` in `completion/bridge.h`.
 pub(crate) const SHARED_STATE_OFFSET: u64 = 64;
+
+/// Complete fixed Frozen allocation header, including the padding before its
+/// max_align_t payload. Pinned to sizeof/offsetof(wf_frozen) in bridge.c.
+pub(crate) const FROZEN_HEADER_BYTES: u64 = 16;
 
 /// Bytes of the record a lock of one table entry keeps in the frame; equals
 /// `WF_TABLE_ENTRY_SIZE` in `completion/bridge.h`

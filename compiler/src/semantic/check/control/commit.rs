@@ -487,6 +487,21 @@ impl<'unit> Checker<'_, 'unit> {
             .get(&declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
             .binding;
+        // [REF-1, ENT-5] the RHS captures before the holder is replaced.
+        // Include its new path alongside existing references when ending
+        // offset spellings that read the old holder, without invalidating
+        // any captured referent or treating this as a write through it.
+        bindings
+            .get_mut(&declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .reference = Some(reference);
+        self.types
+            .supersede_reference_offsets(bindings, &ResolvedPlace::binding(binding), true);
+        let reference = bindings
+            .get(&declaration)
+            .and_then(|local| local.reference.as_ref())
+            .cloned()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         for context in scope.loops {
             if !context.reference_rebindings.contains(&node) {
                 continue;

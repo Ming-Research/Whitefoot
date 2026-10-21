@@ -1,15 +1,40 @@
 # Specification change log
 
-Newest first. One entry per owner-approved change of the active
-specification, `kernel-spec.md`: a `## <date> <title>` heading, `Rules:`
-naming every rule added, changed or retired, `Owner-approved:` identifying the
-owner's approval in the owner's words, and a concise `Summary:` of the change
-and its selection ground. The form is the design tree log's, with `Rules:` in
-place of `Nodes:`. The entry is written only after the owner approves, and
-`make design-ready` requires a new approved entry whenever the active
-specification changes; it cannot tell whether `Rules:` names every changed
-rule. Earlier versions are the released archives beside this
-file; git holds the rest of the history.
+Newest first. One entry per change of the active specification,
+`kernel-spec.md`: a `## <date> <title>` heading, `Rules:` naming every rule
+added, changed or retired, and a concise `Summary:` of the change and its
+selection ground. The form is the design tree log's, with `Rules:` in place of
+`Nodes:`. The entry is committed with the change, and `make design-ready`
+requires a new entry whenever the active specification changes; it cannot tell
+whether `Rules:` names every changed rule. Older entries also carry an
+`Owner-approved:` line, a field since retired. Earlier versions are the
+released archives beside this file; git holds the rest of the history.
+
+## 2026-10-21 v0.154: the invocation supplies the process identifier, the wall clock reads the local time offset and the handle factory reads and raises the open-files limit
+
+Rules: changed PRE-2, WAIT-2
+
+Summary: A program could neither learn its process identifier nor convert a calendar second to the host's local time, and could not read or raise the limit on the files it may hold open, which Redis-compatible log lines (identifier and local time first) and Redis's startup raise of that limit need. PRE-2 adds the field `process_id: Option<u64>` to `Inputs` (`getpid` on POSIX, `GetCurrentProcessId` on Windows, `None` on a host that gives the process none), fixed before the entry runs like the driver count, and WAIT-2 lists it among the inputs of the execution. PRE-2 adds `local_offset_seconds(clock: &WallClock, at: i64) -> Option<i64>`, which reads the host's local time rule for the second containing `at` by a host table (`localtime` on POSIX, `_localtime64_s` after `_tzset` on Windows, zero on a host with no `localtime`) and returns `Some` only for an offset strictly between -86400 and 86400, stated as two postconditions so a caller adds the offset to a second with no overflow check. PRE-2 adds `OpenFilesLimit`, `open_files_limit(factory)` and `raise_open_files_limit(factory, wanted)` (`getrlimit` and `setrlimit` on POSIX, `Unsupported` elsewhere, a raise adding the matching credits to the factory's budget), the factory's starting budget as c(n) = max(0, min(n, 2^20) - 64) on POSIX and 4096 elsewhere, error origin 11, and the `HandleFactory` and the wall clock's local time rule to the table of self-changing host handles, so an atomic statement's guard reaches neither. Selection ground: the identifier is fixed for the run and the zone rule and the limit are host state that changes between reads, so they are an `Inputs` field and reads through the capability that already presents that state, instead of nullary pure functions, a read through the memory meter or the stop signals, a bare integer whose zero would stand for a missing identifier, the Windows zone API, which ignores `TZ`, or a guard that may read the factory with no wake for an outside change. The new `Inputs` field requires every pattern that destructures `Inputs` without `..` to name `process_id`.
+
+## 2026-10-20 v0.153: two index steps read through one tracked field or dereference term are the same while its support is unwritten
+
+Rules: changed ENT-2
+
+Summary: ENT-2's list of when two index steps are the same gains one case: two steps that read one tracked field or dereference term are the same while no write of its support places has intervened since either was formed. The case follows the existing binding case, so that a guard on `table^[s^.k].len` proves the later read `table^[s^.k][i]` in range; a write to the support ends the equality, as ENT-5 already requires. Selection ground: ENT-2 listed its cases exhaustively, and without this case the checker must treat the two reads as distinct places, so a guard on a field-subscript length never supports the element read.
+
+## 2026-10-20 v0.152: a condition the checker decides is redundant source
+
+Rules: changed OP-5, GRAM-6, ENT-6, MSR-4
+
+Summary: OP-5 adds a source redundancy judgment for the condition of every `if` and `value_if`, `else if` links included, queried after the condition's own evaluation and before its branch-entry facts. In a noncontradictory entering state the condition is decided True when every fact the then-block's entry would establish is already derivable (each goal origin through the Signed Goal query, the comparison origin in the closed L0 state), and False when the same holds for the else side; a decided condition is a hard error with residual `RedundantCondition` and a repair that deletes the test and its dead branch, so the deletion removes no fact a later goal could use. A generic body is judged once at the symbolic instance of its own parameters, a contradictory entering state admits the condition, leaving reachability to FN-1, and a condition with neither a goal origin nor a comparison origin, such as a user function's result, has no derivable truth and is admitted. GRAM-6 points a condition's redundancy to OP-5, ENT-6 names OP-5 as a Signed Goal consumer, and MSR-4 lists OP-5 among the numeric disposition's consumers and lets OP-5 state its own result judgment. The worked example returns the converted value as the exit status instead of testing it, because the old test is itself a decided condition; the rule text first drafted against v0.136 is renumbered to v0.152 because main reached v0.151 first. Selection ground: executable source should contain only the tests its run needs, since a decided test costs run time and tells a reader, often an agent, that an excluded case is still possible.
+
+## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
+
+Rules: changed PROV-6, STOR-3, SHARE-1
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item. This amendment was written as v0.149 and renumbered to v0.151 because main reached v0.150 first.
+
+Summary: PROV-6 adds ConcurrentHashMap and KeySet to the types whose release performs an action, separates the type ownership closure (read by linearity, which keeps a constant-zero Array's element type) from the executable release graph (read by release and guaranteed tail calls, in which a constant-zero Array or window contributes no element edge), and judges a type parameter by its capability bounds. STOR-3 states that a KeySet returns its runtime-held storage on release and that a ConcurrentHashMap releases each held value before returning its storage, and routes every opaque type to these per-type actions; SHARE-1 points to STOR-3 instead of stating the map's value release itself. The rules that read these definitions, such as FN-10 and DIAG-2, keep their text and now resolve to the executable release graph. Selection ground: a guaranteed tail call holding a KeySet with a live reference to it was accepted on main although the backend returns the set's storage before the jump, leaving the reference dangling; the checker followed a release list that omitted the type.
 
 ## 2026-10-13 v0.150: `match` branches on integer constant values
 

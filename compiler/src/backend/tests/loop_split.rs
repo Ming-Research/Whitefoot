@@ -571,7 +571,9 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 /// `discarded` is deliberately consumed before the loop. This already-fitting
 /// frame retains its original unused transport, which must neither read the
 /// consumed allocation nor acquire cleanup authority in the chunk. Removing
-/// that transport is outside the rescue-only capture optimization.
+/// that transport is outside the rescue-only capture optimization. `main`
+/// publishes both returned lengths, each as eight little-endian bytes, for the
+/// harness to compare.
 const ALIGNED_PAYLOAD_MAP: &[u8] = br#"struct Aligned {
   tag: u8;
   word: u64;
@@ -604,6 +606,39 @@ fn marked(seed: u64) -> result: Aligned pure {
   return result;
 }
 
+fn low_byte(v: u64) -> result: u8 pure {
+  let low = iand(v, 255_u64);
+  match cvt.checked::<u64, u8>(low) {
+    Ok(value: byte) => {
+      return byte;
+    }
+    Err(error: problem) => {
+      return 0_u8;
+    }
+  }
+}
+
+fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destination) {
+  let cursor = at;
+  let rest = value;
+  loop @octets {
+    let limit = at +wrap 8_u64;
+    let done = cursor >= limit;
+    if done {
+      break @octets;
+    }
+    let spare = destination^.len;
+    let writable = cursor < spare;
+    if writable {
+      let byte = low_byte(v: rest);
+      set destination^[cursor] = byte;
+    }
+    set rest = irotr(rest, 8_u32);
+    set cursor = cursor +wrap 1_u64;
+  }
+  return at +wrap 8_u64;
+}
+
 fn aligned_array(count: u64, tag: u8, word: u64) -> result: Box<Array<Aligned>> pure contract {
   requires count <= 400000_u64;
   ensures result.inner.len == count;
@@ -634,15 +669,13 @@ fn mapped(count: u64) -> result: Box<Array<Aligned>> pure contract {
   return move output;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let empty = mapped(count: 0_u64);
-  if empty.inner.len != 0_u64 {
-    return std::process::exit_status(code: 1_u8);
-  }
   let output = mapped(count: 400000_u64);
-  if output.inner.len != 400000_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
   let first = output.inner[0_u64];
   let first_expected = mix(seed: 400000_u64);
   if first.tag != 7_u8 {
@@ -659,7 +692,24 @@ fn main() -> status: std::process::ExitStatus pure {
   if last.word != last_expected {
     return std::process::exit_status(code: 6_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  let empty_length = empty.inner.len;
+  let output_length = output.inner.len;
+  let report = box_array_filled::<u8>(count: 16_u64, value: 0_u8);
+  let window = &report.inner[0_u64..16_u64];
+  let empty_end = spell(destination: window, at: 0_u64, value: empty_length);
+  let output_end = spell(destination: window, at: 8_u64, value: output_length);
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 16_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
 }
 "#;
 
@@ -1298,7 +1348,9 @@ fn an_aligned_nominal_payload_capture_handles_empty_and_mixed_measure_element_pa
         .bounded_output()
         .expect("run the unsplit nominal-element map");
     assert_eq!(reference.status.code(), Some(0), "{reference:?}");
-    assert!(reference.stdout.is_empty());
+    // The two returned lengths: the empty call's zero, then 400000.
+    let lengths = [0_u64.to_le_bytes(), 400_000_u64.to_le_bytes()].concat();
+    assert_eq!(reference.stdout, lengths, "{reference:?}");
 
     let executable = build_executable(&split, &directory);
     for workers in ["0", "1", "4"] {

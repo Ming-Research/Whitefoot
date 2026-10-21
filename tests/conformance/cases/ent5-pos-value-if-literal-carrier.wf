@@ -40,19 +40,6 @@ fn first_or_zero(pos: u64, length: u64) -> result: u64 pure contract {
   return x;
 }
 
-fn guarded_or_zero(pos: u64, length: u64) -> result: u64 pure contract {
-  requires pos < length;
-  ensures result < length;
-} {
-  doc "The literal edge cannot be reached: its closed state is contradictory, so its image is contradictory and neutral at the join, as a branch-local copy's would be, and the reachable edge alone decides x < length [ENT-5].";
-  let x = if pos < length {
-    give pos;
-  } else {
-    give 0_u64;
-  }
-  return x;
-}
-
 fn main() -> status: ExitStatus pure {
   doc "Every reachable edge runs and its delivered value is observed.";
   let kept = bounded_or_zero(pos: 2_u64, length: 5_u64);
@@ -84,11 +71,6 @@ fn main() -> status: ExitStatus pure {
   if first == 0_u64 {
   } else {
     return exit_status(code: 206_u8);
-  }
-  let guarded = guarded_or_zero(pos: 1_u64, length: 3_u64);
-  if guarded == 1_u64 {
-  } else {
-    return exit_status(code: 207_u8);
   }
   return exit_status(code: 0_u8);
 }

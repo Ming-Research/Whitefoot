@@ -24,10 +24,11 @@
 //! writer cannot act on, and a writer trial recorded a writer running `head
 //! -c` on their own program to decode them.
 //!
-//! Stops that are not source rejections -- resource ceilings, invocation
-//! envelopes, internal invariants, target layout, backend -- carry
-//! compiler-facing payloads with no writer repair. They keep their stage
-//! value's `Debug` text as one `payload` field.
+//! Allocation target-layout stops retain a source position and a `reason`
+//! naming the payload layout and violated target limit, with no language rule
+//! or source repair. Other non-source stops -- resource ceilings, invocation
+//! envelopes, internal invariants, and remaining target/backend failures --
+//! keep their stage value's `Debug` text as one compiler-facing `payload` field.
 
 use core::fmt::{self, Write as _};
 
@@ -37,11 +38,12 @@ use crate::{
     CallRequirementDisposition, CanonicalIssue, ContractShapeIssue, DeclarationClass,
     DeclarationConflict, DeclarationDomain, DeclarationOrigin, ExpectedTerminals, GraphIssue,
     GraphIssueKind, LexicalUseRole, LookaheadPredicate, LoopInvariantProofObligation,
-    PostconditionProofDisposition, ReservedDeclarationRole, ReservedNameClass, ResolutionIssue,
-    ResolutionIssueKind, SemanticIssue, SemanticIssueKind, SemanticLocation, SemanticUnsupported,
-    SourceIssue, SourceIssueKind, SourceOrigin, SourceProofObligation, StaticObligationDisposition,
-    SyntaxCoordinate, SyntaxIssue, SyntaxRepair, TerminalIssue, UndischargedCallRequirementDetail,
-    UndischargedPostconditionDetail, UnsupportedSemanticFeature,
+    NonExhaustiveMatchSite, PostconditionProofDisposition, ReservedDeclarationRole,
+    ReservedNameClass, ResolutionIssue, ResolutionIssueKind, SemanticIssue, SemanticIssueKind,
+    SemanticLocation, SemanticUnsupported, SourceIssue, SourceIssueKind, SourceOrigin,
+    SourceProofObligation, StaticObligationDisposition, SyntaxCoordinate, SyntaxIssue, SyntaxRepair,
+    TerminalIssue, UndischargedCallRequirementDetail, UndischargedPostconditionDetail,
+    UnsupportedSemanticFeature,
 };
 
 /// How a caller asks for compiler stops to be printed.
@@ -155,6 +157,20 @@ impl Record {
             kind: (!kind.is_empty()).then_some(kind),
             at: None,
             detail: vec![("payload", Value::Text(payload))],
+        }
+    }
+
+    /// A target-stage stop may still name the checked source allocation that
+    /// requires the failed representation, without claiming a language rule.
+    pub(super) fn target_layout(
+        message: String,
+        bundle: &SourceBundle,
+        coordinate: Option<SyntaxCoordinate>,
+    ) -> Self {
+        Self {
+            kind: Some("TargetLayout".to_owned()),
+            at: coordinate.and_then(|at| Place::resolve(bundle, at, Anchor::Start)),
+            detail: vec![("reason", Value::Text(message))],
         }
     }
 
@@ -433,6 +449,12 @@ enum Value {
     /// Another source position the payload names, with the first line of
     /// the node it belongs to.
     Place(Box<Place>, Vec<u8>),
+    /// One ERR-2 edit site: compact in text, complete in JSON.
+    MatchSite {
+        location: Option<Box<Place>>,
+        enum_name: String,
+        missing_variants: Vec<Value>,
+    },
     /// A structured payload element, such as one declaration conflict.
     Fields(Vec<(&'static str, Value)>),
     /// A classification variant that carries fields of its own.
@@ -625,6 +647,21 @@ impl FieldValue for SemanticLocation {
     }
 }
 
+impl FieldValue for NonExhaustiveMatchSite {
+    fn value(&self, bundle: &SourceBundle) -> Option<Value> {
+        let Self {
+            location,
+            enum_name,
+            missing_variants,
+        } = self;
+        Some(Value::MatchSite {
+            location: Place::resolve(bundle, location.coordinate(), Anchor::Start).map(Box::new),
+            enum_name: enum_name.clone(),
+            missing_variants: missing_variants.iter().cloned().map(Value::Text).collect(),
+        })
+    }
+}
+
 /// An origin points at its role's spelling and belongs to its owning
 /// production.
 impl FieldValue for SourceOrigin {
@@ -737,7 +774,7 @@ variant_names! {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, OperationFamily,
         RangeArithmetic, RangeOrdinaryGoal, RangeOperationIntervals,
-        RangeLoopNesting, RangeAtomicAliases,
+        RangeLoopNesting, PageLengthPostcondition,
     }
 }
 
@@ -887,6 +924,7 @@ impl Report for SemanticIssueKind {
             MoveOfCopy { binding, ty, reason, mechanical_fix };
             BareAffineUse { binding, ty, reason, mechanical_fix };
             ContainerConstruction { nominal, mechanical_fix };
+            OpaqueDestructuring { nominal, mechanical_fix };
             UseAfterMove { mechanical_fix };
             InvalidReferenceUse { binder, event, mechanical_fix };
             UnestablishedPayloadVariant { place, variant, mechanical_fix };
@@ -901,6 +939,7 @@ impl Report for SemanticIssueKind {
             InvalidOperation { operation, operand_types, mechanical_fix };
             InvalidEqualityType { mechanical_fix };
             InvalidPredicateCondition;
+            RedundantCondition { residual, decided, facts, mechanical_fix };
             InvalidConditionalForm { mechanical_fix };
             UndischargedBoundsObligation { residual, disposition, mechanical_fix };
             UndischargedEmptyRunRelease { residual, disposition, mechanical_fix };
@@ -962,7 +1001,7 @@ impl Report for SemanticIssueKind {
             InvalidConstructionFields { constructor, declared_fields };
             InvalidMatchFields { variant, declared_fields };
             ForeignMatchVariant;
-            NonExhaustiveMatch { missing_variants };
+            NonExhaustiveMatch { missing_variants, other_sites };
             DuplicateMatchVariant { variant, mechanical_fix };
             InvalidIntegerMatchArm { reason, mechanical_fix };
             DuplicateIntegerMatchValue { value, earlier, mechanical_fix };
@@ -1091,8 +1130,11 @@ impl Report for CanonicalIssue {
 /// A valid source that needs a semantic family the compiler has not built;
 /// the node is the record's location.
 impl Report for SemanticUnsupported {
-    fn report(&self, _: &mut Fields<'_>) -> &'static str {
+    fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         let Self { feature, node: _ } = self;
+        if *feature == UnsupportedSemanticFeature::PageLengthPostcondition {
+            fields.field("reason", &"not yet supported: a page's length in a postcondition");
+        }
         feature.name()
     }
 }
@@ -1147,6 +1189,24 @@ fn write_text(text: &mut String, value: &Value) {
             text.push_str(" \"");
             push_escaped(text, quote);
             text.push('"');
+        }
+        Value::MatchSite {
+            location,
+            enum_name: _,
+            missing_variants,
+        } => {
+            match location {
+                Some(place) => push_position(text, place),
+                None => text.push_str("an unresolved coordinate"),
+            }
+            text.push_str(" missing [");
+            for (index, variant) in missing_variants.iter().enumerate() {
+                if index > 0 {
+                    text.push_str(", ");
+                }
+                write_text(text, variant);
+            }
+            text.push(']');
         }
         Value::Fields(fields) => push_fields(text, fields),
         Value::Variant(name, fields) => {
@@ -1320,6 +1380,33 @@ fn push_json_value(json: &mut String, value: &Value) {
             push_escaped(&mut escaped, quote);
             push_json_string(json, &escaped);
             json.push('}');
+        }
+        Value::MatchSite {
+            location,
+            enum_name,
+            missing_variants,
+        } => {
+            json.push('{');
+            push_json_key(json, "location", true);
+            match location {
+                Some(place) => {
+                    json.push('{');
+                    push_json_position(json, place);
+                    json.push('}');
+                }
+                None => push_json_string(json, "an unresolved coordinate"),
+            }
+            push_json_key(json, "enum_name", false);
+            push_json_string(json, enum_name);
+            push_json_key(json, "missing_variants", false);
+            json.push('[');
+            for (index, variant) in missing_variants.iter().enumerate() {
+                if index > 0 {
+                    json.push(',');
+                }
+                push_json_value(json, variant);
+            }
+            json.push_str("]}");
         }
         Value::Fields(fields) => push_json_fields(json, fields),
         // A variant with fields is an object naming it as `kind`; one without
