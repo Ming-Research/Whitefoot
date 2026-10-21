@@ -433,16 +433,51 @@ text; "inferred" marks a consequence not yet shown with a program.
    identical in target position"), carries the target address across the
    right-hand side (line 638), and after it rechecks only writability,
    liveness, moved prefixes and references the target is reached through
-   (lines 635 to 637). Read. Inferred, and probed with the compiler in this
-   study's CI:
-   `set v[1_u64] = remove_at(window: &v, index: 0_u64);` on a two-element
-   `Slots<Box<u64>, 4>` stores into a slot the call moved out of the window
-   and releases that slot's stale copy of the element now at index 0, a
-   double release; and `set b.inner[0_u64] = f(cell: &b);`, where `f` grows
-   the block, stores to the block's old address. [OP-12] states the missing
-   restriction, but only for the atomic update ("`f`'s declared row must not
-   write, move out of, or free any prefix of `p`", line 1268). Recommended:
-   a specification item that applies the same condition to every `set`.
+   (lines 635 to 637). [OP-12] states the missing restriction, but only for
+   the atomic update ("`f`'s declared row must not write, move out of, or
+   free any prefix of `p`", line 1268). Read. Measured: the compiler at
+   main's revision c40acc366 accepts both programs below (this study's
+   temporary workflow, run 39574795043, ubuntu-24.04). The first aborts with
+   glibc's "free(): double free detected in tcache 2": as the rules predict, the commit releases
+   the stale copy, in slot 1, of the box `remove_at` moved to slot 0, and the
+   scope exit releases slot 0. The second exits 3: the store went to the
+   block `grow` released, so slot 0 of the new block still holds 1.
+   Recommended: a specification item that applies OP-12's condition to every
+   `set`, with these programs as conformance cases.
+
+   ```wf
+   fn main() -> status: std::process::ExitStatus pure {
+     let v = slots_new::<Box<u64>, 4>();
+     let first = box_new::<u64>(value: 1_u64);
+     place_back(window: &v, value: move first);
+     let second = box_new::<u64>(value: 2_u64);
+     place_back(window: &v, value: move second);
+     set v[1_u64] = remove_at(window: &v, index: 0_u64);
+     return std::process::exit_status(code: 0_u8);
+   }
+   ```
+
+   ```wf
+   fn refill(cell: &Box<Slots<u64>>) -> result: u64 writes(cell) contract {
+     requires cell^.inner.cap <= 64_u64;
+     ensures cell^.inner.len == entry(cell)^.inner.len;
+   } {
+     grow(cell: cell, capacity: 64_u64);
+     return 7_u64;
+   }
+
+   fn main() -> status: std::process::ExitStatus pure {
+     let b = box_slots_new::<u64>(capacity: 1_u64);
+     let pin = box_new::<u64>(value: 9_u64);
+     place_back(window: &b.inner, value: 1_u64);
+     set b.inner[0_u64] = refill(cell: &b);
+     let stored = b.inner[0_u64];
+     if stored == 7_u64 {
+       return std::process::exit_status(code: 0_u8);
+     }
+     return std::process::exit_status(code: 3_u8);
+   }
+   ```
 7. Moving out through a reference parameter is refused by no stated rule:
    [TYPE-7] says a use of an affine `p^` "requires `move`" (line 612), while
    [OWN-1] admits consumption only of places "rooted in a live own-mode
