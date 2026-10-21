@@ -1,0 +1,27 @@
+# Temporary: checks the merge of main's --sanitize option with --format
+# (coord-wfbl-10-05). Removed before the full check.
+name: tmp-format-sanitize
+
+on:
+  push:
+    branches: [claude/format-command]
+
+permissions:
+  contents: read
+
+jobs:
+  quick:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare the Rust toolchain
+        run: |
+          rustup default stable
+          rustup component add rustfmt
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Format check
+        run: perl .github/run-check.pl tmp/format-check cargo fmt --manifest-path compiler/Cargo.toml --all -- --check
+      - name: Formatting and sanitize option tests
+        run: |
+          perl .github/run-check.pl tmp/format-bin-tests cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc -- formatting sanitize
