@@ -10,6 +10,12 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/waiting-contexts/state-locks
 
 Summary: A wait guard written as a call to a helper function, such as `atomic m = &meta when reply_covered(...)`, gave the wake derivation no atom, so each write to the object could wake a waiter whose guard was still false, which woke, reacquired, found it false and parked again; a counted program test measured eight such wakes for a helper guard and none for the same comparison written inline (`tests/programs/helper_guard_false_wakes.wf`). When the atom derivation yields no test for a guard containing a helper call, the guard now compiles to a read-only, nonwaiting, nonlocking, nonallocating, nonrecursive function over the written object's state and the values captured at registration, kept with its captures in the waiter's frame and called by the writer under the hold it already has; a guard the audit cannot cover, or one reading another target, still contributes true, and atom tests are still preferred. A helper whose body is a single `return` of an expression over its parameters is also expanded into atom tests, which the earlier derivation dropped as an unknown call. The existing rejection of the releaser running each waiter's guard is narrowed to every guard, and a rejection of field-read footprints is added, because a write flag names the whole object. The cost of the callbacks against the wakes they remove is unmeasured and reopens the decision.
+## 2026-10-21 The gate runs on Linux only for now
+
+Nodes: compiler/verification
+
+Summary: The hosted gate stops adding macOS for ready pull requests, the main line and manual runs, and its final job requires every group green on Linux alone. The hosted macOS runners take five jobs at a time; with several ready pull requests at once, a run's macOS jobs waited about 43 minutes for a runner while five ran and ten more queued, and merges waited behind them. The change is provisional: macOS returns, in a form still to be chosen, before the first release, whose release workflow still requires a gate run with macOS jobs on the released commit. The decision on a failed scope query no longer mentions dropping macOS.
+
 ## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
 
 Nodes: compiler/verification
