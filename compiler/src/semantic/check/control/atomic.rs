@@ -380,8 +380,15 @@ impl Checker<'_, '_> {
         {
             // No event the guard and block were checked with may have
             // written, moved or released the handle place, on any path
-            // through them.
-            target.kept_by_place = watch.as_ref().is_some_and(|watch| !watch.disturbed());
+            // through them. A handle to a linear state ends only in a
+            // `shared_close`, a waiting call no block contains, so every
+            // handle the block may move away still names the object when the
+            // statement completes [SHARE-1, PROV-6].
+            target.kept_by_place = watch.as_ref().is_some_and(|watch| !watch.disturbed())
+                || matches!(
+                    self.types.linearity_class(check_context, target.state)?,
+                    super::super::linearity::LinearityClass::Linear
+                );
             if !named_bindings.contains(&declaration.id()) {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,

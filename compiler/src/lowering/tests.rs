@@ -2428,10 +2428,16 @@ fn main() -> status: std::process::ExitStatus pure waits {
 /// handle's and a window operation that takes the handle's element back each
 /// still count it. So does a consume of a sibling field, by a move, a `match`
 /// or a destructuring `let`, which releases the handle's field with the rest
-/// of the owner [WIN-3].
+/// of the owner [WIN-3]. A handle to a linear state is never counted, even
+/// when the block moves it away: it ends only in a `shared_close`, which no
+/// block contains, so wherever it goes it still names the object [PROV-6].
 #[test]
 fn atomic_statements_count_a_handle_only_when_the_block_may_lose_it() {
-    let source = br#"struct Holder {
+    let source = br#"nodrop struct Pen {
+  strokes: u64;
+}
+
+struct Holder {
   count: u64;
   cell: Shared<u64>;
 }
@@ -2666,6 +2672,28 @@ fn element_taken_back() -> result: u64 pure waits {
   return seen;
 }
 
+fn linear_moved_in_block() -> result: u64 pure waits {
+  let pen = Pen(strokes: 1_u64);
+  let desk = shared_new::<Pen>(value: move pen);
+  let out = slots_new::<Shared<Pen>, 1>();
+  let seen = 0_u64;
+  atomic state = &desk {
+    set seen = state^.strokes;
+    place_back(window: &out, value: move desk);
+  }
+  let moved = take_back(window: &out);
+  free_empty(window: move out);
+  match shared_close::<Pen>(shared: move moved) {
+    Some(value: returned) => {
+      let Pen(strokes: last) = move returned;
+      set seen = seen +wrap last;
+    }
+    None() => {
+    }
+  }
+  return seen;
+}
+
 fn main() -> status: std::process::ExitStatus pure waits {
   return std::process::exit_status(code: 0_u8);
 }
@@ -2690,6 +2718,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
             ("sibling_destructured", 1),
             ("element_replaced", 1),
             ("element_taken_back", 1),
+            ("linear_moved_in_block", 0),
         ] {
             let mut retains = 0;
             for block in function(program, name).blocks() {

@@ -1289,6 +1289,18 @@ pub enum IrOperation {
         nominal: IrNominalId,
         object: IrValueId,
     },
+    /// [SHARE-1] counts the handle `object` out of its object, for
+    /// `shared_close`. Defines a `Bool`, true when it was the last handle,
+    /// whose state then belongs to the caller.
+    SharedCountOut {
+        object: IrValueId,
+    },
+    /// [SHARE-1] returns the object `object` names, whose last handle was
+    /// counted out and whose state was moved out, to the runtime. Defines
+    /// `Unit`.
+    SharedFree {
+        object: IrValueId,
+    },
     /// Native snapshot signal preparation before any atomic acquisition.
     /// Erased when the composition uses no snapshot export.
     SnapshotAtomicBegin,
