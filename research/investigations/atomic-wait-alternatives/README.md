@@ -132,7 +132,11 @@ guarded statement, an untimed newcomer, and (with two units) one or two
 holders of the second unit alone. One such holder makes the timed statement
 wait on a claim while it holds the first unit; with two, one parks behind
 the other, so the claims' turn, hand-offs to a parked context and borrowing
-of them are reached.
+of them are reached. One more configuration has the timed statement take
+the second unit alone, with a holder of that unit and the newcomer: the
+timed statement parks on the second unit, and the newcomer, which takes it
+as a later unit, borrows the hand-off made to the timed statement while the
+timer fires.
 
 Checked in every reachable state and every final state:
 

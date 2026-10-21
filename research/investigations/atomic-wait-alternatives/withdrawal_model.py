@@ -58,27 +58,32 @@ MUTANTS = (
 # Context kinds.  Each has the units it takes (in lock order), whether it has
 # the guard `flag` (the state of unit 0), and which unit its body writes.
 #   W  writer: takes unit 0, no guard, sets flag
-#   T  timed statement: takes every unit, guard flag or none, writes last unit
+#   T  timed statement: takes every unit (or, in a last-unit configuration,
+#      the last unit alone), guard flag or none, writes last unit
 #   N  untimed guarded statement: takes unit 0, guard flag, writes nothing on 0
 #   M  untimed newcomer: takes every unit, no guard, writes last unit
 #   H  holder of the last unit only (forces T to wait on a later unit)
 KINDS = ("W", "T", "N", "M", "H")
 
 
-def kind_units(kind, k):
+def kind_units(kind, k, t_last):
     if kind in ("W", "N"):
         return (0,)
-    if kind == "H":
+    if kind == "H" or (kind == "T" and t_last):
         return (k - 1,)
     return tuple(range(k))
 
 
 class Config:
-    def __init__(self, k, kinds, t_guard):
+    def __init__(self, k, kinds, t_guard, t_last=False):
+        # The guard reads unit 0, so a timed statement on the last unit alone
+        # has none.
+        assert not (t_guard and t_last)
         self.k = k
         self.kinds = kinds
         self.t_guard = t_guard
-        self.units = tuple(kind_units(x, k) for x in kinds)
+        self.t_last = t_last
+        self.units = tuple(kind_units(x, k, t_last) for x in kinds)
 
     def guarded(self, c):
         kind = self.kinds[c]
@@ -94,7 +99,8 @@ class Config:
 
     def __str__(self):
         g = "guard" if self.t_guard else "no-guard"
-        return f"k={self.k} {'+'.join(self.kinds)} T:{g}"
+        last = ",last-unit" if self.t_last else ""
+        return f"k={self.k} {'+'.join(self.kinds)} T:{g}{last}"
 
 
 # Context state fields (a tuple, so states hash):
@@ -562,6 +568,10 @@ def configs():
                 # turn are reached
                 out.append(Config(k, ("T", "H", "H"), t_guard))
                 out.append(Config(k, ("W", "T", "H", "H"), t_guard))
+    # the timed statement on the second unit alone parks there, so the
+    # newcomer, which takes it as a later unit, borrows the hand-off made to
+    # the timed statement while that statement waits
+    out.append(Config(2, ("T", "M", "H"), False, t_last=True))
     return out
 
 
