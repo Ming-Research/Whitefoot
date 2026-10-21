@@ -10,6 +10,14 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/checker-facts
 
 Summary: A new decision has fact invalidation submit index and range separation questions only between a write and live support positions with the same containing place, through the ordinary proof families in that write's context, because the specification keeps a fact whose support is provably disjoint from the write even when no earlier call or reference check asked that question, instead of relying only on separations asked elsewhere or comparing unrelated bases. Each live item's support is collected once and identical positions are removed before path resolution; proved answers are shared across that write's supports only, keyed by the subscripts' current binding identity, instead of being published as immutable captured relations; and no support is pruned because it would be kept anyway, since its numeric separation may protect another support that cannot ask the question. Measured: Halo's check time is 1.021 times main's, under the 1.03 rejection line set beforehand. Known limit, not decided here: a support whose containing place differs from the write's only in index steps is not asked, so such a fact can still be removed although OWN-7 proves the places disjoint; this is the follow-up item wf-disjoint-write-outer-index.
+## 2026-10-13 Rebinding a reference variable is its own invalidation event
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: pointing a reference variable elsewhere becomes its own kind of event that invalidates proof facts? (Ming-Research/Whitefoot#439, head b1ee96910)" (translated).
+
+Summary: A new decision makes a reference rebinding a distinct invalidation event that removes only the facts spelled through or reached through that reference variable, and loop summaries carry the event unchanged, because the specification says a rebinding writes no storage, instead of synthesizing a whole write of the variable and removing facts by its function-wide provenance list, which removed facts established through other names on the old or new target.
+
 ## 2026-10-13 A Slab reserves capacity up to its type limit without disturbing handles
 
 Nodes: language/data-model/slab-storage

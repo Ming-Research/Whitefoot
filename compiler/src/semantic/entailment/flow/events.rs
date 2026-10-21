@@ -198,7 +198,9 @@ impl Input<'_, '_> {
                 *element,
                 *relocation,
             ),
-            KillEvent::Consume { binding, .. } => root == PlaceRoot::Binding(*binding),
+            KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
+                root == PlaceRoot::Binding(*binding)
+            }
             KillEvent::EntryImageHolderConsume { .. } => false,
         }
     }
@@ -226,9 +228,9 @@ impl Input<'_, '_> {
         // Index/Measure or Range/Part pair. A measured element has an Index
         // after its range step and therefore does not take this case.
         //
-        // Both classifiers require complete, nonempty resolution. A holder
-        // rebind is a whole-place write with no Part/Measure suffix, while an
+        // Both classifiers require complete, nonempty resolution. An
         // unresolved write remains conservative and reaches the descriptor.
+        // A holder rebind is a separate event, not a storage write.
         if self.is_range_descriptor_support(support)
             && (element_write || self.is_window_extent_write(written))
         {
@@ -283,7 +285,7 @@ impl Input<'_, '_> {
             })
     }
 
-    /// [ENT-5] whether one event writes or consumes a binding an offset
+    /// [ENT-5] whether one event replaces or consumes a binding an offset
     /// occurring in `support` reads.
     ///
     /// The support of a measure term over P contains the support of every
@@ -305,9 +307,12 @@ impl Input<'_, '_> {
                 | KillEvent::EntryImageHolderWrite { place: written, .. } => {
                     self.resolved_places_overlap(separations, &read, written)
                 }
-                KillEvent::Consume {
-                    binding: consumed, ..
-                } => binding == *consumed,
+                KillEvent::Rebind {
+                    binding: changed, ..
+                }
+                | KillEvent::Consume {
+                    binding: changed, ..
+                } => binding == *changed,
                 KillEvent::EntryImageHolderConsume { .. } => false,
             }
         })
@@ -365,9 +370,12 @@ impl Input<'_, '_> {
                 place,
                 *relocation,
             ),
-            KillEvent::Consume {
-                binding: consumed, ..
-            } => binding == *consumed,
+            KillEvent::Rebind {
+                binding: changed, ..
+            }
+            | KillEvent::Consume {
+                binding: changed, ..
+            } => binding == *changed,
             KillEvent::EntryImageHolderConsume { .. } => false,
         }
     }
@@ -416,7 +424,8 @@ impl Input<'_, '_> {
                         None => self.write_kills_support(separations, &image.place, place, true),
                     }
             }
-            KillEvent::Consume { binding, .. }
+            KillEvent::Rebind { binding, .. }
+            | KillEvent::Consume { binding, .. }
             | KillEvent::EntryImageHolderConsume { binding, .. } => {
                 image.holders.contains(binding) || image.place.root == PlaceRoot::Binding(*binding)
             }
@@ -688,12 +697,15 @@ impl Input<'_, '_> {
                 place,
                 *relocation,
             ),
-            KillEvent::Consume {
-                binding: consumed, ..
+            KillEvent::Rebind {
+                binding: changed, ..
+            }
+            | KillEvent::Consume {
+                binding: changed, ..
             }
             | KillEvent::EntryImageHolderConsume {
-                binding: consumed, ..
-            } => binding == *consumed,
+                binding: changed, ..
+            } => binding == *changed,
         }
     }
 
@@ -706,6 +718,14 @@ impl Input<'_, '_> {
         target: &CheckedSetTarget,
     ) -> KillEvent {
         match target {
+            CheckedSetTarget::Place(place)
+                if place.fields.is_empty() && place.mode.is_reference() =>
+            {
+                KillEvent::Rebind {
+                    binding: place.binding,
+                    source: node_path.clone(),
+                }
+            }
             CheckedSetTarget::Place(place) => {
                 let spelled = ResolvedPlace::spelled(
                     PlaceRoot::Binding(place.binding),
@@ -902,7 +922,7 @@ impl Reasoning<'_, '_, '_> {
                     } => self
                         .input
                         .write_kills_support(separations, place, written, *relocation),
-                    KillEvent::Consume { binding, .. } => {
+                    KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
                         place.root == PlaceRoot::Binding(*binding)
                     }
                     KillEvent::EntryImageHolderConsume { .. } => false,
@@ -1031,7 +1051,7 @@ impl Reasoning<'_, '_, '_> {
                 } => self
                     .input
                     .write_kills_support(separations, &place, written, *relocation),
-                KillEvent::Consume { binding, .. } => {
+                KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
                     holders.contains(binding) || place.root == PlaceRoot::Binding(*binding)
                 }
                 KillEvent::EntryImageHolderConsume { .. } => false,

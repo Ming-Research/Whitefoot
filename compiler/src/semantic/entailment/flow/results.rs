@@ -932,7 +932,10 @@ impl Reasoning<'_, '_, '_> {
         held.retain(|binding, _| {
             let place = bound_place(*binding);
             if events.iter().any(|event| match event {
-                KillEvent::Consume {
+                KillEvent::Rebind {
+                    binding: source, ..
+                }
+                | KillEvent::Consume {
                     binding: source, ..
                 }
                 | KillEvent::EntryImageHolderConsume {
