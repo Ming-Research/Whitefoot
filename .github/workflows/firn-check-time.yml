@@ -1,0 +1,177 @@
+# Firn's total checking time on the dedicated i9-14900K runner: how much a
+# compiler with the redundant-condition rule adds over one without it, on the
+# same Firn source. Two pairs of compilers; each pair also has a twin, a byte
+# copy of its rule-free compiler, whose spread is the run's noise. Pair `now`
+# is the primary question; pair `then` reproduces the historical measurement on
+# this machine and is voided, with its reason recorded, if its compilers do not
+# accept the source. The calculation and its prior criterion are in the
+# check-time investigation's DESIGN.md, section "Firn total checking
+# comparison". The helper is .github/firn-check-time.py.
+#
+# Manual dispatch only, never on push or pull request: a timing job needs the
+# machine to itself. GitHub dispatches only a workflow present on the default
+# branch, which is why this file lives on main.
+#
+# The job fails when the acquisition is invalid (a failed command, a missing
+# observation, fewer rounds than required); it never fails because a
+# criterion is not met. The criterion is written in the report only.
+name: firn-check-time
+
+on:
+  workflow_dispatch:
+    inputs:
+      now_base:
+        description: Pair now, compiler without the rule (a full 40-digit commit id)
+        type: string
+        default: aa667568707c6c10ff6d5a294feb45e85e83694d
+      now_rule:
+        description: Pair now, compiler with the rule
+        type: string
+        default: bf7e033330a450b4e4fd848f69c2f35d6580f874
+      now_source:
+        description: Pair now, the revision whose apps/firn both compilers check
+        type: string
+        default: bf7e033330a450b4e4fd848f69c2f35d6580f874
+      then_base:
+        description: Pair then, compiler without the rule; leave all three then_ inputs empty to skip the pair
+        type: string
+        default: 58743a931a5ec6244864d37041fd1a7c1c5a145d
+      then_rule:
+        description: Pair then, compiler with the rule
+        type: string
+        default: 82fdda25ecb15171568f8b7dd3f033c47f5ab6f7
+      then_source:
+        description: Pair then, the revision whose apps/firn both compilers check
+        type: string
+        default: 82fdda25ecb15171568f8b7dd3f033c47f5ab6f7
+      claimed_overhead_seconds:
+        description: The overhead the criterion starts from, measured on another machine; empty evaluates no criterion
+        type: string
+        default: "1.6"
+      required_reduction_seconds:
+        description: How far pair now must bring the claimed overhead down
+        type: string
+        default: "0.5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firn-check-time-14900k
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  FIRN_TIME_NOW_BASE: ${{ inputs.now_base }}
+  FIRN_TIME_NOW_RULE: ${{ inputs.now_rule }}
+  FIRN_TIME_NOW_SOURCE: ${{ inputs.now_source }}
+  FIRN_TIME_THEN_BASE: ${{ inputs.then_base }}
+  FIRN_TIME_THEN_RULE: ${{ inputs.then_rule }}
+  FIRN_TIME_THEN_SOURCE: ${{ inputs.then_source }}
+  FIRN_TIME_CLAIMED_OVERHEAD: ${{ inputs.claimed_overhead_seconds }}
+  FIRN_TIME_REQUIRED_REDUCTION: ${{ inputs.required_reduction_seconds }}
+  # The criterion is defined for seven measured rounds after one warmup.
+  FIRN_TIME_ROUNDS: "7"
+  # A P core, never CPU 0.
+  FIRN_TIME_CPU: "2"
+
+jobs:
+  timing:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 180
+    steps:
+      - name: Initialize evidence before acquisition
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d "$RUNNER_TEMP/firn-check-time-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.XXXXXX")
+          echo "FIRN_TIME_OUT=$out" >> "$GITHUB_ENV"
+          mkdir -p "$out"/{logs,raw,inputs,images}
+          printf '%s\n' 'NOT MEASURED: acquisition has not completed.' > "$out/acquisition-status.txt"
+          printf '%s\n' 'NOT MEASURED: smallest sample has not completed.' > "$out/sample.md"
+          printf '%s\n' 'NOT MEASURED: measured rounds have not completed.' > "$out/timing.md"
+          printf '%s\n' 'NOT MEASURED: manifest preparation has not completed.' > "$out/manifest.json"
+          printf '%s\n' 'stage,round,order,variant,seconds,actual_returncode,launcher_returncode,timed_out,verdict' > "$out/raw/times.csv"
+          printf '%s\n' 'NOT MEASURED: compiler images have not been built.' > "$out/images.sha256"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize manifest, inspect tools and refuse a busy host
+        run: |
+          set -euo pipefail
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          python3 .github/firn-check-time.py init
+          python3 .github/firn-check-time.py host
+          python3 .github/firn-check-time.py idle
+
+      - name: Reducers refuse invalid acquisitions and keep the criterion's boundaries
+        run: python3 .github/firn-check-time.py selfcheck
+
+      - name: Prepare exact compiler and source identities
+        run: python3 .github/firn-check-time.py prepare
+
+      - name: Build each compiler with a fresh gate target and copy the twins
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "5400"
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl firn-check-time/build python3 .github/firn-check-time.py build
+
+      - name: Smallest useful sample, one full Firn entry check per variant
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "900"
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl firn-check-time/sample python3 .github/firn-check-time.py sample
+
+      - name: One warmup each and the measured rotated interleaved rounds
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "5400"
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl firn-check-time/rounds python3 .github/firn-check-time.py rounds
+
+      - name: Final acquisition status, manifest and complete raw table
+        if: always()
+        env:
+          FIRN_TIME_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          if [ -f .github/firn-check-time.py ]; then
+            python3 .github/firn-check-time.py finalize
+          else
+            printf '%s\n' 'UNAVAILABLE: checkout/helper unavailable; no timing report.' > "$FIRN_TIME_OUT/acquisition-status.txt"
+          fi
+          {
+            cat "$FIRN_TIME_OUT/acquisition-status.txt"
+            cat "$FIRN_TIME_OUT/sample.md" "$FIRN_TIME_OUT/timing.md"
+            printf '\n### Raw manifest\n\n```json\n'
+            cat "$FIRN_TIME_OUT/manifest.json"
+            printf '\n```\n\n### Complete raw times\n\n```csv\n'
+            cat "$FIRN_TIME_OUT/raw/times.csv"
+            printf '\n```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firn-check-time-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.FIRN_TIME_OUT }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove only this run's scratch worktrees and Cargo targets
+        if: always()
+        run: |
+          if [ -f .github/firn-check-time.py ]; then
+            python3 .github/firn-check-time.py cleanup
+          fi
