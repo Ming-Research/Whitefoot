@@ -1,0 +1,380 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias HashMap = std::collections::hash_map::HashMap;
+alias HashMapConsume = std::collections::hash_map::HashMapConsume;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias HashMapPut = std::collections::hash_map::HashMapPut;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias OutputStream = std::io::OutputStream;
+alias exit_status = std::process::exit_status;
+alias hash_map_free = std::collections::hash_map::hash_map_free;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_scan = std::collections::hash_map::hash_map_scan;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+
+const ceiling: u64 = 4194304_u64;
+
+const spread: u64 = 11400714819323198485_u64;
+
+const limit: u64 = 64_u64;
+
+struct HoldKeys {
+  doc "The hash environment, which neither hash reads.";
+  unused: u64;
+}
+
+struct Count {
+  doc "Pairs lent to the callback, and the sum of their values, kept so that no visit can be dropped as unused.";
+  pairs: u64;
+  sum: u64;
+}
+
+fn hold_mix(key: u64) -> mixed: u64 pure {
+  doc "The splitmix64 finalizer, the same uniform hash the operation cells use.";
+  let a = ixor(key, ishr.wrap(key, 30_u32));
+  let b = a *wrap 13787848793156543929_u64;
+  let c = ixor(b, ishr.wrap(b, 27_u32));
+  let d = c *wrap 10723151780598845931_u64;
+  return ixor(d, ishr.wrap(d, 31_u32));
+}
+
+fn hold_hash(env: &HoldKeys, key: &u64) -> result: u64 reads(key) {
+  return hold_mix(key^);
+}
+
+fn hold_same_hash(env: &HoldKeys, key: &u64) -> result: u64 reads(key) {
+  doc "Every key has one hash, so every pair shares one home bucket.";
+  return 6148914691236517205_u64;
+}
+
+fn hold_equal(env: &HoldKeys, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
+  return left^ == right^;
+}
+
+binding HoldKey : HashMapKey<u64, HoldKeys> {
+  hash = hold_hash;
+  equal = hold_equal;
+}
+
+binding HoldSameKey : HashMapKey<u64, HoldKeys> {
+  hash = hold_same_hash;
+  equal = hold_equal;
+}
+
+fn hold_consume(env: &Count, key: u64, value: u64) -> result: unit writes(env) {
+  return unit;
+}
+
+binding HoldConsume : HashMapConsume<u64, u64, Count> {
+  consume = hold_consume;
+}
+
+fn hold_visit(env: &Count, key: &u64, value: &u64) -> result: unit reads(value), writes(env) {
+  doc "The callback that only counts, as the hold criterion fixes.";
+  set env^.pairs = env^.pairs +wrap 1_u64;
+  set env^.sum = env^.sum +wrap value^;
+  return unit;
+}
+
+fn uniform_map(size: u64, keys: &HoldKeys) -> map: HashMap<u64, u64, ceiling> reads(keys) {
+  doc "size pairs with uniformly distributed hashes, built from capacity zero by insertion.";
+  let map = hash_map_new::<u64, u64, ceiling>(capacity: 0_u64);
+  for (index in 0_u64..size) {
+    let key = index *wrap spread;
+    let outcome = hash_map_put::<HoldKey, u64, ceiling>(map: &map, key: key, value: index, env: keys);
+  }
+  return map;
+}
+
+fn same_map(size: u64, keys: &HoldKeys) -> map: HashMap<u64, u64, ceiling> reads(keys) {
+  doc "size pairs that all share one hash, built from capacity zero by insertion.";
+  let map = hash_map_new::<u64, u64, ceiling>(capacity: 0_u64);
+  for (index in 0_u64..size) {
+    let key = index *wrap spread;
+    let outcome = hash_map_put::<HoldSameKey, u64, ceiling>(map: &map, key: key, value: index, env: keys);
+  }
+  return map;
+}
+
+fn release_map(map: HashMap<u64, u64, ceiling>) -> result: unit pure {
+  let count = Count(pairs: 0_u64, sum: 0_u64);
+  hash_map_free::<HoldConsume, ceiling>(map: move map, env: &count);
+  return unit;
+}
+
+fn release_words(words: Box<Slots<u64>>) -> result: unit pure {
+  loop @drain {
+    if words.inner.len == 0_u64 {
+      break @drain;
+    }
+    let dropped = take_back(window: &words.inner);
+  }
+  free_empty(window: move words);
+  return unit;
+}
+
+fn record(words: &Box<Slots<u64>>, value: u64) -> result: unit writes(words) {
+  if words^.inner.len < words^.inner.cap {
+    place_back(window: &words^.inner, value: value);
+  }
+  return unit;
+}
+
+fn pass_pairs(map: &HashMap<u64, u64, ceiling>) -> pairs: u64 reads(map) {
+  doc "One whole untimed pass of limit-bucket calls, which warms the caches and returns the pairs it lent.";
+  let count = Count(pairs: 0_u64, sum: 0_u64);
+  let cursor = hash_map_scan::<u64, u64, Count, fn hold_visit, ceiling>(map: map, cursor: 0_u64, limit: limit, env: &count);
+  loop @pass {
+    if cursor == 0_u64 {
+      break @pass;
+    }
+    set cursor = hash_map_scan::<u64, u64, Count, fn hold_visit, ceiling>(map: map, cursor: cursor, limit: limit, env: &count);
+  }
+  return count.pairs;
+}
+
+fn find_chain(map: &HashMap<u64, u64, ceiling>, size: u64) -> start: Option<u64> reads(map) {
+  doc "The cursor of the call in a pass that lends at least size pairs, the call that holds the shared chain, or None when no call does.";
+  let count = Count(pairs: 0_u64, sum: 0_u64);
+  let start = 0_u64;
+  loop @pass {
+    let before = count.pairs;
+    let next = hash_map_scan::<u64, u64, Count, fn hold_visit, ceiling>(map: map, cursor: start, limit: limit, env: &count);
+    let lent = count.pairs -wrap before;
+    if lent >= size {
+      return Some<u64>(value: start);
+    }
+    if next == 0_u64 {
+      break @pass;
+    }
+    set start = next;
+  }
+  return None<u64>();
+}
+
+fn time_calls(map: &HashMap<u64, u64, ceiling>, calls: u64, from: u64, restart: Bool, clock: &Clock, durations: &Box<Slots<u64>>, lent: &Box<Slots<u64>>) -> result: u64 reads(map), writes(clock), writes(durations), writes(lent) {
+  doc "Times calls scan calls one by one, recording each call's nanoseconds and pairs. With restart every call starts at from; otherwise each call continues where the last stopped, and a finished pass starts the next at zero. Returns the sum of the values lent.";
+  let count = Count(pairs: 0_u64, sum: 0_u64);
+  let cursor = from;
+  for (call in 0_u64..calls) {
+    let before = count.pairs;
+    let started = now(clock: clock);
+    let next = hash_map_scan::<u64, u64, Count, fn hold_visit, ceiling>(map: map, cursor: cursor, limit: limit, env: &count);
+    let ended = now(clock: clock);
+    let elapsed = nanoseconds_from(earlier: started, later: ended);
+    record(words: durations, value: elapsed);
+    let pairs = count.pairs -wrap before;
+    record(words: lent, value: pairs);
+    if restart {
+    } else {
+      set cursor = next;
+    }
+  }
+  return count.sum;
+}
+
+fn put_decimal(line: &Slots<u8, 256>, value: u64) -> result: unit writes(line) {
+  doc "Appends value in decimal and one tab to the line, as much as fits.";
+  let digits = slots_new::<u8, 20>();
+  let rest = value;
+  loop @split {
+    let low = rest % 10_u64;
+    let glyph = cvt.wrap::<u64, u8>(low);
+    let shown = glyph +wrap 48_u8;
+    if digits.len < digits.cap {
+      place_back(window: &digits, value: shown);
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @split;
+    }
+  }
+  loop @emit {
+    if digits.len == 0_u64 {
+      break @emit;
+    }
+    let shown = take_back(window: &digits);
+    if line^.len < line^.cap {
+      place_back(window: line, value: shown);
+    }
+  }
+  if line^.len < line^.cap {
+    place_back(window: line, value: 9_u8);
+  }
+  return unit;
+}
+
+fn write_line(factory: &HandleFactory, output: &OutputStream, line: &Slots<u8, 256>) -> result: u8 reads(line), writes(factory), writes(output) waits {
+  doc "Ends the line's last field with a newline instead of a tab and writes the whole line; 0 when written, 1 when the output refused it.";
+  if line^.len > 0_u64 {
+    let dropped = take_back(window: line);
+  }
+  if line^.len < line^.cap {
+    place_back(window: line, value: 10_u8);
+  }
+  let length = line^.len;
+  let source = &line^[0_u64..length];
+  let sent = 0_u64;
+  let unbounded = None<Instant>();
+  let cancel = std::time::cancel_never();
+  loop @send {
+    if sent < length {
+    } else {
+      break @send;
+    }
+    match std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: unbounded, cancel: &cancel) {
+      Ok(value: endpoint) => {
+        set sent = endpoint;
+      }
+      Err(error: failure) => {
+        std::time::close_cancel_watch(watch: move cancel);
+        return 1_u8;
+      }
+    }
+  }
+  std::time::close_cancel_watch(watch: move cancel);
+  return 0_u8;
+}
+
+fn emit(factory: &HandleFactory, output: &OutputStream, fields: &Array<u64, 5>) -> result: u8 reads(fields), writes(factory), writes(output) waits {
+  doc "Prints one row of five tab-separated decimal fields.";
+  let line = slots_new::<u8, 256>();
+  for (at in 0_u64..5_u64) {
+    put_decimal(line: &line, value: fields^[at]);
+  }
+  return write_line(factory: factory, output: output, line: &line);
+}
+
+fn report(mode: u64, size: u64, durations: &Box<Slots<u64>>, lent: &Box<Slots<u64>>, factory: &HandleFactory, output: &OutputStream) -> failed: u8 reads(durations), reads(lent), writes(factory), writes(output) waits {
+  doc "Prints one row per recorded call: mode, size, call index, nanoseconds and pairs lent.";
+  let failed = 0_u8;
+  for (call in 0_u64..durations^.inner.len) {
+    if call < lent^.inner.len {
+      let fields = array_filled::<u64, 5>(value: 0_u64);
+      set fields[0_u64] = mode;
+      set fields[1_u64] = size;
+      set fields[2_u64] = call;
+      set fields[3_u64] = durations^.inner[call];
+      set fields[4_u64] = lent^.inner[call];
+      let written = emit(factory: factory, output: output, fields: &fields);
+      set failed = ior(failed, written);
+    }
+  }
+  return failed;
+}
+
+fn arg_number(args: &std::text::Args, position: u64) -> result: Option<u64> reads(args) {
+  doc "The invocation argument at position read as a decimal number of one to 18 digits, or None.";
+  match std::text::arg_get(args: args, position: position) {
+    Ok(value: host) => {
+      let digits = array_filled::<u8, 18>(value: 0_u8);
+      match std::text::host_copy_bytes(value: &host, destination: &digits[0_u64..18_u64], start: 0_u64, end: 18_u64) {
+        Ok(value: length) => {
+          if length == 0_u64 {
+            return None<u64>();
+          }
+          let total = 0_u64;
+          for @digit (at in 0_u64..length) {
+            let byte = digits[at];
+            if byte < 48_u8 {
+              return None<u64>();
+            }
+            if byte > 57_u8 {
+              return None<u64>();
+            }
+            let digit = byte - 48_u8;
+            let value = cvt::<u8, u64>(digit);
+            set total = total *wrap 10_u64;
+            set total = total +wrap value;
+          }
+          return Some<u64>(value: total);
+        }
+        Err(error: short) => {
+          return None<u64>();
+        }
+      }
+    }
+    Err(error: missing) => {
+      return None<u64>();
+    }
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "hold MODE SIZE CALLS times CALLS calls of hash_map_scan with limit 64 one by one and prints each call's nanoseconds and pairs lent. MODE 1: SIZE pairs with uniform hashes, after one untimed pass, each call continuing the last. MODE 2: SIZE pairs sharing one hash, every call starting at the cursor of the call that holds their chain. SIZE 1..1000000, CALLS 1..1000000. Status 2 for invalid arguments, 1 when output failed, 3 when the untimed pass lent fewer than SIZE pairs or no call held the shared chain.";
+  let Inputs(args: args, cwd: directory, stdout: output, handles: factory, clock: clock, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  let mode = 0_u64;
+  let size = 0_u64;
+  let calls = 0_u64;
+  match arg_number(args: &args, position: 1_u64) {
+    Some(value: read) => {
+      set mode = read;
+    }
+    None() => {
+    }
+  }
+  match arg_number(args: &args, position: 2_u64) {
+    Some(value: read) => {
+      set size = read;
+    }
+    None() => {
+    }
+  }
+  match arg_number(args: &args, position: 3_u64) {
+    Some(value: read) => {
+      set calls = read;
+    }
+    None() => {
+    }
+  }
+  if size == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if size > 1000000_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if calls == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if calls > 1000000_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let keys = HoldKeys(unused: 0_u64);
+  let durations = box_slots_new::<u64>(capacity: calls);
+  let lent = box_slots_new::<u64>(capacity: calls);
+  let status = 2_u8;
+  if mode == 1_u64 {
+    let map = uniform_map(size: size, keys: &keys);
+    let pairs = pass_pairs(map: &map);
+    if pairs < size {
+      set status = 3_u8;
+    } else {
+      let sum = time_calls(map: &map, calls: calls, from: 0_u64, restart: False(), clock: &clock, durations: &durations, lent: &lent);
+      set status = report(mode: mode, size: size, durations: &durations, lent: &lent, factory: &factory, output: &output);
+    }
+    release_map(map: move map);
+  }
+  if mode == 2_u64 {
+    let map = same_map(size: size, keys: &keys);
+    match find_chain(map: &map, size: size) {
+      Some(value: start) => {
+        let sum = time_calls(map: &map, calls: calls, from: start, restart: True(), clock: &clock, durations: &durations, lent: &lent);
+        set status = report(mode: mode, size: size, durations: &durations, lent: &lent, factory: &factory, output: &output);
+      }
+      None() => {
+        set status = 3_u8;
+      }
+    }
+    release_map(map: move map);
+  }
+  release_words(words: move durations);
+  release_words(words: move lent);
+  return exit_status(code: status);
+}

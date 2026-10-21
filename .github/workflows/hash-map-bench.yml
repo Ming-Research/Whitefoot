@@ -1,0 +1,180 @@
+# Serves research/experiments/hash-map-compare: the ordinary HashMap before
+# and after a library change, on a hosted runner or the owner's i9-14900K.
+# Two compilers are built from the candidate revision's compiler source, one
+# with the base revision's lib/std/collections/hash_map/ checked out over it,
+# and compare.py builds, runs and reduces the paired cells (the README beside
+# it gives the cells, the decision rule and the controls).
+#
+# research-boundary: manual-only
+# Explicitly requested comparison; no push or pull-request trigger.
+#
+# FAILURE POLICY. The job fails when a compiler or image does not build, when
+# the reducer's self-test fails, when a process fails or its rows are missing,
+# malformed or differ from the workload's expected checks, and, with
+# `control: slow`, when a timed cell is not judged a regression. No verdict
+# of an ordinary run fails it. `timeout-minutes` bounds a stuck runner.
+#
+# The summary a decision relies on is copied by hand into the consuming
+# item's research record with its run id, because artifacts expire.
+name: hash-map-bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Candidate commit or branch, whose compiler source both arms use
+        type: string
+        required: true
+      base:
+        description: Base commit or branch for lib/std/collections/hash_map/; empty means the candidate's merge base with main
+        type: string
+        default: ""
+      runner:
+        description: Where it runs, GitHub or the owner's i9-14900K runner
+        type: choice
+        options: [github, 14900k]
+        default: github
+      cpu:
+        description: The CPU every timed process is pinned to; empty means 2 on the 14900K and 1 on GitHub
+        type: string
+        default: ""
+      sizes:
+        description: Comma-separated map sizes of the timed and memory cells
+        type: string
+        default: "1000,10000,1000000"
+      min_rounds:
+        description: Rounds before any cell may be judged (at least 6)
+        type: string
+        default: "10"
+      max_rounds:
+        description: Rounds after which an unjudged cell is reported unresolved
+        type: string
+        default: "40"
+      control:
+        description: none, or slow to repeat every eighth candidate operation and require a regression in every timed cell
+        type: choice
+        options: [none, slow]
+        default: none
+
+defaults:
+  run:
+    shell: bash
+
+# A 14900K run waits for the one before it.
+concurrency:
+  group: hash-map-bench-${{ inputs.runner }}${{ inputs.runner == 'github' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  compare:
+    name: compare (${{ inputs.runner }})
+    runs-on: ${{ inputs.runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The hosted image's clang predates the calling convention the
+      # compiler emits; take the pinned LLVM major as the gate does. The
+      # 14900K carries the latest stable release at /usr/bin/clang.
+      - name: Install the host toolchain (GitHub)
+        if: inputs.runner == 'github'
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+
+      # A runner service starts without the login shell's PATH, where rustup
+      # puts cargo; the step stops on the first missing tool and names it.
+      - name: Check the host's tools
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          missing=
+          for tool in /usr/bin/clang ld.lld cargo make taskset python3 git perl; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          /usr/bin/clang --version
+          nproc
+          lscpu
+
+      - name: Self-test the reducer
+        run: python3 -B research/experiments/hash-map-compare/compare.py self-test
+
+      - name: Build the base and candidate compilers
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+          BASE: ${{ inputs.base }}
+        run: |
+          rm -rf "$RUNNER_TEMP/out"
+          mkdir -p "$RUNNER_TEMP/out"
+          bash research/experiments/hash-map-compare/arms.sh "$CANDIDATE" "$BASE" "$RUNNER_TEMP/out"
+
+      - name: Build the images
+        run: |
+          arms="$RUNNER_TEMP/out/arms"
+          python3 -B research/experiments/hash-map-compare/compare.py build \
+            --base-wfc "$arms/base/compiler/target/gate/whitefootc" \
+            --candidate-wfc "$arms/candidate/compiler/target/gate/whitefootc" \
+            --runtime-root "$arms/candidate" --out "$RUNNER_TEMP/out"
+
+      - name: Measure
+        env:
+          CPU: ${{ inputs.cpu }}
+          SIZES: ${{ inputs.sizes }}
+          MIN_ROUNDS: ${{ inputs.min_rounds }}
+          MAX_ROUNDS: ${{ inputs.max_rounds }}
+          CONTROL: ${{ inputs.control }}
+        run: |
+          if [ -z "$CPU" ]; then
+            if [ "${{ inputs.runner }}" = 14900k ]; then CPU=2; else CPU=1; fi
+          fi
+          slow=()
+          if [ "$CONTROL" = slow ]; then slow=(--slow); fi
+          python3 -B research/experiments/hash-map-compare/compare.py measure --out "$RUNNER_TEMP/out" \
+            --cpu "$CPU" --sizes "$SIZES" --min-rounds "$MIN_ROUNDS" --max-rounds "$MAX_ROUNDS" "${slow[@]}"
+
+      - name: Reduce and publish
+        env:
+          CONTROL: ${{ inputs.control }}
+        run: |
+          expect=()
+          if [ "$CONTROL" = slow ]; then expect=(--expect-regression); fi
+          status=0
+          python3 -B research/experiments/hash-map-compare/compare.py reduce --out "$RUNNER_TEMP/out" \
+            "${expect[@]}" || status=$?
+          {
+            echo "## hash-map-bench (${{ inputs.runner }}, control ${{ inputs.control }})"
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/out/summary.txt" 2>/dev/null || echo "the summary was not written"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hash-map-bench-${{ inputs.runner }}-${{ inputs.control }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/out/manifest.txt
+            ${{ runner.temp }}/out/raw.tsv
+            ${{ runner.temp }}/out/memory.tsv
+            ${{ runner.temp }}/out/hold.tsv
+            ${{ runner.temp }}/out/summary.txt
+            ${{ runner.temp }}/out/images/
