@@ -54,6 +54,15 @@ Chinese, on 2026-10-14 and 2026-10-19:
   three-quarter mark and the vacated count of linear probing are gone. The
   shrink rule approved for linear probing is re-derived on this structure by
   the shrink work, not here.
+- Linear probing with high-bit homes (the fourth question, raised after the
+  second comparison). The owner ruled on 2026-10-21 for the representation in
+  [Next representation](#next-representation-linear-probing-with-high-bit-homes),
+  which replaces the home chains and the two capacity rules above that only
+  chains needed: pairs move again when the map rebuilds, and the
+  three-quarter mark and the vacated count return.
+
+The rest of this section and the two comparisons below describe the chains as
+built and measured on Ming-Research/Whitefoot#487 before that ruling.
 
 The implementation on Ming-Research/Whitefoot#487 differs from Valkey 8 in
 two ways the third ruling accepted:
@@ -309,6 +318,23 @@ memory equals main's: the 10,000-pair cell no longer regresses and the
 1,000 and 1,000,000-pair cells no longer improve. This replaces two ruled
 rules of the capacity card: pairs move when the map rebuilds, and the
 three-quarter mark and the deleted count return.
+
+As implemented after the ruling: the bucket count is zero or a power of two
+of at least two, since the shift that keeps the top bits must stay below 64;
+a map at capacity zero takes two buckets at its first insertion, where main
+took one. Capacity is at most the ceiling, so a reservation of the ceiling is
+always granted though its bucket count's three quarters may pass it, and
+growth continues while the capacity is below the ceiling, so the ceiling
+bounds the pairs, which `hash_map_try_put` refuses beyond it. Hashing the end
+runs needs the key binding, so `hash_map_scan` takes it and its environment
+as the lookups do. A pure Python model of these rules, run while writing
+them, lent every pair once per pass over unchanged maps of up to 300 pairs
+with uniform, single-hash, last-home and clustered hashes at limits 1 to
+1000, and lent every surviving pair in 300 random passes with insertions,
+removals, rehash and growth between calls; the CI tests are the record. At a
+million members the map has 2^21 buckets, a capacity of 1,572,864, so
+Firn's witness now inserts 32 churn keys per call, not 16, to make the map
+grow during the pass.
 
 Predictions, exploratory and not acceptance: every lookup, removal and
 insertion cell no slower than main, since the walk is main's and the home
