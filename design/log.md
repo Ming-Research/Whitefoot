@@ -10,6 +10,19 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/waiting-contexts/state-locks
 
 Summary: A wait guard written as a call to a helper function, such as `atomic m = &meta when reply_covered(...)`, gave the wake derivation no atom, so each write to the object could wake a waiter whose guard was still false, which woke, reacquired, found it false and parked again; a counted program test measured eight such wakes for a helper guard and none for the same comparison written inline (`tests/programs/helper_guard_false_wakes.wf`). When the atom derivation yields no test for a guard containing a helper call, the guard now compiles to a read-only, nonwaiting, nonlocking, nonallocating, nonrecursive function over the written object's state and the values captured at registration, kept with its captures in the waiter's frame and called by the writer under the hold it already has; a guard the audit cannot cover, or one reading another target, still contributes true, and atom tests are still preferred. A helper whose body is a single `return` of an expression over its parameters is also expanded into atom tests, which the earlier derivation dropped as an unknown call. The existing rejection of the releaser running each waiter's guard is narrowed to every guard, and a rejection of field-read footprints is added, because a write flag names the whole object. The cost of the callbacks against the wakes they remove is unmeasured and reopens the decision.
+## 2026-10-20 The merge-base compiler is cached per main commit, and its cold build is report-only
+
+Nodes: compiler/verification, compiler/merge-base-compiler-cache
+
+Summary: The paired performance comparison builds the main line's compiler as its baseline, a cold build of about 110 s that overran its 115 s budget on about one run in four and turned unrelated pull requests red. The owner chose on 2026-10-13 to cache that compiler per main commit and toolchain, with an exact key and no prefix restore, and on 2026-10-14 to make the baseline build report-only, because it builds the main line's own code that no pull request changes. The cache misses after each runner image change, so the first pull request after one builds cold; that build is recorded but does not fail the verdict. The candidate build keeps its own enforced budget.
+
+## 2026-10-13 One compilation lists every non-exhaustive match
+
+Nodes: compiler/rejection-payloads
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the decision that Whitefoot#444 (one compilation lists every non-exhaustive match) adds to the design tree?" (translated), shown at head commit 4cca9198f.
+
+Summary: A non-exhaustive match records its edit site and the same structural walk continues over the written arms and later functions, reporting the first established event with every recorded site, because ERR-2 promises site-enumerated edit lists and one site per compile costs an agent a round per match when adding a variant, instead of stopping at the first site. Missing arms contribute no path or guessed binding, pending sites fail before proof analysis or receipt publication, and a same-node rejection under an earlier-defined rule still wins under DIAG-1; re-running with masked matches or a second checker and narrowing ERR-2 to the first site are rejected.
 ## 2026-10-13 Release packages carry their own clang, and macOS stack probing follows the clang in use
 
 Nodes: compiler/toolchain-resolution, compiler/resource-exhaustion-floor, compiler/downstream-releases

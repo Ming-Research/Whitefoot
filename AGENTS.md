@@ -220,8 +220,9 @@ build time apart from test and program execution.
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
   `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
-  timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
-  experiments and never a gate.
+  timing; each push to `main` there only builds and caches that commit's
+  compiler for later PRs' merge-base baselines), and `io-bench.yml` and
+  `compute-bench.yml` on request, which are experiments and never a gate.
 - Compiler releases: `compiler-release.yml`, dispatched when a downstream
   project needs a main commit, publishes that commit's compiler as release
   `wf-<12 hex digits>`, with `bundle_toolchain` as
@@ -249,7 +250,10 @@ labeled stage with its budget in `.github/time-budgets.txt` without changing
 the command's status. Linux budgets are per CPU model: the maximum of at least
 its 20 most recent recorded runs plus 10%, rounded up to 5 s, with a 10 s floor.
 Models with fewer runs have no column; unknown models use the stage's largest
-Linux budget, with a note. macOS overruns are report-only; Windows rows keep their rule.
+Linux budget, with a note. macOS overruns are report-only, and so are the stages
+named in `WHITEFOOT_BUDGET_REPORT_ONLY` (comma-separated labels; the merge-base
+compiler build uses it, since its cache misses after a runner image change);
+Windows rows keep their rule.
 The final CI verdict fails on Linux and Windows overruns and on a missing row
 for any host. On a self-hosted runner, inspect an existing lock owner's PID
 instead of starting another heavy command, and after an uncatchable stop
