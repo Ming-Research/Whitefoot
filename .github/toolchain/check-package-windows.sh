@@ -99,6 +99,14 @@ PY
 # The clean machine: a container started from the stock Server Core image. The
 # host's own clang is the control that shows the detector can see one.
 name=wf-clean-windows
+# The hosted image starts its container engine in the background, so the first
+# call can come before it listens: give it a bounded time, then fail with the
+# engine's own message.
+for attempt in $(seq 1 24); do
+  docker info > /dev/null 2>&1 && break
+  sleep 5
+done
+docker info > "$logs/docker-info.txt"
 docker rm -f "$name" > /dev/null 2>&1 || true
 trap 'docker rm -f "$name" > /dev/null 2>&1 || true; restore' EXIT
 docker run --detach --name "$name" --isolation process \
@@ -133,6 +141,10 @@ run_image() { # label executable : exit code in $logs/label.code, output in labe
   printf 'Run (%s): %s\n' "$label" "$exe"
   docker exec --workdir 'C:\work\unrelated cwd' "$name" 'C:\work\tools\run-code.cmd' \
     "C:\\work\\logs\\$label.code" "$exe" > "$logs/$label.out" 2> "$logs/$label.err" || true
+  report_run "$label"
+}
+report_run() { # label : read the exit code the wrapper wrote and show the run
+  local label="$1"
   code=$(tr -d '\r\n ' < "$logs/$label.code")
   cat "$logs/$label.out" "$logs/$label.err"
   printf 'Exit (%s): %s\n' "$label" "$code"
@@ -164,8 +176,18 @@ test "$code" = 0
 # packaged clang selected: an unprobed frame would end in a host fault with no
 # record. The CRT's abort ends a Windows process with 3 or with the fast-fail
 # status 0xC0000409, which cmd's errorlevel prints as a signed 32-bit number.
+# The package builds the image in the container, but the image runs on the
+# runner: ending a process that holds the floor's 1 GiB of committed stack by
+# a crash takes about twenty minutes inside a process-isolated container and
+# one second on the runner (a dedicated probe measured both, with an
+# exit-based end taking a second in either), and the property under test is
+# which method the compiler chose, not where the image runs. The ordinary
+# images already run in the container, and the import check below covers this
+# image like the others.
 cexec stack-build "$compiler" -o 'C:\work\out\stack.exe' 'C:\work\stack-exhaustion.wf'
-run_image stack-run 'C:\work\out\stack.exe'
+cmd /c "$(cygpath -w "$work/tools/run-code.cmd")" "$(cygpath -w "$logs/stack-run.code")" \
+  "$(cygpath -w "$work/out/stack.exe")" > "$logs/stack-run.out" 2> "$logs/stack-run.err" || true
+report_run stack-run
 case "$code" in 3 | 3221226505 | -1073740791) ;; *) echo "stack witness ended with $code" >&2; exit 1 ;; esac
 test "$(tr -d '\r' < "$logs/stack-run.err")" = '{"resource":"stack"}'
 test ! -s "$logs/stack-run.out"
