@@ -133,9 +133,17 @@ fn hash_map_thread<K, V>(cells: &Box<Slots<HashMapNode<K, V>>>, start: u64, end:
 } {
   doc "Chains the nodes in [start, end) into a free list in increasing position, ending at spare, and returns the new head.";
   let head = spare;
+  let length = cells^.inner.len;
+  let room = cells^.inner.cap;
   if start < end {
     set head = start +wrap 1_u64;
-    for (index in start..end) {
+    for @thread (
+      index in start..end,
+      invariant length_min: cells^.inner.len >= length,
+      invariant length_max: cells^.inner.len <= length,
+      invariant room_min: cells^.inner.cap >= room,
+      invariant room_max: cells^.inner.cap <= room
+    ) {
       let following = index +wrap 2_u64;
       if following > end {
         set following = spare;
@@ -341,7 +349,11 @@ fn hash_map_relink<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Hash
   set map^.shift = hash_map_shift(count: buckets);
   if buckets > 0_u64 {
     let count = map^.cells.inner.len;
-    for @nodes (index in 0_u64..count) {
+    for @nodes (
+      index in 0_u64..count,
+      invariant count_min: map^.cells.inner.len >= count,
+      invariant count_max: map^.cells.inner.len <= count
+    ) {
       let hashed = hash_map_slot_hash::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index].slot, env: env);
       match hashed {
         Some(value: hash) => {
