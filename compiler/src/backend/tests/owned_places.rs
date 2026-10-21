@@ -1746,7 +1746,10 @@ void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
 /// explicitly; a boxed inline shape leaves a wrapped partial window to cleanup.
 /// The checker proves the wrapped ring's length and capacity and the drained
 /// length, so the full program folds them into its exit status, zero when
-/// they are 3, 3 and 0, and the trace keeps standard output.
+/// they are 3, 3 and 0, and the trace keeps standard output. The fixed-shape
+/// variant keeps its two zero tests on the freshly boxed ring: the checker
+/// does not carry the facts about a value's fields through `box_new`, so it
+/// cannot decide them (`wf-box-field-facts`).
 #[test]
 fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
     let source = include_str!("../../../../tests/programs/runtime_ring_wrap.wf");
@@ -1790,6 +1793,10 @@ fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
 /// The arena half of this case retired with [STOR-4]: there is one heap
 /// [STOR-8] and one cell release [STOR-3], so the same helper over a second
 /// store class has no successor to contrast against.
+///
+/// The zero test on the freshly boxed window's length stays: the checker does
+/// not carry the facts about a value's fields through `box_new`, so it cannot
+/// decide it (`wf-box-field-facts`).
 #[test]
 fn boxed_window_bounded_append_preserves_storage_and_elements() {
     let source = br#"struct Checked {
