@@ -1,0 +1,102 @@
+# Temporary (wf-gate-budget-noise): removed before the branch is ready.
+#
+# Question: the semantic test helpers have about 520 call sites in the source,
+# yet the unit test build's IR holds 510, 1,022 and 1,545 definitions of
+# `with_semantics`, `with_semantics_inputs` and `with_resolved_semantics_inputs`
+# (tmp-llvm-lines, one codegen unit). Which monomorphizations make the chain
+# three-deep per call site, and what does the front-end driver count become
+# after the driver is deduplicated?
+#
+# rustc lists every monomorphized item with its type arguments
+# (`-Zprint-mono-items`, enabled on stable by RUSTC_BOOTSTRAP). The listing is
+# grouped by function path before the change (200e4f8c3) and at the head.
+name: tmp-ir-instances
+
+on:
+  push:
+    branches: [wf-gate-budget-noise]
+    paths: ['.github/workflows/tmp-ir-instances.yml']
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  instances:
+    name: instances (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: before
+            ref: 200e4f8c3bee1040b409903a871347226fb9f715
+          - name: after
+            ref: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          submodules: true
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: List the monomorphized items of the unit test build
+        run: |
+          set -eu
+          git rev-parse HEAD
+          cd compiler
+          RUSTC_BOOTSTRAP=1 cargo rustc --lib --profile test --locked --offline -- \
+            -Zprint-mono-items=lazy -C codegen-units=1 -C no-prepopulate-passes -C opt-level=0 \
+            > "$RUNNER_TEMP/mono.txt" 2> "$RUNNER_TEMP/mono.err" || { tail -30 "$RUNNER_TEMP/mono.err"; exit 1; }
+          grep -c '^MONO_ITEM' "$RUNNER_TEMP/mono.txt"
+
+      - name: Count per function path
+        run: |
+          python3 -I - "$RUNNER_TEMP/mono.txt" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import re, sys, collections
+          items = []
+          for line in open(sys.argv[1], errors='replace'):
+              if line.startswith('MONO_ITEM fn '):
+                  items.append(line[len('MONO_ITEM fn '):].split(' @@ ')[0])
+          print("### mono items (${{ matrix.name }}):", len(items))
+          def key(it):
+              i = it.find('::<')
+              return it if i < 0 else it[:i]
+          watched = ('semantic::tests::with_', 'semantic::tests::run_resolved_semantics', 'native_test_support::timed')
+          per = collections.Counter(key(it) for it in items if any(w in it for w in watched))
+          print("\n```text")
+          for k, n in sorted(per.items(), key=lambda kv: -kv[1])[:30]:
+              print("%6d  %s" % (n, k))
+          print("```")
+          # Every item that names the first `with_semantics` call site's closure.
+          first = next((it for it in items if key(it).endswith('semantic::tests::with_semantics')), None)
+          if first:
+              m = re.search(r'\{closure@[^}]+\}', first)
+              site = m.group(0) if m else None
+              print("\n### the items that name the closure of the first `with_semantics` instance:", site)
+              print("\n```text")
+              for it in items:
+                  if site and site in it:
+                      print(it[:400])
+              print("```")
+          print("\n### first three `with_semantics_inputs` and `with_resolved_semantics_inputs` instances\n\n```text")
+          for name in ('semantic::tests::with_semantics_inputs', 'semantic::tests::with_resolved_semantics_inputs'):
+              shown = 0
+              for it in items:
+                  if key(it).endswith(name) and shown < 3:
+                      print(it[:400]); shown += 1
+          print("```")
+          PY
