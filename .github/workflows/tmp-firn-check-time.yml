@@ -126,7 +126,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Idle check against no lock, a live lock and a stale lock
         run: |
-          set -u
+          # The default shell stops at the first failing command; the probes
+          # expect nonzero exits and read them.
+          set +e -u
           lock="/tmp/whitefoot-check-$(id -u).lock"
           probe() {
             out=$(mktemp -d "$RUNNER_TEMP/idle.XXXXXX"); mkdir -p "$out/logs"
