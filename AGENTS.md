@@ -207,15 +207,15 @@ build time apart from test and program execution.
   of a ready pull request, the event of marking one ready and a manual run;
   any other push, a draft pull request's included, skips their checks, and
   the event of marking a pull request ready skips them when its head already
-  has a successful manual run of the same workflow. `gate.yml` runs the
-  groups on Linux and macOS both; its job `Gate on both platforms` passes
-  only when every group is green on both for the revision, and its job
-  `No temporary workflow` fails while a `tmp-` workflow file exists in the
-  checked head, and while it fails the correctness groups and `Gate on both
-  platforms` do not run. The success of `Gate on both platforms` on the exact
-  revision to be merged, a head current with `main`, is that revision's
-  `make check`. It needs `python3`, `jq`, LLD on Linux (`ld.lld`) and the
-  `time` utility.
+  has a successful manual run of the same workflow. `gate.yml` runs the groups
+  on Linux only while macOS is off (wf-gate-no-macos); its job `Gate on both
+  platforms` passes only when every group is green on Linux for the revision,
+  and its job `No temporary workflow` fails while a `tmp-` workflow file
+  exists in the checked head, and while it fails the correctness groups and
+  `Gate on both platforms` do not run. The success of `Gate on both platforms`
+  on the exact revision to be merged, a head current with `main`, is that
+  revision's `make check`. It needs `python3`, `jq`, LLD on Linux (`ld.lld`)
+  and the `time` utility.
 - Writing and the full check: a push to a draft pull request starts no gate,
   so the result for what a change touches comes from a temporary workflow
   (below). Once the review has passed, delete the `tmp-` file, merge `main`
