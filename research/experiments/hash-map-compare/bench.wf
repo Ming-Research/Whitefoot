@@ -35,7 +35,7 @@ struct BenchKeys {
 }
 
 struct Tally {
-  doc "What the timed operations observed: found counts lookups and removals that found their key, sum adds the values they saw, and extra collects what the slow control's repeated operations saw, kept apart so the check is the same in every arm.";
+  doc "What the timed operations observed: found counts lookups and removals that found their key, sum adds the values they saw, and extra collects what the slow control's extra lookups saw, kept apart so the check is the same in every arm.";
   found: u64;
   sum: u64;
   extra: u64;
@@ -118,7 +118,7 @@ fn order(step: u64, size: u64) -> index: u64 pure contract {
 }
 
 fn slow_turn(mask: u64, step: u64) -> repeat: Bool pure {
-  doc "Whether the slow control repeats the operation at step: when every bit of mask is set in step. The slow control passes 3, every fourth step; every other run passes all ones, which no step below 2^64 - 1 matches. The mask is data, so every run executes the same loops; a run-time Bool would let the compiler split each loop into a copy with and a copy without the repetition, which can differ in more than the repetition.";
+  doc "Whether the slow control adds its extra work at step: when every bit of mask is set in step. The slow control passes 3, every fourth step; every other run passes all ones, which no step below 2^64 - 1 matches. The mask is data, so every run executes the same loops; a run-time Bool would let the compiler split each loop into a copy with and a copy without the repetition, which can differ in more than the repetition.";
   let phase = iand(step, mask);
   return phase == mask;
 }
@@ -149,21 +149,6 @@ fn put_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys) -> re
   }
 }
 
-fn replace_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, tally: &Tally) -> result: unit reads(keys), writes(map), writes(tally) {
-  doc "The slow control's repeated put: the key is present, so the put replaces its value and returns the old pair, whose value goes to extra.";
-  let key = key_of(index: index);
-  let outcome = hash_map_put::<BenchKey, u64, ceiling>(map: map, key: key, value: index, env: keys);
-  match outcome {
-    HashMapInserted() => {
-      set tally^.extra = tally^.extra +wrap 1_u64;
-    }
-    HashMapReturned(reason: why, pair: returned) => {
-      set tally^.extra = tally^.extra +wrap index;
-    }
-  }
-  return unit;
-}
-
 fn remove_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys) -> found: u64 reads(keys), writes(map) {
   doc "Removes the pair of index; 1 when it was present, 0 when not.";
   let probe = key_of(index: index);
@@ -185,6 +170,7 @@ fn lookup_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, ta
 }
 
 fn relookup_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, tally: &Tally) -> result: unit reads(map), reads(keys), writes(tally) {
+  doc "The slow control's extra operation: one lookup of the key of index, whose result goes to extra. Callers pass an index unrelated to the operation just made, so the lookup costs what a lookup of a cold key costs; a repeat of the key just used is cheap and was not detected on a hosted runner.";
   let probe = key_of(index: index);
   let seen = hash_map_lookup::<BenchKey, u64, Tally, u64, fn bench_reread, ceiling>(map: map, key: &probe, key_env: keys, visit_env: tally);
   set tally^.extra = tally^.extra +wrap 1_u64;
@@ -218,7 +204,7 @@ fn build_sample(size: u64, capacity: u64, mask: u64, keys: &BenchKeys, clock: &C
   requires size > 0_u64;
   requires capacity <= 1000000_u64;
 } {
-  doc "Builds reps maps of size pairs, each from the given capacity, timing construction and every put; releasing each map is outside the interval.";
+  doc "Builds reps maps of size pairs, each from the given capacity, timing construction and every put; releasing each map is outside the interval. The slow control adds a lookup of an earlier key at every fourth put.";
   let reps = reps_for(size: size);
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let total = 0_u64;
@@ -231,7 +217,8 @@ fn build_sample(size: u64, capacity: u64, mask: u64, keys: &BenchKeys, clock: &C
       set check = check +wrap refused;
       let repeat = slow_turn(mask: mask, step: index);
       if repeat {
-        replace_one(map: &map, index: index, keys: keys, tally: &tally);
+        let earlier = ishr.wrap(index, 1_u32);
+        relookup_one(map: &map, index: earlier, keys: keys, tally: &tally);
       }
     }
     let ended = now(clock: clock);
@@ -251,6 +238,7 @@ fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, mask:
 } {
   doc "Looks up reps times the keys of offset + order(step) for every step below size, in one interval: offset zero finds every key of a map holding indexes 0..size, offset size finds none.";
   let reps = reps_for(size: size);
+  let half = size / 2_u64;
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let started = now(clock: clock);
   for (rep in 0_u64..reps) {
@@ -260,7 +248,10 @@ fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, mask:
       lookup_one(map: map, index: index, keys: keys, tally: &tally);
       let repeat = slow_turn(mask: mask, step: step);
       if repeat {
-        relookup_one(map: map, index: index, keys: keys, tally: &tally);
+        let far = step +wrap half;
+        let elsewhere = order(step: far, size: size);
+        let other = offset +wrap elsewhere;
+        relookup_one(map: map, index: other, keys: keys, tally: &tally);
       }
     }
   }
@@ -275,8 +266,9 @@ fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, mask:
 fn remove_sample(size: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(clock) contract {
   requires size > 0_u64;
 } {
-  doc "Builds reps maps of size pairs outside the interval and times removing every pair of each in order(step) order; the slow control removes every fourth key a second time, which finds nothing.";
+  doc "Builds reps maps of size pairs outside the interval and times removing every pair of each in order(step) order; the slow control adds a lookup of another key at every fourth step.";
   let reps = reps_for(size: size);
+  let half = size / 2_u64;
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let total = 0_u64;
   let check = 0_u64;
@@ -289,9 +281,9 @@ fn remove_sample(size: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sampl
       set check = check +wrap found;
       let repeat = slow_turn(mask: mask, step: step);
       if repeat {
-        let again = remove_one(map: &map, index: index, keys: keys);
-        let counted = again +wrap 1_u64;
-        set tally.extra = tally.extra +wrap counted;
+        let far = step +wrap half;
+        let other = order(step: far, size: size);
+        relookup_one(map: &map, index: other, keys: keys, tally: &tally);
       }
     }
     let ended = now(clock: clock);
@@ -309,8 +301,9 @@ fn remove_sample(size: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sampl
 fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(map), writes(clock) contract {
   requires size > 0_u64;
 } {
-  doc "With the map holding indexes oldest..oldest + size, reps times size steps each remove the oldest pair and put the next new one, so the map keeps size pairs; the slow control puts every fourth new pair a second time, which replaces it.";
+  doc "With the map holding indexes oldest..oldest + size, reps times size steps each remove the oldest pair and put the next new one, so the map keeps size pairs; the slow control adds a lookup of a live key half the map away at every fourth step.";
   let reps = reps_for(size: size);
+  let half = size / 2_u64;
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let ops = reps *wrap size;
   let check = 0_u64;
@@ -324,7 +317,8 @@ fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, mask: 
     set check = check +wrap refused;
     let repeat = slow_turn(mask: mask, step: step);
     if repeat {
-      replace_one(map: map, index: arriving, keys: keys, tally: &tally);
+      let live = leaving +wrap half;
+      relookup_one(map: map, index: live, keys: keys, tally: &tally);
     }
   }
   let ended = now(clock: clock);
@@ -540,7 +534,7 @@ fn run_memory(size: u64, meter: &std::process::MemoryMeter, factory: &HandleFact
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "bench OPERATION SIZE SAMPLES SLOW. OPERATION 1 presized insertion, 2 insertion from capacity zero, 3 lookup hit, 4 lookup miss, 5 removal, 6 alternating removal and insertion, 7 full iteration, 8 memory; SIZE 1..1000000; SAMPLES 1..1000; SLOW 1 adds the slow control's repeated operations, 0 does not. Status 2 for invalid arguments and 1 when output failed; the driver checks every row's check field against its expected value.";
+  doc "bench OPERATION SIZE SAMPLES SLOW. OPERATION 1 presized insertion, 2 insertion from capacity zero, 3 lookup hit, 4 lookup miss, 5 removal, 6 alternating removal and insertion, 7 full iteration, 8 memory; SIZE 1..1000000; SAMPLES 1..1000; SLOW 1 adds the slow control's extra work, 0 does not. Status 2 for invalid arguments and 1 when output failed; the driver checks every row's check field against its expected value.";
   let Inputs(args: args, cwd: directory, stdout: output, handles: factory, clock: clock, memory_meter: meter, ..) = move inputs;
   let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move write_directory);

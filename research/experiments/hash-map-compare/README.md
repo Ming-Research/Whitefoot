@@ -96,18 +96,19 @@ Accepting a detected regression is not this instrument's decision.
 
 The twin is the null control in every run. The slow control, the workflow's
 `control: slow`, replaces the candidate arm with the base image given an
-argument that repeats every fourth operation of every timed batch inside the
-interval (a lookup, a removal that finds nothing, or a put that replaces;
-for iterate, every fourth pass), from about 5% to 25% more work, so the
-repetition is the only difference between the arms. The repetition is
-selected by a bit mask passed as data, all ones in every other run, so every
-run executes the same machine code. With a run-time switch instead, a
-hosted run measured lookup hits at 10,000 pairs 11% faster with 25% more
-lookups; the likely cause, not inspected, is that the compiler split each
-timed loop into a copy with and a copy without the repetition, which differ
-in more than the repetition; `compare.py reduce
---expect-regression` fails unless every timed cell is judged a regression.
-The repeated operations' results go to a separate field, so the checks stay
+argument that adds work inside the interval at every fourth step of every
+timed batch: one lookup of a key unrelated to the step's own operation (an
+earlier key while inserting, a key half the permutation away while looking
+up or removing, a live key half the map away while churning), and for
+iterate one more pass. The extra work is selected by a bit mask passed as
+data, all ones in every other run, so every run executes the same machine
+code and the extra work is the only difference between the arms. `compare.py
+reduce --expect-regression` fails unless every timed cell is judged a
+regression. An earlier form that repeated the step's own operation on the
+same key was not detected for lookups at 10,000 pairs on a hosted AMD EPYC
+7763: with 25% more lookups of keys just used, the cell measured 16% faster,
+for a reason not established; a repeat of a key in cache is not a reliable
+slowdown. The extra lookups' results go to a separate field, so the checks stay
 those of the workload. `compare.py self-test` exercises the interval, the
 decision rule and the data checks on synthetic rows.
 
