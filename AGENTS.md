@@ -195,7 +195,7 @@ build time apart from test and program execution.
 
 - `make static`, run by the static group of `gate.yml`, which adds the
   conformance structure, the performance instrument and the compiler's
-  format and lint checks: repository invariants, the specification
+  lint check: repository invariants, the specification
   archives, the README and its translation changed together, prose
   integrity, guidance references, Rust sources under `compiler/src/` over
   4,000 lines listed in `.github/oversized-sources.txt`, and the design
