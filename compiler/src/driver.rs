@@ -3630,50 +3630,69 @@ mod formatting_tests {
         }
     }
 
-    /// Formatting derives through the segment admission checking uses. A
-    /// declaration keyword at the start of a line that is inside a declaration,
-    /// and two independent bad declarations, are rejected only by that
-    /// admission: the whole token sequence derives in the first case and stops
-    /// at one defect in the second. Both requests must report what the
-    /// front end reports for the same bundle.
-    #[test]
-    fn formatting_reports_the_segment_rejections_checking_reports() {
+    /// Rejects `inputs` through formatting and through the front end's syntax
+    /// stages over the same bundle, asserts both report the same diagnostics,
+    /// and returns how many diagnostics there are.
+    fn formatting_and_front_end_reject_alike(
+        inputs: &[SourceInput<'_>],
+        grammar: FormatGrammar,
+    ) -> usize {
         let limits = CompilerLimits::default();
-        let split = [SourceInput::new(
+        let graph = grammar == FormatGrammar::Graph;
+        let bundle = SourceBundle::with_limits(inputs, limits.source).expect("bundle");
+        let checked = canonical_syntax(&bundle, limits, graph)
+            .expect_err("independent segment failures precede canonical rendering");
+        let formatted = canonical_format(inputs, grammar, limits)
+            .expect_err("formatting needs every segment to derive");
+        assert_eq!(
+            formatted.render(DiagnosticFormat::Json),
+            checked.render(DiagnosticFormat::Json)
+        );
+        formatted.diagnostics().count()
+    }
+
+    /// Formatting derives through the segment admission checking uses. A
+    /// declaration keyword at the start of a line that is inside a declaration
+    /// derives as a whole token sequence and is rejected only by that
+    /// admission, so formatting it as a whole would write `public fn f() ...`.
+    #[test]
+    fn formatting_reports_a_declaration_split_across_lines_like_checking() {
+        let limits = CompilerLimits::default();
+        let inputs = [SourceInput::new(
             "split.wf",
             b"public\nfn f() -> r: unit pure {\n  return unit;\n}\n",
         )];
-        let two = [
+        let bundle = SourceBundle::with_limits(&inputs, limits.source).expect("bundle");
+        derive_syntax(&bundle, limits, false, false)
+            .expect("the complete token sequence derives");
+        formatting_and_front_end_reject_alike(&inputs, FormatGrammar::Program);
+    }
+
+    /// Two independent bad declarations in two sources are two diagnostics
+    /// from the segment admission; the whole derivation stops at one.
+    #[test]
+    fn formatting_reports_every_independent_bad_declaration_like_checking() {
+        let inputs = [
             SourceInput::new("first.wf", b"fn first() -> r: unit {\n  return unit;\n}\n"),
             SourceInput::new(
                 "second.wf",
                 b"fn second() -> r: unit pure {\n  // bad\n}\n",
             ),
         ];
-        let row = [SourceInput::new("split.wfg", b"pkg: [\nother\n];\n")];
-        for (inputs, grammar, diagnostics) in [
-            (&split[..], FormatGrammar::Program, None),
-            (&two[..], FormatGrammar::Program, Some(2)),
-            (&row[..], FormatGrammar::Graph, None),
-        ] {
-            let graph = grammar == FormatGrammar::Graph;
-            let bundle = SourceBundle::with_limits(inputs, limits.source).expect("bundle");
-            if diagnostics.is_none() {
-                derive_syntax(&bundle, limits, graph, false)
-                    .expect("the complete token sequence derives");
-            }
-            let checked = canonical_syntax(&bundle, limits, graph)
-                .expect_err("independent segment failures precede canonical rendering");
-            let formatted = canonical_format(inputs, grammar, limits)
-                .expect_err("formatting needs every segment to derive");
-            assert_eq!(
-                formatted.render(DiagnosticFormat::Json),
-                checked.render(DiagnosticFormat::Json)
-            );
-            if let Some(count) = diagnostics {
-                assert_eq!(formatted.diagnostics().count(), count);
-            }
-        }
+        assert_eq!(
+            formatting_and_front_end_reject_alike(&inputs, FormatGrammar::Program),
+            2
+        );
+    }
+
+    /// The graph grammar has its own segments, one per row.
+    #[test]
+    fn formatting_reports_a_graph_row_split_across_lines_like_checking() {
+        let limits = CompilerLimits::default();
+        let inputs = [SourceInput::new("split.wfg", b"pkg: [\nother\n];\n")];
+        let bundle = SourceBundle::with_limits(&inputs, limits.source).expect("bundle");
+        derive_syntax(&bundle, limits, true, false).expect("the complete graph derives");
+        formatting_and_front_end_reject_alike(&inputs, FormatGrammar::Graph);
     }
 
     #[test]

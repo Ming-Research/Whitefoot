@@ -49,11 +49,17 @@ jobs:
           open(p, 'w').write(s.replace(old, new))
           PY
           git diff --stat
-      - name: The comparison fails on the mutant
+      - name: The comparisons fail on the mutant
         working-directory: compiler
         run: |
-          if perl ../.github/run-check.pl tmp/mutant cargo test --profile gate --locked --offline --lib -- formatting_reports_the_segment_rejections_checking_reports; then
-            echo "::error::the new test passed with formatting through the whole derivation"
+          set +e
+          perl ../.github/run-check.pl tmp/mutant cargo test --profile gate --locked --offline --lib -- formatting_reports_ > "$RUNNER_TEMP/mutant.log" 2>&1
+          status=$?
+          set -e
+          grep -E '^test driver::formatting_tests::formatting_reports_|^test result' "$RUNNER_TEMP/mutant.log"
+          failed=$(grep -cE '^test driver::formatting_tests::formatting_reports_.* \.\.\. FAILED$' "$RUNNER_TEMP/mutant.log" || true)
+          if [ "$status" -eq 0 ] || [ "$failed" -ne 3 ]; then
+            echo "::error::expected the three comparisons to fail on the mutant: status $status, failed $failed"
             exit 1
           fi
-          echo "the new test fails on the mutant, as intended"
+          echo "all three comparisons fail on the mutant, as intended"
