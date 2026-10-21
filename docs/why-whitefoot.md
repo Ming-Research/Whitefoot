@@ -392,9 +392,9 @@ Measured at n = 65,536: 0.512 ns/element for the obvious fold in either language
 The part that earns this section its place is the failure mode. The committed Rust adversary states it in its own comment: the expert shape works only while the human's algebra is right. Swap the operation for one that is not associative, signed saturating add, where `(MAX ⊕ 1) ⊕ -1 = MAX - 1` but `MAX ⊕ (1 ⊕ -1) = MAX`, and the two languages part ways.
 
 - **Rust compiles it in silence.** The four-accumulator loop now computes a different function than the fold it replaced. No warning exists or can exist; the language has no idea the shape encodes an algebraic claim.
-- **Whitefoot rejects it at compile time.** A declared `associative` law on the signed op is refuted against the operation table with a rule-citing diagnostic, and a conformance test pins exactly this case. An undischargeable law is a hard error, so a stated-but-unchecked law never reaches the optimizer.
+- **Whitefoot rejected it at compile time.** In the historical experiment, a declared `associative` law on the signed op was refuted against the operation table with a rule-citing diagnostic, and a conformance test pinned exactly this case. An undischargeable law was a hard error, so a stated-but-unchecked law never reached the optimizer.
 
-The transform every performance engineer does on faith is, here, a checked fact. The honest mistake is unrepresentable, and the fast shape is the obvious fold.
+In that experiment the transform every performance engineer does on faith was a checked fact, the honest mistake was unrepresentable, and the fast shape was the obvious fold.
 
 ## 7. Keep boolean state boolean, and the vectorizer widens it
 
