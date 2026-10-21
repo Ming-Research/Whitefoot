@@ -779,6 +779,9 @@ impl<'unit> TypeContext<'unit> {
             postcondition_clauses: &self.postcondition_clauses,
             postcondition_sources: &self.postcondition_sources,
             type_spellings: &type_spellings,
+            captured_places: &self.captured_places,
+            // A contract hypothesis has no body and so no source condition.
+            judge_conditions: false,
             declarations: self.declarations.resolved.declarations(),
             callees: &[],
             constants: &self.checked_constants,

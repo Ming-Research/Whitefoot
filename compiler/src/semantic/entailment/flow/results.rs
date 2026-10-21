@@ -921,6 +921,7 @@ impl Reasoning<'_, '_, '_> {
 impl Reasoning<'_, '_, '_> {
     pub(super) fn kill_result_evidence(
         &mut self,
+        separations: &dyn SeparationOracle,
         state: &mut ProofFlowState,
         events: &[KillEvent],
     ) {
@@ -931,7 +932,10 @@ impl Reasoning<'_, '_, '_> {
         held.retain(|binding, _| {
             let place = bound_place(*binding);
             if events.iter().any(|event| match event {
-                KillEvent::Consume {
+                KillEvent::Rebind {
+                    binding: source, ..
+                }
+                | KillEvent::Consume {
                     binding: source, ..
                 }
                 | KillEvent::EntryImageHolderConsume {
@@ -948,7 +952,7 @@ impl Reasoning<'_, '_, '_> {
                     ..
                 } => self
                     .input
-                    .write_kills_support(&state.separations, &place, written, *relocation),
+                    .write_kills_support(separations, &place, written, *relocation),
             }) {
                 return false;
             }
@@ -959,7 +963,7 @@ impl Reasoning<'_, '_, '_> {
             for result in held.values_mut().flatten() {
                 self.vocabulary
                     .refresh_result_from_snapshot(result, &ordinary);
-                self.apply_kills_one(&state.separations, &mut result.facts, events);
+                self.apply_kills_one(separations, &mut result.facts, events);
             }
         }
         state.results = held;
@@ -1080,11 +1084,14 @@ mod tests {
     fn numeric_result_transport_preserves_the_complete_candidate_set() {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
+        let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
             source_spellings: &HashMap::new(),
             postcondition_clauses: &HashMap::new(),
             postcondition_sources: &HashMap::new(),
             type_spellings: &HashMap::new(),
+            captured_places: &captured_places,
+            judge_conditions: true,
             declarations: &[],
             callees: &[],
             constants: &[],

@@ -194,14 +194,15 @@ fn lock_ledger_reports_a_guard_read_before_the_guard() {
 }
 
 /// A guard over a local value reads no target. Its watch fallback takes all
-/// groups before the guard, including metadata used only under a condition.
+/// groups before the guard; the true guard fact makes a repeated body test
+/// redundant under OP-5, so the metadata read runs directly.
 #[test]
 fn lock_ledger_reports_all_groups_before_a_guard_that_reads_no_target() {
     let source = lock_ledger_source(
         "Meta",
         "Meta(count: 1_u64)",
         " when kept",
-        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+        "    let observed = m^.count;\n    set m^.count = observed;",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);

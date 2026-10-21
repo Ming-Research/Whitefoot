@@ -322,9 +322,12 @@ impl Input<'_, '_> {
             CapturedTerm::Literal(value) => format!("{value}_u64"),
             CapturedTerm::Binding(binding) => self.render_header_binding(binding, counted),
             CapturedTerm::Const(declaration) => self.declaration_name(declaration),
+            CapturedTerm::Place(id) => {
+                self.render_header_place(&self.context.captured_places.get(id), counted)
+            }
             // [REF-1] the binding's spelling names a later value than the one
             // this index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_) => "?".to_owned(),
+            CapturedTerm::Superseded(_) | CapturedTerm::SupersededPlace(_) => "?".to_owned(),
             CapturedTerm::Opaque => offset
                 .source
                 .and_then(|node| self.context.source_spellings.get(&node))
@@ -567,7 +570,12 @@ impl Input<'_, '_> {
             }
             // [REF-1] a later write made the binding's spelling name another
             // value, so neither it nor the occurrence spells this one.
-            CapturedTerm::Superseded(_) => RangeEndpointReading::Unspelled(None),
+            CapturedTerm::Place(id) => RangeEndpointReading::Spelled(
+                self.render_place(&self.context.captured_places.get(id)),
+            ),
+            CapturedTerm::Superseded(_) | CapturedTerm::SupersededPlace(_) => {
+                RangeEndpointReading::Unspelled(None)
+            }
             CapturedTerm::Opaque => RangeEndpointReading::Unspelled(match endpoint.capture {
                 CaptureId::Source(occurrence) => Some(occurrence),
                 _ => None,
@@ -800,8 +808,14 @@ impl Input<'_, '_> {
     ) -> String {
         use crate::semantic::place_render::{PlaceProjection, render_place_projections};
         let projections = projections.iter().map(|projection| match *projection {
-            GoalProjection::FormalSubscript { ordinal } => PlaceProjection::FormalSubscript(ordinal),
-            GoalProjection::FormalPage { ordinal } => PlaceProjection::FormalPage(ordinal),
+            GoalProjection::FormalSubscript { ordinal }
+            | GoalProjection::FormalPlaceSubscript { ordinal, .. } => {
+                PlaceProjection::FormalSubscript(ordinal)
+            }
+            GoalProjection::FormalPage { ordinal }
+            | GoalProjection::FormalPlacePage { ordinal, .. } => {
+                PlaceProjection::FormalPage(ordinal)
+            }
             projection => PlaceProjection::Place(projection.place_step()),
         });
         render_place_projections(

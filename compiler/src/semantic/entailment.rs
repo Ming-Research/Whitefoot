@@ -214,6 +214,12 @@ pub(crate) struct EntailmentContext<'check> {
         &'check HashMap<NodePath, super::postcondition::PostconditionSource>,
     /// Constructor type names for aggregate constants in diagnostic goals.
     pub(crate) type_spellings: &'check HashMap<CheckedType, String>,
+    pub(crate) captured_places: &'check super::places::CapturedPlaceTable,
+    /// [OP-5, FN-2] whether this analysis judges the source redundancy of its
+    /// `if` conditions: a nongeneric body at its ordinary instance and a
+    /// generic body at its canonical symbolic instance, never a concrete
+    /// instance of a generic body or a bodyless contract hypothesis.
+    pub(crate) judge_conditions: bool,
     /// Existing resolved declarations, borrowed for source names in residuals.
     pub(crate) declarations: &'check [crate::DeclarationRecord],
     /// Callee projections indexed by [`FunctionId`].
@@ -1294,9 +1300,24 @@ pub(crate) struct BooleanGoalDecomposition {
     pub(crate) members: Vec<(state::GoalId, state::GoalSign)>,
 }
 
+/// [OP-5] one condition's source redundancy judgment. An admitted condition
+/// has no decided truth; a decided one retains its rendered condition and the
+/// premises of the proofs that decided it, for the repair [DIAG-1].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConditionOutcome {
+    /// The complete condition `expr` the judgment cites.
+    pub(crate) node_path: NodePath,
+    pub(crate) decided: Option<bool>,
+    pub(crate) residual: String,
+    pub(crate) facts: Vec<String>,
+}
+
 /// Retained summary of one function's entailment analysis [DIAG-2].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FunctionEntailment {
+    /// [OP-5] one source redundancy judgment per `if` and `value_if`
+    /// condition, in deterministic walk order.
+    pub(crate) conditions: Vec<ConditionOutcome>,
     /// Operand intervals read from the ordinary closed state at each integer
     /// operation [ENT-3.S7], for the later range walk [RANGE-2]. `None` names
     /// a contradictory point, where the operation establishes no facts.
@@ -1360,6 +1381,12 @@ pub(crate) fn answer_records(
     function: &CheckedFunction,
     entailment: &FunctionEntailment,
 ) -> (Vec<Option<RecordAnswer>>, Vec<NodePath>) {
+    let mut conditions = Judgments::of(
+        entailment
+            .conditions
+            .iter()
+            .map(|outcome| (&outcome.node_path, &outcome.node_path)),
+    );
     let mut obligations = Judgments::of(entailment.obligations.iter().map(|outcome| {
         (
             (&outcome.node_path, outcome.family, outcome.conjunct),
@@ -1407,6 +1434,7 @@ pub(crate) fn answer_records(
         .map(|record| {
             let site = &record.site;
             match &record.subject {
+                ObligationSubject::Condition => conditions.take(&site).map(RecordAnswer::Condition),
                 ObligationSubject::Source { family, conjunct } => obligations
                     .take(&(site, *family, *conjunct))
                     .map(RecordAnswer::Obligation),
@@ -1443,6 +1471,7 @@ pub(crate) fn answer_records(
         .collect();
     let mut unrecorded = obligations
         .unanswered()
+        .chain(conditions.unanswered())
         .chain(call_goals.unanswered())
         .chain(loop_invariants.unanswered())
         .chain(source_proofs.unanswered())

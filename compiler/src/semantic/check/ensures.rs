@@ -1037,7 +1037,7 @@ impl<'unit> Checker<'_, 'unit> {
                         .invalid_postcondition_relation(expression);
                 }
                 expanded_bindings.insert(*binding, expanded);
-                clause_places.define(*binding, value);
+                clause_places.define(*binding, value, &self.types.captured_places);
             }
             let expression = self
                 .types
@@ -1269,6 +1269,8 @@ impl<'unit> Checker<'_, 'unit> {
                         | GoalProjection::Page(_)
                         | GoalProjection::FormalSubscript { .. }
                         | GoalProjection::FormalPage { .. }
+                        | GoalProjection::FormalPlaceSubscript { .. }
+                        | GoalProjection::FormalPlacePage { .. }
                 )
             }) =>
             {
@@ -2774,8 +2776,10 @@ impl<'unit> TypeContext<'unit> {
         let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
             return Ok(None);
         };
-        Ok(variants.iter().enumerate().find(|(_, variant)| {
-            match (variant.constructor, target) {
+        Ok(variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| match (variant.constructor, target) {
                 (
                     super::super::model::CheckedConstructor::Prelude(actual),
                     Some(ResolvedTarget::Prelude(wanted)),
@@ -2785,8 +2789,7 @@ impl<'unit> TypeContext<'unit> {
                     Some(ResolvedTarget::Source { declaration, .. }),
                 ) => actual == declaration,
                 _ => false,
-            }
-        }))
+            }))
     }
     /// A symbolic result type has no enum instance yet, but its route's
     /// resolved variant still fixes the declared field names and positions.
@@ -3560,9 +3563,7 @@ impl<'unit> TypeContext<'unit> {
                 }
                 // Retain the field-specific diagnostic for a missing or
                 // misspelled field of a valid enum variant.
-                None if selected_variant.is_some() => {
-                    (SelectorAdmissionType::Payload, declared.ty)
-                }
+                None if selected_variant.is_some() => (SelectorAdmissionType::Payload, declared.ty),
                 _ if symbolic_enum => (SelectorAdmissionType::Symbolic, declared.ty),
                 _ => (SelectorAdmissionType::Invalid, declared.ty),
             }
@@ -3571,8 +3572,12 @@ impl<'unit> TypeContext<'unit> {
                 ty if Checker::postcondition_fragment_type(ty, symbolic) => {
                     (SelectorAdmissionType::Fragment, ty)
                 }
-                ty if self.type_supplies_data(ty, symbolic)? => (SelectorAdmissionType::Aggregate, ty),
-                CheckedType::Generic(_) if symbolic => (SelectorAdmissionType::Symbolic, declared.ty),
+                ty if self.type_supplies_data(ty, symbolic)? => {
+                    (SelectorAdmissionType::Aggregate, ty)
+                }
+                CheckedType::Generic(_) if symbolic => {
+                    (SelectorAdmissionType::Symbolic, declared.ty)
+                }
                 _ => (SelectorAdmissionType::Invalid, declared.ty),
             }
         };

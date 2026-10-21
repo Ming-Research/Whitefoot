@@ -8,6 +8,7 @@
 use super::{DiagnosticFormat, Value, render_driver_failure, write_text};
 use crate::{CompilationFailure, CompilerLimits, SourceInput, check};
 
+mod match_sites;
 mod postconditions;
 
 /// The failure one source-only compilation must stop with.

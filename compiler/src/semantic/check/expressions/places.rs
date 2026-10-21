@@ -110,7 +110,7 @@ impl crate::semantic::place_render::PlaceNames for CheckerPlaceNames<'_, '_> {
                 .and_then(|node| self.types.source_spellings.get(&node))
                 .cloned()
                 .unwrap_or_else(|| "?".to_owned())),
-            _ => self.types.declarations.render_captured_offset(value, self.bindings),
+            _ => self.types.render_captured_offset(value, self.bindings),
         }
     }
 }
@@ -625,14 +625,8 @@ impl<'unit> Checker<'_, 'unit> {
         if !root.live || dereferenced != (root.mode == CheckedMode::Reference) {
             return Ok(None);
         }
-        let place = self.elaborate_place_prefix(
-            check_context,
-            node,
-            node,
-            &suffixes,
-            bindings,
-            root_role,
-        )?;
+        let place =
+            self.elaborate_place_prefix(check_context, node, node, &suffixes, bindings, root_role)?;
         let identity = &place.resolved.identity;
         if !matches!(place.ty, CheckedType::Integer(_))
             || place.measure.is_some()
@@ -2328,6 +2322,38 @@ impl<'unit> TypeContext<'unit> {
     }
 }
 
+impl<'unit> TypeContext<'unit> {
+    /// The value one index step or range endpoint captured, as the source
+    /// names it [REF-1]: an [OP-4] offset is a `u64`, so a literal carries
+    /// that suffix [FORM-5].
+    fn render_captured_offset(
+        &self,
+        offset: CapturedValue,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<String, CheckStop> {
+        Ok(match offset.term {
+            CapturedTerm::Literal(value) => format!("{value}_u64"),
+            CapturedTerm::Const(declaration) => {
+                self.declarations.declaration_spelling(declaration)?
+            }
+            CapturedTerm::Binding(binding) => {
+                match bindings.values().find(|local| local.binding == binding) {
+                    Some(local) => self.declarations.declaration_spelling(local.declaration)?,
+                    None => "?".to_owned(),
+                }
+            }
+            // The binding's spelling names a later value than the one this
+            // index read, and no source spelling names that one.
+            CapturedTerm::Superseded(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => "?".to_owned(),
+            CapturedTerm::Place(id) => {
+                self.render_resolved_place(&self.captured_places.get(id), bindings)?
+            }
+        })
+    }
+}
+
 impl<'unit> DeclarationInventory<'unit> {
     /// [TYPE-7] a range referent is a run, admitted only as the base of an
     /// element subscript, a range step or its `len` measure. Inspect the
@@ -2393,28 +2419,6 @@ impl<'unit> DeclarationInventory<'unit> {
         let name = std::str::from_utf8(self.tree.token_bytes(member.field)?)
             .map_err(|_| SemanticCompilerFailure::InvalidSourceEncoding)?;
         Ok(super::super::types::measure_named(name))
-    }
-    /// The value one index step or range endpoint captured, as the source
-    /// names it [REF-1]: an [OP-4] offset is a `u64`, so a literal carries
-    /// that suffix [FORM-5].
-    fn render_captured_offset(
-        &self,
-        offset: CapturedValue,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<String, CheckStop> {
-        Ok(match offset.term {
-            CapturedTerm::Literal(value) => format!("{value}_u64"),
-            CapturedTerm::Const(declaration) => self.declaration_spelling(declaration)?,
-            CapturedTerm::Binding(binding) => {
-                match bindings.values().find(|local| local.binding == binding) {
-                    Some(local) => self.declaration_spelling(local.declaration)?,
-                    None => "?".to_owned(),
-                }
-            }
-            // The binding's spelling names a later value than the one this
-            // index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => "?".to_owned(),
-        })
     }
     /// [TYPE-10] a window part is effect-row vocabulary and never a place.
     ///
