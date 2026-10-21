@@ -28,6 +28,7 @@ mod programs {
     mod hashing;
     #[cfg(unix)]
     mod heap;
+    mod host_paths;
     #[cfg(unix)]
     mod image;
     mod memory;
