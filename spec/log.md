@@ -10,6 +10,12 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
+## 2026-10-20 v0.153: two index steps read through one tracked field or dereference term are the same while its support is unwritten
+
+Rules: changed ENT-2
+
+Summary: ENT-2's list of when two index steps are the same gains one case: two steps that read one tracked field or dereference term are the same while no write of its support places has intervened since either was formed. The case follows the existing binding case, so that a guard on `table^[s^.k].len` proves the later read `table^[s^.k][i]` in range; a write to the support ends the equality, as ENT-5 already requires. Selection ground: ENT-2 listed its cases exhaustively, and without this case the checker must treat the two reads as distinct places, so a guard on a field-subscript length never supports the element read.
+
 ## 2026-10-20 v0.152: a condition the checker decides is redundant source
 
 Rules: changed OP-5, GRAM-6, ENT-6, MSR-4

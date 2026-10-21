@@ -2262,12 +2262,12 @@ fn subscript_offsets(
 /// value here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SubscriptedTerm {
-    /// Every offset is a captured literal, const or binding [REF-1], so the
-    /// place has the term identity the entailment fragment interns.
+    /// Every offset is a captured literal, const or tracked place [REF-1],
+    /// so the place has the identity the entailment fragment interns.
     Represented,
-    /// An offset is a tracked place with projections, which ENT-2 admits but
-    /// no captured value names. This is a compiler capability limit, reported
-    /// as unsupported, not a language rejection [DIAG-1].
+    /// An admitted tracked offset has no captured representation. This is a
+    /// compiler capability limit, reported as unsupported, not a language
+    /// rejection [DIAG-1].
     Unrepresented,
 }
 
@@ -2358,8 +2358,8 @@ fn selects_readonly_fragment_field(
 }
 
 /// Whether one checked offset reads an [ENT-2] clause (a) tracked place:
-/// a binding, possibly below field selections, `^` suffixes and `Box`
-/// content, with no subscript.
+/// a binding, possibly below field selections, enum-payload selections, `^`
+/// suffixes and `Box` content, with no subscript.
 fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
     match offset {
         CheckedExpression::Binding {
@@ -2373,6 +2373,21 @@ fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
         | CheckedExpression::DerefAddressed { .. } => true,
         CheckedExpression::BoxDeref { value, .. }
         | CheckedExpression::ProjectValue { value, .. } => is_tracked_place_read(value),
+        // [ENT-2] clause (a) admits enum-payload suffixes; a payload read is
+        // checked as storage below its root, with no subscript or measure.
+        CheckedExpression::ReadStorage { root, .. } => {
+            root.path
+                .iter()
+                .any(|step| matches!(step, CheckedPlaceStep::Payload { .. }))
+                && root.path.iter().all(|step| {
+                    matches!(
+                        step,
+                        CheckedPlaceStep::Field(_)
+                            | CheckedPlaceStep::Payload { .. }
+                            | CheckedPlaceStep::BoxReferent(_)
+                    )
+                })
+        }
         _ => false,
     }
 }

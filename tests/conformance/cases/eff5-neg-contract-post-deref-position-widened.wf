@@ -1,0 +1,22 @@
+fn helper(source: &Array<Array<u64, 1>, 2>, target: &u64, selector: &u64) -> result: u64 writes(target) contract {
+  requires source^.len == 2_u64;
+  requires selector^ == 0_u64;
+  ensures result <= source^[selector^].len;
+} {
+  doc "FN-9: the integer result supplies a result datum, and returning zero proves its bound by the source measure's nonnegative domain.";
+  set target^ = 1_u64;
+  return 0_u64;
+}
+
+fn caller() -> result: unit pure {
+  doc "EFF-5: a dereferenced postcondition offset widens to the source run. Its entry value is 0 and the target lies in row 1; entry-value separation must not keep the exit read narrow.";
+  let row = array_filled::<u64, 1>(value: 0_u64);
+  let rows = array_filled::<Array<u64, 1>, 2>(value: row);
+  let index = 0_u64;
+  helper(source: &rows, target: &rows[1_u64][0_u64], selector: &index);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

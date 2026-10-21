@@ -13,6 +13,13 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: A new node records two decisions that let a sampling profiler's DWARF unwinder walk Whitefoot call stacks. Every emitted function carries `uwtable`, so a leaf that cannot unwind by exception still has a frame-description entry; and the Linux LTO link passes `-z separate-code` to LLD, so the code segment's virtual address equals its file offset, because under LLD's default layout perf 6.17 recovered no caller. In the witness, `uwtable` gave the hot leaf its frame-description entry and raised the samples recovering the resume function from 83 to 85 percent to 88 to 89 percent at 208 bytes of `.eh_frame`; `-z separate-code` then raised the samples reaching resume and the thread entry from none above resume to 100 percent, at 992 bytes (1.2 percent) of executable. Keeping frame pointers and documenting the limitation instead were rejected. The reason for the second decision separates the measured layout dependence from the inferred lookup mechanism, which is not yet reproduced; the decisions are unchanged.
 
+## 2026-10-13 Field- and dereference-subscript terms carry captured place and formal offset identities
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision added for how subscripts with a field or a dereference record their identity? (#454, head commit ef598ae35)" (translated).
+
+Summary: A subscript such as `table^[s^.k]`, `nodes^[n^.parent_slot]` or `nodes^[r^]` is identified by a captured place id (its root and field or dereference steps) or, in a contract, a formal offset id (a parameter-relative suffix), both interned in one compilation-owned table shared by the checker's parts. While its support is unchanged the id stands for the current value with its complete support; a write or rebinding of any support place degrades it to an immutable capture with no support. At a call the actual's path is joined to the formal's remaining suffix and interned again. Small copyable ids let parallel checking and contract substitution share one identity and support without conflating sibling fields, captured and later values, or formal and body names; refused were root-only identity (which cannot separate `n.a` from `n.b`), embedding the recursive path in every capture, and per-part identity and support tables.
 ## 2026-10-13 An allocation that does not fit the heap names its type, layout, limit and call
 
 Nodes: compiler/diagnostic-rendering
