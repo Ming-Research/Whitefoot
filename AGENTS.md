@@ -153,11 +153,9 @@ read.
 ### Document roles
 
 - `README.md`: introduction and navigation; points to the user guide.
-- `docs/guide/`: user documents for readers outside the project. The
-  getting-started guide covers installation and the first program. A language
-  tour, a standard library reference and a guide to fixing rejections are
-  planned. `docs/guide/README.md` indexes the guides and owns the checked
-  example convention.
+- `docs/guide/`: user documents for readers outside the project;
+  `docs/guide/README.md` indexes the guides and owns the checked example
+  convention.
 - `AGENTS.md`: Whitefoot's goal, authority, process additions, approval and
   merge rules, integrity rules, checks and review.
 - `docs/review-checklist.md`: the items a reviewer answers from the diff.

@@ -367,9 +367,6 @@ fn check_document(path: &Path, text: &str) -> Vec<String> {
         }
         let mut words = block.info.split_whitespace();
         let kind = words.next();
-        if kind == Some("wf") {
-            continue;
-        }
         if kind != Some("whitefoot")
             && let Some(attribute) = words.next()
         {
@@ -621,7 +618,6 @@ fn markdown_containers_preserve_program_and_output_contents() {
 fn only_whitefoot_opts_in_and_other_fences_cannot_carry_attributes() {
     let ignored = concat!(
         "```wf\nnot a program\n```\n",
-        "```wf run exit=bad file=../bad\nnot a program\n```\n",
         "```wf-output\nnot an expected rejection\n```\n",
         "```whitefootish\nnot a program\n```\n",
         "```text\nnot a program\n```\n",
@@ -632,11 +628,13 @@ fn only_whitefoot_opts_in_and_other_fences_cannot_carry_attributes() {
     let malformed = concat!(
         "```text file=first.wf\nnot a program\n```\n",
         "```whitefoot-output file=first.wf\nnot output\n```\n",
+        "```wf run exit=4\nnot a program\n```\n",
     );
     let failures = check_document(Path::new("fixture.md"), malformed);
-    assert_eq!(failures.len(), 2);
+    assert_eq!(failures.len(), 3);
     assert!(failures[0].contains("fixture.md:1"));
     assert!(failures[1].contains("fixture.md:4"));
+    assert!(failures[2].contains("fixture.md:7"));
     assert!(failures.iter().all(|error| error.contains("no attributes")));
 }
 
