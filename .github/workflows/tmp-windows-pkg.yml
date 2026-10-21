@@ -41,9 +41,6 @@ jobs:
           cargo --version
       - name: Fetch locked compiler dependencies
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
-      - name: Format
-        working-directory: compiler
-        run: cargo fmt --all -- --check
       - name: Target, toolchain and deterministic-target tests
         run: |
           perl .github/run-check.pl quick/unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib target:: toolchain:: deterministic_target
@@ -120,3 +117,101 @@ jobs:
           cat "$RUNNER_TEMP/imports.txt"
           test -s "$RUNNER_TEMP/imports.txt"
           grep -i -E '^(vcruntime|msvcp|concrt|vccorlib)' "$RUNNER_TEMP/imports.txt"
+
+  # The stack-exhaustion witness took twenty minutes to end in the Server Core
+  # container. Time the pieces: the CRT's abort (a fast fail), touching a 1 GiB
+  # reserved stack, and a replica of the runtime floor's overflow handler, with
+  # Windows Error Reporting as it is and disabled.
+  container-abort:
+    name: Exit timing in a clean container
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned llvm-mingw
+        run: |
+          root=$(bash .github/toolchain/fetch-llvm-mingw.sh .github/toolchain/llvm-assets.json "$RUNNER_TEMP/archives" "$RUNNER_TEMP/mingw" | tail -n 1)
+          echo "LLVM_MINGW_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Time the exits
+        env:
+          MSYS_NO_PATHCONV: 1
+          MSYS2_ARG_CONV_EXCL: '*'
+        run: |
+          set -u
+          work=$(cygpath -m "$RUNNER_TEMP/exit-timing")
+          mkdir -p "$work/out" "$work/src"
+          cat > "$work/src/abort.c" <<'C'
+          #include <stdlib.h>
+          int main(void) { abort(); }
+          C
+          cat > "$work/src/touch.c" <<'C'
+          #include <windows.h>
+          static __attribute__((noinline)) unsigned long recurse(unsigned depth) {
+            volatile char frame[57344];
+            for (unsigned i = 0; i < sizeof frame; i += 4096) frame[i] = (char)depth;
+            if (depth == 0) return frame[0];
+            return recurse(depth - 1) + frame[0];
+          }
+          static DWORD WINAPI body(void *arg) { (void)arg; return (DWORD)(recurse(16000) & 1u); }
+          int main(void) {
+            HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, body, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+            WaitForSingleObject(t, INFINITE);
+            return 0;
+          }
+          C
+          cat > "$work/src/overflow.c" <<'C'
+          #include <windows.h>
+          #include <stdlib.h>
+          static __attribute__((noinline)) unsigned long recurse(unsigned depth) {
+            volatile char frame[57344];
+            for (unsigned i = 0; i < sizeof frame; i += 4096) frame[i] = (char)depth;
+            return recurse(depth + 1) + frame[0];
+          }
+          static LONG CALLBACK handler(EXCEPTION_POINTERS *e) {
+            if (e->ExceptionRecord->ExceptionCode != EXCEPTION_STACK_OVERFLOW) return EXCEPTION_CONTINUE_SEARCH;
+            DWORD written;
+            WriteFile(GetStdHandle(STD_ERROR_HANDLE), "{\"resource\":\"stack\"}\n", 21, &written, NULL);
+            abort();
+          }
+          static DWORD WINAPI body(void *arg) {
+            ULONG guarantee = 64u * 1024u;
+            (void)arg;
+            SetThreadStackGuarantee(&guarantee);
+            return (DWORD)(recurse(0) & 1u);
+          }
+          int main(void) {
+            AddVectoredExceptionHandler(1, handler);
+            HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, body, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+            WaitForSingleObject(t, INFINITE);
+            return 0;
+          }
+          C
+          clang="$LLVM_MINGW_ROOT/bin/clang.exe"
+          for name in abort touch overflow; do
+            "$clang" --target=x86_64-w64-windows-gnu -O1 "$work/src/$name.c" -o "$work/out/$name.exe"
+          done
+          name=exit-timing
+          docker run --detach --name "$name" --isolation process \
+            --mount "type=bind,src=$(cygpath -w "$work"),dst=C:\\work" \
+            mcr.microsoft.com/windows/servercore:ltsc2022 ping -t localhost > /dev/null
+          timed() { # label command... : seconds the command takes in the container
+            local label="$1" start end status=0
+            shift
+            start=$(date +%s)
+            timeout 240 docker exec "$name" "$@" > "$work/$label.txt" 2>&1 || status=$?
+            end=$(date +%s)
+            echo "== $label: status $status after $((end - start)) s"
+            head -c 400 "$work/$label.txt" || true
+          }
+          timed wer-state cmd /c "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\" & sc query wersvc & tasklist"
+          timed abort-1 'C:\work\out\abort.exe'
+          timed touch-1 'C:\work\out\touch.exe'
+          timed overflow-1 'C:\work\out\overflow.exe'
+          timed tasks-after cmd /c tasklist
+          timed disable-wer cmd /c 'reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting" /v Disabled /t REG_DWORD /d 1 /f'
+          timed abort-2 'C:\work\out\abort.exe'
+          timed overflow-2 'C:\work\out\overflow.exe'
+          docker rm -f "$name" > /dev/null

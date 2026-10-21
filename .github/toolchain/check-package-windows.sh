@@ -162,10 +162,11 @@ test "$code" = 0
 # Stack exhaustion ends in the floor's abort and its one record only if every
 # large frame is probed into the guard, so this observes the probing method the
 # packaged clang selected: an unprobed frame would end in a host fault with no
-# record. The CRT's abort ends a Windows process with 3 or 0xC0000409.
+# record. The CRT's abort ends a Windows process with 3 or with the fast-fail
+# status 0xC0000409, which cmd's errorlevel prints as a signed 32-bit number.
 cexec stack-build "$compiler" -o 'C:\work\out\stack.exe' 'C:\work\stack-exhaustion.wf'
 run_image stack-run 'C:\work\out\stack.exe'
-case "$code" in 3 | 3221226505) ;; *) echo "stack witness ended with $code" >&2; exit 1 ;; esac
+case "$code" in 3 | 3221226505 | -1073740791) ;; *) echo "stack witness ended with $code" >&2; exit 1 ;; esac
 test "$(tr -d '\r' < "$logs/stack-run.err")" = '{"resource":"stack"}'
 test ! -s "$logs/stack-run.out"
 cexec full-lto-build "$compiler" --full-lto -o 'C:\work\out\full-lto.exe' 'C:\work\waiting.wf'
