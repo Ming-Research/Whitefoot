@@ -7,12 +7,9 @@ struct Point {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "TYPE-2/GRAM-8: construct a struct, read its fields, use them in total wrapping arithmetic, and control-check the expected sum.";
+  doc "TYPE-2/GRAM-8: construct a struct, read its fields, use them in total wrapping arithmetic, and return the sum as the exit status.";
   let p = Point(x: 3_i32, y: 4_i32);
   let s = p.x +wrap p.y;
-  if s == 7_i32 {
-  } else {
-    return exit_status(code: 201_u8);
-  }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<i32, u8>(s);
+  return exit_status(code: status_code);
 }

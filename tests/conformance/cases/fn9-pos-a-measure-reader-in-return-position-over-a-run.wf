@@ -13,8 +13,6 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &run, value: 3_u8);
   place_back(window: &run, value: 4_u8);
   let seen = size_of(taken: move run);
-  if seen == 2_u64 {
-    return exit_status(code: 0_u8);
-  }
-  return exit_status(code: 1_u8);
+  let code = cvt::<u64, u8>(seen);
+  return exit_status(code: code);
 }
