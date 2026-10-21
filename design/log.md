@@ -5,7 +5,7 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-10-13 Syntax diagnostics are segmented per top-level declaration, expected tokens come from the parse stack, and repair hints stay where they compile
+## 2026-10-21 Syntax diagnostics are segmented per top-level declaration, expected tokens come from the parse stack, and repair hints stay where they compile
 
 Nodes: compiler, compiler/diagnostic-rendering, compiler/diagnostic-repairs, compiler/incremental-compilation, language/grammar
 

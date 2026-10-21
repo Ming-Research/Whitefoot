@@ -10,7 +10,7 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
-## 2026-10-20 v0.153: a compilation reports the first syntax error of each top-level declaration, with expected tokens from the parse stack
+## 2026-10-21 v0.153: a compilation reports the first syntax error of each top-level declaration, with expected tokens from the parse stack
 
 Rules: changed GRAM-1, GRAM-9, DIAG-1, MOD-8; added to GRAM-2 the graph-record segment production, to DIAG-1 the call-chain expected-token computation, and to PRE-1 the statement that compiler-owned declaration records are not writer source records and are not segmented; restricted the implementation-chosen order of distinct rejections to semantic rejections after name resolution
 

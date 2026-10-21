@@ -566,7 +566,7 @@ fn emit(
     // unpadded words let it concatenate nullable suffixes without importing
     // another caller's FOLLOW set or enumerating runtime derivations. A word
     // names its positions in the shared atom table, as a row does, and a
-    // position the word lacks is the index one past the table's end.
+    // position the word lacks is ABSENT_ATOM.
     let mut prefixes: Vec<[u16; 2]> = Vec::new();
     for (name, sets) in [
         ("NODE_PREFIX_RANGES", &first.node),
