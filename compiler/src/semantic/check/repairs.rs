@@ -964,6 +964,18 @@ pub(super) fn unrestored_type_invariant(
         (None, false, _) if origin == SealingOrigin::Unsealed => format!(
             "an entry of a map or an `Entries` carries no type invariant, and no relation names each one at or below `{place}`, so they cannot be proved: hand off the value of one entry whose invariants the body proves, or replace `{place}` whole with a value a construction or a call returns before this hand-off"
         ),
+        (_, false, _) if origin == SealingOrigin::ClosedResult => String::from(
+            "a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, and no relation names it while no binding holds the result: bind the result with `let`, then prove the invariants of the values below its state before handing it on, such as by checking the fields they relate"
+        ),
+        (Some(goal), false, _) if origin == SealingOrigin::Closed && member => format!(
+            "`{goal}` is not proved: a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, so prove it before this hand-off, such as by checking the fields it relates"
+        ),
+        (Some(goal), false, _) if origin == SealingOrigin::Closed => format!(
+            "`{goal}` is not proved: a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, so prove it before this hand-off, such as by checking the fields it relates, or replace `{place}` whole with a value a construction or a call returns"
+        ),
+        (None, false, _) if origin == SealingOrigin::Closed => format!(
+            "a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, and no relation names each one at or below `{place}`, so they cannot be proved: hand off one field or element whose invariants the body proves, or replace `{place}` whole with a value a construction or a call returns before this hand-off"
+        ),
         (Some(goal), false, false) if member => format!(
             "`{goal}` is not proved: a write at a position not known to differ from `{place}` may have broken it, so prove it before this hand-off, such as by checking or writing the fields it relates"
         ),

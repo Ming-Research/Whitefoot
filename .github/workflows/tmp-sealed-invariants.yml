@@ -1,10 +1,11 @@
 # Temporary: the focused checks of the sealed type invariant work (the
 # compiler build and lint, every unit test after main's merge, every
 # conformance case's verdict with each failing case listed, the documentation
-# examples main's check reads through the branch's compiler),
-# the trial compile of the downstream programs with the branch's compiler
-# and the base's, and the repository-level static checks and the change-log
-# check against the branch's fork point. Removed before the branch is ready.
+# examples main's check reads through the branch's compiler), the verdicts
+# of the `shared_close` cases under the compiler before their rule, the trial
+# compile of the downstream programs with the branch's compiler and the
+# base's, and the repository-level static checks and the change-log check
+# against the branch's fork point. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -62,6 +63,50 @@ jobs:
         run: |
           perl .github/run-check.pl sealed-doc-examples cargo test --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --test corpus -- doc_examples:: --nocapture
+  # The new `shared_close` cases under the compiler of the merge that brought
+  # `shared_close` in, before the rule that keeps the values below its state
+  # in debt: that compiler takes the result as a sealed call result, so each
+  # negative case must be accepted there, which shows that the case fails on
+  # that broken rule. The positive cases' verdicts there are printed too.
+  before-fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the compiler before the rule
+        run: |
+          git fetch --depth=1 origin a9836f5f801da9eb4b3d3ee7da111654caba1c28
+          git worktree add "$RUNNER_TEMP/before" FETCH_HEAD
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/before/compiler/Cargo.toml"
+          perl .github/run-check.pl before-fix-build cargo build \
+            --manifest-path "$RUNNER_TEMP/before/compiler/Cargo.toml" \
+            --profile gate --locked --offline --bin whitefootc
+      - name: Check each shared_close case with that compiler
+        run: |
+          set +e
+          compiler="$RUNNER_TEMP/before/compiler/target/gate/whitefootc"
+          missed=0
+          for file in tests/conformance/cases/type11-*-shared-close-*.wf; do
+            name=$(basename "$file")
+            "$compiler" --check "$file" > "$RUNNER_TEMP/out" 2>&1
+            status=$?
+            first=$(grep -m1 -E 'error\[' "$RUNNER_TEMP/out")
+            echo "$name: exit $status ${first:-accepted}"
+            case "$name" in
+              type11-neg-*) [ "$status" = 0 ] || missed=$((missed + 1)) ;;
+            esac
+          done
+          echo "negative cases the compiler before the rule already rejects: $missed"
+          [ "$missed" = 0 ]
+
   # The repository-level static checks the gate's static group runs, which
   # a draft skips: the specification's archive, prose and references, and
   # the design tree's form against the branch's fork point, which prints the
@@ -122,7 +167,7 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Build the branch's compiler and the base's
         run: |
-          git fetch --depth=1 origin 5d14959eb43e60652044925e75f382b26baa0fcf
+          git fetch --depth=1 origin b7168249e3c7812c333ff2d3cbeafa2e3f5d2dd4
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
           if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
             # A decided condition counts as discharged in both compilers,

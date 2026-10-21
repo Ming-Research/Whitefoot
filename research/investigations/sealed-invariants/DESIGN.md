@@ -375,8 +375,10 @@ restored debts are removed.
 T6 **Call.** After the hand-off of every argument, the callee's projected
 writes apply T2 to the anchors strictly above each argument's place, and to
 no anchor at or below a reference argument's referent: the callee left that
-referent sealed (T7). The call's results are sealed. This rule needs only
-the callee's declared row and the declared parameter types, never its body.
+referent sealed (T7). The call's results are sealed, apart from the values
+below the state a `shared_close` result holds, which enter in debt
+([below](#prelude-host-and-module-boundaries)). This rule needs only the
+callee's declared row and the declared parameter types, never its body.
 
 T7 **Body exit.** Each `return` and propagated error exit is a hand-off of
 the returned value and of the referent of every reference parameter whose
@@ -635,7 +637,9 @@ Every way a value comes into existence is covered: a literal or constant
 (construction checked [TYPE-11, CONST-2]), a construction (its own
 invariants owed as today, its operands handed off), a call result (the
 callee's return is a hand-off; a supplied definition's result is sealed by
-parametricity, below), a place read (sealed or carrying its debts, T4), a
+parametricity, below, apart from the values below the state `shared_close`
+returns, which start in debt at the binding the result continues into and
+fail any hand-off of the unbound result), a place read (sealed or carrying its debts, T4), a
 value initializer (`give` is a hand-off), a propagated payload (T4), an
 atomic target (SI of the state), a parameter (T1).
 
@@ -991,6 +995,33 @@ parameter in a result or written-element position (`take_back`,
 `take_front`, `remove_at`, `split_off`, `append`, `slots_into_array`,
 `slots_from_array`, `array_filled`, `box_array_filled`, `swap`, the shared,
 frozen and map rows) moves or copies only values it received.
+
+**The state `shared_close` returns.** Specification v0.158 added
+`shared_close`, whose call as an object's last handle returns the object's
+state; the argument above does not cover it. Its parameter is a handle, which
+owns nothing [TYPE-11.S1], so no hand-off delivered the state to the call,
+and every atomic block on the object owes only its target's own invariants
+on its leaving edges, the provisional reading of shared state that also
+starts each atomic entry with the unfolding below the target. The state
+therefore keeps its own invariants, since `shared_new` received it in a
+hand-off and each block owes them, while every struct value it owns is in
+debt: a continuation of the result into a binding takes the unfolding below
+the state's place there, and a hand-off of the unbound result fails while a
+value of the state's type may own a struct value with an affine invariant,
+since no term names a value that no place holds. Trusting the state as a
+sealed call result is unsound: a block may write a nested value out of range
+and end, and the last close then returns it. Putting the whole state in debt
+would make a writer recheck invariants every block already owes. A
+shared-object model that makes leaving edges restore the values below a
+target (board item shared-invariant-through-reads) would seal the state and
+retire this exception. The concrete instance of a generic body is judged
+with its substituted types, so a generic function that returns its
+`shared_close` result whole is refused at an instance whose state owns such
+a value. Cases: `type11-neg-shared-close-state-field-unchecked`,
+`type11-pos-shared-close-state-field-checked`,
+`type11-neg-shared-close-result-handed-whole`,
+`type11-pos-shared-close-state-own-invariant` and
+`type11-neg-shared-close-generic-wrapper`.
 
 **Module boundaries.** The sealing boundary is a property of declared types
 alone: parameters sealed at entry, written reference parameters sealed at

@@ -2953,6 +2953,9 @@ impl<'unit> TypeContext<'unit> {
                 "release" | "map_clear" if prelude => CalleeSealing::Release,
                 _ => CalleeSealing::HandsOff,
             };
+            // [TYPE-11.S2] the state `shared_close` returns is sealed only in
+            // its own invariants, which every atomic block owes.
+            callee.closes_state = signature.name == "shared_close" && prelude;
             callees.push(callee);
         }
         for (callee, checked) in callees.iter_mut().zip(functions) {

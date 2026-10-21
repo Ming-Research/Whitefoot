@@ -1202,11 +1202,13 @@ impl Input<'_, '_> {
             })
     }
 
-    /// [TYPE-11.S2] the debts an atomic block's target starts with, and a
-    /// map or `Entries` parameter at body entry: every anchor strictly below
-    /// the referent that it holds, at the unknown position for each element
-    /// and entry, and the cover of each place where a held type recurs.
-    fn owned_anchor_debts(
+    /// [TYPE-11.S2] the unfolding below `place`, whose value has type `ty`,
+    /// under `ancestors`: the debts an atomic block's target starts with, a
+    /// map or `Entries` parameter at body entry, and a continuation of a
+    /// `shared_close` result. Every anchor strictly below `place` that its
+    /// value holds, at the unknown position for each element and entry, and
+    /// the cover of each place where a held type recurs.
+    fn unfolding_below(
         &self,
         place: &mut ResolvedPlace,
         ty: CheckedType,
@@ -1215,33 +1217,59 @@ impl Input<'_, '_> {
         origin: SealingOrigin,
         debts: &mut Debts,
     ) {
-        if ancestors.contains(&ty) {
+        ancestors.push(ty);
+        for (steps, below) in self.unfolded_parts(ty) {
+            if self.owns_anchor(below, &mut Vec::new()) {
+                let depth = place.path.len();
+                place.path.extend(steps);
+                self.unfolding_at(place, below, ancestors, source, origin, debts);
+                place.path.truncate(depth);
+            }
+        }
+        ancestors.pop();
+    }
+
+    /// [TYPE-11.S2] the unfolding of the value at `place`, of type `ty`,
+    /// under `ancestors`: the cover of `place` when `ty` is among them, and
+    /// otherwise a debt for each affine invariant of `ty` with the unfolding
+    /// below `place`.
+    fn unfolding_at(
+        &self,
+        place: &mut ResolvedPlace,
+        ty: CheckedType,
+        ancestors: &mut Vec<CheckedType>,
+        source: &crate::NodePath,
+        origin: SealingOrigin,
+        debts: &mut Debts,
+    ) {
+        let recurs = ancestors.contains(&ty);
+        let invariants = if recurs {
+            vec![None]
+        } else {
+            (0..self.affine_invariants(ty).len()).map(Some).collect()
+        };
+        for invariant in invariants {
             debts.add(Debt {
                 anchor: place.clone(),
-                invariant: None,
+                invariant,
                 events: vec![source.clone()],
                 widened: false,
                 through: None,
                 origin,
             });
-            return;
         }
-        if !place.path.is_empty() {
-            for index in 0..self.affine_invariants(ty).len() {
-                debts.add(Debt {
-                    anchor: place.clone(),
-                    invariant: Some(index),
-                    events: vec![source.clone()],
-                    widened: false,
-                    through: None,
-                    origin,
-                });
-            }
+        if !recurs {
+            self.unfolding_below(place, ty, ancestors, source, origin, debts);
         }
-        // The steps to each value one level below, a segment of a `Segments`
-        // being a run its element subscript selects from [REF-4].
+    }
+
+    /// [TYPE-11.S2] the steps to each value one level below a value of type
+    /// `ty` that it owns [TYPE-11.S1] or, as a map or an `Entries`, holds as
+    /// an entry, with that value's type; a segment of a `Segments` is a run
+    /// its element subscript selects from [REF-4].
+    fn unfolded_parts(&self, ty: CheckedType) -> Vec<(Vec<PlaceStep>, CheckedType)> {
         let unknown = PlaceStep::Index(CapturedValue::unknown());
-        let parts: Vec<(Vec<PlaceStep>, CheckedType)> = match ty {
+        match ty {
             CheckedType::Nominal(nominal) => {
                 match self
                     .context
@@ -1300,17 +1328,79 @@ impl Input<'_, '_> {
                 .into_iter()
                 .collect(),
             _ => Vec::new(),
-        };
-        ancestors.push(ty);
-        for (steps, below) in parts {
-            if self.owns_anchor(below, &mut Vec::new()) {
-                let depth = place.path.len();
-                place.path.extend(steps);
-                self.owned_anchor_debts(place, below, ancestors, source, origin, debts);
-                place.path.truncate(depth);
-            }
         }
-        ancestors.pop();
+    }
+
+    /// [TYPE-11.S2] the `shared_close` call `value` is, with its result's
+    /// type.
+    fn closed_state<'value>(
+        &self,
+        value: &'value CheckedExpression,
+    ) -> Option<(&'value crate::NodePath, CheckedType)> {
+        let CheckedExpression::UserCall {
+            function,
+            call,
+            result,
+            ..
+        } = value
+        else {
+            return None;
+        };
+        self.context
+            .callee(*function)
+            .is_some_and(|callee| callee.closes_state)
+            .then_some((call, *result))
+    }
+
+    /// [TYPE-11.S2] the debts a continuation of `value` into `binding` adds
+    /// when `value` is a `shared_close` result: the unfolding below the place
+    /// its state takes, the `Some` payload of a binding of the whole result
+    /// or the binding itself when it binds that payload. `None` for any other
+    /// value, which carries no debt of its own [TYPE-11.S3].
+    fn closed_state_debts(
+        &self,
+        value: &CheckedExpression,
+        binding: BindingId,
+    ) -> Option<Vec<Debt>> {
+        let (call, result) = self.closed_state(value)?;
+        let mut debts = Debts::default();
+        let Some(ty) = self.summary(binding).and_then(|summary| summary.ty) else {
+            return Some(debts.0);
+        };
+        let mut place = ResolvedPlace::binding(binding);
+        let states = if ty == result {
+            self.unfolded_parts(result)
+        } else {
+            vec![(Vec::new(), ty)]
+        };
+        for (steps, state) in states {
+            place.path.extend(steps);
+            self.unfolding_below(
+                &mut place,
+                state,
+                &mut Vec::new(),
+                call,
+                SealingOrigin::Closed,
+                &mut debts,
+            );
+            place.path.clear();
+        }
+        Some(debts.0)
+    }
+
+    /// [TYPE-11.S4] the `shared_close` call whose result `value` is, when its
+    /// state may own a struct value with an affine type invariant, which no
+    /// relation names while no place holds the result.
+    fn unsealed_closed_result<'value>(
+        &self,
+        value: &'value CheckedExpression,
+    ) -> Option<&'value crate::NodePath> {
+        let (call, result) = self.closed_state(value)?;
+        self.owned_types(result)
+            .into_iter()
+            .flat_map(|state| self.owned_types(state))
+            .any(|below| self.owns_anchor(below, &mut Vec::new()))
+            .then_some(call)
     }
 }
 
@@ -1538,6 +1628,35 @@ impl Judging<'_, '_, '_> {
         });
         false
     }
+
+    /// [TYPE-11.S4] a hand-off of `value` itself at `site`: a failure of
+    /// `rule` when `value` is a `shared_close` result whose state may own a
+    /// struct value with an affine type invariant, which no relation names
+    /// while no place holds the result.
+    pub(super) fn seal_closed_hand_off(
+        &mut self,
+        value: &CheckedExpression,
+        rule: SealingRule,
+        site: &crate::NodePath,
+    ) {
+        let Some(call) = self.input.unsealed_closed_result(value) else {
+            return;
+        };
+        let anchor = String::from("the state `shared_close` returns");
+        self.output.sealing_failures.push(SealingFailure {
+            rule,
+            site: site.clone(),
+            clause: None,
+            replaced: anchor.clone(),
+            goal: None,
+            rendered_goal: format!("the type invariants of each value {anchor} owns"),
+            anchor,
+            events: vec![call.clone()],
+            widened: false,
+            origin: SealingOrigin::ClosedResult,
+            member: false,
+        });
+    }
 }
 
 impl Analyzer<'_, '_> {
@@ -1622,7 +1741,7 @@ impl Analyzer<'_, '_> {
             // [TYPE-11.S2] the entries of a map or an `Entries` referent are
             // no part of the value its hand-off delivered.
             if parameter.mode == CheckedMode::Reference && self.input.holds_entries(ty) {
-                self.input.owned_anchor_debts(
+                self.input.unfolding_below(
                     &mut anchor,
                     ty,
                     &mut Vec::new(),
@@ -1644,7 +1763,14 @@ impl Analyzer<'_, '_> {
         site: &crate::NodePath,
         state: &mut ProofFlowState,
     ) {
-        if !self.input.sealing || state.debts.is_empty() {
+        if !self.input.sealing {
+            return;
+        }
+        for value in values {
+            self.judging()
+                .seal_closed_hand_off(value, SealingRule::Fn9, site);
+        }
+        if state.debts.is_empty() {
             return;
         }
         let mut places = values
@@ -1690,7 +1816,12 @@ impl Analyzer<'_, '_> {
         site: &crate::NodePath,
         state: &mut ProofFlowState,
     ) {
-        if !self.input.sealing || state.debts.is_empty() {
+        if !self.input.sealing {
+            return;
+        }
+        self.judging()
+            .seal_closed_hand_off(value, SealingRule::Type11, site);
+        if state.debts.is_empty() {
             return;
         }
         let places = self.input.sealed_places(value);
@@ -1920,7 +2051,13 @@ impl Analyzer<'_, '_> {
         binding: BindingId,
         state: &ProofFlowState,
     ) -> Vec<Debt> {
-        if state.debts.is_empty() || self.input.places.is_reference(binding) {
+        if self.input.places.is_reference(binding) {
+            return Vec::new();
+        }
+        if let Some(debts) = self.input.closed_state_debts(value, binding) {
+            return debts;
+        }
+        if state.debts.is_empty() {
             return Vec::new();
         }
         let from = self.input.sealed_places(value);
@@ -1938,7 +2075,13 @@ impl Analyzer<'_, '_> {
         binding: BindingId,
         state: &ProofFlowState,
     ) -> Vec<Debt> {
-        if state.debts.is_empty() || self.input.places.is_reference(binding) {
+        if self.input.places.is_reference(binding) {
+            return Vec::new();
+        }
+        if let Some(debts) = self.input.closed_state_debts(value, binding) {
+            return debts;
+        }
+        if state.debts.is_empty() {
             return Vec::new();
         }
         let from = self
@@ -1963,7 +2106,7 @@ impl Analyzer<'_, '_> {
         arms: &[CheckedMatchArm],
         state: &ProofFlowState,
     ) -> Vec<(BindingId, Vec<Debt>)> {
-        if state.debts.is_empty() {
+        if state.debts.is_empty() && self.input.closed_state(scrutinee).is_none() {
             return Vec::new();
         }
         let mut taken = Vec::new();
@@ -2059,8 +2202,9 @@ impl Analyzer<'_, '_> {
             _ => {
                 let places = self.input.sealed_places(value);
                 let handed = !places.is_empty();
-                self.judging()
-                    .seal_hand_off(state, &places, SealingRule::Type11, node_path);
+                let mut judging = self.judging();
+                judging.seal_closed_hand_off(value, SealingRule::Type11, node_path);
+                judging.seal_hand_off(state, &places, SealingRule::Type11, node_path);
                 SealedSet::Stored {
                     sealed: handed || sealed_value(value),
                 }
@@ -2140,9 +2284,10 @@ impl Analyzer<'_, '_> {
             .map(|argument| self.input.sealed_places(argument))
             .collect::<Vec<_>>();
         if sealing == CalleeSealing::HandsOff {
-            for places in &handed {
-                self.judging()
-                    .seal_hand_off(state, places, SealingRule::Fn8, call);
+            for (argument, places) in arguments.iter().zip(&handed) {
+                let mut judging = self.judging();
+                judging.seal_closed_hand_off(argument, SealingRule::Fn8, call);
+                judging.seal_hand_off(state, places, SealingRule::Fn8, call);
             }
         }
         if sealing == CalleeSealing::Exchange {
@@ -2304,7 +2449,7 @@ impl Analyzer<'_, '_> {
                 });
             }
         }
-        self.input.owned_anchor_debts(
+        self.input.unfolding_below(
             &mut place,
             ty,
             &mut Vec::new(),
@@ -2322,7 +2467,8 @@ pub(super) enum SealedSet {
     /// A reference rebinding.
     Rebinding,
     /// A commit into a complete own local binding: a continuation, which
-    /// takes nothing from a call result or a construction.
+    /// takes nothing from a construction or a call result other than a
+    /// `shared_close` result [TYPE-11.S2].
     Local {
         binding: BindingId,
         taken: Vec<Debt>,
@@ -2345,7 +2491,9 @@ const RESULT_ERR: PlaceStep = PlaceStep::Payload {
     field: 0,
 };
 
-/// Whether `value` is a call result or a construction, which carry no debt.
+/// Whether `value` is a call result or a construction, which carry no debt;
+/// the hand-off of a `shared_close` result whose state may owe one fails
+/// instead [TYPE-11.S4].
 fn sealed_value(value: &CheckedExpression) -> bool {
     matches!(
         value,

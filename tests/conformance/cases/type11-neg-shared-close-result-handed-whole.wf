@@ -1,0 +1,29 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn first_entry(closed: Option<State>, table: &Array<u64, 16>) -> result: u64 reads(table) {
+  match closed {
+    Some(value: state) => {
+      let at = state.single.value;
+      let got = table^[at];
+      return got;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn close_and_pass(cell: Shared<State>, table: &Array<u64, 16>) -> result: u64 reads(table) waits {
+  atomic s = &cell {
+    set s^.single.value = 31_u64;
+  }
+  let got = first_entry(closed: shared_close::<State>(shared: move cell), table: table);
+  return got;
+}

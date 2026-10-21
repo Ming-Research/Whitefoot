@@ -1,0 +1,20 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn close_and_read(cell: Shared<Index>, table: &Array<u64, 16>) -> result: u64 reads(table) waits {
+  atomic s = &cell {
+    set s^.value = 9_u64;
+  }
+  match shared_close::<Index>(shared: move cell) {
+    Some(value: index) => {
+      let at = index.value;
+      let got = table^[at];
+      return got;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}

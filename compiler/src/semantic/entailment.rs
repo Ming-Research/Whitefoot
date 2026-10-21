@@ -149,6 +149,10 @@ pub(crate) struct EntailmentCallee {
     pub(crate) parameter_transports: Vec<CallTransport>,
     /// [TYPE-11.S4] whether the call hands its arguments off.
     pub(crate) sealing: CalleeSealing,
+    /// [TYPE-11.S2] whether the call is the supplied `shared_close`, whose
+    /// result holds a state no atomic block restored below its own
+    /// invariants.
+    pub(crate) closes_state: bool,
 }
 
 impl EntailmentCallee {
@@ -180,6 +184,7 @@ impl EntailmentCallee {
             range_boundary: false,
             relocation: false,
             sealing: CalleeSealing::HandsOff,
+            closes_state: false,
             parameter_exhibited_writes: exhibited.map(rooted),
             parameter_declarations: parameters
                 .iter()
@@ -1427,6 +1432,12 @@ pub(crate) enum SealingOrigin {
     /// Body entry, for a value an entry of a map or an `Entries` holds: no
     /// hand-off delivers those entries valid [TYPE-11.S1, TYPE-11.S2].
     Unsealed,
+    /// A `shared_close` result, for a value its state owns: an atomic block
+    /// owes only its target's own invariants [TYPE-11, TYPE-11.S2].
+    Closed,
+    /// A hand-off of a `shared_close` result itself, whose state owns a value
+    /// with an invariant that no relation names [TYPE-11.S4].
+    ClosedResult,
 }
 
 /// [TYPE-11.S3, TYPE-11.S4] what a call does with the values its arguments
