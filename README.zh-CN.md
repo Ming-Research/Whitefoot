@@ -226,6 +226,7 @@ tests/conformance/cases/op4-neg-index-undischarged.wf:6:12: error[OP-4]: Undisch
 - `--par` 构建并行版本，`--par-ledger` 打印每一个并行决定及其理由。运行时由 `WF_WORKERS` 设置使用多少个工作线程，由 `WF_DRIVERS` 设置用多少个驱动线程运行 `spawn` 所启动的上下文，默认每个 CPU 一个；
 - `--stack-ledger` 报告每个函数的栈帧，以及每个递归环能容纳多少层；
 - `--emit-llvm` 输出 LLVM IR；
+- `--sanitize address` 在 AddressSanitizer 加 UndefinedBehaviorSanitizer 下构建程序和它的运行时，`--sanitize thread` 则在 ThreadSanitizer 下构建，只用于 Linux 和 macOS。它们需要 clang 的 sanitizer 运行时：Apple 的 clang 自带；Linux 上要另装，比如 Debian 和 Ubuntu 上 clang 22 对应的 `libclang-rt-22-dev`。被接受的程序不应让它们报告任何问题，所以一条报告就是编译器或运行时的缺陷；
 - `--diagnostic-format json` 把每次拒绝输出为一行一个的 JSON 对象；
 - `whitefootc --help` 列出其余选项。
 

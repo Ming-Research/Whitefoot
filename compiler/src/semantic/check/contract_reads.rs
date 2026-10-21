@@ -23,6 +23,10 @@ pub(super) enum ContractReadStep {
     Row(CheckedEffectStep),
     /// Literal and const positions already have a captured value.
     Captured(PlaceStep),
+    /// A projected parameter offset is substituted as one ordinary goal datum.
+    Projected(GoalProjection),
+    /// The selector's own relative read path, independent of its indexed base.
+    FormalPath(crate::semantic::places::FormalOffsetId),
     /// A finite typed range position and the erased definition images its
     /// local roots can name, kept intact until caller substitution.
     Computed(CheckedRangeTerm, Vec<(BindingId, GoalExpression)>),
@@ -135,7 +139,12 @@ impl Checker<'_, '_> {
             let checked =
                 self.check_requires(context, block, &mut bindings.clone(), &mut counters)?;
             for requirement in checked.requirements {
-                collect_goal(&requirement.template.root, signature, &mut reads);
+                collect_goal(
+                    &requirement.template.root,
+                    signature,
+                    ClauseState::Entry,
+                    &mut reads,
+                );
             }
             for clause in checked.range {
                 collect_range_clause(
@@ -167,14 +176,19 @@ impl Checker<'_, '_> {
                     &mut bindings.clone(),
                     &mut counters,
                 )?;
-                collect_expanded(&expression, signature, &mut reads);
+                collect_expanded(&expression, signature, ClauseState::Exit, &mut reads);
             }
         }
         // Both entry and published exit/result invariant clauses use the
         // existing TYPE-11 substitution. Owned result roots supply no
         // reference argument and therefore add no compared read.
         for requirement in self.implicit_type_invariant_requirements(signature)? {
-            collect_goal(&requirement.template.root, signature, &mut reads);
+            collect_goal(
+                &requirement.template.root,
+                signature,
+                ClauseState::Entry,
+                &mut reads,
+            );
         }
         self.append_range_type_invariant_contracts(signature, &parameters)?;
         for clause in &self.body.range_facts.requirements {
@@ -219,18 +233,49 @@ fn ordinary_read(
     signature: &FunctionSignature,
     ordinal: u32,
     projections: &[GoalProjection],
+    state: ClauseState,
     reads: &mut Vec<ContractReadPath>,
 ) {
-    if let Some(steps) = ordinary_steps(signature, ordinal, projections) {
-        add_read(signature, ordinal, steps, reads);
+    if let Some(path) = ordinary_steps(signature, ordinal, projections, state) {
+        add_read(signature, ordinal, path.steps, reads);
     }
+    ordinary_selector_reads(signature, projections, reads);
+}
+
+fn ordinary_selector_reads(
+    signature: &FunctionSignature,
+    projections: &[GoalProjection],
+    reads: &mut Vec<ContractReadPath>,
+) {
+    // Offset evaluation reads its own referent even when the indexed base
+    // is an owned parameter and contributes no reference argument read.
+    for projection in projections {
+        if let GoalProjection::FormalPlaceSubscript { ordinal, place, .. }
+        | GoalProjection::FormalPlacePage { ordinal, place, .. } = projection
+        {
+            add_read(
+                signature,
+                *ordinal,
+                vec![ContractReadStep::FormalPath(*place)],
+                reads,
+            );
+        }
+    }
+}
+
+/// Widening ends a path: no later field, measure or index can narrow the
+/// whole run that the position contributes to the footprint [EFF-5].
+struct ReadSteps {
+    steps: Vec<ContractReadStep>,
+    widened: bool,
 }
 
 fn ordinary_steps(
     signature: &FunctionSignature,
     ordinal: u32,
     projections: &[GoalProjection],
-) -> Option<Vec<ContractReadStep>> {
+    state: ClauseState,
+) -> Option<ReadSteps> {
     signature
         .parameters
         .get(ordinal as usize)
@@ -243,9 +288,35 @@ fn ordinary_steps(
         // A bare reference holder supplies no observation of its referent.
         return None;
     };
-    let steps = projections
-        .iter()
-        .map(|projection| match *projection {
+    let mut path = ReadSteps {
+        steps: Vec::new(),
+        widened: false,
+    };
+    for projection in projections {
+        // Ordinary clause positions have neither bound nor result roots.
+        // Only whole value parameters and constants are call values; a
+        // field of a value parameter is still a projected position [EFF-5].
+        let call_value = match projection {
+            GoalProjection::FormalPlaceSubscript { .. }
+            | GoalProjection::FormalPlacePage { .. } => Some(false),
+            GoalProjection::FormalSubscript { ordinal }
+            | GoalProjection::FormalPage { ordinal } => {
+                Some(signature.parameters[*ordinal as usize].mode == CheckedMode::Own)
+            }
+            GoalProjection::Subscript(value) | GoalProjection::Page(value) => Some(matches!(
+                value.term,
+                CapturedTerm::Literal(_) | CapturedTerm::Const(_)
+            )),
+            GoalProjection::Range(range) => Some([range.start, range.end].iter().all(|value| {
+                matches!(value.term, CapturedTerm::Literal(_) | CapturedTerm::Const(_))
+            })),
+            _ => None,
+        };
+        if call_value.is_some_and(|call_value| state.widens_position(false, call_value)) {
+            path.widened = true;
+            break;
+        }
+        path.steps.push(match *projection {
             GoalProjection::Deref => ContractReadStep::Row(CheckedEffectStep::Deref),
             GoalProjection::Field(field) => ContractReadStep::Row(CheckedEffectStep::Field(field)),
             GoalProjection::Payload { variant, field } => {
@@ -260,15 +331,18 @@ fn ordinary_steps(
             GoalProjection::FormalPage { ordinal } => ContractReadStep::Row(
                 CheckedEffectStep::Page(signature.parameters[ordinal as usize].declaration),
             ),
+            projection @ (GoalProjection::FormalPlaceSubscript { .. }
+            | GoalProjection::FormalPlacePage { .. }) => ContractReadStep::Projected(projection),
             projection => ContractReadStep::Captured(projection.place_step()),
-        })
-        .collect();
-    Some(steps)
+        });
+    }
+    Some(path)
 }
 
 fn collect_goal(
     expression: &GoalExpression,
     signature: &FunctionSignature,
+    state: ClauseState,
     reads: &mut Vec<ContractReadPath>,
 ) {
     match expression {
@@ -276,7 +350,7 @@ fn collect_goal(
             ordinal,
             projections,
             ..
-        }) => ordinary_read(signature, *ordinal, projections, reads),
+        }) => ordinary_read(signature, *ordinal, projections, state, reads),
         GoalExpression::Operation { row, arguments, .. } => {
             // A measure operation observes one descriptor word of its
             // operand. Recursing into the operand datum instead would
@@ -291,11 +365,11 @@ fn collect_goal(
                     }),
                 ] = arguments.as_slice()
             {
-                ordinary_measure_read(signature, *ordinal, projections, measure, reads);
+                ordinary_measure_read(signature, *ordinal, projections, measure, state, reads);
                 return;
             }
             for argument in arguments {
-                collect_goal(argument, signature, reads);
+                collect_goal(argument, signature, state, reads);
             }
         }
         _ => {}
@@ -305,6 +379,7 @@ fn collect_goal(
 fn collect_expanded(
     expression: &ExpandedClauseExpression,
     signature: &FunctionSignature,
+    state: ClauseState,
     reads: &mut Vec<ContractReadPath>,
 ) {
     match expression {
@@ -312,7 +387,7 @@ fn collect_expanded(
             ordinal,
             projections,
             ..
-        }) => ordinary_read(signature, *ordinal, projections, reads),
+        }) => ordinary_read(signature, *ordinal, projections, state, reads),
         ExpandedClauseExpression::Operation { row, arguments, .. } => {
             if let Some(measure) = operation_measure(*row)
                 && let [
@@ -323,11 +398,11 @@ fn collect_expanded(
                     }),
                 ] = arguments.as_slice()
             {
-                ordinary_measure_read(signature, *ordinal, projections, measure, reads);
+                ordinary_measure_read(signature, *ordinal, projections, measure, state, reads);
                 return;
             }
             for argument in arguments {
-                collect_expanded(argument, signature, reads);
+                collect_expanded(argument, signature, state, reads);
             }
         }
         _ => {}
@@ -348,14 +423,15 @@ fn ordinary_measure_read(
     ordinal: u32,
     projections: &[GoalProjection],
     measure: CheckedMeasure,
+    state: ClauseState,
     reads: &mut Vec<ContractReadPath>,
 ) {
     let mut projections = projections.to_vec();
     projections.push(GoalProjection::Measure(measure));
-    ordinary_read(signature, ordinal, &projections, reads);
+    ordinary_read(signature, ordinal, &projections, state, reads);
 }
 
-/// The clause a range read belongs to, which fixes the state its positions
+/// The clause a read belongs to, which fixes the state its positions
 /// read [EFF-5]. A requirement reads the call-entry state the caller
 /// instantiates; a postcondition reads the state its return leaves
 /// [RANGE-1, FN-9], which the call entry does not determine.
@@ -363,6 +439,13 @@ fn ordinary_measure_read(
 enum ClauseState {
     Entry,
     Exit,
+}
+
+impl ClauseState {
+    /// [EFF-5] one retention rule for ordinary and quantified positions.
+    fn widens_position(self, bound_or_result: bool, call_value: bool) -> bool {
+        bound_or_result || (matches!(self, Self::Exit) && !call_value)
+    }
 }
 
 /// What forming one range clause's reads needs besides its terms.
@@ -400,15 +483,20 @@ fn collect_range_clause(
 
 fn range_base(
     place: &CheckedRangePlace,
-    signature: &FunctionSignature,
-    definitions: &[(BindingId, GoalExpression)],
-) -> Option<(u32, Vec<ContractReadStep>)> {
+    context: RangeReads<'_>,
+    reads: &mut Vec<ContractReadPath>,
+) -> Option<(u32, ReadSteps)> {
+    let RangeReads {
+        signature,
+        definitions,
+        state,
+    } = context;
     // An entry-state root reads the same parameter storage at call entry
     // [MSR-3, RANGE-1], so it joins the footprint as that parameter's read.
     let (CheckedRangeRoot::Binding(binding) | CheckedRangeRoot::Entry(binding)) = place.root else {
         return None;
     };
-    let (ordinal, mut steps) =
+    let (ordinal, mut path) =
         if let Some((_, expression)) = definitions.iter().find(|(id, _)| *id == binding) {
             // A copy definition is erased, so a projection of that definition
             // observes the projected original place, not the complete copied
@@ -421,18 +509,30 @@ fn range_base(
             else {
                 return None;
             };
-            (*ordinal, ordinary_steps(signature, *ordinal, projections)?)
+            ordinary_selector_reads(signature, projections, reads);
+            (
+                *ordinal,
+                ordinary_steps(signature, *ordinal, projections, state)?,
+            )
         } else {
-            (binding.0, Vec::new())
+            (
+                binding.0,
+                ReadSteps {
+                    steps: Vec::new(),
+                    widened: false,
+                },
+            )
         };
-    steps.extend(place.path.iter().filter_map(|step| match step {
-        CheckedRangeStep::Referent => None,
-        CheckedRangeStep::Field(field) => {
-            Some(ContractReadStep::Row(CheckedEffectStep::Field(*field)))
-        }
-        CheckedRangeStep::BoxContent => Some(ContractReadStep::Row(CheckedEffectStep::Deref)),
-    }));
-    Some((ordinal, steps))
+    if !path.widened {
+        path.steps.extend(place.path.iter().filter_map(|step| match step {
+            CheckedRangeStep::Referent => None,
+            CheckedRangeStep::Field(field) => {
+                Some(ContractReadStep::Row(CheckedEffectStep::Field(*field)))
+            }
+            CheckedRangeStep::BoxContent => Some(ContractReadStep::Row(CheckedEffectStep::Deref)),
+        }));
+    }
+    Some((ordinal, path))
 }
 
 fn has_bound(term: &CheckedRangeTerm) -> bool {
@@ -468,9 +568,10 @@ fn call_value(term: &CheckedRangeTerm, signature: &FunctionSignature) -> bool {
 /// reads the state its return leaves.
 /// Every remaining position is kept with its value at the call.
 fn widens(term: &CheckedRangeTerm, context: RangeReads<'_>) -> bool {
-    has_bound(term)
-        || has_result(term)
-        || (matches!(context.state, ClauseState::Exit) && !call_value(term, context.signature))
+    context.state.widens_position(
+        has_bound(term) || has_result(term),
+        call_value(term, context.signature),
+    )
 }
 
 fn range_position(term: &CheckedRangeTerm, context: RangeReads<'_>) -> ContractReadStep {
@@ -509,7 +610,7 @@ fn collect_range_term(
     match term {
         CheckedRangeTerm::Value(CheckedRangeRoot::Binding(binding)) => {
             if let Some((_, expression)) = definitions.iter().find(|(id, _)| id == binding) {
-                collect_goal(expression, signature, reads);
+                collect_goal(expression, signature, context.state, reads);
             }
         }
         CheckedRangeTerm::Sum { terms, .. } => {
@@ -518,21 +619,25 @@ fn collect_range_term(
             }
         }
         CheckedRangeTerm::Measure { place, measure, .. } => {
-            if let Some((ordinal, mut steps)) = range_base(place, signature, definitions) {
-                steps.push(ContractReadStep::Row(CheckedEffectStep::Measure(*measure)));
-                add_read(signature, ordinal, steps, reads);
+            if let Some((ordinal, mut path)) = range_base(place, context, reads) {
+                if !path.widened {
+                    path.steps
+                        .push(ContractReadStep::Row(CheckedEffectStep::Measure(*measure)));
+                }
+                add_read(signature, ordinal, path.steps, reads);
             }
         }
         CheckedRangeTerm::SegmentLength { place, segment } => {
             collect_range_term(segment, context, reads);
-            if let Some((ordinal, mut steps)) = range_base(place, signature, definitions) {
-                if !widens(segment, context) {
-                    steps.push(range_position(segment, context));
-                    steps.push(ContractReadStep::Row(CheckedEffectStep::Measure(
-                        CheckedMeasure::Length,
-                    )));
+            if let Some((ordinal, mut path)) = range_base(place, context, reads) {
+                if !path.widened && !widens(segment, context) {
+                    path.steps.push(range_position(segment, context));
+                    path.steps
+                        .push(ContractReadStep::Row(CheckedEffectStep::Measure(
+                            CheckedMeasure::Length,
+                        )));
                 }
-                add_read(signature, ordinal, steps, reads);
+                add_read(signature, ordinal, path.steps, reads);
             }
         }
         CheckedRangeTerm::Read {
@@ -570,7 +675,12 @@ fn collect_range_projection(
     for index in indices {
         collect_range_term(index, context, reads);
     }
-    if let Some((ordinal, mut steps)) = range_base(place, context.signature, context.definitions) {
+    if let Some((ordinal, base)) = range_base(place, context, reads) {
+        if base.widened {
+            add_read(context.signature, ordinal, base.steps, reads);
+            return;
+        }
+        let mut steps = base.steps;
         let mut widened = false;
         // A run has one outer index; Segments has two. Remaining
         // indices occur in the owned projection below that element.

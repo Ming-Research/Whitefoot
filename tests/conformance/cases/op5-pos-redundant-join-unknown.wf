@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn choose(x: u64, flag: Bool) -> r: u64 pure {
+  doc "One reaching edge lacks the bound, so the join cannot decide it.";
+  if flag {
+    if x >= 8_u64 {
+      return 0_u64;
+    }
+  }
+  if x < 8_u64 {
+    return 1_u64;
+  }
+  return 2_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The checker judges every body.";
+  return exit_status(code: 0_u8);
+}

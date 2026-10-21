@@ -35,10 +35,6 @@ fn main() -> status: ExitStatus pure {
   let view = &ipv4_header[0_u64..20_u64];
   let view_length = view^.len;
   let view_odd = iand(view_length, 1_u64);
-  if view_odd == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let checksum = ipv4_checksum(header: view);
   if checksum == 47248_u16 {
   } else {
@@ -57,10 +53,6 @@ fn main() -> status: ExitStatus pure {
   let copied = &runtime_header[0_u64..20_u64];
   let copied_length = copied^.len;
   let copied_odd = iand(copied_length, 1_u64);
-  if copied_odd == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let copied_checksum = ipv4_checksum(header: copied);
   if copied_checksum == 47248_u16 {
   } else {
