@@ -10,6 +10,12 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
+## 2026-10-21 v0.157: swap's equality allowance admits equal-depth slots whose containing paths differ only in index steps
+
+Rules: changed OP-11
+
+Summary: OP-11 said two equal-depth slots satisfy swap's equality allowance only under one identical array or window, while the checker accepted slots whose containing paths are identical step for step or differ only in index steps, such as `rows^[i][k]` with `rows^[j][l]`. The relation is sound: equal row indices give the same slot or disjoint slots, different row indices give disjoint slots. OP-11 now states that relation, read as OWN-7 reads paths; the checker and every verdict are unchanged, and two accepted cases pin the boundary. Selection ground: the owner ruled on 2026-10-13 to state the relation the checker uses rather than narrow the checker, as the owner's 2026-09-26 ruling had settled the analogous range-separation gap. The amendment was written as v0.150 and renumbered to v0.157 as main advanced; the rule text did not change in the renumbering.
+
 ## 2026-10-13 v0.156: an explicit formatting request outside acceptance
 
 Rules: changed FORM-1, FORM-2

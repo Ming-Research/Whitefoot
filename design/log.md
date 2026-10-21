@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/checker-facts
 
 Summary: Per-branch ensures for own enums established route states wherever evidence arose, so programs writing no such ensures paid for snapshots, closures and joins of states nothing read; constructing one variant stored a context for every field of the other variants, and the Halo VM test host's check grew from about 2 s to about 630 s. The checker now collects, alongside binding types, which values a later match, error propagation, routed ensures or nested routed requirement reads, and omits conditional-state computations with no reachable reader; a read value keeps every version and every source through copies, assignments and `give`, and a routed call still establishes the root that diagnostics require. Establishing states at every evidence site regardless of readers is rejected because the omitted work feeds no proof and no required diagnostic root. Interleaved hosted-runner timings, recorded in the "Validation and outstanding evidence" section of research/investigations/enum-route-check-cost/DESIGN.md: Halo VM module 1.025x and Firn 0.978x against the revision before per-branch ensures, Halo VM test host 1.005x against wf-d837678c6905.
+## 2026-10-21 Exchange's equality allowance covers slots whose containing paths differ only in index steps
+
+Nodes: language/ownership/exchange
+
+Summary: A new decision records the relation under which `swap` tolerates equality: two equal-depth slots whose containing paths are identical step for step or differ only in index steps are the same slot or disjoint storage, so an exchange between two runtime-selected rows needs no proof that the rows are the same, instead of limiting the allowance to slots under one identical array or window. The specification states the relation the checker already applied; the checker is unchanged. Refused: tightening the checker to require one identical array or window.
 
 ## 2026-10-13 An atomic target named only in proofs is held from statement entry
 
