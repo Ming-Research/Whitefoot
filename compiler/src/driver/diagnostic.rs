@@ -924,6 +924,7 @@ impl Report for SemanticIssueKind {
             InvalidOperation { operation, operand_types, mechanical_fix };
             InvalidEqualityType { mechanical_fix };
             InvalidPredicateCondition;
+            RedundantCondition { residual, decided, facts, mechanical_fix };
             InvalidConditionalForm { mechanical_fix };
             UndischargedBoundsObligation { residual, disposition, mechanical_fix };
             UndischargedEmptyRunRelease { residual, disposition, mechanical_fix };

@@ -224,12 +224,6 @@ fn main() -> status: ExitStatus pure {
   }
   let window = &output[0_u64..15_u64];
   let input = &utf8_input[0_u64..15_u64];
-  let window_length = window^.len;
-  let input_length = input^.len;
-  if window_length >= input_length {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   let produced = parse(out: window, src: input);
   if produced == 6_u64 {
   } else {

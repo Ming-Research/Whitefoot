@@ -12,6 +12,11 @@ Nodes: compiler/checker-facts
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: pointing a reference variable elsewhere becomes its own kind of event that invalidates proof facts? (Ming-Research/Whitefoot#439, head b1ee96910)" (translated).
 
 Summary: A new decision makes a reference rebinding a distinct invalidation event that removes only the facts spelled through or reached through that reference variable, and loop summaries carry the event unchanged, because the specification says a rebinding writes no storage, instead of synthesizing a whole write of the variable and removing facts by its function-wide provenance list, which removed facts established through other names on the old or new target.
+## 2026-10-20 Conditions the checker decides are rejected
+
+Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
+
+Summary: A new node rejects an `if` or `value_if` condition when every fact its selected branch establishes at entry is already derivable, with a repair that deletes the test and its dead branch; it judges a generic body once at its own parameters' symbolic instance and admits a condition in a contradictory state. It rejects judging only the goal origins and a language facility for a program to check its own final result, since the harness can compare the output. The acceptance-records decision adds the redundancy judgment to the obligations the structural checker records. The proof-query-context decision keeps reusing a closed view when goals are appended, after checking them for newly derivable contradictions, so the redundancy queries share preparation without changing a judgment.
 ## 2026-10-20 The merge-base compiler is cached per main commit, and its cold build is report-only
 
 Nodes: compiler/verification, compiler/merge-base-compiler-cache

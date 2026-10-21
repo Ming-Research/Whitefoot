@@ -3,9 +3,6 @@ alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
   doc "Exact domain boundaries are observed without host rounding: inexact large integers, float integer endpoints, fractional and nonfinite inputs, cross-format NaN canonicalization and signed zero.";
-  if cvt.defined::<u32, f32>(16777217_u32) {
-    return exit_status(code: 1_u8);
-  }
   match cvt.checked::<u32, f32>(16777217_u32) {
     Ok(value: converted) => {
       return exit_status(code: 2_u8);
@@ -13,14 +10,19 @@ fn main() -> status: ExitStatus pure {
     Err(error: refused) => {
     }
   }
-  if cvt.defined::<u64, f64>(18446744073709551615_u64) {
-    return exit_status(code: 3_u8);
+  match cvt.checked::<u64, f64>(18446744073709551615_u64) {
+    Ok(value: converted) => {
+      return exit_status(code: 3_u8);
+    }
+    Err(error: refused) => {
+    }
   }
-  if cvt.defined::<i64, f64>(9223372036854775807_i64) {
-    return exit_status(code: 4_u8);
-  }
-  if cvt.defined::<f64, i64>(9.223372036854776e18_f64) {
-    return exit_status(code: 5_u8);
+  match cvt.checked::<i64, f64>(9223372036854775807_i64) {
+    Ok(value: converted) => {
+      return exit_status(code: 4_u8);
+    }
+    Err(error: refused) => {
+    }
   }
   match cvt.checked::<f64, i64>(9.223372036854776e18_f64) {
     Ok(value: converted) => {
@@ -37,8 +39,12 @@ fn main() -> status: ExitStatus pure {
   if minimum != -9223372036854775808_i64 {
     return exit_status(code: 8_u8);
   }
-  if cvt.defined::<f64, u8>(1.5_f64) {
-    return exit_status(code: 9_u8);
+  match cvt.checked::<f64, u8>(1.5_f64) {
+    Ok(value: converted) => {
+      return exit_status(code: 9_u8);
+    }
+    Err(error: refused) => {
+    }
   }
   let infinity = finf::<f64>();
   if cvt.defined::<f64, u64>(infinity) {
