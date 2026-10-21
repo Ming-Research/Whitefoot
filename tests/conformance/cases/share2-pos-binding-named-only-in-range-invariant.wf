@@ -1,0 +1,20 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 1_u64);
+  atomic es = &store[keys] {
+    for (
+      i in 0_u64..1_u64,
+      invariant forall nonnegative(q in 0_u64..es^.len): 0_u64 <= q
+    ) {
+      let count = i;
+    }
+  }
+  atomic es = &store[keys] {
+    loop (
+      invariant forall nonnegative(q in 0_u64..es^.len): 0_u64 <= q
+    ) {
+      break;
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
