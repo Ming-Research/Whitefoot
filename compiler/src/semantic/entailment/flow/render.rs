@@ -1011,6 +1011,45 @@ impl Input<'_, '_> {
 }
 
 impl Reasoning<'_, '_, '_> {
+    /// Renders a normalized relation whose source type nobody supplies, such
+    /// as a condition fact: its constants take the integer type of the
+    /// relation's own typed terms.
+    pub(super) fn render_relation_of_terms(&self, relation: &Relation) -> String {
+        let (Relation::Bound { left, right, .. }
+        | Relation::Equal { left, right, .. }
+        | Relation::Distinct { left, right, .. }) = relation;
+        // Offsets, lengths and counted captures are `u64` [OP-4], so a
+        // relation with no other typed term reads as one over `u64`.
+        let ty = self
+            .term_integer_type(*left)
+            .or_else(|| self.term_integer_type(*right))
+            .unwrap_or(IntegerType::U64);
+        self.render_relation(relation, CheckedType::Integer(ty))
+    }
+
+    /// The integer type a term is typed by, where the term itself records
+    /// one.
+    fn term_integer_type(&self, term: TermId) -> Option<IntegerType> {
+        match self.vocabulary.terms.kind(term) {
+            TermKind::Sum(left, right) => self
+                .term_integer_type(*left)
+                .or_else(|| self.term_integer_type(*right)),
+            TermKind::TargetMeasure { source, .. } => self.term_integer_type(*source),
+            TermKind::Measure(..) => Some(IntegerType::U64),
+            TermKind::ConstParameter(_, ty)
+            | TermKind::Place(_, ty)
+            | TermKind::ResultPayload { ty, .. }
+            | TermKind::CommitValue { ty, .. }
+            | TermKind::CallDatum { ty, .. }
+            | TermKind::EntryDatum { ty, .. }
+            | TermKind::MeasureDatum { ty, .. } => Some(*ty),
+            TermKind::Zero
+            | TermKind::Constant(_)
+            | TermKind::CountedCapture { .. }
+            | TermKind::IndexCapture { .. } => None,
+        }
+    }
+
     /// Renders one normalized relation for diagnostics.
     pub(super) fn render_relation(&self, relation: &Relation, ty: CheckedType) -> String {
         match relation {
