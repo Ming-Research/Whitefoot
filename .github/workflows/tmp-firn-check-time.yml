@@ -1,0 +1,118 @@
+# Temporary: the smallest sample of firn-check-time.yml on a hosted runner, to
+# show the whole chain (prepare, build, sample, warmup, one round, report)
+# before the workflow reaches main. Same helper and steps; differences are the
+# runner, one measured round instead of seven, the last CPU instead of CPU 2,
+# and no idle-host refusal (a hosted runner is not the dedicated machine, so
+# these numbers are a link test and not a measurement). Remove before the full
+# check.
+name: tmp-firn-check-time
+
+on:
+  push:
+    branches: [firn-check-time-wf]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  FIRN_TIME_NOW_BASE: aa667568707c6c10ff6d5a294feb45e85e83694d
+  FIRN_TIME_NOW_RULE: bf7e033330a450b4e4fd848f69c2f35d6580f874
+  FIRN_TIME_NOW_SOURCE: bf7e033330a450b4e4fd848f69c2f35d6580f874
+  FIRN_TIME_THEN_BASE: 58743a931a5ec6244864d37041fd1a7c1c5a145d
+  FIRN_TIME_THEN_RULE: 82fdda25ecb15171568f8b7dd3f033c47f5ab6f7
+  FIRN_TIME_THEN_SOURCE: 82fdda25ecb15171568f8b7dd3f033c47f5ab6f7
+  FIRN_TIME_CLAIMED_OVERHEAD: "1.6"
+  FIRN_TIME_REQUIRED_REDUCTION: "0.5"
+  FIRN_TIME_ROUNDS: "1"
+
+jobs:
+  timing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Initialize evidence before acquisition
+        run: |
+          set -euo pipefail
+          out=$(mktemp -d "$RUNNER_TEMP/firn-check-time-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.XXXXXX")
+          echo "FIRN_TIME_OUT=$out" >> "$GITHUB_ENV"
+          echo "FIRN_TIME_CPU=$(( $(nproc) - 1 ))" >> "$GITHUB_ENV"
+          mkdir -p "$out"/{logs,raw,inputs,images}
+          printf '%s\n' 'NOT MEASURED: acquisition has not completed.' > "$out/acquisition-status.txt"
+          printf '%s\n' 'NOT MEASURED: smallest sample has not completed.' > "$out/sample.md"
+          printf '%s\n' 'NOT MEASURED: measured rounds have not completed.' > "$out/timing.md"
+          printf '%s\n' 'NOT MEASURED: manifest preparation has not completed.' > "$out/manifest.json"
+          printf '%s\n' 'stage,round,order,variant,seconds,actual_returncode,launcher_returncode,timed_out,verdict' > "$out/raw/times.csv"
+          printf '%s\n' 'NOT MEASURED: compiler images have not been built.' > "$out/images.sha256"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize manifest and inspect tools
+        run: |
+          set -euo pipefail
+          rustup default stable
+          python3 .github/firn-check-time.py init
+          python3 .github/firn-check-time.py host
+
+      - name: Reducers refuse invalid acquisitions and keep the criterion's boundaries
+        run: python3 .github/firn-check-time.py selfcheck
+
+      - name: Prepare exact compiler and source identities
+        run: python3 .github/firn-check-time.py prepare
+
+      - name: Build each compiler with a fresh gate target and copy the twins
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "5400"
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl firn-check-time/build python3 .github/firn-check-time.py build
+
+      - name: Smallest useful sample, one full Firn entry check per variant
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "900"
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl firn-check-time/sample python3 .github/firn-check-time.py sample
+
+      - name: One warmup each and one rotated round
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "900"
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl firn-check-time/rounds python3 .github/firn-check-time.py rounds
+
+      - name: Final acquisition status, manifest and complete raw table
+        if: always()
+        env:
+          FIRN_TIME_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          python3 .github/firn-check-time.py finalize
+          {
+            cat "$FIRN_TIME_OUT/acquisition-status.txt"
+            cat "$FIRN_TIME_OUT/sample.md" "$FIRN_TIME_OUT/timing.md"
+            printf '\n### Raw manifest\n\n```json\n'
+            cat "$FIRN_TIME_OUT/manifest.json"
+            printf '\n```\n\n### Complete raw times\n\n```csv\n'
+            cat "$FIRN_TIME_OUT/raw/times.csv"
+            printf '\n```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firn-check-time-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.FIRN_TIME_OUT }}/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove only this run's scratch worktrees and Cargo targets
+        if: always()
+        run: python3 .github/firn-check-time.py cleanup
