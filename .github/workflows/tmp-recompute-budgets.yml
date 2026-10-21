@@ -1,7 +1,8 @@
 # Temporary (wf-gate-budget-noise): removed before the branch is ready.
 # The quick workflow for .github/recompute-time-budgets.py: the repository
 # invariants that now include its self-test, and one run per deliberate fault
-# in a copy of the script, each of which the self-test must reject.
+# in a copy of the script, each of which the self-test must reject; and the
+# design tree's lint and readiness for the node this branch changes.
 name: tmp-recompute-budgets
 
 on:
@@ -10,7 +11,9 @@ on:
     paths:
       - '.github/workflows/tmp-recompute-budgets.yml'
       - '.github/recompute-time-budgets.py'
+      - '.github/time-budgets.txt'
       - 'Makefile'
+      - 'design/**'
 
 jobs:
   recompute:
@@ -20,6 +23,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+          fetch-depth: 0
 
       - name: Repository invariants
         run: perl .github/run-check.pl repository-invariants make repository-invariants
@@ -52,3 +56,16 @@ jobs:
           fault thin-class 'value = max(largest, own[1]) if own else largest' 'value = own[1] if own else largest'
           fault slowdown 'cs * (1 + slowdown) > limit' 'cs > limit'
           fault window 'ok[-size:]' 'ok[-3:]'
+          fault repeated-attempts 'if key in seen or job["cpu"] is None:' 'if job["cpu"] is None:'
+          fault no-cpu 'if key in seen or job["cpu"] is None:' 'if key in seen:'
+          fault largest-class 'largest = max(new.values())' 'largest = min(new.values())'
+          fault period 'boundary = days[(days.index(r["day"]) // every) * every]' 'boundary = days[days.index(r["day"])]'
+          fault first-day 'if r["day"] < since:' 'if False:'
+          fault logged-budget 'if r["budget"] is not None:' 'if r["budget"] is None:'
+
+      - name: Design tree lint and readiness
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          git log --oneline -1 "$base"
+          perl .github/run-check.pl design-lint make design-lint DESIGN_REVIEW_BASE="$base"
+          perl .github/run-check.pl design-ready make design-ready DESIGN_REVIEW_BASE="$base"

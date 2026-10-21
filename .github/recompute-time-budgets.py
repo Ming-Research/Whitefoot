@@ -256,8 +256,14 @@ def collect(repo, workflows, since, path, limit):
     for workflow in workflows:
         runs = lines("--method", "GET", "--paginate", f"repos/{repo}/actions/workflows/{workflow}/runs",
                      "-f", "per_page=100", "-f", "status=completed", "-f", f"created=>={since}",
-                     "--jq", ".workflow_runs[] | {id, head_sha, head_branch, run_attempt, conclusion} | tojson")
-        runs = [r for r in runs if r["conclusion"] in ("success", "failure")][:limit]
+                     "--jq", ".workflow_runs[] | {id, head_sha, head_branch, run_attempt, conclusion, created_at} | tojson")
+        runs = [r for r in runs if r["conclusion"] in ("success", "failure")]
+        if runs:
+            # The listing is newest first and holds at most 1,000 runs, and
+            # --limit keeps the newest: the oldest kept run is the window's start.
+            print(f"{workflow}: {len(runs)} finished runs listed, keeping the newest {min(limit, len(runs))},"
+                  f" the oldest created {runs[:limit][-1]['created_at']}", file=sys.stderr)
+        runs = runs[:limit]
         # A run's jobs are recorded together, so a run with a recorded job is done.
         known = {job["run"] for job in samples["jobs"].values()}
         runs = [r for r in runs if r["id"] not in known]
@@ -318,22 +324,37 @@ def self_test():
         "stage/three  20     20       20      25     -",
         "stage/four   20     20       20      25     -",
         "stage/five   -      15       -       25     -",
+        "stage/six    40     40       40      50     -",
+        "stage/seven  60     60       60      70     -",
         ""])
-    def sample(rows):
+    def sample(rows, budget=None):
         jobs = {}
         for number, (label, model, cs, day, code) in enumerate(rows):
             jobs[str(number)] = {"run": number, "workflow": "gate.yml", "sha": "0", "branch": "main", "cpu": model,
                                  "rows": [{"label": label, "cs": cs, "exit": code,
                                            "ts": f"2026-10-{day:02d}T00:00:{number % 60:02d}.{number // 60:07d}Z",
-                                           "budget": None}]}
+                                           "budget": budget}]}
         return {"jobs": jobs}
-    rows = flatten(sample(
+    data = sample(
         [("stage/one", "Big CPU", 9000 + 100 * i, 1 + i // 3, 0) for i in range(25)]      # max 114.00 s
         + [("stage/one", "Big CPU", 99900, 28, 1)]                                          # failed: not counted
         + [("stage/one", "Small CPU", 8000, 5, 0)] * 10                                     # 10 runs: too few
         + [("stage/one", "Thin CPU", 12000, 6, 0)]                                          # one run: 120 s
         + [("stage/two", "Big CPU", 5000, 7, 0)] * 25                                       # kept as is
-        + [("stage/four", "Small CPU", 100, 8, 0)] * 25))                                    # floor: 10 s
+        + [("stage/four", "Small CPU", 100, 8, 0)] * 25                                     # floor: 10 s
+        + [("stage/six", "Big CPU", 4000 + 100 * i, 9 + i // 3, 0) for i in range(15)]    # 15 runs, logged twice
+        + [("stage/seven", "Big CPU", 5000, 14, 0)] * 25                                    # 55 s
+        + [("stage/seven", "Small CPU", 3000, 14, 0)] * 25)                                 # 35 s
+    # A rerun attempt lists the earlier attempts' jobs again under new job ids,
+    # with the same run, stage and time; they count once. A job whose CPU model
+    # was not logged is not sampled.
+    for number, job in list(data["jobs"].items()):
+        if job["rows"][0]["label"] == "stage/six":
+            data["jobs"]["again-" + number] = job
+    data["jobs"]["no-cpu"] = dict(data["jobs"]["0"], run=999, cpu=None)
+    rows = flatten(data)
+    assert all(r["cpu"] for r in rows)
+    assert sum(r["label"] == "stage/six" for r in rows) == 15
     table = Table(table_text)
     report = recompute(table, rows, 50, keep=("stage/two",))
     cells = table.cells("stage/one")
@@ -345,9 +366,14 @@ def self_test():
     assert table.cells("stage/four")["small-2"] == "10" and table.cells("stage/four")["big-1"] == "10"
     assert table.cells("stage/five") == {"big-1": "-", "small-2": "15", "thin-3": "-", "macos": "25", "windows": "-"}
     assert table.cells("stage/one")["macos"] == "60" and table.cells("stage/one")["windows"] == "-"
+    # Counted once, 15 runs are too few; counted twice they would be 30.
+    assert table.cells("stage/six") == {"big-1": "40", "small-2": "40", "thin-3": "40", "macos": "50", "windows": "-"}
+    # Two classes have enough runs, 55 s and 35 s by the rule: the class
+    # without runs takes the larger of them, not the smaller.
+    assert table.cells("stage/seven") == {"big-1": "55", "small-2": "35", "thin-3": "55", "macos": "70", "windows": "-"}
     out = table.text().split("\n")
     old = table_text.split("\n")
-    assert out[:6] == old[:6] and out[7:9] == old[7:9] and out[10:] == old[10:]
+    assert out[:6] == old[:6] and out[7:9] == old[7:9] and out[10:12] == old[10:12] and out[13:] == old[13:]
     assert all(len(line.split()) == len(before.split()) for line, before in zip(out, old))
     again = Table(table.text())
     assert recompute(again, rows, 50, keep=("stage/two",)) and again.text() == table.text()
@@ -364,6 +390,16 @@ def self_test():
     slowed = stable[:-1] + [("stage/one", "Big CPU", 12600, 30, 0)]
     judged = replay(flatten(sample(slowed)), Table(table_text), "2026-10-21", 20, 1, (0,))
     assert judged["rule over 20 runs, recomputed every 1 day(s)"][0] == (1, 10), judged
+    # A recompute every 3 days judges a stage on the runs before its period's
+    # first day: day 21 belongs to the period of day 19, which has 18 runs
+    # before it and is not judged, so 9 jobs remain.
+    spaced = replay(flatten(sample(stable)), Table(table_text), "2026-10-21", 20, 3, (0, 0.30))
+    assert spaced["rule over 20 runs, recomputed every 3 day(s)"] == {0: (0, 9), 0.30: (9, 9)}, spaced
+    # Only days from --from are judged, and the budget a log recorded (120 s:
+    # above the slowest stage's 102 s, below it at +30%) is judged as logged.
+    late = replay(flatten(sample(stable, budget=120)), Table(table_text), "2026-10-25", 20, 1, (0, 0.30))
+    assert late["rule over 20 runs, recomputed every 1 day(s)"] == {0: (0, 6), 0.30: (6, 6)}, late
+    assert late["table logged when the job ran"] == {0: (0, 6), 0.30: (6, 6)}, late
     print("recompute-time-budgets self-test passed")
 
 

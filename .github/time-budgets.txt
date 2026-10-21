@@ -8,8 +8,9 @@
 # recomputed on 2026-10-21 over the 50 most recent runs of each stage and class
 # (research/investigations/test-economy/time-budgets.md, "Recomputing the Linux
 # budgets").
-# A model with fewer than 20 runs has no column. An unmapped model uses the
-# stage's largest Linux class budget and is reported by name. Unsampled rows
+# A model with fewer than 20 runs has no column unless the owner adds one (see
+# xeon-8573c below). An unmapped model uses the stage's largest Linux class
+# budget and is reported by name. Unsampled rows
 # retain the former Linux values until per-CPU runs are recorded in
 # research/investigations/test-economy/time-budgets.md.
 #

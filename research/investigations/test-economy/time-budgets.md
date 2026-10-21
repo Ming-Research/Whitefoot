@@ -1031,27 +1031,46 @@ records why the table was stale and how it was recomputed.
 from 2026-10-13 12:10 to 2026-10-21 09:51 UTC (2,333 jobs, 5,099 stage lines;
 reruns counted once) and of 45 `sanitizers.yml` runs (197 jobs). Only stages
 that exited 0 count. The runs fall on five days (10-13, 10-14, 10-19, 10-20,
-10-21); the listing has no gate run from 10-15 to 10-18. The scratch inputs are
-not kept; `.github/recompute-time-budgets.py collect` rebuilds them.
+10-21); the listing has no gate run from 10-15 to 10-18. The sample is not
+every run since 10-13. The API lists at most 1,000 runs for a query, so the
+listing taken on 10-21 reached back only to 12:08 on 10-13 (the early morning
+of 10-13 is not in it). Of its 891 finished runs (611 success, 280 failure; 109
+more were cancelled) 454 are in the sample; the other 437, 386 of them from
+10-13, were not reached before the collection stopped at GitHub's API rate
+limit. The sample also holds 89 runs that are not in that listing (the 27 of
+them with stage lines were created after it). Most missing runs are from 10-13,
+the oldest part of the window: a class with 50 runs in the sample takes its
+newest 50 and is affected only by the 34 missing runs from 10-19 to 10-21, and a
+class with fewer (the Xeon column, EPYC 9V74's static group, the sanitizer rows)
+might have had more runs, and a larger maximum. The scratch inputs are not
+kept; `.github/recompute-time-budgets.py collect` rebuilds them, and prints the
+oldest run it keeps so that a cut like this one shows. The tables under "New
+budgets" and the replay below are the tool's output on these inputs. The noise,
+correlation, overrun and growth figures were computed from the same inputs with
+throwaway scripts that are not in the repository.
 
-**Noise is small.** The same stage on the same commit and CPU class, run
-twice, differs little. Per-sample standard deviation of the log time, from 11
-to 13 same-commit pairs on EPYC 7763: `compiler/test-build-unit` 4.7% (largest
-ratio between two runs 1.19), `compiler/test-unit` 1.7% (1.05), `check/unit`
-3.0% (1.10), `check/runtime` 2.9% (1.13). A budget 10% above the maximum of
-many runs absorbs noise of that size. Stages of one job move together on a slow
+**Noise is modest.** The same stage on the same commit and CPU class, run more
+than once, differs little. Pooled standard deviation of the log time within a
+commit, over the 11 or 12 commits on EPYC 7763 with two or more runs of the
+stage: `compiler/test-build-unit` 5.9% (largest ratio between two runs of one
+commit 1.19), `compiler/test-unit` 1.6% (1.05), `check/unit` 3.6% (1.10),
+`check/runtime` 3.7% (1.13). A budget 10% above the maximum of many runs
+absorbs most noise of that size. Stages of one job move together on a slow
 host: within one job, the log of a stage's time over its class median
-correlates 0.98 to 1.00 between `compiler/lint` and `check/static`, and 0.58 to
-0.94 between a build stage and the test stage that follows it.
+correlates 0.98 to 1.00 between `compiler/lint` and `check/static`, 0.69 to 0.94
+between `compiler/test-build-unit` and `compiler/test-unit`, and 0.58 to 0.89
+between `compiler/test-build-corpus` and `compiler/test-corpus` (the four
+mapped classes, 10-13 to 10-21).
 
-**The table was stale.** 176 stage runs exceeded an enforced budget between
-10-13 and 10-21. Against the median of the same stage and class on the same
-day, 64% had a budget below 1.08 times that median (a typical run was already
-within 8% of the limit), 18% took more than 1.25 times the median (a slow
-host), and 18% were the rest. The stage medians on EPYC 7763 rose from 10-13 to
+**The table was stale.** 221 stage runs that exited 0 took longer than the
+budget logged for them between 10-13 and 10-21. Against the median of the same
+stage and class on the same day, 147 (67%) had a budget below 1.08 times that
+median (a typical run was already within 8% of the limit), 35 (16%) took more
+than 1.25 times the median (a slow host), and 39 (18%) were the rest
+(percentages rounded). The stage medians on EPYC 7763 rose from 10-13 to
 10-21: `check/corpus` 311.3 to 330.4 s (+6%), `compiler/test-corpus` 206.1 to
 217.1 s (+5%), `compiler/test-build-corpus` 103.9 to 112.4 s (+8%), medians of
-38 to 99 runs a day. A rule that takes the maximum of old runs and adds 10%
+38 to 45 runs on 10-13 and of 94 to 99 on 10-21. A rule that takes the maximum of old runs and adds 10%
 falls behind growth of that size within days.
 
 **The tool.** `.github/recompute-time-budgets.py` applies the rule to the
@@ -1064,9 +1083,11 @@ its newest 50 (all of them if fewer). A class with fewer takes the larger of
 the row's recomputed class values and its own runs by the rule, the treatment
 the Xeon column received on 2026-10-13. `--keep` leaves rows alone. Its
 self-test runs in `make repository-invariants`; a temporary workflow ran the
-self-test against eight deliberately faulty copies of the script (margin,
-minimum run count, floor, rounding, failed runs counted, thin-class rule,
-slowdown scaling, window) and each was rejected.
+self-test against deliberately faulty copies of the script (margin, minimum run
+count, floor, rounding, failed runs counted, thin-class rule, slowdown scaling,
+window, repeated attempts counted, jobs without a CPU model, largest class
+taken as smallest, recompute period, first day judged, logged budget) and each
+was rejected.
 
 **New budgets.** Rows recomputed with the 50 newest runs per class (the Linux
 columns only; macOS and Windows are untouched). The three unit-group rows
@@ -1084,6 +1105,7 @@ fewer than 20 runs in every class and keep their provisional 475 s.
 | `check/static` | xeon-8573c | 14 | 61.4 | 74.0 | 85 | 95 |
 | `repository-invariants` | epyc-7763 | 50 | 24.3 | 24.6 | 25 | 30 |
 | `repository-invariants` | epyc-9v74 | 22 | 22.6 | 24.1 | 25 | 30 |
+| `repository-invariants` | epyc-9v45 | 38 | 21.1 | 21.6 | 25 | 25 |
 | `repository-invariants` | xeon-8573c | 15 | 22.8 | 23.1 | 25 | 30 |
 | `compiler/lint` | epyc-7763 | 50 | 34.0 | 56.6 | 55 | 65 |
 | `compiler/lint` | epyc-9v74 | 21 | 32.7 | 38.8 | 60 | 45 |
@@ -1092,6 +1114,7 @@ fewer than 20 runs in every class and keep their provisional 475 s.
 | `check/corpus` | epyc-7763 | 50 | 330.5 | 360.7 | 360 | 400 |
 | `check/corpus` | epyc-9v74 | 50 | 259.3 | 346.8 | 320 | 385 |
 | `check/corpus` | epyc-9v45 | 50 | 214.7 | 240.1 | 220 | 265 |
+| `check/corpus` | xeon-8573c | 29 | 305.1 | 326.1 | 360 | 360 |
 | `compiler/test-build-corpus` | epyc-7763 | 50 | 111.7 | 134.8 | 135 | 150 |
 | `compiler/test-build-corpus` | epyc-9v74 | 50 | 93.8 | 126.6 | 115 | 140 |
 | `compiler/test-build-corpus` | epyc-9v45 | 50 | 78.9 | 92.2 | 85 | 105 |
@@ -1112,6 +1135,10 @@ fewer than 20 runs in every class and keep their provisional 475 s.
 | `compiler/corpus-tsan-conformance` | epyc-9v74 | 6 | 233.7 | 283.9 | 415 | 335 |
 | `compiler/corpus-tsan-conformance` | epyc-9v45 | 7 | 183.8 | 214.4 | 415 | 335 |
 | `compiler/corpus-tsan-conformance` | xeon-8573c | 5 | 250.4 | 266.3 | 415 | 335 |
+
+Two listed cells keep their value: `repository-invariants` on EPYC 9V45, and
+`check/corpus` on the Xeon, which has 29 runs and so follows the rule on its
+own maximum (326.1 s, giving 360 s) rather than taking the 400 s of EPYC 7763.
 
 Three cells fall: `check/static` and `compiler/lint` on EPYC 9V74 (85 to 80
 and 60 to 45, 21 runs each; the earlier values rested on the 10-13 sample, whose
