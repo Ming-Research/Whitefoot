@@ -524,7 +524,7 @@ impl<'unit> Checker<'_, 'unit> {
             actual_paths.push(paths);
             actual_captures.push(
                 self.body.note_capture(
-                    Checker::captured_of(atom, &argument.expression)
+                    self.captured_of(atom, &argument.expression)
                         .unwrap_or_else(CapturedValue::unknown),
                     bindings,
                 ),
@@ -618,6 +618,56 @@ impl<'unit> Checker<'_, 'unit> {
                         )?);
                     }
                     ContractReadStep::Captured(step) => suffix.push(*step),
+                    ContractReadStep::FormalPath(place) => {
+                        suffix.extend(self.types.captured_places.formal(*place));
+                    }
+                    ContractReadStep::Projected(projection) => {
+                        let (ordinal, place, ty, page) = match projection {
+                            GoalProjection::FormalPlaceSubscript { ordinal, place, ty } => {
+                                (*ordinal, *place, *ty, false)
+                            }
+                            GoalProjection::FormalPlacePage { ordinal, place, ty } => {
+                                (*ordinal, *place, *ty, true)
+                            }
+                            _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+                        };
+                        let mut projections = crate::semantic::goal::formal_offset_projections(
+                            place,
+                            &self.types.captured_places,
+                        )
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        if signature.parameters[ordinal as usize].mode.is_reference() {
+                            projections.insert(0, GoalProjection::Deref);
+                        }
+                        let template = GoalExpression::Datum(GoalDatum::Parameter {
+                            ordinal,
+                            projections,
+                            ty,
+                        });
+                        let goal = self.instantiate_goal_expression(
+                            check_context,
+                            &template,
+                            signature,
+                            &signature.region_parameters,
+                            &goal_arguments,
+                        )?;
+                        let captured = CapturedValue::new(
+                            CaptureId::ContractRead {
+                                call: node,
+                                position: contract_position,
+                            },
+                            CapturedTerm::Opaque,
+                        );
+                        contract_position = contract_position
+                            .checked_add(1)
+                            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+                        suffix.push(if page {
+                            PlaceStep::Page(captured)
+                        } else {
+                            PlaceStep::Index(captured)
+                        });
+                        contract_indices.push((captured, goal));
+                    }
                     ContractReadStep::Computed(term, definitions) => {
                         let mut pending = Vec::new();
                         let goal = range_term_goal(

@@ -1049,6 +1049,19 @@ pub enum SemanticIssueKind {
     },
     /// A contract predicate is not exactly `own Bool`.
     InvalidPredicateCondition,
+    /// [OP-5] the fixed automatic derivation decides an `if` or `value_if`
+    /// condition: every fact the selected branch would establish is already
+    /// derivable, so the test and its dead branch are a redundant source form.
+    RedundantCondition {
+        /// The rendered condition.
+        residual: String,
+        /// The truth the condition is decided to have.
+        decided: String,
+        /// The source facts of the proofs that decided it.
+        facts: Vec<String>,
+        /// The repair [DIAG-1]: delete the test and its dead branch.
+        mechanical_fix: String,
+    },
     /// A conditional was written in a form GRAM-6 does not admit for its
     /// class: a Bool-scrutinee `match`, an empty `else`, or an `else` block
     /// holding exactly one `if`.

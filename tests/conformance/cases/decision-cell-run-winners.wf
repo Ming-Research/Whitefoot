@@ -23,9 +23,6 @@ fn main() -> status: std::process::ExitStatus pure {
   if after_write != written {
     return std::process::exit_status(code: 5_u8);
   }
-  if before != open {
-    return std::process::exit_status(code: 6_u8);
-  }
   let kill_cell = decision_cell_new();
   let kill_winner = claim_killed(cell: &kill_cell);
   let kill_again = claim_killed(cell: &kill_cell);

@@ -10,6 +10,71 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, language/checks-and-proofs/range-facts
 
 Summary: A struct's difference-bound invariants now hold of every value of the struct that a handed-off value owns, in a field, a held variant's payload, a `Box` or a storage element: they belong to the implicit requirement and postcondition of every hand-off, a body takes each instance from the hand-off that delivered the value, a write that may falsify one records a debt, and every debt at or below a handed place is restored before the hand-off, because storing a checked value once and using its bound everywhere is the commonest use of a type invariant ([soundness](../research/investigations/sealed-invariants/DESIGN.md#result-1-restoration-obligations-are-never-lost)). A move into a complete own local binding continues the value with its debts; `swap`, `release` and `map_clear` take no hand-off and `swap` exchanges debts, exactly at a target's level and as the other target's cover below it, while a widened offset widens every later one, so the debts a loop forms are polynomially many outside atomic entries ([bound](../research/investigations/sealed-invariants/DESIGN.md#result-3-the-added-work-is-polynomial)); a write through a cursor reference is restored through the cursor's own terms before it moves on, widening to a cover only if that fails; a debt at an unknown position is satisfied by the instance at the position a hand-off fixes and stays for the others; an atomic target provisionally establishes only its referent's own invariants, pending the shared-object model, at the cost of one entry debt per struct value its type holds; a supplied generic definition returns sealed values by parametricity; and a generic struct may declare invariants over data every instance reads alike. The generated enum-payload routes and their vacuous-postcondition rule are retired, since sealing carries the invariant into every payload, and their rejection reasons are recorded with the refused per-slot evidence, annotation, proof-step and static-type alternatives. The field-visibility rule reads only the struct's own invariants; the automatic-facts node counts an instance at a sealed place among the facts a tracked field place's image carries; range type invariants stay at function boundaries.
+## 2026-10-13 A write asks separation questions only against support on the same containing place
+
+Nodes: compiler/checker-facts
+
+Summary: A new decision has fact invalidation submit index and range separation questions only between a write and live support positions with the same containing place, through the ordinary proof families in that write's context, because the specification keeps a fact whose support is provably disjoint from the write even when no earlier call or reference check asked that question, instead of relying only on separations asked elsewhere or comparing unrelated bases. Each live item's support is collected once and identical positions are removed before path resolution; proved answers are shared across that write's supports only, keyed by the subscripts' current binding identity, instead of being published as immutable captured relations; and no support is pruned because it would be kept anyway, since its numeric separation may protect another support that cannot ask the question. Measured: Halo's check time is 1.021 times main's, under the 1.03 rejection line set beforehand. Known limit, not decided here: a support whose containing place differs from the write's only in index steps is not asked, so such a fact can still be removed although OWN-7 proves the places disjoint; this is the follow-up item wf-disjoint-write-outer-index.
+
+## 2026-10-13 Every emitted function carries unwind tables and the Linux LTO link keeps code at its file offset, so profilers recover callers
+
+Nodes: compiler/profiler-unwinding
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve two compiler decisions: every generated function carries an unwind table (uwtable), and the Linux LTO link passes -z separate-code to LLD, so that perf can recover callers along Whitefoot call stacks? (Whitefoot#461, head commit 5f99db772)" (translated); later on 2026-10-13 the owner chose option A on the card "approve the rewording of one rejection reason in the unwind node (Whitefoot#461, head 639a831cd): only the wording narrows, no decision changes?" (translated), approving the rejection reason as narrowed to perf 6.17, the witness and the LLD-linked C control.
+
+Summary: A new node records two decisions that let a sampling profiler's DWARF unwinder walk Whitefoot call stacks. Every emitted function carries `uwtable`, so a leaf that cannot unwind by exception still has a frame-description entry; and the Linux LTO link passes `-z separate-code` to LLD, so the code segment's virtual address equals its file offset, because under LLD's default layout perf 6.17 recovered no caller. In the witness, `uwtable` gave the hot leaf its frame-description entry and raised the samples recovering the resume function from 83 to 85 percent to 88 to 89 percent at 208 bytes of `.eh_frame`; `-z separate-code` then raised the samples reaching resume and the thread entry from none above resume to 100 percent, at 992 bytes (1.2 percent) of executable. Keeping frame pointers and documenting the limitation instead were rejected. The reason for the second decision separates the measured layout dependence from the inferred lookup mechanism, which is not yet reproduced; the decisions are unchanged.
+
+## 2026-10-13 Field- and dereference-subscript terms carry captured place and formal offset identities
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision added for how subscripts with a field or a dereference record their identity? (#454, head commit ef598ae35)" (translated).
+
+Summary: A subscript such as `table^[s^.k]`, `nodes^[n^.parent_slot]` or `nodes^[r^]` is identified by a captured place id (its root and field or dereference steps) or, in a contract, a formal offset id (a parameter-relative suffix), both interned in one compilation-owned table shared by the checker's parts. While its support is unchanged the id stands for the current value with its complete support; a write or rebinding of any support place degrades it to an immutable capture with no support. At a call the actual's path is joined to the formal's remaining suffix and interned again. Small copyable ids let parallel checking and contract substitution share one identity and support without conflating sibling fields, captured and later values, or formal and body names; refused were root-only identity (which cannot separate `n.a` from `n.b`), embedding the recursive path in every capture, and per-part identity and support tables.
+## 2026-10-13 An allocation that does not fit the heap names its type, layout, limit and call
+
+Nodes: compiler/diagnostic-rendering
+
+Summary: A target layout failure caused by a runtime allocation now names the payload type, its size and alignment, the violated target limit with its value, and the nearest writer-written call requiring the allocation, found through the call origins lowering already records, because a writer can repair a source-valid program only from those; an unlocated allocation category, guessing the call from source text or symbol names, and moving target representability into source acceptance were rejected, the last because STOR-6 places it after checking. Allocation obligations are checked before the program-wide layout walk so the failure keeps its allocation; every check still runs before emission and the failure cites no source-language rule.
+
+## 2026-10-13 Rebinding a reference variable is its own invalidation event
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: pointing a reference variable elsewhere becomes its own kind of event that invalidates proof facts? (Ming-Research/Whitefoot#439, head b1ee96910)" (translated).
+
+Summary: A new decision makes a reference rebinding a distinct invalidation event that removes only the facts spelled through or reached through that reference variable, and loop summaries carry the event unchanged, because the specification says a rebinding writes no storage, instead of synthesizing a whole write of the variable and removing facts by its function-wide provenance list, which removed facts established through other names on the old or new target.
+
+## 2026-10-13 A Slab reserves capacity up to its type limit without disturbing handles
+
+Nodes: language/data-model/slab-storage
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve: the new decision and the two rewordings take effect; write the design-tree approval record, mark ready, run the gate on both platforms, merge through the coordinator's queue and release to Firn" (translated), on the card "approve the Slab storage design node's changes (Whitefoot#448, head commit 2c2890351119)?" (translated), whose background listed the new reservation decision, its three refused alternatives and the two rewordings.
+
+Summary: A Slab may reserve capacity explicitly up to its type limit through the ordinary window growth, so existing slots, indices and generations stay and old handles remain valid while a value's address may change; the free list's end marker becomes the type limit instead of the initial capacity, which growth would turn into a valid index. A request beyond the limit returns Err without mutation and a sufficient capacity returns Ok without shrinking, as HashMap reservation does. Fixed capacity after construction, rebuilding the slot records on growth and promising stable value addresses were refused. The first decision now says the Slab uses (not reserves) one backing and keeps slot indices, and the refused dense-array alternative is refused for changing another value's slot index.
+
+## 2026-10-21 The gate runs on Linux only for now
+
+Nodes: compiler/verification
+
+Summary: The hosted gate stops adding macOS for ready pull requests, the main line and manual runs, and its final job requires every group green on Linux alone. The hosted macOS runners take five jobs at a time; with several ready pull requests at once, a run's macOS jobs waited about 43 minutes for a runner while five ran and ten more queued, and merges waited behind them. The change is provisional: macOS returns, in a form still to be chosen, before the first release, whose release workflow still requires a gate run with macOS jobs on the released commit. The decision on a failed scope query no longer mentions dropping macOS.
+
+## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
+
+Nodes: compiler/verification
+
+Summary: The hosted gate and the I/O host checks no longer run for a push to a draft pull request's branch or for a draft's opening or reopening; they run for the main line, a ready pull request's pushes, a hand-started run and the event of marking a pull request ready, which skips when the head already has a successful manual run of the same workflow. With the draft pushes gone, every run that checks a revision runs both platforms, so the Linux-only run is retired and the earlier refusal of both platforms on every push is restated for the case that no longer holds. The gate also fails while a `tmp-` workflow file exists in the checked head, and the performance comparison skips a draft as the design-readiness job already does. The run record of a week shows 122 checked runs on 40 branches other than the main line, up to 10 on one branch ([measurements](../research/investigations/test-economy/time-budgets.md#gate-at-ready-not-at-each-draft-push)); the author now gets results from a temporary workflow while writing.
+
+## 2026-10-20 Conditions the checker decides are rejected
+
+Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
+
+Summary: A new node rejects an `if` or `value_if` condition when every fact its selected branch establishes at entry is already derivable, with a repair that deletes the test and its dead branch; it judges a generic body once at its own parameters' symbolic instance and admits a condition in a contradictory state. It rejects judging only the goal origins and a language facility for a program to check its own final result, since the harness can compare the output. The acceptance-records decision adds the redundancy judgment to the obligations the structural checker records. The proof-query-context decision keeps reusing a closed view when goals are appended, after checking them for newly derivable contradictions, so the redundancy queries share preparation without changing a judgment.
+## 2026-10-20 The merge-base compiler is cached per main commit, and its cold build is report-only
+
+Nodes: compiler/verification, compiler/merge-base-compiler-cache
+
+Summary: The paired performance comparison builds the main line's compiler as its baseline, a cold build of about 110 s that overran its 115 s budget on about one run in four and turned unrelated pull requests red. The owner chose on 2026-10-13 to cache that compiler per main commit and toolchain, with an exact key and no prefix restore, and on 2026-10-14 to make the baseline build report-only, because it builds the main line's own code that no pull request changes. The cache misses after each runner image change, so the first pull request after one builds cold; that build is recorded but does not fail the verdict. The candidate build keeps its own enforced budget.
 
 ## 2026-10-13 One compilation lists every non-exhaustive match
 

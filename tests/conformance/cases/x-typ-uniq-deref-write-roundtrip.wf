@@ -2,13 +2,10 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "Writing Box content with set cell.inner and reading the content back exercises the Box content field step [TYPE-9] together with SET-1's writable-target relation through a live own cell binding; a positive combination that runs to exit 0.";
+  doc "Writing Box content with set cell.inner and reading the content back exercises the Box content field step [TYPE-9] together with SET-1's writable-target relation through a live own cell binding; a positive combination whose content read back is the exit status 42.";
   let cell = box_new::<i32>(value: 40_i32);
   set cell.inner = 42_i32;
   let seen = cell.inner;
-  if seen == 42_i32 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<i32, u8>(seen);
+  return exit_status(code: status_code);
 }
