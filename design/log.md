@@ -11,6 +11,18 @@ Nodes: language/system-interface, language/system-interface/clocks, language/sys
 
 Summary: Four decisions are added or widened. `process_id: Option<u64>` is an ordinary `Inputs` field, because the identifier is fixed for the run like the driver count and a target without processes needs a total answer (refused: a nullary pure function, a read through the memory meter or the stop signals, a bare `u64` with zero for missing). `local_offset_seconds` reads the wall clock, with the offset bounded to less than a day by two postconditions on `Some` and `None` otherwise, because the zone rule is host state that changes between reads and the bound lets a caller add it with no overflow check (refused: a nullary function and the Windows zone API, which ignores `TZ`). The open-files limit is read and raised through the handle factory, because a raise changes the factory's credit budget and must be ordered with acquisitions through it, and a request above the soft limit, the hard limit included, goes to the host, which refuses what it will not set. `HandleFactory` joins the self-changing host handles that an atomic statement's guard cannot reach, because another process can change the limit with no write that wakes a guard (refused: keeping factories readable in guards and waking on a raise). Evidence is the conformance and corpus cases that compare the identifier with the child's, the offset with the C library at fixed instants in several zones, and the limit under `ulimit`.
 
+## 2026-10-21 Documentation examples are complete programs whose stated outcome the gate checks
+
+Nodes: compiler/verification/documentation-examples
+
+Summary: A claim in user documentation must stay bound to the program it describes. Complete programs in `docs/guide/` and both READMEs sit in ```whitefoot blocks whose info string states the outcome (accepted as `--check` does, `run exit=N`, or `reject RULE`), matching the annotation Whitefoot-kit already uses; a Rust test in the corpus integration target checks every block through the same entry `--check` uses and the existing build-and-run support, reporting every failing block; and an optional ```whitefoot-output block after a rejection is compared byte for byte, because the rejection text is part of the example and changes only when its author changes it. Refused: a Python extractor (the compiler is checked through cargo test), treating unmarked blocks as programs (articles hold fragments and output), and checking every file under `docs/` with the current compiler (15 article and essay programs disagree with it by the articles' own convention of naming their compiler revision; recorded on the first-release articles item).
+
+## 2026-10-21 Exchange's equality allowance covers slots whose containing paths differ only in index steps
+
+Nodes: language/ownership/exchange
+
+Summary: A new decision records the relation under which `swap` tolerates equality: two equal-depth slots whose containing paths are identical step for step or differ only in index steps are the same slot or disjoint storage, so an exchange between two runtime-selected rows needs no proof that the rows are the same, instead of limiting the allowance to slots under one identical array or window. The specification states the relation the checker already applied; the checker is unchanged. Refused: tightening the checker to require one identical array or window.
+
 ## 2026-10-13 An atomic target named only in proofs is held from statement entry
 
 Nodes: compiler/waiting-contexts/state-locks
