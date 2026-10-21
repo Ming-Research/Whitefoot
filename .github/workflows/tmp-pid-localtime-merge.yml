@@ -99,12 +99,7 @@ jobs:
         run: |
           ulimit -c 0
           cd compiler
-          perl ../.github/run-check.pl tmp/lib cargo test --profile gate --lib --locked --offline -- \
-            driver::pinned_repairs driver::diagnostic \
-            backend::tests::arrays backend::tests::paged backend::tests::ranges \
-            backend::tests::storage_alias backend::tests::loop_split \
-            backend::tests::owned_places backend::tests::containers \
-            backend::tests::windows backend::tests::exhaustion
+          perl ../.github/run-check.pl tmp/lib cargo test --profile gate --lib --locked --offline
 
       - name: corpus
         if: matrix.stage == 'corpus'
