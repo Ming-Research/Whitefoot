@@ -156,7 +156,10 @@ read.
 
 ### Document roles
 
-- `README.md`: introduction, getting started and navigation.
+- `README.md`: introduction and navigation; points to the user guide.
+- `docs/guide/`: user documents for readers outside the project;
+  `docs/guide/README.md` indexes the guides and owns the checked example
+  convention.
 - `AGENTS.md`: Whitefoot's goal, authority, process additions, approval and
   merge rules, integrity rules, checks and review.
 - `docs/review-checklist.md`: the items a reviewer answers from the diff.
@@ -212,7 +215,9 @@ build time apart from test and program execution.
   page against the specification and the conformance manifest, and the design
   tree's form, read through the `design/skill` submodule.
 - `make check`, on the revision to merge: the static group plus the compiler
-  build, tests, the conformance adapter and the runtime; `make check-groups`
+  build, tests, the conformance adapter and the runtime. Its corpus group
+  compiles the example programs in `docs/guide/` and both READMEs under the
+  [guide's convention](docs/guide/README.md#writing-examples). `make check-groups`
   lists the groups. `gate.yml` and `io-hosts.yml` check a push to `main`, a
   push to a branch with an open ready pull request, the opening or reopening
   of a ready pull request, the event of marking one ready and a manual run;
