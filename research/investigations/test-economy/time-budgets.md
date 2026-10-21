@@ -388,6 +388,116 @@ or bring a raise to the owner, and rerun once when attribution is unclear. A
 reported macOS overrun does not hold the revision back. AGENTS.md "Checks" owns the
 current procedure.
 
+#### Unit group recompute on 2026-10-21
+
+After the diagnostics change that lets one check list every incomplete `match`
+(Whitefoot#444) merged to the main line, the gate's `compiler/test-build-unit`
+stage ran over its budget on three CPU models: 193.7 s against 175 s on EPYC
+7763 (run 39521731772), 142.0 s against 130 s on EPYC 9V45 (run 39541773155)
+and 186.1 s against 185 s on Xeon 8573C (run 39542057962). The EPYC 7763 stage
+was already near its budget before the merge: 19 of the 64 recorded executions
+on that CPU before the merge (2026-10-21T00:30:26Z) in the window below were
+above 175 s, up to 193.5 s. Those are runs of many branches at different
+revisions, so they say how noisy the stage was, not how much the merge added;
+the added time comes from the paired builds.
+
+**Cause.** A temporary workflow on the branch of Whitefoot#497 built the unit
+test binary cold on one hosted runner per job, alternating revisions in rotated
+order, and dropped each job's first round, in which the base builds first into
+a cold cache. `base` is the merge base 0d5ba0057, `cand` the merge commit,
+`twin` a second checkout of `base` (the noise control), `prod` the merge
+commit without the change's two test modules (`semantic/tests/match_sites.rs`,
+`driver/diagnostic/tests/match_sites.rs`), and, in the last run, `sem` the
+merge commit without the driver test module and `drv` without the semantic one.
+Mean wall time as a ratio to `base`:
+
+| Run | Host | Rounds | twin | cand | prod | sem | drv |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 39530565940 | EPYC 7763 (1) | 4 | 1.012 | 1.040 | 1.004 | | |
+| 39530565940 | EPYC 7763 (2) | 4 | 0.999 | 1.039 | 1.005 | | |
+| 39530565940 | EPYC 7763 (3) | 4 | 1.002 | 1.035 | 1.006 | | |
+| 39524889282 | EPYC 7763 | 5 | 1.004 | 1.042 | | | |
+| 39524889282 | EPYC 9V74 | 5 | 1.009 | 1.033 | | | |
+| 39524889282 | Xeon 8370C | 5 | 0.981 | 1.034 | | | |
+| 39536092382 | Xeon 8573C (1) | 4 | 0.999 | 1.040 | | 1.019 | 0.993 |
+| 39536092382 | Xeon 8573C (2) | 4 | 1.003 | 1.048 | | 1.027 | 0.999 |
+| 39536092382 | EPYC 9V74 | 4 | 0.987 | 1.054 | | 1.012 | 0.998 |
+
+Xeon 8370C has no budget column; its rounds are noisy (twin 0.904 to 1.006,
+cand 0.949 to 1.095) and its 95% intervals, 0.927 to 1.034 for the twin and
+0.967 to 1.101 for `cand`, overlap, so it supports the direction only.
+
+The merge makes the cold build 3.3% to 5.4% longer, about 6 s on a 154 s base
+on EPYC 7763. On EPYC 7763 the 95% interval of `cand` over `base` in run
+39524889282, 1.031 to 1.053, lies above the twin's, 0.995 to 1.013; on EPYC
+9V74 in the same run the intervals, 1.012 to 1.054 and 0.989 to 1.029,
+overlap and the means differ in the same direction. The production code is
+within the twin's noise (`prod` 1.004 to 1.006, 0.4% to 0.6% over `base`), so
+the added time is in the new tests. The semantic test module alone costs 1.2%
+to 2.7% and the driver module alone about nothing, while together they cost
+4.0% to 5.4%: the cost does not follow the lines of test code (418 and 73),
+and which compilation unit lengthens was not located, because the instrument
+that would show it (a compiler self-profile) was not run. The 5.4% upper bound
+is the noisiest host (EPYC 9V74 in run 39536092382, twin 0.927 to 1.031 over
+rounds). The tests are the cases the change's acceptance and review require, so
+they are kept.
+
+**Recompute.** The owner approved raising the unit group's budgets by the
+rule above on 2026-10-21; the rule is applied as written. The recorded runs are
+every execution of the `unit (ubuntu-24.04)` job of `gate.yml` runs of any
+branch created from 2026-10-14T01:06:58Z to 2026-10-21T07:02:42Z that printed
+`== END <stage>: <seconds> s, exit 0 ==` for the stage: cancelled runs are
+excluded, over-budget executions are included, the first attempt of a re-run is
+included, and a job that a later attempt carried over unchanged (re-running only
+the failed jobs keeps the other jobs, with the same job start time) counts once,
+under its first attempt. The CPU model is
+the first `model name` line of that attempt's job log. The window starts where
+Xeon 8573C, the scarcest class, has at least 20 observations of each stage
+(20, 21 and 20), ends at the newest run with a unit job in the data, and holds
+revisions before and after the merge. The runs and
+executions are listed in
+[unit-group-runs-2026-10-21.tsv](unit-group-runs-2026-10-21.tsv), from which
+each count, median and maximum below can be recomputed. They were taken from the
+GitHub API: the runs listed with `created=<start>..<end>` (418 runs), then for
+each attempt the jobs of `runs/<id>/attempts/<n>/jobs` and the job log of the
+`unit (ubuntu-24.04)` job; no request failed. The file holds only the four CPU
+models with a budget column. Each cell is the maximum plus 10%, rounded up to 5
+s.
+
+Each cell is **count / median / maximum / rule / earlier**, in seconds, with
+the run and attempt that hold the maximum; the new value is the rule value.
+
+| Stage | EPYC 7763 | EPYC 9V74 | EPYC 9V45 | Xeon 8573C |
+|---|---|---|---|---|
+| `check/unit` | 141 / 327.1 / 366.3 (39544796974 a2) / **405** / 385 | 64 / 258.7 / 334.0 (39546951274 a1) / **370** / 320 | 61 / 214.6 / 244.0 (39541773155 a2) / **270** / 225 | 20 / 306.0 / 321.5 (39542057962 a2) / **355** / 385 |
+| `compiler/test-build-unit` | 147 / 168.5 / 202.5 (39544796974 a2) / **225** / 175 | 70 / 139.1 / 181.3 (39184302472 a1) / **200** / 175 | 62 / 117.9 / 142.0 (39541773155 a2) / **160** / 130 | 21 / 168.1 / 186.1 (39542057962 a2) / **205** / 185 |
+| `compiler/test-unit` | 141 / 156.0 / 176.8 (39493437202 a1) / **195** / 215 | 64 / 119.3 / 155.8 (39546951274 a1) / **175** / 150 | 61 / 94.4 / 106.0 (39494847475 a1) / **120** / 100 | 20 / 135.3 / 143.2 (39509413316 a2) / **160** / 215 |
+
+Three cells fall: EPYC 7763 `compiler/test-unit` (215 to 195), Xeon 8573C
+`check/unit` (385 to 355) and Xeon 8573C `compiler/test-unit` (215 to 160). The
+earlier values came from other windows: the 2026-10-13 sample, whose EPYC 7763
+`compiler/test-unit` maximum was 194.6 s, and, for the Xeon 8573C column, values
+borrowed from the largest class of the row before the CPU had 20 observations
+of its own (the column's `compiler/test-build-unit` value, 185, was a single
+Xeon run). The rule gives the lower values over this window.
+
+The EPYC 7763 `compiler/test-build-unit` maximum, 202.5 s, is the second
+attempt of the push to the main line of a commit (ed1a544b8) that changed no
+Rust source. The rule takes the maximum of the window, so one slow host sets the
+budget: 225 s is 34% above that stage's median of 168.5 s, against a merge cost
+of about 4%. How the rule treats such outliers belongs to the budget-method
+study, not to this change.
+
+A CPU model without a column uses the stage's largest class budget (405, 225
+and 195 s for the three rows). The models seen in the window, Xeon 8370C (10, 11
+and 10 executions) and Xeon 6973P-C (8 each), stay within them: their largest
+readings are 348.1, 191.6 and 156.4 s on Xeon 8370C and 282.7, 162.7 and 119.9 s
+on Xeon 6973P-C for `check/unit`, `compiler/test-build-unit` and
+`compiler/test-unit`.
+
+This is one week of runs on mixed revisions and branches; the paired builds are
+measurements on hosted runners on that day and say nothing about other hosts.
+
 ### Historical policy and earlier measurements
 
 **Mechanism.** `.github/time-budgets.txt` gives each labeled stage a
