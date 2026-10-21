@@ -1040,8 +1040,10 @@ morning of 10-13 is not in it), and of that day's 481 finished runs in the
 listing 95 are in the sample; the other 386 were not reached before the
 collection stopped at GitHub's API rate limit. A class with 50 runs in the
 sample takes its newest 50 and is not affected by the missing 10-13 runs; a
-class with fewer (the Xeon column, EPYC 9V74's static group, the sanitizer rows)
-might have had more runs, and a larger maximum. The scratch inputs are not
+class with fewer (the Xeon column, and the static group on EPYC 9V74 and EPYC
+9V45) might have had more runs, and a larger maximum. The sanitizer rows have
+fewer than 50 runs because the workflow is new, not because runs are missing.
+The scratch inputs are not
 kept; `.github/recompute-time-budgets.py collect` rebuilds them (`--since` and
 `--until` fix the window), and prints the oldest run it keeps so that a cut
 like this one shows. The tables under "New budgets" and the replay below are

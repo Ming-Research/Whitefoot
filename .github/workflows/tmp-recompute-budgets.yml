@@ -16,6 +16,7 @@ on:
       - 'design/**'
       - 'AGENTS.md'
       - 'docs/review-checklist.md'
+      - 'research/investigations/test-economy/time-budgets.md'
 
 jobs:
   recompute:
