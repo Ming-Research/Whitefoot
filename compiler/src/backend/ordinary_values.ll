@@ -881,6 +881,16 @@ entry:
   ret i64 %value
 }
 
+declare void @wf__body_local_offset_seconds(ptr, ptr, i64)
+
+define { i8, i64 } @wf_std.time.local_offset_seconds(ptr %clock, i64 %at) align 64 {
+entry:
+  %result = alloca { i8, i64 }, align 8
+  call void @wf__body_local_offset_seconds(ptr %result, ptr %clock, i64 %at)
+  %offset = load { i8, i64 }, ptr %result, align 8
+  ret { i8, i64 } %offset
+}
+
 declare void @wf__body_exit_status(ptr, i8 zeroext)
 
 define void @wf_std.process.exit_status(ptr %result, i8 %code) align 64 {
@@ -1161,4 +1171,20 @@ define i64 @wf_std.process.release_map_reserve(ptr %map, ptr %meter) align 64 {
 entry:
   %freed = call i64 @wf__body_release_map_reserve(ptr %map, ptr %meter)
   ret i64 %freed
+}
+
+declare void @wf__body_open_files_limit(ptr, ptr)
+
+define void @wf_std.process.open_files_limit(ptr %result, ptr %factory) align 64 {
+entry:
+  tail call void @wf__body_open_files_limit(ptr %result, ptr %factory)
+  ret void
+}
+
+declare void @wf__body_raise_open_files_limit(ptr, ptr, i64)
+
+define void @wf_std.process.raise_open_files_limit(ptr %result, ptr %factory, i64 %wanted) align 64 {
+entry:
+  tail call void @wf__body_raise_open_files_limit(ptr %result, ptr %factory, i64 %wanted)
+  ret void
 }
