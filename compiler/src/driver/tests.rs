@@ -5,6 +5,7 @@ use super::{
 use crate::{OverlapLowering, RecursionBudget, SourceInput};
 
 mod call_result_repairs;
+mod call_spellings;
 mod recursive_postconditions;
 #[cfg(unix)]
 mod spellings;
@@ -3395,7 +3396,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(detail.contains("[EFF-2]"), "{detail}");
     assert!(
             detail.contains(
-                "\n  expected_row: pure\n  found_row: reads(data)\n  missing: []\n  extra: [reads(data)]\n"
+                "\n  expected_row: pure\n  found_row: reads(data)\n  missing: []\n  extra: [\"reads(data)\"]\n"
             ),
             "{detail}"
         );
@@ -3503,7 +3504,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(detail.contains("[GRAM-3]"), "{detail}");
     assert!(
             detail.contains(
-                r#"expected: [IDENT, TYPEID, "pkg", "std", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "unit"]"#
+                r#"expected: ["IDENT", "TYPEID", "pkg", "std", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "unit"]"#
             ),
             "{detail}"
         );

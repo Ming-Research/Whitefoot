@@ -463,7 +463,8 @@ fn source_characters(bytes: &[u8]) -> usize {
 /// One field value, typed by how a reader must read it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Value {
-    /// Prose, a name, or a rendered source relation: printed as written.
+    /// Prose, a name, or a rendered source relation: quoted in a list and
+    /// otherwise printed as written.
     Text(String),
     /// Exact source bytes whose spacing or escapes matter: printed quoted.
     Exact(Vec<u8>),
@@ -849,6 +850,7 @@ impl FieldList for UndischargedPostconditionDetail {
             conjunct,
             selector,
             relation,
+            clause,
             disposition,
             mechanical_fix,
         });
@@ -1223,7 +1225,13 @@ fn write_text(text: &mut String, value: &Value) {
                 if index > 0 {
                     text.push_str(", ");
                 }
-                write_text(text, item);
+                if let Value::Text(value) = item {
+                    text.push('"');
+                    push_escaped(text, value.as_bytes());
+                    text.push('"');
+                } else {
+                    write_text(text, item);
+                }
             }
             text.push(']');
         }

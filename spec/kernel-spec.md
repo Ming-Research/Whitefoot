@@ -1,4 +1,4 @@
-# Kernel Specification v0.156
+# Kernel Specification v0.157
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -23,14 +23,14 @@ Resource failure establishes no source fact, grants no fallback path, and cannot
 ## 2. Canonical form
 
 [FORM-1] There is exactly one spelling per semantic construct and one legal byte-level formatting.
-Non-canonical input is a hard error; the toolchain never auto-formats.
+Non-canonical input is a hard error; acceptance never formats input on the writer's behalf.
 Unknown constructs are hard errors (conservative extension).
 
 [FORM-2] Each source file is UTF-8.
 Once every source has passed raw lexical formation and the complete compilation unit has one derivation, each source owns one ordered derivation forest: exactly the top-level `item` subtrees under the single compilation-unit `program` root whose terminals belong to that source, in source-local item order.
 A source forest is not a second `program` node, and a source with no items owns an empty forest.
 That source's canonical bytes are exactly the result of rendering its forest by the following rules.
-The input bytes must equal that rendering byte for byte; the toolchain does not normalize or rewrite input.
+The input bytes must equal that rendering byte for byte [FORM-1]; a formatting request that replaces a source with its rendering is a writer tool outside acceptance and changes no verdict.
 A source that has no complete `item*` derivation is rejected by its owning lexical or grammar rule before this forest-format comparison, and no tree or forest is fabricated [DIAG-1].
 A module graph record [MOD-1] is rendered by the same rules over its forest of `package_decl`, `module_row` and `entry_decl` subtrees under its `graph_file` root.
 

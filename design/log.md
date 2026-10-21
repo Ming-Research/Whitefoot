@@ -11,6 +11,28 @@ Nodes: language/waiting/shared-objects, language/ownership/linearity
 
 Summary: A shared object's state was released with its last handle, so it had to be droppable, and no value that must be closed explicitly could pass between running contexts. The shared-objects node now ends a handle by its release or by `shared_close` in one order whose last end takes the state, makes a handle to a linear state linear so that each of its handles ends in a close, refuses a linear state type that reaches its own handle type, and keeps an atomic statement's object live without a handle of its own when the state is linear; the linearity node counts the state behind a `Shared` handle among the places a linear value can be contained. The owner chose linear handles with an explicit close on 2026-10-09 (board item firn-wf-linear-share); the study is on board item linear-in-shared.
 
+## 2026-10-13 An atomic target named only in proofs is held from statement entry
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: an atomic target that appears only in proofs takes its lock at statement entry? (Ming-Research/Whitefoot#434, head 5811a8c89)" (translated).
+
+Summary: The lock-order decision's entry-acquired groups gain the groups of targets with no executable use in the guard and block, acquired with every earlier group, because once proofs are erased such a target has no first use to acquire at and entry acquisition keeps the hold SHARE-1 requires, instead of omitting its lock; "before the guard" is reworded to "before the guard or block" without changing the choice. The checker now counts invariant and `use` mentions toward SHARE-2's naming rule.
+
+## 2026-10-13 The compiler offers an explicit formatting request
+
+Nodes: compiler/formatting-command
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the spec/log.md and design/log.md approval records, mark the pull request ready and run the gate on both platforms, renumber when its turn comes and report to the coordinator for merging" (translated), on the card "approve the specification and design-tree changes of Whitefoot#438 (head commit 6320188fc)? It gives the compiler a command that rewrites source files into the canonical layout" (translated), whose background quoted FORM-1 and FORM-2 before and after, stated that no rule was added or retired and no conformance verdict changed, and listed the three decisions of the new node. The revision merged here differs from 6320188fc by the merge of main, the renumbering of the specification from v0.149 to v0.156, because main reached v0.155 first, and the wording of the new node's second decision, which the later card fmt-render-single-fn replaced because the code walks the derivation twice (see Summary).
+
+Summary: A new node records that `whitefootc --format` replaces, in place and all or nothing, every source whose bytes differ from its FORM-2 rendering, over the sources `--check` takes or a module graph, while checking and compilation keep rejecting non-canonical input, because the canonical bytes are fixed by derivation and a FORM-2 rejection reports only the first difference; that its bytes come from one rendering function that stops after grammar derivation, so a program with semantic errors can still be formatted, while the FORM-2 judgment walks the derivation on its own and shares only the layout derivation, with a corpus test holding the judgment and the rendering together; and that graph formatting forms the module program as `--check --graph` does and reports any other failure as `--check` would. Refused: formatting during checking, a formatter script per downstream project, and writing canonical bytes to standard output.
+
+## 2026-10-13 Rejection text spells source constructs as the writer wrote them
+
+Nodes: compiler/rejection-payloads, compiler/diagnostic-rendering
+
+Summary: Proof-goal places share the one canonical place renderer; a computed call argument or range endpoint is spelled by the source text retained at that occurrence, kept out of proof identities, and a binding rewritten since then still prints `?`, replacing the earlier refusal to invent an expression for a computed index with refusals of invented text and of a rewritten binding's current name; a callee keeps the alias or `pkg::` prefix written at the call with its generic arguments. A normalized relation keeps its mathematical form and writes each constant as a legal literal or exact literal expression, because normalization can produce a negative bound from unsigned operands. A failed postcondition keeps `relation` and adds `clause`, the written comparison with each result datum replaced by the returned value, because normalization can reverse and fold what the writer wrote. Text-format list items that are strings are double-quoted, because a string can contain the list separator.
+
 ## 2026-10-21 Safety claims are stated on one checked page
 
 Nodes: language/safety-claims
