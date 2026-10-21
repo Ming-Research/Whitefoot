@@ -60,11 +60,19 @@ never executed must not carry one. Every byte string is lowercase hex so the
 corpus can express non-UTF-8 argument and path bytes exactly and diff them
 readably:
 
-  ARRANGE = {"argv": ["<hex>"...]?,          the complete native argument vector
+  ARRANGE = {"argv": [BYTES...]?,            the complete native argument vector
              "stdin": "<hex>"?,              standard input body
              "files": [FIXTURE...]?,         fixtures under the initial directory
              "redirect": {"stdout": NAME?, "stderr": NAME?}?}
-  FIXTURE = {"path":"<hex>", "bytes":"<hex>"} | {"path":"<hex>", "directory":true}
+  FIXTURE = {"path":"<hex>", "bytes":BYTES} | {"path":"<hex>", "directory":true}
+          | {"path":"<hex>", "link":"<hex>"}
+  BYTES   = "<hex>" | {"initial":"<hex>"}
+
+A `link` fixture is a symbolic link whose target is the given bytes. A BYTES
+object denotes the absolute path of the invocation's initial directory, a `/`,
+then the given bytes, so a case can name a file by an absolute path although
+the adapter chooses where the initial directory is. Fixtures are made in
+listed order.
 
 `argv` is the COMPLETE native argument vector, position 0 included, exactly as
 the ordinary Args library value delivers it: `argv[i]` is what the program
@@ -214,6 +222,16 @@ def hex_errors(label, value, allow_empty=True):
     return []
 
 
+def arranged_bytes_errors(label, value):
+    """A BYTES value: a hex byte string, or an object whose one member
+    `initial` is the hex suffix after the initial directory's absolute path."""
+    if isinstance(value, dict):
+        if set(value) != {"initial"}:
+            return [f"{label} must be a hex byte string or an object with exactly the member initial"]
+        return hex_errors(f"{label}.initial", value["initial"])
+    return hex_errors(label, value)
+
+
 def arrange_errors(label, arrange):
     """Check one invocation arrangement. Keys are a closed set: an unknown key is a
     silently ignored intention, which is worse in a corpus than a rejected line."""
@@ -230,7 +248,7 @@ def arrange_errors(label, arrange):
             errors.append(f"{label}: argv must be a nonempty list")
         else:
             for position, argument in enumerate(argv):
-                errors += hex_errors(f"{label}: argv[{position}]", argument)
+                errors += arranged_bytes_errors(f"{label}: argv[{position}]", argument)
 
     if "stdin" in arrange:
         errors += hex_errors(f"{label}: stdin", arrange["stdin"])
@@ -246,16 +264,18 @@ def arrange_errors(label, arrange):
                 if not isinstance(fixture, dict):
                     errors.append(f"{where} must be an object")
                     continue
-                unknown = sorted(set(fixture) - {"path", "bytes", "directory"})
+                unknown = sorted(set(fixture) - {"path", "bytes", "directory", "link"})
                 if unknown:
                     errors.append(f"{where}: unknown fixture keys: {' '.join(unknown)}")
                 errors += hex_errors(f"{where}.path", fixture.get("path"), allow_empty=False)
                 paths.append(fixture.get("path"))
-                is_file, is_directory = "bytes" in fixture, "directory" in fixture
-                if is_file == is_directory:
-                    errors.append(f"{where} must carry exactly one of bytes, directory")
-                elif is_file:
-                    errors += hex_errors(f"{where}.bytes", fixture["bytes"])
+                kinds = [kind for kind in ("bytes", "directory", "link") if kind in fixture]
+                if len(kinds) != 1:
+                    errors.append(f"{where} must carry exactly one of bytes, directory, link")
+                elif kinds == ["bytes"]:
+                    errors += arranged_bytes_errors(f"{where}.bytes", fixture["bytes"])
+                elif kinds == ["link"]:
+                    errors += hex_errors(f"{where}.link", fixture["link"], allow_empty=False)
                 elif fixture["directory"] is not True:
                     errors.append(f"{where}.directory must be true")
             duplicate = sorted({path for path in paths if paths.count(path) > 1})
