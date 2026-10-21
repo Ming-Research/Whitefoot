@@ -11,6 +11,14 @@ Nodes: language/soundness-proof
 
 Summary: A new node records how the rules' safety claims get machine-checked evidence. A Lean 4 model in `proof/` formalizes the covered rules' own sentences for a fragment of the constructs, with an interpreter that takes no step where the specification gives an operation no meaning, and its theorems say that what the model's checker accepts runs without such a state. Seven rule-level defects fixed in 22 days of the change log, each a detail an idealized calculus would abstract away, decided against a core calculus in RustBelt's manner ([study](../research/investigations/spec-proof/DESIGN.md#why-the-rules-need-their-own-evidence)). The specification-representation decision refused a formal model kept on its own cadence; this one is checked in the same work instead: `proof.yml`, a merge precondition for changes to the specification or the model, fails when a covered line's hash, a mark beside the formalizing definition and the coverage list disagree, when a covered family gains an unclassified rule, or when a theorem needs an axiom beyond Lean's standard three, and once the model parses programs it also compares the model with the fragment's conformance cases. Measured on the 75 versions from v0.81 to v0.153, about half the changes would touch a covered rule and 9% to 16% would need model work ([study](../research/investigations/spec-proof/DESIGN.md#keeping-the-proof-in-step)). Lean was chosen over Rocq with Iris and Isabelle/HOL because the model must run on the conformance cases with no extraction step and agents prove most in Lean; SMT-backed verifiers were excluded because their verdicts can change with solver version. The first slice models the value part of [OP-2].
 
+## 2026-10-13 An atomic target named only in proofs is held from statement entry
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: an atomic target that appears only in proofs takes its lock at statement entry? (Ming-Research/Whitefoot#434, head 5811a8c89)" (translated).
+
+Summary: The lock-order decision's entry-acquired groups gain the groups of targets with no executable use in the guard and block, acquired with every earlier group, because once proofs are erased such a target has no first use to acquire at and entry acquisition keeps the hold SHARE-1 requires, instead of omitting its lock; "before the guard" is reworded to "before the guard or block" without changing the choice. The checker now counts invariant and `use` mentions toward SHARE-2's naming rule.
+
 ## 2026-10-13 The compiler offers an explicit formatting request
 
 Nodes: compiler/formatting-command
