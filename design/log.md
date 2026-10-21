@@ -10,6 +10,49 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/system-interface/host-paths
 
 Summary: A program opens a file or an existing directory at a host path, absolute or relative to a directory it holds, only through `std::fs::HostPaths`, a fieldless value that `Inputs.host_paths` supplies on POSIX and Windows hosts and no program can construct, because Firn must open a configuration file named on its command line and an included file and data directory whose paths are read from configuration bytes while a function given only a directory half gains no new authority; widening the relative path type and giving every directory a path open were refused, since either lets a directory parameter authorize more paths that ignore it. Six opens take a host string or a byte window with a stated encoding, follow every link, resolve `..` as the host does and never create an entry, instead of the create-if-missing directory open, which hides a misconfigured data directory; the single-name opens below a directory keep refusing a link at the name. The directory pair comes from one lookup and takes two credits, a byte window is copied into a bounded runtime block, and a Windows host path is UTF-16 code units looked up in the Win32 dialect, a relative path whose normalized form begins with the base's reported spelling opening from the base's handle so a rename of the base cannot redirect it. A host without a host filesystem supplies no authority. The study is research/investigations/host-paths/DESIGN.md.
+## 2026-10-13 A write asks separation questions only against support on the same containing place
+
+Nodes: compiler/checker-facts
+
+Summary: A new decision has fact invalidation submit index and range separation questions only between a write and live support positions with the same containing place, through the ordinary proof families in that write's context, because the specification keeps a fact whose support is provably disjoint from the write even when no earlier call or reference check asked that question, instead of relying only on separations asked elsewhere or comparing unrelated bases. Each live item's support is collected once and identical positions are removed before path resolution; proved answers are shared across that write's supports only, keyed by the subscripts' current binding identity, instead of being published as immutable captured relations; and no support is pruned because it would be kept anyway, since its numeric separation may protect another support that cannot ask the question. Measured: Halo's check time is 1.021 times main's, under the 1.03 rejection line set beforehand. Known limit, not decided here: a support whose containing place differs from the write's only in index steps is not asked, so such a fact can still be removed although OWN-7 proves the places disjoint; this is the follow-up item wf-disjoint-write-outer-index.
+
+## 2026-10-13 Every emitted function carries unwind tables and the Linux LTO link keeps code at its file offset, so profilers recover callers
+
+Nodes: compiler/profiler-unwinding
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve two compiler decisions: every generated function carries an unwind table (uwtable), and the Linux LTO link passes -z separate-code to LLD, so that perf can recover callers along Whitefoot call stacks? (Whitefoot#461, head commit 5f99db772)" (translated); later on 2026-10-13 the owner chose option A on the card "approve the rewording of one rejection reason in the unwind node (Whitefoot#461, head 639a831cd): only the wording narrows, no decision changes?" (translated), approving the rejection reason as narrowed to perf 6.17, the witness and the LLD-linked C control.
+
+Summary: A new node records two decisions that let a sampling profiler's DWARF unwinder walk Whitefoot call stacks. Every emitted function carries `uwtable`, so a leaf that cannot unwind by exception still has a frame-description entry; and the Linux LTO link passes `-z separate-code` to LLD, so the code segment's virtual address equals its file offset, because under LLD's default layout perf 6.17 recovered no caller. In the witness, `uwtable` gave the hot leaf its frame-description entry and raised the samples recovering the resume function from 83 to 85 percent to 88 to 89 percent at 208 bytes of `.eh_frame`; `-z separate-code` then raised the samples reaching resume and the thread entry from none above resume to 100 percent, at 992 bytes (1.2 percent) of executable. Keeping frame pointers and documenting the limitation instead were rejected. The reason for the second decision separates the measured layout dependence from the inferred lookup mechanism, which is not yet reproduced; the decisions are unchanged.
+
+## 2026-10-13 Field- and dereference-subscript terms carry captured place and formal offset identities
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision added for how subscripts with a field or a dereference record their identity? (#454, head commit ef598ae35)" (translated).
+
+Summary: A subscript such as `table^[s^.k]`, `nodes^[n^.parent_slot]` or `nodes^[r^]` is identified by a captured place id (its root and field or dereference steps) or, in a contract, a formal offset id (a parameter-relative suffix), both interned in one compilation-owned table shared by the checker's parts. While its support is unchanged the id stands for the current value with its complete support; a write or rebinding of any support place degrades it to an immutable capture with no support. At a call the actual's path is joined to the formal's remaining suffix and interned again. Small copyable ids let parallel checking and contract substitution share one identity and support without conflating sibling fields, captured and later values, or formal and body names; refused were root-only identity (which cannot separate `n.a` from `n.b`), embedding the recursive path in every capture, and per-part identity and support tables.
+## 2026-10-13 An allocation that does not fit the heap names its type, layout, limit and call
+
+Nodes: compiler/diagnostic-rendering
+
+Summary: A target layout failure caused by a runtime allocation now names the payload type, its size and alignment, the violated target limit with its value, and the nearest writer-written call requiring the allocation, found through the call origins lowering already records, because a writer can repair a source-valid program only from those; an unlocated allocation category, guessing the call from source text or symbol names, and moving target representability into source acceptance were rejected, the last because STOR-6 places it after checking. Allocation obligations are checked before the program-wide layout walk so the failure keeps its allocation; every check still runs before emission and the failure cites no source-language rule.
+
+## 2026-10-13 Rebinding a reference variable is its own invalidation event
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: pointing a reference variable elsewhere becomes its own kind of event that invalidates proof facts? (Ming-Research/Whitefoot#439, head b1ee96910)" (translated).
+
+Summary: A new decision makes a reference rebinding a distinct invalidation event that removes only the facts spelled through or reached through that reference variable, and loop summaries carry the event unchanged, because the specification says a rebinding writes no storage, instead of synthesizing a whole write of the variable and removing facts by its function-wide provenance list, which removed facts established through other names on the old or new target.
+
+## 2026-10-13 A Slab reserves capacity up to its type limit without disturbing handles
+
+Nodes: language/data-model/slab-storage
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve: the new decision and the two rewordings take effect; write the design-tree approval record, mark ready, run the gate on both platforms, merge through the coordinator's queue and release to Firn" (translated), on the card "approve the Slab storage design node's changes (Whitefoot#448, head commit 2c2890351119)?" (translated), whose background listed the new reservation decision, its three refused alternatives and the two rewordings.
+
+Summary: A Slab may reserve capacity explicitly up to its type limit through the ordinary window growth, so existing slots, indices and generations stay and old handles remain valid while a value's address may change; the free list's end marker becomes the type limit instead of the initial capacity, which growth would turn into a valid index. A request beyond the limit returns Err without mutation and a sufficient capacity returns Ok without shrinking, as HashMap reservation does. Fixed capacity after construction, rebuilding the slot records on growth and promising stable value addresses were refused. The first decision now says the Slab uses (not reserves) one backing and keeps slot indices, and the refused dense-array alternative is refused for changing another value's slot index.
+
 ## 2026-10-21 The gate runs on Linux only for now
 
 Nodes: compiler/verification

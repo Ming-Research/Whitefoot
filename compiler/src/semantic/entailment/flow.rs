@@ -40,6 +40,7 @@ mod loop_summary;
 pub(crate) mod operation_facts;
 mod origin_transport;
 mod postconditions;
+mod preservation;
 mod prover;
 mod relations;
 mod render;
@@ -128,6 +129,11 @@ use super::{
 /// One [ENT-5] kill event gathered from a statement or expression.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum KillEvent {
+    /// [REF-1, ENT-5] replaces a reference holder without writing storage.
+    Rebind {
+        binding: BindingId,
+        source: crate::NodePath,
+    },
     /// (a) a `set` commit or (b) a boundary-projected callee write. An
     /// element write targets indexed element storage, which never kills a
     /// length fact [ENT-5].
@@ -177,13 +183,15 @@ impl KillEvent {
     fn source(&self) -> &crate::NodePath {
         match self {
             Self::Write { source, .. }
+            | Self::Rebind { source, .. }
             | Self::Consume { source, .. }
             | Self::EntryImageHolderConsume { source, .. }
             | Self::EntryImageHolderWrite { source, .. } => source,
         }
     }
 
-    /// The binding the event's place is rooted at; a constant root has none.
+    /// The replaced holder or the binding the event's place is rooted at;
+    /// a constant root has none.
     fn root_binding(&self) -> Option<BindingId> {
         match self {
             Self::Write { place, .. } | Self::EntryImageHolderWrite { place, .. } => {
@@ -192,7 +200,9 @@ impl KillEvent {
                     PlaceRoot::Constant(_) => None,
                 }
             }
-            Self::Consume { binding, .. } | Self::EntryImageHolderConsume { binding, .. } => {
+            Self::Rebind { binding, .. }
+            | Self::Consume { binding, .. }
+            | Self::EntryImageHolderConsume { binding, .. } => {
                 Some(*binding)
             }
         }
@@ -1573,6 +1583,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 delivery_join_roots: 0,
                 header_relation_roots: 0,
                 loop_induction_roots: 0,
+                fact_preservation_roots: 0,
             },
             output: Output {
                 conditions: Vec::new(),
@@ -1891,7 +1902,7 @@ struct LiveBounds {
 /// `place_back` distinct from `r[i]` rather than possibly `r[i]` itself; a
 /// fact below `r[lo..hi]` likewise needs `hi <= r.len` derived there.
 struct EventSeparations<'event> {
-    ledger: &'event SeparationLedger,
+    ledger: &'event dyn SeparationOracle,
     live: &'event LiveBounds,
 }
 
@@ -2008,6 +2019,7 @@ struct Vocabulary {
     delivery_join_roots: u32,
     header_relation_roots: u32,
     loop_induction_roots: u32,
+    fact_preservation_roots: u32,
 }
 
 /// What the analysis publishes: every judgment's outcome, the retained
@@ -2223,7 +2235,9 @@ mod indexed_goal_kill_tests {
     fn signed_indexed_facts_follow_offset_events_and_scope_exits() {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
+        let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            captured_places: &captured_places,
             judge_conditions: true,
             declarations: &[],
             callees: &[],
@@ -2468,7 +2482,9 @@ mod range_argument_kill_tests {
     ) -> R {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
+        let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            captured_places: &captured_places,
             judge_conditions: true,
             declarations: &[],
             callees: &[],

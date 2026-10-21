@@ -148,7 +148,7 @@ pub(super) fn assert_stack_probes(module: &str) {
     let attributes =
         target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper);
     assert!(
-        module.contains(&format!("attributes #0 = {{ {attributes} }}")),
+        module.contains(&format!("attributes #0 = {{ {attributes} uwtable }}")),
         "the group must name the resolved consumer's probing method:\n{module}"
     );
 }
@@ -1043,7 +1043,9 @@ fn ablate_probe(module: &str, signature: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    ablated.push_str("\nattributes #1 = { \"no-stack-arg-probe\" }\n");
+    // The control differs from group 0 only in its probe, so it keeps
+    // `uwtable`: without it the unwind directives would differ too.
+    ablated.push_str("\nattributes #1 = { \"no-stack-arg-probe\" uwtable }\n");
     ablated
 }
 
