@@ -1,0 +1,144 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Ticket {
+  id: u64;
+}
+
+nodrop struct Pen {
+  strokes: u64;
+}
+
+fn redeem(ticket: Ticket) -> id: u64 pure {
+  let Ticket(id: taken) = move ticket;
+  return taken;
+}
+
+fn drain(ring: Ring<Ticket, 4>) -> result: u64 pure {
+  doc "Redeems every ticket the ring still holds, then frees the emptied window, which a window of linear elements needs.";
+  let sum = 0_u64;
+  loop @drain {
+    if ring.len == 0_u64 {
+      break @drain;
+    }
+    let ticket = take_front(window: &ring);
+    let id = redeem(ticket: move ticket);
+    set sum = sum +wrap id;
+  }
+  free_empty(window: move ring);
+  return sum;
+}
+
+fn finish(queue: Shared<Ring<Ticket, 4>>) -> result: u64 pure waits {
+  doc "Closes one handle of the queue; the last close receives the ring and redeems what is left.";
+  match shared_close::<Ring<Ticket, 4>>(shared: move queue) {
+    Some(value: ring) => {
+      return drain(ring: move ring);
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn serve(queue: Shared<Ring<Ticket, 4>>, count: u64) -> result: u64 pure waits {
+  doc "A running context takes count tickets out of the queue, one atomic statement each, and redeems them outside the statements.";
+  let sum = 0_u64;
+  for @take (index in 0_u64..count) {
+    let out = slots_new::<Ticket, 1>();
+    atomic items = &queue when items^.len > 0_u64 {
+      let front = take_front(window: items);
+      place_back(window: &out, value: move front);
+    }
+    if out.len > 0_u64 {
+      let ticket = take_back(window: &out);
+      let id = redeem(ticket: move ticket);
+      set sum = sum +wrap id;
+    }
+    free_empty(window: move out);
+  }
+  let left = finish(queue: move queue);
+  return sum +wrap left;
+}
+
+fn close_desk(desk: Shared<Slots<Pen, 1>>) -> result: u64 pure waits {
+  doc "Closes one handle of the desk; the last close receives the slot and takes the pen apart.";
+  match shared_close::<Slots<Pen, 1>>(shared: move desk) {
+    Some(value: slot) => {
+      let strokes = 0_u64;
+      if slot.len > 0_u64 {
+        let pen = take_back(window: &slot);
+        let Pen(strokes: total) = move pen;
+        set strokes = total;
+      }
+      free_empty(window: move slot);
+      return strokes;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn write_turns(desk: Shared<Slots<Pen, 1>>, turns: u64) -> result: u64 pure waits {
+  doc "Each turn takes the one pen off the desk in an atomic statement, writes a stroke with it outside the statements, and puts it back.";
+  for @turn (index in 0_u64..turns) {
+    let held = slots_new::<Pen, 1>();
+    atomic home = &desk when home^.len > 0_u64 {
+      let taken = take_back(window: home);
+      place_back(window: &held, value: move taken);
+    }
+    let pen = take_back(window: &held);
+    free_empty(window: move held);
+    let Pen(strokes: count) = move pen;
+    let more = count +wrap 1_u64;
+    let next = Pen(strokes: more);
+    atomic home = &desk when home^.len < home^.cap {
+      place_back(window: home, value: move next);
+    }
+  }
+  return close_desk(desk: move desk);
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Objects whose states are linear. Two running contexts take 2000 nodrop tickets out of one queue while main puts them in, and every ticket is redeemed once. Three contexts take turns with one nodrop pen and close their handles; main joins them and closes the last handle, which receives the pen with every stroke. The status is 0 only when every ticket and every stroke is counted once, and names the first wrong count otherwise.";
+  let empty = ring_new::<Ticket, 4>();
+  let queue = shared_new::<Ring<Ticket, 4>>(value: move empty);
+  let left_worker = shared_share::<Ring<Ticket, 4>>(shared: &queue);
+  let left_sum = spawn serve(queue: move left_worker, count: 1000_u64);
+  let right_worker = shared_share::<Ring<Ticket, 4>>(shared: &queue);
+  let right_sum = spawn serve(queue: move right_worker, count: 1000_u64);
+  for @give (index in 0_u64..2000_u64) {
+    let id = index +wrap 1_u64;
+    let ticket = Ticket(id: id);
+    atomic items = &queue when items^.len < items^.cap {
+      place_back(window: items, value: move ticket);
+    }
+  }
+  let rest = finish(queue: move queue);
+  let both = left_sum +wrap right_sum;
+  let handed = both +wrap rest;
+  if handed != 2001000_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let start = slots_new::<Pen, 1>();
+  let pen = Pen(strokes: 0_u64);
+  place_back(window: &start, value: move pen);
+  let desk = shared_new::<Slots<Pen, 1>>(value: move start);
+  let a = shared_share::<Slots<Pen, 1>>(shared: &desk);
+  let first = spawn write_turns(desk: move a, turns: 100_u64);
+  let b = shared_share::<Slots<Pen, 1>>(shared: &desk);
+  let second = spawn write_turns(desk: move b, turns: 200_u64);
+  let c = shared_share::<Slots<Pen, 1>>(shared: &desk);
+  let third = spawn write_turns(desk: move c, turns: 300_u64);
+  let pair = first +wrap second;
+  let workers = pair +wrap third;
+  if workers != 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let strokes = close_desk(desk: move desk);
+  if strokes != 600_u64 {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

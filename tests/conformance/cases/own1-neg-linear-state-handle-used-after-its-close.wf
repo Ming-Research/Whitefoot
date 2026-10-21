@@ -1,0 +1,24 @@
+nodrop struct Ticket {
+  id: u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let ticket = Ticket(id: 1_u8);
+  let held = shared_new::<Ticket>(value: move ticket);
+  match shared_close::<Ticket>(shared: move held) {
+    Some(value: first) => {
+      let Ticket(id: one) = move first;
+    }
+    None() => {
+    }
+  }
+  let again = shared_share::<Ticket>(shared: &held);
+  match shared_close::<Ticket>(shared: move again) {
+    Some(value: second) => {
+      let Ticket(id: two) = move second;
+    }
+    None() => {
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

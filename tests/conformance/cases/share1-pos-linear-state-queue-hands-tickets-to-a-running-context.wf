@@ -1,0 +1,70 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Ticket {
+  id: u8;
+}
+
+fn redeem(ticket: Ticket) -> id: u8 pure {
+  let Ticket(id: taken) = move ticket;
+  return taken;
+}
+
+fn drain(ring: Ring<Ticket, 4>) -> result: u8 pure {
+  let sum = 0_u8;
+  loop @drain {
+    if ring.len == 0_u64 {
+      break @drain;
+    }
+    let ticket = take_front(window: &ring);
+    let id = redeem(ticket: move ticket);
+    set sum = sum +wrap id;
+  }
+  free_empty(window: move ring);
+  return sum;
+}
+
+fn finish(queue: Shared<Ring<Ticket, 4>>) -> result: u8 pure waits {
+  match shared_close::<Ring<Ticket, 4>>(shared: move queue) {
+    Some(value: ring) => {
+      return drain(ring: move ring);
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn serve(queue: Shared<Ring<Ticket, 4>>) -> result: u8 pure waits {
+  let out = slots_new::<Ticket, 1>();
+  atomic items = &queue when items^.len > 0_u64 {
+    let front = take_front(window: items);
+    place_back(window: &out, value: move front);
+  }
+  let seen = 0_u8;
+  if out.len > 0_u64 {
+    let ticket = take_back(window: &out);
+    set seen = redeem(ticket: move ticket);
+  }
+  free_empty(window: move out);
+  let left = finish(queue: move queue);
+  return seen +wrap left;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  let empty = ring_new::<Ticket, 4>();
+  let queue = shared_new::<Ring<Ticket, 4>>(value: move empty);
+  let worker = shared_share::<Ring<Ticket, 4>>(shared: &queue);
+  let served = spawn serve(queue: move worker);
+  let first = Ticket(id: 3_u8);
+  atomic items = &queue when items^.len < items^.cap {
+    place_back(window: items, value: move first);
+  }
+  let second = Ticket(id: 4_u8);
+  atomic items = &queue when items^.len < items^.cap {
+    place_back(window: items, value: move second);
+  }
+  let left = finish(queue: move queue);
+  let total = served +wrap left;
+  return exit_status(code: total);
+}

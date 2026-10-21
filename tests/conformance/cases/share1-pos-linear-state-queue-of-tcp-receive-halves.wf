@@ -1,0 +1,51 @@
+alias HandleFactory = std::io::HandleFactory;
+alias TcpReceive = std::net::TcpReceive;
+
+fn drain(ring: Ring<TcpReceive, 4>, factory: &HandleFactory) -> result: unit writes(factory) waits {
+  loop @drain {
+    if ring.len == 0_u64 {
+      break @drain;
+    }
+    let receive = take_front(window: &ring);
+    let closed = std::net::close_receive(factory: factory, receive: move receive);
+  }
+  free_empty(window: move ring);
+  return unit;
+}
+
+fn finish(queue: Shared<Ring<TcpReceive, 4>>, factory: &HandleFactory) -> result: unit writes(factory) waits {
+  match shared_close::<Ring<TcpReceive, 4>>(shared: move queue) {
+    Some(value: ring) => {
+      drain(ring: move ring, factory: factory);
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn hand_over(receive: TcpReceive, queue: &Shared<Ring<TcpReceive, 4>>) -> result: unit reads(queue) waits {
+  atomic items = &queue^ when items^.len < items^.cap {
+    place_back(window: items, value: move receive);
+  }
+  return unit;
+}
+
+fn serve(queue: Shared<Ring<TcpReceive, 4>>, factory: HandleFactory) -> result: unit pure waits {
+  let out = slots_new::<TcpReceive, 1>();
+  atomic items = &queue when items^.len > 0_u64 {
+    let front = take_front(window: items);
+    place_back(window: &out, value: move front);
+  }
+  if out.len > 0_u64 {
+    let receive = take_back(window: &out);
+    let closed = std::net::close_receive(factory: &factory, receive: move receive);
+  }
+  free_empty(window: move out);
+  finish(queue: move queue, factory: &factory);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

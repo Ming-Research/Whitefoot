@@ -1,0 +1,11 @@
+nodrop struct Ticket {
+  id: u8;
+}
+
+fn watch(held: &Shared<Ticket>) -> result: SharedRead<Ticket> reads(held) {
+  return shared_read::<Ticket>(shared: held);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-21 A shared object may hold a linear state
+
+Nodes: language/waiting/shared-objects, language/ownership/linearity
+
+Summary: A shared object's state was released with its last handle, so it had to be droppable, and no value that must be closed explicitly could pass between running contexts. The shared-objects node now ends a handle by its release or by `shared_close` in one order whose last end takes the state, makes a handle to a linear state linear so that each of its handles ends in a close, refuses a linear state type that reaches its own handle type, and keeps an atomic statement's object live without a handle of its own when the state is linear; the linearity node counts the state behind a `Shared` handle among the places a linear value can be contained. The owner chose linear handles with an explicit close on 2026-10-09 (board item firn-wf-linear-share); the study is on board item linear-in-shared.
+
 ## 2026-10-21 Safety claims are stated on one checked page
 
 Nodes: language/safety-claims
