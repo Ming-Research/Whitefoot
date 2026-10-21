@@ -2,13 +2,13 @@ nodrop struct Ledger {
   count: u64;
 }
 
-struct Ring<U> {
+struct Chain<U> {
   item: U;
-  next: Option<Shared<Ring<U>>>;
+  next: Option<Shared<Chain<U>>>;
 }
 
-fn keep(ring: Ring<Ledger>) -> result: Ring<Ledger> pure {
-  return move ring;
+fn keep(chain: Chain<Ledger>) -> result: Chain<Ledger> pure {
+  return move chain;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

@@ -1,10 +1,10 @@
-struct Ring<U> {
+struct Chain<U> {
   item: U;
-  next: Option<Shared<Ring<U>>>;
+  next: Option<Shared<Chain<U>>>;
 }
 
-fn keep<U>(ring: Ring<U>) -> result: Ring<U> pure {
-  return move ring;
+fn keep<U>(chain: Chain<U>) -> result: Chain<U> pure {
+  return move chain;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
