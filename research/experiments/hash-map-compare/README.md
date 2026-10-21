@@ -82,7 +82,11 @@ measurement:
 - A cell is judged once the twin's interval contains 1 and its half-width is
   below the cell's resolution, 3% at 1,000 pairs and 2% at 10,000 and
   1,000,000. Then a candidate interval wholly above 1 is a regression of any
-  size, wholly below 1 an improvement, and across 1 no detected change. A
+  size, wholly below 1 an improvement, and across 1 no detected change
+  only when it also lies within 1 plus or minus the resolution; a wider
+  interval across 1 has not resolved a change of that size and takes more
+  rounds (a hosted slow control once judged a 13% slowdown, ratio 1.1343
+  [0.9929, 1.1667], no change before this condition). A
   cell still not judged at the round limit is reported unresolved. The
   resolution is the smallest difference the cell must resolve, not an
   acceptance threshold.

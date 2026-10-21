@@ -118,10 +118,12 @@ def median_interval(values):
 
 def judge(candidate, twin, size):
     """One timed cell: candidate and twin are the per-round ratios to the
-    base. The cell is decided once the twin's interval contains 1 and its
-    half-width is below the cell's resolution; then the candidate's interval
-    wholly above 1 is a regression, wholly below an improvement, and across
-    1 no detected change. Otherwise the cell is unresolved."""
+    base. The twin is usable once its interval contains 1 and its half-width
+    is below the cell's resolution. Then the candidate's interval wholly
+    above 1 is a regression and wholly below an improvement; across 1 it is
+    no detected change only when it also lies within 1 plus or minus the
+    resolution, since a wider interval has not resolved a change of that
+    size. Otherwise the cell is unresolved and takes more rounds."""
     ci = median_interval(candidate)
     wi = median_interval(twin)
     out = {
@@ -141,8 +143,10 @@ def judge(candidate, twin, size):
         out["verdict"] = "regression"
     elif ci[1] < 1:
         out["verdict"] = "improvement"
-    else:
+    elif 1 - out["resolution"] <= ci[0] and ci[1] <= 1 + out["resolution"]:
         out["verdict"] = "no change"
+    else:
+        out["verdict"] = "unresolved"
     return out
 
 
@@ -544,11 +548,11 @@ def measure(args):
 # ---------------------------------------------------------------- self-test
 
 
-def synthetic(cells, rounds, factor, twin_factor=1.0, noise=0.0, slow=False, seed=1):
+def synthetic(cells, rounds, factor, twin_factor=1.0, noise=0.0, slow=False, seed=1, candidate_noise=None):
     """Raw rows for the given cells: every process's samples equal its
     per-operation time, base 10 ns, candidate factor times that and twin
     twin_factor times, each scaled per process by a uniform draw within
-    plus or minus noise."""
+    plus or minus noise (candidate_noise for the candidate, when given)."""
     rng = random.Random(seed)
     rows = []
     for round_ in range(rounds):
@@ -556,7 +560,8 @@ def synthetic(cells, rounds, factor, twin_factor=1.0, noise=0.0, slow=False, see
             ops, check = expected_row(operation, size)
             for position, arm in enumerate(ARMS):
                 scale = {"base": 1.0, "candidate": factor, "twin": twin_factor}[arm]
-                scale *= 1 + rng.uniform(-noise, noise)
+                spread = candidate_noise if arm == "candidate" and candidate_noise is not None else noise
+                scale *= 1 + rng.uniform(-spread, spread)
                 extra = 1 if slow and arm == "candidate" else 0
                 for sample in range(4):
                     rows.append({"round": round_, "position": position, "arm": arm, "operation": operation,
@@ -619,6 +624,14 @@ def self_test():
                  "lookup-hit:1000=0.01,lookup-hit:1000=0.02", " , "):
         expect_invalid(f"floor {text!r}", lambda text=text: parse_floor(text))
     expect("spread of equal arms", twin_spread([1.0] * 6), (0.0, (0.0, 0.0)))
+
+    # A quiet twin does not decide a cell whose candidate interval is wide:
+    # with 30% candidate noise over 8 rounds the interval is the extremes,
+    # across 1 and far wider than the 3% resolution, so the cell stays
+    # unresolved instead of no change; the hosted slow control once judged a
+    # 13% slowdown no change this way.
+    wide = reduce_timed(synthetic([(1, 1000)], 8, 1.0, noise=0.002, candidate_noise=0.3), False, sink)
+    expect("wide candidate interval", wide, {(1, 1000): "unresolved"})
 
     good = synthetic(cells, 6, 1.0)
     expect_invalid("missing arm", lambda: timed_cells([r for r in good if not (r["round"] == 2 and r["arm"] == "twin")],
