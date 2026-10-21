@@ -1,0 +1,548 @@
+# Machine-checked soundness of the kernel specification
+
+Status board item: `wf-spec-proof`. This record holds the study behind it:
+which rules carry the safety claims, how other projects proved such claims
+and kept the proof in step with a changing specification, the approaches
+compared, the selected design and the first phase's theorem and cost.
+
+## Question
+
+Whitefoot's safety claims rest on the rules of
+[the specification](../../../spec/kernel-spec.md), not only on the compiler.
+The conformance cases check that the compiler implements the rules; nothing
+checks that the rules, taken together, imply the claims. The question is how
+to obtain a machine-checked proof that they do, for a core of the rules
+first, in a form that stays true while the specification keeps changing.
+
+What the proof covers is the rules. Whether the compiler implements them
+stays with the conformance cases and the sanitizer runs; the trusted base
+that [SCOPE-3] names (compiler, checker, linked definitions, runtime,
+allocator, operating system) stays trusted.
+
+## Why the rules need their own evidence
+
+Rule-level defects, measured from `spec/log.md` and the status board. Each
+of these let an accepted program misbehave at run time, and each was a gap in
+the rules, not only in the checker, so the fix changed the specification:
+
+| Version | Rules | What the rules admitted |
+|---|---|---|
+| v0.104 | ENT-3 | a Bool binding's comparison origin ended only at a `set` naming the binding, so a write through a reference left a stale fact |
+| v0.129 | TYPE-7 | `&r^` of a range reference named the whole run but was typed as one element; a run of length four discharged a requirement of seven |
+| v0.135 | EFF-2, EFF-5 | the call-site overlap check compared only the runtime rows of two reference arguments, while the callee's contract read other fields through them; passing one object twice made a postcondition false, and one variant ended in a segmentation fault (board item `proof-bl-contract-alias-overlap`, six witnesses) |
+| v0.137 | FN-3 | `get::<300>()` was accepted for `const n: u8`; the checker reasoned about 300 while the generated code used 44, an out-of-bounds read |
+| v0.149 | FN-9, ENT-2 | nothing judged a postcondition's subscripts, so `ensures r <= rows^[i].len` with `i` unbounded was a promise about an element that need not exist |
+| v0.151 | PROV-6 | the list of types whose release performs an action omitted `KeySet` and `ConcurrentHashMap`, so a guaranteed tail call could leave a reference to released storage (board item `paged-bl-release-class-audit`) |
+| v0.124 | TYPE-9, TYPE-10 | a `swap` of two runtime-capacity window contents exchanged the block headers alone, so a capacity-1 block carried a capacity-64 header and later writes ran past it |
+| open | SHARE-2 | several objects in one atomic statement are safe only if they are distinct, a run-time fact the checker cannot see (board item `shared-object-model`; the one-object redesign replaces the rule) |
+
+All were found by hand, by reading code or by a downstream program failing.
+A proof obligation of the form "every fact holds of every state that reaches
+its point" fails on each of the first six at the rule that admitted it.
+
+The specification changes often. From 2026-09-29 to 2026-10-20 `spec/log.md`
+records 75 versions (v0.81 to v0.153), on 14 of those 22 days, up to 13 on one
+day. The file is 693,372 bytes with 152 rules; section 15, obligation
+discharge, is 210 KB of it.
+
+## What the claims rest on
+
+Read for this study: sections 1 and 4 to 7 (types, ownership, storage,
+operations), 8 to 14 (functions, effects, calls, sharing, parallelism) and 15
+to 17 (facts and discharge), each by its own reader, with every key line
+checked against the text. Line numbers are those of v0.153.
+
+| Claim | Rules it rests on | Invariant a proof must carry |
+|---|---|---|
+| memory safety: no use after free, no dangling reference | REF-1 to REF-3, TYPE-8, STOR-5, STOR-7, OWN-1, LIV-1, STOR-3, PROV-6, WIN-3, SET-1, OP-10, OP-11, with EFF-5, FN-10, HOLD-1 | a reference holding its validity fact resolves to existing, initialized storage of its type; every runtime event that removes or moves storage on its path is a static invalidation event; no value holds a reference |
+| memory safety: no double free | OWN-1, LIV-1, STOR-3, PROV-6, WIN-3, SET-1, OP-11, OP-12, OWN-11, OWN-13 | each heap cell has exactly one live owner path, and the static live or dead status of every binding equals its dynamic initialization at every point |
+| memory safety: in bounds | OP-4, REF-4, WIN-1, OP-10, OP-13, with MSR-1, MSR-2, MSR-4, ENT-5, ENT-6 | `len <= cap`; logical offsets map injectively into the block; every fact holds |
+| no uninitialized read | OWN-1, LIV-1, SET-1, WIN-1, WIN-3, OP-11 to OP-13, TYPE-2, TYPE-6 | every live binding and every slot inside a window holds a whole value, and no point observes a hole |
+| no silent overflow; every partial operation proven | SCOPE-2, OP-1, OP-2, OP-4 to OP-6, TYPE-4, CONST-1, TYPE-11, with ENT-1 to ENT-6, MSR-1 to MSR-4, FN-8, FN-9, INV-1, PRF-1, RANGE-1 to RANGE-5 | every fact of the closed state at a point holds in every execution reaching it, so every discharged domain query is true when its operation runs |
+| no data race | OWN-7, WIN-2, REF-1, with PAR-1, PAR-2, SHARE-1 to SHARE-3, WAIT, EFF-1, EFF-2, EFF-5 | places OWN-7 calls disjoint have disjoint runtime footprints, and every access lies inside its static footprint |
+
+Four properties of the text shape the proof.
+
+- The specification states no meaning for its facts. No rule says that the
+  fact state at a point holds in every execution reaching that point; only
+  [SCOPE-3]'s "Accepted programs have no undefined behavior" (line 17) and
+  [ENT-1]'s "a wrong derivation is a compiler defect" (line 3460) imply it.
+  The model must state it, over a semantics that gives each compiler-owned
+  term (captures, commit values, call datums, header atoms) a ghost value
+  set at its defining point; lines 3522 to 3523 rely on that reading. It is
+  the theorem the proof is for.
+- The static judgments depend on one another in a cycle: OWN-7 separates
+  places by proved facts (lines 754 to 757), ENT-5 kills facts by OWN-7
+  overlap (line 4062), and a window reference stays valid while a numeric
+  bound holds (lines 863, 1249). Fact soundness, overlap soundness and
+  reference validity therefore need one simultaneous induction over
+  execution, not three separate proofs.
+- Two checkers abstract the same execution: ENT's place-based facts that
+  writes kill, and RANGE's versioned symbolic walk, which judges what ENT
+  leaves undischarged and imports ENT's published targets (lines 4581 to
+  4598). Both need a soundness theorem against one semantics.
+- There is no termination judgment: "v0 provides no termination checker"
+  (line 1662), and recursive contracts are "partial correctness, not a
+  termination judgment" (line 2177). The theorem is safety and partial
+  correctness.
+
+Some rules model cleanly as inference rules: ENT-4's closure, ENT-3's local
+sources, MSR-2's standing facts, the join as an intersection, INV-1's
+induction, and DIRECT, AUTO and PRF-1 read as "the target follows from a
+nonnegative integer combination of at most k premises and bounds". Others are
+written as procedures: ENT-3's walk, ENT-5's ordering and transports,
+ENT-4.OT, ENT-6's image management, MSR-4's step order and RANGE-2 and
+RANGE-3. A faithful model writes the procedures as functions and proves them
+against the inference-rule reading, so the ENT-1 claims (one deterministic,
+terminating derivation, line 3432) become two theorems: every derivation is
+sound, which safety needs, and the procedure computes the specified set,
+which line 3449's claim that two implementations agree needs.
+
+Several rules decide by an explicit list of type names: PROV-6's list of
+types with a non-empty release (line 824), STOR-3's release actions (lines
+905 to 916), STOR-8's no-heap lists (lines 887 and 889), TYPE-9's placement
+homes. The v0.151 defect was a type missing from the first list. The model
+derives each list from one descriptor per prelude type, so a missing entry
+is a failed proof obligation rather than a silent default.
+
+## Earlier decisions this design must answer
+
+- The [specification-representation decision](../spec-representation/DOSSIER.md)
+  (2026-08-16) refused "a sibling formal model (Coq/Lean/K/Sail-style, or a
+  second executable spec in Rust)", because every negative precedent (KJS,
+  JSCert, the WebAssembly provers, Cerberus, Standard ML) was a parallel
+  formal artifact on a separate cadence that drifted and then froze, and it
+  required that "anything formal must generate or gate from day one". The
+  refusal stands for a model on its own cadence. The design below gates from
+  day one: a covered rule cannot change without the model changing in the
+  same work, and the model's checker is run against the conformance cases.
+- The language tree records that the specification stands on its own with
+  no ledger connecting rules to their grounds, because a record nothing
+  consumes drifts. The proof's coverage list is consumed by a check on every
+  change of the specification; it records which sentences the model
+  formalizes, not why the rules exist.
+- The specification states every normative fact once. The model is not a
+  second statement of the language: the specification stays the only
+  authority, and a disagreement between the model and the specification is a
+  defect of one of them, settled as a specification/compiler discrepancy is.
+
+## Proof assistants compared
+
+Three assistants can carry a language soundness proof of this kind; each has
+a large precedent. The criteria are the ones this project's situation makes
+decisive: the proof is written and maintained by agents, it must run as a
+check on every change of a covered rule, its model must be executable so the
+conformance cases can test it, and the later concurrency phase needs a
+logic for ownership and interference.
+
+| | Lean 4 | Rocq (Coq) with Iris | Isabelle/HOL |
+|---|---|---|---|
+| Executable model | the model is a program: compiled to native code with no extraction step; Cedar's Lean model runs millions of differential tests against the Rust implementation [cedar-vgd] | extraction to OCaml; WasmCert-Coq's interpreter [wasmcert-two] | code generation to SML, OCaml or Scala; WasmRef-Isabelle is Wasmtime's fuzzing oracle [wasmref] |
+| Arithmetic and search | `omega`; `grind`, an SMT-style tactic whose linear integer arithmetic is complete for the fragment it decides [lean-grind]; `simp`, `decide`; all produce kernel-checked terms | `lia`, `auto`; CoqHammer outside the core | Sledgehammer (external provers, proofs reconstructed), `arith`, `auto` |
+| Finding a false lemma before proving it | the executable model and its own generators; Plausible | QuickChick | Nitpick and Quickcheck, the strongest of the three |
+| Ownership and interference | Iris-Lean, a port of Iris; the core library is reported complete in 2026 with parts still missing [iris-lean] | Iris, mature; RustBelt [rustbelt] | no framework of Iris's reach |
+| Determinism of the check | kernel check deterministic; tactic limits count heartbeats (allocations), not time | deterministic | deterministic kernel; external provers only while writing |
+| Agent proficiency | the target of most machine-proving work: AlphaProof, Aristotle, Seed-Prover, the PutnamBench Lean track [alphaproof] [aristotle] [putnambench] | far less | far less |
+| CI toolchain | one installer (`elan`), version pinned in `lean-toolchain`, about one release a month | opam; Iris builds take long | a large distribution, about one release a year |
+| Language-definition precedent | Cedar: model, proofs and differential tests are a release condition [cedar-blog] | CompCert [compcert], RustBelt, WasmCert-Coq, the SpecTec prover backend [spectec] | seL4, WasmCert-Isabelle [watt-cpp18], WasmRef |
+
+SMT-based verifiers (Dafny, F*) are not compared further: their verdicts can
+change with solver version and resource limits, which is the instability the
+project's own acceptance rule refuses for programs, and a proof that turns
+red without a change cannot gate. Agda lacks arithmetic automation; K and
+PLT Redex execute semantics but do not prove theorems about them.
+
+Lean 4 is selected. The deciding grounds are the first and the sixth rows:
+the model has to run on the conformance cases on every change, and Lean runs
+it with no translation step; and agents write the proofs, and Lean is where
+machine proving is strongest. Rocq with Iris is the stronger choice for the
+concurrency phase alone; that phase is not first (see [Phase 1](#phase-1)),
+and Iris-Lean is the path to reopen if Lean's interference reasoning proves
+too weak there.
+
+## Modeling approaches compared
+
+| Approach | What is proved | Faithfulness to the rules | Size | Precedent |
+|---|---|---|---|---|
+| A. Faithful fragment model, executable | the actual rules for a fragment of the constructs, rule by rule, with the checker as a total function and an interpreter | high inside the fragment; the conformance cases of the fragment test it | grows with the fragment | Cedar [cedar-vgd] |
+| B. Idealized core calculus | a small language that captures the idea of the rules | low: the proof is about the calculus, and the rules' details are argued informally | small | RustBelt's lambda-Rust [rustbelt], Featherweight Java |
+| C. Full direct model | every rule as written | highest | the whole specification | JSCert and KJS stopped at ES5 [jscert] [kjs]; a-mir-formality is "very incomplete compared to Rust" after years [mir-formality] |
+| D. One source generating text and model | the rules written once in a domain language that prints both the prose and prover definitions | exact by construction | rewrite the specification | SpecTec for WebAssembly [spectec] |
+| E. Executable model with random testing, no proofs | nothing proved; the model's judgments are tested against its semantics | as A | small | Redex: mechanizing nine ICFP papers found errors in all nine [ryr] |
+
+B is refused because every rule-level defect in [the table above](#why-the-rules-need-their-own-evidence)
+was a detail: which reads the overlap check compares, which types a release
+list names, whether an origin ends at a write through a reference. A
+calculus that abstracts those details proves its theorem and misses them.
+C is refused now because 693 KB of prose changing several times a day is not
+a first target; A grows into it fragment by fragment. D needs the
+specification rewritten in a new language; the representation decision
+refused that for now, and WebAssembly's precondition, rules that were formal
+before they were prose, is absent here. E is not refused but absorbed: A's
+model is executable, so random programs can test it before and between
+proofs, and the theorem is what E lacks.
+
+A is selected: the model formalizes the actual sentences of the covered
+rules for a fragment of the constructs, as a Lean checker that is a total
+function and an interpreter that gets stuck exactly where the specification
+gives an operation no meaning, and its theorems say that every program the
+checker accepts runs without getting stuck.
+
+## Keeping the proof in step
+
+Three checks, all in one workflow, `proof.yml`, on every push to a pull
+request that changes the specification, the model or the workflow, drafts
+included, and on such a push to `main`; the third adds the conformance cases
+to those paths when it arrives. A pass on the revision being merged is a merge
+precondition (AGENTS.md):
+
+1. Sentence coverage. The specification is written one sentence per line, so
+   a rule's text is a list of lines. A line the model formalizes carries a
+   `-- spec <ID> <hash>` comment above the Lean definition that formalizes
+   it, where the hash is a 64-bit FNV-1a hash of the line's bytes;
+   `proof/coverage.txt` lists the covered rules, each line left `outside`
+   with its reason, and the covered families, every rule of which must be
+   covered or skipped with a reason. `lake exe coverage` fails when a covered
+   line is neither marked nor listed, when a mark or listing names a line the
+   rule no longer has, and when a covered family gains an unclassified rule,
+   and prints the lines concerned. Listing an added line as outside is one
+   line of the list; a line marked as modeled changes the model.
+2. The proof. `lake build` checks every theorem, and the build fails when a
+   theorem the model states depends on an axiom beyond Lean's standard three
+   (`propext`, `Classical.choice`, `Quot.sound`), which excludes an unproved
+   step (`sorry`) and an evaluation the kernel does not check.
+3. Differential conformance, once the model parses programs. The model's
+   parser takes every conformance case written entirely in the fragment's
+   constructs. On an `accept` or `run` case, the model must accept, and on a
+   `run` case its interpreter must produce the expected exit status. On a
+   `reject` case whose expected rule is covered, the model must reject. A
+   mismatch fails the check: either the model is not faithful, or the case
+   shows a gap in the rules, and either way the change stops until it is
+   settled. Reject cases citing a rule outside the coverage (canonical form,
+   diagnostics, the redundancy judgment) are not compared, so the model need
+   not reproduce rejections that carry no safety meaning.
+
+A change that edits a covered rule therefore updates the model, the proof
+and the coverage list in the same work. That is the rule the project
+already applies to everything derived from the specification ("conformance
+cases and verdicts, the lexer/parser and generated syntax data, tests and
+docs", AGENTS.md), extended to the model, and it is what the representation
+decision required of anything formal: it gates from day one.
+
+How much this costs each change, measured on the 75 versions from v0.81 to
+v0.153. A sequential-core rule set (SCOPE-2, SCOPE-3, TYPE-1, TYPE-2,
+TYPE-7, SET-1, OWN-1, REF-1 to REF-4, OP-1 to OP-4, FN-1 to FN-5, FN-8,
+FN-9, CALL-1 to CALL-3, CALL-5, CALL-6, EFF-1, EFF-2, ENT-1 to ENT-6) was
+touched by 36 of the 75 (48%); most touched a covered rule in a part outside
+the fragment, such as a new prelude type, a shared object or a range
+reference, and would have cost one `outside` line per changed sentence. By
+reading the 36 summaries, 7 changed what the fragment means (v0.100, v0.104,
+v0.109, v0.135, v0.142, v0.149, v0.153), 2 more if loops are in the
+fragment (v0.101, v0.106), and 3 are uncertain (v0.120, v0.145, v0.152):
+between 7 and 12 of 75, 9% to 16%, would have needed model work. Four of
+the seven (v0.104, v0.135, v0.149 and, through its index identity, v0.153)
+are changes where a proof obligation would have been checked at the moment
+the rule changed. This classification was read from summaries, not from
+the rules' diffs, and the first phase's own record replaces it with counts
+from the coverage check.
+
+Two weaker policies were considered. A release gate, the policy Cedar uses
+("a new version of Cedar isn't released unless its model, proofs, and
+differential tests are up to date" [cedar-blog]), lets `main` carry a stale
+proof between releases; Whitefoot publishes compiler releases on demand for
+downstream projects, so a defect would reach a downstream pin before the
+proof saw it, and the catch-up would be the separate-cadence artifact the
+representation decision refused. A periodic catch-up with no gate is that
+artifact outright. A mechanization kept apart from its standard follows it
+at its own pace: WasmCert-Isabelle, a version behind for a time, reached
+WebAssembly 2.0 in a 2025 workshop paper [wasmcert-2].
+
+## Phase 1
+
+Three first targets were compared.
+
+| First target | What it proves first | Against it |
+|---|---|---|
+| A. The sequential fact core: integers, fixed arrays, loops, calls with contracts | that every fact holds in every execution reaching its point, so no unproved partial operation runs | none of the seven defects lies wholly inside it; they need references or prelude types, its next phase |
+| B. Ownership and local references: `Box`, moves, releases, references to locals | no use after free, no double free, no uninitialized read, with no fact discharge | the release-list and swap defects need tail calls, prelude types and windows, outside it |
+| C. One-object atomic statements and data-race freedom | data-race freedom | the specification defines no location, access or race to state it against, and the shared-object rule is being redesigned (board item `shared-object-model`) |
+
+A is selected. Section 15, the fact language and its discharge, is 210 KB of
+the 693 KB and the part whose meaning the text never states; every later
+phase needs that meaning, and A states and proves it on the smallest
+fragment. A's second phase, references and effect rows, is where the v0.104
+and v0.135 defects lived. B is the third phase; C waits for the shared-object
+redesign and a memory model, and reopens Iris-Lean.
+
+The fragment, from the section 15 reading:
+
+- integer types and the operations of [OP-2]; `let` and whole-binding `set`;
+  `if` and `else`; `loop` with `break` and `continue`, with optional
+  difference-bound header invariants; local `Array<T, N>` with constant N,
+  subscript reads and element `set`; non-recursive calls with own integer
+  parameters, one integer result and difference-bound `requires` and
+  `ensures`; `return`.
+- its rules: SET-1 for value targets, OP-2, OP-4 for arrays, OP-5, TYPE-4,
+  TYPE-5 and FN-1's control-flow graph; ENT-2's terms (a), (c) and (g) with
+  difference bounds, normalization and implicit type bounds; ENT-3's
+  comparison origin of S1, S4, S5, the `+` and `-` rows of S7, and S16;
+  CALL-6's instantiation and establishment with FN-8 and FN-9; ENT-4's rules
+  (1) to (3), contradiction and dispositions; ENT-5's supports, kills (a)
+  and (d), pre-kill closure, call order, join and ordinary loop head; MSR-4's
+  steps 1 and 3 with the subscript and integer-domain normalizations; INV-1's
+  base batch and induction for difference bounds.
+- left for later phases: references, proof paths and OWN-7; effect rows and
+  CALL-1, CALL-3, CALL-5; ownership and release; windows and measures beyond
+  `Array`; ENT-6 and PRF-1; ENT-4.OT; exclusions; counted loops; RANGE;
+  generics; recursion; atomic and shared state.
+
+The theorems, stated over the model's checker `accepts` and its interpreter
+`run`, which takes a step budget and ends `done`, `stuck` (a state the
+specification gives no meaning: an exact operation whose domain query is
+false, a subscript out of bounds, a read of a binding with no value, a call
+whose requirement is false, a return whose `ensures` is false) or
+`outOfSteps`:
+
+```lean
+theorem accepted_never_stuck (p : Program) (hp : p.accepts = true)
+    (args : List Int) (hreq : p.entryRequires args) (steps : Nat) :
+    p.run args steps ≠ .stuck
+
+theorem facts_hold (p : Program) (hp : p.accepts = true)
+    (args : List Int) (hreq : p.entryRequires args) :
+    ∀ point state, p.Reaches args point state → (p.factsAt point).Holds state
+```
+
+The first is the safety claim for the fragment; the second gives the facts
+the meaning the specification leaves unstated and is the invariant the first
+is proved by. Neither says anything about termination, the compiler, or
+resource exhaustion, which [SCOPE-3] leaves outside the language.
+
+Phase 1 is done when both theorems check with only the standard axioms;
+every line of the listed rules is marked or listed outside with a reason;
+the model accepts every accepted and run conformance case in the fragment,
+runs every run case to its expected status and rejects every rejected case
+whose expected rule is covered, each disagreement settled as a defect of the
+model or of the specification; and `proof.yml` stays under 10 minutes on a
+GitHub-hosted runner. A text search finds about 150 accepted or run cases and
+250 rejected cases that use only the fragment's constructs; the parser counts
+them exactly.
+
+It is built in slices, each a pull request through the same check: the
+check itself with the value part of [OP-2] (the first, with this record); the
+fragment's syntax, parser and interpreter, compared with the run cases; the
+checker, compared with the accepted and rejected cases; the proofs.
+
+Prior criterion for the approach, written before the first slice is
+measured. Each slice records its model and proof lines and the turns and CI
+runs it took; once the check gates, each specification version records
+whether it needed model work. The approach card is reopened if, at the end
+of phase 1, `proof.yml` takes more than 10 minutes; if more than a quarter
+of the versions in the month after the check starts gating need model work,
+or the median such update takes more than one engineer day; or if writing
+the checker requires choosing between readings of the text at more than ten
+places, which would mean the rules are not yet precise enough for a faithful
+model.
+
+## Cost
+
+Precedents with measured sizes:
+
+| Work | Model | Proof | Effort | Source |
+|---|---|---|---|---|
+| Cedar, all components (2024) | 1,673 lines of Lean | 5,714 lines of Lean | not stated | [cedar-vgd] |
+| Cedar's validator soundness | 532 lines | 4,686 lines | 18 person-days for the proof | [cedar-vgd] [cedar-blog] |
+| WebAssembly 1.0 in Isabelle (semantics, type system, soundness, interpreter, checker) | about 8,600 non-comment lines in all | | | [ctwasm] |
+
+Proof size grows faster than the size of what it is about: over 15,018
+lemmas of seL4 and the Archive of Formal Proofs, proof size grew with the
+square of the statement's size [matichuk].
+
+The first phase's fragment (see [Phase 1](#phase-1)) carries more intricate
+static rules than Cedar's validator, a type checker over expressions: facts
+with a closure, invalidation by writes, joins, loop heads and the contract
+boundary. The estimate for it is a model of 1,500 to 2,500 lines (parser for
+the fragment, checker, interpreter, differential harness) and a proof of
+6,000 to 12,000 lines. At Cedar's measured rate, 4,686 proof lines in 18
+person-days, about 260 a day, that is 25 to 50 person-days of expert work.
+No rate is measured for agents writing Lean against this repository's CI;
+each slice records its lines and the turns and CI runs it took, and the
+estimate is replaced by those measurements. The first slice, the check and
+the value part of [OP-2], is 21 marked lines and 26 listed outside of OP-2's
+47, about 250 lines of Lean and ten theorems.
+
+Each run of `proof.yml` installs a pinned Lean (cached), builds the model and
+proofs and runs the fragment's conformance cases. Lean without Mathlib builds
+a project of this size in minutes; the first slice measures the time, which
+then becomes the stage's budget.
+
+Each later change of the specification costs, by the measurement in
+[Keeping the proof in step](#keeping-the-proof-in-step), made for a larger
+sequential rule set than phase 1's: about half the changes touch a covered
+rule and need one coverage line per changed sentence; 9% to 16% change the
+fragment's meaning and need the model and proof updated in the same work. At the measured rate of 75 versions in 22 days,
+3.4 a day, that is 0.3 to 0.55 model updates a day, about one every two to
+three days.
+
+## Incidental findings
+
+Found while reading the rules for this study. "Read" marks a fact in the
+text; "inferred" marks a consequence not yet shown with a program.
+
+1. The specification gives safety no runtime meaning to be checked against.
+   [SCOPE-3] (line 17) says accepted programs have no undefined behavior but
+   never says what undefined behavior is; the only mention of data races is
+   [CAP-1]'s "Its data-race guarantee is subject to [SCOPE-3]; it does not
+   exclude general race conditions" (line 2233), and no rule defines a
+   location, an access, a happens-before order or a race. No rule defines
+   parameter binding or an activation; the runtime meaning of a
+   requirement ("it holds in the pre-call state of every execution") is never
+   stated, the nearest being [DIAG-2]'s "every value a returning call hands
+   back or leaves behind satisfies them" (line 2177). Read. The model must
+   supply these; see [the semantics decision](#phase-1).
+2. [FN-1] says every atomic block an edge leaves "completes its ordinary
+   exit, including [TYPE-11] obligations and [SHARE-2] release" (line 1359),
+   but SHARE-2 (lines 2387 to 2414) never mentions a release; the end of an
+   atomic statement's exclusive access on a leaving edge is only implicit.
+   Read.
+3. [EFF-3] licenses deduplicating and reordering a `pure`, non-waiting call
+   "which allocates nothing" (line 1660), and grounds it on "a duplicated take
+   is a different program [STOR-8]". STOR-8's list of allocating rows
+   (line 887) names only `Box` and storage constructors and growth, not
+   `shared_new`, `frozen_new`, `key_set_new` or `cancel_source`, which are
+   `pure` and create runtime objects. Read. Inferred: two equal
+   `shared_new` calls may be merged into one object, which a program can
+   observe, and a no-heap program may call `key_set_new` although a key set
+   holds runtime storage.
+4. A call through a function-kind formal is checked against the formal's
+   contract and row, while the actual function runs ([FN-5], line 1423); the
+   actual's own proof treated its reference parameters as separate roots for
+   its possibly stronger postconditions. Inferred, no witness built: the
+   v0.135 contract-read footprint covers the formal's contract only, so a
+   proof must show every state the actual's proof relied on lies in the
+   formal's requirements or row.
+5. A guaranteed tail call transfers "without retaining the current
+   activation" ([FN-10], line 1593), while a spawned statement is joined
+   "when the activation that executed the spawn leaves by any edge"
+   ([WAIT-3], line 2353); whether the transfer joins outstanding spawns is
+   not stated. Read; no memory-safety consequence, since a context holds
+   only moved values.
+6. A `set` whose right-hand side changes the storage of its own target.
+   [SET-1] evaluates the target first and judges its subscript's bound there
+   (lines 619 and 621, and [OP-4] line 1115: "its discharge judgment is
+   identical in target position"), carries the target address across the
+   right-hand side (line 638), and after it rechecks only writability,
+   liveness, moved prefixes and references the target is reached through
+   (lines 635 to 637). Read. Inferred, and probed with the compiler in this
+   study's CI:
+   `set v[1_u64] = remove_at(window: &v, index: 0_u64);` on a two-element
+   `Slots<Box<u64>, 4>` stores into a slot the call moved out of the window
+   and releases that slot's stale copy of the element now at index 0, a
+   double release; and `set b.inner[0_u64] = f(cell: &b);`, where `f` grows
+   the block, stores to the block's old address. [OP-12] states the missing
+   restriction, but only for the atomic update ("`f`'s declared row must not
+   write, move out of, or free any prefix of `p`", line 1268). Recommended:
+   a specification item that applies the same condition to every `set`.
+7. Moving out through a reference parameter is refused by no stated rule:
+   [TYPE-7] says a use of an affine `p^` "requires `move`" (line 612), while
+   [OWN-1] admits consumption only of places "rooted in a live own-mode
+   binding" (line 690). Read. Recommended: one sentence in OWN-1 naming the
+   refusal and its citation.
+8. A `nodrop` struct may be a const: [CONST-2] admits a non-opaque struct
+   with eligible fields (line 676) and a const is never moved (line 679),
+   while `nodrop` "states a logical must-consume obligation" (line 439).
+   Inferred. Recommended: decide in CONST-2 whether `nodrop` types are
+   eligible.
+9. The loop-head state has no stated input for its "may kill" judgment.
+   [ENT-5] removes "every fact having a support member that a continuing
+   kill event of L may kill" (line 4181), and an indexed write is separated
+   from a fact only by offsets proved distinct "in the entry state of that
+   event" (line 863), which for a continuing event depends on the head being
+   formed. Read; the circularity is inferred. A purely structural reading is
+   safe; using pre-loop facts to separate a write whose index changes in the
+   body is not. Recommended: state that the judgment is structural.
+10. [CALL-1] states survival per parameter ("the call is a kill event for no
+    fact supported by that actual's path", line 3726), while kill (b)
+    applies to any argument's projected write (line 4062) and EFF-5 compares
+    only the footprints the arguments supply (lines 1671 to 1674). Read;
+    inferred that an unread, unnamed reference argument sharing storage with
+    a written one is killed anyway. Recommended: phrase CALL-1 as "this
+    parameter contributes no write".
+11. A contradictory prelude contract would discharge every obligation in
+    every caller ([ENT-4] line 3988), and [PRE-1] contracts are trusted under
+    [SCOPE-3] ("a PRE-1 or PRE-2 definition is supplied under SCOPE-3",
+    line 1321), with CALL-6's consistency check seeing only what
+    the closure represents (line 3958). Read. Recommended: the model
+    exhibits a satisfying state for each prelude contract it uses.
+12. Wording a model must settle, each read: WIN-2 says "`r.len` is itself a
+    write target" (line 862) and OP-15 "A measure is never a write target"
+    (line 1300); WIN-3 says "frees the block" (line 874) and STOR-3 "no
+    storage reclamation of its own" (line 907); TYPE-9 does not count
+    `Paged` as a runtime-capacity form (lines 587 and 589) while STOR-1 and
+    OP-13 do (lines 848, 1279); OP-8 carries editing history ("added in this
+    revision", line 1190). Recommended: one specification item for the
+    wording.
+
+## Sources
+
+Read for this study on 2026-10-21; figures are as the sources state them.
+
+- [alphaproof] T. Hubert et al., "Olympiad-level formal mathematical
+  reasoning with reinforcement learning", Nature, 2025: Lean proofs, trained
+  on 80 million statements auto-formalized into Lean.
+- [aristotle] Harmonic, the Aristotle paper, arXiv:2510.01346, 2025: Lean 4
+  solutions to five of the six 2025 IMO problems.
+- [cedar-blog] AWS Open Source Blog, "Lean into verified software
+  development", <https://aws.amazon.com/blogs/opensource/lean-into-verified-software-development/>:
+  Lean chosen for its fast runtime, libraries and small trusted base; "a new
+  version of Cedar isn't released unless its model, proofs, and differential
+  tests are up to date"; the validator proof, 4,686 lines, took 18
+  person-days.
+- [cedar-vgd] C. Disselkoen et al., "How We Built Cedar: A
+  Verification-Guided Approach", FSE 2024 industry track,
+  <https://arxiv.org/abs/2407.01688>: Table 1 (Lean model 1,673 lines, Lean
+  proofs 5,714 lines, Rust 15,693 lines; validator model 532, proofs 4,686);
+  proofs found 4 validator bugs, differential and property-based testing 21
+  more.
+- [compcert] X. Leroy, "A formally verified compiler back-end", Journal of
+  Automated Reasoning, 2009, <https://arxiv.org/abs/0902.2137>.
+- [ctwasm] J. Renner, S. Cauligi, D. Stefan, "CT-Wasm: Type-Driven Secure
+  Cryptography for the Web Ecosystem", POPL 2019, arXiv:1808.01348: inherits
+  about 8,600 non-comment, non-blank lines of Isabelle from Watt's
+  mechanization.
+- [iris-lean] "Iris in Lean", arXiv:2609.24252, 2026, and the Iris workshop
+  2026 slides: the core library ported, some features still missing.
+- [jscert] M. Bodin et al., "A Trusted Mechanised JavaScript Specification",
+  POPL 2014: ES5 in Coq with an extracted interpreter.
+- [kjs] D. Park, A. Stefanescu, G. Rosu, "KJS: A Complete Formal Semantics of
+  JavaScript", PLDI 2015: ES5.1, passes all 2,782 core conformance tests.
+- [lean-grind] The Lean Language Reference, "The `grind` tactic",
+  <https://lean-lang.org/doc/reference/latest/The--grind--tactic/>.
+- [matichuk] D. Matichuk et al., "Empirical Study Towards a Leading
+  Indicator for Cost of Formal Software Verification", ICSE 2015: 15,018
+  lemmas, proof size quadratic in statement size.
+- [mir-formality] Rust project goals, "a-mir-formality",
+  <https://rust-lang.github.io/goals/2026/a-mir-formality.html>.
+- [putnambench] G. Tsoukalas et al., "PutnamBench", NeurIPS 2024 datasets
+  track, <https://arxiv.org/abs/2407.11214>.
+- [rustbelt] R. Jung et al., "RustBelt: Securing the Foundations of the Rust
+  Programming Language", POPL 2018: a core language, lambda-Rust, and its
+  semantic soundness proof in Coq with Iris.
+- [ryr] C. Klein et al., "Run Your Research: On the Effectiveness of
+  Lightweight Mechanization", POPL 2012,
+  <https://users.cs.northwestern.edu/~robby/lightweight-metatheory/>: Redex
+  models of nine ICFP 2009 papers found mistakes in all nine.
+- [spectec] D. Youn et al., "Bringing the WebAssembly Standard up to Speed
+  with SpecTec", PLDI 2024: one source for the standard's typeset rules,
+  prose, interpreter and prover definitions; the Rocq backend is the most
+  developed.
+- [wasmcert-2] "Updating WasmCert-Isabelle to WebAssembly 2.0", WebAssembly
+  workshop at ICFP/SPLASH 2025.
+- [wasmcert-two] C. Watt et al., "Two Mechanisations of WebAssembly 1.0",
+  FM 2021.
+- [wasmref] C. Watt, M. Trela, P. Lammich, F. Maerkl, "WasmRef-Isabelle: A
+  Verified Monadic Interpreter and Industrial Fuzzing Oracle for
+  WebAssembly", PLDI 2023: adopted as a fuzzing oracle for Wasmtime.
+- [watt-cpp18] C. Watt, "Mechanising and Verifying the WebAssembly
+  Specification", CPP 2018: a mechanized soundness proof whose work exposed
+  errors in the draft specification, fixed before publication.

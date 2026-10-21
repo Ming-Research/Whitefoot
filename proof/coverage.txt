@@ -1,0 +1,61 @@
+# The model's sentence coverage of the specification, checked by
+# `lake exe coverage` in this directory on every change to the specification
+# or the model.
+#
+# `rule ID` covers a rule: every line of its text must be marked as modeled by
+# a `-- spec ID HASH` comment above the Lean definition that formalizes it, or
+# be listed here as `outside ID HASH reason`. `family P` requires every rule
+# whose ID starts with `P-` to have a `rule` or a `skip ID reason` entry, so a
+# new rule in a covered family is classified before it merges. HASH is the
+# 64-bit FNV-1a hash of the line's bytes in hexadecimal; blank lines and
+# code-fence lines carry none. `lake exe coverage --show ID` prints a rule's
+# lines with their hashes and dispositions.
+#
+# A change that edits a covered line changes its hash: the check then names
+# the line, and the change updates the model, its proofs and this list.
+
+family OP
+
+rule OP-2
+outside OP-2 a361e882fc6dbb5e spellings: the fragment's parser
+outside OP-2 81b37a42b8d3ad53 obligation formation: the fragment's checker
+outside OP-2 dceb896cf0d98ac0 acceptance by discharge: the fragment's checker
+outside OP-2 c7df40e527f97de6 contradictory states: the fragment's checker
+outside OP-2 581b23ecd26b70ea lowering, which the model does not describe
+outside OP-2 22ab98f1d1da2f04 division: a later slice
+outside OP-2 c6366c225d68f036 remainder: a later slice
+outside OP-2 d8bc430a003e7a41 shifts: a later slice
+outside OP-2 6a3110d2c5591b4f shifts: a later slice
+outside OP-2 b749e9bd9126a614 fact sources: the fragment's checker
+outside OP-2 072c584ded9ba987 fact sources: the fragment's checker
+outside OP-2 2549511d4fc76a0b spellings: the fragment's parser
+outside OP-2 ee8acc5f10f1aecd division and remainder: a later slice
+outside OP-2 3f9bef0e3d501db9 shifts: a later slice
+outside OP-2 0ecb9a64671c58f9 shifts: a later slice
+outside OP-2 4a071fa752dfc467 division and remainder: a later slice
+outside OP-2 8453dd7dc1abe6ca saturating forms belong to OP-8
+outside OP-2 4b4e29c4a85cddd1 division and remainder: a later slice
+outside OP-2 7dbfa2db3467236c typing: the fragment's checker
+outside OP-2 7f1f67bf143f2482 typing: the fragment's checker
+outside OP-2 1276e30b81cfa6c8 typing: the fragment's checker; the theorems assume a signed type
+outside OP-2 91e0542de1499705 typing: the fragment's checker
+outside OP-2 fac7a2bd6bf7ab80 rejection citations: the fragment's checker
+outside OP-2 4ab9e3d81edb2369 typing: the fragment's checker
+outside OP-2 e887ad5c7088061b mode membership: the fragment's parser and checker
+outside OP-2 fd96f44324d288c6 effects: the fragment's checker
+
+skip OP-1 the operation table and operator resolution: the fragment's parser and checker
+skip OP-3 floats: outside the first phase
+skip OP-4 subscripts: a later slice of the first phase
+skip OP-5 conditions: a later slice of the first phase
+skip OP-6 conversions: outside the first phase
+skip OP-7 naming convention, which carries no semantics
+skip OP-8 bit, saturating and float edge semantics: outside the first phase
+skip OP-9 allocation sizes: outside the first phase
+skip OP-10 window operations: outside the first phase
+skip OP-11 swap: outside the first phase
+skip OP-12 the atomic in-place update: outside the first phase
+skip OP-13 construction: outside the first phase
+skip OP-14 free_empty: outside the first phase
+skip OP-15 measure reads: a later slice of the first phase
+skip OP-16 value equality: a later slice of the first phase
