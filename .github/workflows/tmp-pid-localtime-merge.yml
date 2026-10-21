@@ -108,9 +108,7 @@ jobs:
         run: |
           ulimit -c 0
           cd compiler
-          perl ../.github/run-check.pl tmp/corpus cargo test --profile gate --test corpus --locked --offline -- \
-            programs::local_time programs::open_files programs::heap \
-            programs::runs programs::package_fixtures programs::file_replacement
+          perl ../.github/run-check.pl tmp/corpus cargo test --profile gate --test corpus --locked --offline
 
       - name: conformance
         if: matrix.stage == 'conformance'

@@ -2424,7 +2424,7 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
  * contexts raising through related factories add each credit once. */
 #define WF_LIMIT_ORIGIN 11u
 #if !defined(_WIN32)
-static int wf_limit_lock;
+static unsigned char wf_limit_lock;
 #endif
 
 void wf__body_open_files_limit(wf_limit_result *result, const wf_value *factory) {
