@@ -12,6 +12,7 @@ specification's current text (see `coverage.txt`).
 
 An exact form returns `none` where its domain query is false: the
 specification gives that operation no result, and the model takes no step.
+`iabs.wrap` returns `none` away from `MIN(T)` for the same reason.
 -/
 
 namespace Whitefoot
@@ -131,6 +132,7 @@ def exactForm (op : ArithOp) (t : IntTy) (a b : Int) : Option Int :=
 def wrapForm (op : ArithOp) (t : IntTy) (a b : Int) : Int :=
   t.wrap (op.math a b)
 
+-- spec OP-2 12ccb1e9b931d855
 /-- The checked form. -/
 def checkedForm (op : ArithOp) (t : IntTy) (a b : Int) : Checked :=
   if t.Mem (op.math a b) then .ok (op.math a b) else .overflow
@@ -185,14 +187,21 @@ def math : UnaryOp → Int → Int
 def defined (_ : UnaryOp) (t : IntTy) (x : Int) : Bool :=
   decide (x ≠ t.minVal)
 
+-- spec OP-2 5503711c8aacc135
 /-- The exact form. -/
 def exactForm (op : UnaryOp) (t : IntTy) (x : Int) : Option Int :=
   if op.defined t x then some (op.math x) else none
 
-/-- The wrap form. -/
-def wrapForm (op : UnaryOp) (t : IntTy) (x : Int) : Int :=
-  t.wrap (op.math x)
+-- spec OP-2 b2f9211f8c7d02cf
+/-- The wrap form: `wrap_T(-x)` for negation, and `MIN(T)` for the absolute value
+of `MIN(T)`. OP-2 gives `iabs.wrap` no result at any other operand, and OP-8
+names only its lowering, so the model takes no step there until a rule states
+one (`wf-spec-rule-gaps`). -/
+def wrapForm : UnaryOp → IntTy → Int → Option Int
+  | .neg, t, x => some (t.wrap (-x))
+  | .abs, t, x => if x = t.minVal then some t.minVal else none
 
+-- spec OP-2 12ccb1e9b931d855
 /-- The checked form. -/
 def checkedForm (op : UnaryOp) (t : IntTy) (x : Int) : Checked :=
   if t.Mem (op.math x) then .ok (op.math x) else .overflow
@@ -212,26 +221,46 @@ theorem exactForm_mem {op : UnaryOp} {t : IntTy} {x r : Int} (hs : t.signed = tr
   · rw [ite_eq_right hd] at h
     cases h
 
-/-- On a signed type, where its domain query holds, the exact form returns the
-wrap form's result. -/
-theorem exactForm_eq_wrapForm {op : UnaryOp} {t : IntTy} {x : Int} (hs : t.signed = true)
-    (hx : t.Mem x) (hd : op.defined t x = true) :
-    op.exactForm t x = some (op.wrapForm t x) := by
-  have hr : op.exactForm t x = some (op.math x) := by
+/-- On a signed type, where its domain query holds, exact negation returns the
+wrap form's result, so a discharged negation needs no runtime test. -/
+theorem neg_exactForm_eq_wrapForm {t : IntTy} {x : Int} (hs : t.signed = true)
+    (hx : t.Mem x) (hd : UnaryOp.neg.defined t x = true) :
+    UnaryOp.neg.exactForm t x = UnaryOp.neg.wrapForm t x := by
+  have hr : UnaryOp.neg.exactForm t x = some (UnaryOp.neg.math x) := by
     unfold exactForm
     rw [ite_eq_left hd]
-  have hm : t.Mem (op.math x) := exactForm_mem hs hx hr
-  rw [hr]
-  unfold wrapForm
+  have hr' : UnaryOp.neg.exactForm t x = some (-x) := hr
+  have hm : t.Mem (-x) := exactForm_mem hs hx hr'
+  rw [hr']
+  show some (-x) = some (t.wrap (-x))
   rw [IntTy.wrap_of_mem hm]
 
-/-- `iabs.wrap(MIN(T))` returns `MIN(T)`. -/
-theorem abs_wrapForm_min {t : IntTy} (hs : t.signed = true) :
-    UnaryOp.abs.wrapForm t t.minVal = t.minVal := by
-  cases t <;> simp [IntTy.signed] at hs <;>
-    first
-    | decide
-    | simp [wrapForm, math, IntTy.wrap, IntTy.minVal, IntTy.modulus, IntTy.bits, IntTy.signed]
+/-- On a signed type, the checked form returns `Ok` exactly where the exact form
+returns a result, and with the same value: the checked form's overflow test
+and the exact form's domain query `x != MIN(T)` agree. -/
+theorem checkedForm_ok_iff {op : UnaryOp} {t : IntTy} {x r : Int} (hs : t.signed = true)
+    (hx : t.Mem x) : op.checkedForm t x = .ok r ↔ op.exactForm t x = some r := by
+  by_cases hd : op.defined t x = true
+  · have he : op.exactForm t x = some (op.math x) := by
+      unfold exactForm
+      rw [ite_eq_left hd]
+    have hm : t.Mem (op.math x) := exactForm_mem hs hx he
+    unfold checkedForm
+    rw [he, ite_eq_left hm]
+    simp
+  · have he : op.exactForm t x = none := by
+      unfold exactForm
+      rw [ite_eq_right hd]
+    have hmin : x = t.minVal :=
+      Decidable.byContradiction fun hne => hd (by simp [defined, hne])
+    have hm : ¬ t.Mem (op.math x) := by
+      subst hmin
+      cases op <;> cases t <;>
+        simp [math, IntTy.Mem, IntTy.minVal, IntTy.maxVal, IntTy.bits, IntTy.signed] at hs ⊢ <;>
+        omega
+    unfold checkedForm
+    rw [he, ite_eq_right hm]
+    simp
 
 end UnaryOp
 

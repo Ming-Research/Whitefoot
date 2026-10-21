@@ -9,7 +9,9 @@
 # new rule in a covered family is classified before it merges. HASH is the
 # 64-bit FNV-1a hash of the line's bytes in hexadecimal; blank lines and
 # code-fence lines carry none. `lake exe coverage --show ID` prints a rule's
-# lines with their hashes and dispositions.
+# lines with their hashes and dispositions. `WhitefootProof.lean` must import
+# every source file under `WhitefootProof/`, so that each mark sits in a module
+# that is built and whose declarations the axiom check reads.
 #
 # A change that edits a covered line changes its hash: the check then names
 # the line, and the change updates the model, its proofs and this list.

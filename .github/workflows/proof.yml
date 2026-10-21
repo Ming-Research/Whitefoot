@@ -1,11 +1,11 @@
 # The Lean model of the specification and its proofs, `proof/`
 # (design/language/soundness-proof.md). The sentence coverage check fails
 # when a covered rule's text and the model's coverage list disagree, and the
-# build fails when a proof does not check or a theorem depends on an axiom
-# beyond Lean's standard three. A pull request that changes the
-# specification, the model or this workflow runs it on every push, drafts
-# included, so a covered rule cannot change without the model changing in the
-# same work; a push to main with such a change runs it again.
+# build fails when a proof does not check or any declaration of the model
+# depends on an axiom beyond Lean's standard three. A pull request that
+# changes the specification, the model or this workflow runs it on every push,
+# drafts included, so a covered rule cannot change without the model changing
+# in the same work; a push to main with such a change runs it again.
 name: proof
 
 on:

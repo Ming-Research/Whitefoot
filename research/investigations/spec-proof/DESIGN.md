@@ -207,10 +207,13 @@ precondition (AGENTS.md):
    rule no longer has, and when a covered family gains an unclassified rule,
    and prints the lines concerned. Listing an added line as outside is one
    line of the list; a line marked as modeled changes the model.
-2. The proof. `lake build` checks every theorem, and the build fails when a
-   theorem the model states depends on an axiom beyond Lean's standard three
+2. The proof. `lake build` checks every theorem, and the build fails when any
+   declaration of the model depends on an axiom beyond Lean's standard three
    (`propext`, `Classical.choice`, `Quot.sound`), which excludes an unproved
-   step (`sorry`) and an evaluation the kernel does not check.
+   step (`sorry`), an evaluation the kernel does not check (`native_decide`)
+   and a new `axiom`. The check enumerates the declarations of every module
+   itself, and the coverage check requires the package root to import every
+   module file, so no theorem has to be listed to be checked.
 3. Differential conformance, once the model parses programs. The model's
    parser takes every conformance case written entirely in the fragment's
    constructs. On an `accept` or `run` case, the model must accept, and on a
@@ -369,12 +372,14 @@ No rate is measured for agents writing Lean against this repository's CI;
 each slice records its lines and the turns and CI runs it took, and the
 estimate is replaced by those measurements. The first slice, the check and
 the value part of [OP-2], is 21 marked lines and 26 listed outside of OP-2's
-47, about 250 lines of Lean and ten theorems.
+47: a model of about 290 lines of Lean with ten theorems, beside a coverage
+checker of about 250 lines and an axiom check of about 40.
 
-Each run of `proof.yml` installs a pinned Lean (cached), builds the model and
-proofs and runs the fragment's conformance cases. Lean without Mathlib builds
-a project of this size in minutes; the first slice measures the time, which
-then becomes the stage's budget.
+Each run of `proof.yml` downloads the pinned Lean (about 20 s on GitHub's
+machines), builds the model and proofs and, once the model parses programs,
+runs the fragment's conformance cases. The first slice's coverage check takes
+about 2.5 s and its proofs about 4 s; the stages' budgets follow the
+measurements as they grow.
 
 Each later change of the specification costs, by the measurement in
 [Keeping the proof in step](#keeping-the-proof-in-step), made for a larger
@@ -388,7 +393,7 @@ three days.
 
 Found while reading the rules for this study. "Read" marks a fact in the
 text; "inferred" marks a consequence not yet shown with a program. Finding 6
-is taken up as `wf-sound-set-rhs-target`, findings 2 to 5 and 7 to 12 together
+is taken up as `wf-sound-set-rhs-target`, findings 2 to 5 and 7 to 13 together
 as `wf-spec-rule-gaps`, and finding 1 by the model this study designs.
 
 1. The specification gives safety no runtime meaning to be checked against.
@@ -519,6 +524,15 @@ as `wf-spec-rule-gaps`, and finding 1 by the model this study designs.
     OP-13 do (lines 848, 1279); OP-8 carries editing history ("added in this
     revision", line 1190). Recommended: one specification item for the
     wording.
+13. [OP-2] gives `iabs.wrap` a result only at `MIN(T)`: "The wrap forms
+    return `wrap_T(z)` for add, subtract, multiply, and negation;
+    `iabs.wrap(MIN(T))` returns `MIN(T)`" (line 1076). Its result at every
+    other operand follows only from [OP-8]'s lowering ("use `llvm.abs` with
+    is-int-min-poison false", line 1198) and from [ENT-3.S7]'s range row
+    ("corner hull of abs(a)", line 3854). Read; found in the review of the
+    first slice, whose model takes no step there. Recommended: OP-2 names
+    absolute value among the wrap forms that return `wrap_T(z)`, from which
+    `iabs.wrap(MIN(T))` returning `MIN(T)` follows.
 
 ## Sources
 

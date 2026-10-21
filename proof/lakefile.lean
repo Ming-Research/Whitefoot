@@ -9,6 +9,11 @@ package «whitefoot-proof» where
 @[default_target]
 lean_lib WhitefootProof
 
+-- Building `StandardAxioms` fails when any declaration of the model depends
+-- on an axiom beyond Lean's standard three.
+@[default_target]
+lean_lib StandardAxioms
+
 -- `lake exe coverage` checks the model's sentence coverage of the
 -- specification; `coverage.txt` describes it.
 @[default_target]

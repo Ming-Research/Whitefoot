@@ -1,2 +1,1 @@
 import WhitefootProof.Integers
-import WhitefootProof.Axioms

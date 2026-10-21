@@ -2,8 +2,9 @@
 `lake exe coverage`, run from this directory, checks the model's sentence
 coverage of the specification: every line of every covered rule is marked as
 formalized by a `-- spec <ID> <hash>` comment in a source file under
-`WhitefootProof/`, or listed in `coverage.txt` as outside the model, and every
-mark and listing names a line the specification still has. `coverage.txt`
+`WhitefootProof/`, or listed in `coverage.txt` as outside the model, every
+mark and listing names a line the specification still has, and
+`WhitefootProof.lean` imports every source file there. `coverage.txt`
 gives the list's format. `lake exe coverage --show <ID>` prints each line of a
 rule with its hash and disposition.
 -/
@@ -125,6 +126,28 @@ def parseMarks (file : String) (text : String) : Array (String × Entry) := Id.r
     | _ => pure ()
   return marks
 
+/-- The module a source file under `WhitefootProof/` defines:
+`WhitefootProof.Integers` for `WhitefootProof/Integers.lean`. -/
+def moduleOf (file : System.FilePath) : String :=
+  let cs := file.toString.toList
+  ofChars ((cs.take (cs.length - ".lean".length)).map fun c => if c == '/' then '.' else c)
+
+/-- A problem for each source file under `WhitefootProof/` that
+`WhitefootProof.lean` does not import. Lake builds only what the root imports
+and the axiom check reads only what it builds, so such a file's proofs would go
+unchecked while its marks claimed lines. -/
+def unimported (root : String) (files : Array System.FilePath) : Array String :=
+  let imports := (root.splitOn "\n").filterMap fun line =>
+    match words line with
+    | ["import", m] => some m
+    | _ => none
+  files.filterMap fun file =>
+    if file.extension == some "lean" && !imports.contains (moduleOf file) then
+      some (s!"{file} is not imported by WhitefootProof.lean, so its proofs are not " ++
+        "checked and its marks count for nothing")
+    else
+      none
+
 def shorten (line : String) : String :=
   let cs := line.toList
   if cs.length ≤ 100 then line else ofChars (cs.take 100) ++ "…"
@@ -207,18 +230,22 @@ def main (args : List String) : IO UInt32 := do
       IO.println line
     return 0
   | [] =>
-    let problems := listProblems ++ check rules entries
+    let problems := listProblems ++ unimported (← IO.FS.readFile "WhitefootProof.lean") files ++
+      check rules entries
     if problems.isEmpty then
       let covered := entries.filter fun
         | (_, .rule _) => true
         | _ => false
-      let marks := entries.filter fun
-        | (_, .mark _ _) => true
-        | _ => false
+      let marks := entries.filterMap fun
+        | (_, .mark id h) => some (id, h)
+        | _ => none
+      let marked := marks.foldl (fun seen m => if seen.contains m then seen else seen.push m)
+        (#[] : Array (String × String))
       let outside := entries.filter fun
         | (_, .outside _ _) => true
         | _ => false
-      IO.println s!"coverage: {covered.size} rules covered, {marks.size} lines marked as modeled, {outside.size} listed outside"
+      IO.println (s!"coverage: {covered.size} rules covered, {marked.size} lines marked as " ++
+        s!"modeled by {marks.size} marks, {outside.size} listed outside")
       return 0
     else
       for p in problems do

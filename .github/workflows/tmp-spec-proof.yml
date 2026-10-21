@@ -112,6 +112,9 @@ jobs:
         run: |
           perl ../.github/run-check.pl tmp-proof-coverage lake exe coverage
           perl ../.github/run-check.pl tmp-proof-build lake build
+      - name: The lines of OP-2 and what claims each
+        working-directory: proof
+        run: lake exe coverage --show OP-2
       - name: Each broken input fails
         working-directory: proof
         run: |
@@ -126,6 +129,7 @@ jobs:
             echo "FAIL-DEMO $label: rejected as expected:"
             grep -F -- "$pattern" "$RUNNER_TEMP/out.txt" | head -2
             git checkout -- ..
+            git clean -fdq -- .
           }
           sed -i 's/^The closed integer-type set is /The closed integer type set is /' ../spec/kernel-spec.md
           expect_failure changed-line 'has no line with hash b9d1e5b8e0b6674b' lake exe coverage
@@ -137,7 +141,11 @@ jobs:
           expect_failure uncovered-mark 'OP-3 has no `rule OP-3` entry' lake exe coverage
           sed -i 's/^rule OP-2$/rule OP-99/' coverage.txt
           expect_failure missing-rule 'the specification has no rule OP-99' lake exe coverage
-          printf '\ntheorem demo_unproved : 1 + 1 = 3 := by sorry\n\n#require_standard_axioms demo_unproved\n' >> WhitefootProof/Axioms.lean
+          printf '\ntheorem demo_unproved : 1 + 1 = 3 := by sorry\n' >> WhitefootProof/Integers.lean
           expect_failure unproved-step 'demo_unproved depends on' lake build
-          printf '\ntheorem demo_native : 2 + 2 = 4 := by native_decide\n\n#require_standard_axioms demo_native\n' >> WhitefootProof/Axioms.lean
+          printf '\ntheorem demo_native : 2 + 2 = 4 := by native_decide\n' >> WhitefootProof/Integers.lean
           expect_failure unchecked-evaluation 'demo_native depends on' lake build
+          printf '\naxiom demo_axiom : 1 = 2\n' >> WhitefootProof/Integers.lean
+          expect_failure new-axiom 'demo_axiom depends on' lake build
+          printf 'theorem demo_orphan : 1 + 1 = 3 := by sorry\n' > WhitefootProof/Orphan.lean
+          expect_failure unimported-module 'WhitefootProof/Orphan.lean is not imported by WhitefootProof.lean' lake exe coverage
