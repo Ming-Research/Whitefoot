@@ -1,0 +1,24 @@
+struct Link {
+  v: u64;
+  next: Option<Box<Link>>;
+  invariant small(link): link.v < 16_u64;
+}
+
+struct Chain {
+  head: Link;
+}
+
+fn inspect(link: &Link) -> result: u64 reads(link.v) {
+  let got = link^.v;
+  return got;
+}
+
+fn peek(chain: Shared<Chain>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic s = &chain {
+    if s^.head.v < 16_u64 {
+      set got = inspect(link: &s^.head);
+    }
+  }
+  return got;
+}

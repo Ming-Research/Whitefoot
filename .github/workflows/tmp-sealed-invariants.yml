@@ -85,7 +85,8 @@ jobs:
             type11-pos-unknown-position-element-checked type11-neg-unknown-position-element-unchecked \
             type11-neg-unknown-position-whole-container type11-pos-atomic-element-checked \
             type11-neg-atomic-element-unchecked type11-pos-atomic-field-checked \
-            type11-neg-atomic-field-unchecked; do
+            type11-neg-atomic-field-unchecked type11-pos-unknown-position-whole-container-replaced \
+            type11-pos-atomic-recursive-value-replaced type11-neg-atomic-recursive-value; do
             compare "$case" "tests/conformance/cases/$case.wf"
           done
           probe="$RUNNER_TEMP/probe"
