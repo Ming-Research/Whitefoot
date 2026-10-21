@@ -93,7 +93,7 @@ as if the statement had never arrived:
 | Wait | What the waiter may own when the deadline passes | What withdrawal must do |
 |---|---|---|
 | First ordinary object: parked on the object's queue | A queue link; a wake (the unlocker popped it and left the object free); a hand-off (after `WF_SHARED_HANDOFF` vain wakes the unlocker made it the holder), which a running statement may be borrowing | Unlink; release a handed-off object as an ordinary quiet unlock, after claiming it back and waiting for a borrower to give it back, as a resuming context does; pass a wake on to the next queued context when the object is free |
-| Later ordinary object: a claim on its own stack | A claim link, which refuses parking newcomers, possibly with the claims' turn set (`take_turn`); a granted claim; a borrowed hold (the oldest claim, or a take's first look when no claim waits, may borrow a hold an unlock handed to a parked context) | Unlink the claim (and hand back the reservation slot if its record is the queue tail); release a granted object; give a borrowed hold back to the context it was handed to |
+| Later ordinary object: a claim on its own stack | A claim link, which refuses parking newcomers, possibly with the claims' turn set (`take_turn`); a granted claim; a borrowed hold (the oldest claim, or a take's first look when no claim waits, may borrow a hold an unlock handed to a parked context) | Unlink the claim (and hand back the reservation slot if its record is the queue tail); when it was the last claim, end the claims' turn, as a grant does, since today a claim leaves only through a grant; release a granted object; give a borrowed hold back to the context it was handed to |
 | Guard false: parked on a watch | A watch link; a notification; a reservation that refuses newcomers holding nothing | Unlink the watch; pass a notification on as a retry that wrote nothing does; clear a reservation and wake the queue head when the object is free |
 | Map entries: spinning on cell lock bits | Cell locks already taken | Release the taken cells in reverse order; nothing is queued |
 | Whole map: ticket lock, then the gate | A ticket in `hold_next` / `hold_serving`, possibly being served | A ticket cannot be abandoned: a withdrawing waiter either keeps spinning until served and then releases at once, or the ticket lock gains a skip mark. This is an implementation choice for `atomic-until-impl`, not modelled below |
@@ -144,46 +144,24 @@ Checked in every reachable state and every final state:
   the timer fired;
 - the `else` branch only after the timer fired, and then no body effect;
 - every final state has every context completed, every unit free, and no
-  queue, claim or watch link, pending hand-off, borrow, notification or
-  reservation left;
+  queue, claim or watch link, claims' turn, pending hand-off, borrow,
+  notification or reservation left;
 - from every reachable state a final state is reachable, so no wake, grant,
   notification or reservation is lost.
 
 A coverage count shows that the races are reached: the timer firing while
-the timed statement holds a unit, waits on a claim (also while the claims
+the timed statement holds a unit (also after it waited, before it takes the
+next unit), waits on a claim (also while the claims
 hold the turn), has a hand-off not yet taken up (also while a running
 statement borrows it), holds a borrowed unit, owns a notification, owns a
 reservation, and has been woken; a count of zero fails the run. Each of
-seven deliberately broken protocols must fail at least one configuration:
-keeping the units taken, keeping a hand-off not yet taken up, leaving the
-links, dropping a wake, keeping a notification, keeping a reservation, and
-admitting after expiry.
+eight deliberately broken protocols must fail at least one configuration:
+keeping the units taken, keeping a hand-off not yet taken up, keeping the
+claims' turn after withdrawing the last claim, leaving the links, dropping
+a wake, keeping a notification, keeping a reservation, and admitting after
+expiry.
 
-Result (GitHub-hosted `ubuntu-24.04`, workflow run 39521013539, model at
-commit 939b6c715, 17 s): the proposed protocol passes all 38
-configurations, 359,153 reachable states in total; the largest, two units
-with all five kinds of statement and the guarded timed statement, has
-167,874. Both outcomes occur: 340 final states with the body, 286 with
-`else`. The races are reached: the timer fires while the timed statement
-holds a unit (19,215 states), waits on a claim (3,801; 128 of them while
-the claims hold the turn), has a hand-off not yet taken up (4,477; 12 of
-them while a running statement borrows it), holds a borrowed unit (1,628),
-owns a notification (26,164), owns a reservation (9,934), and has been
-woken (11,658). Each broken protocol fails. The model reports the first
-failing configuration and the violated check ("admitted after expiry" for
-admitting after expiry, a state with no step that is not final for the
-others); the cause column is deduced from the mutation, not read from a
-trace:
-
-| Broken protocol | First failing configuration | Cause |
-|---|---|---|
-| Keep the units taken | one unit, writer and timed guarded statement | a unit stays held; no completion |
-| Keep a hand-off not yet taken up | the same | the handed unit is never released |
-| Leave the links | the same | a later unlock hands the unit to the departed statement |
-| Drop a wake | one unit, writer, timed and untimed guarded statements | a parked statement is never woken while the unit is free |
-| Keep a notification | one unit, writer and timed guarded statement | the notification is never passed on |
-| Keep a reservation | the same | newcomers stay refused |
-| Admit after expiry | the same | the body runs after the timer fired |
+RESULTS-PLACEHOLDER
 
 What the model does not cover: map entries and whole-map tickets (rows four
 and five), lazily taken groups (excluded by the eager rule above), a

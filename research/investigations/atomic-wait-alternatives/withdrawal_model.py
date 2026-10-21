@@ -53,6 +53,7 @@ MUTANTS = (
     "keep_reservation",  # a reserved waiter that withdraws keeps the reservation
     "late_admit",        # admission does not check the expiry
     "keep_grant",        # withdrawal keeps a hand-off it has not taken up
+    "keep_turn",         # withdrawing the last claim keeps the claims' turn
 )
 
 # Context kinds.  Each has the units it takes (in lock order), whether it has
@@ -261,6 +262,10 @@ def withdraw(st, cfg, c, mutant, handoff):
                 unit[QUEUE].remove(c)
             if c in unit[CLAIMS]:
                 unit[CLAIMS].remove(c)
+                # A claim leaves today only through a grant, which ends the
+                # claims' turn; the last claim withdrawn ends it the same way.
+                if not unit[CLAIMS] and mutant != "keep_turn":
+                    unit[TURN] = False
         if c in st.watches:
             st.watches.remove(c)
     if mutant != "keep_held":
@@ -456,7 +461,7 @@ def is_final(s, cfg):
     return (
         all(c[PC] == "done" for c in ctxs)
         and all(u[HOLDER] is None and not u[QUEUE] and not u[CLAIMS] and u[GRANTED] is None
-                and u[BORROWER] is None and not u[CLAIMED] for u in units)
+                and u[BORROWER] is None and not u[CLAIMED] and not u[TURN] for u in units)
         and not watches and notif is None and resv is None
     )
 
@@ -484,7 +489,8 @@ def explore(cfg, mutant):
              "expired while its hand-off is borrowed": 0,
              "expired holding a borrowed unit": 0,
              "expired with notification": 0, "expired with reservation": 0,
-             "expired after a wake": 0}
+             "expired after a wake": 0,
+             "expired holding a unit after waiting": 0}
     t = cfg.kinds.index("T")
     for s, succ in edges.items():
         ctxs, units = s[0], s[1]
@@ -508,6 +514,8 @@ def explore(cfg, mutant):
                 cover["expired with reservation"] += 1
             if me[WOKEN]:
                 cover["expired after a wake"] += 1
+            if me[HELD] > 0 and me[PC] == "acq" and me[STATUS] == "run" and me[WAITED]:
+                cover["expired holding a unit after waiting"] += 1
         for v in s[7]:
             failures.append((v, s))
         if not succ:
