@@ -32,6 +32,7 @@ import argparse
 import collections
 import concurrent.futures
 import json
+import os
 import re
 import statistics
 import subprocess
@@ -222,7 +223,14 @@ def lines(*args):
     return [json.loads(line) for line in gh(*args).splitlines() if line.strip()]
 
 
+def save(path, samples):
+    with open(path + ".tmp", "w") as handle:
+        json.dump(samples, handle)
+    os.replace(path + ".tmp", path)
+
+
 def collect(repo, workflows, since, path, limit):
+    """Add the jobs of finished runs to the samples file; a rerun skips known jobs."""
     try:
         with open(path) as handle:
             samples = json.load(handle)
@@ -246,16 +254,22 @@ def collect(repo, workflows, since, path, limit):
                      "--jq", ".workflow_runs[] | {id, head_sha, head_branch, run_attempt, conclusion} | tojson")
         runs = [r for r in runs if r["conclusion"] in ("success", "failure")][:limit]
         with concurrent.futures.ThreadPoolExecutor(6) as pool:
-            for found in pool.map(lambda run: fetch(run, workflow), runs):
+            for done, found in enumerate(pool.map(lambda run: fetch(run, workflow), runs), 1):
                 samples["jobs"].update(found)
+                if done % 10 == 0:
+                    save(path, samples)
+                    print(f"{workflow}: {done} of {len(runs)} runs", file=sys.stderr, flush=True)
         print(f"{workflow}: {len(runs)} runs, {len(samples['jobs'])} jobs kept", file=sys.stderr)
-    with open(path, "w") as handle:
-        json.dump(samples, handle)
+    save(path, samples)
 
 
-def load(path):
-    with open(path) as handle:
-        return json.load(handle)
+def load(paths):
+    """The jobs of every samples file, as one."""
+    jobs = {}
+    for path in paths:
+        with open(path) as handle:
+            jobs.update(json.load(handle)["jobs"])
+    return {"jobs": jobs}
 
 
 def print_report(report):
@@ -357,7 +371,7 @@ def main():
     fetch.add_argument("--samples", required=True)
     for name in ("table", "replay"):
         command = sub.add_parser(name)
-        command.add_argument("--samples", required=True)
+        command.add_argument("--samples", required=True, nargs="+", help="samples files from collect")
         command.add_argument("--budgets", default=".github/time-budgets.txt")
         command.add_argument("--window", type=int, default=DEFAULT_WINDOW)
         command.add_argument("--keep", action="append", default=[], help="a stage to leave untouched")

@@ -3,7 +3,11 @@
 # names. Each stage/class budget is the maximum of at least its 20 most recent
 # recorded runs plus 10%, rounded up to 5 s. The prior 10 s floor remains,
 # rather than coming from the 2026-10-13 ruling; it can affect only stages
-# whose measured maximum is below about 9 s.
+# whose measured maximum is below about 9 s. .github/recompute-time-budgets.py
+# applies the rule to the stage times in CI logs; the Linux columns were last
+# recomputed on 2026-10-21 over the 50 most recent runs of each stage and class
+# (research/investigations/test-economy/time-budgets.md, "Recomputing the Linux
+# budgets").
 # A model with fewer than 20 runs has no column. An unmapped model uses the
 # stage's largest Linux class budget and is reported by name. Unsampled rows
 # retain the former Linux values until per-CPU runs are recorded in
