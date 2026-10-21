@@ -7,10 +7,11 @@
 # work-counter run each.
 #
 # The downstream sources predate main's rule OP-5 (a conditional test whose
-# outcome the checker already knows is rejected), so the merged compiler rejects
-# them. The adapt step deletes each test OP-5 reports, one at a time, with the
-# merged compiler, so every compiler times the same accepted source; the
-# older compilers accept the shorter source too.
+# outcome the checker already knows is rejected) and a grammar change that makes
+# `held` unusable as a parameter name, so the merged compiler rejects them. The
+# adapt step applies the compiler's own mechanical fix for each rejection, one
+# at a time, with the merged compiler, so every compiler times the same
+# accepted source; the older compilers accept the adapted source too.
 name: tmp-halo-check-cost
 
 on:
@@ -56,20 +57,10 @@ jobs:
             rounds: 5
             main_rounds: 5
             adapt_max: 200
-          # pkg::test: the baseline is the compiler of the earlier run; main
-          # takes about ten minutes a check, so it runs once.
-          - label: halo pkg::test
-            repo: Halo-wf
-            rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
-            args: --graph tests/halo-vm/modules.wfg --check-module pkg::test
-            base: d837678c6905
-            rounds: 3
-            main_rounds: 1
-            adapt_max: 200
-          # Firn whole program, at the main the earlier measurement used last.
-          - label: firn now
+          # Firn whole program, at the revision the 10-13 measurement used.
+          - label: firn
             repo: Firn-wf
-            rev: 97037839080693708361bfd06d6ed789ed2a4808
+            rev: b83b67fa0d7b463dbafe5429b013efc04e39076a
             args: --graph firn/modules.wfg --entry firn --check
             base: 7d9118eba
             rounds: 5
@@ -106,36 +97,59 @@ jobs:
           cmd = os.environ['ARGS'].split(); cap = int(os.environ['ADAPT_MAX'])
           env = {k: v for k, v in os.environ.items() if k not in ('WHITEFOOT_CHECK_WORK', 'WHITEFOOT_TIME_BUDGET_RECORD')}
           site = re.compile(r'rejected: (\S+?):(\d+):(\d+): error\[([A-Za-z0-9-]+)\]')
-          notes = []; fixed = 0; end = 'cap reached'
-          def delete_test(path, number):
+          notes = []; end = 'cap reached'
+          def block_end(lines, start, indent):
+              return next((n for n in range(start, len(lines)) if lines[n].startswith(indent + '}') and not lines[n].startswith(indent + ' ')), None)
+          def fix_redundant(path, number, decided):
               lines = (src / path).read_text().split('\n'); i = number - 1
               m = re.match(r'^(\s*)if (.*) \{$', lines[i])
               if not m: return f'not a statement-form if: {lines[i]!r}'
               indent = m.group(1)
-              j = next((n for n in range(i + 1, len(lines)) if lines[n].startswith(indent + '}') and not lines[n].startswith(indent + ' ')), None)
+              j = block_end(lines, i + 1, indent)
               if j is None: return 'no closing brace at the same indent'
-              inner = [l[2:] if l.startswith('  ') else l for l in lines[i + 1:j]]
-              tail = j + 1
+              then = [l[2:] if l.startswith('  ') else l for l in lines[i + 1:j]]; other = []; tail = j + 1
               if lines[j] == indent + '} else {':
-                  k = next((n for n in range(j + 1, len(lines)) if lines[n].startswith(indent + '}') and not lines[n].startswith(indent + ' ')), None)
+                  k = block_end(lines, j + 1, indent)
                   if k is None or lines[k] != indent + '}': return 'else branch is not a plain block'
-                  tail = k + 1
+                  other = [l[2:] if l.startswith('  ') else l for l in lines[j + 1:k]]; tail = k + 1
               elif lines[j] != indent + '}': return f'closing line is {lines[j]!r}'
-              (src / path).write_text('\n'.join(lines[:i] + inner + lines[tail:]))
+              keep = then if decided == 'True' else other
+              rest = lines[tail:]
+              # Statements after a kept `return` at this level are unreachable.
+              last = next((l for l in reversed(keep) if l.strip()), None)
+              if last is not None and last.startswith(indent + 'return') and len(last) - len(last.lstrip()) == len(indent):
+                  cut = next((n for n, l in enumerate(rest) if l.strip() and len(l) - len(l.lstrip()) < len(indent)), len(rest))
+                  rest = rest[cut:]
+              (src / path).write_text('\n'.join(lines[:i] + keep + rest))
               return None
+          def rename_held():
+              changed = 0
+              for path in src.rglob('*'):
+                  if path.suffix not in ('.wf', '.wfm') or 'deps' in path.relative_to(src).parts: continue
+                  text = path.read_text(); new = re.sub(r'\bheld\b', 'held_n', text)
+                  if new != text: path.write_text(new); changed += 1
+              return changed
           for n in range(cap + 1):
               r = subprocess.run([str(binary), *cmd], cwd=src, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
               if r.returncode == 0: end = 'accepted'; break
               (out / 'adapt-last.log').write_text(r.stdout)
               m = site.search(r.stdout)
-              if not m or m.group(4) != 'OP-5': end = 'stopped at a different rejection'; break
+              if not m: end = 'stopped: no located rejection'; break
               if n == cap: break
-              why = delete_test(m.group(1), int(m.group(2)))
-              if why: end = f'cannot delete the test at {m.group(1)}:{m.group(2)}: {why}'; break
-              fixed += 1; notes.append(f'{m.group(1)}:{m.group(2)}'); print('deleted', notes[-1], flush=True)
+              where = f'{m.group(1)}:{m.group(2)}'
+              if m.group(4) == 'OP-5':
+                  d = re.search(r'decided: (True|False)', r.stdout[m.end():])
+                  why = fix_redundant(m.group(1), int(m.group(2)), d.group(1) if d else '?') if d else 'no decided value'
+                  if why: end = f'cannot fix {where}: {why}'; break
+                  notes.append('OP-5 ' + where)
+              elif m.group(4) == 'FORM-3' and 'found: "held"' in r.stdout[m.end():m.end() + 1500] and not any(x.startswith('held') for x in notes):
+                  notes.append(f'held renamed in {rename_held()} files')
+              else:
+                  end = f'stopped at {where} {m.group(4)}'; break
+              print('applied', notes[-1], flush=True)
           diff = subprocess.run(['git', 'diff'], cwd=src, stdout=subprocess.PIPE, text=True).stdout
-          (out / 'adapt.diff').write_text(diff)
-          line = f'## Adapt `{os.environ["ARGS"]}`: {fixed} tests deleted, ended: {end}\n'
+          (out / 'adapt.diff').write_text(diff); (out / 'adapt-notes.txt').write_text('\n'.join(notes) + '\n')
+          line = f'## Adapt `{os.environ["ARGS"]}`: {len(notes)} fixes, ended: {end}\n'
           print(line, flush=True)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(line)
           PY
