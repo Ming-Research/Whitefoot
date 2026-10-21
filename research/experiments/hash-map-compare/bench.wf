@@ -420,9 +420,7 @@ fn write_line(factory: &HandleFactory, output: &OutputStream, line: &Slots<u8, 2
   if line^.len > 0_u64 {
     let dropped = take_back(window: line);
   }
-  if line^.len < line^.cap {
-    place_back(window: line, value: 10_u8);
-  }
+  place_back(window: line, value: 10_u8);
   let length = line^.len;
   let source = &line^[0_u64..length];
   let sent = 0_u64;
