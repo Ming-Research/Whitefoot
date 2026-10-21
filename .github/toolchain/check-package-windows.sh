@@ -148,6 +148,12 @@ for attempt in $(seq 1 60); do
 done
 docker info > "$logs/docker-info.txt"
 docker rm -f "$name" > /dev/null 2>&1 || true
+restore() { # the negative tests hide one component at a time
+  for hidden in "$package"/*.hidden "$package"/*/*.hidden "$package"/lib/clang/22/*.hidden; do
+    [ -e "$hidden" ] && mv "$hidden" "${hidden%.hidden}"
+  done
+  return 0
+}
 trap 'docker rm -f "$name" > /dev/null 2>&1 || true; restore' EXIT
 docker run --detach --name "$name" --isolation process \
   --mount "type=bind,src=$(cygpath -w "$work"),dst=C:\\work" "$image" ping -t localhost > /dev/null
@@ -191,7 +197,7 @@ cexec_at 'C:\work\installed here' install-from-guide powershell -NoProfile -Exec
   -File 'C:\work\tools\install-from-guide.ps1'
 grep -F 'whitefootc-windows-x86_64-bundled.zip: OK' "$logs/install-from-guide.txt"
 printed=$(tr -d '\r' < "$logs/install-from-guide.txt" | grep -x -E '[0-9]+' | tr '\n' ' ')
-test "$printed" = "$(tr '\n' ' ' < "$work/tools/guide-exit-codes.txt")"
+test "$printed" = "$(tr -d '\r' < "$work/tools/guide-exit-codes.txt" | tr '\n' ' ')"
 test -f "$work/installed here/first.exe"
 test -f "$work/installed here/checked.exe"
 cp "$work/installed here/first.exe" "$work/out/guide-first.exe"
@@ -251,12 +257,6 @@ report_run() { # label : read the exit code the wrapper wrote and show the run
   code=$(tr -d '\r\n ' < "$logs/$label.code")
   cat "$logs/$label.out" "$logs/$label.err"
   printf 'Exit (%s): %s\n' "$label" "$code"
-}
-restore() { # the negative tests hide one component at a time
-  for hidden in "$package"/*.hidden "$package"/*/*.hidden "$package"/lib/clang/22/*.hidden; do
-    [ -e "$hidden" ] && mv "$hidden" "${hidden%.hidden}"
-  done
-  return 0
 }
 
 cexec bundle-version "$package_c\\bin\\clang.exe" --version
