@@ -108,9 +108,17 @@ PY
 name=wf-clean-windows
 # The hosted image starts its container engine in the background, so the first
 # call can come before it listens: give it a bounded time, then fail with the
-# engine's own message.
-for attempt in $(seq 1 24); do
+# engine's own message. One run found no engine after two minutes, so after
+# one minute the engine's service state goes to the log and a stopped service
+# is started; the bound is five minutes.
+for attempt in $(seq 1 60); do
   docker info > /dev/null 2>&1 && break
+  if [ "$attempt" -eq 12 ]; then
+    powershell.exe -NoProfile -Command \
+      'Get-Service docker | Format-List Name,Status,StartType; Start-Service docker' \
+      > "$logs/docker-service.txt" 2>&1 || true
+    cat "$logs/docker-service.txt"
+  fi
   sleep 5
 done
 docker info > "$logs/docker-info.txt"
