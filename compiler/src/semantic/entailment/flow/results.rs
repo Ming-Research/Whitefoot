@@ -949,9 +949,10 @@ impl Reasoning<'_, '_, '_> {
                     place: written,
                     relocation,
                     ..
-                } => self
-                    .input
-                    .write_kills_support(&state.separations, &place, written, *relocation),
+                } => {
+                    self.input
+                        .write_kills_support(&state.separations, &place, written, *relocation)
+                }
             }) {
                 return false;
             }
@@ -1083,7 +1084,9 @@ mod tests {
     fn numeric_result_transport_preserves_the_complete_candidate_set() {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
+        let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            captured_places: &captured_places,
             judge_conditions: true,
             declarations: &[],
             callees: &[],

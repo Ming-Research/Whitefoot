@@ -1,0 +1,19 @@
+struct Node {
+  parent_slot: u64;
+  count: u64;
+}
+
+fn select(table: &[Slots<u8, 8>], n: &Node, i: u64) -> result: u8 reads(table), reads(n.parent_slot) contract {
+  requires n^.parent_slot < table^.len;
+} {
+  doc "ENT-2: a user-defined parent_slot field supplies a tracked offset independently of field spelling, and the selected row's len guard proves the nested read.";
+  if i < table^[n^.parent_slot].len {
+    return table^[n^.parent_slot][i];
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The function body is checked without a call.";
+  return std::process::exit_status(code: 0_u8);
+}
