@@ -1393,8 +1393,9 @@ struct AnalysisRun {
 
 /// [TYPE-11.S6] walks the body from empty loop-header debts, and again from
 /// the debts the last walk found on each loop's backedges, until no backedge
-/// carries a debt its header did not start with: the least set, reached by
-/// monotone iteration, since a walk from more debts leaves no fewer.
+/// carries a debt its header did not start with, or one its header's would
+/// restore over other terms [TYPE-11.S5]: the least set, reached by monotone
+/// iteration, since a walk from more debts leaves no fewer.
 fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisRun {
     let _work = super::work::function(&function.name);
     let mut seeds = HashMap::new();
@@ -1403,7 +1404,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         let settled = backedges.iter().all(|(id, debts)| {
             seeds
                 .get(id)
-                .is_some_and(|seed: &Debts| debts.keys_within(seed))
+                .is_some_and(|seed: &Debts| debts.settled_within(seed))
         });
         if settled {
             return run;

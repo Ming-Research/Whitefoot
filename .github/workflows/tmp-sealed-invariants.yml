@@ -65,8 +65,9 @@ jobs:
             WHITEFOOT_DEBUG_SEALING=1 ./compiler/target/gate/whitefootc --check "$2" 2>&1 | head -400
           }
           for case in range2-pos-module-boxed-dispatch-backedge type11-pos-loop-reference-restored \
-            type11-pos-generic-arena type11-neg-generic-arena-writer-exit \
-            type11-neg-generic-type-parameter-datum; do
+            type11-neg-loop-reference-cover type11-pos-reference-two-targets-restored \
+            type11-neg-reference-rebound-before-restored type11-pos-generic-arena \
+            type11-neg-generic-arena-writer-exit type11-neg-generic-type-parameter-datum; do
             check "$case" "tests/conformance/cases/$case.wf"
           done
           probe="$RUNNER_TEMP/probe"
@@ -262,6 +263,10 @@ jobs:
             let got = inspect(link: &head);
             return got;
           }" "$main"
-          for name in follow-none follow-written walk-const; do
+          for name in walk-const walk-guard; do
             trace "$name" "$probe/$name.wf"
+          done
+          for case in type11-pos-loop-reference-restored type11-pos-reference-two-targets-restored \
+            type11-neg-reference-rebound-before-restored; do
+            trace "$case" "tests/conformance/cases/$case.wf"
           done

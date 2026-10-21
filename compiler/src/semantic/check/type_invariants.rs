@@ -453,11 +453,9 @@ impl<'unit> Checker<'_, 'unit> {
             .into_iter()
             .flatten()
             .map(|invariant| CheckedRequirement {
-                template: GoalTemplate::new(substitute_goal(
-                    &invariant.goal.root,
-                    ordinal,
-                    reference,
-                )),
+                template: GoalTemplate::new(
+                    invariant.goal.root.over_parameter(ordinal, reference),
+                ),
                 clause: invariant.clause.clone(),
                 subject: Some(ordinal),
             })
@@ -1119,43 +1117,6 @@ impl TypeContext<'_> {
                 CheckedConst::Derived(_) => None,
             },
         )
-    }
-}
-
-/// [TYPE-11] the predicate over the parameter at `ordinal`: its value, or
-/// its referent when `reference`, in place of parameter zero.
-fn substitute_goal(expression: &GoalExpression, ordinal: u32, reference: bool) -> GoalExpression {
-    match expression {
-        GoalExpression::Datum(GoalDatum::Parameter {
-            ordinal: 0,
-            projections,
-            ty,
-        }) => GoalExpression::Datum(GoalDatum::Parameter {
-            ordinal,
-            projections: reference
-                .then_some(GoalProjection::Deref)
-                .into_iter()
-                .chain(projections.iter().copied())
-                .collect(),
-            ty: *ty,
-        }),
-        GoalExpression::Datum(datum) => GoalExpression::Datum(datum.clone()),
-        GoalExpression::Operation {
-            row,
-            type_arguments,
-            const_arguments,
-            result,
-            arguments,
-        } => GoalExpression::Operation {
-            row: *row,
-            type_arguments: type_arguments.clone(),
-            const_arguments: const_arguments.clone(),
-            result: *result,
-            arguments: arguments
-                .iter()
-                .map(|argument| substitute_goal(argument, ordinal, reference))
-                .collect(),
-        },
     }
 }
 

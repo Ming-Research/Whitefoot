@@ -35,10 +35,22 @@ pub(super) struct Debt {
     /// The invariant's position among the affine invariants of the anchor's
     /// struct; `None` for a cover.
     invariant: Option<usize>,
-    /// The breaking events in walk order, which only the diagnostic reads.
+    /// The breaking events in walk order, which the diagnostic reads.
     events: Vec<crate::NodePath>,
     /// Whether a widening lost an identity the debt was restorable through.
     widened: bool,
+    /// The reference every breaking event wrote through, while no kill
+    /// batch has rebound or ended it [TYPE-11.S5].
+    through: Option<Through>,
+}
+
+/// [TYPE-11.S5] the reference a debt's breaking events all wrote through,
+/// and the projection each formed from its referent to the debt's anchor:
+/// the terms the debt is restored over.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Through {
+    holder: BindingId,
+    steps: Vec<PlaceStep>,
 }
 
 impl Debt {
@@ -47,7 +59,9 @@ impl Debt {
     }
 
     /// This debt with its anchor's first `depth` steps replaced by `onto`
-    /// [TYPE-11.S3]; a cover above `onto` covers all of it.
+    /// [TYPE-11.S3]; a cover above `onto` covers all of it. The rebased debt
+    /// records no reference [TYPE-11.S2]: no reference names the place its
+    /// value moved to.
     fn rebased(&self, depth: usize, onto: &ResolvedPlace) -> Self {
         let mut anchor = onto.clone();
         anchor
@@ -55,6 +69,7 @@ impl Debt {
             .extend_from_slice(self.anchor.path.get(depth..).unwrap_or_default());
         Self {
             anchor,
+            through: None,
             ..self.clone()
         }
     }
@@ -70,7 +85,8 @@ impl Debts {
     }
 
     /// Adds one debt, uniting its breaking events with those of the debt of
-    /// the same key [TYPE-11.S6].
+    /// the same key [TYPE-11.S6]; the united events wrote through one
+    /// reference only where both debts' did [TYPE-11.S5].
     fn add(&mut self, debt: Debt) {
         if let Some(existing) = self.0.iter_mut().find(|known| known.same_key(&debt)) {
             for event in debt.events {
@@ -79,6 +95,9 @@ impl Debts {
                 }
             }
             existing.widened |= debt.widened;
+            if existing.through != debt.through {
+                existing.through = None;
+            }
         } else {
             self.0.push(debt);
         }
@@ -90,11 +109,14 @@ impl Debts {
         }
     }
 
-    /// Whether every key of these debts is a key of `other`.
-    pub(super) fn keys_within(&self, other: &Self) -> bool {
-        self.0
-            .iter()
-            .all(|debt| other.0.iter().any(|known| known.same_key(debt)))
+    /// Whether every debt of these is a debt of `other` that is restored over
+    /// the same reference's terms or over its anchor's own [TYPE-11.S5].
+    pub(super) fn settled_within(&self, other: &Self) -> bool {
+        self.0.iter().all(|debt| {
+            other.0.iter().any(|known| {
+                known.same_key(debt) && (known.through.is_none() || known.through == debt.through)
+            })
+        })
     }
 
     /// Removes and returns the debts `select` picks.
@@ -233,32 +255,42 @@ fn has_unknown_offset(place: &ResolvedPlace) -> bool {
 }
 
 /// [TYPE-11.S3] `debt` after a kill batch wrote or ended `binding` while the
-/// debt was not restored: an offset reading the binding widens to `[?]`, and
-/// an anchor carrying the binding's current target identity widens to its
-/// cover.
+/// debt was not restored: an offset reading the binding widens to `[?]`, an
+/// anchor carrying the binding's current target identity widens to its
+/// cover, and a debt restored through the binding is restored over its
+/// anchor's own terms from then on [TYPE-11.S5].
 fn widened(mut debt: Debt, binding: BindingId) -> Debt {
+    if debt
+        .through
+        .as_ref()
+        .is_some_and(|through| through.holder == binding)
+    {
+        debt.through = None;
+    }
+    let mut lost = false;
     if let Some(position) = carried_by(&debt.anchor, binding) {
         debt.anchor.path.truncate(position);
         debt.invariant = None;
+        lost = true;
     }
     let current = CapturedTerm::Binding(binding);
+    let mut forget = |value: &mut CapturedValue| {
+        if value.term == current {
+            *value = CapturedValue::unknown();
+            lost = true;
+        }
+    };
     for step in &mut debt.anchor.path {
         match step {
-            PlaceStep::Index(value) | PlaceStep::Page(value) if value.term == current => {
-                *value = CapturedValue::unknown();
-            }
+            PlaceStep::Index(value) | PlaceStep::Page(value) => forget(value),
             PlaceStep::Range(range) => {
-                if range.start.term == current {
-                    range.start = CapturedValue::unknown();
-                }
-                if range.end.term == current {
-                    range.end = CapturedValue::unknown();
-                }
+                forget(&mut range.start);
+                forget(&mut range.end);
             }
             _ => {}
         }
     }
-    debt.widened = true;
+    debt.widened |= lost;
     debt
 }
 
@@ -475,12 +507,16 @@ impl Input<'_, '_> {
     /// [TYPE-11.S3] the write row: a write at `written` adds a debt for each
     /// anchor strictly above the first `limit` steps of the written place and
     /// each affine invariant of the anchor whose read set the write reaches.
+    /// A write through the reference `through` names, whose referent is the
+    /// written place's first steps up to the given count, records that
+    /// reference on each debt at or below the referent [TYPE-11.S5].
     pub(super) fn seal_write(
         &self,
         debts: &mut Debts,
         oracle: &dyn SeparationOracle,
         written: &ResolvedPlace,
         limit: usize,
+        through: Option<(BindingId, usize)>,
         source: &crate::NodePath,
     ) {
         if !self.sealing {
@@ -518,6 +554,12 @@ impl Input<'_, '_> {
                         invariant: Some(index),
                         events: vec![source.clone()],
                         widened: false,
+                        through: through.filter(|(_, referent)| depth >= *referent).map(
+                            |(holder, referent)| Through {
+                                holder,
+                                steps: written.path[referent..depth].to_vec(),
+                            },
+                        ),
                     });
                 }
             }
@@ -542,6 +584,7 @@ impl Input<'_, '_> {
                 invariant: None,
                 events: vec![source.clone()],
                 widened: false,
+                through: None,
             });
         }
     }
@@ -641,6 +684,27 @@ impl Input<'_, '_> {
     fn sealed_instance(&self, anchor: &ResolvedPlace, index: usize) -> Option<GoalExpression> {
         let ty = (*self.sealed_prefix_types(anchor).last()?)?;
         let image = self.sealed_image(anchor, ty)?;
+        self.instance_over(&image, ty, index)
+    }
+
+    /// [TYPE-11.S5] the instance that restores `debt`: read over the terms
+    /// the reference its breaking events all wrote through forms, or else
+    /// from its anchor's image. A cover and an anchor at `[?]` form none.
+    fn restoration_instance(&self, debt: &Debt) -> Option<GoalExpression> {
+        let index = debt.invariant?;
+        if has_unknown_offset(&debt.anchor) {
+            return None;
+        }
+        let Some(through) = &debt.through else {
+            return self.sealed_instance(&debt.anchor, index);
+        };
+        let ty = (*self.sealed_prefix_types(&debt.anchor).last()?)?;
+        let referent = ResolvedPlace {
+            atomic_aliases: Vec::new(),
+            root: PlaceRoot::Binding(through.holder),
+            path: through.steps.clone(),
+        };
+        let image = self.goal_place_datum(&referent, ty)?;
         self.instance_over(&image, ty, index)
     }
 
@@ -841,6 +905,7 @@ impl Input<'_, '_> {
                 invariant: None,
                 events: vec![source.clone()],
                 widened: false,
+                through: None,
             });
             return;
         }
@@ -851,6 +916,7 @@ impl Input<'_, '_> {
                     invariant: Some(index),
                     events: vec![source.clone()],
                     widened: false,
+                    through: None,
                 });
             }
         }
@@ -926,10 +992,11 @@ impl Reasoning<'_, '_, '_> {
         eprintln!("[sealing] {label}");
         for debt in &state.debts.0 {
             eprintln!(
-                "[sealing]   debt {} {:?} widened={}",
+                "[sealing]   debt {} {:?} widened={} through={:?}",
                 self.input.render_place(&debt.anchor),
                 debt.invariant,
-                debt.widened
+                debt.widened,
+                debt.through
             );
         }
         for (left, right, bound, _) in state.facts.bounds.cells() {
@@ -952,9 +1019,8 @@ impl Reasoning<'_, '_, '_> {
         }
     }
 
-    /// [TYPE-11.S5] whether `debt` is restored in `state`: the instance of
-    /// its invariant at its anchor is proved by [MSR-4]'s disposition of an
-    /// [FN-8] goal. A cover and an anchor at `[?]` form no instance.
+    /// [TYPE-11.S5] whether `debt` is restored in `state`: its restoring
+    /// instance is proved by [MSR-4]'s disposition of an [FN-8] goal.
     fn sealed_debt_restored(&mut self, debt: &Debt, state: &ProofFlowState) -> bool {
         let Some(index) = debt.invariant else {
             if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_some() {
@@ -965,10 +1031,10 @@ impl Reasoning<'_, '_, '_> {
             }
             return false;
         };
-        let Some(goal) = self.input.sealed_instance(&debt.anchor, index) else {
+        let Some(goal) = self.input.restoration_instance(debt) else {
             if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_some() {
                 eprintln!(
-                    "[sealing] offered {} with no instance",
+                    "[sealing] offered {} {index} with no instance",
                     self.input.render_place(&debt.anchor)
                 );
             }
@@ -1046,9 +1112,7 @@ impl Judging<'_, '_, '_> {
                 .or_else(|| invariants.first())
                 .map(|invariant| invariant.clause.clone())
         });
-        let goal = first
-            .invariant
-            .and_then(|index| self.input.sealed_instance(&first.anchor, index));
+        let goal = self.input.restoration_instance(first);
         let anchor = self.input.render_anchor(&first.anchor);
         let rendered_goal = goal
             .as_ref()
@@ -1380,14 +1444,19 @@ impl Analyzer<'_, '_> {
 
     /// [TYPE-11.S3] the widening row for a kill batch that writes or ends
     /// `binding`: each debt whose anchor reads it in an offset, or carries its
-    /// current target identity, is offered for restoration first, and widened
-    /// when it is not restored.
+    /// current target identity, or which is restored through it, is offered
+    /// for restoration first, and widened when it is not restored.
     pub(super) fn seal_binding_change(&mut self, state: &mut ProofFlowState, binding: BindingId) {
         if state.debts.is_empty() {
             return;
         }
         let unrestored = self.reasoning().unrestored_debts(state, |debt| {
-            offset_reads(&debt.anchor, binding) || carried_by(&debt.anchor, binding).is_some()
+            offset_reads(&debt.anchor, binding)
+                || carried_by(&debt.anchor, binding).is_some()
+                || debt
+                    .through
+                    .as_ref()
+                    .is_some_and(|through| through.holder == binding)
         });
         for debt in unrestored {
             state.debts.add(widened(debt, binding));
@@ -1631,12 +1700,29 @@ impl Analyzer<'_, '_> {
                 else {
                     return;
                 };
+                // A write through a rebindable reference names its place
+                // through that reference while it is not rebound.
+                let holder = match place.root {
+                    PlaceRoot::Binding(binding)
+                        if self.input.places.reference_holder(binding).is_some() =>
+                    {
+                        Some(binding)
+                    }
+                    _ => None,
+                };
                 for written in self.input.resolve_sealed(&place) {
+                    let through = holder.map(|binding| {
+                        (
+                            binding,
+                            written.path.len().saturating_sub(place.path.len()),
+                        )
+                    });
                     self.input.seal_write(
                         &mut state.debts,
                         &state.separations,
                         &written,
                         written.path.len(),
+                        through,
                         node_path,
                     );
                     if sealed {
@@ -1732,6 +1818,7 @@ impl Analyzer<'_, '_> {
                         &state.separations,
                         &written,
                         referent.path.len(),
+                        None,
                         call,
                     );
                 }
@@ -1815,6 +1902,7 @@ impl Analyzer<'_, '_> {
                     invariant: Some(index),
                     events: vec![node_path.clone()],
                     widened: false,
+                    through: None,
                 });
             }
         }

@@ -143,6 +143,44 @@ impl GoalExpression {
         datum.set_ty(ty);
         Some(self)
     }
+
+    /// [TYPE-11] a type invariant's predicate over the parameter at
+    /// `ordinal`: its value, or its referent when `reference`, in place of
+    /// parameter zero, the invariant's binder.
+    pub(crate) fn over_parameter(&self, ordinal: u32, reference: bool) -> Self {
+        match self {
+            Self::Datum(GoalDatum::Parameter {
+                ordinal: 0,
+                projections,
+                ty,
+            }) => Self::Datum(GoalDatum::Parameter {
+                ordinal,
+                projections: reference
+                    .then_some(GoalProjection::Deref)
+                    .into_iter()
+                    .chain(projections.iter().copied())
+                    .collect(),
+                ty: *ty,
+            }),
+            Self::Datum(datum) => Self::Datum(datum.clone()),
+            Self::Operation {
+                row,
+                type_arguments,
+                const_arguments,
+                result,
+                arguments,
+            } => Self::Operation {
+                row: *row,
+                type_arguments: type_arguments.clone(),
+                const_arguments: const_arguments.clone(),
+                result: *result,
+                arguments: arguments
+                    .iter()
+                    .map(|argument| argument.over_parameter(ordinal, reference))
+                    .collect(),
+            },
+        }
+    }
 }
 
 /// One typed leaf in a requirement template or concrete proof goal.

@@ -1,0 +1,23 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+  let at = index^.value;
+  let got = table^[at];
+  return got;
+}
+
+fn pick(flag: Bool, table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let left = Index(value: 1_u64);
+  let right = Index(value: 2_u64);
+  let target = &left;
+  if flag {
+    set target = &right;
+  }
+  set target^.value = 31_u64;
+  set target^.value = 7_u64;
+  let got = lookup(index: &right, table: table);
+  return got;
+}

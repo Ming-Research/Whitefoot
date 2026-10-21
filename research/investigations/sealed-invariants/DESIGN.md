@@ -7,6 +7,16 @@ specification change and the implementation. Nothing in it has been compiled
 or run; every verdict below is derived from the rules stated here and the
 active specification (v0.150), not observed.
 
+As built in specification v0.152: range type invariants stay out of sealing
+and keep their function-boundary sites [TYPE-11], so T8 and T13 apply to
+affine invariants only, and the range walk takes the affine instances that
+body entry establishes as path conditions [RANGE-2], as it took the
+generated requirements before; the mentions of range invariants in T8, T13,
+result 3 and the specification table below describe the proposal. The
+cursor refinement, point 4 of the points for the owner, is in: a debt
+written through a reference that resolves to several members is restored
+over that reference's own terms while it is not rebound [TYPE-11.S5].
+
 The design study that preceded the ruling compared five candidates and named
 three points a soundness argument must settle before implementation:
 restoration obligations across reference joins, a finite representation of
@@ -860,7 +870,7 @@ Rules to change, with the intended behavior (not final text):
 | GIVE-1 | A `give` of a value is a hand-off. |
 | PRE-1, SCOPE-3 | Replace "a supplied definition promises no generated postcondition" with the parametricity obligation; supplied results are sealed; `release` and `map_clear` arguments are not hand-offs (T5's closed list). |
 | SHARE-2 | Every target kind (whole state, map entry, `Entries`) is sealed at block entry and restored on every leaving edge; today only a whole `Shared<S>` or `SharedRead<S>` target of a struct is. |
-| RANGE-2, RANGE-3 | A fifth activation source: a range type invariant's instance at a sealed anchor (T13); range debts restored by RANGE-3 at hand-offs. |
+| RANGE-2 | As built: the affine instances body entry establishes (T13) are path conditions of the range walk, as the generated requirements were; range type invariants keep their function-boundary sites and take no part in sealing. |
 | CALL-4, CALL-6 | Generated invariant relations no longer flow as published result relations; sealedness of results replaces them, and the routed generated clauses are removed. |
 | DIAG-1 | The restoration rejection's repair and its naming of breaking events. |
 | DIAG-2 | Drop "type-invariant-generated" from the postconditions a component member receives as induction hypotheses: sealedness is type-based and needs none. |
