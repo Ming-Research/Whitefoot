@@ -30,6 +30,9 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 # compute-regression run for the compute rows; no run for the others). Only
 # compiler/test-build-unit and performance-baseline-compiler rise above the
 # largest class. Evidence: research/investigations/test-economy/time-budgets.md.
+# The unit group's three rows were recomputed on 2026-10-21 from 20 or more
+# runs on this CPU; check/unit and compiler/test-unit keep the 2026-10-13 value,
+# which is above that result.
 # performance-candidate-compiler is 145 s for every Linux class, set by the
 # owner on 2026-10-13 (it was 130 s).
 cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
@@ -49,10 +52,13 @@ conformance                     10         10         10         10          10 
 performance-instrument          10         10         10         10          10     -
 compiler/lint                   55         60         40         60          75     -
 
-# gate.yml, unit group: the library in test mode, then its cases
-check/unit                      385        320        225        385         425    -
-compiler/test-build-unit        175        175        130        185         300    -
-compiler/test-unit              215        150        100        215         175    -
+# gate.yml, unit group: the library in test mode, then its cases. Recomputed on
+# 2026-10-21 from the gate runs since 2026-10-14, after the diagnostics merge made
+# the test build about 4% longer; a value never falls below its earlier one.
+# Evidence: research/investigations/test-economy/time-budgets.md.
+check/unit                      405        360        270        385         425    -
+compiler/test-build-unit        225        195        160        205         300    -
+compiler/test-unit              215        170        120        215         175    -
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
