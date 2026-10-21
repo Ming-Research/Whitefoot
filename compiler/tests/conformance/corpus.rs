@@ -146,20 +146,67 @@ impl Span {
     }
 }
 
+/// One arranged byte string: exact bytes, or bytes that follow the absolute
+/// path of the invocation's initial directory and a `/`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ArrangedBytes {
+    /// `"<hex>"`: these bytes.
+    Exact(Vec<u8>),
+    /// `{"initial":"<hex>"}`: the initial directory's absolute path, `/`,
+    /// then these bytes.
+    BelowInitial(Vec<u8>),
+}
+
+impl ArrangedBytes {
+    /// The bytes this string denotes for an invocation whose initial
+    /// directory is `initial`.
+    pub fn resolve(&self, initial: &Path) -> Vec<u8> {
+        match self {
+            Self::Exact(bytes) => bytes.clone(),
+            Self::BelowInitial(suffix) => {
+                let mut bytes = initial.as_os_str().as_encoded_bytes().to_vec();
+                bytes.push(b'/');
+                bytes.extend_from_slice(suffix);
+                bytes
+            }
+        }
+    }
+
+    /// The bytes themselves, when they do not depend on the invocation.
+    #[cfg_attr(unix, allow(dead_code))]
+    pub fn exact(&self) -> Option<&[u8]> {
+        match self {
+            Self::Exact(bytes) => Some(bytes),
+            Self::BelowInitial(_) => None,
+        }
+    }
+}
+
+/// What one fixture places at its path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FixtureContent {
+    /// A regular file with these contents.
+    File(ArrangedBytes),
+    /// A directory.
+    Directory,
+    /// A symbolic link whose target is these exact bytes.
+    Link(Vec<u8>),
+}
+
 /// One fixture object placed under the invocation's initial directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fixture {
     /// The path's exact bytes, relative to the initial directory.
     pub path: Vec<u8>,
-    /// A regular file's exact contents, or `None` for a directory.
-    pub bytes: Option<Vec<u8>>,
+    /// What the fixture places there.
+    pub content: FixtureContent,
 }
 
 /// The invocation one `run` case needs.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Arrangement {
     /// The complete native argument vector, position 0 included.
-    pub argv: Option<Vec<Vec<u8>>>,
+    pub argv: Option<Vec<ArrangedBytes>>,
     /// The standard input body; absent means an empty standard input.
     pub stdin: Option<Vec<u8>>,
     /// Fixtures created under the initial directory before the invocation.
@@ -471,7 +518,7 @@ fn arrangement(value: &Value) -> Result<Arrangement, String> {
             argv.array()
                 .ok_or_else(|| "argv must be an array".to_owned())?
                 .iter()
-                .map(hex_bytes)
+                .map(arranged_bytes)
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
@@ -507,12 +554,29 @@ fn arrangement(value: &Value) -> Result<Arrangement, String> {
 
 fn fixture(value: &Value) -> Result<Fixture, String> {
     let path = hex_bytes(value.get("path").ok_or("fixture needs a path")?)?;
-    let bytes = match (value.get("bytes"), value.get("directory")) {
-        (Some(content), None) => Some(hex_bytes(content)?),
-        (None, Some(Value::True)) => None,
-        _ => return Err("fixture needs exactly one of bytes, directory".to_owned()),
+    let content = match (
+        value.get("bytes"),
+        value.get("directory"),
+        value.get("link"),
+    ) {
+        (Some(content), None, None) => FixtureContent::File(arranged_bytes(content)?),
+        (None, Some(Value::True), None) => FixtureContent::Directory,
+        (None, None, Some(target)) => FixtureContent::Link(hex_bytes(target)?),
+        _ => return Err("fixture needs exactly one of bytes, directory, link".to_owned()),
     };
-    Ok(Fixture { path, bytes })
+    Ok(Fixture { path, content })
+}
+
+/// Decodes one arranged byte string: a hex string, or an object whose one
+/// member `initial` holds the hex bytes that follow the initial directory.
+fn arranged_bytes(value: &Value) -> Result<ArrangedBytes, String> {
+    match value {
+        Value::Object(members) => match (members.len(), members.get("initial")) {
+            (1, Some(suffix)) => Ok(ArrangedBytes::BelowInitial(hex_bytes(suffix)?)),
+            _ => Err("an arranged byte object has exactly the member initial".to_owned()),
+        },
+        _ => Ok(ArrangedBytes::Exact(hex_bytes(value)?)),
+    }
 }
 
 /// Decodes one manifest byte string.
