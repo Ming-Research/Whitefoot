@@ -7,9 +7,11 @@
 //! position to hold at the position handed on, and a read of a sealed place
 //! establishes the instance the delivering hand-off guaranteed.
 
-use super::super::super::model::{CheckedAffineInvariant, CheckedEffects, FunctionId};
+use super::super::super::model::{
+    CheckedAffineInvariant, CheckedEffects, CheckedShared, FunctionId,
+};
 use super::super::super::places::places_overlap;
-use super::super::{CalleeSealing, SealingFailure, SealingRule};
+use super::super::{CalleeSealing, SealingFailure, SealingOrigin, SealingRule};
 use super::*;
 
 /// [TYPE-11.S7] one binder datum a read selects.
@@ -43,9 +45,9 @@ pub(super) struct Debt {
     /// The reference every breaking event wrote through, while no kill
     /// batch has rebound or ended it [TYPE-11.S5].
     through: Option<Through>,
-    /// Whether every breaking event is an atomic block's entry
-    /// [TYPE-11.S2] rather than a write, which the diagnostic's repair reads.
-    entered: bool,
+    /// What created the debt, which the diagnostic's repair reads: an
+    /// atomic block's entry only when every breaking event is one.
+    origin: SealingOrigin,
 }
 
 /// [TYPE-11.S5] the reference a debt's breaking events all wrote through,
@@ -57,25 +59,23 @@ struct Through {
     steps: Vec<PlaceStep>,
 }
 
+/// What one prefix of a place selects [TYPE-11.S2, REF-4].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Selected {
+    /// A value of this type.
+    Value(CheckedType),
+    /// A run of elements of this type, which is no value of its own: what a
+    /// range step, a page step or a segment subscript of a `Segments`
+    /// selects, and the referent of a range or run parameter or of a range
+    /// reference's current target.
+    Run(CheckedType),
+    /// A selection the walk does not follow.
+    Unknown,
+}
+
 impl Debt {
     fn same_key(&self, other: &Self) -> bool {
         self.invariant == other.invariant && self.anchor == other.anchor
-    }
-
-    /// This debt with its anchor's first `depth` steps replaced by `onto`
-    /// [TYPE-11.S3]; a cover above `onto` covers all of it. The rebased debt
-    /// records no reference [TYPE-11.S2]: no reference names the place its
-    /// value moved to.
-    fn rebased(&self, depth: usize, onto: &ResolvedPlace) -> Self {
-        let mut anchor = onto.clone();
-        anchor
-            .path
-            .extend_from_slice(self.anchor.path.get(depth..).unwrap_or_default());
-        Self {
-            anchor,
-            through: None,
-            ..self.clone()
-        }
     }
 }
 
@@ -99,7 +99,9 @@ impl Debts {
                 }
             }
             existing.widened |= debt.widened;
-            existing.entered &= debt.entered;
+            if existing.origin != debt.origin {
+                existing.origin = SealingOrigin::Written;
+            }
             if existing.through != debt.through {
                 existing.through = None;
             }
@@ -156,53 +158,11 @@ fn cover_step(place: &ResolvedPlace) -> Option<usize> {
         .position(|step| matches!(step, PlaceStep::Descendant(_)))
 }
 
-/// [TYPE-11.S2] the fewest and the most steps the places `left` and
-/// `right` may have, compared as their step counts are: exactly, unless one
-/// passes through a cover step the other does not share, which stands for
-/// any number of steps, none included [REF-1].
-fn step_counts(left: &ResolvedPlace, right: &ResolvedPlace) -> [(usize, usize); 2] {
-    let shared = match (cover_step(left), cover_step(right)) {
-        (Some(at), Some(other)) => at == other && left.path[at] == right.path[other],
-        _ => false,
-    };
-    [left, right].map(|place| match cover_step(place) {
-        Some(_) if !shared => (place.path.len() - 1, usize::MAX),
-        _ => (place.path.len(), place.path.len()),
-    })
-}
-
-/// [TYPE-11.S2] whether `debt` may be at or below `place`: its anchor may
-/// have at least the place's number of steps and may overlap it.
-fn may_be_at_or_below(oracle: &dyn SeparationOracle, debt: &Debt, place: &ResolvedPlace) -> bool {
-    let [(_, most), (least, _)] = step_counts(&debt.anchor, place);
-    (debt.invariant.is_none() || most >= least) && places_overlap(oracle, &debt.anchor, place)
-}
-
 /// [TYPE-11.S2] whether `debt` is proved at or below `place`: its anchor has
 /// the place's root and begins with the place's steps, every captured offset
 /// equal.
 fn proved_at_or_below(debt: &Debt, place: &ResolvedPlace) -> bool {
     place.contains(&debt.anchor)
-}
-
-/// [TYPE-11.S2] whether `debt` may denote the invariant at `invariant` of
-/// `anchor`.
-fn may_denote(
-    oracle: &dyn SeparationOracle,
-    debt: &Debt,
-    anchor: &ResolvedPlace,
-    invariant: usize,
-) -> bool {
-    match debt.invariant {
-        None => places_overlap(oracle, &debt.anchor, anchor),
-        Some(own) => {
-            let [(least, most), (other_least, other_most)] = step_counts(&debt.anchor, anchor);
-            own == invariant
-                && least <= other_most
-                && other_least <= most
-                && places_overlap(oracle, &debt.anchor, anchor)
-        }
-    }
 }
 
 /// [REF-1] the members of one resolution that no other member covers. A
@@ -230,14 +190,19 @@ fn uncovered(members: Vec<ResolvedPlace>) -> Vec<ResolvedPlace> {
         .collect()
 }
 
-/// Whether an offset of `place` reads the current value of `binding`.
-fn offset_reads(place: &ResolvedPlace, binding: BindingId) -> bool {
+/// Whether an offset of `step` reads the current value of `binding`.
+fn step_reads(step: &PlaceStep, binding: BindingId) -> bool {
     let reads = |value: &CapturedValue| value.term == CapturedTerm::Binding(binding);
-    place.path.iter().any(|step| match step {
+    match step {
         PlaceStep::Index(value) | PlaceStep::Page(value) => reads(value),
         PlaceStep::Range(range) => reads(&range.start) || reads(&range.end),
         _ => false,
-    })
+    }
+}
+
+/// Whether an offset of `place` reads the current value of `binding`.
+fn offset_reads(place: &ResolvedPlace, binding: BindingId) -> bool {
+    place.path.iter().any(|step| step_reads(step, binding))
 }
 
 /// The position of the step through which `place` carries the current
@@ -295,10 +260,13 @@ fn handed_member(debt: &Debt, place: &ResolvedPlace) -> Option<ResolvedPlace> {
 }
 
 /// [TYPE-11.S3] `debt` after a kill batch wrote or ended `binding` while the
-/// debt was not restored: an offset reading the binding widens to `[?]`, an
-/// anchor carrying the binding's current target identity widens to its
-/// cover, and a debt restored through the binding is restored over its
-/// anchor's own terms from then on [TYPE-11.S5].
+/// debt was not restored: the first offset reading the binding and every
+/// later offset of the anchor that reads a binding widen to `[?]`, so one
+/// anchor widens to one more shape than it has such offsets; an anchor
+/// carrying the binding's
+/// current target identity widens to its cover; and a debt restored through
+/// the binding is restored over its anchor's own terms from then on
+/// [TYPE-11.S5].
 fn widened(mut debt: Debt, binding: BindingId) -> Debt {
     if debt
         .through
@@ -313,21 +281,27 @@ fn widened(mut debt: Debt, binding: BindingId) -> Debt {
         debt.invariant = None;
         lost = true;
     }
-    let current = CapturedTerm::Binding(binding);
-    let mut forget = |value: &mut CapturedValue| {
-        if value.term == current {
-            *value = CapturedValue::unknown();
-            lost = true;
-        }
-    };
-    for step in &mut debt.anchor.path {
-        match step {
-            PlaceStep::Index(value) | PlaceStep::Page(value) => forget(value),
-            PlaceStep::Range(range) => {
-                forget(&mut range.start);
-                forget(&mut range.end);
+    let first = debt
+        .anchor
+        .path
+        .iter()
+        .position(|step| step_reads(step, binding));
+    if let Some(first) = first {
+        let mut forget = |value: &mut CapturedValue| {
+            if matches!(value.term, CapturedTerm::Binding(_)) {
+                *value = CapturedValue::unknown();
+                lost = true;
             }
-            _ => {}
+        };
+        for step in &mut debt.anchor.path[first..] {
+            match step {
+                PlaceStep::Index(value) | PlaceStep::Page(value) => forget(value),
+                PlaceStep::Range(range) => {
+                    forget(&mut range.start);
+                    forget(&mut range.end);
+                }
+                _ => {}
+            }
         }
     }
     debt.widened |= lost;
@@ -386,7 +360,8 @@ impl Input<'_, '_> {
         }
     }
 
-    /// The type one step below a value of type `ty` reaches.
+    /// The type of the value one field selection, `Box` content step or
+    /// payload step below a value of type `ty` selects.
     fn sealed_step_type(&self, ty: CheckedType, step: &PlaceStep) -> Option<CheckedType> {
         let kind = |ty: CheckedType| match ty {
             CheckedType::Nominal(nominal) => self
@@ -416,57 +391,303 @@ impl Input<'_, '_> {
                 ),
                 _ => None,
             },
-            PlaceStep::Index(_) | PlaceStep::Page(_) => self
-                .context
-                .elements
-                .get(ty.storage_element()?.index())
-                .copied(),
-            PlaceStep::Range(_) | PlaceStep::Part(_) => Some(ty),
-            PlaceStep::Descendant(target) => Some(target.ty),
-            PlaceStep::Measure(_) => None,
+            _ => None,
         }
     }
 
-    /// The type at each prefix of `place`, from its root to the whole place.
-    /// A range or run parameter is a run of elements of its declared type
-    /// and owns no value itself [REF-4]: each index or page step below it
-    /// reaches one element.
-    fn sealed_prefix_types(&self, place: &ResolvedPlace) -> Vec<Option<CheckedType>> {
-        let mut run = None;
-        let mut ty = match place.root {
+    /// The type of each entry of a map of type `ty`, the prelude's
+    /// `Option<V>` [SHARE-1]; `None` for every other type.
+    fn map_entry(&self, ty: CheckedType) -> Option<CheckedType> {
+        let CheckedType::Nominal(nominal) = ty else {
+            return None;
+        };
+        match self
+            .context
+            .nominals
+            .get(nominal.0 as usize)
+            .map(|record| &record.kind)
+        {
+            Some(CheckedNominalKind::Shared {
+                shape: CheckedShared::Map { entry },
+                ..
+            }) => Some(*entry),
+            _ => None,
+        }
+    }
+
+    /// [TYPE-11.S1] whether a value of type `ty` is a map or an `Entries`,
+    /// whose entries are no part of its value: no hand-off of it delivers
+    /// them valid.
+    fn holds_entries(&self, ty: CheckedType) -> bool {
+        self.map_entry(ty).is_some() || matches!(ty, CheckedType::Entries { .. })
+    }
+
+    /// [TYPE-11.S4] whether `debt`'s anchor passes an entry of a map or an
+    /// `Entries` that lies below `place`'s level: handing `place` on owes
+    /// nothing of what that entry holds.
+    fn below_entry(&self, debt: &Debt, place: &ResolvedPlace) -> bool {
+        let (level, _) = self.sealed_levels(place);
+        let selections = self.sealed_selections(&debt.anchor);
+        let mut levels = 0;
+        for (step, pair) in debt.anchor.path.iter().zip(selections.windows(2)) {
+            let [above, below] = pair else {
+                return false;
+            };
+            if !matches!(step, PlaceStep::Descendant(_)) && matches!(below, Selected::Value(_)) {
+                levels += 1;
+            }
+            let entry = matches!(step, PlaceStep::Index(_))
+                && matches!(above, Selected::Value(ty) if self.holds_entries(*ty));
+            if entry && levels > level {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// What each prefix of `place` selects, from its root to the whole place
+    /// [TYPE-11.S2]. A range or run parameter is a run of elements of its
+    /// declared type and owns no value itself [REF-4].
+    fn sealed_selections(&self, place: &ResolvedPlace) -> Vec<Selected> {
+        let mut selected = match place.root {
             PlaceRoot::Binding(binding) => {
-                let ty = self.summary(binding).and_then(|summary| summary.ty);
-                let elements = self.function.parameters.iter().any(|parameter| {
+                let run = self.function.parameters.iter().any(|parameter| {
                     parameter.binding == binding
                         && matches!(parameter.mode, CheckedMode::Range | CheckedMode::Run)
                 });
-                if elements {
-                    run = ty;
-                    None
-                } else {
-                    ty
+                match self.summary(binding).and_then(|summary| summary.ty) {
+                    Some(ty) if run => Selected::Run(ty),
+                    Some(ty) => Selected::Value(ty),
+                    None => Selected::Unknown,
                 }
             }
-            PlaceRoot::Constant(_) => None,
+            PlaceRoot::Constant(_) => Selected::Unknown,
         };
-        let mut types = Vec::with_capacity(place.path.len() + 1);
-        types.push(ty);
+        let mut selections = Vec::with_capacity(place.path.len() + 1);
+        selections.push(selected);
         for step in &place.path {
-            ty = match (run, step) {
-                (Some(element), PlaceStep::Index(_) | PlaceStep::Page(_)) => {
-                    run = None;
-                    Some(element)
-                }
-                (Some(_), PlaceStep::Range(_) | PlaceStep::Part(_)) => None,
-                (Some(_), _) => {
-                    run = None;
-                    None
-                }
-                (None, _) => ty.and_then(|ty| self.sealed_step_type(ty, step)),
-            };
-            types.push(ty);
+            selected = self.selected_below(selected, step);
+            selections.push(selected);
         }
-        types
+        selections
+    }
+
+    /// What `step` selects below a prefix that selects `selected`. A range
+    /// step, a page step and a segment subscript of a `Segments` select a run
+    /// of its elements, and a subscript of a run selects one of them, so
+    /// `x[a..b][i]` selects an element as `x[k]` does [REF-4]; a reference's
+    /// current target is its referent, a run for a range reference [REF-1].
+    fn selected_below(&self, selected: Selected, step: &PlaceStep) -> Selected {
+        let element = |ty: CheckedType| {
+            ty.storage_element()
+                .and_then(|element| self.context.elements.get(element.index()).copied())
+        };
+        let selection = |ty: Option<CheckedType>, run: bool| match ty {
+            Some(ty) if run => Selected::Run(ty),
+            Some(ty) => Selected::Value(ty),
+            None => Selected::Unknown,
+        };
+        match (selected, step) {
+            (_, PlaceStep::Descendant(target)) => selection(Some(target.ty), target.range),
+            (Selected::Run(ty), PlaceStep::Index(_) | PlaceStep::Page(_)) => Selected::Value(ty),
+            (Selected::Run(ty), PlaceStep::Range(_) | PlaceStep::Part(_)) => Selected::Run(ty),
+            (Selected::Value(ty), PlaceStep::Index(_)) => match self.map_entry(ty) {
+                Some(entry) => Selected::Value(entry),
+                None => selection(element(ty), matches!(ty, CheckedType::Segments { .. })),
+            },
+            (
+                Selected::Value(ty),
+                PlaceStep::Range(_) | PlaceStep::Page(_) | PlaceStep::Part(_),
+            ) => selection(element(ty), true),
+            (Selected::Value(ty), _) => selection(self.sealed_step_type(ty, step), false),
+            (Selected::Run(_) | Selected::Unknown, _) => Selected::Unknown,
+        }
+    }
+
+    /// The type of the value each prefix of `place` selects, from its root
+    /// to the whole place; `None` where the prefix selects a run, or a
+    /// selection the walk does not follow.
+    fn sealed_prefix_types(&self, place: &ResolvedPlace) -> Vec<Option<CheckedType>> {
+        self.sealed_selections(place)
+            .into_iter()
+            .map(|selected| match selected {
+                Selected::Value(ty) => Some(ty),
+                Selected::Run(_) | Selected::Unknown => None,
+            })
+            .collect()
+    }
+
+    /// [TYPE-11.S2] the fewest and the most levels of `place`: each step that
+    /// selects a value adds one, and a step that selects a run adds none. A
+    /// cover step adds none here, [`Self::level_bounds`] reading the number
+    /// it stands for; a subscript whose base the walk does not follow may
+    /// select a run or a value, so it adds either.
+    fn sealed_levels(&self, place: &ResolvedPlace) -> (usize, usize) {
+        let selections = self.sealed_selections(place);
+        let mut levels = (0, 0);
+        for (step, selected) in place.path.iter().zip(&selections[1..]) {
+            let (least, most) = match (step, selected) {
+                (PlaceStep::Descendant(_), _) | (_, Selected::Run(_)) => (0, 0),
+                (PlaceStep::Index(_) | PlaceStep::Page(_), Selected::Unknown) => (0, 1),
+                (PlaceStep::Range(_) | PlaceStep::Part(_), Selected::Unknown) => (0, 0),
+                (_, Selected::Value(_) | Selected::Unknown) => (1, 1),
+            };
+            levels.0 += least;
+            levels.1 += most;
+        }
+        levels
+    }
+
+    /// [TYPE-11.S2] the fewest and the most levels the places `left` and
+    /// `right` may have: a cover step `**` both pass through adds the same
+    /// number to each, and one that only one of them passes through adds any
+    /// number to it, none included [REF-1].
+    fn level_bounds(&self, left: &ResolvedPlace, right: &ResolvedPlace) -> [(usize, usize); 2] {
+        let shared = match (cover_step(left), cover_step(right)) {
+            (Some(at), Some(other)) => at == other && left.path[at] == right.path[other],
+            _ => false,
+        };
+        [left, right].map(|place| {
+            let (least, most) = self.sealed_levels(place);
+            if cover_step(place).is_some() && !shared {
+                (least, usize::MAX)
+            } else {
+                (least, most)
+            }
+        })
+    }
+
+    /// [TYPE-11.S2] whether `debt` may be at or below `place`: its anchor may
+    /// have at least the place's level and may overlap it, or it is a cover
+    /// whose place may overlap it.
+    fn may_be_at_or_below(
+        &self,
+        oracle: &dyn SeparationOracle,
+        debt: &Debt,
+        place: &ResolvedPlace,
+    ) -> bool {
+        let below = debt.invariant.is_none() || {
+            let [(_, most), (least, _)] = self.level_bounds(&debt.anchor, place);
+            most >= least
+        };
+        below && places_overlap(oracle, &debt.anchor, place)
+    }
+
+    /// [TYPE-11.S2] whether `debt` may denote the invariant at `invariant` of
+    /// `anchor`: it is a cover that may overlap the anchor, or names that
+    /// invariant at an anchor that may have the anchor's level and may
+    /// overlap it.
+    fn may_denote(
+        &self,
+        oracle: &dyn SeparationOracle,
+        debt: &Debt,
+        anchor: &ResolvedPlace,
+        invariant: usize,
+    ) -> bool {
+        let named = match debt.invariant {
+            None => true,
+            Some(own) => {
+                let [(least, most), (other_least, other_most)] =
+                    self.level_bounds(&debt.anchor, anchor);
+                own == invariant && least <= other_most && other_least <= most
+            }
+        };
+        named && places_overlap(oracle, &debt.anchor, anchor)
+    }
+
+    /// [TYPE-11.S2] the steps of `anchor` below the value at `place`'s level
+    /// on its path: those after `place`'s own steps when the anchor begins
+    /// with them, every captured offset equal, and otherwise, when `place`
+    /// selects a value at one level, those after the anchor's shortest prefix
+    /// that selects a value at that level with no cover step on it. `None`
+    /// when neither gives them.
+    fn steps_below<'a>(
+        &self,
+        anchor: &'a ResolvedPlace,
+        place: &ResolvedPlace,
+    ) -> Option<&'a [PlaceStep]> {
+        if place.contains(anchor) {
+            return anchor.path.get(place.path.len()..);
+        }
+        let (level, most) = self.sealed_levels(place);
+        let value = matches!(self.sealed_selections(place).last(), Some(Selected::Value(_)));
+        if !value || level != most || cover_step(place).is_some() || anchor.root != place.root {
+            return None;
+        }
+        let selections = self.sealed_selections(anchor);
+        let mut at = 0;
+        for (position, selected) in selections.iter().enumerate() {
+            if at == level && matches!(selected, Selected::Value(_)) {
+                return anchor.path.get(position..);
+            }
+            let (Some(step), Some(below)) =
+                (anchor.path.get(position), selections.get(position + 1))
+            else {
+                return None;
+            };
+            match (step, below) {
+                (PlaceStep::Descendant(_), _) | (_, Selected::Unknown) => return None,
+                (_, Selected::Value(_)) => at += 1,
+                (_, Selected::Run(_)) => {}
+            }
+            if at > level {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// [TYPE-11.S2] `debt`, which may be at or below `from`, rebased onto
+    /// `onto`: its anchor's steps down to the value at `from`'s level are
+    /// replaced by `onto`'s. Where those steps are not known, or what is left
+    /// passes a reference's current target identity, which no reference to
+    /// `onto` carries, the debt is the cover of the place it is known down
+    /// to. The rebased debt records no reference: no reference names the
+    /// place its value moved to.
+    fn rebased(&self, debt: &Debt, from: &ResolvedPlace, onto: &ResolvedPlace) -> Debt {
+        let below = self.steps_below(&debt.anchor, from);
+        let steps = below.unwrap_or_default();
+        let kept = steps
+            .iter()
+            .position(|step| matches!(step, PlaceStep::Descendant(_)))
+            .unwrap_or(steps.len());
+        let mut anchor = onto.clone();
+        anchor.path.extend_from_slice(&steps[..kept]);
+        let covered = below.is_none() || kept < steps.len();
+        Debt {
+            anchor,
+            invariant: debt.invariant.filter(|_| !covered),
+            through: None,
+            origin: if covered && debt.invariant.is_some() {
+                SealingOrigin::Moved
+            } else {
+                debt.origin
+            },
+            ..debt.clone()
+        }
+    }
+
+    /// [TYPE-11.S3] `debt`, which may be at or below the `swap` target
+    /// `from`, exchanged onto the other target `onto`: its invariant at
+    /// `onto` when its anchor is at `from`'s level, and otherwise the cover
+    /// of `onto`. An exchange so appends no steps below `onto`, and the
+    /// debts a loop of exchanges forms are polynomially many [TYPE-11.S6].
+    fn exchanged(&self, debt: &Debt, from: &ResolvedPlace, onto: &ResolvedPlace) -> Debt {
+        let at_level = debt.invariant.is_some()
+            && self
+                .steps_below(&debt.anchor, from)
+                .is_some_and(<[PlaceStep]>::is_empty);
+        Debt {
+            anchor: onto.clone(),
+            invariant: debt.invariant.filter(|_| at_level),
+            through: None,
+            origin: if debt.invariant.is_some() && !at_level {
+                SealingOrigin::Moved
+            } else {
+                debt.origin
+            },
+            ..debt.clone()
+        }
     }
 
     /// Whether a value of type `ty` owns a struct value with an affine type
@@ -620,7 +841,7 @@ impl Input<'_, '_> {
                                 steps: written.path[referent..depth].to_vec(),
                             },
                         ),
-                        entered: false,
+                        origin: SealingOrigin::Written,
                     });
                 }
             }
@@ -629,11 +850,13 @@ impl Input<'_, '_> {
         // were named above. One the cover `R.**` hides strictly above that
         // target, R included, reads the written place only through a value
         // of the target's type, so the write adds the cover only when an
-        // invariant of R or of a struct value R owns reads through that type.
+        // invariant of R, or of each element of a run R, or of a struct value
+        // they own, reads through that type.
         if let Some(position) = cover
             && position < limit
             && let PlaceStep::Descendant(target) = written.path[position]
-            && let Some(ty) = types[position]
+            && let Some(Selected::Value(ty) | Selected::Run(ty)) =
+                self.sealed_selections(written).get(position).copied()
             && self.reads_through(ty, target.ty)
         {
             debts.add(Debt {
@@ -646,7 +869,7 @@ impl Input<'_, '_> {
                 events: vec![source.clone()],
                 widened: false,
                 through: None,
-                entered: false,
+                origin: SealingOrigin::Written,
             });
         }
     }
@@ -905,8 +1128,8 @@ impl Input<'_, '_> {
         let mut taken = Vec::new();
         for place in from {
             for debt in &state.debts.0 {
-                if may_be_at_or_below(&state.separations, debt, place) {
-                    taken.push(debt.rebased(place.path.len(), onto));
+                if self.may_be_at_or_below(&state.separations, debt, place) {
+                    taken.push(self.rebased(debt, place, onto));
                 }
             }
         }
@@ -949,16 +1172,17 @@ impl Input<'_, '_> {
             })
     }
 
-    /// [TYPE-11.S2] the debts an atomic block's target starts with: every
-    /// anchor strictly below its referent that the referent owns, at the
-    /// unknown position for each element, and the cover of each place where
-    /// an owned type recurs.
+    /// [TYPE-11.S2] the debts an atomic block's target starts with, and a
+    /// map or `Entries` parameter at body entry: every anchor strictly below
+    /// the referent that it holds, at the unknown position for each element
+    /// and entry, and the cover of each place where a held type recurs.
     fn owned_anchor_debts(
         &self,
         place: &mut ResolvedPlace,
         ty: CheckedType,
         ancestors: &mut Vec<CheckedType>,
         source: &crate::NodePath,
+        origin: SealingOrigin,
         debts: &mut Debts,
     ) {
         if ancestors.contains(&ty) {
@@ -968,7 +1192,7 @@ impl Input<'_, '_> {
                 events: vec![source.clone()],
                 widened: false,
                 through: None,
-                entered: true,
+                origin,
             });
             return;
         }
@@ -980,11 +1204,14 @@ impl Input<'_, '_> {
                     events: vec![source.clone()],
                     widened: false,
                     through: None,
-                    entered: true,
+                    origin,
                 });
             }
         }
-        let steps: Vec<(PlaceStep, CheckedType)> = match ty {
+        // The steps to each value one level below, a segment of a `Segments`
+        // being a run its element subscript selects from [REF-4].
+        let unknown = PlaceStep::Index(CapturedValue::unknown());
+        let parts: Vec<(Vec<PlaceStep>, CheckedType)> = match ty {
             CheckedType::Nominal(nominal) => {
                 match self
                     .context
@@ -996,7 +1223,7 @@ impl Input<'_, '_> {
                         .iter()
                         .enumerate()
                         .filter_map(|(ordinal, field)| {
-                            Some((PlaceStep::Field(u32::try_from(ordinal).ok()?), field.ty))
+                            Some((vec![PlaceStep::Field(u32::try_from(ordinal).ok()?)], field.ty))
                         })
                         .collect(),
                     Some(CheckedNominalKind::Enum { variants }) => variants
@@ -1008,38 +1235,49 @@ impl Input<'_, '_> {
                                 .enumerate()
                                 .filter_map(|(ordinal, field)| {
                                     Some((
-                                        PlaceStep::Payload {
+                                        vec![PlaceStep::Payload {
                                             variant: variant.tag,
                                             field: u32::try_from(ordinal).ok()?,
-                                        },
+                                        }],
                                         field.ty,
                                     ))
                                 })
                         })
                         .collect(),
                     Some(CheckedNominalKind::Box { referent, .. }) => {
-                        vec![(PlaceStep::Deref, *referent)]
+                        vec![(vec![PlaceStep::Deref], *referent)]
                     }
+                    Some(CheckedNominalKind::Shared {
+                        shape: CheckedShared::Map { entry },
+                        ..
+                    }) => vec![(vec![unknown], *entry)],
                     _ => Vec::new(),
                 }
             }
             CheckedType::Array { .. }
             | CheckedType::Buffer { .. }
             | CheckedType::Window { .. }
-            | CheckedType::Segments { .. } => ty
+            | CheckedType::Entries { .. } => ty
                 .storage_element()
                 .and_then(|element| self.context.elements.get(element.index()).copied())
-                .map(|element| (PlaceStep::Index(CapturedValue::unknown()), element))
+                .map(|element| (vec![unknown], element))
+                .into_iter()
+                .collect(),
+            CheckedType::Segments { .. } => ty
+                .storage_element()
+                .and_then(|element| self.context.elements.get(element.index()).copied())
+                .map(|element| (vec![unknown, unknown], element))
                 .into_iter()
                 .collect(),
             _ => Vec::new(),
         };
         ancestors.push(ty);
-        for (step, below) in steps {
+        for (steps, below) in parts {
             if self.owns_anchor(below, &mut Vec::new()) {
-                place.path.push(step);
-                self.owned_anchor_debts(place, below, ancestors, source, debts);
-                place.path.pop();
+                let depth = place.path.len();
+                place.path.extend(steps);
+                self.owned_anchor_debts(place, below, ancestors, source, origin, debts);
+                place.path.truncate(depth);
             }
         }
         ancestors.pop();
@@ -1114,17 +1352,17 @@ impl Judging<'_, '_, '_> {
             return true;
         }
         let separations = state.separations.clone();
-        let unrestored = self.reasoning().unrestored_debts(state, |debt| {
-            places
-                .iter()
-                .any(|place| may_be_at_or_below(&separations, debt, place))
-        });
+        let input = self.input;
+        let owed = |debt: &Debt, place: &ResolvedPlace| {
+            input.may_be_at_or_below(&separations, debt, place) && !input.below_entry(debt, place)
+        };
+        let unrestored = self
+            .reasoning()
+            .unrestored_debts(state, |debt| places.iter().any(|place| owed(debt, place)));
         let mut failed = Vec::new();
         for debt in unrestored {
-            let handed: Vec<&ResolvedPlace> = places
-                .iter()
-                .filter(|place| may_be_at_or_below(&separations, &debt, place))
-                .collect();
+            let handed: Vec<&ResolvedPlace> =
+                places.iter().filter(|place| owed(&debt, place)).collect();
             let satisfied = has_unknown_offset(&debt.anchor)
                 && handed
                     .iter()
@@ -1193,7 +1431,7 @@ impl Judging<'_, '_, '_> {
             rendered_goal,
             events: first.events.clone(),
             widened,
-            entered: first.entered,
+            origin: first.origin,
             member,
         });
         false
@@ -1254,7 +1492,9 @@ impl Analyzer<'_, '_> {
     /// [TYPE-11.S7] at body entry, the instance of each affine invariant at
     /// each parameter of its struct and at the referent of each reference
     /// parameter to it, which the call handed off. A range parameter's type
-    /// is its element's, so it takes none here.
+    /// is its element's, so it takes none here. [TYPE-11.S2] A reference
+    /// parameter to a map or an `Entries` starts with a debt at each anchor
+    /// its entries hold.
     pub(super) fn seal_body_entry(&mut self, state: &mut ProofFlowState) {
         if !self.input.sealing {
             return;
@@ -1271,11 +1511,23 @@ impl Analyzer<'_, '_> {
             else {
                 continue;
             };
-            let anchor = ResolvedPlace::binding(parameter.binding);
+            let mut anchor = ResolvedPlace::binding(parameter.binding);
             for index in 0..self.input.affine_invariants(ty).len() {
                 if let Some(goal) = self.input.sealed_instance(&anchor, index) {
                     self.establish_sealed_instance(&anchor, index, goal, state);
                 }
+            }
+            // [TYPE-11.S2] the entries of a map or an `Entries` referent are
+            // no part of the value its hand-off delivered.
+            if parameter.mode == CheckedMode::Reference && self.input.holds_entries(ty) {
+                self.input.owned_anchor_debts(
+                    &mut anchor,
+                    ty,
+                    &mut Vec::new(),
+                    &parameter.node_path,
+                    SealingOrigin::Unsealed,
+                    &mut state.debts,
+                );
             }
         }
     }
@@ -1456,7 +1708,7 @@ impl Analyzer<'_, '_> {
                 .debts
                 .0
                 .iter()
-                .any(|debt| may_denote(&state.separations, debt, anchor, index))
+                .any(|debt| self.input.may_denote(&state.separations, debt, anchor, index))
     }
 
     fn establish_sealed_instance(
@@ -1783,8 +2035,10 @@ impl Analyzer<'_, '_> {
         }
     }
 
-    /// [TYPE-11.S3, TYPE-11.S4] one call: the hand-off of each argument, then
-    /// the write row of each projected write, then a `swap`'s exchange.
+    /// [TYPE-11.S3, TYPE-11.S4] one call: the hand-off of each argument, or
+    /// for a `swap` the restoration of each debt that may be at or below a
+    /// target [TYPE-11.S5], then the write row of each projected write, then
+    /// a `swap`'s exchange.
     pub(super) fn seal_call(
         &mut self,
         function: FunctionId,
@@ -1808,6 +2062,22 @@ impl Analyzer<'_, '_> {
             for places in &handed {
                 self.judging()
                     .seal_hand_off(state, places, SealingRule::Fn8, call);
+            }
+        }
+        if sealing == CalleeSealing::Exchange {
+            // A value repaired before the exchange moves sealed: the debts
+            // at or below the targets are offered in the state before the
+            // swap's events, which kill the facts that restore them.
+            let input = self.input;
+            let separations = state.separations.clone();
+            let targets: Vec<&ResolvedPlace> = handed.iter().flatten().collect();
+            let unrestored = self.reasoning().unrestored_debts(state, |debt| {
+                targets
+                    .iter()
+                    .any(|place| input.may_be_at_or_below(&separations, debt, place))
+            });
+            for debt in unrestored {
+                state.debts.add(debt);
             }
         }
         let offsets = substituted_offsets(callee, actual_captures);
@@ -1882,22 +2152,30 @@ impl Analyzer<'_, '_> {
     }
 
     /// [TYPE-11.S3] `swap`'s exchange: each debt proved at or below one
-    /// target moves onto the other, rebased; each that may be at or below one
-    /// target without being proved there stays and is copied onto the other;
-    /// when the two targets may be one place, each receives the union.
+    /// target moves onto the other, exchanged; each that may be at or below
+    /// one target without being proved there stays and is copied onto the
+    /// other the same way; when the two targets may be one place, each
+    /// receives the union.
     fn seal_exchange(
         &self,
         first: &[ResolvedPlace],
         second: &[ResolvedPlace],
         state: &mut ProofFlowState,
     ) {
+        let input = &self.input;
         let ([first], [second]) = (first, second) else {
             // A target with several resolved members is proved at none of
             // them: every debt there is copied and stays.
             let mut copies = Vec::new();
             for (from, onto) in [(first, second), (second, first)] {
-                for place in onto {
-                    copies.extend(self.input.taken_debts(state, from, place));
+                for source in from {
+                    for target in onto {
+                        for debt in &state.debts.0 {
+                            if input.may_be_at_or_below(&state.separations, debt, source) {
+                                copies.push(input.exchanged(debt, source, target));
+                            }
+                        }
+                    }
                 }
             }
             for debt in copies {
@@ -1909,11 +2187,11 @@ impl Analyzer<'_, '_> {
         let mut moved = Vec::new();
         for (from, onto) in [(first, second), (second, first)] {
             for debt in &state.debts.0 {
-                if may_be_at_or_below(&state.separations, debt, from) {
+                if input.may_be_at_or_below(&state.separations, debt, from) {
                     moved.push((
                         !one_place && proved_at_or_below(debt, from),
                         debt.clone(),
-                        debt.rebased(from.path.len(), onto),
+                        input.exchanged(debt, from, onto),
                     ));
                 }
             }
@@ -1923,8 +2201,8 @@ impl Analyzer<'_, '_> {
                 state.debts.0.retain(|debt| !debt.same_key(original));
             }
         }
-        for (_, _, rebased) in moved {
-            state.debts.add(rebased);
+        for (_, _, exchanged) in moved {
+            state.debts.add(exchanged);
         }
     }
 
@@ -1953,12 +2231,18 @@ impl Analyzer<'_, '_> {
                     events: vec![node_path.clone()],
                     widened: false,
                     through: None,
-                    entered: true,
+                    origin: SealingOrigin::Entered,
                 });
             }
         }
-        self.input
-            .owned_anchor_debts(&mut place, ty, &mut Vec::new(), node_path, &mut state.debts);
+        self.input.owned_anchor_debts(
+            &mut place,
+            ty,
+            &mut Vec::new(),
+            node_path,
+            SealingOrigin::Entered,
+            &mut state.debts,
+        );
     }
 }
 

@@ -1,0 +1,19 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+  let at = index^.value;
+  let got = table^[at];
+  return got;
+}
+
+fn beside_window(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let seed = Index(value: 3_u64);
+  let cells = array_filled::<Index, 8>(value: seed);
+  set cells[1_u64].value = 31_u64;
+  let window = &cells[4_u64..8_u64];
+  let got = lookup(index: &window^[0_u64], table: table);
+  return got;
+}

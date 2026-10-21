@@ -1,0 +1,14 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn read_beside(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let seed = Index(value: 3_u64);
+  let cells = array_filled::<Index, 8>(value: seed);
+  let window = &cells[0_u64..4_u64];
+  set window^[1_u64].value = 31_u64;
+  let at = cells[5_u64].value;
+  let got = table^[at];
+  return got;
+}

@@ -1374,17 +1374,35 @@ pub(crate) struct SealingFailure {
     pub(crate) events: Vec<NodePath>,
     /// Whether a widening lost the identity the debt was restorable through.
     pub(crate) widened: bool,
-    /// Whether the debt began at an atomic block's entry, with no write.
-    pub(crate) entered: bool,
+    /// What created the debt, which the repair reads.
+    pub(crate) origin: SealingOrigin,
     /// Whether the goal is the instance at the handed position of a debt at
     /// the unknown position [TYPE-11.S5], which no whole replacement of
     /// that position removes.
     pub(crate) member: bool,
 }
 
+/// What created a debt [TYPE-11.S2], which the repair of a hand-off that
+/// leaves it unrestored reads.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum SealingOrigin {
+    /// A write that may have broken the invariant [TYPE-11.S3].
+    #[default]
+    Written,
+    /// An atomic block's entry, for a value its target owns, with no write.
+    Entered,
+    /// A continuation or a `swap` that moved the debt to a place no relation
+    /// names, as the cover of that place [TYPE-11.S2, TYPE-11.S3].
+    Moved,
+    /// Body entry, for a value an entry of a map or an `Entries` holds: no
+    /// hand-off delivers those entries valid [TYPE-11.S1, TYPE-11.S2].
+    Unsealed,
+}
+
 /// [TYPE-11.S3, TYPE-11.S4] what a call does with the values its arguments
-/// name: an ordinary call hands them off, and the supplied `swap` and
-/// `release` exchange or release them without reading them.
+/// name: an ordinary call hands them off, the supplied `swap` exchanges them,
+/// and the supplied `release` and `map_clear` release them, none of them
+/// reading them.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum CalleeSealing {
     #[default]

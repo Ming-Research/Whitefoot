@@ -1,9 +1,10 @@
 //! [TYPE-11] a struct's type invariants: their formation, a hand-off
 //! before a broken invariant is restored, after the identity a debt was
-//! restorable through changed, with no relation naming its anchor, of an
-//! element whose instance is unproved beside a lost position, or of a value
-//! an atomic block's target owns, a construction that does not establish
-//! one, and an atomic block that leaves one unproved.
+//! restorable through changed, with no relation naming its anchor, after a
+//! `swap` moved a value broken below its own level, of an element whose
+//! instance is unproved beside a lost position, or of a value an atomic
+//! block's target owns, a construction that does not establish one, and an
+//! atomic block that leaves one unproved.
 
 use super::RepairPair;
 
@@ -721,6 +722,113 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let state = shared_new::<State>(value: initial);
   let first = shared_share::<State>(shared: &state);
   let got = peek(state: move first);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "a-value-broken-below-its-level-is-swapped.wf",
+        rejected: br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn lookup(holder: &Holder) -> result: u64 reads(holder.index.value) {
+  let got = holder^.index.value;
+  return got;
+}
+
+fn exchange() -> result: u64 pure {
+  let first = Index(value: 1_u64);
+  let h1 = Holder(index: first);
+  let second = Index(value: 2_u64);
+  let h2 = Holder(index: second);
+  set h1.index.value = 31_u64;
+  swap(first: &h1, second: &h2);
+  set h2.index.value = 3_u64;
+  let got = lookup(holder: &h2);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = exchange();
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "]: UnrestoredTypeInvariant\n",
+            "\n  mechanical_fix: a write may have broken a type invariant below a value that moved to `h2`, and no relation names the broken place there, so it cannot be restored: restore the invariant before the value moves, or replace `h2` whole with a value a construction or a call returns before this hand-off\n",
+        ],
+        repaired: &[
+            br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn lookup(holder: &Holder) -> result: u64 reads(holder.index.value) {
+  let got = holder^.index.value;
+  return got;
+}
+
+fn exchange() -> result: u64 pure {
+  let first = Index(value: 1_u64);
+  let h1 = Holder(index: first);
+  let second = Index(value: 2_u64);
+  let h2 = Holder(index: second);
+  set h1.index.value = 31_u64;
+  set h1.index.value = 3_u64;
+  swap(first: &h1, second: &h2);
+  let got = lookup(holder: &h2);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = exchange();
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+            br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn lookup(holder: &Holder) -> result: u64 reads(holder.index.value) {
+  let got = holder^.index.value;
+  return got;
+}
+
+fn exchange() -> result: u64 pure {
+  let first = Index(value: 1_u64);
+  let h1 = Holder(index: first);
+  let second = Index(value: 2_u64);
+  let h2 = Holder(index: second);
+  set h1.index.value = 31_u64;
+  swap(first: &h1, second: &h2);
+  let third = Index(value: 3_u64);
+  set h2 = Holder(index: third);
+  let got = lookup(holder: &h2);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = exchange();
   let code = cvt.wrap::<u64, u8>(got);
   return std::process::exit_status(code: code);
 }

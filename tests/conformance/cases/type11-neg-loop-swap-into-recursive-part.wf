@@ -1,0 +1,42 @@
+struct Link {
+  v: u64;
+  next: Option<Box<Link>>;
+  invariant small(link): link.v < 16_u64;
+}
+
+fn head(link: &Link) -> result: u64 reads(link.v) {
+  let got = link^.v;
+  return got;
+}
+
+fn exchange_rounds() -> result: u64 pure {
+  let x_end = None<Box<Link>>();
+  let x_tail = Link(v: 1_u64, next: move x_end);
+  let x_box = box_new::<Link>(value: move x_tail);
+  let x_more = Some<Box<Link>>(value: move x_box);
+  let x = Link(v: 2_u64, next: move x_more);
+  let y_end = None<Box<Link>>();
+  let y_tail = Link(v: 3_u64, next: move y_end);
+  let y_box = box_new::<Link>(value: move y_tail);
+  let y_more = Some<Box<Link>>(value: move y_box);
+  let y = Link(v: 4_u64, next: move y_more);
+  set x.v = 31_u64;
+  for (i in 0_u64..2_u64) {
+    match &y.next {
+      Some(value: child) => {
+        swap(first: &x, second: &child^.inner);
+      }
+      None() => {
+      }
+    }
+    match &x.next {
+      Some(value: child) => {
+        swap(first: &y, second: &child^.inner);
+      }
+      None() => {
+      }
+    }
+  }
+  let got = head(link: &x);
+  return got;
+}

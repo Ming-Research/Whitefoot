@@ -1,0 +1,26 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn lookup(holder: &Holder, table: &Array<u64, 16>) -> result: u64 reads(holder), reads(table) {
+  let at = holder^.index.value;
+  let got = table^[at];
+  return got;
+}
+
+fn swap_then_repair(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let first = Index(value: 1_u64);
+  let h1 = Holder(index: first);
+  let second = Index(value: 2_u64);
+  let h2 = Holder(index: second);
+  set h1.index.value = 31_u64;
+  swap(first: &h1, second: &h2);
+  set h2.index.value = 3_u64;
+  let got = lookup(holder: &h2, table: table);
+  return got;
+}

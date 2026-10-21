@@ -205,6 +205,26 @@ cover that overlaps p. Debts anchored strictly above p do not affect p: a
 broken cross-field relation of `Holder` says nothing about the `Index` it
 owns.
 
+"At or below" and "the same anchor" compare **levels**, not step counts. A
+place's level is the number of values its steps select below its root: a
+field, payload or `Box` content step and a subscript of a value's element
+each add one; a range step, a page step, a subscript of a `Segments` and a
+window part select a run of elements, which is no value, and add none; the
+root of a range or run parameter is a run. So `cells[0..4][1]` and
+`cells[1]` both have level 1, as [REF-4] makes them the same element; a
+step count would put them at two depths and let a debt at one spelling miss
+a read or a hand-off at the other. A cover step `**` stands for any number
+of levels unless both places pass through the same one.
+
+**Rebasing** a debt that may be at or below a value place p onto a place q
+keeps the anchor's steps below the value at p's level and puts q's steps
+above them: below p's own steps when the anchor begins with them, and
+otherwise below the anchor's shortest prefix that selects a value at p's
+level. When the anchor has no such prefix free of cover steps, or its steps
+below it pass a cover step (a reference's current target identity, which no
+reference to q carries), the rebased debt is the cover of q, or of q
+followed by the steps before that cover step.
+
 ### The sealing invariant
 
 The argument rests on one invariant of the abstract state, written SI:
@@ -277,8 +297,8 @@ struct, a by-value `match` binder, a destructuring binder [PROV-6], the
 `Ok` continuation of `propagate`, and a SET-1 commit `set y = p;` or
 `set y = move p;` whose target y is a complete own local binding are not
 hand-offs. In this order: (1) take the set S of every debt that may be at
-or below the source p, each rebased onto the destination, the part of its
-anchor below p appended to y; (2) drop every debt *proved* at or below y
+or below the source p, each rebased onto the destination y (see
+[Debts](#debts)); (2) drop every debt *proved* at or below y
 (equal steps, equal captured offsets), because y's old value is released
 or overwritten whole [WIN-3]; (3) add S. Taking S before the drop matters
 when p lies below y: `set y = move y.Some.value.inner.next;` must keep the
@@ -351,7 +371,9 @@ removes it.
 Restoration is attempted at exactly these points, so the result is
 deterministic:
 
-1. at each hand-off, for the debts it bears on (T5);
+1. at each hand-off, for the debts it bears on (T5), and at each `swap`,
+   for the debts that may be at or below either target, before its events
+   kill the facts that would restore them (T10);
 2. immediately before a kill batch of [ENT-5] that would remove the support
    of a term the anchor needs — an offset identity in its path, or the last
    reference variable through which the anchor is named — in the same
@@ -362,25 +384,58 @@ deterministic:
    edge's own events and before the merge (T11).
 
 T9 **Widening.** When an event of T8 point 2 removes an offset identity of
-an anchor and the debt is not restored, that position becomes `[?]`; when
-the anchor was reached only through a reference whose path set REF-1
-summarizes by a cover, the debt is anchored at that cover. Widening only
-coarsens a debt: the widened anchor overlaps everything the old one did.
+an anchor and the debt is not restored, that position becomes `[?]`, and so
+does every later offset of the anchor that reads a binding; when the anchor
+was reached only through a reference whose path set REF-1 summarizes by a
+cover, the debt is anchored at that cover. Widening only coarsens a debt:
+the widened anchor overlaps everything the old one did. Widening the later
+offsets too keeps the shapes of one anchor to one more than its offsets
+that read a binding ([result 3](#result-3-the-added-work-is-polynomial)):
+`grid[r][c]` widens to `grid[r][?]` when the inner index changes and to
+`grid[?][?]` when the outer one does, never to `grid[?][c]`.
 (The finer anchor for linked-structure cursors proposed under
 [points for the owner](#points-for-the-owner), point 4, was adopted: a
 debt written through a cursor is anchored at its current target identity,
 and only one not restored when the cursor moves widens to the cover.)
 
 T10 **Swap.** For `swap(first: &f, second: &s)`: a debt *proved* at or below
-f (equal steps, equal captured offsets) is moved onto s, rebased, and one
+f (equal steps, equal captured offsets) is moved onto s, exchanged, and one
 proved at or below s onto f. A debt that only may be at or below f — an
 index not proved equal to f's, a reference whose path set holds several
-targets — stays where it is and a rebased copy is added at s; likewise
+targets — stays where it is and an exchanged copy is added at s; likewise
 for s. When the two targets may be the same place, both receive the union.
-T2 adds debts above each target. So after `let r = &c[j]; set r^.value =
-31_u64; let x = Index(value: 1_u64); swap(first: &c[i], second: &x);`,
-with i not proved equal to j, c keeps the debt at `c[j]` and x receives a
-copy.
+T2 adds debts above each target. A debt exchanged onto a target t names its
+invariant at t itself when its anchor lies at the other target's level, and
+is the cover of t otherwise: an exchange appends no steps below t. So after
+`let r = &c[j]; set r^.value = 31_u64; let x = Index(value: 1_u64);
+swap(first: &c[i], second: &x);`, with i not proved equal to j, c keeps the
+debt at `c[j]` and x receives a copy at x, while a debt at `h1.index` that
+`swap(first: &h1, second: &h2)` moves becomes the cover of h2, which only a
+whole store into h2 or its death removes.
+
+Exchanging whole anchors below the targets was the first form of this rule;
+it does not terminate. A loop that swaps a value with one of its own
+recursive parts stacks the other target's steps onto its anchors every
+round (the review of Whitefoot#484 traced `swap(first: &x, second:
+&child^.inner)` and its mirror through two lists, the anchors growing by
+three steps a swap), so the loop header's key set never stops growing.
+Cutting a moved anchor where the exchanged value's type recurs below the
+other target makes it finite but not small: with struct types T1 to TN,
+T(k+1) holding two fields f and g of type Tk, and a loop of the N swaps
+`swap(first: &A(k), second: &B(k))` with A(k) the path of N−k f steps and
+B(k) the path of N−k−1 f steps and one g step, one round maps the f/g word
+of a debt's anchor as a binary decrement, so the header collects all 2^N
+words, one key each, and the iteration walks the body 2^N times (derived by
+hand, not run). Every rule that keeps an exchanged anchor's steps below the
+target composes this way; ending the anchor at the target is the one that
+appends nothing. What it gives up is precision for a value broken below its
+own level, exchanged and then repaired in its new place, rather than
+repaired before the exchange or replaced whole: the repair the diagnostic
+offers for a debt an exchange moved. Repairing before the exchange works
+because T8 offers the targets' debts for restoration at the `swap`, in the
+state before its write rows kill the facts the repair established; without
+that point a debt repaired before the swap would still be on record there
+and become a cover.
 
 T11 **Join.** At a merge of control inputs, in this order:
 
@@ -457,6 +512,28 @@ program, every activation's abstract state paired with its runtime state.
   w and T2 adds `(a, I)`, so SI asserts nothing about it afterwards. The
   overlap judgment is [OWN-7]'s, conservative where separation is unproved,
   so an alias that may name the same storage is treated as naming it.
+- *Levels.* Every runtime value has one level, the number of values on the
+  ownership path from its root down to it, and every resolved place that
+  denotes it has that level: a step that selects a value goes one value
+  down, a run selector stays within the value it selects from, and a
+  subscript of a run selects an element of the value the run lies in, one
+  level below it. So two places that may denote one value have one level,
+  and a place denoting a value at or below another's has at least its level;
+  "may denote" and "may be at or below" ask exactly these levels and
+  [OWN-7]'s conservative overlap, and miss no runtime aliasing. A cover step
+  stands for any number of levels, so it never makes them miss one either.
+- *Rebasing and exchange.* When the value at p moves to q, a runtime anchor
+  v at or below it moves to q followed by v's steps below p's value. An
+  anchor that denotes v has, by the level argument, a prefix at p's level
+  denoting p's value, and its steps below that prefix lead from p's value to
+  v; the rebased anchor puts q above exactly those steps. Where the prefix
+  cannot be found, or the steps pass a cover step, the rebased debt is a
+  cover above the moved anchors, which only adds what SI must not assume.
+  An anchor that does not begin with p's steps is only possibly at or below
+  p, so its debt also stays where it is (T4, T10): a copy rebased from an
+  anchor that denotes another value adds a debt and removes none. A `swap`
+  exchange is a rebasing whose steps below the target are dropped into the
+  target's cover, coarser still.
 - *Reference joins.* A write through a reference variable whose target REF-1
   describes by a path set or a cover resolves to every member [EFF-2, REF-1];
   T2 is applied to every member's anchors, and to the cover's, so no member
@@ -616,12 +693,17 @@ with n the number of statements and places written in the body, d the
 longest written path, K the largest number of invariants of one struct and
 r the largest read set:
 
-- the number of debt keys is at most A = R·n·d·K + C, with R the number of
-  roots in the body (bindings, parameters and atomic targets' states) and C
-  the number of REF-1 covers: a key is a root followed by a relative suffix
-  of some write site's path (at most n·d of them, each possibly with
-  `[?]`-widened positions), and T4 and T10 rebasing only move a suffix onto
-  another root, so they create no other suffixes;
+- the number of debt keys is at most A = (R + 1)·B·(d + 1)²·K + C, with R
+  the number of roots in the body (bindings, parameters and atomic targets'
+  states), B = n·d + U + S the base anchors, d here also bounding the paths
+  of the anchors atomic entries add, U their number, S the number of `swap`
+  targets and C the number of covers. An anchor is a base anchor (a proper
+  prefix of a written place, at most n·d, one an atomic entry adds, or a
+  `swap` target) or a root followed by the steps a base anchor has below a
+  value, at most d + 1 per base anchor: T4 rebasing onto a root keeps such
+  steps and a T10 exchange appends none below its target. T9 widens each
+  anchor to at most d + 1 shapes, because a widened offset widens every
+  later one;
 - the debt state at a point is a subset of those keys; the breaking-event
   sets are diagnostic only and take no part in the fixed point;
 - a write event costs at most d·K·r overlap judgments, each an existing
@@ -658,8 +740,9 @@ key can only remove instances.
 **Loop fixed point.** Fix every other input; the header's debt set D_h maps
 to F(D_h) = entering debts ∪ the debts on the backedges and `continue`s after
 one walk of the body starting from D_h. By the monotonicity above F is
-monotone. The key lattice is finite (A keys), so Kleene iteration from the
-entering set reaches the least fixed point in at most A + 1 walks. The least
+monotone. The key lattice is finite (A keys, each with or without its
+recorded reference), so Kleene iteration from the entering set reaches the
+least fixed point in at most 2·A + 1 walks. The least
 fixed point is sound by induction over iterations: the entering edge
 satisfies SI for every key outside it, and if an iteration starts with SI
 for those keys, the walk proves the backedge leaves them restored or keeps
@@ -669,10 +752,10 @@ argument [INV-1] uses for a written header invariant.
 **Nested loops and the whole body.** Header sets never shrink during the
 computation: iterate the whole body with a monotone update of every header
 (chaotic iteration without resets). Each re-walk adds at least one key to at
-least one header, so there are at most H·A + 1 walks, H the number of loop
-headers. Each walk is the existing proof walk plus the work above, so the
-total is O(H·A·C), C the existing per-body checking cost — polynomial in the
-body's size. The least fixed point of a monotone function on a finite
+least one header or drops a recorded reference [TYPE-11.S2] from one, so
+there are at most 2·H·A + 1 walks, H the number of loop headers. Each walk
+is the existing proof walk plus the work above, so the total is O(H·A·C), C
+the existing per-body checking cost — polynomial in the body's size and U. The least fixed point of a monotone function on a finite
 lattice is unique, so the iteration order, worklist order and thread
 schedule cannot change it [ENT-1]. No budget, depth limit or timeout
 appears; the iteration ends because a finite set grows.
@@ -685,7 +768,27 @@ instance is killed at the header in every round; the re-walk changes only
 which instances appear inside the body, which is what the monotone
 iteration accounts for.
 
-**What remains to measure.** The bound is polynomial; whether it is cheap
+Two earlier forms of the rules broke this bound. Exchanging whole anchors
+below the `swap` targets composes: N nested swaps of distinct types reach
+2^N anchors and walk a loop 2^N times, and a swap into a value's own
+recursive part never stops growing them (T10). Widening each offset
+independently gives an anchor with m offsets that read bindings 2^m shapes,
+when the kill batches of different paths widen different subsets (T9).
+
+U is the one term that is not polynomial in the body's size. The
+provisional atomic rule trusts no struct value a target's referent owns
+below it, so an atomic entry adds one debt per anchor of the referent's
+type unfolding, with `[?]` for each element and a cover where a type
+recurs on the path; that is one per struct value a value of the type holds
+down to its first recursion, which is exponential in the number of distinct
+struct types nested along shared paths (S1 holding two S2, S2 two S3, and
+so on). The shared-object model, whose ruling the provisional rule waits
+for, decides which of those values a block may trust; a block that trusts
+them adds no entry debts and U is zero, as the model above assumes. Until
+then the cost stands, recorded with that decision.
+
+**What remains to measure.** The bound is polynomial in the body's size
+and U; whether it is cheap
 is an empirical question the criterion below answers. The common case is one
 walk per loop (every key restored on the backedge on the first round), and a
 function that writes no invariant data has no debts at all.

@@ -3324,12 +3324,12 @@ impl<'unit> TypeContext<'unit> {
             );
             let prelude = self.declarations.tree.is_prelude_node(signature.node)?;
             callee.relocation = matches!(signature.name.as_str(), "grow" | "grow_paged") && prelude;
-            // [TYPE-11.S3] the arguments of `swap` and `release` are no
-            // hand-offs: their supplied definitions exchange or release
-            // values and read none.
+            // [TYPE-11.S3] the arguments of `swap`, `release` and `map_clear`
+            // are no hand-offs: their supplied definitions exchange, release
+            // or clear values and read none.
             callee.sealing = match signature.name.as_str() {
                 "swap" if prelude => CalleeSealing::Exchange,
-                "release" if prelude => CalleeSealing::Release,
+                "release" | "map_clear" if prelude => CalleeSealing::Release,
                 _ => CalleeSealing::HandsOff,
             };
             callees.push(callee);
