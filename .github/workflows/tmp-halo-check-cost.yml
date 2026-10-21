@@ -52,11 +52,14 @@ jobs:
           perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path compiler/Cargo.toml
           perl .github/run-check.pl thc-unit-build cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib --no-run
       - name: Routed ensures tests
-        run: perl .github/run-check.pl thc-unit-routed cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib enum_routed_ensures
+        run: |
+          perl .github/run-check.pl thc-unit-routed cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib 'enum_routed_ensures'
       - name: Entailment tests
-        run: perl .github/run-check.pl thc-unit-entailment cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib semantic::entailment
+        run: |
+          perl .github/run-check.pl thc-unit-entailment cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib 'semantic::entailment'
       - name: Resolution tests
-        run: perl .github/run-check.pl thc-unit-resolution cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib resolution::
+        run: |
+          perl .github/run-check.pl thc-unit-resolution cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib 'resolution::'
 
   measure:
     runs-on: ubuntu-24.04
