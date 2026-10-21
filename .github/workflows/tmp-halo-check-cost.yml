@@ -143,7 +143,7 @@ jobs:
                   names = [pattern] if re.fullmatch(r'\w+', pattern) else re.findall(r'(?<=: )[a-z_]\w*', pattern)
                   for name in names:
                       counter[0] += 1; fresh = f'{name}_d{counter[0]}'
-                      use = re.compile(r'(?<![\w.:])' + re.escape(name) + r'(?!\w)(?!:(?!:))')
+                      use = re.compile(r'(?<![\w:])(?<![\w)\]^]\.)' + re.escape(name) + r'(?!\w)(?!:(?!:))')
                       keep[at] = use.sub(fresh, keep[at][:d.end(1)]) + keep[at][d.end(1):]
                       keep[at + 1:] = [use.sub(fresh, l) for l in keep[at + 1:]]
               rest = lines[tail:]
