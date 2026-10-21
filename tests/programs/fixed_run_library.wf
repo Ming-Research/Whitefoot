@@ -127,7 +127,7 @@ fn publish_report(factory: &std::io::HandleFactory, output: &std::io::OutputStre
 
 fn main(inputs: std::process::Inputs) -> status: ExitStatus pure waits {
   doc "Runs all six fixed-window library functions at copy element types, then separately instantiates the transposing removal at an affine Box element type: the two constructions, the removal built on swap, the two checked boundary forms, and the drain that returns a wrapped window to its origin. The lengths the constructions, the removal and the drain leave are published as one byte each for the harness to compare.";
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &factory, directory: move unused_cwd);

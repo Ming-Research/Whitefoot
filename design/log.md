@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-20 Programs open host paths through an explicit authority no program can construct, and an open of an existing directory never creates one
+
+Nodes: language/system-interface/host-paths
+
+Summary: A program opens a file or an existing directory at a host path, absolute or relative to a directory it holds, only through `std::fs::HostPaths`, a fieldless value that `Inputs.host_paths` supplies on POSIX and Windows hosts and no program can construct, because Firn must open a configuration file named on its command line and an included file and data directory whose paths are read from configuration bytes while a function given only a directory half gains no new authority; widening the relative path type and giving every directory a path open were refused, since either lets a directory parameter authorize more paths that ignore it. Six opens take a host string or a byte window with a stated encoding, follow every link, resolve `..` as the host does and never create an entry, instead of the create-if-missing directory open, which hides a misconfigured data directory; the single-name opens below a directory keep refusing a link at the name. The directory pair comes from one lookup and takes two credits, a byte window is copied into a bounded runtime block, and a Windows host path is UTF-16 code units looked up in the Win32 dialect, a relative path whose normalized form begins with the base's reported spelling opening from the base's handle so a rename of the base cannot redirect it. A host without a host filesystem supplies no authority. The study is research/investigations/host-paths/DESIGN.md.
+
 ## 2026-10-21 Syntax diagnostics are segmented per top-level declaration, expected tokens come from the parse stack, and repair hints stay where they compile
 
 Nodes: compiler, compiler/diagnostic-rendering, compiler/diagnostic-repairs, compiler/incremental-compilation, language/grammar
