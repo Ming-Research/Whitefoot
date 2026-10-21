@@ -112,9 +112,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let folder_end = copy_name(args: &args, position: 1_u64, destination: &folder[0_u64..64_u64]);
   let outcome = 99_u8;
   if folder_end > 0_u64 {
-    if folder_end <= 64_u64 {
-      set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, folder: &folder[0_u64..folder_end]);
-    }
+    set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, folder: &folder[0_u64..folder_end]);
   }
   std::fs::close_directory(factory: &factory, directory: move reader);
   std::fs::close_directory_write(factory: &factory, directory: move writer);

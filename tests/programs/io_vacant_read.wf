@@ -12,7 +12,7 @@ alias read_at = std::fs::read_at;
 alias relative_path = std::fs::relative_path;
 
 fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) waits {
-  doc "An empty request must transfer nothing and must not disturb the following transfer; both requests name the same destination range reference over one frame-resident array.";
+  doc "An empty request must transfer nothing and must not disturb the following transfer; both requests name the same destination range reference over one frame-resident array. The second request's exit status, its count or 213 at end of input, adds one hundred times the empty request's count, so a nonzero empty transfer changes it.";
   match arg_get(args: args, position: 1_u64) {
     Ok(value: text) => {
       match relative_path(value: move text) {
@@ -39,23 +39,23 @@ fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: 
                   }
                 }
               }
-              if vacant == 0_u64 {
-              } else {
-                close_read(factory: files, file: move file);
-                return exit_status(code: 212_u8);
-              }
               let second = &bytes[0_u64..8_u64];
               match read_at(factory: files, file: &file, destination: second, file_offset: 0_u64, start: 0_u64, end: 8_u64) {
                 Ok(value: n) => {
-                  let code = cvt::<u64, u8>(n);
+                  let vacant_weight = vacant * 100_u64;
+                  let observed = n + vacant_weight;
+                  let code = cvt::<u64, u8>(observed);
                   close_read(factory: files, file: move file);
                   return exit_status(code: code);
                 }
                 Err(error: second_stop) => {
                   match second_stop {
                     ReadEnd() => {
+                      let vacant_weight = vacant * 100_u64;
+                      let ended = 213_u64 + vacant_weight;
+                      let code = cvt::<u64, u8>(ended);
                       close_read(factory: files, file: move file);
-                      return exit_status(code: 213_u8);
+                      return exit_status(code: code);
                     }
                     ReadFailed(error: problem) => {
                       close_read(factory: files, file: move file);

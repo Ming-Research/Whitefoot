@@ -119,29 +119,51 @@ fn growth_cases() -> code: u8 pure {
   return 0_u8;
 }
 
-fn main() -> status: ExitStatus pure {
-  doc "The growth policy exercised twice: one string grown to twenty-four slots and filled with twenty bytes, and one grown to eight and filled from a const run through a range reference.";
+fn publish_report(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) waits contract {
+  define source_length = source^.len;
+  requires length <= source_length;
+} {
+  doc "Publishes one prefix of the report, reattempting until the host has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @publish {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @publish;
+    }
+    let no_deadline = None<std::time::Instant>();
+    let wait_cancel = std::time::cancel_never();
+    let wait_outcome = std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel);
+    std::time::close_cancel_watch(watch: move wait_cancel);
+    match wait_outcome {
+      Ok(value: accepted) => {
+        set sent = accepted;
+      }
+      Err(error: problem) => {
+        return Err<unit, std::io::IoError>(error: problem);
+      }
+    }
+  }
+  return Ok<unit, std::io::IoError>(value: unit);
+}
+
+fn main(inputs: std::process::Inputs) -> status: ExitStatus pure waits {
+  doc "The growth policy exercised twice: one string grown to twenty-four slots and filled with twenty bytes, and one grown to eight and filled from a const run through a range reference. The lengths and free slots each reservation leaves are published one byte each for the harness to compare.";
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &factory, directory: move unused_cwd);
+  let report = array_filled::<u8, 5>(value: 0_u8);
   let growth_code = growth_cases();
   if growth_code != 0_u8 {
     return exit_status(code: growth_code);
   }
   let s = bs_new();
-  let start_length = s.inner.len;
-  if 24_u64 >= start_length {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   bs_reserve(s: &s, total: 24_u64);
   let opening = s.inner.len;
   let spare = s.inner.cap - s.inner.len;
-  if opening == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  if spare >= 24_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  set report[0_u64] = cvt::<u64, u8>(opening);
+  set report[1_u64] = cvt::<u64, u8>(spare);
   let b = 7_u8;
   for @seed (
     at in 0_u64..20_u64,
@@ -158,36 +180,18 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 1_u8);
   }
   let cap_now = s.inner.cap;
-  if cap_now == 24_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  if 3_u64 < total {
-    let third = s.inner[3_u64];
-    if third == 28_u8 {
-    } else {
-      return exit_status(code: 1_u8);
-    }
+  set report[2_u64] = cvt::<u64, u8>(cap_now);
+  let third = s.inner[3_u64];
+  if third == 28_u8 {
   } else {
     return exit_status(code: 1_u8);
   }
   let observed = bs_new();
-  let second_start_length = observed.inner.len;
-  if 8_u64 >= second_start_length {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   bs_reserve(s: &observed, total: 8_u64);
   let second_opening = observed.inner.len;
   let second_spare = observed.inner.cap - observed.inner.len;
-  if second_opening == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  if second_spare >= 8_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  set report[3_u64] = cvt::<u64, u8>(second_opening);
+  set report[4_u64] = cvt::<u64, u8>(second_spare);
   place_back(window: &observed.inner, value: 65_u8);
   let source = &appended_bytes[0_u64..5_u64];
   for @append (
@@ -204,19 +208,23 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 1_u8);
   }
-  if 5_u64 < stored {
-    let last = observed.inner[5_u64];
-    if last == 33_u8 {
-    } else {
-      return exit_status(code: 1_u8);
-    }
-    let front = observed.inner[0_u64];
-    if front == 65_u8 {
-    } else {
-      return exit_status(code: 1_u8);
-    }
+  let last = observed.inner[5_u64];
+  if last == 33_u8 {
   } else {
     return exit_status(code: 1_u8);
+  }
+  let front = observed.inner[0_u64];
+  if front == 65_u8 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let report_window = &report[0_u64..5_u64];
+  match publish_report(factory: &factory, output: &out, source: report_window, length: 5_u64) {
+    Ok(value: published) => {
+    }
+    Err(error: problem) => {
+      return exit_status(code: 4_u8);
+    }
   }
   return exit_status(code: 0_u8);
 }

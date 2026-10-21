@@ -120,11 +120,10 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
       let (list_result_10, bytes, reported) = directory_next(source: &list, destination: window, start: 0_u64, end: 0_u64);
       match list_result_10 {
         Ok(value: done) => {
-          if bytes == 0_u64 {
-            if reported == 0_u64 {
-              close_directory_source(factory: files, source: move list);
-              return exit_status(code: 0_u8);
-            }
+          if reported == 0_u64 {
+            close_directory_source(factory: files, source: move list);
+            let code = cvt::<u64, u8>(bytes);
+            return exit_status(code: code);
           }
           close_directory_source(factory: files, source: move list);
           return exit_status(code: 5_u8);

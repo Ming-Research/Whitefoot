@@ -559,10 +559,8 @@ fn main() -> status: std::process::ExitStatus pure {
   if distinct.payload[15_u64] != 43_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  if watch != 5_u64 {
-    return std::process::exit_status(code: 5_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let watch_code = cvt::<u64, u8>(watch);
+  return std::process::exit_status(code: watch_code);
 }
 "#;
     let module = super::emit_lowered(source, super::OverlapLowering::Off);
@@ -588,7 +586,12 @@ fn main() -> status: std::process::ExitStatus pure {
         calls.contains(&false),
         "exercise an independent result destination"
     );
-    assert_success(&retain_calls(&module));
+    // The exit status is the caller's `watch` after both calls, which must
+    // still read the 5 it was initialized with.
+    let output = compile_and_run(&retain_calls(&module));
+    assert_eq!(output.status.code(), Some(5), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
 }
 
 #[test]
@@ -632,10 +635,8 @@ fn main() -> status: std::process::ExitStatus pure {
   if second.value != 99_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  if watch != 29_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let watch_code = cvt::<u64, u8>(watch);
+  return std::process::exit_status(code: watch_code);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -645,8 +646,12 @@ fn main() -> status: std::process::ExitStatus pure {
         // (compiler/result-registers); the caller's destination cannot alias
         // an input here. The destination-sized form is
         // `destination_results_keep_snapshots_of_inputs_their_caller_aliases`.
-        // Retained calls keep each call boundary observable.
-        assert_success(&retain_calls(&module));
+        // Retained calls keep each call boundary observable. The exit status
+        // is the caller's `watch` after both relays, still 29.
+        let output = compile_and_run(&retain_calls(&module));
+        assert_eq!(output.status.code(), Some(29), "{overlap:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{overlap:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{overlap:?}: {output:?}");
     }
 }
 
@@ -702,10 +707,8 @@ fn main() -> status: std::process::ExitStatus pure {
   if second.value != 99_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  if watch != 29_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let watch_code = cvt::<u64, u8>(watch);
+  return std::process::exit_status(code: watch_code);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -731,14 +734,21 @@ fn main() -> status: std::process::ExitStatus pure {
             pointer(2),
             "{overlap:?}: the result destination is right's backing: {call}"
         );
-        assert_success(&module);
-        assert_success(&retain_calls(&module));
+        // The exit status is the caller's `watch` after both relays, still 29.
+        for program in [module.clone(), retain_calls(&module)] {
+            let output = compile_and_run(&program);
+            assert_eq!(output.status.code(), Some(29), "{overlap:?}: {output:?}");
+            assert!(output.stdout.is_empty(), "{overlap:?}: {output:?}");
+            assert!(output.stderr.is_empty(), "{overlap:?}: {output:?}");
+        }
     }
 }
 
 /// A [SET-1] commit over a zero-extent aggregate field leaves its adjacent
 /// fields alone. The displaced value is released there [WIN-3]; the read-out
-/// that handed it back retired with [SET-2].
+/// that handed it back retired with [SET-2]. The empty field's own `len` is
+/// its type's extent 0 with no storage behind it, so the program no longer
+/// reads it.
 #[test]
 fn zero_sized_aggregate_assignment_preserves_adjacent_fields() {
     let source = br#"struct Envelope {
@@ -752,27 +762,42 @@ fn install_empty(target: &Envelope, value: Array<u64, 0>) -> result: unit writes
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let empty = array_filled::<u64, 0>(value: 0_u64);
   let envelope = Envelope(before: 17_u64, empty: empty, after: 29_u64);
   let replacement = array_filled::<u64, 0>(value: 43_u64);
   install_empty(target: &envelope, value: replacement);
-  if envelope.before != 17_u64 {
-    return std::process::exit_status(code: 1_u8);
+  let report = array_filled::<u8, 2>(value: 255_u8);
+  set report[0_u64] = cvt::<u64, u8>(envelope.before);
+  set report[1_u64] = cvt::<u64, u8>(envelope.after);
+  let report_bytes = &report[0_u64..2_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 1_u8);
+    }
   }
-  if envelope.after != 29_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
-  let size = envelope.empty.len;
-  if size != 0_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
-        assert_success(&retain_calls(&module));
+        // The program writes the adjacent fields `before` and `after` after
+        // the zero-extent commit, one byte each; the harness compares them
+        // with the constructed 17 and 29.
+        let output = compile_and_run(&retain_calls(&module));
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+        assert_eq!(output.stdout, [17_u8, 29], "{overlap:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{overlap:?}: {output:?}");
     }
 }
 
@@ -1184,14 +1209,17 @@ fn main() -> status: std::process::ExitStatus pure {
   if table.rows[1_u64].right != 201_u64 {
     return std::process::exit_status(code: 8_u8);
   }
-  if table.tag != 41_u64 {
-    return std::process::exit_status(code: 9_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let tag_code = cvt::<u64, u8>(table.tag);
+  return std::process::exit_status(code: tag_code);
 }
 "#,
     );
-    assert_success(&module);
+    // The exit status is `table.tag` after the element swap and the
+    // copy-place exchange beside it, still the constructed 41.
+    let output = compile_and_run(&module);
+    assert_eq!(output.status.code(), Some(41), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
 }
 
 /// OP-11 excludes partial overlap while admitting an exactly equal target.
@@ -1329,15 +1357,19 @@ fn main() -> status: std::process::ExitStatus pure {
   if table.bytes[0_u64] != 23_u8 {
     return std::process::exit_status(code: 5_u8);
   }
-  if table.tag != 29_u64 {
-    return std::process::exit_status(code: 6_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let tag_code = cvt::<u64, u8>(table.tag);
+  return std::process::exit_status(code: tag_code);
 }
 "#,
     );
-    assert_success(&module);
-    assert_success(&retain_calls(&module));
+    // The exit status is `table.tag` as written through the sibling
+    // reference, 29.
+    for program in [module.clone(), retain_calls(&module)] {
+        let output = compile_and_run(&program);
+        assert_eq!(output.status.code(), Some(29), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
 }
 
 #[test]
@@ -1712,6 +1744,12 @@ void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
 /// checks that the removed owner leaves before A5, the remaining owners leave
 /// in logical order, and the outer cell leaves last. The runtime shape drains
 /// explicitly; a boxed inline shape leaves a wrapped partial window to cleanup.
+/// The checker proves the wrapped ring's length and capacity and the drained
+/// length, so the full program folds them into its exit status, zero when
+/// they are 3, 3 and 0, and the trace keeps standard output. The fixed-shape
+/// variant keeps its two zero tests on the freshly boxed ring: the checker
+/// does not carry the facts about a value's fields through `box_new`, so it
+/// cannot decide them (`wf-box-field-facts`).
 #[test]
 fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
     let source = include_str!("../../../../tests/programs/runtime_ring_wrap.wf");
@@ -1755,6 +1793,10 @@ fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
 /// The arena half of this case retired with [STOR-4]: there is one heap
 /// [STOR-8] and one cell release [STOR-3], so the same helper over a second
 /// store class has no successor to contrast against.
+///
+/// The zero test on the freshly boxed window's length stays: the checker does
+/// not carry the facts about a value's fields through `box_new`, so it cannot
+/// decide it (`wf-box-field-facts`).
 #[test]
 fn boxed_window_bounded_append_preserves_storage_and_elements() {
     let source = br#"struct Checked {

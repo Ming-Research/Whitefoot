@@ -58,6 +58,7 @@ mod integer_matches;
 mod integer_negation;
 mod loop_invariants;
 mod loop_permission;
+mod match_sites;
 mod operation_table;
 mod options;
 mod ordinary_effects;
@@ -703,14 +704,18 @@ fn loop_break_and_backedge_cleanup_is_explicit() {
   value: i32;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn cycle(stop: Bool) -> result: unit pure {
   loop @again {
     let first = Cell(value: 1_i32);
-    if True() {
+    if stop {
       break @again;
     }
     let second = Cell(value: 2_i32);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -718,12 +723,17 @@ fn main() -> status: std::process::ExitStatus pure {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("loop cleanup source must check: {outcome:?}");
         };
-        let main = &checked.data.functions[0];
+        let cycle = checked
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "cycle")
+            .expect("cycle");
         let CheckedStatement::Loop {
             body,
             backedge_drops,
             ..
-        } = &main.body.as_ref().expect("WF body")[0]
+        } = &cycle.body.as_ref().expect("WF body")[0]
         else {
             panic!("first statement must be the checked loop");
         };
@@ -897,12 +907,13 @@ fn nominal_diagnostics_retain_required_lists_and_repairs() {
             declared_fields: vec!["a".to_owned(), "b".to_owned()],
         },
     );
-    assert_rule(
-        include_bytes!("../../../tests/conformance/cases/err2-neg-missing-variant.wf"),
-        SemanticRule::Err2,
-        SemanticIssueKind::NonExhaustiveMatch {
-            missing_variants: vec!["Blue".to_owned()],
-        },
+    match_sites::assert_sites(
+        include_str!("../../../tests/conformance/cases/err2-neg-missing-variant.wf"),
+        "Color",
+        &[(
+            "match c {\n    Red() => {\n      return 1_i32;\n    }\n    Green() => {\n      return 2_i32;\n    }\n  }",
+            &["Blue"],
+        )],
     );
     assert_rule(
         b"struct Pair {\n  x: i32;\n  x: i32;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",

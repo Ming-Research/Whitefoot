@@ -1083,7 +1083,7 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
             let (modules, selected) =
                 super::composition_inputs(&graph, &all_inputs, selection.module);
             let facts = *crate::toolchain::facts();
-            // Seed all three alternatives before the first ordinary lookup.
+            // Seed all four alternatives before the first ordinary lookup.
             // Omitting any fact from the production key makes that alternative
             // collide and incorrectly reports a cache hit on the first build.
             for foreign in [
@@ -1105,6 +1105,10 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
                     } else {
                         "i1"
                     },
+                    ..facts
+                },
+                crate::toolchain::ToolchainFacts {
+                    darwin_stack_probe_helper: !facts.darwin_stack_probe_helper,
                     ..facts
                 },
             ] {
@@ -2373,8 +2377,8 @@ fn a_counted_loop_a_give_can_leave_is_denied_by_condition_four() {
     let source = b"fn scan_until(src: &Slots<u64, 64>, needle: u64) -> result: u64 reads(src) {
   let count = src^.len;
   let acc = 0_u64;
-  let always = True();
-  let answer = if always {
+  let searching = needle != 0_u64;
+  let answer = if searching {
     for @scan (i in 0_u64..count) {
       let v = src^[i];
       set acc = acc +wrap v;
@@ -2433,8 +2437,8 @@ fn main() -> status: std::process::ExitStatus pure {
     let contained = b"fn scan_until(src: &Slots<u64, 64>, needle: u64) -> result: u64 reads(src) {
   let count = src^.len;
   let acc = 0_u64;
-  let always = True();
-  let answer = if always {
+  let searching = needle != 0_u64;
+  let answer = if searching {
     for @scan (i in 0_u64..count) {
       let v = src^[i];
       set acc = acc +wrap v;
