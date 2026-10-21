@@ -395,7 +395,7 @@ After the diagnostics change that lets one check list every incomplete `match`
 stage ran over its budget on three CPU models: 193.7 s against 175 s on EPYC
 7763 (run 39521731772), 142.0 s against 130 s on EPYC 9V45 (run 39541773155)
 and 186.1 s against 185 s on Xeon 8573C (run 39542057962). The EPYC 7763 stage
-was already near its budget before the merge: 19 of the 67 recorded attempts
+was already near its budget before the merge: 19 of the 64 recorded executions
 on that CPU before the merge (2026-10-21T00:30:26Z) in the window below were
 above 175 s, up to 193.5 s. Those are runs of many branches at different
 revisions, so they say how noisy the stage was, not how much the merge added;
@@ -444,20 +444,24 @@ they are kept.
 
 **Recompute.** The owner approved raising the unit group's budgets by the
 rule above on 2026-10-21; the rule is applied as written. The recorded runs are
-every attempt, the first of a re-run included, of `gate.yml` runs of any branch
-created from 2026-10-14T01:06:58Z to 2026-10-21T07:02:42Z, cancelled runs
-excluded and over-budget attempts included, whose `unit (ubuntu-24.04)` job
-printed `== END <stage>: <seconds> s, exit 0 ==` for the stage. The CPU model is
+every execution of the `unit (ubuntu-24.04)` job of `gate.yml` runs of any
+branch created from 2026-10-14T01:06:58Z to 2026-10-21T07:02:42Z that printed
+`== END <stage>: <seconds> s, exit 0 ==` for the stage: cancelled runs are
+excluded, over-budget executions are included, the first attempt of a re-run is
+included, and a job that a later attempt carried over unchanged (re-running only
+the failed jobs keeps the other jobs, with the same job start time) counts once,
+under its first attempt. The CPU model is
 the first `model name` line of that attempt's job log. The window starts where
 Xeon 8573C, the scarcest class, has at least 20 observations of each stage
-(23, 24 and 23), ends at the newest run with a unit job in the data, and holds
+(20, 21 and 20), ends at the newest run with a unit job in the data, and holds
 revisions before and after the merge. The runs and
-attempts are listed in
+executions are listed in
 [unit-group-runs-2026-10-21.tsv](unit-group-runs-2026-10-21.tsv), from which
 each count, median and maximum below can be recomputed. They were taken from the
-GitHub API: the runs listed with `created=<start>..<end>`, then for each
-attempt the jobs of `runs/<id>/attempts/<n>/jobs` and the job log of the
-`unit (ubuntu-24.04)` job. Each cell is the maximum plus 10%, rounded up to 5
+GitHub API: the runs listed with `created=<start>..<end>` (418 runs), then for
+each attempt the jobs of `runs/<id>/attempts/<n>/jobs` and the job log of the
+`unit (ubuntu-24.04)` job; no request failed. The file holds only the four CPU
+models with a budget column. Each cell is the maximum plus 10%, rounded up to 5
 s.
 
 Each cell is **count / median / maximum / rule / earlier**, in seconds, with
@@ -465,9 +469,9 @@ the run and attempt that hold the maximum; the new value is the rule value.
 
 | Stage | EPYC 7763 | EPYC 9V74 | EPYC 9V45 | Xeon 8573C |
 |---|---|---|---|---|
-| `check/unit` | 152 / 327.1 / 366.3 (39544796974 a2) / **405** / 385 | 71 / 259.8 / 334.0 (39546951274 a1) / **370** / 320 | 66 / 213.8 / 244.0 (39541773155 a2) / **270** / 225 | 23 / 303.3 / 321.5 (39542057962 a2) / **355** / 385 |
-| `compiler/test-build-unit` | 158 / 168.7 / 202.5 (39544796974 a2) / **225** / 175 | 77 / 140.0 / 181.3 (39184302472 a1) / **200** / 175 | 67 / 117.7 / 142.0 (39541773155 a2) / **160** / 130 | 24 / 167.7 / 186.1 (39542057962 a2) / **205** / 185 |
-| `compiler/test-unit` | 152 / 156.0 / 176.8 (39493437202 a1) / **195** / 215 | 71 / 119.8 / 155.8 (39546951274 a1) / **175** / 150 | 66 / 94.5 / 106.0 (39494847475 a1) / **120** / 100 | 23 / 135.2 / 143.2 (39509413316 a2) / **160** / 215 |
+| `check/unit` | 141 / 327.1 / 366.3 (39544796974 a2) / **405** / 385 | 64 / 258.7 / 334.0 (39546951274 a1) / **370** / 320 | 61 / 214.6 / 244.0 (39541773155 a2) / **270** / 225 | 20 / 306.0 / 321.5 (39542057962 a2) / **355** / 385 |
+| `compiler/test-build-unit` | 147 / 168.5 / 202.5 (39544796974 a2) / **225** / 175 | 70 / 139.1 / 181.3 (39184302472 a1) / **200** / 175 | 62 / 117.9 / 142.0 (39541773155 a2) / **160** / 130 | 21 / 168.1 / 186.1 (39542057962 a2) / **205** / 185 |
+| `compiler/test-unit` | 141 / 156.0 / 176.8 (39493437202 a1) / **195** / 215 | 64 / 119.3 / 155.8 (39546951274 a1) / **175** / 150 | 61 / 94.4 / 106.0 (39494847475 a1) / **120** / 100 | 20 / 135.3 / 143.2 (39509413316 a2) / **160** / 215 |
 
 Three cells fall: EPYC 7763 `compiler/test-unit` (215 to 195), Xeon 8573C
 `check/unit` (385 to 355) and Xeon 8573C `compiler/test-unit` (215 to 160). The
@@ -480,9 +484,16 @@ Xeon run). The rule gives the lower values over this window.
 The EPYC 7763 `compiler/test-build-unit` maximum, 202.5 s, is the second
 attempt of the push to the main line of a commit (ed1a544b8) that changed no
 Rust source. The rule takes the maximum of the window, so one slow host sets the
-budget: 225 s is 33% above that stage's median of 168.7 s, against a merge cost
+budget: 225 s is 34% above that stage's median of 168.5 s, against a merge cost
 of about 4%. How the rule treats such outliers belongs to the budget-method
 study, not to this change.
+
+A CPU model without a column uses the stage's largest class budget (405, 225
+and 195 s for the three rows). The models seen in the window, Xeon 8370C (10, 11
+and 10 executions) and Xeon 6973P-C (8 each), stay within them: their largest
+readings are 348.1, 191.6 and 156.4 s on Xeon 8370C and 282.7, 162.7 and 119.9 s
+on Xeon 6973P-C for `check/unit`, `compiler/test-build-unit` and
+`compiler/test-unit`.
 
 This is one week of runs on mixed revisions and branches; the paired builds are
 measurements on hosted runners on that day and say nothing about other hosts.
