@@ -14,6 +14,7 @@ mod held;
 mod inventory;
 mod linearity;
 mod lock_ledger_sources;
+mod match_diagnostics;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -33,6 +34,8 @@ mod type_invariants;
 mod type_regions;
 mod types;
 
+#[cfg(test)]
+pub(super) use match_diagnostics::capture_match_sites;
 pub(crate) use receipts::ProofReceipts;
 pub(crate) use repairs::{
     executable_caller_repair, executable_runner_repair, header_invariant_scope_repair,
@@ -719,6 +722,8 @@ struct BodyChecker {
 /// Program-wide judgments and reuse records, published after checking succeeds.
 #[derive(Default)]
 struct AnalysisState {
+    /// [ERR-2] rejected structural scratch, stopped before proof consumers.
+    match_diagnostics: match_diagnostics::MatchDiagnostics,
     /// [DIAG-1, FN-10] retain tail-condition failures until ordinary call
     /// checking, including FN-8 proofs, can establish a prior same-node rule.
     musttail_rejections: Vec<SemanticIssue>,
@@ -930,6 +935,7 @@ fn check_semantics_attempt(
             receipts,
         );
         let result = checker.check_program(&CheckContext::default());
+        let result = checker.analysis.match_diagnostics.finish(result);
         checker.analysis.finish_musttail_checks(result)
     })
 }
@@ -1830,11 +1836,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         };
         let queries = self.analysis.contract_queries.len();
         let tail_rejections = self.analysis.musttail_rejections.len();
+        let match_rejections = self.analysis.match_diagnostics.len();
         loop {
             self.analysis.contract_queries.truncate(queries);
             // Only the settled body may contribute FN-10 refusals. Keep the
             // position checks and earlier functions outside this attempt.
             self.analysis.musttail_rejections.truncate(tail_rejections);
+            self.analysis.match_diagnostics.truncate(match_rejections);
             let outcome = {
                 let mut attempt = Checker::new(
                     self.types,

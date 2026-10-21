@@ -12,6 +12,19 @@ Nodes: language/data-model/slab-storage
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve: the new decision and the two rewordings take effect; write the design-tree approval record, mark ready, run the gate on both platforms, merge through the coordinator's queue and release to Firn" (translated), on the card "approve the Slab storage design node's changes (Whitefoot#448, head commit 2c2890351119)?" (translated), whose background listed the new reservation decision, its three refused alternatives and the two rewordings.
 
 Summary: A Slab may reserve capacity explicitly up to its type limit through the ordinary window growth, so existing slots, indices and generations stay and old handles remain valid while a value's address may change; the free list's end marker becomes the type limit instead of the initial capacity, which growth would turn into a valid index. A request beyond the limit returns Err without mutation and a sufficient capacity returns Ok without shrinking, as HashMap reservation does. Fixed capacity after construction, rebuilding the slot records on growth and promising stable value addresses were refused. The first decision now says the Slab uses (not reserves) one backing and keeps slot indices, and the refused dense-array alternative is refused for changing another value's slot index.
+## 2026-10-20 The merge-base compiler is cached per main commit, and its cold build is report-only
+
+Nodes: compiler/verification, compiler/merge-base-compiler-cache
+
+Summary: The paired performance comparison builds the main line's compiler as its baseline, a cold build of about 110 s that overran its 115 s budget on about one run in four and turned unrelated pull requests red. The owner chose on 2026-10-13 to cache that compiler per main commit and toolchain, with an exact key and no prefix restore, and on 2026-10-14 to make the baseline build report-only, because it builds the main line's own code that no pull request changes. The cache misses after each runner image change, so the first pull request after one builds cold; that build is recorded but does not fail the verdict. The candidate build keeps its own enforced budget.
+
+## 2026-10-13 One compilation lists every non-exhaustive match
+
+Nodes: compiler/rejection-payloads
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the decision that Whitefoot#444 (one compilation lists every non-exhaustive match) adds to the design tree?" (translated), shown at head commit 4cca9198f.
+
+Summary: A non-exhaustive match records its edit site and the same structural walk continues over the written arms and later functions, reporting the first established event with every recorded site, because ERR-2 promises site-enumerated edit lists and one site per compile costs an agent a round per match when adding a variant, instead of stopping at the first site. Missing arms contribute no path or guessed binding, pending sites fail before proof analysis or receipt publication, and a same-node rejection under an earlier-defined rule still wins under DIAG-1; re-running with masked matches or a second checker and narrowing ERR-2 to the first site are rejected.
 ## 2026-10-13 Release packages carry their own clang, and macOS stack probing follows the clang in use
 
 Nodes: compiler/toolchain-resolution, compiler/resource-exhaustion-floor, compiler/downstream-releases
