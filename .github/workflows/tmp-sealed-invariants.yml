@@ -50,6 +50,15 @@ jobs:
           grep -E '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
           grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
           exit "$status"
+      - name: Build the base compiler
+        if: always()
+        run: |
+          git fetch --depth=1 origin d1f2a19d2ae599512b51a19ea622cd3377e34366
+          git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
+          perl .github/run-check.pl sealed-base-build cargo build \
+            --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" \
+            --profile gate --locked --offline --bin whitefootc
       - name: Print the open cases' diagnostics and probe their causes
         if: always()
         run: |
@@ -57,6 +66,14 @@ jobs:
           check() {
             echo "== $1"
             perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check "$2"
+            echo "exit $?"
+          }
+          # The same probe with the branch's compiler and the base's.
+          compare() {
+            check "$1" "$2"
+            echo "== $1 (base)"
+            perl .github/run-check.pl sealed-probe "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" \
+              --check "$2"
             echo "exit $?"
           }
           for case in range2-pos-module-boxed-dispatch-backedge type11-pos-loop-reference-restored \
@@ -89,7 +106,7 @@ jobs:
               first=0
               printf '%s\n' "$item" >> "$probe/$name.wf"
             done
-            check "$name" "$probe/$name.wf"
+            "${checker:-check}" "$name" "$probe/$name.wf"
           }
           # range2's follow, alone and with a read of a binder datum of
           # same_length before the loop, inside it, or of the other datum,
@@ -259,9 +276,10 @@ jobs:
             let got = inspect(link: &head);
             return got;
           }" "$main"
+          checker=compare
           # A member an ancestor's invariant reads, replaced whole by a
-          # construction that keeps the invariant, by one that breaks it, and
-          # moved out, changed and moved back.
+          # value that keeps the invariant, by one that breaks it, by a
+          # construction in place, and copied out, changed and copied back.
           member='struct Member {
             index: u64;
           }'
@@ -274,21 +292,68 @@ jobs:
             let got = holder^.member.index;
             return got;
           }'
-          for variant in fits breaks moved; do
+          for variant in fits breaks built copied; do
             case "$variant" in
               fits) update='  let fresh = Member(index: 3_u64);
-            set holder.member = move fresh;' ;;
+            set holder.member = fresh;' ;;
               breaks) update='  let fresh = Member(index: 9_u64);
-            set holder.member = move fresh;' ;;
-              moved) update='  let taken = move holder.member;
+            set holder.member = fresh;' ;;
+              built) update='  set holder.member = Member(index: 3_u64);' ;;
+              copied) update='  let taken = holder.member;
             set taken.index = 5_u64;
-            set holder.member = move taken;' ;;
+            set holder.member = taken;' ;;
             esac
             write "replace-$variant" "$member" "$holder" "$pick" "fn replace() -> result: u64 pure {
             let first = Member(index: 1_u64);
-            let holder = Holder(member: move first, size: 8_u64);
+            let holder = Holder(member: first, size: 8_u64);
           $update
             let got = pick(holder: &holder);
             return got;
           }" "$main"
           done
+          # An element of a shared state, a field of it, and an element whose
+          # broken sibling's position changed, each handed off after a check
+          # of its own instance.
+          index='struct Index {
+            value: u64;
+            invariant bounded(index): index.value < 16_u64;
+          }'
+          lookup='fn lookup(index: &Index) -> result: u64 reads(index) {
+            let got = index^.value;
+            return got;
+          }'
+          state='struct State {
+            items: Array<Index, 4>;
+            single: Index;
+          }'
+          for variant in element field; do
+            case "$variant" in
+              element) handed='s^.items[at]' ;;
+              field) handed='s^.single' ;;
+            esac
+            write "atomic-$variant" "$index" "$state" "$lookup" "fn peek(state: Shared<State>, at: u64) -> result: u64 pure waits contract {
+            requires at < 4_u64;
+          } {
+            let got = 0_u64;
+            atomic s = &state {
+              if $handed.value < 16_u64 {
+                set got = lookup(index: &$handed);
+              }
+            }
+            return got;
+          }" "$main"
+          done
+          write widened-element "$index" "$lookup" 'fn widened(at: u64) -> result: u64 pure contract {
+            requires at < 4_u64;
+          } {
+            let seed = Index(value: 3_u64);
+            let items = array_filled::<Index, 4>(value: seed);
+            let j = 0_u64;
+            set items[j].value = 31_u64;
+            set j = 1_u64;
+            let got = 0_u64;
+            if items[at].value < 16_u64 {
+              set got = lookup(index: &items[at]);
+            }
+            return got;
+          }' "$main"

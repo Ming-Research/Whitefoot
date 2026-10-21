@@ -242,7 +242,7 @@ fn main() -> status: std::process::ExitStatus pure {
         name: "a-cursor-writes-below-a-hidden-anchor.wf",
         rejected: br#"struct Wrap {
   inner: Link;
-  invariant small(wrap): wrap.inner.v < 16_u64;
+  invariant small(outer): outer.inner.v < 16_u64;
 }
 
 struct Link {
@@ -250,8 +250,8 @@ struct Link {
   next: Option<Box<Wrap>>;
 }
 
-fn inspect(wrap: &Wrap) -> result: u64 reads(wrap.inner.v) {
-  let got = wrap^.inner.v;
+fn inspect(outer: &Wrap) -> result: u64 reads(outer.inner.v) {
+  let got = outer^.inner.v;
   return got;
 }
 
@@ -276,7 +276,7 @@ fn walk() -> result: u64 pure {
   }
   set cursor^.v = 9_u64;
   set top.inner.v = 1_u64;
-  let got = inspect(wrap: &top);
+  let got = inspect(outer: &top);
   return got;
 }
 
@@ -294,7 +294,7 @@ fn main() -> status: std::process::ExitStatus pure {
         repaired: &[
             br#"struct Wrap {
   inner: Link;
-  invariant small(wrap): wrap.inner.v < 16_u64;
+  invariant small(outer): outer.inner.v < 16_u64;
 }
 
 struct Link {
@@ -302,8 +302,8 @@ struct Link {
   next: Option<Box<Wrap>>;
 }
 
-fn inspect(wrap: &Wrap) -> result: u64 reads(wrap.inner.v) {
-  let got = wrap^.inner.v;
+fn inspect(outer: &Wrap) -> result: u64 reads(outer.inner.v) {
+  let got = outer^.inner.v;
   return got;
 }
 
@@ -331,7 +331,7 @@ fn walk() -> result: u64 pure {
   let fresh = Link(v: 1_u64, next: move rest);
   set top.inner = move fresh;
   set top.inner.v = 1_u64;
-  let got = inspect(wrap: &top);
+  let got = inspect(outer: &top);
   return got;
 }
 
@@ -343,7 +343,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
             br#"struct Wrap {
   inner: Link;
-  invariant small(wrap): wrap.inner.v < 16_u64;
+  invariant small(outer): outer.inner.v < 16_u64;
 }
 
 struct Link {
@@ -351,8 +351,8 @@ struct Link {
   next: Option<Box<Wrap>>;
 }
 
-fn inspect(wrap: &Wrap) -> result: u64 reads(wrap.inner.v) {
-  let got = wrap^.inner.v;
+fn inspect(outer: &Wrap) -> result: u64 reads(outer.inner.v) {
+  let got = outer^.inner.v;
   return got;
 }
 
@@ -378,7 +378,7 @@ fn walk() -> result: u64 pure {
   let named = &top.inner;
   set named^.v = 9_u64;
   set top.inner.v = 1_u64;
-  let got = inspect(wrap: &top);
+  let got = inspect(outer: &top);
   return got;
 }
 
