@@ -5,6 +5,8 @@
 //! Derivation tests observe accepted proof roots through checked-program
 //! metadata.
 
+mod preservation;
+
 use crate::{
     BindingId, CallRequirementDisposition, NodePath, SemanticIssueKind, SemanticOutcome,
     SemanticRule, SourceInput, StaticObligationDisposition,
@@ -1790,6 +1792,21 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                             CapturedTerm::Const(declaration) => {
                                 matches!(term, TermKind::ConstParameter(candidate, _) if *candidate == declaration)
                             }
+                            CapturedTerm::Binding(binding)
+                                if captured.capture == CaptureId::SpellingDetermined =>
+                            {
+                                matches!(term, TermKind::Place(place, IntegerType::U64)
+                                    if *place == crate::semantic::places::ResolvedPlace::binding(binding))
+                            }
+                            // The validator holds no place table, so it names a
+                            // field-valued offset by its shape: a place term with
+                            // a path below its root.
+                            CapturedTerm::Place(_)
+                                if captured.capture == CaptureId::SpellingDetermined =>
+                            {
+                                matches!(term, TermKind::Place(place, IntegerType::U64)
+                                    if !place.path.is_empty())
+                            }
                             CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) | CapturedTerm::Place(_) | CapturedTerm::SupersededPlace(_) => matches!(
                                 term,
                                 TermKind::IndexCapture { capture } if *capture == captured.capture
@@ -2595,12 +2612,24 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
     let mut seen_delivery_joins = 0u32;
     let mut seen_header_relations = 0u32;
     let mut seen_loop_inductions = 0u32;
+    let mut seen_fact_preservations = 0u32;
     let mut seen_delivery_nodes = vec![false; summary.derivations.nodes.len()];
     let mut counted_root_order = Vec::new();
     let mut class_counts = [0u32; 4];
     for root in &summary.derivations.roots {
         let conclusion = retained_conclusion(&conclusions, root.node);
         match root.kind {
+            DerivationRootKind::FactPreservation { occurrence } => {
+                assert_eq!(occurrence, seen_fact_preservations);
+                seen_fact_preservations += 1;
+                assert!(matches!(
+                    conclusion,
+                    DerivationConclusion::IndexSeparation { .. }
+                        | DerivationConclusion::RangeSeparation { .. }
+                        | DerivationConclusion::AffineConsequence
+                        | DerivationConclusion::Contradiction
+                ));
+            }
             DerivationRootKind::BodyEntryContradiction => {
                 let CheckedBodyDisposition::Uninhabited { contradiction } =
                     summary.body_disposition

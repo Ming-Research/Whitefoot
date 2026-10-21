@@ -241,7 +241,7 @@ impl CapturedValue {
     /// The half of [OWN-7]'s index separation this module settles without a
     /// proof: two written literals of different value select two slots.
     /// Every other pair is the fixed [ENT-6] families' question.
-    const fn literals_distinct(self, other: Self) -> bool {
+    pub(crate) const fn literals_distinct(self, other: Self) -> bool {
         matches!(
             (self.term, other.term),
             (CapturedTerm::Literal(left), CapturedTerm::Literal(right)) if left != right
@@ -288,10 +288,24 @@ impl CapturedRange {
         (end as i128).checked_sub(start as i128)
     }
 
+    /// [OWN-7]'s endpoint orderings when written literals settle them.
+    pub(crate) const fn literally_disjoint(self, other: Self) -> bool {
+        const fn no_greater(left: CapturedValue, right: CapturedValue) -> bool {
+            matches!(
+                (left.term, right.term),
+                (CapturedTerm::Literal(left), CapturedTerm::Literal(right)) if left <= right
+            )
+        }
+        no_greater(self.end, other.start)
+            || no_greater(other.end, self.start)
+            || no_greater(self.end, self.start)
+            || no_greater(other.end, other.start)
+    }
+
     /// The half of [OWN-7]'s index-and-range separation this module settles
     /// without a proof: written literals that put the index before the start
     /// or at or after the end, or make the range empty.
-    const fn literally_excludes(self, index: CapturedValue) -> bool {
+    pub(crate) const fn literally_excludes(self, index: CapturedValue) -> bool {
         match (self.start.term, self.end.term, index.term) {
             (CapturedTerm::Literal(start), CapturedTerm::Literal(end), _) if end <= start => true,
             (_, CapturedTerm::Literal(end), CapturedTerm::Literal(index)) if end <= index => true,
@@ -993,10 +1007,10 @@ fn separation(
         // the walk: unequal subscripts below two different range steps never
         // establish separation by themselves.
         (PlaceStep::Range(left), PlaceStep::Range(right)) => {
-            if left.start.provably_same(right.start) && left.end.provably_same(right.end) {
-                StepSeparation::Same
-            } else if oracle.ranges_disjoint(left, right) {
+            if left.literally_disjoint(right) || oracle.ranges_disjoint(left, right) {
                 StepSeparation::Separate
+            } else if left.start.provably_same(right.start) && left.end.provably_same(right.end) {
+                StepSeparation::Same
             } else {
                 StepSeparation::Overlapping
             }
@@ -1143,20 +1157,22 @@ pub(crate) fn places_overlap(
 /// [EFF-5] whether two places overlap whatever values their index and range
 /// positions take.
 ///
-/// This is the ordinary [OWN-7] walk asked with every position question
-/// answered by the values alone: two positions that are not provably the
-/// same value may be distinct, a slot may lie below `r.len` [WIN-2], and a
-/// range may be empty or lie apart from an index, from another range, or
-/// from `r.len` [OWN-7, WIN-2]. The places overlap at every position exactly
-/// when the walk still finds them overlapping: one is a prefix of the other,
-/// or they first differ at a pair OWN-7 and WIN-2 fix as overlapping, such as
-/// two payload steps naming different variants or a slot or a range against
-/// `r.last` or `r.filled`.
+/// Compare declaration steps as [EFF-5] specifies before asking about
+/// separation. Equal steps continue to the next pair, so identical paths
+/// and prefixes overlap even when an actual range is empty. At the first
+/// differing pair, only the fixed structural overlap answers of [OWN-7]
+/// and [WIN-2] establish overlap at every position; a separation that depends
+/// on position values selects the pair for the call-site comparison.
 pub(crate) fn overlaps_at_every_position(left: &ResolvedPlace, right: &ResolvedPlace) -> bool {
     if !left.roots_overlap(right) {
         return false;
     }
     for (depth, (left_step, right_step)) in left.path.iter().zip(&right.path).enumerate() {
+        // EFF-5 compares declaration spellings before actual OWN-7 proofs:
+        // an empty range cannot separate a declared path from itself.
+        if steps_provably_same(*left_step, *right_step) {
+            continue;
+        }
         let window = ResolvedPlace {
             atomic_aliases: left.atomic_aliases.clone(),
             root: left.root,
@@ -2035,6 +2051,27 @@ mod tests {
         assert!(map.overlaps(&denied, &part(WindowPart::Last), &part(WindowPart::Filled)));
     }
 
+    #[test]
+    fn literal_range_endpoints_separate_adjacent_and_empty_ranges() {
+        let map = PlaceMap::default();
+        let range = |start, end| {
+            place(
+                0,
+                &[PlaceStep::Range(CapturedRange {
+                    start: literal(1, start),
+                    end: literal(2, end),
+                })],
+            )
+        };
+        assert!(!map.overlaps(&DENIED, &range(0, 1), &range(1, 3)));
+        assert!(!map.overlaps(&DENIED, &range(1, 3), &range(0, 1)));
+        assert!(!map.overlaps(&DENIED, &range(2, 2), &range(2, 2)));
+        assert!(!map.overlaps(&DENIED, &range(0, 3), &range(2, 2)));
+        assert!(!map.overlaps(&DENIED, &range(2, 2), &range(0, 3)));
+        assert!(map.overlaps(&DENIED, &range(0, 2), &range(1, 3)));
+        assert!(map.overlaps(&DENIED, &range(0, 3), &range(0, 3)));
+    }
+
     /// [OWN-7] an index beside a range of one base is separated only when
     /// the fixed family proves the index outside the range, or written
     /// literals put it there. [WIN-2] a range proved within `r.len` is
@@ -2131,6 +2168,27 @@ mod tests {
             ));
         }
         assert!(super::overlaps_at_every_position(&span, &span));
+        let mut below_span = span.clone();
+        below_span.path.push(PlaceStep::Field(1));
+        assert!(super::overlaps_at_every_position(&span, &below_span));
+        assert!(super::overlaps_at_every_position(&below_span, &span));
+        let other_span = place(
+            0,
+            &[PlaceStep::Range(CapturedRange {
+                start: opaque(3),
+                end: opaque(4),
+            })],
+        );
+        assert!(!super::overlaps_at_every_position(&span, &other_span));
+        assert!(!super::overlaps_at_every_position(&other_span, &span));
+        let empty_span = place(
+            0,
+            &[PlaceStep::Range(CapturedRange {
+                start: literal(5, 2),
+                end: literal(6, 2),
+            })],
+        );
+        assert!(super::overlaps_at_every_position(&empty_span, &empty_span));
     }
 
     /// Every [WIN-2] part is defined against `r.len`, and a live index is live
