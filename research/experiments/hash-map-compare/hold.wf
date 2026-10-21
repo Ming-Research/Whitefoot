@@ -50,7 +50,7 @@ fn hold_hash(env: &HoldKeys, key: &u64) -> result: u64 reads(key) {
   return hold_mix(key: value);
 }
 
-fn hold_same_hash(env: &HoldKeys, key: &u64) -> result: u64 reads(key) {
+fn hold_same_hash(env: &HoldKeys, key: &u64) -> result: u64 pure {
   doc "Every key has one hash, so every pair shares one home bucket.";
   return 6148914691236517205_u64;
 }
@@ -69,7 +69,7 @@ binding HoldSameKey : HashMapKey<u64, HoldKeys> {
   equal = hold_equal;
 }
 
-fn hold_consume(env: &Count, key: u64, value: u64) -> result: unit writes(env) {
+fn hold_consume(env: &Count, key: u64, value: u64) -> result: unit pure {
   return unit;
 }
 
@@ -212,7 +212,7 @@ fn put_decimal(line: &Slots<u8, 256>, value: u64) -> result: unit writes(line) {
   return unit;
 }
 
-fn write_line(factory: &HandleFactory, output: &OutputStream, line: &Slots<u8, 256>) -> result: u8 reads(line), writes(factory), writes(output) waits {
+fn write_line(factory: &HandleFactory, output: &OutputStream, line: &Slots<u8, 256>) -> result: u8 writes(line), writes(factory), writes(output) waits {
   doc "Ends the line's last field with a newline instead of a tab and writes the whole line; 0 when written, 1 when the output refused it.";
   if line^.len > 0_u64 {
     let dropped = take_back(window: line);
