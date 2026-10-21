@@ -533,6 +533,36 @@ those of the first merge, so the 192 intervening commits did not move the
 unfixed workload either. Firn was not timed again: its source adaptation takes
 more than an hour, and the Firn figures above stand for the first merge.
 
+### Firn re-measurement on the merged head (`10f74e7e8`)
+
+Firn was last timed on the first merge of main; the compiler has changed since
+(192 commits under `semantic/entailment`, `semantic/places` and `resolution`),
+and a measurement counts only for the compiler that merges. Main advanced again
+by ten commits that change no file under `compiler/`, and the compiler sources
+of this head differ from the timed `da79abd12` only inside test modules, so the
+Halo figures above stand and only Firn is timed again. The question: does the
+merged head still meet the 1.03 criterion against the pre-#431 main on Firn's
+whole-program check, and does the fix still remove the #431 work from current
+main. Same method and source adaptation as the first merge's Firn run, one
+run, five interleaved rounds, compiler user+sys CPU, no check cache, then one
+work-counter run per compiler. Sides and what each result would show:
+
+- `base` (`7d9118eba`, pre-#431 main): the denominator of the criterion.
+- `twin`: the same `base` binary run again in each round; the median and
+  min–max of its ratio to `base` are this run's noise. A twin median that lies
+  outside the min–max of its own five rounds around 1 is not noise, and the run
+  is repeated.
+- `main` (`0c40731d3`, current main with the #431 regression): the branch's
+  ratio to it isolates the fix from main's unrelated speedups. Branch above
+  main on median CPU, or at or above main's join pairs and closure cells,
+  would reject the claim that the fix still pays on Firn.
+- `prebranch` (`44f33c996`, the head before the second merge): branch against
+  it shows what the second merge changed; equal counters mean the merge left
+  this fix's work unchanged, a different count is attributed by the counter
+  that moved.
+- `branch` (the merged head): median ratio to `base` at most 1.03 meets the
+  criterion; above 1.03 rejects it.
+
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
 record, ENT-5, the checker-facts decisions, and the directly affected fact-state
