@@ -51,7 +51,7 @@ on:
         type: string
         default: "40"
       control:
-        description: none, or slow to repeat every eighth candidate operation and require a regression in every timed cell
+        description: none, or slow to run the base program repeating every eighth operation as the candidate and require a regression in every timed cell
         type: choice
         options: [none, slow]
         default: none

@@ -71,7 +71,7 @@ def resolution(size):
 
 def reps_for(operation, size):
     reps = -(-TARGET_OPS // size)
-    return max(8, reps) if operation == 7 else reps
+    return 8 * reps if operation == 7 else reps
 
 
 def expected_row(operation, size):
@@ -436,8 +436,11 @@ def measure(args):
         for index, (operation, size) in enumerate(order):
             arms = ORDERS[(round_ + index) % len(ORDERS)]
             for position, arm in enumerate(arms):
+                # The slow control's candidate is the base program with the
+                # repetition, so the repetition is the only difference.
                 slow = 1 if args.slow and arm == "candidate" else 0
-                lines = launch(os.path.join(images, f"bench-{arm}"), [operation, size, args.samples, slow], args.cpu)
+                image = "base" if slow else arm
+                lines = launch(os.path.join(images, f"bench-{image}"), [operation, size, args.samples, slow], args.cpu)
                 rows = []
                 for fields in lines:
                     if len(fields) != 7 or int(fields[0]) != operation or int(fields[1]) != size:

@@ -341,11 +341,9 @@ fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, slow: 
 fn each_sample(map: &HashMap<u64, u64, ceiling>, size: u64, slow: Bool, clock: &Clock) -> sample: Sample reads(map), writes(clock) contract {
   requires size > 0_u64;
 } {
-  doc "Visits every pair reps times in one interval, reps at least eight; the slow control makes every eighth visit pass twice.";
-  let reps = reps_for(size: size);
-  if reps < 8_u64 {
-    set reps = 8_u64;
-  }
+  doc "Visits every pair reps times in one interval, eight times the other cells' batches since a visit costs so little; the slow control makes every eighth pass run twice.";
+  let batches = reps_for(size: size);
+  let reps = batches *wrap 8_u64;
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let started = now(clock: clock);
   for (rep in 0_u64..reps) {

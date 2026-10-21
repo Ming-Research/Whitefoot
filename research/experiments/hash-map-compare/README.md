@@ -40,7 +40,8 @@ otherwise read them sequentially. Each cell is one operation at one size,
 | iterate | one `hash_map_each` over N pairs | building the map once |
 
 A sample repeats its batch until it makes at least 262,144 operations
-(iterate: at least eight passes). A process prints one warmup sample and
+(iterate: eight times as many batches, at least eight passes, since a visit
+costs well under a nanosecond). A process prints one warmup sample and
 five measured ones; its value is the median of the measured samples in
 nanoseconds per operation. Every row carries the operation count and a check
 the driver compares with the value the workload's definition gives (every
@@ -94,10 +95,11 @@ Accepting a detected regression is not this instrument's decision.
 ## Controls
 
 The twin is the null control in every run. The slow control, the workflow's
-`control: slow`, gives the candidate image an argument that repeats every
-eighth operation of every timed batch inside the interval (a lookup, a
-removal that finds nothing, or a put that replaces; for iterate, every
-eighth pass), about 4% to 12% more work; `compare.py reduce
+`control: slow`, replaces the candidate arm with the base image given an
+argument that repeats every eighth operation of every timed batch inside the
+interval (a lookup, a removal that finds nothing, or a put that replaces;
+for iterate, every eighth pass), about 4% to 12% more work, so the
+repetition is the only difference between the arms; `compare.py reduce
 --expect-regression` fails unless every timed cell is judged a regression.
 The repeated operations' results go to a separate field, so the checks stay
 those of the workload. `compare.py self-test` exercises the interval, the
