@@ -131,10 +131,10 @@ fn main() -> status: ExitStatus pure waits {
   let third = spawn write_turns(desk: move c, turns: 300_u64);
   let pair = first +wrap second;
   let workers = pair +wrap third;
+  let strokes = close_desk(desk: move desk);
   if workers != 0_u64 {
     return exit_status(code: 2_u8);
   }
-  let strokes = close_desk(desk: move desk);
   if strokes != 600_u64 {
     return exit_status(code: 3_u8);
   }
