@@ -29,6 +29,7 @@ mod prelude_opaque;
 mod qualified_constants;
 mod qualified_names;
 mod recursive_effects;
+mod redundant_conditions;
 mod remaining_repairs;
 mod selector_scope;
 mod shared_maps;

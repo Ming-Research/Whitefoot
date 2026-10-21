@@ -294,9 +294,7 @@ fn decimal_text(value: i64) -> made: Bytes pure {
   }
   let spelled = slots_new::<u8, 24>();
   if negative {
-    if spelled.len < spelled.cap {
-      place_back(window: &spelled, value: 45_u8);
-    }
+    place_back(window: &spelled, value: 45_u8);
   }
   for @emit (index in 0_u64..count) {
     let back = count -wrap index;

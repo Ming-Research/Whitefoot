@@ -3009,6 +3009,10 @@ pub(crate) enum CheckedStatement {
         drops: Vec<CheckedDrop>,
     },
     Match {
+        /// [OP-5] the complete source condition of an `if_stmt` or an
+        /// `else if` link, whose redundancy is judged; an enum `match` has
+        /// none.
+        condition: Option<NodePath>,
         /// The complete written `match` or `if`, including a chained `else if`.
         node_path: NodePath,
         scrutinee: CheckedExpression,
@@ -3018,6 +3022,9 @@ pub(crate) enum CheckedStatement {
     },
     ValueMatchLet {
         node_path: NodePath,
+        /// [OP-5] the complete source condition of a `value_if`; a
+        /// `value_match` has none.
+        condition: Option<NodePath>,
         kind: ValueInitializerKind,
         binding: BindingId,
         result_type: CheckedType,

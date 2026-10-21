@@ -78,11 +78,9 @@ fn section_matches(input: &[u8], start: u64, length: u64, which: u64) -> matched
   if which < 13_u64 {
     set last = section_ends[which];
   }
-  if last <= 105_u64 {
-    if first <= last {
-      let matched = name_is(input: input, start: start, length: length, word: &section_names[first..last]);
-      return matched;
-    }
+  if first <= last {
+    let matched = name_is(input: input, start: start, length: length, word: &section_names[first..last]);
+    return matched;
   }
   return False();
 }
@@ -97,9 +95,7 @@ fn text_reserve(text: &Box<Slots<u8>>, needed: u64) -> result: unit writes(text)
     let target = imax(doubled, wanted);
     let fits = target <= 4611686018427387904_u64;
     if fits {
-      if target >= text^.inner.cap {
-        grow(cell: text, capacity: target);
-      }
+      grow(cell: text, capacity: target);
     }
   }
   return unit;

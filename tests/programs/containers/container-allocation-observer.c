@@ -179,7 +179,10 @@ static void exercise_concurrent_observation(void) {
     wait_for_workers(&finished);
 }
 
+// The fixture's own exit status is returned once the ledger holds, so the
+// harness compares it with the status the program is expected to report.
 int main(int argc, char **argv) {
+    int status = 0;
     if (argc == 2 && strcmp(argv[1], "concurrent") == 0) {
         exercise_concurrent_observation();
     } else if (argc == 2 && strcmp(argv[1], "double-release") == 0) {
@@ -196,14 +199,7 @@ int main(int argc, char **argv) {
         (void)wf_observe_allocate(8);
     } else {
         require(argc == 1, "unknown observer control");
-        int status = wf_fixture_main(0, NULL);
-        if (status != 0) {
-            fprintf(stderr,
-                    "container allocation observer: the fixture returned status %d, "
-                    "expected 0\n",
-                    status);
-            exit(1);
-        }
+        status = wf_fixture_main(0, NULL);
     }
     lock_ledger();
     require(request_count > 0, "the fixture must reach the heap at all");
@@ -223,5 +219,5 @@ int main(int argc, char **argv) {
     printf("container allocation observer: %zu events, each allocation released exactly once and each shared empty header released or grown\n",
            allocation_count + atomic_load(&shared_header_events));
     unlock_ledger();
-    return 0;
+    return status;
 }

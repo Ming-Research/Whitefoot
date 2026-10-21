@@ -20,7 +20,7 @@ fn declared_functions(source: &[u8]) -> Vec<String> {
 
 /// The judgments in `source` that succeed only in a contradictory state, or
 /// the rejection that stops it.
-fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<String>, String> {
+pub(super) fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<String>, String> {
     let functions = declared_functions(source);
     with_checked_program(
         &[SourceInput::new(name, source)],
@@ -54,6 +54,7 @@ pub(super) fn run_pairs() {
         .chain(super::enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(super::entry_formers::ENTRY_FORMERS)
         .chain(super::collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(super::redundant_conditions::REDUNDANT_CONDITIONS)
         .chain(super::clause_requirements::CLAUSE_REQUIREMENTS)
         .chain(super::writer_operations::WRITER_OPERATIONS)
         .chain(super::writer_ownership::WRITER_OWNERSHIP)
@@ -188,27 +189,4 @@ fn an_allocation_count_bounded_only_by_its_type_builds() {
     ) {
         panic!("a count bounded only by its type does not build:\n{failure}");
     }
-}
-
-/// The pair test's second condition is live: a guard around a refuted goal
-/// is accepted, and the goal inside it succeeds only because the branch
-/// state is contradictory, which is what makes guarding a refuted goal no
-/// repair [DIAG-1].
-#[test]
-fn a_guard_around_a_refuted_goal_succeeds_only_in_a_contradictory_state() {
-    let guarded = br#"fn main() -> status: std::process::ExitStatus pure {
-  let x = 255_u8;
-  if x +defined 1_u8 {
-    let y = x + 1_u8;
-    return std::process::exit_status(code: y);
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    let contradictions = contradictory_successes("guarded-refuted-goal.wf", guarded)
-        .expect("the guarded program is accepted");
-    assert!(
-        !contradictions.is_empty(),
-        "the operation inside the dead branch must be discharged by contradiction"
-    );
 }
