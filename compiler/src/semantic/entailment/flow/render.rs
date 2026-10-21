@@ -832,12 +832,13 @@ impl Input<'_, '_> {
     /// to overlap identities: even a non-term offset retains its source
     /// expression in an obligation's residual.
     pub(super) fn render_storage_place(&self, root: &CheckedContainerRoot) -> String {
-        let mut rendered = self.render_place(&ResolvedPlace {
+        use crate::semantic::place_render::{PlaceProjection, render_place_projections};
+        let rendered = self.render_place(&ResolvedPlace {
             atomic_aliases: Vec::new(),
             root: root.root,
             path: Vec::new(),
         });
-        let mut ty = match root.root {
+        let ty = match root.root {
             PlaceRoot::Binding(binding) => self.summary(binding).and_then(|summary| summary.ty),
             PlaceRoot::Constant(id) => self
                 .context
@@ -845,67 +846,32 @@ impl Input<'_, '_> {
                 .get(id.0 as usize)
                 .map(|value| value.ty),
         };
-        for step in &root.path {
-            match step {
-                CheckedPlaceStep::Field(field) => {
-                    if let Some((name, selected)) =
-                        ty.and_then(|ty| self.field_name(ty, *field)).flatten()
-                    {
-                        rendered.push('.');
-                        rendered.push_str(&name);
-                        ty = Some(selected);
-                    } else {
-                        rendered.push_str(".?");
-                        ty = None;
-                    }
-                }
-                CheckedPlaceStep::Payload {
-                    nominal,
-                    variant,
-                    field,
-                } => {
-                    let selected =
-                        self.context
-                            .nominals
-                            .get(nominal.0 as usize)
-                            .and_then(|nominal| match &nominal.kind {
-                                CheckedNominalKind::Enum { variants } => {
-                                    variants.get(*variant as usize).and_then(|variant| {
-                                        variant
-                                            .fields
-                                            .get(*field as usize)
-                                            .map(|field| (&variant.name, &field.name, field.ty))
-                                    })
-                                }
-                                _ => None,
-                            });
-                    match selected {
-                        Some((variant, field, field_type)) => {
-                            rendered.push_str(&format!(".{variant}.{field}"));
-                            ty = Some(field_type);
-                        }
-                        None => {
-                            rendered.push_str(".?.?");
-                            ty = None;
-                        }
-                    }
-                }
-                CheckedPlaceStep::BoxReferent(nominal) => {
-                    rendered.push_str(".inner");
-                    ty = self.deref_type(CheckedType::Nominal(*nominal));
-                }
-                CheckedPlaceStep::Measure(measure) => {
-                    rendered.push('.');
-                    rendered.push_str(measure.spelling());
-                    ty = Some(CheckedType::Integer(IntegerType::U64));
-                }
-                CheckedPlaceStep::Subscript(index) => {
-                    rendered.push_str(&format!("[{}]", self.render_expression(&index.offset)));
-                    ty = Some(index.element_type);
-                }
+        let projections = root.path.iter().map(|step| match step {
+            CheckedPlaceStep::Field(field) => PlaceProjection::Place(PlaceStep::Field(*field)),
+            CheckedPlaceStep::Payload { variant, field, .. } => {
+                PlaceProjection::Place(PlaceStep::Payload {
+                    variant: *variant,
+                    field: *field,
+                })
             }
-        }
-        rendered
+            CheckedPlaceStep::BoxReferent(_) => PlaceProjection::Place(PlaceStep::Deref),
+            CheckedPlaceStep::Measure(measure) => {
+                PlaceProjection::Place(PlaceStep::Measure(*measure))
+            }
+            CheckedPlaceStep::Subscript(index) => PlaceProjection::Subscript {
+                offset: self.render_expression(&index.offset),
+                element: index.element_type,
+            },
+        });
+        render_place_projections(
+            &ProofPlaceNames { input: self, counted: None },
+            rendered,
+            ty,
+            false,
+            0,
+            projections,
+        )
+        .unwrap_or_else(|never| match never {})
     }
 
     pub(super) fn render_expression(&self, expression: &CheckedExpression) -> String {

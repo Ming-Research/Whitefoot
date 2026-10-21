@@ -214,7 +214,7 @@ impl Input<'_, '_> {
         }
         let base = match expression {
             CheckedExpression::Constant(value) => source
-                .filter(|source| source.literal && !source.spelling.ends_with("_T"))
+                .filter(|source| source.literal)
                 .map(|source| source.spelling.clone())
                 .unwrap_or_else(|| self.render_goal_datum(&GoalDatum::Literal(value.clone()))),
             _ => expression

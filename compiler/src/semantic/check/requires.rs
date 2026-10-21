@@ -1743,7 +1743,8 @@ impl<'unit> TypeContext<'unit> {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             };
             let bytes = self.declarations.tree.token_bytes(literal)?;
-            let origin = if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
+            let generic = crate::syntax::terminal::is_generic_numeric_literal(bytes);
+            let origin = if generic {
                 let usage = self.declarations.use_at(
                     check_context,
                     atom,
@@ -1767,8 +1768,7 @@ impl<'unit> TypeContext<'unit> {
                 ExpandedClauseDatum::Literal {
                     value: value.clone(),
                     origin,
-                    spelling: (!matches!(bytes, b"0_T" | b"1_T"))
-                        .then(|| String::from_utf8_lossy(bytes).into_owned()),
+                    spelling: (!generic).then(|| String::from_utf8_lossy(bytes).into_owned()),
                 },
             ));
         }

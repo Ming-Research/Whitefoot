@@ -60,12 +60,15 @@ fn postcondition_source(
         literal: false,
         fields: Vec::new(),
     };
-    if tree
+    if let Some(literal) = tree
         .direct_token_with(node, crate::TerminalPredicate::Literal)
         .ok()?
-        .is_some()
     {
-        source.literal = true;
+        // A generic numeric identity such as `1_Num` is written over the
+        // type parameter, whatever its name, so it is not the concrete
+        // instance's literal [FORM-5].
+        source.literal =
+            !crate::syntax::terminal::is_generic_numeric_literal(tree.token_bytes(literal).ok()?);
     } else if tree.has_fixed(node, FixedTerminal::Move).ok()? {
         return postcondition_source(
             tree,

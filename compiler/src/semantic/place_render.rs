@@ -3,11 +3,18 @@
 use super::model::{CheckedType, IntegerType};
 use super::places::{CapturedValue, PlaceStep, WindowPart};
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) enum PlaceProjection {
     Place(PlaceStep),
     FormalSubscript(u32),
     FormalPage(u32),
+    /// A subscript the caller spelled from its checked offset expression,
+    /// such as one inside a storage root, where the offset is no captured
+    /// value; it selects an element of the given type.
+    Subscript {
+        offset: String,
+        element: CheckedType,
+    },
 }
 
 /// The names and selected types retained by the stage rendering a place.
@@ -56,8 +63,8 @@ pub(super) fn render_place_projections<N: PlaceNames>(
 ) -> Result<String, N::Error> {
     let path = projections.into_iter().collect::<Vec<_>>();
     for (position, projection) in path.iter().enumerate() {
-        let step = match *projection {
-            PlaceProjection::Place(step) => step,
+        let step = match projection {
+            PlaceProjection::Place(step) => *step,
             PlaceProjection::FormalSubscript(ordinal) => {
                 rendered.push_str(&format!("[parameter #{ordinal}]"));
                 ty = names.element(ty, range)?;
@@ -68,6 +75,12 @@ pub(super) fn render_place_projections<N: PlaceNames>(
                 rendered.push_str(&format!(".pages[parameter #{ordinal}]"));
                 ty = names.element(ty, range)?;
                 range = true;
+                continue;
+            }
+            PlaceProjection::Subscript { offset, element } => {
+                rendered.push_str(&format!("[{offset}]"));
+                ty = Some(*element);
+                range = false;
                 continue;
             }
         };
