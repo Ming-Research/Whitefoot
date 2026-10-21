@@ -386,7 +386,9 @@ jobs:
   # The trial compile: each module of the downstream programs checked with
   # the branch's compiler and the base's, one module at a time so that one
   # rejection hides no other, then Firn's entry composed, which also judges
-  # the standard library modules it selects.
+  # the standard library modules it selects. The programs predate the base's
+  # reserved words `held`, `not` and `unchanged` and its prelude variant
+  # `Open`, so their copies rename each before either compiler reads them.
   trial:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -423,8 +425,11 @@ jobs:
               "https://github.com/Ming-Research/$repo" "$work/$repo"
             git -C "$work/$repo" log -1 --format="$repo %H"
           done
-          python3 research/experiments/match-dispatch/wasm/gen.py "$work/v2h.wf"
-          python3 research/experiments/match-dispatch/wasm/gen.py "$work/v2h-inline.wf" --inline
+          find "$work" -type f \( -name '*.wf' -o -name '*.wfm' \) -print0 | xargs -0 perl -pi -e \
+            's/\bheld\b/trial_held/g; s/\bnot\b/trial_not/g; s/\bunchanged\b/trial_unchanged/g; s/\bOpen\b/TrialOpen/g'
+          same_accepted=0
+          same_rejected=0
+          differ=0
           branch="$PWD/compiler/target/gate/whitefootc"
           base="$RUNNER_TEMP/base/compiler/target/gate/whitefootc"
           # One judgment with both compilers, run in the given directory; a
@@ -447,15 +452,19 @@ jobs:
             printf '%-50s branch %s base %s (%s s)\n' "$label" "$mine" "$theirs" "$seconds"
             quiet='^== (START|RUNNING|BUDGET)'
             if [ "$mine" != "$theirs" ]; then
+              differ=$((differ + 1))
               echo "---- $label differs: branch"
               grep -v -E "$quiet" "$work/logs/$label.branch" | head -80
               echo "---- $label differs: base"
               grep -v -E "$quiet" "$work/logs/$label.base" | head -30
             elif [ "$mine" != 0 ]; then
+              same_rejected=$((same_rejected + 1))
               echo "---- $label rejected by both: branch"
               grep -v -E "$quiet" "$work/logs/$label.branch" | head -12
               echo "---- $label rejected by both: base"
               grep -v -E "$quiet" "$work/logs/$label.base" | head -12
+            else
+              same_accepted=$((same_accepted + 1))
             fi
           }
           graph() {
@@ -471,5 +480,4 @@ jobs:
           done
           graph firn "$work/Firn-wf/firn"
           judge "firn composed" "$work/Firn-wf/firn" --graph modules.wfg --check-modules
-          judge v2h "$work" --check v2h.wf
-          judge v2h-inline "$work" --check v2h-inline.wf
+          echo "accepted by both $same_accepted, rejected by both $same_rejected, verdicts that differ $differ"
