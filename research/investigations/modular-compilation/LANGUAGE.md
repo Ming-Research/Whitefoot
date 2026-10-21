@@ -302,11 +302,11 @@ a wrapper or formal. There are no named footprint declarations, mapping
 expansion, extra disjointness axioms or new path syntax.
 
 A public operation whose body writes private state declares the nearest
-accessible path that covers it, which may be the whole parameter. EFF-2 already
-counts a declared entry as exhibited by any access at or below its path, so the
-covering row is exact in the existing sense; it only loses the independence a
-finer published path would show. When callers need that independence, the
-interface publishes the finer field.
+accessible path that covers it, which may be the whole parameter. That write
+exhibits the covering entry under EFF-2, so the covering row is exact in the
+existing sense; it only loses the independence a finer published path would
+show. When callers need that independence, the interface publishes the finer
+field.
 
 Resolve each path to canonical member identities, then check declared versus
 exhibited effects in both directions using EFF-2. An annotation mentioning a
