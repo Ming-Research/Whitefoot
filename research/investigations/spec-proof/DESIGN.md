@@ -387,7 +387,9 @@ three days.
 ## Incidental findings
 
 Found while reading the rules for this study. "Read" marks a fact in the
-text; "inferred" marks a consequence not yet shown with a program.
+text; "inferred" marks a consequence not yet shown with a program. Finding 6
+is taken up as `wf-sound-set-rhs-target`, findings 2 to 5 and 7 to 12 together
+as `wf-spec-rule-gaps`, and finding 1 by the model this study designs.
 
 1. The specification gives safety no runtime meaning to be checked against.
    [SCOPE-3] (line 17) says accepted programs have no undefined behavior but
