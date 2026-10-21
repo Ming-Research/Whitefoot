@@ -71,8 +71,6 @@ jobs:
         include:
           - os: windows-2022
             image: mcr.microsoft.com/windows/servercore:ltsc2022
-          - os: windows-2025
-            image: mcr.microsoft.com/windows/servercore:ltsc2025
     defaults:
       run:
         shell: bash
