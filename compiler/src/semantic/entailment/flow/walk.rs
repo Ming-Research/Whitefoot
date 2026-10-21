@@ -277,7 +277,9 @@ impl Analyzer<'_, '_> {
                     KillEvent::Consume { .. } | KillEvent::EntryImageHolderConsume { .. } => {
                         FlowEventKind::PostconditionCallConsume
                     }
-                    KillEvent::Write { .. } | KillEvent::EntryImageHolderWrite { .. } => {
+                    KillEvent::Rebind { .. }
+                    | KillEvent::Write { .. }
+                    | KillEvent::EntryImageHolderWrite { .. } => {
                         FlowEventKind::PostconditionCallWrite
                     }
                 };
@@ -394,22 +396,7 @@ impl Analyzer<'_, '_> {
             self.vocabulary
                 .proof_event(FlowEventKind::PostconditionReceiverWrite, Some(node_path))
         });
-        if !result.is_empty() {
-            let live = self.reasoning().event_live_bounds(state, &target_kills);
-            let separations = EventSeparations {
-                ledger: &state.separations,
-                live: &live,
-            };
-            for result in &mut result {
-                self.reasoning()
-                    .apply_kills_one(&separations, &mut result.facts, &target_kills);
-            }
-        }
-        if let Some(target_event) = target_event {
-            self.apply_kills_each(state, &target_kills, |_, _| target_event);
-        } else {
-            self.apply_kills(state, &target_kills);
-        }
+        self.apply_kills_with_pending_results(state, &target_kills, &mut result, target_event);
         // [MSR-3] the placement's second half, after the target's own kills:
         // the committed place's measures are the datums minted before them.
         if commit_reached
@@ -471,26 +458,27 @@ impl Analyzer<'_, '_> {
             // access through the binding's new value.
             let bindings = place.spelled_indices().collect::<Vec<_>>();
             let mut identity_preserved = true;
-            for (capture, binding) in bindings {
+            for (capture, source) in bindings {
+                let mut support = place.clone();
+                support.path.clear();
+                support
+                    .path
+                    .push(PlaceStep::Index(CapturedValue::new(capture, source)));
                 if prepared.kills.iter().any(|event| {
-                    self.input.affine_event_kills_binding(
+                    self.input.event_kills_offset_support(
                         &prepared.entry_separations(&state.separations),
-                        binding,
+                        &support,
                         event,
                     )
                 }) || target_kills.iter().any(|event| {
                     self.input
-                        .affine_event_kills_binding(&state.separations, binding, event)
+                        .event_kills_offset_support(&state.separations, &support, event)
                 }) {
-                    // A direct page selection can already have discarded its
-                    // occurrence in favor of current spelling. That spelling
-                    // cannot name the old value after this write, and minting
-                    // a replacement capture would assert an invented identity.
                     if !matches!(capture, CaptureId::Source(_) | CaptureId::LoopHeader { .. }) {
                         identity_preserved = false;
                         break;
                     }
-                    place.supersede_binding(binding);
+                    place.supersede_term(source);
                 }
             }
             let destinations = vec![identity_preserved.then(|| {
@@ -1547,6 +1535,7 @@ impl Analyzer<'_, '_> {
                 false
             }
             CheckedStatement::Match {
+                condition,
                 scrutinee,
                 match_type,
                 arms,
@@ -1574,6 +1563,9 @@ impl Analyzer<'_, '_> {
                 } else {
                     ArmFacts::default()
                 };
+                if let Some(site) = condition {
+                    self.judging().judge_condition(site, &facts, state);
+                }
                 let mut exits = Vec::new();
                 for arm in arms {
                     let payload = payload.iter().find(|payload| {
@@ -1590,6 +1582,7 @@ impl Analyzer<'_, '_> {
             }
             CheckedStatement::ValueMatchLet {
                 node_path,
+                condition,
                 binding,
                 result_type,
                 result_mode,
@@ -1617,6 +1610,9 @@ impl Analyzer<'_, '_> {
                 } else {
                     ArmFacts::default()
                 };
+                if let Some(site) = condition {
+                    self.judging().judge_condition(site, &facts, state);
+                }
                 self.frames.gives.push(GiveFrame {
                     scope_depth: self.frames.scopes.len(),
                     loop_depth: self.frames.loops.len(),

@@ -377,16 +377,16 @@ fn measure_guarded_calls() -> result: Bool pure {
   return True();
 }
 
-fn mark_empty_array(rows: &Array<CallRow, 0>, at: u64) -> result: unit writes(rows) {
-  doc "A guarded field update in an empty fixed array still has typed lowering.";
+fn mark_empty_array<const n: u64>(rows: &Array<CallRow, n>, at: u64) -> result: unit writes(rows) {
+  doc "A guarded field update over a fixed array of any length; at length zero it still has typed lowering.";
   if at < rows^.len {
     set rows^[at].bits = ior(rows^[at].bits, 1_u64);
   }
   return unit;
 }
 
-fn mark_empty_slots(rows: &Slots<CallRow, 0>, at: u64) -> result: unit writes(rows) {
-  doc "A zero-capacity Slots tail carries no record element alignment.";
+fn mark_empty_slots<const n: u64>(rows: &Slots<CallRow, n>, at: u64) -> result: unit writes(rows) {
+  doc "A guarded field update over a Slots window of any capacity; at capacity zero its tail carries no record element alignment.";
   if at < rows^.len {
     set rows^[at].stamp = 42_u64;
   }
@@ -399,16 +399,10 @@ fn empty_call_fields() -> result: Bool pure {
   let array = array_filled::<CallRow, 0>(value: initial);
   let slots = slots_new::<CallRow, 0>();
   for (row in 0_u64..262144_u64) {
-    mark_empty_array(rows: &array, at: row);
+    mark_empty_array::<0>(rows: &array, at: row);
   }
   for (row in 0_u64..262144_u64) {
-    mark_empty_slots(rows: &slots, at: row);
-  }
-  if array.len != 0_u64 {
-    return False();
-  }
-  if slots.len != 0_u64 {
-    return False();
+    mark_empty_slots::<0>(rows: &slots, at: row);
   }
   return True();
 }

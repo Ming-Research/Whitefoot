@@ -42,7 +42,7 @@ fn a_postcondition_place_owes_its_subscript_at_every_selected_return() {
   requires i < 4_u64;
   ensures r <= rows^[i].len;
 } {
-  if rows^[0_u64].len > 9_u64 {
+  if rows^[0_u64].len > 0_u64 {
     return 0_u64;
   }
   return 0_u64;
@@ -148,14 +148,11 @@ fn main() -> status: std::process::ExitStatus pure {{
 #[test]
 fn a_rebound_offset_formal_leaves_its_postcondition_place_unavailable() {
     let bounded =
-        br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {
+        br#"fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 pure contract {
   requires i < 4_u64;
   ensures r <= rows^[i].len;
 } {
   set i = 9_u64;
-  if rows^[0_u64].len > 9_u64 {
-    return 0_u64;
-  }
   return 0_u64;
 }
 

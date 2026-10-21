@@ -101,21 +101,17 @@ fn exercise(value: i32, fail: Bool, choose: Bool) -> result: Result<i32, Overflo
 fn main() -> status: ExitStatus pure {
   let yes = True();
   let no = False();
-  match exercise(value: 7_i32, fail: no, choose: no) {
+  let first = match exercise(value: 7_i32, fail: no, choose: no) {
     Ok(value: payload) => {
-      if payload != 7_i32 {
-        return exit_status(code: 1_u8);
-      }
+      give payload;
     }
     Err(error: problem) => {
       return exit_status(code: 2_u8);
     }
   }
-  match exercise(value: -3_i32, fail: no, choose: yes) {
+  let second = match exercise(value: -3_i32, fail: no, choose: yes) {
     Ok(value: payload) => {
-      if payload != -3_i32 {
-        return exit_status(code: 3_u8);
-      }
+      give payload;
     }
     Err(error: problem) => {
       return exit_status(code: 4_u8);
@@ -135,5 +131,9 @@ fn main() -> status: ExitStatus pure {
     Err(error: problem) => {
     }
   }
-  return exit_status(code: 0_u8);
+  let shifted = second + 5_i32;
+  let tens = shifted * 10_i32;
+  let combined = tens + first;
+  let code = cvt::<i32, u8>(combined);
+  return exit_status(code: code);
 }
