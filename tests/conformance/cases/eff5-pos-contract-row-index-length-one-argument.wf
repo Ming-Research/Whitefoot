@@ -15,14 +15,11 @@ fn main() -> status: ExitStatus pure {
   doc "EFF-5, WIN-2: the repair supplies writes(window.next), writes(window.len) and writes(window[j]) through one reference parameter. Its contract length reads belong to that argument, while the live row index is separate from the append slot. The program observes the same append and overwrite.";
   let window = slots_new::<u64, 4>();
   place_back(window: &window, value: 0_u64);
-  if window.len < window.cap {
-    touch(window: &window, j: 0_u64);
-    if window.len == 2_u64 {
-      if window[0_u64] == 5_u64 {
-        return exit_status(code: 0_u8);
-      }
+  touch(window: &window, j: 0_u64);
+  if window.len == 2_u64 {
+    if window[0_u64] == 5_u64 {
+      return exit_status(code: 0_u8);
     }
-    return exit_status(code: 2_u8);
   }
-  return exit_status(code: 1_u8);
+  return exit_status(code: 2_u8);
 }

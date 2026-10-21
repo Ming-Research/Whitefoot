@@ -11,6 +11,11 @@ Nodes: language/safety-claims
 
 Summary: The safety claims were spread over the README, the constitution, the specification and articles, with no place that connected each claim to the rules and cases behind it. A new node puts them on one page whose rows cite specification rules and conformance cases, with the limits quoted from the specification and the trusted base sized, and `make static` holds every citation to the specification and the manifest and the presence of each limit, because a page nothing reads drifts, which the refused rule-to-ground ledger already showed. Tagging cases in the manifest, generating the page from the manifest, leaving the page unchecked and holding the size figures to the checkout are rejected.
 
+## 2026-10-20 Conditions the checker decides are rejected
+
+Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
+
+Summary: A new node rejects an `if` or `value_if` condition when every fact its selected branch establishes at entry is already derivable, with a repair that deletes the test and its dead branch; it judges a generic body once at its own parameters' symbolic instance and admits a condition in a contradictory state. It rejects judging only the goal origins and a language facility for a program to check its own final result, since the harness can compare the output. The acceptance-records decision adds the redundancy judgment to the obligations the structural checker records. The proof-query-context decision keeps reusing a closed view when goals are appended, after checking them for newly derivable contradictions, so the redundancy queries share preparation without changing a judgment.
 ## 2026-10-20 The merge-base compiler is cached per main commit, and its cold build is report-only
 
 Nodes: compiler/verification, compiler/merge-base-compiler-cache

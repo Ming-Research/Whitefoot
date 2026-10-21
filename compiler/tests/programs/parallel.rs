@@ -233,9 +233,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let n = 200000_u64;
   let last = n - 1_u64;
   let values = box_array_filled::<u64>(count: n, value: 0_u64);
-  if n <= values.inner.len {
-    shifted_inline(values: &values, n: n);
-  }
+  shifted_inline(values: &values, n: n);
   if last < values.inner.len {
     let once = values.inner[last];
     if once == n {

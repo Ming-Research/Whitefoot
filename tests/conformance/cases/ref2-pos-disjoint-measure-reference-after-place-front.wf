@@ -4,9 +4,6 @@ fn main() -> status: std::process::ExitStatus pure {
   let ring = ring_new::<u64, 4>();
   place_front(window: &ring, value: source.len);
   let observed = length^;
-  if observed == 0_u64 {
-  } else {
-    return std::process::exit_status(code: 1_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(observed);
+  return std::process::exit_status(code: code);
 }
