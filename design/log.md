@@ -10,6 +10,13 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/diagnostic-rendering
 
 Summary: A target layout failure caused by a runtime allocation now names the payload type, its size and alignment, the violated target limit with its value, and the nearest writer-written call requiring the allocation, found through the call origins lowering already records, because a writer can repair a source-valid program only from those; an unlocated allocation category, guessing the call from source text or symbol names, and moving target representability into source acceptance were rejected, the last because STOR-6 places it after checking. Allocation obligations are checked before the program-wide layout walk so the failure keeps its allocation; every check still runs before emission and the failure cites no source-language rule.
+## 2026-10-13 A Slab reserves capacity up to its type limit without disturbing handles
+
+Nodes: language/data-model/slab-storage
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve: the new decision and the two rewordings take effect; write the design-tree approval record, mark ready, run the gate on both platforms, merge through the coordinator's queue and release to Firn" (translated), on the card "approve the Slab storage design node's changes (Whitefoot#448, head commit 2c2890351119)?" (translated), whose background listed the new reservation decision, its three refused alternatives and the two rewordings.
+
+Summary: A Slab may reserve capacity explicitly up to its type limit through the ordinary window growth, so existing slots, indices and generations stay and old handles remain valid while a value's address may change; the free list's end marker becomes the type limit instead of the initial capacity, which growth would turn into a valid index. A request beyond the limit returns Err without mutation and a sufficient capacity returns Ok without shrinking, as HashMap reservation does. Fixed capacity after construction, rebuilding the slot records on growth and promising stable value addresses were refused. The first decision now says the Slab uses (not reserves) one backing and keeps slot indices, and the refused dense-array alternative is refused for changing another value's slot index.
 
 ## 2026-10-21 The gate runs on Linux only for now
 
