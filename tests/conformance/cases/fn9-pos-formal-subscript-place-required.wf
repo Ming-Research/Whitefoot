@@ -6,7 +6,7 @@ fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {
   ensures r <= rows^[i].len;
 } {
   doc "The requirement bounds i, and nothing rebinds it, so the place is formed at both returns.";
-  if rows^[0_u64].len > 9_u64 {
+  if rows^[0_u64].len > 0_u64 {
     return 0_u64;
   }
   return 0_u64;

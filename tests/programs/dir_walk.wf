@@ -237,11 +237,6 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           } else {
             break @stored_entry;
           }
-          let addressable = name_end <= entries_room;
-          if addressable {
-          } else {
-            break @stored_entry;
-          }
           set at = name_end;
           let dotted = 0_u8;
           let single = name_count == 1_u64;
@@ -355,11 +350,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
                       let body_at = slot -wrap 2_u64;
                       let inside = body_at < stored;
                       if inside {
-                        let room_now = child.len;
-                        let readable = body_at < room_now;
-                        if readable {
-                          set byte = child[body_at];
-                        }
+                        set byte = child[body_at];
                       }
                     }
                     place_back(window: records, value: byte);
@@ -460,14 +451,11 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     }
     let swap_room = order.len;
     let best_readable = best < swap_room;
-    let selected_writable = selected < swap_room;
     if best_readable {
-      if selected_writable {
-        let standing = order[selected];
-        let winner = order[best];
-        set order[best] = standing;
-        set order[selected] = winner;
-      }
+      let standing = order[selected];
+      let winner = order[best];
+      set order[best] = standing;
+      set order[selected] = winner;
     }
     set selected = selected +wrap 1_u64;
   }

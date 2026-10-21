@@ -482,8 +482,82 @@ impl Reasoning<'_, '_, '_> {
             _ => None,
         };
         let view = self.origin_query_view(context, submitted.as_ref());
+        self.prove_in_origin_view(context, goal, ordinary, &view)
+    }
+
+    /// R1: the extra `bnot X` class may contain only its new root and term
+    /// view. It then has no entering sign or transport edge to an old member;
+    /// introduction never decomposes its derived sign. Thus its positive
+    /// affine proof cannot feed any old class. We also reject a contradictory
+    /// shared view: the new root could itself supply a different contradiction
+    /// parent when opposite affine proofs are found in the same pass. With
+    /// neither effect, old fixed-point proofs and True stay unchanged. An
+    /// existing class must use the two specified collections (a transported
+    /// `+bnot X` can otherwise
+    /// make only the enlarged collection contradictory).
+    ///
+    /// The memo belongs to one condition judgment, with unchanged entering
+    /// facts and affine images. Both truths still try the ordinary route first
+    /// and keep its result whenever the view leaves its disposition unchanged.
+    pub(super) fn prove_condition_origin(
+        &mut self,
+        context: ProofContext<'_>,
+        origin: GoalId,
+        truth: bool,
+        views: &mut HashMap<GoalId, FactState>,
+    ) -> ProofResult {
+        let expression = self.vocabulary.goals.expression(origin).clone();
+        let negated = GoalExpression::Operation {
+            row: GoalOperation::Boolean(CheckedBooleanOperation::Not),
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![expression.clone()],
+        };
+        let expression = if truth { &expression } else { &negated };
+        let affine = self.affine_goal_ordering_target(expression, context.affine);
+        let goal = ProofGoal::Signed {
+            expression,
+            affine: affine.as_ref(),
+        };
+        let ordinary = self.prove_prepared(
+            ProofContext {
+                origin_view: OriginView::Ordinary,
+                ..context
+            },
+            goal,
+        );
+        if ordinary.disposition == ProofDisposition::Proved || context.facts.goal_origins.is_empty()
+        {
+            return ordinary;
+        }
+        if truth && let Some(view) = self.try_condition_origin_view(context, &negated) {
+            let closed = close(
+                &view,
+                &self.vocabulary.terms,
+                &self.vocabulary.goals,
+                &mut self.vocabulary.derivations,
+            );
+            if !closed.contradictory() {
+                views.insert(origin, view);
+            }
+        }
+        if let Some(view) = views.get(&origin) {
+            return self.prove_in_origin_view(context, goal, ordinary, view);
+        }
+        let view = self.origin_query_view(context, Some(expression));
+        self.prove_in_origin_view(context, goal, ordinary, &view)
+    }
+
+    fn prove_in_origin_view(
+        &mut self,
+        context: ProofContext<'_>,
+        goal: ProofGoal<'_>,
+        ordinary: ProofResult,
+        view: &FactState,
+    ) -> ProofResult {
         let prepared = ProofContext {
-            facts: &view,
+            facts: view,
             affine: context.affine,
             closed: None,
             origin_view: OriginView::Prepared,
@@ -1628,7 +1702,22 @@ impl Reasoning<'_, '_, '_> {
             &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
         );
+        // Each residual below is the target less one bridge image, so the
+        // point that falsified the target and satisfies every bridge image
+        // falsifies every residual: no candidate can succeed. Only this loop
+        // is skipped, so any step after it still runs.
+        let bridges_refuted = self.affine_bridges_refuted(
+            target,
+            auto.assumptions,
+            &closed,
+            right,
+            &right_value,
+            &candidates,
+        );
         for candidate in candidates {
+            if bridges_refuted {
+                break;
+            }
             let Some(bound) = closed.tight_bound(candidate.term, right) else {
                 continue;
             };
@@ -3330,9 +3419,10 @@ impl Reasoning<'_, '_, '_> {
         proof
     }
 
-    /// Reuse the demanded index entries only for exactly the same closed
-    /// facts and candidate images. Candidate formation comes first: it may
-    /// register a term or mint a current measure image. Exact vector equality
+    /// Reuse the demanded index entries only for exactly the same L0
+    /// inputs and candidate images (see `AffineL0Content`). Candidate formation
+    /// comes first: it may register a term or mint a current measure image.
+    /// Exact vector equality
     /// includes term identity, coefficients, constants and traversal order;
     /// equal lengths or an unchanged L0 closure alone are insufficient.
     pub(super) fn affine_query_view(
@@ -3345,8 +3435,14 @@ impl Reasoning<'_, '_, '_> {
             &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
         );
+        let l0 = AffineL0Content::new(
+            context.facts,
+            &self.vocabulary.terms,
+            &self.vocabulary.derivations,
+            &closed,
+        );
         if let Some(cached) = &self.vocabulary.affine_l0_cache
-            && Rc::ptr_eq(&cached.closed, &closed)
+            && cached.l0.matches(&l0)
             && cached.index.candidates == candidates
         {
             super::super::work::affine_query(true);
@@ -3355,7 +3451,7 @@ impl Reasoning<'_, '_, '_> {
         super::super::work::affine_query(false);
         let index = Rc::new(LazyAffineL0Index::new(candidates));
         self.vocabulary.affine_l0_cache = Some(AffineL0Cache {
-            closed: Rc::clone(&closed),
+            l0,
             index: Rc::clone(&index),
         });
         (closed, index)
@@ -3378,11 +3474,33 @@ impl Reasoning<'_, '_, '_> {
         origin: Metric,
     ) -> Option<AffineConsequenceProof> {
         work::affine_metric(origin);
+        self.affine_target_search(target, assumptions, context, true)
+    }
+
+    /// `DIRECT`, then `AUTO`'s families in their fixed order [MSR-4]. With
+    /// `refute`, a target the premise families leave open is checked against
+    /// the view's integer points (`affine_models`) before the final family: a
+    /// point satisfying every premise the families read and falsifying the
+    /// target ends a search no family can win. A search without such a point
+    /// runs unchanged, so the result and its retained parents are the
+    /// traversal's.
+    pub(super) fn affine_target_search(
+        &mut self,
+        target: &AffineInequality,
+        assumptions: &[ActiveAffineFact],
+        context: ProofContext<'_>,
+        refute: bool,
+    ) -> Option<AffineConsequenceProof> {
         let (closed, l0) = self.affine_query_view(context);
         let mut query = AffineDirectQuery::new(&l0, context.affine, &closed);
-        self.evaluate_affine_target(target, assumptions, &mut query)
-            .ok()
-            .flatten()
+        self.evaluate_affine_target(
+            target,
+            assumptions,
+            &mut query,
+            refute.then_some((&closed, &l0)),
+        )
+        .ok()
+        .flatten()
     }
 
     /// Revalidate shared preparation before every target. Forming a
@@ -3400,6 +3518,17 @@ impl Reasoning<'_, '_, '_> {
         facts: &FactState,
         closed: Option<&ProofClosure>,
         auto: &mut AffineAutoQuery<'_>,
+    ) -> Option<AffineConsequenceProof> {
+        self.prepared_affine_target_search(target, facts, closed, auto, true)
+    }
+
+    fn prepared_affine_target_search(
+        &mut self,
+        target: &AffineInequality,
+        facts: &FactState,
+        closed: Option<&ProofClosure>,
+        auto: &mut AffineAutoQuery<'_>,
+        refute: bool,
     ) -> Option<AffineConsequenceProof> {
         // Origin transport has already selected these facts at the numeric
         // disposition; affine_query_view only reads affine inputs and close().
@@ -3429,7 +3558,12 @@ impl Reasoning<'_, '_, '_> {
             direct_metric: Metric::DirectOther,
             final_interval_exceptions: prepared.final_interval_exceptions.take(),
         };
-        let result = self.evaluate_affine_target(target, auto.assumptions, &mut query);
+        let result = self.evaluate_affine_target(
+            target,
+            auto.assumptions,
+            &mut query,
+            refute.then_some((&closed, &l0)),
+        );
         prepared.intervals = query.intervals;
         prepared.measures = query.measures;
         prepared.residual = query.residual;
@@ -3437,13 +3571,14 @@ impl Reasoning<'_, '_, '_> {
         result.ok().flatten()
     }
 
-    /// A fresh arithmetic state for every target; only complete AUTO
-    /// exhaustion returns Ok(None). No answer is memoized.
+    /// A fresh arithmetic state for every target; complete AUTO exhaustion
+    /// or a certified falsifying point returns Ok(None). No answer is memoized.
     fn evaluate_affine_target(
         &mut self,
         target: &AffineInequality,
         assumptions: &[ActiveAffineFact],
         query: &mut AffineDirectQuery<'_>,
+        model_view: Option<(&Rc<ClosedState>, &Rc<LazyAffineL0Index>)>,
     ) -> Result<Option<AffineConsequenceProof>, AffineCheckError> {
         query.direct_metric = Metric::DirectInitial;
         let mut check = AffineCheckState::new();
@@ -3495,6 +3630,14 @@ impl Reasoning<'_, '_, '_> {
             return Ok(Some(affine_consequence_from_residual(
                 &selected, &automatic, parents,
             )));
+        }
+
+        // A falsifying point shows that no indexed L0 image can close the
+        // target, before the final family selects its retained images.
+        if let Some((closed, l0)) = model_view
+            && self.affine_model_refutes(target, assumptions, closed, l0)
+        {
+            return Ok(None);
         }
 
         // Ordinary L0 relations remain outside the affine premise set. This

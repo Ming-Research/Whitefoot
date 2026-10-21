@@ -6,8 +6,8 @@ fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {
   ensures r <= rows^[i].len;
 } {
   doc "Returns a bound on the length of element i.";
-  if rows^[i].len > 9_u64 {
-    return 9_u64;
+  if rows^[i].len > 0_u64 {
+    return 1_u64;
   }
   return 0_u64;
 }
@@ -19,9 +19,6 @@ fn relay(rows: &Array<Slots<u8, 8>, 4>, k: u64) -> r: u64 reads(rows) contract {
   doc "The first result is bounded by element one; only the second call's relation is over element k.";
   let first = width(rows: rows, i: 1_u64);
   let other = width(rows: rows, i: k);
-  if other > 9_u64 {
-    return other;
-  }
   return first;
 }
 

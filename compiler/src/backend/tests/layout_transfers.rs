@@ -733,26 +733,23 @@ fn classify(value: Snapshot) -> result: u64 pure {
 fn main() -> status: std::process::ExitStatus pure {
   let seed = Snapshot::Number(n: 17_u64);
   let values = box_array_filled::<Snapshot>(count: 2_u64, value: seed);
-  if 1_u64 < values.inner.len {
-    let first = relay(values: &values, index: 0_u64);
-    set values.inner[0_u64] = Snapshot::Function(id: 29_u64);
-    let second = relay(values: &values, index: 0_u64);
-    let first_observed = classify(value: first);
-    let second_observed = classify(value: second);
-    let untouched = relay(values: &values, index: 1_u64);
-    let untouched_observed = classify(value: untouched);
-    if first_observed != 17_u64 {
-      return std::process::exit_status(code: 1_u8);
-    }
-    if second_observed != 30_u64 {
-      return std::process::exit_status(code: 2_u8);
-    }
-    if untouched_observed != 17_u64 {
-      return std::process::exit_status(code: 3_u8);
-    }
-    return std::process::exit_status(code: 0_u8);
+  let first = relay(values: &values, index: 0_u64);
+  set values.inner[0_u64] = Snapshot::Function(id: 29_u64);
+  let second = relay(values: &values, index: 0_u64);
+  let first_observed = classify(value: first);
+  let second_observed = classify(value: second);
+  let untouched = relay(values: &values, index: 1_u64);
+  let untouched_observed = classify(value: untouched);
+  if first_observed != 17_u64 {
+    return std::process::exit_status(code: 1_u8);
   }
-  return std::process::exit_status(code: 4_u8);
+  if second_observed != 30_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if untouched_observed != 17_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = emit(source);

@@ -1168,11 +1168,8 @@ fn copy_between(values: &Array<u64, 8>, a: u64, b: u64, c: u64, d: u64) -> resul
   requires d <= 8_u64;
 } {
   let left = &values^[a..b];
-  let right = &values^[a..b];
   if 4_u64 <= left^.len {
-    if 4_u64 <= right^.len {
-      copy_len(src: &left^[0_u64..2_u64], dst: &left^[2_u64..4_u64]);
-    }
+    copy_len(src: &left^[0_u64..2_u64], dst: &left^[2_u64..4_u64]);
   }
   return unit;
 }
