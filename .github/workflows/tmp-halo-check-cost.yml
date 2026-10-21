@@ -76,6 +76,7 @@ jobs:
           perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
           perl .github/run-check.pl compiler/build cargo build --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
       - name: Adapt the source to the merged compiler's OP-5 rule
+        id: adapt
         env:
           ARGS: ${{ matrix.args }}
           ADAPT_MAX: ${{ matrix.adapt_max }}
@@ -136,11 +137,15 @@ jobs:
               # The kept block's own bindings leave their block and could collide
               # with a later binding of the same spelling [TYPE-6]: rename them.
               for at in range(len(keep)):
-                  d = re.match(r'^' + re.escape(indent) + r'let (\w+)\b', keep[at])
+                  d = re.match(r'^' + re.escape(indent) + r'let (.*?) = ', keep[at])
                   if not d: continue
-                  counter[0] += 1; name = d.group(1); fresh = f'{name}_d{counter[0]}'
-                  use = re.compile(r'(?<![\w.:])' + re.escape(name) + r'(?!\w)(?!:(?!:))')
-                  keep[at:] = [use.sub(fresh, l) if k else re.sub(r'\b' + re.escape(name) + r'\b', fresh, l, count=1) for k, l in enumerate(keep[at:])]
+                  pattern = d.group(1)
+                  names = [pattern] if re.fullmatch(r'\w+', pattern) else re.findall(r'(?<=: )[a-z_]\w*', pattern)
+                  for name in names:
+                      counter[0] += 1; fresh = f'{name}_d{counter[0]}'
+                      use = re.compile(r'(?<![\w.:])' + re.escape(name) + r'(?!\w)(?!:(?!:))')
+                      keep[at] = use.sub(fresh, keep[at][:d.end(1)]) + keep[at][d.end(1):]
+                      keep[at + 1:] = [use.sub(fresh, l) for l in keep[at + 1:]]
               rest = lines[tail:]
               # Statements after a kept `return` at this level are unreachable.
               last = next((l for l in reversed(keep) if l.strip()), None)
@@ -183,14 +188,17 @@ jobs:
           line = f'## Adapt `{os.environ["ARGS"]}`: {len(notes)} fixes, ended: {end}\n'
           print(line, flush=True)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(line)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f: f.write('accepted=' + ('true' if end == 'accepted' else 'false') + '\n')
           PY
       - name: Build the other compilers
+        if: steps.adapt.outputs.accepted == 'true'
         run: |
           for tree in "$RUNNER_TEMP/base" "$RUNNER_TEMP/prebranch" "$RUNNER_TEMP/main"; do
             perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
           done
       - name: Interleaved checks and counters
+        if: steps.adapt.outputs.accepted == 'true'
         env:
           LABEL: ${{ matrix.label }}
           ARGS: ${{ matrix.args }}
