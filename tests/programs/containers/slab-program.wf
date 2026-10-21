@@ -9,6 +9,7 @@ alias slab_free = std::collections::slab::slab_free;
 alias slab_insert = std::collections::slab::slab_insert;
 alias slab_new = std::collections::slab::slab_new;
 alias slab_remove = std::collections::slab::slab_remove;
+alias slab_reserve = std::collections::slab::slab_reserve;
 alias slab_visit = std::collections::slab::slab_visit;
 
 struct SlabTestSeen {
@@ -576,13 +577,352 @@ fn slab_test_tickets() -> failures: u64 pure {
   return failed;
 }
 
+fn slab_test_reserve_live_handles() -> failures: u64 pure {
+  doc "Growing a full two-slot backing to four preserves both returned handles and their nodrop Box-owning payloads. Both new slots accept owners. Equal and smaller requests preserve capacity and materialization; every ticket reaches final consumption once.";
+  let failed = 0_u64;
+  let seen = SlabTestSeen(sum: 0_u64, count: 0_u64, sequence: 0_u64, visits: 0_u64, last: 0_u64);
+  let slab = slab_new::<SlabTestTicket, 4, 1>(capacity: 2_u64);
+  let first_value = slab_test_ticket(id: 11_u64);
+  let first = match slab_insert::<SlabTestTicket, 4, 1>(slab: &slab, value: move first_value) {
+    Ok(value: handle) => {
+      give handle;
+    }
+    Err(error: uninserted) => {
+      slab_test_consume_ticket(env: &seen, value: move uninserted);
+      slab_free::<SlabTestTicketConsume, 4, 1>(slab: move slab, env: &seen);
+      return 1_u64;
+    }
+  }
+  let second_value = slab_test_ticket(id: 22_u64);
+  let second = match slab_insert::<SlabTestTicket, 4, 1>(slab: &slab, value: move second_value) {
+    Ok(value: handle) => {
+      give handle;
+    }
+    Err(error: uninserted) => {
+      slab_test_consume_ticket(env: &seen, value: move uninserted);
+      slab_free::<SlabTestTicketConsume, 4, 1>(slab: move slab, env: &seen);
+      return 1_u64;
+    }
+  }
+  match slab_reserve::<SlabTestTicket, 4, 1>(slab: &slab, capacity: 4_u64) {
+    Ok(value: reserved) => {
+    }
+    Err(error: refused) => {
+      set failed = failed +wrap 1_u64;
+    }
+  }
+  if slab.cells.inner.cap != 4_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if slab.cells.inner.len != 2_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  match slab_visit::<SlabTestTicketVisit, 4, 1>(slab: &slab, handle: first, env: &seen) {
+    Ok(value: observed) => {
+      if observed != 11_u64 {
+        set failed = failed +wrap 1_u64;
+      }
+    }
+    Err(error: expired) => {
+      set failed = failed +wrap 1_u64;
+    }
+  }
+  match slab_visit::<SlabTestTicketVisit, 4, 1>(slab: &slab, handle: second, env: &seen) {
+    Ok(value: observed) => {
+      if observed != 22_u64 {
+        set failed = failed +wrap 1_u64;
+      }
+    }
+    Err(error: expired) => {
+      set failed = failed +wrap 1_u64;
+    }
+  }
+  for (capacity in 1_u64..5_u64) {
+    match slab_reserve::<SlabTestTicket, 4, 1>(slab: &slab, capacity: capacity) {
+      Ok(value: reserved) => {
+      }
+      Err(error: refused) => {
+        set failed = failed +wrap 1_u64;
+      }
+    }
+    if slab.cells.inner.cap != 4_u64 {
+      set failed = failed +wrap 1_u64;
+    }
+    if slab.cells.inner.len != 2_u64 {
+      set failed = failed +wrap 1_u64;
+    }
+  }
+  for (id in 33_u64..35_u64) {
+    let value = slab_test_ticket(id: id);
+    match slab_insert::<SlabTestTicket, 4, 1>(slab: &slab, value: move value) {
+      Ok(value: handle) => {
+        let expected_index = id - 31_u64;
+        if handle.index != expected_index {
+          set failed = failed +wrap 1_u64;
+        }
+        if handle.generation != 0_u64 {
+          set failed = failed +wrap 1_u64;
+        }
+        match slab_visit::<SlabTestTicketVisit, 4, 1>(slab: &slab, handle: handle, env: &seen) {
+          Ok(value: observed) => {
+            if observed != id {
+              set failed = failed +wrap 1_u64;
+            }
+          }
+          Err(error: expired) => {
+            set failed = failed +wrap 1_u64;
+          }
+        }
+      }
+      Err(error: uninserted) => {
+        slab_test_consume_ticket(env: &seen, value: move uninserted);
+        set failed = failed +wrap 1_u64;
+      }
+    }
+  }
+  if slab.cells.inner.len != 4_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  slab_free::<SlabTestTicketConsume, 4, 1>(slab: move slab, env: &seen);
+  if seen.sum != 100_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if seen.count != 4_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if seen.visits != 4_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  return failed;
+}
+
+fn slab_test_reserve_free_list() -> failures: u64 pure {
+  doc "The free list is nonempty across growth from two to four slots. Reusing slot zero expires its old handle and increments its generation. Both added slots are filled before all four values are checked, so the old capacity cannot masquerade as a free-list head after slot two materializes.";
+  let failed = 0_u64;
+  let seen = SlabTestSeen(sum: 0_u64, count: 0_u64, sequence: 0_u64, visits: 0_u64, last: 0_u64);
+  let slab = slab_new::<u64, 4, 1>(capacity: 2_u64);
+  let first = match slab_insert::<u64, 4, 1>(slab: &slab, value: 11_u64) {
+    Ok(value: handle) => {
+      give handle;
+    }
+    Err(error: uninserted) => {
+      slab_free::<SlabTestScalarConsume, 4, 1>(slab: move slab, env: &seen);
+      return 1_u64;
+    }
+  }
+  let second = match slab_insert::<u64, 4, 1>(slab: &slab, value: 22_u64) {
+    Ok(value: handle) => {
+      give handle;
+    }
+    Err(error: uninserted) => {
+      slab_free::<SlabTestScalarConsume, 4, 1>(slab: move slab, env: &seen);
+      return 1_u64;
+    }
+  }
+  match slab_remove::<u64, 4, 1>(slab: &slab, handle: first) {
+    Some(value: removed) => {
+      if removed != 11_u64 {
+        set failed = failed +wrap 1_u64;
+      }
+      slab_test_record(env: &seen, value: removed);
+    }
+    None() => {
+      slab_free::<SlabTestScalarConsume, 4, 1>(slab: move slab, env: &seen);
+      return 1_u64;
+    }
+  }
+  match slab_reserve::<u64, 4, 1>(slab: &slab, capacity: 4_u64) {
+    Ok(value: reserved) => {
+    }
+    Err(error: refused) => {
+      set failed = failed +wrap 1_u64;
+    }
+  }
+  let reused = match slab_insert::<u64, 4, 1>(slab: &slab, value: 33_u64) {
+    Ok(value: handle) => {
+      give handle;
+    }
+    Err(error: uninserted) => {
+      slab_free::<SlabTestScalarConsume, 4, 1>(slab: move slab, env: &seen);
+      return 1_u64;
+    }
+  }
+  if reused.index != first.index {
+    set failed = failed +wrap 1_u64;
+  }
+  if reused.generation != 1_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  match slab_visit::<SlabTestScalarVisit, 4, 1>(slab: &slab, handle: first, env: &seen) {
+    Ok(value: unexpected) => {
+      set failed = failed +wrap 1_u64;
+    }
+    Err(error: expired) => {
+    }
+  }
+  for (index in 2_u64..4_u64) {
+    let value = index +wrap 33_u64;
+    match slab_insert::<u64, 4, 1>(slab: &slab, value: value) {
+      Ok(value: handle) => {
+        if handle.index != index {
+          set failed = failed +wrap 1_u64;
+        }
+        if handle.generation != 0_u64 {
+          set failed = failed +wrap 1_u64;
+        }
+      }
+      Err(error: uninserted) => {
+        set failed = failed +wrap 1_u64;
+      }
+    }
+  }
+  for (index in 0_u64..4_u64) {
+    let handle = if index == 0_u64 {
+      give reused;
+    } else if index == 1_u64 {
+      give second;
+    } else {
+      give SlabHandle(index: index, generation: 0_u64);
+    }
+    let expected = if index == 0_u64 {
+      give 33_u64;
+    } else if index == 1_u64 {
+      give 22_u64;
+    } else {
+      give index +wrap 33_u64;
+    }
+    match slab_visit::<SlabTestScalarVisit, 4, 1>(slab: &slab, handle: handle, env: &seen) {
+      Ok(value: observed) => {
+        if observed != expected {
+          set failed = failed +wrap 1_u64;
+        }
+      }
+      Err(error: expired) => {
+        set failed = failed +wrap 1_u64;
+      }
+    }
+  }
+  if slab.cells.inner.cap != 4_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if slab.cells.inner.len != 4_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  slab_free::<SlabTestScalarConsume, 4, 1>(slab: move slab, env: &seen);
+  if seen.sum != 137_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if seen.count != 5_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if seen.visits != 4_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  return failed;
+}
+
+fn slab_test_reserve_ceiling() -> failures: u64 pure {
+  doc "A request above the static ceiling returns Err before changing capacity, materialized length or the live value; the free-list head is outside the reserve operation's write set, so the checker already decides it unchanged. The unchanged full backing still refuses insertion. A separate shared-empty backing grows directly to its ceiling and accepts a value.";
+  let failed = 0_u64;
+  let seen = SlabTestSeen(sum: 0_u64, count: 0_u64, sequence: 0_u64, visits: 0_u64, last: 0_u64);
+  let slab = slab_new::<u64, 3, 1>(capacity: 1_u64);
+  let handle = match slab_insert::<u64, 3, 1>(slab: &slab, value: 77_u64) {
+    Ok(value: handle) => {
+      give handle;
+    }
+    Err(error: uninserted) => {
+      slab_free::<SlabTestScalarConsume, 3, 1>(slab: move slab, env: &seen);
+      return 1_u64;
+    }
+  }
+  match slab_reserve::<u64, 3, 1>(slab: &slab, capacity: 4_u64) {
+    Ok(value: unexpected) => {
+      set failed = failed +wrap 1_u64;
+    }
+    Err(error: refused) => {
+    }
+  }
+  if slab.cells.inner.cap != 1_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if slab.cells.inner.len != 1_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  match slab_visit::<SlabTestScalarVisit, 3, 1>(slab: &slab, handle: handle, env: &seen) {
+    Ok(value: observed) => {
+      if observed != 77_u64 {
+        set failed = failed +wrap 1_u64;
+      }
+    }
+    Err(error: expired) => {
+      set failed = failed +wrap 1_u64;
+    }
+  }
+  match slab_insert::<u64, 3, 1>(slab: &slab, value: 88_u64) {
+    Ok(value: unexpected) => {
+      set failed = failed +wrap 1_u64;
+    }
+    Err(error: uninserted) => {
+      if uninserted != 88_u64 {
+        set failed = failed +wrap 1_u64;
+      }
+    }
+  }
+  slab_free::<SlabTestScalarConsume, 3, 1>(slab: move slab, env: &seen);
+  let empty = slab_new::<u64, 3, 1>(capacity: 0_u64);
+  match slab_reserve::<u64, 3, 1>(slab: &empty, capacity: 3_u64) {
+    Ok(value: reserved) => {
+    }
+    Err(error: refused) => {
+      set failed = failed +wrap 1_u64;
+    }
+  }
+  if empty.cells.inner.cap != 3_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if empty.cells.inner.len != 0_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  match slab_insert::<u64, 3, 1>(slab: &empty, value: 99_u64) {
+    Ok(value: inserted) => {
+      match slab_visit::<SlabTestScalarVisit, 3, 1>(slab: &empty, handle: inserted, env: &seen) {
+        Ok(value: observed) => {
+          if observed != 99_u64 {
+            set failed = failed +wrap 1_u64;
+          }
+        }
+        Err(error: expired) => {
+          set failed = failed +wrap 1_u64;
+        }
+      }
+    }
+    Err(error: uninserted) => {
+      set failed = failed +wrap 1_u64;
+    }
+  }
+  slab_free::<SlabTestScalarConsume, 3, 1>(slab: move empty, env: &seen);
+  if seen.sum != 176_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if seen.count != 2_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  if seen.visits != 2_u64 {
+    set failed = failed +wrap 1_u64;
+  }
+  return failed;
+}
+
 fn main() -> status: ExitStatus pure {
-  doc "The complete bounded Slab chain covers scalar, affine Box and nodrop owners, empty and full capacity, checked expiry, reuse, finite-generation retirement, borrowed visitation, and cleanup. The separately bundled membership witness adds weak and composite retained indexes. A native observer checks every backing and payload allocation is released once.";
+  doc "The complete bounded Slab chain covers scalar, affine Box and nodrop owners, empty and full capacity, checked expiry, reuse, finite-generation retirement, borrowed visitation, growth with live handles and vacancies, ceiling refusal, and cleanup. The separately bundled membership witness adds weak and composite retained indexes. A native observer checks every backing and payload allocation is released once.";
   let scalar_failures = slab_test_scalars();
   let zero_failures = slab_test_zero_capacity();
   let box_failures = slab_test_boxes();
   let ticket_failures = slab_test_tickets();
   let membership_failures = slab_membership_checks();
+  let reserve_live_failures = slab_test_reserve_live_handles();
+  let reserve_free_failures = slab_test_reserve_free_list();
+  let reserve_ceiling_failures = slab_test_reserve_ceiling();
   if scalar_failures != 0_u64 {
     return exit_status(code: 1_u8);
   }
@@ -597,6 +937,15 @@ fn main() -> status: ExitStatus pure {
   }
   if membership_failures != 0_u64 {
     return exit_status(code: 5_u8);
+  }
+  if reserve_live_failures != 0_u64 {
+    return exit_status(code: 6_u8);
+  }
+  if reserve_free_failures != 0_u64 {
+    return exit_status(code: 7_u8);
+  }
+  if reserve_ceiling_failures != 0_u64 {
+    return exit_status(code: 8_u8);
   }
   return exit_status(code: 0_u8);
 }
