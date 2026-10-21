@@ -238,19 +238,13 @@ fn exercise(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) ->
   let third = array_filled::<u8, 1024>(value: 0_u8);
   let third_end = read_config(factory: factory, root: base, name: &invalid_config[0_u64..12_u64], destination: &third[0_u64..1024_u64]);
   if first_end > 0_u64 {
-    if first_end <= 1024_u64 {
-      if second_end > 0_u64 {
-        if second_end <= 1024_u64 {
-          if third_end > 0_u64 {
-            if third_end <= 1024_u64 {
-              let opened = open_both(factory: factory, paths: paths, base: base, file_path: &first[0_u64..first_end], directory_path: &second[0_u64..second_end]);
-              if opened != 0_u8 {
-                return opened;
-              }
-              return refuse_both(factory: factory, paths: paths, base: base, path: &third[0_u64..third_end]);
-            }
-          }
+    if second_end > 0_u64 {
+      if third_end > 0_u64 {
+        let opened = open_both(factory: factory, paths: paths, base: base, file_path: &first[0_u64..first_end], directory_path: &second[0_u64..second_end]);
+        if opened != 0_u8 {
+          return opened;
         }
+        return refuse_both(factory: factory, paths: paths, base: base, path: &third[0_u64..third_end]);
       }
     }
   }

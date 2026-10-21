@@ -69,9 +69,7 @@ fn open_listed(factory: &HandleFactory, paths: &HostPaths, cwd: &DirectoryRead, 
   let listed = array_filled::<u8, 1024>(value: 0_u8);
   let listed_end = read_config(factory: factory, root: cwd, name: name, destination: &listed[0_u64..1024_u64]);
   if listed_end > 0_u64 {
-    if listed_end <= 1024_u64 {
-      return open_window(factory: factory, paths: paths, base: base, path: &listed[0_u64..listed_end], encoding: encoding, expected: expected);
-    }
+    return open_window(factory: factory, paths: paths, base: base, path: &listed[0_u64..listed_end], encoding: encoding, expected: expected);
   }
   return 1_u8;
 }

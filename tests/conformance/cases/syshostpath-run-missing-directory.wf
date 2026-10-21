@@ -211,9 +211,7 @@ fn exercise(args: &Args, factory: &HandleFactory, paths: &HostPaths, base: &Dire
   let inner = array_filled::<u8, 1024>(value: 0_u8);
   let inner_end = copy_argument(args: args, position: 3_u64, destination: &inner[0_u64..1024_u64]);
   if inner_end > 0_u64 {
-    if inner_end <= 1024_u64 {
-      return through_file(factory: factory, paths: paths, base: base, path: &inner[0_u64..inner_end]);
-    }
+    return through_file(factory: factory, paths: paths, base: base, path: &inner[0_u64..inner_end]);
   }
   return 9_u8;
 }

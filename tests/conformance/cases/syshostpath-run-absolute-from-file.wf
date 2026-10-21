@@ -99,16 +99,12 @@ fn exercise(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) ->
   let second = array_filled::<u8, 1024>(value: 0_u8);
   let second_end = read_config(factory: factory, root: base, name: &directory_config[0_u64..8_u64], destination: &second[0_u64..1024_u64]);
   if first_end > 0_u64 {
-    if first_end <= 1024_u64 {
-      if second_end > 0_u64 {
-        if second_end <= 1024_u64 {
-          let opened = open_named_file(factory: factory, paths: paths, base: base, path: &first[0_u64..first_end]);
-          if opened != 0_u8 {
-            return opened;
-          }
-          return open_named_directory(factory: factory, paths: paths, base: base, path: &second[0_u64..second_end]);
-        }
+    if second_end > 0_u64 {
+      let opened = open_named_file(factory: factory, paths: paths, base: base, path: &first[0_u64..first_end]);
+      if opened != 0_u8 {
+        return opened;
       }
+      return open_named_directory(factory: factory, paths: paths, base: base, path: &second[0_u64..second_end]);
     }
   }
   return 2_u8;

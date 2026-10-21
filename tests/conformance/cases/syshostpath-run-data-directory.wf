@@ -293,13 +293,11 @@ fn exercise(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) ->
   let config = array_filled::<u8, 1024>(value: 0_u8);
   let config_end = read_config(factory: factory, root: base, name: &config_name[0_u64..10_u64], destination: &config[0_u64..1024_u64]);
   if config_end > 0_u64 {
-    if config_end <= 1024_u64 {
-      let outcome = open_data(factory: factory, paths: paths, base: base, path: &config[0_u64..config_end]);
-      if outcome != 0_u8 {
-        return outcome;
-      }
-      return seen_through_cwd(factory: factory, base: base);
+    let outcome = open_data(factory: factory, paths: paths, base: base, path: &config[0_u64..config_end]);
+    if outcome != 0_u8 {
+      return outcome;
     }
+    return seen_through_cwd(factory: factory, base: base);
   }
   return 2_u8;
 }

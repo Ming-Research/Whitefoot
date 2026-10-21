@@ -863,7 +863,7 @@ fn fill(values: &STORAGE) -> result: unit writes(values) contract {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1215,7 +1215,7 @@ fn overwrite(view: &[u64], index: u64, value: u64) -> result: unit writes(view) 
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
