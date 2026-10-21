@@ -854,6 +854,61 @@ request opened after its branch's last push gets no run of its own either;
 that head cannot merge until `main` is merged into it, and the push that
 does so is checked.
 
+### Xeon Platinum 8573C column, candidate-compiler budget and cached baseline compiler (2026-10-13)
+
+The owner directed three changes on the status board on 2026-10-13 (option A of
+the baseline-overrun card): cache the merge-base compiler per main commit
+(`compute-regression.yml`), raise `performance-candidate-compiler` to 145 s on
+every Linux class, and add a column for the CPU model
+`INTEL(R) XEON(R) PLATINUM 8573C` (the exact `model name` in `/proc/cpuinfo`
+and `lscpu`, upper case as printed). That model has fewer than the 20 runs a
+class needs; the column is owner-directed and rests on the runs below.
+
+Evidence, fetched from the logs of runs in Ming-Research/Whitefoot on
+2026-10-13 (28 `compute-regression.yml` runs, whose jobs log `lscpu`, and 32
+`gate.yml` Linux jobs from 8 runs, which print the model in the budget note;
+three jobs ran on the 8573C):
+
+| Row | Value (s) | Source | Column value |
+|---|---:|---|---:|
+| `check/unit` | 299.78 | gate run 38474299036, job 115561159609 | 385 (largest class; rule gives 330) |
+| `compiler/test-build-unit` | 164.83 | same job | 185 |
+| `compiler/test-unit` | 134.89 | same job | 215 (largest class; rule gives 150) |
+| `check/runtime` | 21.14 | gate run 38476457958, job 115568648358 | 25 |
+| `performance-candidate-compiler` | 130.96 | compute-regression run 38472638551, job 115555356423 | 145 (owner-set) |
+| `performance-baseline-compiler` | 119.05 | same job | 135 |
+| `performance-candidate-images` | 2.80 | same job | 10 (floor) |
+| `performance-baseline-images` | 2.70 | same job | 10 (floor) |
+| `performance-null` | 27.85 | same job | 45 (largest class; rule gives 35) |
+| `performance-slow-control` | 35.67 | same job | 55 (largest class; rule gives 40) |
+| `performance-shifted-images` | 2.80 | same job | 10 (floor) |
+| `performance-placement-control` | 27.64 | same job | 45 (largest class; rule gives 35) |
+| `performance-comparison` | 27.65 | same job | 45 (largest class; rule gives 35) |
+
+The rule value is the single run's time plus 10%, rounded up to 5 s with the
+10 s floor. One run is far fewer than the 20 the rule asks for, so a column
+value never goes below the row's largest earlier Linux class value: one run
+can show that a class needs more, not that it needs less. Only
+`compiler/test-build-unit` and `performance-baseline-compiler` rise above it. A third 8573C job, gate run 38474311163 job 115561211669, failed
+its unit test build after 25.6 s and is excluded. Every other row has no run on
+this CPU in the sampled logs and takes its largest earlier Linux class value;
+the earlier sample above counts 21 observations of `check/static` and
+`repository-invariants` on this model but its maxima were not retained.
+
+`performance-candidate-compiler` across the 28 compute-regression runs, in
+seconds (cold builds only; runs of 15 to 36 s are failed early builds and are
+left out): AMD EPYC 7763 116.2 to 146.2 (nine runs), AMD EPYC 9V74 94.0 to
+128.7, AMD EPYC 9V45 85.7 to 102.8, Intel Xeon 6973P-C 93.3 to 112.7, Intel Xeon
+Platinum 8370C 118.9, Intel Xeon Platinum 8573C 131.0. The 7763 maximum, 146.2
+s, is above the owner's 145 s.
+
+`performance-baseline-compiler` over the same runs: 87.2 to 121.4 s, the 8573C
+run 119.05 s. The cache in `compute-regression.yml` removes this build from a
+pull request run whose merge base was built on main with the same toolchain;
+a run that finds no cache still builds it, and that cold build is report-only
+(`WHITEFOOT_BUDGET_REPORT_ONLY`), since the 115 s row is exceeded by a cold build
+(126.8 s and 127.0 s on the cache-miss runs of 10-20).
+
 ### Gate at ready, not at each draft push
 
 Read from the Actions API on 2026-10-19: the 200 newest `gate.yml` runs, created

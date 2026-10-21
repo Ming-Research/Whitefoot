@@ -7,8 +7,16 @@
 # review, and a manual run. The author may start it by hand before marking the
 # pull request ready, to see the answer sooner; marking it ready runs it again,
 # since nothing here skips a head that an earlier manual run already measured.
+#
+# The merge-base compiler is cached per main commit and toolchain. A pull
+# request run restores only caches saved on its own ref or on main, never
+# another pull request's, so every push to main builds that commit's compiler
+# once and saves it under the key a pull request derives from its merge base;
+# a push to main runs no comparison.
 name: compute-regression
 on:
+  push:
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
@@ -21,8 +29,8 @@ defaults:
   run:
     shell: bash
 concurrency:
-  group: compute-regression-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: compute-regression-${{ github.event.pull_request.number || (github.event_name == 'push' && github.sha) || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 env:
   CARGO_TERM_COLOR: never
   # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
@@ -49,6 +57,15 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           QUALIFY: ${{ inputs.qualify }}
         run: |
+          if [ "$EVENT_NAME" = push ]; then
+            # Main saves its own compiler for later pull requests; nothing is compared.
+            echo "base=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo 'measure=false' >> "$GITHUB_OUTPUT"
+            echo 'qualify=false' >> "$GITHUB_OUTPUT"
+            echo 'baseline=true' >> "$GITHUB_OUTPUT"
+            echo "Only the main compiler at $GITHUB_SHA is built and cached; no comparison runs." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           base_ref="${BASE_REF:-main}"
           git fetch --no-tags origin "+refs/heads/$base_ref:refs/remotes/origin/$base_ref"
           base=$(git merge-base "origin/$base_ref" HEAD)
@@ -62,16 +79,17 @@ jobs:
             echo 'Performance comparison skipped: no measured compiler, runtime, fixture or instrument input changed.' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "measure=$measure" >> "$GITHUB_OUTPUT"
+          echo "baseline=$measure" >> "$GITHUB_OUTPUT"
           qualify=false
           if [ "$QUALIFY" = true ] || ! git diff --quiet "$base" HEAD -- \
             tests/performance tests/programs/compute compiler/runtime.mk \
             .github/workflows/compute-regression.yml; then qualify=true; fi
           echo "qualify=$qualify" >> "$GITHUB_OUTPUT"
       - name: Check instrument decisions and host toolchain
-        if: steps.scope.outputs.measure == 'true'
+        if: steps.scope.outputs.baseline == 'true'
         run: |
           echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
-          sh tests/performance/test-verdict.sh
+          if [ '${{ steps.scope.outputs.measure }}' = true ]; then sh tests/performance/test-verdict.sh; fi
           rustup default stable
           rustc -vV
           cargo --version
@@ -79,6 +97,10 @@ jobs:
           /usr/bin/clang --version
           test "$(nproc)" -ge 2
           lscpu | grep -E '^(Model name|CPU\(s\)):'
+      # The merge-base compiler is deliberately not in this cache: its
+      # restore-keys prefix would restore another commit's target directory,
+      # and the compiler built over it would not be the one a fresh build of
+      # the merge base produces. Its own cache below is keyed exactly.
       - uses: actions/cache@v4
         if: steps.scope.outputs.measure == 'true'
         with:
@@ -86,16 +108,21 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             compiler/target
-            ${{ runner.temp }}/baseline-target
           key: ${{ runner.os }}-formal-compute-${{ hashFiles('compiler/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-formal-compute-${{ hashFiles('compiler/Cargo.lock') }}-
+      # The merge base is checked out at the same path in every run, so the
+      # compiler built from it (and cached) carries the same build paths.
+      - name: Check out the merge base
+        if: steps.scope.outputs.baseline == 'true'
+        env:
+          BASE: ${{ steps.scope.outputs.base }}
+        run: git worktree add --detach "$RUNNER_TEMP/baseline" "$BASE"
       - name: Export and identify both compiler inputs
         if: steps.scope.outputs.measure == 'true'
         env:
           BASE: ${{ steps.scope.outputs.base }}
         run: |
-          git worktree add --detach "$RUNNER_TEMP/baseline" "$BASE"
           mkdir -p "$RUNNER_TEMP/performance-results"
           identity_error() {
             echo "::error::$*" >&2
@@ -153,14 +180,77 @@ jobs:
         run: |
           WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-candidate-compiler \
             cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
-      - name: Build the merge-base compiler
-        if: steps.scope.outputs.measure == 'true'
+      # The key names the merge-base commit and everything outside its tree
+      # that the built bytes depend on: the Rust toolchain, the C linker
+      # driver and the runner image. "v1" stands for the build command below;
+      # change it when that command, its profile or its environment changes.
+      - name: Identify the cached merge-base compiler
+        id: baseline
+        if: steps.scope.outputs.baseline == 'true'
         env:
+          BASE: ${{ steps.scope.outputs.base }}
+        run: |
+          toolchain=$({
+            rustc -vV
+            /usr/bin/clang --version
+            cc --version | head -n 1
+            echo "image=${ImageVersion:-unknown}"
+          } | sha256sum | cut -c1-24)
+          echo "key=baseline-compiler-v1-${{ runner.os }}-${{ runner.arch }}-$BASE-$toolchain" >> "$GITHUB_OUTPUT"
+      - name: Restore the cached merge-base compiler
+        id: baseline-cache
+        if: steps.scope.outputs.baseline == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/baseline-compiler-cache
+          key: ${{ steps.baseline.outputs.key }}
+      - name: Use the cached merge-base compiler
+        if: steps.scope.outputs.baseline == 'true' && steps.baseline-cache.outputs.cache-hit == 'true'
+        env:
+          BASE: ${{ steps.scope.outputs.base }}
+        run: |
+          cache="$RUNNER_TEMP/baseline-compiler-cache"
+          built_from=$(cat "$cache/commit")
+          echo "baseline compiler restored from cache for $built_from (merge base $BASE)"
+          test "$built_from" = "$BASE" || {
+            echo "::error::the cached compiler was built from $built_from, not the merge base $BASE"
+            exit 1
+          }
+          (cd "$cache" && sha256sum -c whitefootc.sha256)
+          mkdir -p "$RUNNER_TEMP/baseline-target/gate"
+          cp "$cache/whitefootc" "$RUNNER_TEMP/baseline-target/gate/whitefootc"
+          chmod +x "$RUNNER_TEMP/baseline-target/gate/whitefootc"
+      # A restored compiler skips this step and its labeled stage: no build ran,
+      # so the stage would record a time that is not a build time and would
+      # blur the budget's measure of a cold build.
+      - name: Build the merge-base compiler
+        if: steps.scope.outputs.baseline == 'true' && steps.baseline-cache.outputs.cache-hit != 'true'
+        env:
+          BASE: ${{ steps.scope.outputs.base }}
           CARGO_TARGET_DIR: ${{ runner.temp }}/baseline-target
+          # A cold build is reported, not enforced: the cache misses on the
+          # first PR after each change of runner image, and a cold build then
+          # runs about 127 s against the 115 s row. Its row stays as reference.
+          WHITEFOOT_BUDGET_REPORT_ONLY: performance-baseline-compiler
         run: |
           WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-baseline-compiler \
             cargo build --manifest-path "$RUNNER_TEMP/baseline/compiler/Cargo.toml" \
             --locked --profile gate --bin whitefootc
+          cache="$RUNNER_TEMP/baseline-compiler-cache"
+          mkdir -p "$cache"
+          cp "$CARGO_TARGET_DIR/gate/whitefootc" "$cache/whitefootc"
+          (cd "$cache" && sha256sum whitefootc > whitefootc.sha256)
+          printf '%s\n' "$BASE" > "$cache/commit"
+      # Saved at once, so a later failing comparison does not discard the
+      # build. Only the compiler binary is stored: it embeds the standard
+      # library and specification text, and the image step reads nothing else
+      # from the build directory.
+      - name: Save the merge-base compiler
+        if: steps.scope.outputs.baseline == 'true' && steps.baseline-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/baseline-compiler-cache
+          key: ${{ steps.baseline.outputs.key }}
       # The first image build on a runner took 4 to 29 s where an identical
       # second build took 2 to 3.4 s, probably the native toolchain's first
       # use (research/investigations/test-economy/time-budgets.md, the
@@ -252,7 +342,7 @@ jobs:
       # .github/time-budgets.txt, or without one, to this record; the stages
       # themselves kept their own statuses, which the steps above read.
       - name: Hold every stage to its time budget
-        if: always() && steps.scope.outputs.measure == 'true'
+        if: always() && steps.scope.outputs.baseline == 'true'
         run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
       - uses: actions/upload-artifact@v4
         if: always() && steps.scope.outputs.measure == 'true'

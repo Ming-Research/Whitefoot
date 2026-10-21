@@ -14,7 +14,7 @@ use crate::{
 use super::super::super::model::{
     CheckedEnumType, CheckedExpression, CheckedField, CheckedMatchArm, CheckedMatchBinder,
     CheckedMatchSelection, CheckedMatchType, CheckedMode, CheckedNominalKind, CheckedProjectedDrop,
-    CheckedStatement, CheckedType, CheckedValue,
+    CheckedStatement, CheckedType, CheckedValue, FunctionId,
 };
 use super::super::super::places::{PlaceRoot, PlaceStep};
 use super::super::super::tree::ConditionalAlternative;
@@ -198,7 +198,14 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .children_with(node, Production::Arm)?;
         let resolved_arms = if let Some(descriptor) = &descriptor {
-            self.resolve_enum_match_arms(check_context, node, descriptor, &arm_nodes)?
+            self.resolve_enum_match_arms(
+                check_context,
+                context.function.id,
+                node,
+                scrutinee.expression.ty(),
+                descriptor,
+                &arm_nodes,
+            )?
         } else {
             self.resolve_integer_match_arms(context, node, scrutinee.expression.ty(), &arm_nodes)?
         };
@@ -719,9 +726,11 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// [GRAM-12, TYPE-6, ERR-2] enum header and complete-variant judgments.
     fn resolve_enum_match_arms(
-        &self,
+        &mut self,
         check_context: &CheckContext<'_>,
+        function: FunctionId,
         node: NodeId,
+        scrutinee_type: CheckedType,
         descriptor: &MatchDescriptor,
         arm_nodes: &[NodeId],
     ) -> Result<Vec<ArmDescriptor>, CheckStop> {
@@ -772,12 +781,10 @@ impl<'unit> Checker<'_, 'unit> {
             .filter(|variant| !seen.contains(&variant.tag))
             .map(|variant| variant.name.clone())
             .collect::<Vec<_>>();
+        // [ERR-2] record the site and keep walking, so one compilation lists
+        // every incomplete match; the first recorded event is the rejection.
         if !missing_variants.is_empty() {
-            return self.types.declarations.issue_node(
-                SemanticRule::Err2,
-                node,
-                SemanticIssueKind::NonExhaustiveMatch { missing_variants },
-            );
+            self.record_non_exhaustive_match(function, node, scrutinee_type, missing_variants)?;
         }
         if let Some(variant) = duplicate {
             return self.types.declarations.issue_node(
