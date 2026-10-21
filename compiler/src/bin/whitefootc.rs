@@ -2758,6 +2758,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn sanitize_names_one_sanitizer_for_a_linked_program() {
+        assert!(super::USAGE.contains("--sanitize address|thread"));
+        for (word, sanitizer) in [
+            ("address", super::Sanitizer::Address),
+            ("thread", super::Sanitizer::Thread),
+        ] {
+            let options = parse(&["--sanitize", word, "value.wf"]);
+            #[cfg(not(target_os = "windows"))]
+            assert_eq!(
+                options.expect("a sanitized build").sanitize,
+                Some(sanitizer)
+            );
+            #[cfg(target_os = "windows")]
+            assert!(options.is_err(), "{sanitizer:?} is refused on Windows");
+        }
+        for refused in [
+            &["--sanitize", "memory", "value.wf"][..],
+            &["value.wf", "--sanitize"][..],
+            &["--sanitize", "address", "--sanitize", "thread", "value.wf"][..],
+            &["--sanitize", "address", "--check", "value.wf"][..],
+            &["--sanitize", "thread", "--stack-ledger", "value.wf"][..],
+        ] {
+            assert!(parse(refused).is_err(), "{refused:?} must be refused");
+        }
+    }
+
     /// [MOD-8] a cached build links the emitted module's native fragments
     /// with ThinLTO: the executable runs as the program says, a warm build
     /// compiles no object, and an edit to one function's body recompiles

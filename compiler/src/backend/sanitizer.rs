@@ -85,3 +85,40 @@ impl LlvmModule {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Sanitizer;
+    use crate::{CompilerLimits, SourceInput, compile};
+
+    #[test]
+    fn every_emitted_definition_is_admitted_to_the_selected_sanitizer() {
+        let source = b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n";
+        let module = compile(
+            &[SourceInput::new("entry.wf", source)],
+            CompilerLimits::default(),
+        )
+        .expect("a u8 entry compiles");
+        assert!(!module.contains("sanitize_"), "{}", module.as_str());
+        for sanitizer in [Sanitizer::Address, Sanitizer::Thread] {
+            let text = module.clone().sanitized(sanitizer).into_string();
+            let groups = text
+                .lines()
+                .filter(|line| line.starts_with("attributes #"))
+                .collect::<Vec<_>>();
+            assert_eq!(groups.len(), 1, "{text}");
+            assert!(
+                groups[0].starts_with("attributes #0 = {")
+                    && groups[0].contains(sanitizer.function_attribute()),
+                "{}",
+                groups[0]
+            );
+            let definitions = text.lines().filter(|line| line.starts_with("define "));
+            for definition in definitions {
+                assert!(definition.contains(" #0"), "{definition}");
+            }
+            assert_eq!(Sanitizer::parse(sanitizer.name()), Some(sanitizer));
+        }
+        assert_eq!(Sanitizer::parse("memory"), None);
+    }
+}

@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-21 Accepted programs run under host sanitizers in CI
+
+Nodes: compiler/sanitized-builds
+
+Summary: No emitted Whitefoot code had ever run under a sanitizer: the compiler linked with fixed clang arguments and the tests linked through their own recipe, and clang adds no sanitizer attribute to LLVM input, so even a sanitized link would have left the emitted definitions unchecked. A new node adds `whitefootc --sanitize address|thread`, which puts the sanitizer's attribute in the emitted definitions' shared attribute group and the sanitizer's arguments in every runtime compile and link and in the native-cache keys, keeping the fork-child closure uninstrumented; and a Linux workflow on the gate's revisions that runs the corpus target's programs and every running conformance case, also built with the `--par` lowering, under AddressSanitizer with UndefinedBehaviorSanitizer and under ThreadSanitizer, where any report fails the job and blocks the merge. Because an accepted program has no memory error, undefined behavior or data race, a report is a soundness defect found independently of the checker. Refused: instrumenting only the harness link, an environment variable selecting the runtime, a gate group that would also run on macOS, judging cases by exit status alone, and leak detection.
+
 ## 2026-10-13 One compilation lists every non-exhaustive match
 
 Nodes: compiler/rejection-payloads
