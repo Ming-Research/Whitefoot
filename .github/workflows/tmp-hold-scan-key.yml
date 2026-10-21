@@ -42,59 +42,100 @@ jobs:
           cargo fetch --locked --manifest-path "$RUNNER_TEMP/candidate/compiler/Cargo.toml"
           perl .github/run-check.pl build-candidate make -C "$RUNNER_TEMP/candidate/compiler" build
 
+      # The rows of one run. Mode 2 lends the whole chain on every call.
+      # Mode 1 runs over an unchanged map, where a pass lends every pair
+      # exactly once, so the pairs lent per call repeat with a period whose
+      # sum is the size; a call that mis-hashes the pairs at its ends breaks
+      # the sum.
+      - name: Write the row check
+        run: |
+          cat > "$RUNNER_TEMP/check.py" <<'EOF'
+          import sys
+          path, mode, size, calls = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+          rows = [line.split("\t") for line in open(path).read().splitlines()]
+          assert len(rows) == calls, ("rows", len(rows))
+          lent = []
+          for index, row in enumerate(rows):
+              assert len(row) == 5, row
+              got = [int(field) for field in row]
+              assert got[0] == mode and got[1] == size and got[2] == index, row
+              assert got[3] > 0, ("no time", row)
+              lent.append(got[4])
+              if mode == 2:
+                  assert got[4] >= size, ("short chain", row)
+          if mode == 1:
+              running = 0
+              period = None
+              for length in range(1, calls // 2 + 1):
+                  running += lent[length - 1]
+                  if running == size and all(lent[at] == lent[at + length] for at in range(calls - length)):
+                      period = length
+                      break
+              assert period is not None, "no period of calls lends every pair exactly once"
+              print("period", period)
+          print("ok", mode, size, calls, "rows, pairs lent", sum(lent))
+          EOF
+
       - name: Compile hold.wf and run both modes
         run: |
           wfc="$RUNNER_TEMP/candidate/compiler/target/gate/whitefootc"
           hold=research/experiments/hash-map-compare/hold.wf
           "$wfc" "$hold" -o "$RUNNER_TEMP/hold"
           mkdir -p "$RUNNER_TEMP/rows"
-          "$RUNNER_TEMP/hold" 1 5000 1000 > "$RUNNER_TEMP/rows/1-5000.tsv"
-          "$RUNNER_TEMP/hold" 1 20000 2000 > "$RUNNER_TEMP/rows/1-20000.tsv"
-          "$RUNNER_TEMP/hold" 2 64 50 > "$RUNNER_TEMP/rows/2-64.tsv"
-          "$RUNNER_TEMP/hold" 2 1024 50 > "$RUNNER_TEMP/rows/2-1024.tsv"
-          python3 -I - "$RUNNER_TEMP/rows" <<'EOF'
-          import os, sys
-          directory = sys.argv[1]
-          for name, mode, size, calls in (("1-5000", 1, 5000, 1000), ("1-20000", 1, 20000, 2000),
-                                          ("2-64", 2, 64, 50), ("2-1024", 2, 1024, 50)):
-              rows = [line.split("\t") for line in open(os.path.join(directory, name + ".tsv")).read().splitlines()]
-              assert len(rows) == calls, (name, "rows", len(rows))
-              total = 0
-              for index, row in enumerate(rows):
-                  assert len(row) == 5, (name, row)
-                  got = [int(field) for field in row]
-                  assert got[0] == mode and got[1] == size and got[2] == index, (name, row)
-                  assert got[3] > 0, (name, "no time", row)
-                  total += got[4]
-                  if mode == 2:
-                      assert got[4] >= size, (name, "short chain", row)
-              if mode == 1:
-                  assert total >= size, (name, "lent", total)
-              print(name, "ok", len(rows), "rows, pairs lent", total)
-          EOF
+          for cell in "1 5000 1000" "1 20000 2000" "2 64 50" "2 1024 50"; do
+            set -- $cell
+            "$RUNNER_TEMP/hold" "$1" "$2" "$3" > "$RUNNER_TEMP/rows/$1-$2.tsv"
+            python3 -I "$RUNNER_TEMP/check.py" "$RUNNER_TEMP/rows/$1-$2.tsv" "$1" "$2" "$3"
+          done
 
-      # Watch the check fail: a scan that names the other mode's binding
-      # hashes the pairs at the range ends differently from the build, so
-      # the program reports that the pass or the chain was not found.
+      # Watch the checks fail: four copies of hold.wf, each naming the other
+      # mode's binding in the scans of one function only. The untimed pass
+      # and the chain search end the program with status 3 when their
+      # binding is wrong; the two timing functions run to the end, and the
+      # row check must refuse their rows.
       - name: A wrong binding is refused
         run: |
           wfc="$RUNNER_TEMP/candidate/compiler/target/gate/whitefootc"
           hold=research/experiments/hash-map-compare/hold.wf
-          mkdir -p "$RUNNER_TEMP/wrong-chain" "$RUNNER_TEMP/wrong-pass"
-          sed 's/hash_map_scan::<HoldSameKey/hash_map_scan::<HoldKey/' "$hold" > "$RUNNER_TEMP/wrong-chain/hold.wf"
-          sed 's/hash_map_scan::<HoldKey/hash_map_scan::<HoldSameKey/' "$hold" > "$RUNNER_TEMP/wrong-pass/hold.wf"
-          for broken in wrong-chain wrong-pass; do
-            if cmp -s "$hold" "$RUNNER_TEMP/$broken/hold.wf"; then
-              echo "$broken: the copy equals hold.wf"
-              exit 1
-            fi
+          python3 -I - "$hold" "$RUNNER_TEMP" <<'EOF'
+          import os, sys
+          source = open(sys.argv[1]).read()
+          out = sys.argv[2]
+          uniform = "hash_map_scan::<HoldKey,"
+          same = "hash_map_scan::<HoldSameKey,"
+          copies = (
+              ("wrong-pass", "pass_pairs", uniform, same),
+              ("wrong-find", "find_chain", same, uniform),
+              ("wrong-uniform-timing", "time_uniform_calls", uniform, same),
+              ("wrong-chain-timing", "time_chain_calls", same, uniform),
+          )
+          for name, function, old, new in copies:
+              begin = source.index("\nfn " + function + "(") + 1
+              end = source.index("\nfn ", begin)
+              body = source[begin:end]
+              assert old in body and new not in body, (name, function)
+              os.makedirs(os.path.join(out, name), exist_ok=True)
+              with open(os.path.join(out, name, "hold.wf"), "w") as f:
+                  f.write(source[:begin] + body.replace(old, new) + source[end:])
+          EOF
+          for broken in wrong-pass wrong-find wrong-uniform-timing wrong-chain-timing; do
             "$wfc" "$RUNNER_TEMP/$broken/hold.wf" -o "$RUNNER_TEMP/$broken/hold"
           done
           status=0
-          "$RUNNER_TEMP/wrong-chain/hold" 2 64 50 > /dev/null || status=$?
-          echo "wrong chain binding: status $status"
+          "$RUNNER_TEMP/wrong-pass/hold" 1 5000 1000 > /dev/null || status=$?
+          echo "wrong-pass: status $status"
           test "$status" -eq 3
           status=0
-          "$RUNNER_TEMP/wrong-pass/hold" 1 5000 1000 > /dev/null || status=$?
-          echo "wrong pass binding: status $status"
+          "$RUNNER_TEMP/wrong-find/hold" 2 64 50 > /dev/null || status=$?
+          echo "wrong-find: status $status"
           test "$status" -eq 3
+          "$RUNNER_TEMP/wrong-uniform-timing/hold" 1 5000 1000 > "$RUNNER_TEMP/wrong-uniform-timing/rows.tsv"
+          if python3 -I "$RUNNER_TEMP/check.py" "$RUNNER_TEMP/wrong-uniform-timing/rows.tsv" 1 5000 1000; then
+            echo "wrong-uniform-timing: the row check accepted the rows"
+            exit 1
+          fi
+          "$RUNNER_TEMP/wrong-chain-timing/hold" 2 64 50 > "$RUNNER_TEMP/wrong-chain-timing/rows.tsv"
+          if python3 -I "$RUNNER_TEMP/check.py" "$RUNNER_TEMP/wrong-chain-timing/rows.tsv" 2 64 50; then
+            echo "wrong-chain-timing: the row check accepted the rows"
+            exit 1
+          fi
