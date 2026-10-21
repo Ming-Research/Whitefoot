@@ -966,10 +966,10 @@ pairs.
 **Lifecycle and current evidence.** The workflow and its helper are
 permanent, manually dispatched, and not a gate dependency. The criterion above
 was written before the acquisition below and is not changed by it. The
-acquisition's logs and artifact expire on 2026-11-04, so its numbers are
-recorded here.
+acquisition's artifact expires on 2026-11-04, so its numbers are recorded
+here.
 
-**Acquisition.** One dispatch of `firn-check-time.yml` at `main`
+**Recorded acquisition.** One dispatch of `firn-check-time.yml` at `main`
 `ed1a544b8072d30171ecd7bf3c8a3f6389110ff0`, with every input at its default (the
 two pairs in the table above, a claimed overhead of 1.6 seconds and a required
 reduction of 0.5 seconds), on 2026-10-21 UTC:
