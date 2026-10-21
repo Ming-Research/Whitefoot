@@ -1,0 +1,168 @@
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectoryWrite = std::fs::DirectoryWrite;
+alias HandleFactory = std::io::HandleFactory;
+alias HostPaths = std::fs::HostPaths;
+alias ReadFile = std::fs::ReadFile;
+
+const plain: Array<u8, 5> =[112_u8, 108_u8, 97_u8, 105_u8, 110_u8];
+
+const file_link: Array<u8, 8> =[102_u8, 105_u8, 108_u8, 101_u8, 108_u8, 105_u8, 110_u8, 107_u8];
+
+const directory_link: Array<u8, 7> =[100_u8, 105_u8, 114_u8, 108_u8, 105_u8, 110_u8, 107_u8];
+
+const outside: Array<u8, 11> =[111_u8, 117_u8, 116_u8, 115_u8, 105_u8, 100_u8, 101_u8, 46_u8, 116_u8, 120_u8, 116_u8];
+
+const intruder: Array<u8, 1> =[81_u8];
+
+fn holds_byte(factory: &HandleFactory, file: &ReadFile, expected: u8) -> result: Bool writes(factory), writes(file) waits {
+  let bytes = array_filled::<u8, 2>(value: 0_u8);
+  match std::fs::read_at(factory: factory, file: file, destination: &bytes[0_u64..2_u64], file_offset: 0_u64, start: 0_u64, end: 2_u64) {
+    Ok(value: next) => {
+      if next != 1_u64 {
+        return False();
+      }
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+  let same = bytes[0_u64] == expected;
+  return same;
+}
+
+fn holds_named(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], expected: u8) -> result: Bool reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      let right = holds_byte(factory: factory, file: &file, expected: expected);
+      std::fs::close_read(factory: factory, file: move file);
+      return right;
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+}
+
+fn refuses_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8]) -> result: Bool reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      std::fs::close_read(factory: factory, file: move file);
+      return False();
+    }
+    Err(error: problem) => {
+      return True();
+    }
+  }
+}
+
+fn refuses_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8]) -> result: Bool reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_directory(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: opened) => {
+      std::fs::close_directory(factory: factory, directory: move opened);
+      return False();
+    }
+    Err(error: problem) => {
+      return True();
+    }
+  }
+}
+
+fn refuses_append(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8]) -> result: Bool reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_append(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      std::fs::append_once(factory: factory, file: &file, source: &intruder[0_u64..1_u64], start: 0_u64, end: 1_u64);
+      std::fs::close_write(factory: factory, file: move file);
+      return False();
+    }
+    Err(error: problem) => {
+      return True();
+    }
+  }
+}
+
+fn refuses_directory_write(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8]) -> result: Bool reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_directory_write(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: opened) => {
+      std::fs::close_directory_write(factory: factory, directory: move opened);
+      return False();
+    }
+    Err(error: problem) => {
+      return True();
+    }
+  }
+}
+
+fn traverse(factory: &HandleFactory, root: &std::fs::Directory) -> result: u8 reads(root.read), reads(root.write), writes(factory) waits {
+  let entry_read = holds_named(factory: factory, root: &root^.read, name: &plain[0_u64..5_u64], expected: 80_u8);
+  if entry_read {
+  } else {
+    return 3_u8;
+  }
+  let file_refused = refuses_file(factory: factory, root: &root^.read, name: &file_link[0_u64..8_u64]);
+  if file_refused {
+  } else {
+    return 4_u8;
+  }
+  let directory_refused = refuses_directory(factory: factory, root: &root^.read, name: &directory_link[0_u64..7_u64]);
+  if directory_refused {
+  } else {
+    return 5_u8;
+  }
+  let append_refused = refuses_append(factory: factory, root: &root^.write, name: &file_link[0_u64..8_u64]);
+  if append_refused {
+  } else {
+    return 6_u8;
+  }
+  let write_refused = refuses_directory_write(factory: factory, root: &root^.write, name: &directory_link[0_u64..7_u64]);
+  if write_refused {
+  } else {
+    return 7_u8;
+  }
+  return 0_u8;
+}
+
+fn exercise(args: &std::text::Args, factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead) -> result: u8 reads(args), reads(paths), reads(base), writes(factory) waits {
+  match std::text::arg_get(args: args, position: 1_u64) {
+    Ok(value: text) => {
+      match std::fs::open_host_directory(factory: factory, paths: paths, base: base, path: &text) {
+        Ok(value: root) => {
+          let outcome = traverse(factory: factory, root: &root);
+          let std::fs::Directory(read: root_read, write: root_write) = move root;
+          std::fs::close_directory_write(factory: factory, directory: move root_write);
+          std::fs::close_directory(factory: factory, directory: move root_read);
+          if outcome != 0_u8 {
+            return outcome;
+          }
+          let untouched = holds_named(factory: factory, root: base, name: &outside[0_u64..11_u64], expected: 79_u8);
+          if untouched {
+            return 0_u8;
+          }
+          return 8_u8;
+        }
+        Err(error: problem) => {
+          return 2_u8;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 1_u8;
+    }
+  }
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A user-named root directory that is itself a symbolic link opens through host-path lookup, while the name operations below it open a plain entry and refuse every entry that is a link, to a file or to a directory, for reading, appending or opening for writing, leaving the link's target unchanged. Before HostPaths exists name resolution rejects; refusing the linked root exits 2, following a link below it exits 4 to 8, and an invocation without the authority exits 9.";
+  let std::process::Inputs(args: args, cwd: directory, handles: factory, host_paths: host_paths, ..) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  let outcome = 9_u8;
+  match move host_paths {
+    Some(value: paths) => {
+      set outcome = exercise(args: &args, factory: &factory, paths: &paths, base: &reader);
+    }
+    None() => {
+    }
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  return std::process::exit_status(code: outcome);
+}
