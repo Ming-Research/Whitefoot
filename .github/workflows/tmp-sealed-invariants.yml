@@ -1,6 +1,7 @@
 # Temporary: the focused checks of the sealed type invariant work (the
 # compiler build and lint, every unit test after main's merge, every
-# conformance case's verdict with each failing case listed),
+# conformance case's verdict with each failing case listed, the documentation
+# examples main's check reads through the branch's compiler),
 # the trial compile of the downstream programs with the branch's compiler
 # and the base's, and the repository-level static checks and the change-log
 # check against the branch's fork point. Removed before the branch is ready.
@@ -56,6 +57,11 @@ jobs:
           grep -E '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
           grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
           exit "$status"
+      - name: Check every documentation example through the branch's compiler
+        if: always()
+        run: |
+          perl .github/run-check.pl sealed-doc-examples cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --test corpus -- doc_examples:: --nocapture
   # The repository-level static checks the gate's static group runs, which
   # a draft skips: the specification's archive, prose and references, and
   # the design tree's form against the branch's fork point, which prints the
@@ -116,7 +122,7 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Build the branch's compiler and the base's
         run: |
-          git fetch --depth=1 origin bb2f4aaa64829b1cdc80a3933980f660535916e4
+          git fetch --depth=1 origin 5d14959eb43e60652044925e75f382b26baa0fcf
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
           if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
             # A decided condition counts as discharged in both compilers,
