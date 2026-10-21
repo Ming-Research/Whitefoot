@@ -1,0 +1,54 @@
+# Temporary (wf-gate-budget-noise): removed before the branch is ready.
+# The quick workflow for .github/recompute-time-budgets.py: the repository
+# invariants that now include its self-test, and one run per deliberate fault
+# in a copy of the script, each of which the self-test must reject.
+name: tmp-recompute-budgets
+
+on:
+  push:
+    branches: [wf-gate-budget-recompute]
+    paths:
+      - '.github/workflows/tmp-recompute-budgets.yml'
+      - '.github/recompute-time-budgets.py'
+      - 'Makefile'
+
+jobs:
+  recompute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Repository invariants
+        run: perl .github/run-check.pl repository-invariants make repository-invariants
+
+      - name: Self-test rejects each deliberate fault
+        run: |
+          set -u
+          script=.github/recompute-time-budgets.py
+          perl .github/run-check.pl self-test python3 -B "$script" --self-test
+          fault() {
+            name=$1; from=$2; to=$3
+            copy="$RUNNER_TEMP/fault-$name.py"
+            python3 -B - "$script" "$copy" "$from" "$to" <<'EOF'
+          import sys
+          source = open(sys.argv[1]).read()
+          if source.count(sys.argv[3]) != 1:
+              sys.exit("fault text is not found exactly once: " + sys.argv[3])
+          open(sys.argv[2], "w").write(source.replace(sys.argv[3], sys.argv[4]))
+          EOF
+            status=0
+            python3 -B "$copy" --self-test > "$RUNNER_TEMP/fault-$name.log" 2>&1 || status=$?
+            echo "fault $name: self-test exit $status"
+            test "$status" -ne 0 || { echo "fault $name was not detected"; exit 1; }
+          }
+          fault margin 'MARGIN_PERCENT = 10' 'MARGIN_PERCENT = 15'
+          fault minimum 'MINIMUM_RUNS = 20' 'MINIMUM_RUNS = 1'
+          fault floor 'max(10, -(-scaled' 'max(5, -(-scaled'
+          fault rounding '-(-scaled // (100 * 100 * 5)) * 5' '(scaled // (100 * 100 * 5)) * 5'
+          fault failed-runs 'r["cpu"] == model and r["exit"] == 0]' 'r["cpu"] == model]'
+          fault thin-class 'value = max(largest, own[1]) if own else largest' 'value = own[1] if own else largest'
+          fault slowdown 'cs * (1 + slowdown) > limit' 'cs > limit'
+          fault window 'ok[-size:]' 'ok[-3:]'
