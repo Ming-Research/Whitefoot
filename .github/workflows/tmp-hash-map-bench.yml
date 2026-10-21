@@ -68,7 +68,7 @@ jobs:
       - name: Measure with the slow control
         run: |
           python3 -B research/experiments/hash-map-compare/compare.py measure --out "$RUNNER_TEMP/slow" \
-            --cpu 1 --min-rounds 6 --max-rounds 30 --slow
+            --cpu 1 --min-rounds 6 --max-rounds 60 --slow
           python3 -B research/experiments/hash-map-compare/compare.py reduce --out "$RUNNER_TEMP/slow" \
             --expect-regression
       - uses: actions/upload-artifact@v4

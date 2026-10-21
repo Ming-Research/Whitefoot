@@ -96,9 +96,9 @@ Accepting a detected regression is not this instrument's decision.
 
 The twin is the null control in every run. The slow control, the workflow's
 `control: slow`, replaces the candidate arm with the base image given an
-argument that repeats every eighth operation of every timed batch inside the
+argument that repeats every fourth operation of every timed batch inside the
 interval (a lookup, a removal that finds nothing, or a put that replaces;
-for iterate, every eighth pass), about 4% to 12% more work, so the
+for iterate, every fourth pass), from about 5% to 25% more work, so the
 repetition is the only difference between the arms; `compare.py reduce
 --expect-regression` fails unless every timed cell is judged a regression.
 The repeated operations' results go to a separate field, so the checks stay

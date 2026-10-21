@@ -118,10 +118,10 @@ fn order(step: u64, size: u64) -> index: u64 pure contract {
 }
 
 fn slow_turn(slow: Bool, step: u64) -> repeat: Bool pure {
-  doc "Whether the slow control repeats the operation at step: every eighth one.";
+  doc "Whether the slow control repeats the operation at step: every fourth one.";
   if slow {
-    let phase = iand(step, 7_u64);
-    return phase == 7_u64;
+    let phase = iand(step, 3_u64);
+    return phase == 3_u64;
   }
   return False();
 }
@@ -278,7 +278,7 @@ fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, slow:
 fn remove_sample(size: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(clock) contract {
   requires size > 0_u64;
 } {
-  doc "Builds reps maps of size pairs outside the interval and times removing every pair of each in order(step) order; the slow control removes every eighth key a second time, which finds nothing.";
+  doc "Builds reps maps of size pairs outside the interval and times removing every pair of each in order(step) order; the slow control removes every fourth key a second time, which finds nothing.";
   let reps = reps_for(size: size);
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let total = 0_u64;
@@ -312,7 +312,7 @@ fn remove_sample(size: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> samp
 fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(map), writes(clock) contract {
   requires size > 0_u64;
 } {
-  doc "With the map holding indexes oldest..oldest + size, reps times size steps each remove the oldest pair and put the next new one, so the map keeps size pairs; the slow control puts every eighth new pair a second time, which replaces it.";
+  doc "With the map holding indexes oldest..oldest + size, reps times size steps each remove the oldest pair and put the next new one, so the map keeps size pairs; the slow control puts every fourth new pair a second time, which replaces it.";
   let reps = reps_for(size: size);
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let ops = reps *wrap size;
@@ -341,7 +341,7 @@ fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, slow: 
 fn each_sample(map: &HashMap<u64, u64, ceiling>, size: u64, slow: Bool, clock: &Clock) -> sample: Sample reads(map), writes(clock) contract {
   requires size > 0_u64;
 } {
-  doc "Visits every pair reps times in one interval, eight times the other cells' batches since a visit costs so little; the slow control makes every eighth pass run twice.";
+  doc "Visits every pair reps times in one interval, eight times the other cells' batches since a visit costs so little; the slow control makes every fourth pass run twice.";
   let batches = reps_for(size: size);
   let reps = batches *wrap 8_u64;
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
