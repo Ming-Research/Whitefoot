@@ -43,7 +43,7 @@ jobs:
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Target, toolchain and deterministic-target tests
         run: |
-          perl .github/run-check.pl quick/unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib target:: toolchain:: deterministic_target
+          perl .github/run-check.pl quick/unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- target:: toolchain:: deterministic_target
 
   static:
     name: Static checks
@@ -118,11 +118,12 @@ jobs:
           test -s "$RUNNER_TEMP/imports.txt"
           grep -i -E '^(vcruntime|msvcp|concrt|vccorlib)' "$RUNNER_TEMP/imports.txt"
 
-  # The stack-exhaustion witness took twenty minutes to end in the Server Core
-  # container. Time the pieces: the CRT's abort (a fast fail), touching a 1 GiB
-  # reserved stack, and a replica of the runtime floor's overflow handler, with
-  # Windows Error Reporting as it is and disabled.
-  container-abort:
+  # The stack-exhaustion witness takes twenty minutes to end in the Server Core
+  # container: its handler writes the record and calls abort(), and the process
+  # is gone only after that. A plain abort() ends at once, so time what differs:
+  # the exception context, the size of the reserved stack, the way the process
+  # ends, and Windows Error Reporting.
+  container-exit:
     name: Exit timing in a clean container
     runs-on: windows-2022
     timeout-minutes: 45
@@ -143,56 +144,50 @@ jobs:
           set -u
           work=$(cygpath -m "$RUNNER_TEMP/exit-timing")
           mkdir -p "$work/out" "$work/src"
-          cat > "$work/src/abort.c" <<'C'
-          #include <stdlib.h>
-          int main(void) { abort(); }
-          C
-          cat > "$work/src/touch.c" <<'C'
-          #include <windows.h>
-          static __attribute__((noinline)) unsigned long recurse(unsigned depth) {
-            volatile char frame[57344];
-            for (unsigned i = 0; i < sizeof frame; i += 4096) frame[i] = (char)depth;
-            if (depth == 0) return frame[0];
-            return recurse(depth - 1) + frame[0];
-          }
-          static DWORD WINAPI body(void *arg) { (void)arg; return (DWORD)(recurse(16000) & 1u); }
-          int main(void) {
-            HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, body, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
-            WaitForSingleObject(t, INFINITE);
-            return 0;
-          }
-          C
-          cat > "$work/src/overflow.c" <<'C'
+          cat > "$work/src/exp.c" <<'C'
           #include <windows.h>
           #include <stdlib.h>
+          #include <string.h>
+          static const char *mode;
           static __attribute__((noinline)) unsigned long recurse(unsigned depth) {
             volatile char frame[57344];
             for (unsigned i = 0; i < sizeof frame; i += 4096) frame[i] = (char)depth;
             return recurse(depth + 1) + frame[0];
           }
           static LONG CALLBACK handler(EXCEPTION_POINTERS *e) {
-            if (e->ExceptionRecord->ExceptionCode != EXCEPTION_STACK_OVERFLOW) return EXCEPTION_CONTINUE_SEARCH;
-            DWORD written;
-            WriteFile(GetStdHandle(STD_ERROR_HANDLE), "{\"resource\":\"stack\"}\n", 21, &written, NULL);
+            DWORD code = e->ExceptionRecord->ExceptionCode, written;
+            if (code != EXCEPTION_STACK_OVERFLOW && code != 0xE0000001) return EXCEPTION_CONTINUE_SEARCH;
+            WriteFile(GetStdHandle(STD_ERROR_HANDLE), "handled\n", 8, &written, NULL);
+            if (strstr(mode, "exit")) ExitProcess(3);
+            if (strstr(mode, "terminate")) TerminateProcess(GetCurrentProcess(), 3);
+            if (strstr(mode, "fastfail")) __fastfail(7);
             abort();
           }
           static DWORD WINAPI body(void *arg) {
             ULONG guarantee = 64u * 1024u;
             (void)arg;
             SetThreadStackGuarantee(&guarantee);
+            if (strstr(mode, "raise")) RaiseException(0xE0000001, 0, 0, NULL);
+            if (strstr(mode, "plainfast")) __fastfail(7);
             return (DWORD)(recurse(0) & 1u);
           }
-          int main(void) {
-            AddVectoredExceptionHandler(1, handler);
-            HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, body, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+          int main(int argc, char **argv) {
+            mode = argc > 1 ? argv[1] : "";
+            if (strstr(mode, "abortonly")) abort();
+            if (!strstr(mode, "nohandler")) AddVectoredExceptionHandler(1, handler);
+            SIZE_T size = strstr(mode, "small") ? (SIZE_T)16 << 20 : (SIZE_T)1 << 30;
+            HANDLE t = CreateThread(NULL, size, body, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
             WaitForSingleObject(t, INFINITE);
             return 0;
           }
           C
-          clang="$LLVM_MINGW_ROOT/bin/clang.exe"
-          for name in abort touch overflow; do
-            "$clang" --target=x86_64-w64-windows-gnu -O1 "$work/src/$name.c" -o "$work/out/$name.exe"
-          done
+          cat > "$work/wer-off.cmd" <<'C'
+          @echo off
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting" /v Disabled /t REG_DWORD /d 1 /f
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting" /v DontShowUI /t REG_DWORD /d 1 /f
+          C
+          sed -i 's/$/\r/' "$work/wer-off.cmd"
+          "$LLVM_MINGW_ROOT/bin/clang.exe" --target=x86_64-w64-windows-gnu -O1 "$work/src/exp.c" -o "$work/out/exp.exe"
           name=exit-timing
           docker run --detach --name "$name" --isolation process \
             --mount "type=bind,src=$(cygpath -w "$work"),dst=C:\\work" \
@@ -201,17 +196,16 @@ jobs:
             local label="$1" start end status=0
             shift
             start=$(date +%s)
-            timeout 240 docker exec "$name" "$@" > "$work/$label.txt" 2>&1 || status=$?
+            timeout 90 docker exec "$name" "$@" > "$work/$label.txt" 2>&1 || status=$?
             end=$(date +%s)
-            echo "== $label: status $status after $((end - start)) s"
-            head -c 400 "$work/$label.txt" || true
+            echo "== $label: status $status after $((end - start)) s: $(head -c 200 "$work/$label.txt" | tr '\r\n' '  ')"
+            docker exec "$name" taskkill /F /IM exp.exe > /dev/null 2>&1 || true
           }
-          timed wer-state cmd /c "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\" & sc query wersvc & tasklist"
-          timed abort-1 'C:\work\out\abort.exe'
-          timed touch-1 'C:\work\out\touch.exe'
-          timed overflow-1 'C:\work\out\overflow.exe'
-          timed tasks-after cmd /c tasklist
-          timed disable-wer cmd /c 'reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting" /v Disabled /t REG_DWORD /d 1 /f'
-          timed abort-2 'C:\work\out\abort.exe'
-          timed overflow-2 'C:\work\out\overflow.exe'
+          for mode in abortonly plainfast raise-abort overflow-small-abort overflow-small-exit overflow-small-fastfail overflow-nohandler overflow-abort overflow-exit overflow-terminate overflow-fastfail; do
+            timed "$mode" 'C:\work\out\exp.exe' "$mode"
+          done
+          timed wer-off 'C:\work\wer-off.cmd'
+          for mode in overflow-small-abort overflow-abort; do
+            timed "$mode-wer-off" 'C:\work\out\exp.exe' "$mode"
+          done
           docker rm -f "$name" > /dev/null
