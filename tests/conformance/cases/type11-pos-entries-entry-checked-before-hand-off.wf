@@ -13,9 +13,9 @@ fn hand_entry(slots: &Entries<Index>, at: u64) -> result: u64 reads(slots) contr
 } {
   let got = 0_u64;
   match &slots^[at] {
-    Some(value: held) => {
-      if held^.value < 16_u64 {
-        set got = lookup(index: held);
+    Some(value: found) => {
+      if found^.value < 16_u64 {
+        set got = lookup(index: found);
       }
     }
     None() => {

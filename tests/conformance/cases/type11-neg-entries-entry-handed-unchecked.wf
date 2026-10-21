@@ -13,8 +13,8 @@ fn hand_entry(slots: &Entries<Index>, at: u64) -> result: u64 reads(slots) contr
 } {
   let got = 0_u64;
   match &slots^[at] {
-    Some(value: held) => {
-      set got = lookup(index: held);
+    Some(value: found) => {
+      set got = lookup(index: found);
     }
     None() => {
     }

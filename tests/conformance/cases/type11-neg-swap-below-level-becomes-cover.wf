@@ -3,7 +3,7 @@ struct Index {
   invariant bounded(index): index.value < 16_u64;
 }
 
-struct Holder {
+nocopy struct Holder {
   index: Index;
 }
 

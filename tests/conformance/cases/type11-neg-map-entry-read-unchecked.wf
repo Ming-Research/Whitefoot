@@ -5,8 +5,8 @@ struct Index {
 
 fn peek_entry(map: &ConcurrentHashMap<Index>, key: &[u8], table: &Array<u64, 16>) -> result: u64 reads(map), reads(key), reads(table) {
   match &map^[key] {
-    Some(value: held) => {
-      let at = held^.value;
+    Some(value: found) => {
+      let at = found^.value;
       let got = table^[at];
       return got;
     }

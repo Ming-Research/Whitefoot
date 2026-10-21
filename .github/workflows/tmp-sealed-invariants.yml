@@ -81,8 +81,10 @@ jobs:
               type11-neg-entries-entry-handed-unchecked
               type11-pos-entries-entry-checked-before-hand-off
               type11-pos-entries-entry-left-broken
-          - label: merge-before-offset-widening
-            commit: 2c643ac7f750b4fd32a62248c55d11043b46a6fa
+          # The pushed head with the widening row for written offsets
+          # [TYPE-11.S3] switched off, which the negative case must need.
+          - label: head-without-offset-widening
+            commit: head
             cases: >-
               type11-neg-field-offset-moved-before-restored
               type11-pos-field-offset-restored-before-moved
@@ -98,8 +100,15 @@ jobs:
           rustup default stable
       - name: Build the compiler of ${{ matrix.label }}
         run: |
-          git fetch --depth=1 origin ${{ matrix.commit }}
-          git worktree add "$RUNNER_TEMP/before" FETCH_HEAD
+          if [ "${{ matrix.commit }}" = head ]; then
+            git worktree add "$RUNNER_TEMP/before" HEAD
+            perl -0777 -pi -e 's/(self\.seal_offset_kills\(separations, states, events\);)/if false { $1 }/ or die "the widening call is gone\n"' \
+              "$RUNNER_TEMP/before/compiler/src/semantic/entailment/flow/events.rs"
+            git -C "$RUNNER_TEMP/before" diff --stat
+          else
+            git fetch --depth=1 origin ${{ matrix.commit }}
+            git worktree add "$RUNNER_TEMP/before" FETCH_HEAD
+          fi
           cargo fetch --locked --manifest-path "$RUNNER_TEMP/before/compiler/Cargo.toml"
           perl .github/run-check.pl before-build cargo build \
             --manifest-path "$RUNNER_TEMP/before/compiler/Cargo.toml" \

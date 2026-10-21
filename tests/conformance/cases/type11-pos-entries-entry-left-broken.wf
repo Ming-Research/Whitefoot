@@ -7,8 +7,8 @@ fn corrupt(slots: &Entries<Index>, at: u64) -> result: unit writes(slots) contra
   requires at < slots^.len;
 } {
   match &slots^[at] {
-    Some(value: held) => {
-      set held^.value = 31_u64;
+    Some(value: found) => {
+      set found^.value = 31_u64;
     }
     None() => {
     }

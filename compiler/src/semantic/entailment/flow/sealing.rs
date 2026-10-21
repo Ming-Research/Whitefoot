@@ -1399,6 +1399,27 @@ impl Reasoning<'_, '_, '_> {
         }
     }
 
+    /// [TYPE-11.S5] the restoration row of an exchange: a value repaired
+    /// before the exchange moves sealed, so each debt at or below one of its
+    /// `targets` is offered in the state before the swap's events, which kill
+    /// the facts that restore it.
+    pub(super) fn restore_before_exchange(
+        &mut self,
+        state: &mut ProofFlowState,
+        targets: &[&ResolvedPlace],
+    ) {
+        let input = self.input;
+        let separations = state.separations.clone();
+        let unrestored = self.unrestored_debts(state, |debt| {
+            targets
+                .iter()
+                .any(|place| input.may_be_at_or_below(&separations, debt, place))
+        });
+        for debt in unrestored {
+            state.debts.add(debt);
+        }
+    }
+
     /// Offers each debt of `state` that `select` picks for restoration in
     /// `state`, removing the restored ones, and returns the others, taken out
     /// of the set.
@@ -2125,20 +2146,8 @@ impl Analyzer<'_, '_> {
             }
         }
         if sealing == CalleeSealing::Exchange {
-            // A value repaired before the exchange moves sealed: the debts
-            // at or below the targets are offered in the state before the
-            // swap's events, which kill the facts that restore them.
-            let input = self.input;
-            let separations = state.separations.clone();
             let targets: Vec<&ResolvedPlace> = handed.iter().flatten().collect();
-            let unrestored = self.reasoning().unrestored_debts(state, |debt| {
-                targets
-                    .iter()
-                    .any(|place| input.may_be_at_or_below(&separations, debt, place))
-            });
-            for debt in unrestored {
-                state.debts.add(debt);
-            }
+            self.reasoning().restore_before_exchange(state, &targets);
         }
         let offsets = substituted_offsets(callee, actual_captures);
         for (index, argument) in arguments.iter().enumerate() {
