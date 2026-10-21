@@ -26,3 +26,34 @@ jobs:
       - name: Formatting tests of the library
         working-directory: compiler
         run: perl ../.github/run-check.pl tmp/format-lib-tests cargo test --profile gate --locked --offline --lib -- formatting_tests
+
+  # The new comparison must fail when formatting derives the whole source at
+  # once instead of through the segment admission checking uses.
+  mutant:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare the Rust toolchain
+        run: |
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Format through the whole derivation
+        run: |
+          python3 - <<'PY'
+          p = 'compiler/src/driver.rs'
+          s = open(p).read()
+          old = '    let parsed = segment_syntax(bundle, limits, graph)??;\n    finalize_syntax(parsed, limits)\n'
+          new = '    let parsed = derive_syntax(bundle, limits, graph, false)?;\n    finalize_syntax(parsed, limits)\n'
+          assert s.count(old) == 1
+          open(p, 'w').write(s.replace(old, new))
+          PY
+          git diff --stat
+      - name: The comparison fails on the mutant
+        working-directory: compiler
+        run: |
+          if perl ../.github/run-check.pl tmp/mutant cargo test --profile gate --locked --offline --lib -- formatting_reports_the_segment_rejections_checking_reports; then
+            echo "::error::the new test passed with formatting through the whole derivation"
+            exit 1
+          fi
+          echo "the new test fails on the mutant, as intended"
