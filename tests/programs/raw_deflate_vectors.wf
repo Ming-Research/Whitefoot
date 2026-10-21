@@ -87,10 +87,7 @@ fn check_valid() -> result: u8 pure {
       }
     }
     Err(error: valid_error) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
   }
   let valid_output_room = valid_output.len;
@@ -140,50 +137,29 @@ fn check_invalid_length() -> result: u8 pure {
   let invalid_length_result = inflate(out: invalid_length_window, input: invalid_length_view);
   match invalid_length_result {
     Ok(value: invalid_length_value) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: invalid_length_error) => {
       match invalid_length_error {
         InvalidStoredLength() => {
         }
         Truncated() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         OutputFull() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidHuffmanCode() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidHuffmanTree() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidDistance() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidBlockType() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
       }
     }
@@ -215,50 +191,29 @@ fn check_truncated() -> result: u8 pure {
   let truncated_result = inflate(out: truncated_window, input: truncated_view);
   match truncated_result {
     Ok(value: truncated_value) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: truncated_error) => {
       match truncated_error {
         Truncated() => {
         }
         InvalidStoredLength() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         OutputFull() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidHuffmanCode() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidHuffmanTree() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidDistance() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidBlockType() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
       }
     }
@@ -290,50 +245,29 @@ fn check_full() -> result: u8 pure {
   let full_result = inflate(out: full_window, input: full_view);
   match full_result {
     Ok(value: full_value) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: full_error) => {
       match full_error {
         OutputFull() => {
         }
         Truncated() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidStoredLength() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidHuffmanCode() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidHuffmanTree() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidDistance() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
         InvalidBlockType() => {
-          if False() {
-          } else {
-            return 1_u8;
-          }
+          return 1_u8;
         }
       }
     }
@@ -371,10 +305,7 @@ fn check_fixed_literal() -> result: u8 pure {
       }
     }
     Err(error: fixed_literal_error) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
   }
   let fixed_literal_output_room = fixed_literal_output.len;
@@ -430,10 +361,7 @@ fn check_fixed_match() -> result: u8 pure {
       }
     }
     Err(error: fixed_match_error) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
   }
   let fixed_match_output_room = fixed_match_output.len;
@@ -484,10 +412,7 @@ fn check_fixed_phrase() -> result: u8 pure {
       }
     }
     Err(error: fixed_phrase_error) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
   }
   let fixed_phrase_output_room = fixed_phrase_output.len;
@@ -539,10 +464,7 @@ fn check_dynamic() -> result: u8 pure {
       }
     }
     Err(error: dynamic_error) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
   }
   let dynamic_output_room = dynamic_output.len;
@@ -594,10 +516,7 @@ fn check_literal_only() -> result: u8 pure {
       }
     }
     Err(error: literal_only_error) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
   }
   let literal_only_output_room = literal_only_output.len;
@@ -633,10 +552,7 @@ fn check_dynamic_match() -> result: u8 pure {
       }
     }
     Err(error: dynamic_match_error) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
   }
   let dynamic_match_output_room = dynamic_match_output.len;
@@ -704,10 +620,7 @@ fn check_mixed_block() -> result: u8 pure {
       }
     }
     Err(error: mixed_block_error) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
   }
   let mixed_block_output_room = mixed_block_output.len;
@@ -783,10 +696,7 @@ fn check_invalid_tree() -> result: u8 pure {
   let invalid_tree_result = inflate(out: invalid_tree_window, input: invalid_tree_view);
   match invalid_tree_result {
     Ok(value: invalid_tree_length) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: invalid_tree_error) => {
       let invalid_tree_code = error_code(error: invalid_tree_error);
@@ -813,10 +723,7 @@ fn check_dynamic_truncated() -> result: u8 pure {
   let dynamic_truncated_result = inflate(out: dynamic_truncated_window, input: dynamic_truncated_view);
   match dynamic_truncated_result {
     Ok(value: dynamic_truncated_length) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: dynamic_truncated_error) => {
       let dynamic_truncated_code = error_code(error: dynamic_truncated_error);
@@ -843,10 +750,7 @@ fn check_dynamic_full() -> result: u8 pure {
   let dynamic_full_result = inflate(out: dynamic_full_window, input: dynamic_full_view);
   match dynamic_full_result {
     Ok(value: dynamic_full_length) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: dynamic_full_error) => {
       let dynamic_full_code = error_code(error: dynamic_full_error);
@@ -873,10 +777,7 @@ fn check_reserved_block() -> result: u8 pure {
   let reserved_block_result = inflate(out: reserved_block_window, input: reserved_block_view);
   match reserved_block_result {
     Ok(value: reserved_block_length) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: reserved_block_error) => {
       let reserved_block_code = error_code(error: reserved_block_error);
@@ -903,10 +804,7 @@ fn check_fixed_truncated() -> result: u8 pure {
   let fixed_truncated_result = inflate(out: fixed_truncated_window, input: fixed_truncated_view);
   match fixed_truncated_result {
     Ok(value: fixed_truncated_length) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: fixed_truncated_error) => {
       let fixed_truncated_code = error_code(error: fixed_truncated_error);
@@ -933,10 +831,7 @@ fn check_invalid_huffman() -> result: u8 pure {
   let invalid_huffman_result = inflate(out: invalid_huffman_window, input: invalid_huffman_view);
   match invalid_huffman_result {
     Ok(value: invalid_huffman_length) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: invalid_huffman_error) => {
       let invalid_huffman_code = error_code(error: invalid_huffman_error);
@@ -963,10 +858,7 @@ fn check_invalid_distance() -> result: u8 pure {
   let invalid_distance_result = inflate(out: invalid_distance_window, input: invalid_distance_view);
   match invalid_distance_result {
     Ok(value: invalid_distance_length) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: invalid_distance_error) => {
       let invalid_distance_code = error_code(error: invalid_distance_error);
@@ -993,10 +885,7 @@ fn check_fixed_full() -> result: u8 pure {
   let fixed_full_result = inflate(out: fixed_full_window, input: fixed_full_view);
   match fixed_full_result {
     Ok(value: fixed_full_length) => {
-      if False() {
-      } else {
-        return 1_u8;
-      }
+      return 1_u8;
     }
     Err(error: fixed_full_error) => {
       let fixed_full_code = error_code(error: fixed_full_error);

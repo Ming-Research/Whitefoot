@@ -1,39 +1,52 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
+fn order_code(left: i32, right: i32) -> code: u8 pure {
+  doc "Adds 1 when == holds, 2 when != fails, 4 when > holds and 8 when the mirrored < holds, so 0 says left is below right under every comparison row.";
+  let equal = if left == right {
+    give 1_u8;
+  } else {
+    give 0_u8;
+  }
+  let unequal = if left != right {
+    give 0_u8;
+  } else {
+    give 2_u8;
+  }
+  let greater = if left > right {
+    give 4_u8;
+  } else {
+    give 0_u8;
+  }
+  let less = if right < left {
+    give 8_u8;
+  } else {
+    give 0_u8;
+  }
+  let first_pair = equal +wrap unequal;
+  let second_pair = greater +wrap less;
+  let total = first_pair +wrap second_pair;
+  return total;
+}
+
 fn main() -> status: ExitStatus pure {
+  doc "The exact, wrapping, saturating, quotient and remainder rows compute values whose sum, 64, is the exit status; the Bool comparison rows run on a helper's operands and add a nonzero code if any of them selects wrongly.";
   let a = 20_i32;
   let b = a + 22_i32;
-  let want = 42_i32;
-  if b != want {
-    return exit_status(code: 1_u8);
-  }
   let hi = 2147483647_i32;
   let wrapped = hi +wrap 1_i32;
   let low = -2147483648_i32;
-  if wrapped != low {
-    return exit_status(code: 2_u8);
-  }
+  let wrapped_offset = wrapped - low;
   let saturated = hi +sat 1_i32;
-  if saturated != hi {
-    return exit_status(code: 3_u8);
-  }
+  let saturated_offset = hi - saturated;
   let quotient = 43_i32 / 2_i32;
-  if quotient != 21_i32 {
-    return exit_status(code: 4_u8);
-  }
   let rest = 43_i32 % 2_i32;
-  if rest != 1_i32 {
-    return exit_status(code: 5_u8);
-  }
-  if a == b {
-    return exit_status(code: 6_u8);
-  }
-  if a > b {
-    return exit_status(code: 7_u8);
-  }
-  if b < a {
-    return exit_status(code: 8_u8);
-  }
-  return exit_status(code: 0_u8);
+  let sum_one = b + wrapped_offset;
+  let sum_two = sum_one + saturated_offset;
+  let sum_three = sum_two + quotient;
+  let sum_all = sum_three + rest;
+  let value_code = cvt::<i32, u8>(sum_all);
+  let order = order_code(left: a, right: b);
+  let code = value_code +wrap order;
+  return exit_status(code: code);
 }

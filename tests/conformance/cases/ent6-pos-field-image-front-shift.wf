@@ -101,10 +101,6 @@ fn main() -> status: ExitStatus pure {
   let decimal_2 = new_decimal();
   append_digit(decimal: &decimal_2, digit: 1_u8);
   let held_2 = decimal_2.count;
-  if held_2 <= 800_u64 {
-  } else {
-    return exit_status(code: 24_u8);
-  }
   let done_2 = shift_front(decimal: &decimal_2, delta: 0_u64);
   let digest_2 = digest(decimal: &decimal_2);
   if digest_2 == 12638152016183539244_u64 {

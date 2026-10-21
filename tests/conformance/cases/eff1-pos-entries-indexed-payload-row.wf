@@ -19,10 +19,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let key = &name[0_u64..1_u64];
   let index = key_set_insert(keys: &keys, key: key);
   atomic slots = &store[keys] {
-    if index < slots^.len {
-      set slots^[index] = Some<u8>(value: 7_u8);
-      replace_held(slots: slots, index: index);
-    }
+    set slots^[index] = Some<u8>(value: 7_u8);
+    replace_held(slots: slots, index: index);
   }
   let byte = 0_u8;
   atomic slot = &store[key] {
