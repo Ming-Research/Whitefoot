@@ -640,6 +640,15 @@ impl Module {
         // repeated part for the integrity boundary, never an overwritten body.
         self.attributes.entry(id).or_insert(text);
     }
+    /// Adds `attribute` to the body of group `id`, which a module without
+    /// that group does not have.
+    pub(crate) fn add_group_attribute(&mut self, id: u64, attribute: &str) {
+        if let Some(text) = self.attributes.get_mut(&id)
+            && let Some(body) = text.strip_suffix(" }")
+        {
+            *text = format!("{body} {attribute} }}");
+        }
+    }
     pub(crate) fn append(&mut self, mut other: Self) {
         let offset = self.entities.len();
         for part in &mut other.parts {

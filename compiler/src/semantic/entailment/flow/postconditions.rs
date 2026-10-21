@@ -604,6 +604,26 @@ impl Input<'_, '_> {
                             parameter.ty,
                         ))
                     }
+                    GoalProjection::FormalPlaceSubscript { ordinal, place, ty }
+                    | GoalProjection::FormalPlacePage { ordinal, place, ty } => {
+                        let parameter = self.function.parameters.get(*ordinal as usize)?;
+                        let mut projections = super::super::super::goal::formal_offset_projections(
+                            *place,
+                            self.context.captured_places,
+                        )?;
+                        if parameter.mode.is_reference() {
+                            projections.insert(0, GoalProjection::Deref);
+                        }
+                        Some((
+                            PostconditionEntryImage {
+                                parameter: *ordinal,
+                                projections,
+                                measure: None,
+                                immutable: false,
+                            },
+                            *ty,
+                        ))
+                    }
                     _ => None,
                 });
                 for datum in datum.into_iter().chain(offsets) {
@@ -882,13 +902,7 @@ impl Vocabulary {
         target_event: FlowEventId,
         states: &mut ProofFlowState,
     ) {
-        self.retain_direct_receiver(
-            statement,
-            candidate,
-            target_event,
-            prepared,
-            states,
-        );
+        self.retain_direct_receiver(statement, candidate, target_event, prepared, states);
     }
 }
 
@@ -1652,14 +1666,15 @@ impl Reasoning<'_, '_, '_> {
         if substitution.datum {
             return false;
         }
-        let holder_consumed = match event {
-            KillEvent::Consume { binding, .. }
+        let holder_killed = match event {
+            KillEvent::Rebind { binding, .. }
+            | KillEvent::Consume { binding, .. }
             | KillEvent::EntryImageHolderConsume { binding, .. } => {
                 substitution.transfer_holders.contains(binding)
             }
             _ => false,
         };
-        if holder_consumed {
+        if holder_killed {
             return true;
         }
         match event {
@@ -1692,7 +1707,8 @@ impl Reasoning<'_, '_, '_> {
     ) -> bool {
         let live_holders = self.postcondition_term_live_holders(term);
         let live_holder_killed = match event {
-            KillEvent::Consume { binding, .. }
+            KillEvent::Rebind { binding, .. }
+            | KillEvent::Consume { binding, .. }
             | KillEvent::EntryImageHolderConsume { binding, .. } => live_holders.contains(binding),
             KillEvent::Write {
                 place,
@@ -1754,7 +1770,7 @@ impl Reasoning<'_, '_, '_> {
         term: TermId,
         exited: &HashSet<BindingId>,
     ) -> bool {
-        self.vocabulary.scope_kills_term(term, exited)
+        self.vocabulary.scope_kills_term(self.input, term, exited)
             || self
                 .postcondition_term_live_holders(term)
                 .iter()
@@ -2671,6 +2687,7 @@ impl Judging<'_, '_, '_> {
         affine_result: Option<&AffineForm>,
         value_reached: bool,
         forwarded: &[Vec<ResultEvidence>],
+        returned: &[&CheckedExpression],
     ) {
         if self.output.postconditions.is_empty() {
             return;
@@ -2737,7 +2754,10 @@ impl Judging<'_, '_, '_> {
                         )
                     })
                 });
-            let residual = self.reasoning().render_relation(&relation);
+            let residual = self.reasoning().render_relation(
+                &relation,
+                postcondition.relation.operands[0].ty(),
+            );
 
             let entry_images = self.input.postcondition_entry_images[index]
                 .iter()
@@ -2763,12 +2783,19 @@ impl Judging<'_, '_, '_> {
                 &states.affine,
                 unavailable,
             );
+            let clause = if complete.disposition == PostconditionDisposition::Discharged {
+                String::new()
+            } else {
+                self.input
+                    .render_postcondition_clause(postcondition, &selected, returned)
+            };
             self.output.postconditions[index]
                 .exits
                 .push(PostconditionExit {
                     statement: statement.clone(),
                     relation,
                     residual,
+                    clause,
                     entry_images,
                     disposition: complete.disposition,
                     derivation: complete.derivation,
@@ -2937,12 +2964,13 @@ impl Analyzer<'_, '_> {
     /// [MSR-3] the value datum of a formal offset, with the term it equals
     /// at body entry and the formal's ordinal.
     fn offset_entry_datum(&mut self, offset: &CheckedExpression) -> Option<OffsetDatum> {
-        let ordinal = offset_parameter(self.input.function, offset)?;
+        let (ordinal, projections) = offset_parameter(self.input.function, offset)?;
         let fragment = fragment_type(offset.ty())?;
         let live = self.reasoning().read_operand(offset)?;
         Some(OffsetDatum {
             ordinal,
-            kind: entry_datum_kind(ordinal, &[], None, fragment),
+            kind: entry_datum_kind(ordinal, &projections, None, fragment),
+            projections,
             live,
         })
     }
@@ -2975,13 +3003,13 @@ impl Analyzer<'_, '_> {
     /// at this return than at function entry: a write since entry has
     /// invalidated the entry image its spelling reads [MSR-3]. A formal
     /// offset with no tracked image is taken as rebound.
-    fn offset_rebound(&self, ordinal: u32, states: &ProofFlowState) -> bool {
+    fn offset_rebound(&self, offset: &OffsetDatum, states: &ProofFlowState) -> bool {
         self.input
             .entry_images
             .iter()
             .position(|image| {
-                image.datum.parameter == ordinal
-                    && image.datum.projections.is_empty()
+                image.datum.parameter == offset.ordinal
+                    && image.datum.projections == offset.projections
                     && image.datum.measure.is_none()
                     && !image.datum.immutable
             })
@@ -3053,7 +3081,7 @@ impl Analyzer<'_, '_> {
         let rebound = read
             .offset
             .as_ref()
-            .is_some_and(|offset| self.offset_rebound(offset.ordinal, states));
+            .is_some_and(|offset| self.offset_rebound(offset, states));
         let offset_text = self.input.render_expression(subscript.offset);
         let measured = subscript.measured.unwrap_or(MeasuredKind::Range);
         if rebound {
@@ -3082,7 +3110,10 @@ impl Analyzer<'_, '_> {
         // that names it in `ensures`; the place's one state renders as the
         // place itself, which names that state there.
         let length_text = match (denotation, length) {
-            (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(length),
+            (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(
+                length,
+                CheckedType::Integer(super::super::super::model::IntegerType::U64),
+            ),
             _ => plain_length.clone(),
         };
         // [MSR-3] the one state of a parameter can differ from what the body
@@ -3324,20 +3355,41 @@ struct SubscriptDatums {
 /// The value datum of one formal offset [MSR-3].
 struct OffsetDatum {
     ordinal: u32,
+    projections: Vec<GoalProjection>,
     kind: TermKind,
     live: TermId,
 }
 
 /// The ordinal of the parameter one clause offset reads, when it reads one.
-fn offset_parameter(function: &CheckedFunction, offset: &CheckedExpression) -> Option<u32> {
-    let CheckedExpression::Binding { binding, .. } = offset else {
+fn offset_parameter(
+    function: &CheckedFunction,
+    offset: &CheckedExpression,
+) -> Option<(u32, Vec<GoalProjection>)> {
+    let place = super::super::super::places::tracked_offset_place(offset)?;
+    let PlaceRoot::Binding(binding) = place.root else {
         return None;
     };
     let ordinal = function
         .parameters
         .iter()
-        .position(|parameter| parameter.binding == *binding)?;
-    u32::try_from(ordinal).ok()
+        .position(|parameter| parameter.binding == binding)?;
+    let mut projections = place
+        .path
+        .iter()
+        .map(|step| match step {
+            PlaceStep::Deref => Some(GoalProjection::Deref),
+            PlaceStep::Field(field) => Some(GoalProjection::Field(*field)),
+            PlaceStep::Payload { variant, field } => Some(GoalProjection::Payload {
+                variant: *variant,
+                field: *field,
+            }),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if function.parameters[ordinal].mode.is_reference() {
+        projections.insert(0, GoalProjection::Deref);
+    }
+    Some((u32::try_from(ordinal).ok()?, projections))
 }
 
 /// [FN-9, TYPE-11] the conditional evidence for a clause's routed field.
@@ -3455,10 +3507,22 @@ pub(super) fn call_projections(
     projections
         .iter()
         .map(|projection| {
-            projection.instantiate_formal(|ordinal| {
-                arguments
-                    .get(ordinal as usize)
-                    .and_then(|argument| super::super::super::goal::actual_offset(argument, &named))
+            projection.instantiate_formal(|ordinal, projected| {
+                let argument = arguments.get(ordinal as usize)?;
+                match projected {
+                    Some((place, ty)) => super::super::super::goal::projected_actual_offset(
+                        argument,
+                        place,
+                        ty,
+                        context.captured_places,
+                        &named,
+                    ),
+                    None => super::super::super::goal::actual_offset(
+                        argument,
+                        context.captured_places,
+                        &named,
+                    ),
+                }
             })
         })
         .collect()

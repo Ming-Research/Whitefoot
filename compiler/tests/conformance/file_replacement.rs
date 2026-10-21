@@ -49,7 +49,10 @@ fn namespace_cases_on_both_host_routes() {
         let arguments: Vec<_> = argv
             .iter()
             .skip(1)
-            .map(|bytes| std::str::from_utf8(bytes).expect("textual fixture argument"))
+            .map(|bytes| {
+                std::str::from_utf8(bytes.exact().expect("exact fixture argument"))
+                    .expect("textual fixture argument")
+            })
             .collect();
         assert!(
             arrangement.files.is_empty()

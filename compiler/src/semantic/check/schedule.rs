@@ -47,6 +47,7 @@ impl Checker<'_, '_> {
                 .collect::<Vec<_>>(),
         };
         let const_parameter_types: HashMap<_, _> = self.types.const_generic_types().collect();
+        let type_spellings = self.types.diagnostic_constant_type_spellings();
         let copy_type_parameters = self.types.copy_type_parameters();
         let renaming_classes = (0..functions.len())
             .map(|index| {
@@ -112,6 +113,11 @@ impl Checker<'_, '_> {
                 crate::in_parallel(&fresh, |index| {
                     let checked = &functions[*index];
                     let context = EntailmentContext {
+                        source_spellings: &types.source_spellings,
+                        postcondition_clauses: &types.postcondition_clauses,
+                        postcondition_sources: &types.postcondition_sources,
+                        type_spellings: &type_spellings,
+                        captured_places: &types.captured_places,
                         judge_conditions: judge_conditions[*index],
                         declarations: types.declarations.resolved.declarations(),
                         callees,
@@ -344,6 +350,11 @@ impl Checker<'_, '_> {
                     crate::in_parallel(&fresh, |index| {
                         let checked = &functions[*index];
                         let context = EntailmentContext {
+                            source_spellings: &types.source_spellings,
+                            postcondition_clauses: &types.postcondition_clauses,
+                            postcondition_sources: &types.postcondition_sources,
+                            type_spellings: &type_spellings,
+                            captured_places: &types.captured_places,
                             judge_conditions: judge_conditions[*index],
                             declarations: types.declarations.resolved.declarations(),
                             callees,

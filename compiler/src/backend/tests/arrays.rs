@@ -1168,7 +1168,7 @@ fn replacement() -> result: u8 pure {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1701,12 +1701,14 @@ fn runtime_allocation_headers_qualify_for_zero_and_nonzero_strides() {
             let exact = host.with_runtime_allocation_limits_for_test(header, 8);
             assert_eq!(validate_program(exact, program), Ok(()));
             let short = host.with_runtime_allocation_limits_for_test(header - 1, 8);
-            assert_eq!(
+            assert!(matches!(
                 validate_program(short, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    crate::target::TargetObject::RuntimeSizedAllocation
-                ))
-            );
+                Err(TargetLayoutFailure::Allocation {
+                    alignment: Some(1),
+                    limit: crate::target::AllocationLimit::AllocationSize { maximum },
+                    ..
+                }) if maximum == header - 1
+            ));
             if element == "Empty" {
                 // Narrow only the address domain, retaining enough space for
                 // the ordinary prelude's concrete nominal representations.

@@ -35,7 +35,7 @@ fn main() -> status: std::process::ExitStatus pure {
         "{text}"
     );
     assert!(
-        text.contains("  missing_variants: [Square, Triangle]\n"),
+        text.contains("  missing_variants: [\"Square\", \"Triangle\"]\n"),
         "{text}"
     );
     assert!(

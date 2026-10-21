@@ -128,6 +128,11 @@ impl LlvmModule {
         Ok(())
     }
 
+    /// Renders the text again after a change to the model.
+    pub(crate) fn rerender(&mut self) {
+        self.text = self.model.render();
+    }
+
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut bytes = vec![u8::from(self.threaded_layout)];
         bytes.extend(self.model.encode());
@@ -699,9 +704,10 @@ fn emit_module(
     }
     text.attribute_group(
         0,
-        target
-            .stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
-            .to_owned(),
+        format!(
+            "{} uwtable",
+            target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
+        ),
     );
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);

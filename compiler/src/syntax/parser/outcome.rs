@@ -502,6 +502,30 @@ impl ParsedBundle {
             _ => None,
         }
     }
+
+    /// Returns the complete root children's token extents in reverse source
+    /// order. Skipping each child's postorder subtree visits only top-level
+    /// items or graph rows, without finalizing or copying the derivation.
+    pub(crate) fn top_level_extents(&self) -> impl Iterator<Item = SyntaxCoordinate> + '_ {
+        let mut end = self.tree.elements.len().saturating_sub(1);
+        core::iter::from_fn(move || {
+            let super::DerivationElement::Production {
+                subtree_elements,
+                extent:
+                    super::tree::DerivationExtent::Source {
+                        source,
+                        start,
+                        end: stop,
+                    },
+                ..
+            } = self.tree.elements.get(end.checked_sub(1)?)?
+            else {
+                return None;
+            };
+            end = end.checked_sub(usize::try_from(*subtree_elements).ok()?)?;
+            Some(SyntaxCoordinate::new(*source, *start, *stop))
+        })
+    }
 }
 
 /// Failure-atomic result of complete active-specification grammar derivation.
