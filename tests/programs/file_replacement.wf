@@ -214,17 +214,13 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let log_present = log_end > 0_u64;
   let temporary_present = temporary_end > 0_u64;
   if band(log_present, temporary_present) {
-    if log_end <= 64_u64 {
-      if temporary_end <= 64_u64 {
-        let log_name = &log[0_u64..log_end];
-        let temporary_name = &temporary[0_u64..temporary_end];
-        set outcome = check_log(factory: &factory, root: &reader, name: log_name);
-        let succeeded = outcome == 0_u8;
-        let rewriting = stop != 48_u8;
-        if band(succeeded, rewriting) {
-          set outcome = rewrite(factory: &factory, root: &writer, log: log_name, temporary: temporary_name, stop: stop, out: &out, input: &input);
-        }
-      }
+    let log_name = &log[0_u64..log_end];
+    let temporary_name = &temporary[0_u64..temporary_end];
+    set outcome = check_log(factory: &factory, root: &reader, name: log_name);
+    let succeeded = outcome == 0_u8;
+    let rewriting = stop != 48_u8;
+    if band(succeeded, rewriting) {
+      set outcome = rewrite(factory: &factory, root: &writer, log: log_name, temporary: temporary_name, stop: stop, out: &out, input: &input);
     }
   }
   std::fs::close_directory(factory: &factory, directory: move reader);

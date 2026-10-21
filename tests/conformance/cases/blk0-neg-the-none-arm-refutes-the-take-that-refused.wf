@@ -2,12 +2,8 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "A branch that reads the measure back publishes a fact and not an absence: on the arm where the length is known to be zero, take_back's requires window^.len > 0_u64 is refuted rather than merely unproved, and the refusal is a static FN-8 rejection naming the operation.";
+  doc "A fresh run publishes a fact and not an absence: its length is known to be zero, so take_back's requires window^.len > 0_u64 is refuted rather than merely unproved, and the refusal is a static FN-8 rejection naming the operation.";
   let run = slots_new::<u8, 4>();
-  let observed = run.len;
-  if observed == 0_u64 {
-    let gone = take_back(window: &run);
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let gone = take_back(window: &run);
+  return exit_status(code: 1_u8);
 }

@@ -1,0 +1,9 @@
+Decision: Reject an `if` or `value_if` condition when every fact the branch it would select establishes at entry is already derivable in its complete noncontradictory entering state, each goal origin through the fixed Signed Goal disposition and the comparison origin in the closed L0 state, with a repair deleting the test and its dead branch, because executable source should contain only the tests its proofs still need, exactly as a proof block that automatic derivation already proves is rejected, and requiring every origin makes the deletion unable to break a later proof, instead of accepting decided tests, warning about them, or deciding by one origin while the deletion loses another, which a guard around a call needing a binding's expanded goal showed before origin transport ([design](../../../research/investigations/redundant-tests/DESIGN.md#the-rule)).
+
+Decision: Judge a generic body's condition once at the symbolic instance of its own parameters under their written bounds, because a test that some substitutions need must stay writable when another substitution decides it, instead of judging each concrete instance or exempting generic bodies.
+
+Decision: Admit a condition whose entering state is contradictory, because explosion proves both truths and selects no reachable branch to keep, instead of treating the contradiction as one decided truth or adding an unreachable-state rejection beside structural reachability.
+
+Rejected:
+- Judging only the goal origins, or deciding by any one of them: rejected because deleting a test decided by one origin removes the facts its other origins established, and a later goal that needed them then fails.
+- A language facility for a program's run-time check of its own final result: rejected because the harness that runs the program can check its output, so the language needs no test-only form.

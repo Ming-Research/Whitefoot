@@ -11,11 +11,9 @@ fn bump(count: u64) -> total: u64 pure contract {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "MSR-5: a contract clause side is an affine expression, so a relation displaced by a written constant is one clause rather than an unwritable fact.";
+  doc "MSR-5: a contract clause side is an affine expression, so a relation displaced by a written constant is one clause rather than an unwritable fact. The program returns the related result, 6, as its exit status.";
   let five = 5_u64;
   let six = bump(count: five);
-  if six == 6_u64 {
-    return exit_status(code: 0_u8);
-  }
-  return exit_status(code: 1_u8);
+  let code = cvt::<u64, u8>(six);
+  return exit_status(code: code);
 }

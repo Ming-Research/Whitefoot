@@ -909,6 +909,40 @@ a run that finds no cache still builds it, and that cold build is report-only
 (`WHITEFOOT_BUDGET_REPORT_ONLY`), since the 115 s row is exceeded by a cold build
 (126.8 s and 127.0 s on the cache-miss runs of 10-20).
 
+### Gate at ready, not at each draft push
+
+Read from the Actions API on 2026-10-19: the 200 newest `gate.yml` runs, created
+between 2026-10-13 21:31Z and 2026-10-19 03:49Z, 158 of them not cancelled.
+A run that ended after the deciding job took 16 to 20 s from creation to its
+last update; 129 runs took longer than 100 s, so they ran checks, and 122 of
+those were for 40 branches other than `main`: 93 push runs, 26 pull request
+runs and 3 manual runs, up to 10 on one branch. The run record does not say
+whether a pull request was a draft at the time of a push, so the share of
+draft pushes is not measured; the saving is expected from the rule, not
+counted. Four runs on pull request branches on 2026-10-19 took 362, 382, 393
+and 422 s from creation to last update, and one created at 01:12:43Z, whose
+first job started at 01:31:20Z, took 1394 s.
+
+From this, a push to a draft pull request's branch ends after the deciding job
+like a push to a branch with no pull request, and the full check runs once,
+started by hand after the review, and for a pull request marked ready that has
+no such run ([decision](../../../design/compiler/verification.md)). Only a
+manual run counts as the earlier run, because the conclusion of a push, an
+opening or a ready run does not tell a run that checked from one that skipped,
+and a manual run never skips (`.github/gate-scope.sh`). The status board's
+runner, read from its source on 2026-10-19 and not observed against this
+repository, takes a head as checked when the newest run of each workflow on
+it has finished with `success`, `skipped` or `neutral`, and after marking a
+pull request ready waits for a new, finished run of each workflow that lists
+`ready_for_review`; a ready run that skipped counts, so the rule cannot stall
+the merge. `compute-regression.yml` builds a baseline compiler and times both
+for up to 20 minutes; it follows the pull request's draft state as
+`design-readiness.yml` already does. `map-sanitizers.yml` keeps running on
+every push to a pull request that changes the map's runtime, as the owner
+chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
+workflow that listed `ready_for_review` would be waited for after a ready mark
+even when no path matched.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
