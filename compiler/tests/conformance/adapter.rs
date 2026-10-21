@@ -43,15 +43,19 @@ use whitefoot::{
     BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
     DiagnosticFormat, HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry,
     ModuleProgramFailure, OverlapLowering, SourceInput, check, check_module_entry,
-    check_module_program, check_with_cache, compile, compile_module_program, compile_with_overlap,
-    discover_module_sources, entry_verdict, form_module_program_graph, module_verdict,
+    check_module_program, check_module_program_with_cache, check_with_cache, compile,
+    compile_module_program, compile_with_overlap, discover_module_sources, entry_verdict,
+    form_module_program_graph,
 };
 
 use crate::support::{
     PROGRAM_DEADLINE, ProgramChild, append_runtime_objects, require_sanitized, sanitized, sanitizer,
 };
 
-use super::corpus::{self, Arrangement, Case, Expectation, FixtureContent, Span, Verdict};
+use super::corpus::{
+    self, Arrangement, Case, DiagnosticCoordinate, Expectation, FixtureContent, RejectedDiagnostic,
+    Verdict,
+};
 use super::json;
 
 static NEXT_INVOCATION: AtomicU64 = AtomicU64::new(0);
@@ -91,7 +95,7 @@ fn reach_module_program(
         })
         .collect();
     match &case.expect {
-        Expectation::Accept | Expectation::Reject(_) => {
+        Expectation::Accept | Expectation::Reject(_) | Expectation::RejectDiagnostics(_) => {
             check_module_program(&graph, &inputs, CompilerLimits::default())?;
             for entry in graph.entries() {
                 check_module_entry(
@@ -127,7 +131,7 @@ fn build(
     let path = case.logical_path();
     let inputs = [SourceInput::new(&path, &source)];
     match &case.expect {
-        Expectation::Accept | Expectation::Reject(_) => {
+        Expectation::Accept | Expectation::Reject(_) | Expectation::RejectDiagnostics(_) => {
             check(&inputs, CompilerLimits::default()).map(|()| None)
         }
         Expectation::Run(_) | Expectation::Unsupported => {
@@ -454,34 +458,59 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     assert_eq!(failed, 0, "conformance adapter: {summary}");
 }
 
-/// One failure's rule and position from the same complete diagnostic record.
-/// Module verdicts retained as text cannot supply byte spans; the manifest
-/// therefore limits span assertions to single-source cases, including caches.
+/// One failure's corpus verdict, as `reach` reduces it: every reported
+/// diagnostic with its rule and source coordinate. Module verdicts retained
+/// as text cannot supply byte spans; the manifest therefore limits span
+/// assertions to single-source cases, including caches.
 fn failure_verdict(failure: &CompilationFailure) -> Verdict {
     match failure.kind() {
         CompilationFailureKind::Source => {
-            let rendered = failure.render(DiagnosticFormat::Json);
-            let record = json::parse(&rendered).expect("source diagnostic is valid JSON");
-            let span = record.get("bytes").map(|bytes| {
-                let file = record
-                    .get("at")
-                    .and_then(|at| at.get("file"))
-                    .and_then(json::Value::string)
-                    .expect("a diagnostic byte interval has a source file")
-                    .to_owned();
-                (file, Span::read(bytes).expect("diagnostic byte interval"))
-            });
-            Verdict::Reject(failure.rule_id().map(ToOwned::to_owned), span)
+            Verdict::Reject(failure.diagnostics().map(rejected_diagnostic).collect())
         }
         CompilationFailureKind::Unsupported => Verdict::Unsupported(failure.to_string()),
         _ => Verdict::Stopped(failure.to_string()),
     }
 }
 
+/// Retains the diagnostic's structured coordinate and expected-terminal labels.
+/// JSON is the public structured presentation boundary; parsing it checks the
+/// payload the writer receives rather than rebuilding grammar expectations.
+fn rejected_diagnostic(failure: &CompilationFailure) -> RejectedDiagnostic {
+    let rendered = failure.render_diagnostic(DiagnosticFormat::Json);
+    let value = json::parse(&rendered).expect("compiler diagnostic is structured JSON");
+    let expected = value
+        .get("detail")
+        .and_then(|detail| detail.get("expected"))
+        .and_then(json::Value::array)
+        .map(|terminals| {
+            terminals
+                .iter()
+                .map(|terminal| {
+                    terminal
+                        .string()
+                        .expect("expected terminal label")
+                        .to_owned()
+                })
+                .collect()
+        });
+    let coordinate = failure
+        .source_coordinate()
+        .map(|coordinate| DiagnosticCoordinate {
+            source_ordinal: u64::from(coordinate.source().ordinal()),
+            byte_start: coordinate.start().value(),
+            byte_end: coordinate.end().value(),
+        });
+    RejectedDiagnostic {
+        rule: failure.rule_id().map(ToOwned::to_owned),
+        coordinate,
+        expected,
+    }
+}
+
 /// [MOD-8] one case's source verdict reached with proof receipts from
 /// `cache`: a one-record case through the cached check, a module-form case
-/// through each module's verdict in row order and then each named entry's
-/// composition verdict, the order `reach` judges them in.
+/// through the cached program check, which admits syntax across every module
+/// before judging module verdicts, and then each named entry's composition.
 fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
     let limits = CompilerLimits::default();
     let Some(root) = case.module_root() else {
@@ -506,20 +535,10 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
                 .in_module(source.module, source.role)
         })
         .collect();
-    let mut verdicts = Vec::new();
-    for record in graph.modules() {
-        match module_verdict(
-            &graph,
-            &inputs,
-            &record.qualified_name(),
-            false,
-            limits,
-            Some(cache),
-        ) {
-            Ok(verdict) => verdicts.push(verdict),
-            Err(failure) => return failure_verdict(&failure),
-        }
+    if let Err(failure) = check_module_program_with_cache(&graph, &inputs, limits, cache) {
+        return failure_verdict(&failure);
     }
+    let mut verdicts = Vec::new();
     for entry in graph.entries() {
         match entry_verdict(
             &graph,
@@ -527,7 +546,7 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
             ModuleEntry::Named(entry.name()),
             limits,
             Some(cache),
-            &verdicts,
+            &[],
         ) {
             Ok(verdict) => verdicts.push(verdict),
             Err(failure) => return failure_verdict(&failure),
@@ -536,7 +555,22 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
     verdicts
         .iter()
         .find_map(|verdict| match verdict.outcome() {
-            CheckOutcome::Rejected { rule, .. } => Some(Verdict::Reject(rule.clone(), None)),
+            CheckOutcome::Rejected { diagnostics, .. } => Some(Verdict::Reject(
+                diagnostics
+                    .iter()
+                    .map(|diagnostic| RejectedDiagnostic {
+                        rule: Some(diagnostic.rule().to_owned()),
+                        coordinate: diagnostic.source_coordinate().map(|coordinate| {
+                            DiagnosticCoordinate {
+                                source_ordinal: u64::from(coordinate.source().ordinal()),
+                                byte_start: coordinate.start().value(),
+                                byte_end: coordinate.end().value(),
+                            }
+                        }),
+                        expected: diagnostic.expected().map(<[String]>::to_vec),
+                    })
+                    .collect(),
+            )),
             CheckOutcome::Accepted { .. } => None,
         })
         .unwrap_or(Verdict::Accept)
@@ -566,6 +600,9 @@ fn a_shared_proof_receipt_cache_reaches_every_declared_source_verdict() {
         let expected = match &case.expect {
             Expectation::Accept | Expectation::Run(_) => Expectation::Accept,
             Expectation::Reject(rule) => Expectation::Reject(rule.clone()),
+            Expectation::RejectDiagnostics(diagnostics) => {
+                Expectation::RejectDiagnostics(diagnostics.clone())
+            }
             Expectation::Unsupported => continue,
         };
         checked += 1;

@@ -341,27 +341,38 @@ fn dotted_call_spelling_uses_bounded_form3_override() {
 
 #[test]
 fn nested_call_in_atom_only_argument_uses_gram9_override() {
-    let source = b"fn main() -> result: unit pure { outer(inner()); }";
-    let inputs = [SourceInput::new("nested.wf", source)];
-    let bundle = bundle(&inputs);
-    let LexOutcome::Complete(lexed) = lex(&bundle, LEX_LIMITS) else {
-        panic!("test source must lex");
-    };
-    let TerminalOutcome::Complete(classified) = classify_terminals(
-        &lexed,
-        ACTIVE_KERNEL_SPEC_HASH,
-        TerminalLimits { max_tokens: 32 },
-    ) else {
-        panic!("test source must classify");
-    };
-    let outcome = parse(classified, PARSE_LIMITS);
-    let ParseOutcome::SourceIssue(issue) = outcome else {
-        panic!("nested call must be rejected: {outcome:?}");
-    };
-    assert_eq!(issue.rule(), SyntaxRule::Gram9);
-    let start = usize::try_from(issue.coordinate().start().value()).unwrap_or(usize::MAX);
-    let end = usize::try_from(issue.coordinate().end().value()).unwrap_or(usize::MAX);
-    assert_eq!(&source[start..end], b"inner(");
+    for (source, forbidden_start) in [
+        (
+            b"fn main() -> result: unit pure { outer(inner()); }".as_slice(),
+            b"inner(".as_slice(),
+        ),
+        (
+            b"fn main() -> result: unit pure { outer(std::process::exit_status(code: 0_u8)); }"
+                .as_slice(),
+            b"std::".as_slice(),
+        ),
+    ] {
+        let inputs = [SourceInput::new("nested.wf", source)];
+        let bundle = bundle(&inputs);
+        let LexOutcome::Complete(lexed) = lex(&bundle, LEX_LIMITS) else {
+            panic!("test source must lex");
+        };
+        let TerminalOutcome::Complete(classified) = classify_terminals(
+            &lexed,
+            ACTIVE_KERNEL_SPEC_HASH,
+            TerminalLimits { max_tokens: 64 },
+        ) else {
+            panic!("test source must classify");
+        };
+        let outcome = parse(classified, PARSE_LIMITS);
+        let ParseOutcome::SourceIssue(issue) = outcome else {
+            panic!("nested call must be rejected: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Gram9);
+        let start = usize::try_from(issue.coordinate().start().value()).unwrap_or(usize::MAX);
+        let end = usize::try_from(issue.coordinate().end().value()).unwrap_or(usize::MAX);
+        assert_eq!(&source[start..end], forbidden_start);
+    }
 }
 
 #[test]
@@ -621,7 +632,7 @@ fn sufficient_limits_produce_identical_derivation_metrics() {
 }
 
 #[test]
-fn complete_fixture_reaches_every_normative_production_kind() {
+fn complete_and_diagnostic_fixtures_reach_every_normative_production_kind() {
     let source = br#"
 program no_heap;
 alias Imported = pkg::library::Imported;
@@ -751,16 +762,46 @@ fn main() -> result: unit pure {}
     ) else {
         panic!("graph fixture must classify");
     };
+    // [GRAM-2, DIAG-1] gives graph diagnostics a separate entry, which is
+    // never a subtree of either complete-record start production.
+    let segment_outcome = super::parse_graph_segment(graph_classified.clone(), PARSE_LIMITS);
+    let ParseOutcome::Complete(segment_parsed) = segment_outcome else {
+        panic!("graph diagnostic fixture must parse: {segment_outcome:?}");
+    };
+    assert!(matches!(
+        segment_parsed.tree.elements.last(),
+        Some(DerivationElement::Production {
+            production: Production::GraphSegment,
+            ..
+        })
+    ));
     let graph_outcome = super::parse_graph(graph_classified, PARSE_LIMITS);
     let ParseOutcome::Complete(graph_parsed) = graph_outcome else {
         panic!("graph fixture must parse: {graph_outcome:?}");
     };
+    assert!(
+        !parsed
+            .tree
+            .elements
+            .iter()
+            .chain(graph_parsed.tree.elements.iter())
+            .any(|element| {
+                matches!(
+                    element,
+                    DerivationElement::Production {
+                        production: Production::GraphSegment,
+                        ..
+                    }
+                )
+            })
+    );
     for production in productions() {
         let present = parsed
             .tree
             .elements
             .iter()
             .chain(graph_parsed.tree.elements.iter())
+            .chain(segment_parsed.tree.elements.iter())
             .any(|element| {
                 matches!(
                     element,
@@ -769,7 +810,7 @@ fn main() -> result: unit pure {}
             });
         assert!(present, "fixture omitted {production:?}");
     }
-    assert_eq!(productions().len(), 102);
+    assert_eq!(productions().len(), 103);
     assert_eq!(
         parsed
             .tree
@@ -1236,7 +1277,7 @@ fn loop_headers_reject_a_trailing_comma_at_the_closing_delimiter() {
 }
 
 /// Returns the exact source bytes a grammar rejection selected.
-fn issue_bytes(source: &'static [u8], issue: super::SyntaxIssue) -> &'static [u8] {
+fn issue_bytes(source: &[u8], issue: super::SyntaxIssue) -> &[u8] {
     let start = usize::try_from(issue.coordinate().start().value()).unwrap_or(usize::MAX);
     let end = usize::try_from(issue.coordinate().end().value()).unwrap_or(usize::MAX);
     &source[start..end]
@@ -1468,6 +1509,81 @@ fn a_construction_after_an_infix_operator_is_a_forbidden_atom() {
 }
 
 #[test]
+fn type_frontiers_use_only_the_actual_calling_context() {
+    use FixedTerminal::{
+        Comma, Equal, Pure, Reads, RightAngle, RightBracket, RightParen, Semicolon, Writes,
+    };
+    use crate::syntax::grammar::LookaheadPredicate;
+
+    let cases: &[(&[u8], &[FixedTerminal])] = &[
+        (
+            b"fn main(inputs: std::process::Inputs) -> result: u32 {",
+            &[Pure, Reads, Writes],
+        ),
+        (b"fn main(value: u64 {", &[RightParen, Comma]),
+        (b"const value: u64 {", &[Equal]),
+        (b"struct Cell { value: u64 {", &[Semicolon]),
+        (b"fn main(value: &[u64 {", &[RightBracket]),
+        (b"fn main() -> (first: u64 {", &[Comma]),
+        (
+            b"fn main() -> (first: u64, second: u64 {",
+            &[RightParen, Comma],
+        ),
+        (b"fn main() -> result: Array<u64 {", &[Comma, RightAngle]),
+    ];
+    for (source, expected) in cases {
+        let outcome = parse_active("type-context.wf", source);
+        let ParseOutcome::SourceIssue(issue) = outcome else {
+            panic!("a type followed by an opening brace must reject: {outcome:?}");
+        };
+        assert_eq!(issue_bytes(source, issue), b"{", "{source:?}");
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|terminal| LookaheadPredicate::Terminal(TerminalPredicate::Fixed(*terminal)))
+            .collect();
+        assert_eq!(
+            issue.expected().iter().collect::<Vec<_>>(),
+            expected,
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn nullable_type_arguments_keep_their_own_prefix_and_the_real_outer_continuation() {
+    use crate::syntax::grammar::LookaheadPredicate;
+
+    // TYPEID's optional targs may enter with `<` or exit into the effect row.
+    // The qualified spelling additionally crosses type_path's nullable
+    // repetition and a production return before reaching that same suffix.
+    for source in [
+        b"fn main() -> result: Value {".as_slice(),
+        b"fn main() -> result: pkg::Value {".as_slice(),
+        b"fn main() -> result: pkg::nested::Value {".as_slice(),
+    ] {
+        let outcome = parse_active("nullable-context.wf", source);
+        let ParseOutcome::SourceIssue(issue) = outcome else {
+            panic!("the missing effect row must reject: {outcome:?}");
+        };
+        assert_eq!(issue_bytes(source, issue), b"{");
+        let expected: Vec<_> = [
+            FixedTerminal::LeftAngle,
+            FixedTerminal::Pure,
+            FixedTerminal::Reads,
+            FixedTerminal::Writes,
+        ]
+        .into_iter()
+        .map(|terminal| LookaheadPredicate::Terminal(TerminalPredicate::Fixed(terminal)))
+        .collect();
+        assert_eq!(
+            issue.expected().iter().collect::<Vec<_>>(),
+            expected,
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
 fn bare_bool_range_guard_rejects_with_the_is_true_repair() {
     // [GRAM-5, RANGE-1] a guard requires one relation, so
     // a Bool datum written alone stops at its `:`.
@@ -1500,6 +1616,9 @@ fn unchanged_suffixes_parse_for_semantic_admission() {
     let outcome = parse_active("unchanged.wf", source);
     assert!(matches!(outcome, ParseOutcome::Complete(_)), "{outcome:?}");
 }
+
+#[path = "repair_tests.rs"]
+mod repair_hints;
 
 #[test]
 fn integer_match_arm_forms_are_grammar_alternatives() {
