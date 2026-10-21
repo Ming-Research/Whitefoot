@@ -1,6 +1,13 @@
 # Separate WF-vs-WF performance regression. Correctness CI and make check do
 # not construct a baseline. Formal fixtures/oracles supply all inputs.
 #
+# It builds a baseline compiler and times both, so a draft pull request, still
+# being written, shows the job as skipped, as design-readiness.yml does; it
+# runs where its answer decides something: a pull request that is ready for
+# review, and a manual run. The author may start it by hand before marking the
+# pull request ready, to see the answer sooner; marking it ready runs it again,
+# since nothing here skips a head that an earlier manual run already measured.
+#
 # The merge-base compiler is cached per main commit and toolchain. A pull
 # request run restores only caches saved on its own ref or on main, never
 # another pull request's, so every push to main builds that commit's compiler
@@ -11,6 +18,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       qualify:
@@ -33,6 +41,7 @@ env:
 jobs:
   regression:
     name: compute regression (ubuntu-24.04)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
