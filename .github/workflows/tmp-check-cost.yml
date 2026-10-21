@@ -29,6 +29,8 @@ jobs:
           base=$(git merge-base origin/main HEAD)
           echo "base=$base candidate=$(git rev-parse HEAD)"
           git worktree add "$RUNNER_TEMP/base" "$base"
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
           perl .github/run-check.pl build-candidate \
             cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
           perl .github/run-check.pl build-base \
