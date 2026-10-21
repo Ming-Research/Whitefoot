@@ -419,7 +419,7 @@ the report carry the unresolved scope boundary without inventing a board key.
 ## Validation and outstanding evidence
 
 No compiler, build, test suite or measurement runs on the workstation.
-No conformance source, verdict, specification or approval log is changed.
+No conformance source, verdict or specification is changed; `design/log.md` gains one entry.
 
 Round 4 of the temporary workflow
 ([run 38420072424](https://github.com/Ming-Research/Whitefoot/actions/runs/38420072424))
@@ -513,7 +513,7 @@ EPYC 7763; adaptation: `pkg::test` 2 fixes, `pkg::vm` 132, every exit code 0).
 Here prebranch is the head before this merge (`44f33c996`) and main is
 `b59f94622` (with the #431 regression).
 
-| Workload | rounds | base s | prebranch s | main s | branch s | branch/base | branch/prebranch |
+| Workload | rounds | base s | prebranch s | main s | branch s | branch/base (min–max) | branch/prebranch (min–max) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Halo `pkg::test` (base `d837678c6905`) | 3 (main 1) | 2.05 | 2.08 | 604.56 | 2.07 | 0.995 (0.958–1.035) | 0.990 (0.981–1.015) |
 | Halo `pkg::vm` (base `7d9118eba`) | 5 | 16.56 | 9.46 | 11.94 | 9.70 | 0.587 (0.581–0.596) | 1.025 (0.994–1.045) |
@@ -525,7 +525,7 @@ Here prebranch is the head before this merge (`44f33c996`) and main is
 
 The second merge left the work unchanged: on `pkg::vm` the branch's join,
 pair and cell counts equal the pre-merge head's exactly and its CPU ratio to
-that head (1.025) has an interval that contains 1; on `pkg::test` the pair
+that head (1.025) has a min–max range (0.994–1.045) that contains 1, which is a range of five rounds and not a confidence interval; on `pkg::test` the pair
 count is equal and the cell count differs by 111 (0.002%). Against the unfixed
 merged main the branch is 0.812 on `pkg::vm` (9.70 s against 11.94 s) and
 `pkg::test` stays at 2 s against 605 s. Main's own counters on `pkg::vm` equal
