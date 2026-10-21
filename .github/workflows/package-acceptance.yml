@@ -1,0 +1,289 @@
+# Qualify exact bundled archives before compiler-release publishes them, or
+# qualify an existing release by tag. Failed checks and unverified macOS host
+# isolation both leave the reusable workflow's qualified output false.
+# The workflow revision supplies the maintained runner and witness, even when
+# the candidate predates them; unsupported witness behavior fails qualification
+# without changing expectations. Candidate bytes and manifest identity stay fixed.
+name: Bundled package acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing bundled release tag (wf[-exp]-<12 hex>-bundled)
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+      source_commit:
+        description: Exact candidate commit; empty reads the release manifest
+        required: false
+        default: ""
+        type: string
+      artifact_name:
+        description: Same-run unpublished candidate artifact; empty downloads the release
+        required: false
+        default: ""
+        type: string
+    outputs:
+      qualified:
+        description: All package checks and macOS host-clang denial were verified
+        value: ${{ jobs.qualification.outputs.qualified }}
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    name: Verify the exact release candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      commit: ${{ steps.verify.outputs.commit }}
+    steps:
+      - name: Download the unpublished candidate from this workflow run
+        if: inputs.artifact_name != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: candidate
+
+      - name: Download an existing release
+        if: inputs.artifact_name == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          # Quoted option values keep the tag data out of shell syntax.
+          [[ "$RELEASE_TAG" =~ ^wf-(exp-)?[0-9a-f]{12}-bundled$ ]]
+          mkdir -p candidate
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir candidate \
+            --pattern 'whitefootc-*-bundled.tar.gz' --pattern whitefoot-language.tar.gz \
+            --pattern whitefoot-release.json --pattern SHA256SUMS
+
+      - name: Verify metadata and every external checksum
+        id: verify
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/package-prepare"
+          exec > >(tee "$RUNNER_TEMP/package-prepare/verification.log") 2>&1
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re
+          root = pathlib.Path('candidate')
+          release = json.loads((root / 'whitefoot-release.json').read_text())
+          tag, commit = release['tag'], release['commit']
+          assert tag == os.environ['RELEASE_TAG'], (tag, os.environ['RELEASE_TAG'])
+          assert re.fullmatch(r'[0-9a-f]{40}', commit), commit
+          assert re.fullmatch(r'wf-(?:exp-)?' + commit[:12] + r'-bundled', tag), tag
+          assert release.get('bundle_toolchain') is True, 'Manifest is not a bundled package release'
+          requested = os.environ['SOURCE_COMMIT']
+          assert not requested or commit == requested, (commit, requested)
+          expected = {'whitefoot-release.json', 'whitefoot-language.tar.gz'}
+          for platform in ('linux-x86_64', 'macos-arm64'):
+              name = release['assets'][platform]
+              assert name == f'whitefootc-{platform}-bundled.tar.gz', (platform, name)
+              expected.add(name)
+          assert release['assets']['language'] == 'whitefoot-language.tar.gz'
+          covered = set()
+          for line in (root / 'SHA256SUMS').read_text().splitlines():
+              digest, name = line.split(maxsplit=1)
+              name = name.removeprefix('*')
+              assert name in expected and name not in covered, name
+              assert re.fullmatch(r'[0-9a-f]{64}', digest), digest
+              sha = hashlib.sha256()
+              with (root / name).open('rb') as stream:
+                  for block in iter(lambda: stream.read(1024 * 1024), b''):
+                      sha.update(block)
+              assert sha.hexdigest() == digest, name
+              covered.add(name)
+          assert covered == expected, ('Missing external checksums', expected - covered)
+          actual = {path.name for path in root.iterdir() if path.is_file()}
+          assert actual == expected | {'SHA256SUMS'}, ('Unexpected/missing candidate files', actual)
+          print(json.dumps(release, indent=2))
+          print((root / 'SHA256SUMS').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'commit={commit}\n')
+          PY
+
+      - name: Keep the verified inputs for both hosts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-acceptance-inputs
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload candidate verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-acceptance-input-verification
+          path: ${{ runner.temp }}/package-prepare/
+          if-no-files-found: warn
+          retention-days: 7
+
+  linux:
+    name: Linux (${{ matrix.mode }})
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [linux-absent, linux-wrong-major]
+    steps:
+      # github.workflow_sha is the caller's workflow revision for workflow_call,
+      # or this dispatch's workflow revision. It owns the maintained runner and
+      # witness; prepare's verified commit identifies only the candidate bytes.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-acceptance-inputs
+          path: candidate
+
+      - name: Qualify in a fresh minimal development container
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          test -f .github/toolchain/check-package.sh
+          test -f tests/package-fixtures/waiting.wf
+          test -f tests/package-fixtures/stack-exhaustion.wf
+          mkdir -p "$RUNNER_TEMP/package-$MODE/logs"
+          status=0
+          # XML/ICU/LZMA/zlib/C++ are recorded host shared-library prerequisites
+          # of this official clang/lld asset; they supply no host compiler.
+          # strace/Python inspect execution/inventory. No repository, host
+          # compiler or /usr/lib/llvm tree is mounted.
+          docker run --rm --platform linux/amd64 \
+            --mount "type=bind,src=$PWD/candidate/whitefootc-linux-x86_64-bundled.tar.gz,dst=/input/package.tar.gz,readonly" \
+            --mount "type=bind,src=$PWD/tests/package-fixtures,dst=/input/fixtures,readonly" \
+            --mount "type=bind,src=$PWD/.github/toolchain/check-package.sh,dst=/input/check-package.sh,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/package-$MODE,dst=/output" \
+            --env "MODE=$MODE" ubuntu:24.04 /bin/bash -c '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends libc6-dev libgcc-13-dev \
+                libstdc++6 zlib1g libxml2 libicu74 liblzma5 python3 strace
+              if [ "$MODE" = linux-wrong-major ]; then
+                apt-get install -y --no-install-recommends clang-18
+              fi
+              bash /input/check-package.sh /input/package.tar.gz /input/fixtures /output "$MODE"
+            ' > "$RUNNER_TEMP/package-$MODE/logs/container.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/package-$MODE/logs/container.txt"
+          exit "$status"
+
+      - name: Record Linux qualification
+        if: success()
+        env:
+          MODE: ${{ matrix.mode }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          printf 'Linux %s: exact candidate %s passed inventory, coroutine IR, ordinary/full/ThinLTO, cold/warm caches, stack exhaustion, relocation and completeness checks. Successful clang/lld executions are traced; host calls are zero.\n' \
+            "$MODE" "$COMMIT" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Linux command, inventory and execution logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-acceptance-${{ matrix.mode }}
+          path: ${{ runner.temp }}/package-${{ matrix.mode }}/logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos:
+    name: macOS arm64 with host clang denied
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 25
+    outputs:
+      isolation: ${{ steps.check.outputs.isolation }}
+    steps:
+      # Use the same maintained runner and witness revision as Linux, rather
+      # than requiring those acceptance files to exist in the candidate commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-acceptance-inputs
+          path: candidate
+
+      - name: Qualify the package and prove host invocation denial
+        id: check
+        run: |
+          set -euo pipefail
+          test -f .github/toolchain/check-package.sh
+          test -f tests/package-fixtures/waiting.wf
+          test -f tests/package-fixtures/stack-exhaustion.wf
+          bash .github/toolchain/check-package.sh \
+            "$PWD/candidate/whitefootc-macos-arm64-bundled.tar.gz" \
+            "$PWD/tests/package-fixtures" "$RUNNER_TEMP/package-macos" macos
+          cat "$RUNNER_TEMP/package-macos/logs/result.txt" >> "$GITHUB_OUTPUT"
+
+      - name: Record qualification and the isolation boundary
+        if: always()
+        env:
+          ISOLATION: ${{ steps.check.outputs.isolation }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          if [ "$ISOLATION" = verified ]; then
+            echo "macOS candidate $COMMIT: package checks passed under host-clang execution denial. Every inventoried host path first executed successfully outside the sandbox and failed inside it; SDK and system ld stayed available." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$ISOLATION" = unverified ]; then
+            echo "UNVERIFIED: this hosted runner could not prove denial of every host clang. Basic package checks passed, but clang independence and release qualification remain unverified. Use an isolated CI VM; publication is blocked by qualified=false." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "macOS candidate $COMMIT: package checks failed or did not complete. See uploaded logs; qualification is false." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload macOS command, inventory and denial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-acceptance-macos-arm64
+          path: ${{ runner.temp }}/package-macos/logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+  qualification:
+    name: Exact archive qualification result
+    if: always()
+    needs: [prepare, linux, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      qualified: ${{ steps.result.outputs.qualified }}
+    steps:
+      - name: Require both Linux modes and verified macOS isolation
+        id: result
+        env:
+          PREPARE: ${{ needs.prepare.result }}
+          LINUX: ${{ needs.linux.result }}
+          MACOS: ${{ needs.macos.result }}
+          ISOLATION: ${{ needs.macos.outputs.isolation }}
+        run: |
+          qualified=false
+          if [ "$PREPARE" = success ] && [ "$LINUX" = success ] && [ "$MACOS" = success ] && [ "$ISOLATION" = verified ]; then
+            qualified=true
+          fi
+          echo "qualified=$qualified" >> "$GITHUB_OUTPUT"
+          echo "Exact bundled archive qualification: $qualified (inputs=$PREPARE; Linux=$LINUX; macOS=$MACOS; isolation=$ISOLATION)." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PREPARE" != success ] || [ "$LINUX" != success ] || [ "$MACOS" != success ]; then
+            exit 1
+          fi

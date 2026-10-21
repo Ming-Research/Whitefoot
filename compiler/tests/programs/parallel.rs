@@ -83,7 +83,7 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         if mode == OverlapLowering::Off {
             assert!(!module_requires_parallel_runtime(&module));
         }
-        let program = build_program(&module);
+        let program = build_program(&crate::support::sanitized(module));
         for &width in workers {
             let output = program.run_with_workers(width);
             assert!(output.status.success(), "{mode:?}/{width:?}: {output:?}");
@@ -170,7 +170,7 @@ fn tree_window_and_deep_spine_preserve_their_independent_results() {
                 },
             )
             .expect("pinned-budget tree must compile");
-            let pinned = build_program(&module);
+            let pinned = build_program(&crate::support::sanitized(module));
             for workers in ["1", "4"] {
                 let output = pinned.run_with_workers(Some(workers));
                 assert_eq!(
@@ -233,9 +233,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let n = 200000_u64;
   let last = n - 1_u64;
   let values = box_array_filled::<u64>(count: n, value: 0_u64);
-  if n <= values.inner.len {
-    shifted_inline(values: &values, n: n);
-  }
+  shifted_inline(values: &values, n: n);
   if last < values.inner.len {
     let once = values.inner[last];
     if once == n {

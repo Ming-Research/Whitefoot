@@ -277,7 +277,10 @@ impl Checker<'_, '_> {
                     && !writes.iter().any(|(_, write)| places_overlap(&BlockSeparations, &ResolvedPlace::binding(binding), write))
                 { value } else { CapturedValue::unknown() }
             }
-            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => CapturedValue::unknown(),
+            CapturedTerm::Superseded(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => CapturedValue::unknown(),
         };
         let mut result = place.clone();
         // A Descendant identity denotes a current target within one state,

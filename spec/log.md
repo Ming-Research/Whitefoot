@@ -1,23 +1,34 @@
 # Specification change log
 
-Newest first. One entry per owner-approved change of the active
-specification, `kernel-spec.md`: a `## <date> <title>` heading, `Rules:`
-naming every rule added, changed or retired, `Owner-approved:` identifying the
-owner's approval in the owner's words, and a concise `Summary:` of the change
-and its selection ground. The form is the design tree log's, with `Rules:` in
-place of `Nodes:`. The entry is written only after the owner approves, and
-`make design-ready` requires a new approved entry whenever the active
-specification changes; it cannot tell whether `Rules:` names every changed
-rule. Earlier versions are the released archives beside this
-file; git holds the rest of the history.
+Newest first. One entry per change of the active specification,
+`kernel-spec.md`: a `## <date> <title>` heading, `Rules:` naming every rule
+added, changed or retired, and a concise `Summary:` of the change and its
+selection ground. The form is the design tree log's, with `Rules:` in place of
+`Nodes:`. The entry is committed with the change, and `make design-ready`
+requires a new entry whenever the active specification changes; it cannot tell
+whether `Rules:` names every changed rule. Older entries also carry an
+`Owner-approved:` line, a field since retired. Earlier versions are the
+released archives beside this file; git holds the rest of the history.
 
-## 2026-10-13 v0.152: a call forgets only the paths its effect row writes
+## 2026-10-13 v0.154: a call forgets only the paths its effect row writes
 
 Rules: changed RANGE-2
 
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the one-sentence specification change and the two range-judgment design decisions in #466 (head 2f5f1d0)?" (translated), after choosing option A the same day on the direction card "when a callee's effect row writes only one field of an argument (such as `writes(row.g)`), does the call forget the per-element facts on that field, or on the whole argument element?" (translated): forget only the written path. The amendment was written as v0.150 and renumbered to v0.151 because main reached v0.150 first, and to v0.152 because main reached v0.151 first.
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the one-sentence specification change and the two range-judgment design decisions in #466 (head 2f5f1d0)?" (translated), after choosing option A the same day on the direction card "when a callee's effect row writes only one field of an argument (such as `writes(row.g)`), does the call forget the per-element facts on that field, or on the whole argument element?" (translated): forget only the written path. The amendment was written as v0.150 and renumbered to v0.151 because main reached v0.150 first, to v0.152 because main reached v0.151 first, and to v0.154 because main reached v0.153 first.
 
 Summary: RANGE-2's call sentence said a call forgets every location the callee's row writes through a reference argument, one element where the argument names one element; "location" was read as a whole versioned storage, so a call writing `row.g` forgot the range facts on `row.f` of the same element. It now forgets each path the callee's row writes after substituting the reference argument's path [EFF-5], and every path below it, within that element where the argument names one element. Selection ground: effect rows, ordinary facts killed by calls and the range judgment's direct assignments already distinguish paths, so the call was the one coarser place; the written path is still forgotten, so no fact survives a write that could change it.
+
+## 2026-10-20 v0.153: two index steps read through one tracked field or dereference term are the same while its support is unwritten
+
+Rules: changed ENT-2
+
+Summary: ENT-2's list of when two index steps are the same gains one case: two steps that read one tracked field or dereference term are the same while no write of its support places has intervened since either was formed. The case follows the existing binding case, so that a guard on `table^[s^.k].len` proves the later read `table^[s^.k][i]` in range; a write to the support ends the equality, as ENT-5 already requires. Selection ground: ENT-2 listed its cases exhaustively, and without this case the checker must treat the two reads as distinct places, so a guard on a field-subscript length never supports the element read.
+
+## 2026-10-20 v0.152: a condition the checker decides is redundant source
+
+Rules: changed OP-5, GRAM-6, ENT-6, MSR-4
+
+Summary: OP-5 adds a source redundancy judgment for the condition of every `if` and `value_if`, `else if` links included, queried after the condition's own evaluation and before its branch-entry facts. In a noncontradictory entering state the condition is decided True when every fact the then-block's entry would establish is already derivable (each goal origin through the Signed Goal query, the comparison origin in the closed L0 state), and False when the same holds for the else side; a decided condition is a hard error with residual `RedundantCondition` and a repair that deletes the test and its dead branch, so the deletion removes no fact a later goal could use. A generic body is judged once at the symbolic instance of its own parameters, a contradictory entering state admits the condition, leaving reachability to FN-1, and a condition with neither a goal origin nor a comparison origin, such as a user function's result, has no derivable truth and is admitted. GRAM-6 points a condition's redundancy to OP-5, ENT-6 names OP-5 as a Signed Goal consumer, and MSR-4 lists OP-5 among the numeric disposition's consumers and lets OP-5 state its own result judgment. The worked example returns the converted value as the exit status instead of testing it, because the old test is itself a decided condition; the rule text first drafted against v0.136 is renumbered to v0.152 because main reached v0.151 first. Selection ground: executable source should contain only the tests its run needs, since a decided test costs run time and tells a reader, often an agent, that an excluded case is still possible.
 
 ## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
 

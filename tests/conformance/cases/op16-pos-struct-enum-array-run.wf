@@ -9,6 +9,22 @@ enum EqPayload {
   EqSmall(value: u8);
 }
 
+fn record_code(left: EqRecord, right: EqRecord) -> code: u8 pure {
+  doc "Adds 1 when == holds and 2 when != holds, so an equal pair gives 1 and an unequal pair gives 2.";
+  let equal = if left == right {
+    give 1_u8;
+  } else {
+    give 0_u8;
+  }
+  let unequal = if left != right {
+    give 2_u8;
+  } else {
+    give 0_u8;
+  }
+  let total = equal +wrap unequal;
+  return total;
+}
+
 fn main() -> status: std::process::ExitStatus pure {
   let first = EqRecord(small: 3_u8, wide: 17_u64);
   let same = EqRecord(small: 3_u8, wide: 17_u64);
@@ -35,19 +51,13 @@ fn main() -> status: std::process::ExitStatus pure {
   set changed_records[2_u64] = changed;
   let empty_bytes = array_filled::<u8, 0>(value: 0_u8);
   let empty_other = array_filled::<u8, 0>(value: 1_u8);
-  if first == same {
-  } else {
+  let same_code = record_code(left: first, right: same);
+  if same_code != 1_u8 {
     return std::process::exit_status(code: 1_u8);
   }
-  if first != same {
-    return std::process::exit_status(code: 2_u8);
-  }
-  if first == changed {
+  let changed_code = record_code(left: first, right: changed);
+  if changed_code != 2_u8 {
     return std::process::exit_status(code: 3_u8);
-  }
-  if first != changed {
-  } else {
-    return std::process::exit_status(code: 4_u8);
   }
   if wide == same_wide {
   } else {

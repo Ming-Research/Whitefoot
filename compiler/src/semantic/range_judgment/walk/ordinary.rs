@@ -103,7 +103,10 @@ impl Walker<'_> {
                         };
                         value
                     }
-                    CapturedTerm::Superseded(_) | CapturedTerm::Opaque => return None,
+                    CapturedTerm::Superseded(_)
+                    | CapturedTerm::Place(_)
+                    | CapturedTerm::SupersededPlace(_)
+                    | CapturedTerm::Opaque => return None,
                 }),
                 _ => None,
             };
