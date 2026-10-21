@@ -283,21 +283,7 @@ for kind in objects fragments; do
       ${extra[@]+"${extra[@]}"} --report -o "$work/$kind-$temperature" "$witness"
     run "$kind-$temperature-run" "$work/$kind-$temperature"
   done
-  python3 - "$logs" "$kind" <<'PY'
-import json, pathlib, sys
-logs, kind = pathlib.Path(sys.argv[1]), sys.argv[2]
-# The report's final JSON line contains build observations; diagnostics are
-# retained in the same log without making a substring a cache-hit proof.
-def report(temperature):
-    rows = (logs / f'{kind}-{temperature}-build.txt').read_text().splitlines()
-    return next(json.loads(row)['build'] for row in reversed(rows) if row.startswith('{"build":'))
-cold, warm = report('cold'), report('warm')
-assert cold['objects_compiled'] > 0 and cold['objects_reused'] == 0, cold
-assert warm['objects_reused'] > 0 and warm['objects_compiled'] == 0, warm
-if kind == 'fragments':
-    assert cold['fragments'] > 0 and warm['fragments'] > 0, (cold, warm)
-print(kind, 'cold/warm cache observations:', cold, warm)
-PY
+  python3 "$(dirname "${BASH_SOURCE[0]}")/check-cache-report.py" "$logs" "$kind"
  done
 
 expect_failure() {

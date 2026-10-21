@@ -1,0 +1,119 @@
+# TEMPORARY: removed before wf-fr-pkg-windows is marked ready.
+#
+# Quick checks for the Windows package item: the Rust tests and format check of
+# the MinGW target record, the repository's static checks, the tools and
+# container support of the hosted Windows images, and a control showing that
+# the import check on whitefootc.exe fails on a dynamically linked build.
+name: tmp-windows-pkg
+
+on:
+  push:
+    branches: [wf-fr-pkg-windows]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-windows-pkg-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  unit:
+    name: Target and toolchain tests, format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          rustup component add rustfmt
+          cargo --version
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Format
+        run: cargo fmt --manifest-path compiler/Cargo.toml -- --check
+      - name: Target, toolchain and deterministic-target tests
+        run: |
+          perl .github/run-check.pl quick/unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib target:: toolchain:: deterministic_target
+
+  static:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Name main as a local ref
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - name: make static
+        run: make static
+
+  survey:
+    name: Hosted Windows image (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            image: mcr.microsoft.com/windows/servercore:ltsc2022
+          - os: windows-2025
+            image: mcr.microsoft.com/windows/servercore:ltsc2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Tools the Windows package jobs rely on
+        run: |
+          for tool in python python3 jq 7z zstd curl sha256sum cygpath llvm-readobj clang docker; do
+            printf '%s: ' "$tool"; command -v "$tool" || echo MISSING
+          done
+          python --version || true
+          python3 --version || true
+          jq --version || true
+          7z | head -n 2 || true
+          ls "/c/Program Files/LLVM/bin" | head -n 40 || true
+      - name: Docker and the image
+        run: |
+          docker version
+          docker images
+          docker run --rm --isolation process "${{ matrix.image }}" cmd /c ver
+          docker run --rm --isolation process "${{ matrix.image }}" cmd /c where clang || echo "where clang exit status: $?"
+
+  import-control:
+    name: Import check on a dynamic build
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the compiler with the default (dynamic) C runtime
+        run: |
+          rustup default stable
+          cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+      # The release job's check, run on a build it must reject.
+      - name: The import check rejects a dynamic C runtime
+        run: |
+          set -euo pipefail
+          readobj=$(command -v llvm-readobj || echo '/c/Program Files/LLVM/bin/llvm-readobj.exe')
+          "$readobj" --coff-imports compiler/target/gate/whitefootc.exe \
+            | sed -n 's/^ *Name: //p' | tr -d '\r' | sort -u > "$RUNNER_TEMP/imports.txt"
+          cat "$RUNNER_TEMP/imports.txt"
+          test -s "$RUNNER_TEMP/imports.txt"
+          grep -i -E '^(vcruntime|msvcp|concrt|vccorlib)' "$RUNNER_TEMP/imports.txt"

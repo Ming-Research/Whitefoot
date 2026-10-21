@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-21 Windows programs target MinGW, and a bundled release gains a Windows x86-64 package
+
+Nodes: compiler/toolchain-resolution, compiler/downstream-releases, compiler/waiting-contexts
+
+Summary: Windows x86-64 programs now target `x86_64-w64-windows-gnu` (MinGW-w64 with the Universal C Runtime, linked by LLD's MinGW driver) whatever Rust environment built whitefootc, as the single Windows ABI for the gate and for packages; every clang command names the target and every link uses LLD, with the stack-probe helper `___chkstk_ms` in the target record. The reason is that a self-contained llvm-mingw toolchain can be redistributed while the MSVC target needs the Visual Studio linker, C runtime libraries and Windows SDK, which a package may not carry. The release node adds the Windows bundle: a zip with a statically linked `whitefootc.exe` and the trimmed llvm-mingw toolchain, built only in bundled mode, and its acceptance in a Windows Server Core container that holds no other compiler, because a hosted Windows runner holds the tools and the redistributable that would hide a missing component. Refused: keeping MSVC as the Windows target, deriving the ABI from whitefootc's own build, carrying both ABIs, requiring Visual Studio Build Tools, shipping the Visual C++ redistributable DLLs, a tar.gz Windows archive, and hiding the runner's clang instead of using a clean container. The lock-free atomic requirement of waiting contexts now names the Windows GNU target in place of Windows MSVC.
+
 ## 2026-10-21 Syntax diagnostics are segmented per top-level declaration, expected tokens come from the parse stack, and repair hints stay where they compile
 
 Nodes: compiler, compiler/diagnostic-rendering, compiler/diagnostic-repairs, compiler/incremental-compilation, language/grammar

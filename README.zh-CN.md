@@ -198,7 +198,7 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 
 ## 试一试
 
-你需要 Rust stable（版本不低于 [compiler/Cargo.toml](compiler/Cargo.toml) 中的 `rust-version`）和 clang：Linux 和 macOS 上是 `/usr/bin/clang`，Windows 上是 `PATH` 中的 `clang`。
+你需要 Rust stable（版本不低于 [compiler/Cargo.toml](compiler/Cargo.toml) 中的 `rust-version`）和 clang：Linux 和 macOS 上是 `/usr/bin/clang`，Windows 上是 `PATH` 中 [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) 发布包自带的 `clang`，因为编译器的目标是 `x86_64-w64-windows-gnu`。
 
 ```sh
 git clone https://github.com/Ming-Research/Whitefoot.git && cd Whitefoot
