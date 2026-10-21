@@ -574,6 +574,36 @@ main is a single-change one. Sides and what each result shows:
   differs: counts at or above main's reject the claim that the fix still
   removes #431's work from Firn.
 
+Result ([run 39682072749](https://github.com/Ming-Research/Whitefoot/actions/runs/39682072749),
+EPYC 7763, workflow head `7d8d7e0e3` whose compiler tree equals the merged head
+`10f74e7e8`; the source adaptation took 241 fixes, the first merge's 240 and the
+`host_paths` field, and every exit code was 0):
+
+| Compiler | rounds | median CPU s | ratio to `main` (median, min–max) |
+|---|---:|---:|---:|
+| `main` (`0c40731d3`) | 5 | 71.23 | 1.000 |
+| `twin` (same binary as `main`) | 5 | 71.20 | 1.001 (0.993–1.004) |
+| `branch` (merged head) | 5 | 58.52 | 0.822 (0.817–0.825) |
+
+| Counter (one counted run each) | `main` | `branch` |
+|---|---:|---:|
+| `join:join` | 993,232 | 248,266 |
+| `join:pairs_evaluated` | 7,448,963 | 6,304,847 |
+| `closure:cells_sum` | 80,599,888 | 61,390,283 |
+| `snapshot:count` | 100,464 | 46,752 |
+
+The branch's five-round range lies wholly below 1 and the twin's straddles 1,
+so on this source the fix still removes 17.8% of main's Firn check CPU (ratio
+of medians), with 75% fewer joins, 15.4% fewer join pairs and 23.8% fewer
+closure cells. The ranges are the min and max of five paired rounds, not
+confidence intervals. Both counter columns equal those the first merge's run
+recorded (main 7,448,963 pairs and 80.6M cells; branch 6,304,847 pairs and
+61.4M cells), so the later merges of main left Firn's work unchanged on both
+sides. What this run does not show is the ratio to pre-#431 main on this
+head: that compiler cannot check the adapted source, so the figures 0.978
+(before the first merge) and 0.678 (on the first merge) remain the evidence
+for that ratio and belong to those heads.
+
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
 record, ENT-5, the checker-facts decisions, and the directly affected fact-state
