@@ -13,6 +13,14 @@ Owner-approved: On the shared status board on 2026-10-13, written in Chinese, th
 
 Summary: The changed decision substitutes a define into every clause before that clause's range terms are checked, so the range-term restriction holds independently of abbreviation spelling (a linear index admitted, a product of two parameters refused, in requires and ensures alike), instead of refusing a range term because it uses a define name.
 
+## 2026-10-21 Syntax diagnostics are segmented per top-level declaration, expected tokens come from the parse stack, and repair hints stay where they compile
+
+Nodes: compiler, compiler/diagnostic-rendering, compiler/diagnostic-repairs, compiler/incremental-compilation, language/grammar
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the specification and design logs, mark it ready and merge it through the coordinator after the gate on both platforms (if main advances, the version is main plus one and the rules are unchanged)" (translated), on the card "approve the grammar-diagnostic rules of specification v0.150 and the design-tree change in PR Whitefoot#430 at head commit 832bdd593?" (translated); it carries out the owner's 2026-10-13 rulings on the cards "report the first error of each top-level declaration instead of one per compilation" and "list only the tokens that can follow at the failure position" (translated). The revision merged here differs from 832bdd593 by the merge of main and the renumbering of the specification from v0.150 to v0.154, because main reached v0.153 first.
+
+Summary: The grammar node records three decisions: syntax errors are reported per top-level declaration segment rather than by whole-source recovery or one error per compilation, the module-graph file's line records parse through a diagnostic-only production, and expected tokens are computed from the parse stack rather than the grammar-wide FOLLOW set, each with its refused alternative. Diagnostic rendering keeps every rule, coordinate and expected-token set of a module rejection as structured data so cached and rechecked runs give the same ordered syntax diagnostics. Repair hints list up to eight accessible same-role names for an unresolved qualified name, offer hoisting an inner call into a `define` only in a definition's initializer where the operation is contract-admitted and never in a requires or ensures clause, and limit the disjunction repair to requires. The compiler node fixes the front end's segmentation and phase order by DIAG-1, leaving implementation order only for semantic rejections after name resolution, and incremental compilation checks the whole program's front end before judging modules concurrently and reuses the successful parses.
+
 ## 2026-10-21 Accepted programs run under host sanitizers in CI
 
 Nodes: compiler/sanitized-builds

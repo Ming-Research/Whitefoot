@@ -7,6 +7,7 @@ use crate::{ByteOffset, SourceId};
 
 use crate::{ClassifiedBundle, ClassifiedToken};
 
+use super::diagnostic::Continuation;
 use super::tree::DerivationExtent;
 use super::{
     DecisionSelection, DerivationElement, DerivationTree, DiagnosticResult, DiagnosticSite, Frame,
@@ -21,6 +22,17 @@ enum Task {
     Continue(GrammarNodeId),
     Match(TerminalPredicate),
     Finish(Production),
+}
+
+impl Task {
+    fn continuation(self) -> Option<Continuation> {
+        match self {
+            Self::Execute(node) => Some(Continuation::Node(node)),
+            Self::Continue(node) => Some(Continuation::Repeat(node)),
+            Self::Match(terminal) => Some(Continuation::Terminal(terminal)),
+            Self::Finish(_) => None,
+        }
+    }
 }
 
 enum Stop {
@@ -120,6 +132,13 @@ impl<'classified> Parser<'classified> {
         })?;
         let in_contract = self.frames.last().is_some_and(|frame| frame.in_contract)
             || production == Production::ContractBlock;
+        let in_contract_define = self
+            .frames
+            .last()
+            .is_some_and(|frame| frame.in_contract_define)
+            || production == Production::ContractDefine;
+        let in_range = self.frames.last().is_some_and(|frame| frame.in_range)
+            || production == Production::RangeClause;
         self.frames.push(Frame {
             production,
             element_start: self.elements.len(),
@@ -127,6 +146,8 @@ impl<'classified> Parser<'classified> {
             extent: None,
             atom_only,
             in_contract,
+            in_contract_define,
+            in_range,
         });
         Ok(())
     }
@@ -163,14 +184,80 @@ impl<'classified> Parser<'classified> {
             .frames
             .last()
             .ok_or(Stop::Compiler(ParseCompilerFailure::MissingProductionFrame))?;
-        let (production, atom_only, in_contract) =
-            (frame.production, frame.atom_only, frame.in_contract);
-        Ok(ProbeContext {
-            production,
-            atom_only,
-            in_contract,
-            qualified_value: self.qualified_value(source, tokens, cursor)?,
-        })
+        let mut context = ProbeContext {
+            production: frame.production,
+            atom_only: frame.atom_only,
+            in_contract: frame.in_contract,
+            in_contract_define: frame.in_contract_define,
+            in_range: frame.in_range,
+            infix_operand: self
+                .frames
+                .iter()
+                .rev()
+                .find_map(|frame| match frame.production {
+                    Production::InfixTail => Some(true),
+                    Production::Psuffix
+                    | Production::AtomList
+                    | Production::Fieldinit
+                    | Production::ForBinding => Some(false),
+                    _ => None,
+                })
+                .unwrap_or(false),
+            completed_infix_operand: self
+                .elements
+                .windows(2)
+                .rev()
+                .take_while(|pair| {
+                    pair.iter().all(|element| {
+                        matches!(element, DerivationElement::Production { .. })
+                    })
+                })
+                .find_map(|pair| match pair {
+                    [
+                        DerivationElement::Production {
+                            production: Production::Atom,
+                            extent: DerivationExtent::Source { source, start, end },
+                            ..
+                        },
+                        DerivationElement::Production {
+                            production: Production::InfixTail,
+                            ..
+                        },
+                    ] => Some(super::SyntaxCoordinate::new(*source, *start, *end)),
+                    _ => None,
+                }),
+            in_expression: self
+                .frames
+                .iter()
+                .any(|frame| frame.production == Production::Expr),
+            match_binder: self
+                .frames
+                .iter()
+                .rev()
+                .find_map(|frame| match frame.production {
+                    Production::Arm => Some(true),
+                    Production::ResultRoute | Production::LetStmt => Some(false),
+                    _ => None,
+                })
+                .unwrap_or(false),
+            qualified_value: None,
+            after_value_match: self
+                .elements
+                .iter()
+                .rev()
+                .take_while(|element| matches!(element, DerivationElement::Production { .. }))
+                .any(|element| {
+                    matches!(
+                        element,
+                        DerivationElement::Production {
+                            production: Production::ValueMatch,
+                            ..
+                        }
+                    )
+                }),
+        };
+        context.qualified_value = self.qualified_value(source, tokens, cursor)?;
+        Ok(context)
     }
 
     /// The qualified path a `call` in a value position has consumed when
@@ -400,11 +487,13 @@ impl<'classified> Parser<'classified> {
             DiagnosticSite {
                 source,
                 source_len,
+                bundle: self.classified.source_bundle(),
                 tokens,
                 cursor,
                 limits: self.limits,
             },
             &mut self.work,
+            self.tasks.iter().rev().filter_map(|task| task.continuation()),
         )
         .into()
     }
@@ -547,6 +636,7 @@ impl<'classified> Parser<'classified> {
                             DiagnosticSite {
                                 source,
                                 source_len,
+                                bundle: self.classified.source_bundle(),
                                 tokens,
                                 cursor,
                                 limits: self.limits,
@@ -563,6 +653,7 @@ impl<'classified> Parser<'classified> {
                             DiagnosticSite {
                                 source,
                                 source_len,
+                                bundle: self.classified.source_bundle(),
                                 tokens,
                                 cursor,
                                 limits: self.limits,
@@ -702,4 +793,10 @@ fn parse_from(
         Err(Stop::Resource(failure)) => ParseOutcome::ResourceFailure(failure),
         Err(Stop::Compiler(failure)) => ParseOutcome::CompilerFailure(failure),
     }
+}
+
+/// Derives a graph segment's complete row sequence, without graph ordering.
+/// This intermediate tree is discarded after diagnostic selection.
+pub(crate) fn parse_graph_segment(classified: ClassifiedBundle, limits: ParseLimits) -> ParseOutcome {
+    parse_from(classified, limits, Production::GraphSegment)
 }
