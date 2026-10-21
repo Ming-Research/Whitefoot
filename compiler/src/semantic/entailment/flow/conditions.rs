@@ -87,7 +87,7 @@ impl Judging<'_, '_, '_> {
         }
         if let Some(relation) = &origins.comparison {
             if residual.is_none() {
-                residual = Some(self.reasoning().render_relation(relation));
+                residual = Some(self.reasoning().render_relation_of_terms(relation));
             }
             let negated = relation.negated();
             let relation = if truth { relation } else { &negated };
@@ -128,7 +128,7 @@ impl Judging<'_, '_, '_> {
             let text = match &node {
                 DerivationNode::SourceBound { relation, .. }
                 | DerivationNode::OperationFact { relation, .. } => {
-                    Some(self.reasoning().render_relation(relation))
+                    Some(self.reasoning().render_relation_of_terms(relation))
                 }
                 DerivationNode::ImplicitBound {
                     left,
@@ -137,7 +137,7 @@ impl Judging<'_, '_, '_> {
                     kind,
                 } => Some(format!(
                     "{kind:?}: {}",
-                    self.reasoning().render_relation(&Relation::Bound {
+                    self.reasoning().render_relation_of_terms(&Relation::Bound {
                         left: *left,
                         right: *right,
                         bound: *bound,
@@ -148,7 +148,7 @@ impl Judging<'_, '_, '_> {
                     right,
                     difference,
                     ..
-                } => Some(self.reasoning().render_relation(&Relation::Distinct {
+                } => Some(self.reasoning().render_relation_of_terms(&Relation::Distinct {
                     left: *left,
                     right: *right,
                     difference: *difference,
