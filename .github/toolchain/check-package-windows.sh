@@ -42,6 +42,15 @@ PYHASH
 package="$work/relocated package"
 cp "$fixtures/waiting.wf" "$work/waiting.wf"
 cp "$fixtures/stack-exhaustion.wf" "$work/stack-exhaustion.wf"
+# The README's example program, the recursive search, and a tree for it to
+# walk: two levels, the pattern in a file of each.
+wfgrep="$fixtures/../programs/wfgrep.wf"
+test -f "$wfgrep"
+cp "$wfgrep" "$work/wfgrep.wf"
+mkdir -p "$work/search-root/nested"
+cp "$fixtures/stack-exhaustion.wf" "$work/search-root/stack-exhaustion.wf"
+cp "$fixtures/stack-exhaustion.wf" "$work/search-root/nested/again.wf"
+cp "$fixtures/waiting.wf" "$work/search-root/waiting.wf"
 cat > "$work/builtin-headers.c" <<'C'
 #include <stddef.h>
 #include <stdatomic.h>
@@ -171,6 +180,13 @@ grep -F 'target triple = "x86_64-w64-windows-gnu"' "$work/out/waiting.ll"
 cexec ordinary-build "$compiler" -o 'C:\work\out\ordinary.exe' 'C:\work\waiting.wf'
 run_image ordinary-run 'C:\work\out\ordinary.exe'
 test "$code" = 0
+# The README's example, built and run from the package alone: it prints
+# PATH:LINE:TEXT for each matching line of the files under the root it is given.
+cexec wfgrep-build "$compiler" -o 'C:\work\out\wfgrep.exe' 'C:\work\wfgrep.wf'
+cexec wfgrep-run 'C:\work\out\wfgrep.exe' 'fn spine' 'C:\work\search-root'
+test "$(grep -c 'stack-exhaustion.wf:[0-9]*:fn spine(' "$logs/wfgrep-run.txt")" = 1
+test "$(grep -c 'nested.again.wf:[0-9]*:fn spine(' "$logs/wfgrep-run.txt")" = 1
+test "$(wc -l < "$logs/wfgrep-run.txt")" -eq 2
 # Stack exhaustion ends in the floor's abort and its one record only if every
 # large frame is probed into the guard, so this observes the probing method the
 # packaged clang selected: an unprobed frame would end in a host fault with no
