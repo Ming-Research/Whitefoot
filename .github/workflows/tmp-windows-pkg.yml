@@ -42,7 +42,8 @@ jobs:
       - name: Fetch locked compiler dependencies
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Format
-        run: cargo fmt --manifest-path compiler/Cargo.toml -- --check
+        working-directory: compiler
+        run: cargo fmt --all -- --check
       - name: Target, toolchain and deterministic-target tests
         run: |
           perl .github/run-check.pl quick/unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib target:: toolchain:: deterministic_target
@@ -57,7 +58,9 @@ jobs:
           submodules: true
           fetch-depth: 0
       - name: Name main as a local ref
-        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
       - name: make static
         run: make static
 

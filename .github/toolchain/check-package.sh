@@ -14,6 +14,9 @@ archive="$1"
 fixtures="$2"
 work="$3"
 mode="$4"
+# The helper scripts next to this one; resolved before the checks change
+# directory, since BASH_SOURCE may be relative.
+helpers=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 case "$mode" in linux-absent|linux-wrong-major|macos) ;; *) exit 2 ;; esac
 mkdir -p "$work/logs/traces" "$work/unrelated cwd" "$work/driver alias"
 work=$(cd "$work" && pwd -P)
@@ -283,7 +286,7 @@ for kind in objects fragments; do
       ${extra[@]+"${extra[@]}"} --report -o "$work/$kind-$temperature" "$witness"
     run "$kind-$temperature-run" "$work/$kind-$temperature"
   done
-  python3 "$(dirname "${BASH_SOURCE[0]}")/check-cache-report.py" "$logs" "$kind"
+  python3 "$helpers/check-cache-report.py" "$logs" "$kind"
  done
 
 expect_failure() {

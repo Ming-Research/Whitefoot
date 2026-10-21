@@ -146,7 +146,8 @@ restore() { # the negative tests hide one component at a time
 
 cexec bundle-version "$package_c\\bin\\clang.exe" --version
 grep -F 'clang version 22.1.8' "$logs/bundle-version.txt"
-grep -iF "InstalledDir: $package_c\\bin" "$logs/bundle-version.txt"
+# clang reports its installation directory with forward slashes.
+grep -iF "InstalledDir: ${package_c//\\//}/bin" "$logs/bundle-version.txt"
 # Match the resource ablation with a positive that disables host header
 # fallback. This tests the final archive's resources, not the input subset.
 cexec builtin-headers-control "$package_c\\bin\\clang.exe" -std=c11 -nostdlibinc \
