@@ -1,18 +1,18 @@
 # Temporary (board item enum-route-check-cost); remove before the branch is ready.
 # Re-times Firn's whole-program check on the merged head of the branch (the
 # second merge of origin/main), the one measurement not repeated after it: the
-# branch against the pre-regression main (base), a twin of base for the noise,
-# current main with the regression, and the head before the second merge.
-# Compiler CPU (user + system), five interleaved rounds, plus one work-counter
+# branch against current main with the regression (main), and a twin of main
+# for the noise. The pre-regression compiler cannot check the adapted source,
+# because main gave `Inputs` a `host_paths` field after it. Compiler CPU (user + system), five interleaved rounds, plus one work-counter
 # run per compiler. The sides and what each result shows are written in the
 # study record before the run.
 #
 # The downstream sources predate main's rule OP-5 (a conditional test whose
 # outcome the checker already knows is rejected) and a grammar change that makes
-# `held` unusable as a parameter name, so the merged compiler rejects them. The
-# adapt step applies the compiler's own mechanical fix for each rejection, one
-# at a time, with the merged compiler, so every compiler times the same
-# accepted source; the older compilers accept the adapted source too.
+# `held` unusable as a parameter name, and a full destructuring of `Inputs` must
+# now list `host_paths`, so the merged compiler rejects them. The adapt step
+# applies the compiler's own mechanical fix for each rejection, one at a time,
+# with the merged compiler, so both compilers time the same accepted source.
 name: tmp-halo-check-cost
 
 on:
@@ -35,7 +35,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
-  PREBRANCH_REVISION: 44f33c996c7f0aa1746d84ca40d08e3fdcaf4c72
   MAIN_REVISION: 0c40731d330b33e6436e6dbf4c1debd7c9340b41
   WHITEFOOT_CHECK_TIMEOUT: 1800
 
@@ -53,7 +52,6 @@ jobs:
             repo: Firn-wf
             rev: b83b67fa0d7b463dbafe5429b013efc04e39076a
             args: --graph firn/modules.wfg --entry firn --check
-            base: 7d9118eba
             rounds: 5
             main_rounds: 5
             adapt_max: 400
@@ -65,13 +63,11 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           rustup default stable
-          git worktree add --detach "$RUNNER_TEMP/base" "${{ matrix.base }}"
-          git worktree add --detach "$RUNNER_TEMP/prebranch" "$PREBRANCH_REVISION"
           git worktree add --detach "$RUNNER_TEMP/main" "$MAIN_REVISION"
           git clone --quiet "https://github.com/Ming-Research/${{ matrix.repo }}.git" "$RUNNER_TEMP/halo"
           git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "${{ matrix.rev }}"
           git -C "$RUNNER_TEMP/halo" submodule update --init --quiet
-          { printf 'base=%s\nprebranch=%s\nmain=%s\nbranch=%s\nsource=%s\n' "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/prebranch" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
+          { printf 'main=%s\nbranch=%s\nsource=%s\n' "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
       - name: Build the merged compiler
         run: |
           perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
@@ -155,6 +151,18 @@ jobs:
                   rest = rest[cut:]
               (src / path).write_text('\n'.join(lines[:i] + keep + rest))
               return None
+          def fix_match_fields(path, number, text):
+              declared = re.search(r'declared_fields: \[(.*?)\]', text)
+              if not declared or not text.startswith(': InvalidMatchFields'): return 'not a missing-field rejection'
+              names = re.findall(r'"(\w+)"', declared.group(1))
+              lines = (src / path).read_text().split('\n'); line = lines[number - 1]
+              if ') = ' not in line: return 'no closing pattern on the line'
+              close = line.index(') = '); listed = set(re.findall(r'(?:(?<=\()|(?<=, ))(\w+): ', line[:close]))
+              missing = [n for n in names if n not in listed]
+              if not missing: return 'no missing field'
+              lines[number - 1] = line[:close] + ''.join(f', {n}: unused_{n}' for n in missing) + line[close:]
+              (src / path).write_text('\n'.join(lines))
+              return None
           def rename_held():
               changed = 0
               for path in src.rglob('*'):
@@ -179,6 +187,10 @@ jobs:
                   why = fix_effect_row(m.group(1), int(m.group(2)), r.stdout[m.end():m.end() + 2500])
                   if why: end = f'cannot fix {where}: {why}'; break
                   notes.append('EFF-2 ' + where)
+              elif m.group(4) == 'GRAM-10':
+                  why = fix_match_fields(m.group(1), int(m.group(2)), r.stdout[m.end():m.end() + 400])
+                  if why: end = f'cannot fix {where}: {why}'; break
+                  notes.append('GRAM-10 ' + where)
               elif m.group(4) == 'FORM-3' and 'found: "held"' in r.stdout[m.end():m.end() + 1500] and not any(x.startswith('held') for x in notes):
                   notes.append(f'held renamed in {rename_held()} files')
               else:
@@ -194,7 +206,7 @@ jobs:
       - name: Build the other compilers
         if: steps.adapt.outputs.accepted == 'true'
         run: |
-          for tree in "$RUNNER_TEMP/base" "$RUNNER_TEMP/prebranch" "$RUNNER_TEMP/main"; do
+          for tree in "$RUNNER_TEMP/main"; do
             perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
           done
@@ -211,8 +223,8 @@ jobs:
           temp = pathlib.Path(os.environ['RUNNER_TEMP']); out = temp / 'out'
           ws = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
           module = os.environ['LABEL']; rounds = int(os.environ['ROUNDS']); main_rounds = int(os.environ['MAIN_ROUNDS'])
-          bins = {'base': temp / 'base/compiler/target/gate/whitefootc', 'twin': temp / 'base/compiler/target/gate/whitefootc', 'prebranch': temp / 'prebranch/compiler/target/gate/whitefootc',
-                  'main': temp / 'main/compiler/target/gate/whitefootc', 'branch': ws / 'compiler/target/gate/whitefootc'}
+          bins = {'main': temp / 'main/compiler/target/gate/whitefootc', 'twin': temp / 'main/compiler/target/gate/whitefootc',
+                  'branch': ws / 'compiler/target/gate/whitefootc'}
           cmd = os.environ['ARGS'].split()
           env = {k: v for k, v in os.environ.items() if k not in ('WHITEFOOT_CHECK_WORK', 'WHITEFOOT_TIME_BUDGET_RECORD')}
           tag = module.replace('::', '-').replace(' ', '-')
@@ -233,12 +245,12 @@ jobs:
                   print(rnd, w, f'rc={rc}', f'{cpu:.2f}', flush=True)
           lines = [f'## {module}: compiler CPU (user+sys), {rounds} interleaved rounds', '',
                    'Exit codes by round: ' + '; '.join(f'r{r}: ' + ' '.join(f'{w}={status[r][w]}' for w in status[r]) for r in sorted(status)), '',
-                   '| Compiler | Median CPU s | Ratio to base (median, min-max) | Ratio to prebranch (median, min-max) |', '|---|---:|---:|---:|']
+                   '| Compiler | Median CPU s | Ratio to main (median, min-max) |', '|---|---:|---:|']
           for w in order:
               rows = [p for p in paired.values() if w in p]
               if not rows: continue
-              rb = [p[w] / p['base'] for p in rows]; rp = [p[w] / p['prebranch'] for p in rows]
-              lines.append(f"| {w} | {statistics.median(p[w] for p in rows):.2f} | {statistics.median(rb):.3f} ({min(rb):.3f}-{max(rb):.3f}) | {statistics.median(rp):.3f} ({min(rp):.3f}-{max(rp):.3f}) |")
+              rb = [p[w] / p['main'] for p in rows]
+              lines.append(f"| {w} | {statistics.median(p[w] for p in rows):.2f} | {statistics.median(rb):.3f} ({min(rb):.3f}-{max(rb):.3f}) |")
           totals = {}
           for w in order:
               if w == 'twin': continue

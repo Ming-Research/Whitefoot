@@ -541,27 +541,38 @@ and a measurement counts only for the compiler that merges. Main advanced again
 by ten commits that change no file under `compiler/`, and the compiler sources
 of this head differ from the timed `da79abd12` only inside test modules, so the
 Halo figures above stand and only Firn is timed again. The question: does the
-merged head still meet the 1.03 criterion against the pre-#431 main on Firn's
-whole-program check, and does the fix still remove the #431 work from current
-main. Same method and source adaptation as the first merge's Firn run, one
-run, five interleaved rounds, compiler user+sys CPU, no check cache, then one
-work-counter run per compiler. Sides and what each result would show:
+fix still remove the #431 work from current main on Firn's whole-program check.
 
-- `base` (`7d9118eba`, pre-#431 main): the denominator of the criterion.
-- `twin`: the same `base` binary run again in each round; the median and
-  min–max of its ratio to `base` are this run's noise. A twin median that lies
-  outside the min–max of its own five rounds around 1 is not noise, and the run
-  is repeated.
-- `main` (`0c40731d3`, current main with the #431 regression): the branch's
-  ratio to it isolates the fix from main's unrelated speedups. Branch above
-  main on median CPU, or at or above main's join pairs and closure cells,
-  would reject the claim that the fix still pays on Firn.
-- `prebranch` (`44f33c996`, the head before the second merge): branch against
-  it shows what the second merge changed; equal counters mean the merge left
-  this fix's work unchanged, a different count is attributed by the counter
-  that moved.
-- `branch` (the merged head): median ratio to `base` at most 1.03 meets the
-  criterion; above 1.03 rejects it.
+The first attempt planned the first merge's five sides (`base` = pre-#431 main
+`7d9118eba`, a twin of it, current main, the head before the second merge, the
+merged head) and stopped in the source adaptation, before any timing
+([run 39677484147](https://github.com/Ming-Research/Whitefoot/actions/runs/39677484147),
+52 fixes then GRAM-10 `InvalidMatchFields`): Firn destructures `Inputs` with
+every field listed, and main gave `Inputs` a `host_paths` field after the
+pre-#431 compiler and after the head before the second merge. No source that
+the merged compiler accepts is accepted by those two compilers, so a
+branch/base ratio on one source is not measurable at this head: the earlier
+branch/base figures (0.978 before the first merge, 0.678 on the first merge)
+stay the evidence for that ratio and are not repeated. The adapt step now also
+appends the missing field with an unused binding, and the sides are the two
+compilers that accept the adapted source.
+
+Same method as the first merge's Firn run otherwise: five interleaved rounds,
+compiler user+sys CPU, no check cache, then one work-counter run per compiler.
+Branch is now current main plus this change alone, so the comparison with
+main is a single-change one. Sides and what each result shows:
+
+- `main` (`0c40731d3`, current main with the regression): the denominator.
+- `twin`: the same `main` binary run again in each round; the median and
+  min–max of its ratio to `main` are this run's noise. A twin median outside
+  the min–max of its own five rounds around 1 is not noise, and the run is
+  repeated.
+- `branch` (the merged head): a median ratio to `main` whose five-round
+  min–max lies wholly below 1 and the twin's does not shows the fix still pays
+  on Firn; a range that straddles 1 or lies above it shows it does not, and the
+  join pairs and closure cells (one counted run each) say where the work
+  differs: counts at or above main's reject the claim that the fix still
+  removes #431's work from Firn.
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
