@@ -483,7 +483,7 @@ A value that is no place read — a literal, a call result, a construction — c
 
 [TYPE-11.S4]
 - S4 (hand-offs).
-Each hand-off below requires every debt that may be at or below a handed place to be restored [TYPE-11.S5] in the state before the hand-off's own events, and removes those debts:
+Each hand-off below requires every debt that may be at or below a handed place to be restored, or satisfied at that place [TYPE-11.S5], in the state before the hand-off's own events, and removes the restored ones:
 
 | hand-off | handed places | rule and site of a failure |
 |---|---|---|
@@ -494,12 +494,12 @@ Each hand-off below requires every debt that may be at or below a handed place t
 | an operand of a struct or enum-variant construction, `Some`, `Ok` and `Err` included | the operand's place | TYPE-11 at the `call` |
 | the right-hand side of a [SET-1] commit or an [OP-12] update whose target is not a complete own local binding | the right-hand side's place | TYPE-11 at the `set_stmt` |
 
-The failure names the anchor, the invariant, the first conclusion not established and each breaking event, and a widened debt names the identity it lost, with a repair offering to restore the relation before the hand-off or to replace the value whole [DIAG-1].
+The failure names the anchor, at the handed position for a debt at `[?]` that the handed place fixes, the invariant, the first conclusion not established and each breaking event, and a widened debt names the identity it lost, with a repair offering to restore the relation before the hand-off or, where that removes the debt, to replace the value whole [DIAG-1].
 A call's results are sealed, and so is each referent it received at a reference parameter when it returns: the callee handed them off at its exits.
 
 [TYPE-11.S5]
 - S5 (restoration).
-A debt is restored at a point when the instance of its invariant at its anchor is proved there by [MSR-4]'s disposition of an [FN-8] goal, written `invariant` and `use` certificates available as everywhere [INV-1, PRF-1]. Each binder datum of the instance is, for a debt that records a reference r and a projection p, the [ENT-2] term `r^` followed by p forms: each breaking event wrote through r to the member r then named, which r still names, and wrote no other member. For any other debt it is the term the anchor's place forms, or, for an anchor that carries a reference's current target identity [REF-1], the term that reference forms. A debt at an anchor with the unknown position `[?]`, and a cover, form no instance and are never restored.
+A debt is restored at a point when the instance of its invariant at its anchor is proved there by [MSR-4]'s disposition of an [FN-8] goal, written `invariant` and `use` certificates available as everywhere [INV-1, PRF-1]. Each binder datum of the instance is, for a debt that records a reference r and a projection p, the [ENT-2] term `r^` followed by p forms: each breaking event wrote through r to the member r then named, which r still names, and wrote no other member. For any other debt it is the term the anchor's place forms, or, for an anchor that carries a reference's current target identity [REF-1], the term that reference forms. A debt at an anchor with the unknown position `[?]`, and a cover, form no instance and are never restored. A debt at an anchor with `[?]` is satisfied at a handed place p when p has a captured offset at each step where the anchor has `[?]`, the anchor's other steps within p's length are p's, and the instance of its invariant at the anchor with those offsets is proved as above: the value p hands on is valid, and the debt stays in the set for the positions p does not hand on. Satisfaction is attempted only at a hand-off, for each debt it requires that is not restored.
 Restoration is attempted at exactly these points: at each hand-off, for the debts it requires; at each kill batch of [TYPE-11.S3]'s widening row; on each loop backedge and each `continue` [FN-1], for every debt of that edge; and on each incoming edge of a merge [TYPE-11.S6]. A restored debt leaves the set.
 
 [TYPE-11.S6]

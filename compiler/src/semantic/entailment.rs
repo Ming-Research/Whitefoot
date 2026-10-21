@@ -1371,6 +1371,12 @@ pub(crate) struct SealingFailure {
     pub(crate) events: Vec<NodePath>,
     /// Whether a widening lost the identity the debt was restorable through.
     pub(crate) widened: bool,
+    /// Whether the debt began at an atomic block's entry, with no write.
+    pub(crate) entered: bool,
+    /// Whether the goal is the instance at the handed position of a debt at
+    /// the unknown position [TYPE-11.S5], which no whole replacement of
+    /// that position removes.
+    pub(crate) member: bool,
 }
 
 /// [TYPE-11.S3, TYPE-11.S4] what a call does with the values its arguments

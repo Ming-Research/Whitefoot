@@ -3,8 +3,9 @@
 //! Beside its fact state, the walk carries the debts of the values the body
 //! holds: the writes that may have broken an affine type invariant of a value
 //! since the hand-off that delivered it to the body. A hand-off requires the
-//! debts at or below what it hands on to be restored, and a read of a sealed
-//! place establishes the instance the delivering hand-off guaranteed.
+//! debts at or below what it hands on to be restored, or one at an unknown
+//! position to hold at the position handed on, and a read of a sealed place
+//! establishes the instance the delivering hand-off guaranteed.
 
 use super::super::super::model::{CheckedAffineInvariant, CheckedEffects, FunctionId};
 use super::super::super::places::places_overlap;
@@ -42,6 +43,9 @@ pub(super) struct Debt {
     /// The reference every breaking event wrote through, while no kill
     /// batch has rebound or ended it [TYPE-11.S5].
     through: Option<Through>,
+    /// Whether every breaking event is an atomic block's entry
+    /// [TYPE-11.S2] rather than a write, which the diagnostic's repair reads.
+    entered: bool,
 }
 
 /// [TYPE-11.S5] the reference a debt's breaking events all wrote through,
@@ -95,6 +99,7 @@ impl Debts {
                 }
             }
             existing.widened |= debt.widened;
+            existing.entered &= debt.entered;
             if existing.through != debt.through {
                 existing.through = None;
             }
@@ -244,14 +249,49 @@ fn carried_by(place: &ResolvedPlace, binding: BindingId) -> Option<usize> {
         .position(|step| matches!(step, PlaceStep::Descendant(target) if target.holder == binding))
 }
 
-/// Whether `place` has the unknown position `[?]` [TYPE-11.S2].
-fn has_unknown_offset(place: &ResolvedPlace) -> bool {
+/// Whether `step` has the unknown position `[?]` [TYPE-11.S2].
+fn unknown_step(step: &PlaceStep) -> bool {
     let unknown = |value: &CapturedValue| value.capture == CaptureId::Unknown;
-    place.path.iter().any(|step| match step {
+    match step {
         PlaceStep::Index(value) | PlaceStep::Page(value) => unknown(value),
         PlaceStep::Range(range) => unknown(&range.start) || unknown(&range.end),
         _ => false,
-    })
+    }
+}
+
+/// Whether `place` has the unknown position `[?]` [TYPE-11.S2].
+fn has_unknown_offset(place: &ResolvedPlace) -> bool {
+    place.path.iter().any(unknown_step)
+}
+
+/// [TYPE-11.S5] the anchor at which `debt`, at the unknown position, is
+/// satisfied at the handed `place`: its anchor with each `[?]` taking the
+/// captured offset the place has at that step, every other step of the
+/// place's equal to the anchor's. None for a cover, and when some `[?]`
+/// lies where the place has no captured offset.
+fn handed_member(debt: &Debt, place: &ResolvedPlace) -> Option<ResolvedPlace> {
+    if debt.invariant.is_none()
+        || debt.anchor.root != place.root
+        || cover_step(&debt.anchor).is_some()
+        || debt.anchor.path.len() < place.path.len()
+    {
+        return None;
+    }
+    let known = |value: &CapturedValue| value.capture != CaptureId::Unknown;
+    let mut member = debt.anchor.clone();
+    for (step, handed) in member.path.iter_mut().zip(&place.path) {
+        let fixed = match (&*step, handed) {
+            (PlaceStep::Index(value), PlaceStep::Index(offset))
+            | (PlaceStep::Page(value), PlaceStep::Page(offset)) => !known(value) && known(offset),
+            _ => false,
+        };
+        if fixed {
+            *step = handed.clone();
+        } else if *step != *handed {
+            return None;
+        }
+    }
+    (!has_unknown_offset(&member)).then_some(member)
 }
 
 /// [TYPE-11.S3] `debt` after a kill batch wrote or ended `binding` while the
@@ -580,6 +620,7 @@ impl Input<'_, '_> {
                                 steps: written.path[referent..depth].to_vec(),
                             },
                         ),
+                        entered: false,
                     });
                 }
             }
@@ -605,6 +646,7 @@ impl Input<'_, '_> {
                 events: vec![source.clone()],
                 widened: false,
                 through: None,
+                entered: false,
             });
         }
     }
@@ -888,13 +930,19 @@ impl Input<'_, '_> {
             .collect()
     }
 
-    /// The anchor as a residual renders it.
+    /// The anchor as a residual renders it; an anchor at the unknown
+    /// position, which forms no term, is named by the place that position
+    /// lies in.
     fn render_anchor(&self, anchor: &ResolvedPlace) -> String {
-        self.sealed_prefix_types(anchor)
+        let mut named = anchor.clone();
+        if let Some(at) = named.path.iter().position(unknown_step) {
+            named.path.truncate(at);
+        }
+        self.sealed_prefix_types(&named)
             .last()
             .copied()
             .flatten()
-            .and_then(|ty| self.goal_place_datum(anchor, ty))
+            .and_then(|ty| self.goal_place_datum(&named, ty))
             .map(|image| self.render_concrete_goal(&image))
             .unwrap_or_else(|| match anchor.root {
                 PlaceRoot::Binding(binding) => self
@@ -926,6 +974,7 @@ impl Input<'_, '_> {
                 events: vec![source.clone()],
                 widened: false,
                 through: None,
+                entered: true,
             });
             return;
         }
@@ -937,6 +986,7 @@ impl Input<'_, '_> {
                     events: vec![source.clone()],
                     widened: false,
                     through: None,
+                    entered: true,
                 });
             }
         }
@@ -1006,9 +1056,29 @@ impl Reasoning<'_, '_, '_> {
     /// [TYPE-11.S5] whether `debt` is restored in `state`: its restoring
     /// instance is proved by [MSR-4]'s disposition of an [FN-8] goal.
     fn sealed_debt_restored(&mut self, debt: &Debt, state: &ProofFlowState) -> bool {
-        let Some(goal) = self.input.restoration_instance(debt) else {
-            return false;
-        };
+        self.input
+            .restoration_instance(debt)
+            .is_some_and(|goal| self.instance_proved(goal, state))
+    }
+
+    /// [TYPE-11.S5] whether `debt`, at the unknown position, is satisfied at
+    /// the handed `place`: the instance at the member the place fixes is
+    /// proved, so the handed value is valid.
+    fn debt_satisfied_at(
+        &mut self,
+        debt: &Debt,
+        place: &ResolvedPlace,
+        state: &ProofFlowState,
+    ) -> bool {
+        handed_member(debt, place)
+            .zip(debt.invariant)
+            .and_then(|(member, index)| self.input.sealed_instance(&member, index))
+            .is_some_and(|goal| self.instance_proved(goal, state))
+    }
+
+    /// Whether `goal` is proved in `state` by [MSR-4]'s disposition of an
+    /// [FN-8] goal.
+    fn instance_proved(&mut self, goal: GoalExpression, state: &ProofFlowState) -> bool {
         let (disposition, _, _) = self.call_goal_disposition(
             &ConcreteGoal::new(goal),
             ProofContext::new(&state.facts, &state.affine),
@@ -1035,8 +1105,10 @@ impl Reasoning<'_, '_, '_> {
 impl Judging<'_, '_, '_> {
     /// [TYPE-11.S4] one hand-off of `places`: each debt that may be at or
     /// below one of them is offered for restoration in the state before the
-    /// hand-off's own events and leaves the set. A debt left unrestored is a
-    /// failure of `rule` at `site`; returns whether there was none.
+    /// hand-off's own events and leaves the set when restored; one at the
+    /// unknown position that each such place satisfies stays [TYPE-11.S5]. A
+    /// debt neither restored nor satisfied is a failure of `rule` at `site`;
+    /// returns whether there was none.
     pub(super) fn seal_hand_off(
         &mut self,
         state: &mut ProofFlowState,
@@ -1053,7 +1125,23 @@ impl Judging<'_, '_, '_> {
                 .iter()
                 .any(|place| may_be_at_or_below(&separations, debt, place))
         });
-        let Some(first) = unrestored.first() else {
+        let mut failed = Vec::new();
+        for debt in unrestored {
+            let handed: Vec<&ResolvedPlace> = places
+                .iter()
+                .filter(|place| may_be_at_or_below(&separations, &debt, place))
+                .collect();
+            let satisfied = has_unknown_offset(&debt.anchor)
+                && handed
+                    .iter()
+                    .all(|place| self.reasoning().debt_satisfied_at(&debt, place, state));
+            if satisfied {
+                state.debts.add(debt);
+            } else {
+                failed.push((debt, handed.first().map(|place| (*place).clone())));
+            }
+        }
+        let Some((first, handed)) = failed.first() else {
             return true;
         };
         let ty = self
@@ -1070,8 +1158,26 @@ impl Judging<'_, '_, '_> {
                 .or_else(|| invariants.first())
                 .map(|invariant| invariant.clause.clone())
         });
-        let goal = self.input.restoration_instance(first);
-        let anchor = self.input.render_anchor(&first.anchor);
+        // A debt at the unknown position that the handed place fixes names
+        // the instance there, which is what the hand-off owes.
+        let member = handed
+            .as_ref()
+            .filter(|_| has_unknown_offset(&first.anchor))
+            .and_then(|place| handed_member(first, place))
+            .and_then(|member| {
+                let goal = self.input.sealed_instance(&member, first.invariant?)?;
+                Some((member, goal))
+            });
+        let (anchor, goal, widened, member) = match member {
+            Some((member, goal)) => (member, Some(goal), false, true),
+            None => (
+                first.anchor.clone(),
+                self.input.restoration_instance(first),
+                first.widened,
+                false,
+            ),
+        };
+        let anchor = self.input.render_anchor(&anchor);
         let rendered_goal = goal
             .as_ref()
             .map(|goal| self.input.render_concrete_goal(goal))
@@ -1084,7 +1190,9 @@ impl Judging<'_, '_, '_> {
             goal: goal.map(ConcreteGoal::new),
             rendered_goal,
             events: first.events.clone(),
-            widened: first.widened,
+            widened,
+            entered: first.entered,
+            member,
         });
         false
     }
@@ -1843,6 +1951,7 @@ impl Analyzer<'_, '_> {
                     events: vec![node_path.clone()],
                     widened: false,
                     through: None,
+                    entered: true,
                 });
             }
         }

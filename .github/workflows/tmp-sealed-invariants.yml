@@ -80,8 +80,12 @@ jobs:
             type11-neg-loop-reference-cover type11-pos-reference-two-targets-restored \
             type11-neg-reference-rebound-before-restored type11-neg-range-parameter-element-broken \
             type11-pos-range-parameter-element-restored type11-pos-generic-arena \
-            type11-neg-generic-arena-writer-exit type11-neg-generic-type-parameter-datum; do
-            check "$case" "tests/conformance/cases/$case.wf"
+            type11-neg-generic-arena-writer-exit type11-neg-generic-type-parameter-datum \
+            type11-pos-unknown-position-element-checked type11-neg-unknown-position-element-unchecked \
+            type11-neg-unknown-position-whole-container type11-pos-atomic-element-checked \
+            type11-neg-atomic-element-unchecked type11-pos-atomic-field-checked \
+            type11-neg-atomic-field-unchecked; do
+            compare "$case" "tests/conformance/cases/$case.wf"
           done
           probe="$RUNNER_TEMP/probe"
           mkdir -p "$probe"

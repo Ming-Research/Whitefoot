@@ -1,6 +1,7 @@
 //! [TYPE-11] a struct's type invariants: their formation, a hand-off
 //! before a broken invariant is restored, after the identity a debt was
-//! restorable through changed, or with no relation naming its anchor, a
+//! restorable through changed, with no relation naming its anchor, or of
+//! an element whose instance is unproved beside a lost position, a
 //! construction that does not establish one, and an atomic block that
 //! leaves one unproved.
 
@@ -384,6 +385,105 @@ fn walk() -> result: u64 pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let got = walk();
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "an-element-is-handed-off-beside-a-lost-position.wf",
+        rejected: br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn handed(at: u64) -> result: u64 pure contract {
+  requires at < 4_u64;
+} {
+  let seed = Index(value: 3_u64);
+  let items = array_filled::<Index, 4>(value: seed);
+  for (j in 0_u64..4_u64) {
+    set items[j].value = 31_u64;
+  }
+  let got = lookup(index: &items[at]);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = handed(at: 1_u64);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "]: UnrestoredTypeInvariant\n",
+            "\n  mechanical_fix: `items[at].value < 16_u64` is not proved: a write at a position not known to differ from `items[at]` may have broken it, so prove it before this hand-off, such as by checking or writing the fields it relates\n",
+        ],
+        repaired: &[
+            br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn handed(at: u64) -> result: u64 pure contract {
+  requires at < 4_u64;
+} {
+  let seed = Index(value: 3_u64);
+  let items = array_filled::<Index, 4>(value: seed);
+  for (j in 0_u64..4_u64) {
+    set items[j].value = 31_u64;
+  }
+  let got = 0_u64;
+  if items[at].value < 16_u64 {
+    set got = lookup(index: &items[at]);
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = handed(at: 1_u64);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+            br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn handed(at: u64) -> result: u64 pure contract {
+  requires at < 4_u64;
+} {
+  let seed = Index(value: 3_u64);
+  let items = array_filled::<Index, 4>(value: seed);
+  for (j in 0_u64..4_u64) {
+    set items[j].value = 31_u64;
+  }
+  let slot = &items[at];
+  set slot^.value = 3_u64;
+  let got = lookup(index: slot);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = handed(at: 1_u64);
   let code = cvt.wrap::<u64, u8>(got);
   return std::process::exit_status(code: code);
 }

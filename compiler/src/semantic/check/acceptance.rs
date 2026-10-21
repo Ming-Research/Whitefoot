@@ -514,6 +514,8 @@ impl<'unit> TypeContext<'unit> {
                         .map(|_| failure.rendered_goal.as_str()),
                     &failure.anchor,
                     failure.widened,
+                    failure.entered,
+                    failure.member,
                 ),
             },
             request: None,

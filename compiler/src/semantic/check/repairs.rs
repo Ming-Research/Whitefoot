@@ -943,17 +943,39 @@ pub(super) fn constant_construction_invariant(text: &str) -> String {
 /// [TYPE-11.S4] a hand-off of `anchor`'s value while a write since the
 /// hand-off that delivered it may have broken `goal`; `None` when the debt
 /// forms no instance, as a cover or an unknown position does. `widened`
-/// says the debt lost the identity it was restorable through [TYPE-11.S3].
-pub(super) fn unrestored_type_invariant(goal: Option<&str>, anchor: &str, widened: bool) -> String {
-    match goal {
-        Some(goal) if !widened => format!(
+/// says the debt lost the identity it was restorable through [TYPE-11.S3],
+/// `entered` that it began at an atomic block's entry [TYPE-11.S2], and
+/// `member` that `goal` is the instance at the handed position of a debt at
+/// the unknown position, which replacing that position whole leaves in place
+/// [TYPE-11.S5].
+pub(super) fn unrestored_type_invariant(
+    goal: Option<&str>,
+    anchor: &str,
+    widened: bool,
+    entered: bool,
+    member: bool,
+) -> String {
+    match (goal, widened, entered) {
+        (Some(goal), false, false) if member => format!(
+            "`{goal}` is not proved: a write at a position not known to differ from `{anchor}` may have broken it, so prove it before this hand-off, such as by checking or writing the fields it relates"
+        ),
+        (Some(goal), false, true) if member => format!(
+            "`{goal}` is not proved: a value an atomic block's target owns carries no type invariant from the block's entry, so prove it before this hand-off, such as by checking the fields it relates"
+        ),
+        (Some(goal), false, false) => format!(
             "`{goal}` is not restored since a write that may have broken it: restore it before this hand-off, writing the fields it relates so the body shows it holds, or replace `{anchor}` whole with a value a construction or a call returns"
         ),
-        _ if widened => format!(
+        (Some(goal), false, true) => format!(
+            "`{goal}` is not proved: a value an atomic block's target owns carries no type invariant from the block's entry, so prove it before this hand-off, such as by checking the fields it relates, or replace `{anchor}` whole with a value a construction or a call returns"
+        ),
+        (_, true, _) => format!(
             "a write that may have broken a type invariant at or below `{anchor}` went through a position or reference that changed before the invariant was restored, so no relation names it any more: restore the invariant before that position or reference changes, or replace `{anchor}` whole with a value a construction or a call returns before this hand-off"
         ),
-        _ => format!(
+        (None, false, false) => format!(
             "a write reached `{anchor}` through a position or reference that no relation can name any more, so its type invariants cannot be restored: replace `{anchor}` whole with a value a construction or a call returns before this hand-off, or make the write through a place the body still names"
+        ),
+        (None, false, true) => format!(
+            "a value an atomic block's target owns carries no type invariant from the block's entry, and no relation names each one at or below `{anchor}`, so they cannot be proved: hand off one field or element whose invariants the body proves, or replace `{anchor}` whole with a value a construction or a call returns before this hand-off"
         ),
     }
 }

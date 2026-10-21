@@ -15,7 +15,16 @@ generated requirements before; the mentions of range invariants in T8, T13,
 result 3 and the specification table below describe the proposal. The
 cursor refinement, point 4 of the points for the owner, is in: a debt
 written through a reference that resolves to several members is restored
-over that reference's own terms while it is not rebound [TYPE-11.S5].
+over that reference's own terms while it is not rebound [TYPE-11.S5]. A
+debt at an unknown position is satisfied at a hand-off that fixes its
+position by the instance there, and stays for the other positions
+[TYPE-11.S5], so an element checked before it is handed on needs no
+restoration of a sibling whose position was lost. An atomic target
+provisionally starts every value it owns in debt [TYPE-11.S2], instead of
+sealed as the atomic-statement argument of result 1 assumes, pending the
+shared-object model; by the same rule one checked element of its state can
+be handed on. A hand-off of a whole container still needs every element
+restored, as result 2 states.
 
 The design study that preceded the ruling compared five candidates and named
 three points a soundness argument must settle before implementation:
@@ -579,10 +588,12 @@ every element an unrestored loop may have touched).
 
 **What this costs a writer.** An element broken in place must be restored
 before its index identity is lost: within the same iteration, or through a
-callee that takes the element by reference (T7). A program that breaks every
-element in one pass and repairs them in a second pass is refused at the next
-hand-off of the container, naming the write, because no finite fact states
-"every element was repaired". This is a completeness limit, not a soundness
+callee that takes the element by reference (T7). As built, one element
+handed on alone after that only needs its own instance proved there
+[TYPE-11.S5]. A program that breaks every element in one pass and repairs
+them in a second pass is refused at the next hand-off of the container,
+naming the write, because no finite fact states "every element was
+repaired". This is a completeness limit, not a soundness
 gap; a range fact over the run [RANGE-1] could discharge a `c[?]` debt in a
 later change, and the refusal reopens that question if a real program needs
 it. A direct write `set c[i].f = x;` receives no S5 post-write image today
