@@ -64,10 +64,12 @@ representation has no resumable scan. It times `hash_map_scan` calls with
 limit 64 one by one, with a callback that only counts: over 1,000,000 and
 8,000,000 uniform pairs, each call continuing the last after one untimed
 pass, and over 64, 1,024 and 65,536 pairs sharing one hash, every call
-starting at the call that holds their chain. The two uniform tables take
-about 42 MB and 335 MB, both more than the 14900K's 36 MB third-level cache,
-so the comparison between them is of per-call work, not of cache hits
-against misses.
+starting at the call that holds their chain. By their layout (24 bytes a
+slot, 8 for its chain link, 8 for a chain head; capacity 2^20 and 2^23) the
+two uniform tables take about 42 MB and 335 MB, computed, not measured, both
+more than the 14900K's 36 MB third-level cache, so the comparison between
+them is meant to be of per-call work, not of cache hits against misses; the
+smaller is only about a sixth over, and the 14900K run tests that premise.
 
 ## Criterion, set before measurement
 

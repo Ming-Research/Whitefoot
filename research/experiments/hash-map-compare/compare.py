@@ -52,9 +52,11 @@ MASK = (1 << 64) - 1
 RESOLUTION = {1000: 0.03}
 DEFAULT_RESOLUTION = 0.02
 # The hold criterion, set before measurement with the same investigation. Both
-# uniform sizes are larger than the 14900K's 36 MB third-level cache (the
-# tables take about 42 MB and 335 MB), so H1 compares per-call work, not cache
-# hits against misses.
+# uniform sizes are meant to be larger than the 14900K's 36 MB third-level
+# cache (by their layout the tables take about 42 MB and 335 MB, computed, not
+# measured; the smaller is only about a sixth over), so that H1 compares
+# per-call work, not cache hits against misses. The 14900K run tests that
+# premise.
 HOLD_SMALL, HOLD_LARGE = 1000000, 8000000
 HOLD_GROWTH_FACTOR = 2.0
 HOLD_LIMIT_NS = 20000
@@ -677,6 +679,12 @@ def self_test():
     readings = reduce_hold(hold_rows(10000, 25000, lambda m: m), sink)
     expect("hold H2 on the small size", readings["H2"], True)
     expect("hold H1 with H2 passing", readings["H1"], False)
+    # H3 takes its per-pair time from the small size's uniform calls: at 46.9 ns
+    # per pair a chain of 120 ns per pair fails, and at the large size's 93.8 it
+    # would pass.
+    readings = reduce_hold(hold_rows(3000, 6000, lambda m: m * 120), sink)
+    expect("hold H3 on the small size", {k: v for k, v in readings.items() if k.startswith("H3")},
+           {"H3-64": False, "H3-1024": False, "H3-65536": False})
     expect_invalid("hold short chain", lambda: reduce_hold(
         [dict(r, pairs=1) if r["mode"] == 2 else r for r in hold_rows(1, 1, lambda m: 1)], sink))
     sink.close()
