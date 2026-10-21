@@ -314,8 +314,8 @@ def reduce_timed(rows, slow, out, floor=None):
               f"{shown_upper:>7} {shown_limit:>7}  {verdict}", file=out)
     if floor is None:
         print(file=out)
-        print("No floor given: no cell was compared with a floor, so these timed verdicts decide no", file=out)
-        print("change; the run measures the floor. Each cell's spread upper end, as a later run's floor:", file=out)
+        print("No floor given: no cell was compared with a floor, so these timed verdicts decide", file=out)
+        print("nothing; the run measures the floor. Each cell's spread upper end, as a later run's floor:", file=out)
         if any(b is None for b in bounds.values()):
             print("  none: a cell has fewer than six rounds", file=out)
         else:
