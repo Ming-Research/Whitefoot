@@ -97,7 +97,6 @@ impl CapturedPlaceTable {
         support.push(place);
         support
     }
-
 }
 
 /// The written clause (a) place, before capture, identified by its proof path.
