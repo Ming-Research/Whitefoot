@@ -10,6 +10,13 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/ownership/exchange
 
 Summary: A new decision records the relation under which `swap` tolerates equality: two equal-depth slots whose containing paths are identical step for step or differ only in index steps are the same slot or disjoint storage, so an exchange between two runtime-selected rows needs no proof that the rows are the same, instead of limiting the allowance to slots under one identical array or window. The specification states the relation the checker already applied; the checker is unchanged. Refused: tightening the checker to require one identical array or window.
+## 2026-10-13 An atomic target named only in proofs is held from statement entry
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: an atomic target that appears only in proofs takes its lock at statement entry? (Ming-Research/Whitefoot#434, head 5811a8c89)" (translated).
+
+Summary: The lock-order decision's entry-acquired groups gain the groups of targets with no executable use in the guard and block, acquired with every earlier group, because once proofs are erased such a target has no first use to acquire at and entry acquisition keeps the hold SHARE-1 requires, instead of omitting its lock; "before the guard" is reworded to "before the guard or block" without changing the choice. The checker now counts invariant and `use` mentions toward SHARE-2's naming rule.
 
 ## 2026-10-13 The compiler offers an explicit formatting request
 
