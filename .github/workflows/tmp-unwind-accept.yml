@@ -124,5 +124,5 @@ jobs:
           if failed:
               sys.exit('acceptance not met: fewer than 95% of hot-leaf samples reach resume, or too few samples')
           print('acceptance met: at least 95% of hot-leaf samples reach the waiting function in both stack-copy sizes')
-PY
+          PY
           python3 count.py
