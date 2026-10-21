@@ -61,10 +61,17 @@ runs must agree.
 
 `hold.wf` is built by the candidate compiler alone, since the base
 representation has no resumable scan. It times `hash_map_scan` calls with
-limit 64 one by one, with a callback that only counts: over 1,000 and
-1,000,000 uniform pairs, each call continuing the last after one untimed
-pass, and over 64, 1,024 and 65,536 pairs sharing one hash, every call
-starting at the call that holds their chain.
+limit 64 one by one, with a callback that only counts: over 1,000,000,
+4,000,000 and 32,000,000 uniform pairs, each call continuing the last after
+one untimed pass, and over 64, 1,024 and 65,536 pairs sharing one hash, every
+call starting at the call that holds their chain. By their layout (24 bytes a
+slot, 8 for its chain link, 8 for a chain head; capacity 2^20, 2^22 and 2^25)
+the three uniform tables take about 42 MB, 168 MB and 1.34 GB, computed, not
+measured. The 4,000,000- and 32,000,000-pair tables are far larger than the
+14900K's 36 MB third-level cache, so the comparison between them is meant to
+be of per-call work, not of cache hits against misses, and the 14900K run
+tests that premise; the 1,000,000-pair table is only about a sixth over the
+cache, so probably mostly cached there, and is read for H2 and H3 only.
 
 ## Criterion, set before measurement
 
@@ -104,10 +111,11 @@ measurement:
   second run given it; the floor is measured again when the machine, its
   settings or the toolchain change.
 - Memory: any difference in retained or peak bytes is a change.
-- Hold: H1, the p99 of a uniform call at 1,000,000 pairs is at most four
-  times its p99 at 1,000; H2, that p99 is at most 20 microseconds; H3, the
-  median call over a chain of m pairs takes at most 2m times the median
-  per-pair time of the uniform calls at 1,000,000 pairs.
+- Hold: H1, the p99 of a uniform call at 32,000,000 pairs is at most twice
+  its p99 at 4,000,000 (eightfold the pairs, so work that grows with the
+  table gives a ratio near 8); H2, the p99 at 1,000,000 pairs is at most 20
+  microseconds; H3, the median call over a chain of m pairs takes at most 2m
+  times the median per-pair time of the uniform calls at 1,000,000 pairs.
 
 Accepting a detected regression is not this instrument's decision.
 
