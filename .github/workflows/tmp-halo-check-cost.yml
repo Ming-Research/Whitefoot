@@ -1,5 +1,6 @@
 # Temporary (board item enum-route-check-cost); remove before the branch is ready.
-# Re-measures Halo's pkg::vm and pkg::test checks after origin/main was merged
+# Re-measures Halo's pkg::vm and pkg::test checks and Firn's whole-program
+# check after origin/main was merged
 # into the branch, to confirm the merge left the work unchanged: the branch
 # before the merge (e2f2bfe2f), the main revision merged, and the merge itself,
 # against the pre-regression compilers the earlier measurements used. Compiler
@@ -28,29 +29,51 @@ env:
   CARGO_INCREMENTAL: 0
   PREBRANCH_REVISION: e2f2bfe2f2046327b926c2d9104d9b6a1416effa
   MAIN_REVISION: c40acc366f2844869666869ce157bbe3ae5858eb
-  HALO_REVISION: 9de699da3261322eaa750c21f31ae290ef5e93cf
   WHITEFOOT_CHECK_TIMEOUT: 1800
 
 jobs:
   measure:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
+    name: ${{ matrix.label }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # pkg::vm: the baseline is the main revision just before the
           # regression, as the first acceptance row defines it.
-          - module: pkg::vm
+          - label: halo pkg::vm
+            repo: Halo-wf
+            rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
+            args: --graph tests/halo-vm/modules.wfg --check-module pkg::vm
             base: 7d9118eba
             rounds: 5
             main_rounds: 5
           # pkg::test: the baseline is the compiler of the earlier run; main
           # takes about ten minutes a check, so it runs once.
-          - module: pkg::test
+          - label: halo pkg::test
+            repo: Halo-wf
+            rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
+            args: --graph tests/halo-vm/modules.wfg --check-module pkg::test
             base: d837678c6905
             rounds: 3
             main_rounds: 1
+          # Firn whole program: the current main of Firn-wf, and the main of
+          # the earlier measurement in case the current one needs newer rules.
+          - label: firn now
+            repo: Firn-wf
+            rev: 97037839080693708361bfd06d6ed789ed2a4808
+            args: --graph firn/modules.wfg --entry firn --check
+            base: 7d9118eba
+            rounds: 5
+            main_rounds: 5
+          - label: firn then
+            repo: Firn-wf
+            rev: cc8de63beb272279ec7af16e1eb0f6e578ee36e1
+            args: --graph firn/modules.wfg --entry firn --check
+            base: 7d9118eba
+            rounds: 5
+            main_rounds: 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,17 +85,18 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/base" "${{ matrix.base }}"
           git worktree add --detach "$RUNNER_TEMP/prebranch" "$PREBRANCH_REVISION"
           git worktree add --detach "$RUNNER_TEMP/main" "$MAIN_REVISION"
-          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo"
-          git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "$HALO_REVISION"
+          git clone --quiet "https://github.com/Ming-Research/${{ matrix.repo }}.git" "$RUNNER_TEMP/halo"
+          git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "${{ matrix.rev }}"
           git -C "$RUNNER_TEMP/halo" submodule update --init --quiet
-          { printf 'base=%s\nprebranch=%s\nmain=%s\nbranch=%s\nhalo=%s\n' "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/prebranch" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "$HALO_REVISION"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
+          { printf 'base=%s\nprebranch=%s\nmain=%s\nbranch=%s\nhalo=%s\n' "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/prebranch" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
           for tree in "$RUNNER_TEMP/base" "$RUNNER_TEMP/prebranch" "$RUNNER_TEMP/main" "$GITHUB_WORKSPACE"; do
             perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
           done
       - name: Interleaved checks and counters
         env:
-          MODULE: ${{ matrix.module }}
+          LABEL: ${{ matrix.label }}
+          ARGS: ${{ matrix.args }}
           ROUNDS: ${{ matrix.rounds }}
           MAIN_ROUNDS: ${{ matrix.main_rounds }}
         run: |
@@ -80,12 +104,12 @@ jobs:
           import collections, csv, os, pathlib, statistics, subprocess
           temp = pathlib.Path(os.environ['RUNNER_TEMP']); out = temp / 'out'
           ws = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
-          module = os.environ['MODULE']; rounds = int(os.environ['ROUNDS']); main_rounds = int(os.environ['MAIN_ROUNDS'])
+          module = os.environ['LABEL']; rounds = int(os.environ['ROUNDS']); main_rounds = int(os.environ['MAIN_ROUNDS'])
           bins = {'base': temp / 'base/compiler/target/gate/whitefootc', 'prebranch': temp / 'prebranch/compiler/target/gate/whitefootc',
                   'main': temp / 'main/compiler/target/gate/whitefootc', 'branch': ws / 'compiler/target/gate/whitefootc'}
-          cmd = ['--graph', 'tests/halo-vm/modules.wfg', '--check-module', module]
+          cmd = os.environ['ARGS'].split()
           env = {k: v for k, v in os.environ.items() if k not in ('WHITEFOOT_CHECK_WORK', 'WHITEFOOT_TIME_BUDGET_RECORD')}
-          tag = module.replace('::', '-')
+          tag = module.replace('::', '-').replace(' ', '-')
           def run(which, label, counters=False):
               timing = out / (tag + '-' + label + '.time'); e = dict(env)
               if counters: e['WHITEFOOT_CHECK_WORK'] = str(out / (tag + '-' + which + '-work.tsv'))
@@ -111,7 +135,7 @@ jobs:
               lines.append(f"| {w} | {statistics.median(p[w] for p in rows):.2f} | {statistics.median(rb):.3f} ({min(rb):.3f}-{max(rb):.3f}) | {statistics.median(rp):.3f} ({min(rp):.3f}-{max(rp):.3f}) |")
           totals = {}
           for w in order:
-              if w == 'main' and module == 'pkg::test': continue
+              if w == 'main' and module.endswith('pkg::test'): continue
               rc, _ = run(w, 'counters-' + w, counters=True); t = collections.Counter(); print('counters', w, f'rc={rc}', flush=True)
               work = out / (tag + '-' + w + '-work.tsv')
               if work.exists():
