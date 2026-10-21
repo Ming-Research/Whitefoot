@@ -115,6 +115,15 @@ both signs only for appended records; if any is contradictory, use ordinary
 closure to select its contradiction and retained parents. Advance the checked
 prefix on a hit.
 
+An integer-match exclusion is part of the facts but decides a goal by a
+query-time rule, not by L0: a closure answers an appended comparison goal the
+exclusion decides, yet only a fresh closure materializes that sign and its
+proof as an opaque fact, which later snapshots and origin views read. So an
+appended record that an exclusion decides in either sign is treated like a
+contradictory one and recomputed; the test
+`an_appended_goal_an_exclusion_decides_recomputes_the_remembered_view` fails
+without this condition (temporary run 39510883437).
+
 An already contradictory cached state still recomputes after append, since a
 new goal could change the retained contradiction. Incomplete old trees also
 recompute: adding a previously absent child can contradict an old parent even
@@ -124,11 +133,20 @@ invalidation. The regressions distinguish these cases from a harmless append.
 ## R5: retain L0 inputs across signed-only views
 
 The affine index key retains the immutable bound, disequality and disequality
-proof stores, the term revision, ledger identity and contradiction state,
-plus the exact ordered candidate terms and value images. An origin view that
-only adds signed facts keeps those L0 stores. Their retained references force
-copy-on-write on numeric or source-proof edits, so these changes miss. This
-conservatively declines to merge independently allocated equal-content stores.
+proof stores, the integer-match exclusions, the term revision, ledger identity
+and contradiction state, plus the exact ordered candidate terms and value
+images. An origin view that only adds signed facts keeps those L0 stores and
+exclusions. Their retained references force copy-on-write on numeric or
+source-proof edits, so these changes miss. This conservatively declines to
+merge independently allocated equal-content stores.
+
+The exclusions belong in the key because an exclusion tightens closed bounds
+past an excluded endpoint (excluding 5 closes `x <= 5` to `x <= 4`) without
+touching any of those stores: two states differing only in an exclusion would
+otherwise share an index that memoized the looser bound, and the model view
+keyed on that index would inherit it. The test
+`affine_index_cache_misses_when_only_an_exclusion_differs` fails without them
+(temporary run 39510883437).
 
 The index contains pair identities and numeric bounds, not retained proof IDs.
 Every selected proof parent is obtained from the current closed state. A model
