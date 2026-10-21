@@ -206,6 +206,7 @@ impl EntailmentCallee {
 
 /// Program-level context the per-function analysis reads.
 pub(crate) struct EntailmentContext<'check> {
+    pub(crate) captured_places: &'check super::places::CapturedPlaceTable,
     /// [OP-5, FN-2] whether this analysis judges the source redundancy of its
     /// `if` conditions: a nongeneric body at its ordinary instance and a
     /// generic body at its canonical symbolic instance, never a concrete

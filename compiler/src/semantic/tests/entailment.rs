@@ -1798,7 +1798,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                                 matches!(term, TermKind::Place(place, IntegerType::U64)
                                     if *place == crate::semantic::places::ResolvedPlace::binding(binding))
                             }
-                            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) => matches!(
+                            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) | CapturedTerm::Place(_) | CapturedTerm::SupersededPlace(_) => matches!(
                                 term,
                                 TermKind::IndexCapture { capture } if *capture == captured.capture
                             ),

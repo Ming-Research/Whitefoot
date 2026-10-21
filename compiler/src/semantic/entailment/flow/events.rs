@@ -297,24 +297,53 @@ impl Input<'_, '_> {
         support: &ResolvedPlace,
         event: &KillEvent,
     ) -> bool {
-        support.path.iter().any(|step| {
-            let Some(binding) = step.measure_offset_support() else {
-                return false;
-            };
-            let read = ResolvedPlace::binding(binding);
-            match event {
+        self.offset_support(support)
+            .iter()
+            .any(|(read, holders)| match event {
                 KillEvent::Write { place: written, .. }
                 | KillEvent::EntryImageHolderWrite { place: written, .. } => {
-                    self.resolved_places_overlap(separations, &read, written)
+                    self.resolved_places_overlap(separations, read, written)
+                        || holders.iter().any(|holder| {
+                            written.root == PlaceRoot::Binding(*holder) && written.path.is_empty()
+                        })
                 }
-                KillEvent::Rebind {
-                    binding: changed, ..
+                KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
+                    read.root == PlaceRoot::Binding(*binding) || holders.contains(binding)
                 }
-                | KillEvent::Consume {
-                    binding: changed, ..
-                } => binding == *changed,
                 KillEvent::EntryImageHolderConsume { .. } => false,
+            })
+    }
+
+    /// Integer selectors read their exact field and reference-holder chain.
+    fn offset_support(&self, place: &ResolvedPlace) -> Vec<(ResolvedPlace, Vec<BindingId>)> {
+        let mut supports = Vec::new();
+        for step in &place.path {
+            let term = step
+                .measure_offset_support()
+                .map(CapturedTerm::Binding)
+                .or_else(|| step.projected_offset_support().map(CapturedTerm::Place));
+            let Some(term) = term else {
+                continue;
+            };
+            for read in self.context.captured_places.support(term) {
+                let holders = match read.root {
+                    PlaceRoot::Binding(root) if self.places.is_reference(root) => vec![root],
+                    _ => Vec::new(),
+                };
+                supports.push((read, holders));
             }
+        }
+        supports
+    }
+
+    fn scope_kills_offset_support(
+        &self,
+        place: &ResolvedPlace,
+        exited: &HashSet<BindingId>,
+    ) -> bool {
+        self.offset_support(place).iter().any(|(read, holders)| {
+            matches!(read.root, PlaceRoot::Binding(binding) if exited.contains(&binding))
+                || holders.iter().any(|holder| exited.contains(holder))
         })
     }
 
@@ -794,10 +823,16 @@ impl Vocabulary {
     /// Whether leaving the scopes of `exited` kills a fact supported by
     /// `term`: the support contains every tracked place's root binding and
     /// every holder read through, which is the spelling root here.
-    pub(super) fn scope_kills_term(&self, term: TermId, exited: &HashSet<BindingId>) -> bool {
+    pub(super) fn scope_kills_term(
+        &self,
+        input: &Input<'_, '_>,
+        term: TermId,
+        exited: &HashSet<BindingId>,
+    ) -> bool {
         match self.terms.kind(term) {
             TermKind::Sum(left, right) => {
-                self.scope_kills_term(*left, exited) || self.scope_kills_term(*right, exited)
+                self.scope_kills_term(input, *left, exited)
+                    || self.scope_kills_term(input, *right, exited)
             }
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => false,
             TermKind::TargetMeasure { .. }
@@ -816,12 +851,7 @@ impl Vocabulary {
                     PlaceRoot::Binding(binding) => exited.contains(&binding),
                     PlaceRoot::Constant(_) => false,
                 };
-                rooted
-                    || place.path.iter().any(|projection| {
-                        projection
-                            .measure_offset_support()
-                            .is_some_and(|binding| exited.contains(&binding))
-                    })
+                rooted || input.scope_kills_offset_support(place, exited)
             }
         }
     }
@@ -1064,11 +1094,7 @@ impl Reasoning<'_, '_, '_> {
             let (place, holders) = self.input.resolve_goal_support(support);
             holders.iter().any(|holder| exited.contains(holder))
                 || matches!(place.root, PlaceRoot::Binding(binding) if exited.contains(&binding))
-                || place.path.iter().any(|projection| {
-                    projection
-                        .measure_offset_support()
-                        .is_some_and(|binding| exited.contains(&binding))
-                })
+                || self.input.scope_kills_offset_support(&place, exited)
         })
     }
 
@@ -1350,6 +1376,12 @@ impl Reasoning<'_, '_, '_> {
                     IntegerType::U64,
                 ))
             }
+            (CaptureId::SpellingDetermined, CapturedTerm::Place(id)) => {
+                self.vocabulary.terms.interned(&TermKind::Place(
+                    self.input.context.captured_places.get(id),
+                    IntegerType::U64,
+                ))
+            }
             _ => self.captured_index_term(index),
         }?;
         let affine_offset = match index.capture {
@@ -1564,7 +1596,7 @@ impl Analyzer<'_, '_> {
         if exited.is_empty() {
             return;
         }
-        state.kill(|term| self.vocabulary.scope_kills_term(term, &exited));
+        state.kill(|term| self.vocabulary.scope_kills_term(&self.input, term, &exited));
         self.reasoning()
             .kill_s12_candidates_for_scope(state, &exited);
         state.kill_goals(|goal| self.reasoning().scope_kills_goal(goal, &exited));
