@@ -16,7 +16,6 @@ on:
       - 'Makefile'
       - 'design/**'
       - 'AGENTS.md'
-      - 'research/**'
       - 'docs/review-checklist.md'
 
 jobs:
