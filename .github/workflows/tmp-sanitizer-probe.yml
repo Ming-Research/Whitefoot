@@ -158,8 +158,8 @@ jobs:
           [ -n "$WHITEFOOT_CONFORMANCE_SHARD" ] || unset WHITEFOOT_CONFORMANCE_SHARD
           make -C compiler ${{ matrix.target }} SANITIZER_FILTER="${{ matrix.filter }}"
 
-  # `whitefootc --sanitize` as a reader runs it, on each host the README
-  # names: a sanitized build of a sequential and a `--par` program must exit
+  # `whitefootc --sanitize` as a reader runs it, on Linux only (CI runs no
+  # macOS jobs for now): a sanitized build of a sequential and a `--par` program must exit
   # as the ordinary build does and write no report.
   cli:
     name: whitefootc --sanitize on ${{ matrix.os }}
@@ -168,7 +168,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [ubuntu-24.04]
     steps:
       - uses: actions/checkout@v4
       - name: Install the host toolchain
