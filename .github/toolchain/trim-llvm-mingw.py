@@ -26,9 +26,10 @@ TRIPLE = "x86_64-w64-windows-gnu"
 SYSROOT = "x86_64-w64-mingw32"
 RESOURCE = "lib/clang/22"
 # The bundled DLLs that were reviewed for their licenses: LLVM's own libraries
-# are covered by the LLVM license texts the package carries, winpthreads by the
-# notice that travels in the sysroot. A new DLL in the closure fails the trim
-# until someone has read its license.
+# are covered by the license text of their LLVM project (llvm, clang, libcxx
+# and libunwind) that the package carries, winpthreads by the notice that
+# travels in the sysroot. A new DLL in the closure fails the trim until someone
+# has read its license.
 REVIEWED_BUNDLED_DLLS = {"libllvm-22.dll", "libclang-cpp.dll", "libc++.dll",
                          "libunwind.dll", "libwinpthread-1.dll"}
 # Runtime libraries a clean Windows machine does not have: a dependency on one
@@ -158,12 +159,12 @@ while queue:
         else:
             fail(path.name + " needs " + name + ", which is neither bundled nor in " + str(system_directory))
 
-# Licenses: the four LLVM components from the exact source tag (the caller
-# downloads them), the release's own top-level license, and the MinGW-w64
-# notices that travel in the sysroot.
+# Licenses: the LLVM projects whose code the package carries, from the exact
+# source tag (the caller downloads them), the release's own top-level license,
+# and the MinGW-w64 notices that travel in the sysroot.
 licenses = []
 license_sources = {}
-for component in ("llvm", "clang", "lld", "compiler-rt"):
+for component in ("llvm", "clang", "lld", "compiler-rt", "libcxx", "libunwind"):
     path = license_directory / component / "LICENSE.TXT"
     if not path.is_file():
         fail("required component license is missing: " + str(path))

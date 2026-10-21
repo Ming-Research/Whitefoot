@@ -1593,7 +1593,7 @@ fn the_bootstrap_selects_one_world_once() {
 /// refuse an offer and execute its ordinary-call fallback.
 #[test]
 fn windows_parallel_emission_requires_external_runtime_symbols() {
-    let windows = TargetLayout::for_triple("x86_64-pc-windows-msvc")
+    let windows = TargetLayout::for_triple(crate::target::WINDOWS_X86_64_TRIPLE)
         .expect("the supported Windows target must have a system row");
     let module = super::system::with_ir_layout(
         OVERLAPPING_FOLD,

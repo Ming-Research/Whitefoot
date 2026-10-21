@@ -42,7 +42,7 @@ jobs:
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Target, toolchain and deterministic-target tests
         run: |
-          perl .github/run-check.pl quick/unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- target:: toolchain:: deterministic_target
+          perl .github/run-check.pl quick/unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- target:: toolchain:: deterministic_target windows_parallel_emission_requires_external_runtime_symbols accepted_snapshot_source_has_an_explicit_target_capability_boundary union_pointer_and_one_bit_intervals_use_byte_capture aggregate_loop_frames_fit_the_selected_target_before_outlining
 
   static:
     name: Static checks
@@ -59,6 +59,11 @@ jobs:
           git branch -f main origin/main
       - name: make static
         run: make static
+      - name: Design tree counts against the fork point
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          echo "fork point: $base"
+          make design-lint DESIGN_REVIEW_BASE="$base"
 
   import-control:
     name: Import check on a dynamic build

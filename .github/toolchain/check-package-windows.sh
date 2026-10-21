@@ -93,7 +93,7 @@ for line in (root / 'SHA256SUMS').read_text().splitlines():
 actual = {path.relative_to(root).as_posix() for path in root.rglob('*')
           if path.is_file() and path != root / 'SHA256SUMS'}
 assert covered == actual, ('checksum coverage', covered ^ actual)
-for component in ('llvm', 'clang', 'lld', 'compiler-rt'):
+for component in ('llvm', 'clang', 'lld', 'compiler-rt', 'libcxx', 'libunwind'):
     text = (root / 'share/licenses' / component / 'LICENSE.TXT').read_text()
     assert 'Apache License' in text and 'LLVM Exceptions' in text, component
 for name in manifest['licenses']:

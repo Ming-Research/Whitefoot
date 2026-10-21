@@ -905,11 +905,6 @@ fn every_explicit_target_layout_pins_its_exact_abi_bytes() {
             "inline-asm",
         ),
         (
-            "x86_64-pc-windows-msvc",
-            "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
-            "__chkstk",
-        ),
-        (
             "x86_64-w64-windows-gnu",
             "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
             "___chkstk_ms",
@@ -936,6 +931,7 @@ fn explicit_target_selection_is_exact_and_fail_closed() {
         "",
         "x86_64-pc-windows-gnu",
         "x86_64-w64-mingw32",
+        "x86_64-pc-windows-msvc",
         "x86_64-pc-windows-msvc19.33.0",
         "aarch64-pc-windows-msvc",
         "x86_64-unknown-windows-msvc",

@@ -93,10 +93,10 @@ impl TargetLayout {
     ///
     /// Keeping selection explicit lets tests inspect a target which is not the
     /// machine running them. A spelling not listed here is unsupported rather
-    /// than being approximated by a nearby ABI: in particular, the Windows GNU
-    /// and MSVC records do not share a stack-probe helper or C runtime
-    /// contract, and only the exact GNU spelling clang prints for the MinGW
-    /// target, [`WINDOWS_X86_64_TRIPLE`], names the GNU record.
+    /// than being approximated by a nearby ABI: in particular, the one Windows
+    /// record is the MinGW target, named only by the exact spelling clang
+    /// prints for it, [`WINDOWS_X86_64_TRIPLE`]; the MSVC ABI has no record
+    /// because its stack-probe helper and C runtime contract differ.
     pub(crate) fn for_triple(triple: &str) -> Result<Self, TargetLayoutFailure> {
         match triple {
             "aarch64-apple-darwin" => Ok(Self {
@@ -140,18 +140,6 @@ impl TargetLayout {
                 // record names it so the frame contract is stated, not
                 // inferred.
                 stack_probe: "___chkstk_ms",
-                data_layout: "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
-                address_index_max: i64::MAX as u64,
-                allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
-            }),
-            "x86_64-pc-windows-msvc" => Ok(Self {
-                triple: "x86_64-pc-windows-msvc",
-                // The x86-64 MSVC ABI probes a large downward-growing frame
-                // through __chkstk before adjusting RSP. This is the symbol
-                // clang emits for the target, and the MSVC runtime supplies it;
-                // the GNU target's differently named helper is not compatible.
-                stack_probe: "__chkstk",
                 data_layout: "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
@@ -221,7 +209,6 @@ impl TargetLayout {
             "__chkstk_darwin" => {
                 "\"probe-stack\"=\"inline-asm\" \"stack-probe-size\"=\"4096\""
             }
-            "__chkstk" => "\"probe-stack\"=\"__chkstk\"",
             "___chkstk_ms" => "\"probe-stack\"=\"___chkstk_ms\"",
             "inline-asm" => "\"probe-stack\"=\"inline-asm\"",
             _ => unreachable!("the closed target records select a known stack probe"),
@@ -2518,7 +2505,6 @@ mod stack_probe_tests {
         for (triple, attributes) in [
             ("aarch64-unknown-linux-gnu", "\"probe-stack\"=\"inline-asm\""),
             ("x86_64-unknown-linux-gnu", "\"probe-stack\"=\"inline-asm\""),
-            ("x86_64-pc-windows-msvc", "\"probe-stack\"=\"__chkstk\""),
             ("x86_64-w64-windows-gnu", "\"probe-stack\"=\"___chkstk_ms\""),
         ] {
             let target = TargetLayout::for_triple(triple).expect("supported non-Darwin target");

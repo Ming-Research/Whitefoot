@@ -524,7 +524,8 @@ fn aggregate_loop_frames_fit_the_selected_target_before_outlining() {
 
     for target in [
         TargetLayout::host().expect("supported test target"),
-        TargetLayout::for_triple("x86_64-pc-windows-msvc").expect("supported selected target"),
+        TargetLayout::for_triple(crate::target::WINDOWS_X86_64_TRIPLE)
+            .expect("supported selected target"),
     ] {
         for (length, expected_bytes) in [(1, Some(48)), (216, Some(256)), (217, None)] {
             let source = format!(

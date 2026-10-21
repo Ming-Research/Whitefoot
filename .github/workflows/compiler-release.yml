@@ -491,7 +491,7 @@ jobs:
       - name: Trim llvm-mingw into the bundled toolchain
         run: |
           set -euo pipefail
-          bash .bundle-recipe/.github/toolchain/fetch-licenses.sh "$LLVM_TAG" "$BUNDLE_WORK/licenses"
+          bash .bundle-recipe/.github/toolchain/fetch-licenses.sh "$LLVM_TAG" "$BUNDLE_WORK/licenses" libcxx libunwind
           python .bundle-recipe/.github/toolchain/trim-llvm-mingw.py \
             "$LLVM_MINGW_ROOT" "$BUNDLE_DIR" "$ASSET" "$PUBLISHED_SHA256" "$BUNDLE_WORK/licenses"
           rm -rf "$BUNDLE_WORK/extracted"
@@ -703,7 +703,7 @@ jobs:
           toolchain_notes="whitefootc builds programs with /usr/bin/clang, and on Linux links them with ld.lld."
           if [ "$BUNDLE" = true ]; then
             again="$again -f bundle_toolchain=true"
-            toolchain_notes="These Linux x86-64, macOS arm64 and Windows x86-64 archives contain the compiler with sibling clang/lld, LLVM resources, licenses, language inputs and package checksums. Linux links with bundled ld.lld. macOS requires Apple's SDK and system linker; its bundled libLTO is used for LTO. Windows needs no Visual Studio, Windows SDK, Rust or LLVM: extract whitefootc-windows-x86_64-bundled.zip into any directory and run bin\\whitefootc.exe, which compiles for x86_64-w64-windows-gnu (MinGW headers and import libraries, the Universal C Runtime of Windows 10 or later) with the bundled clang and lld. Exact-archive package acceptance, including verified macOS host-clang isolation and a clean Windows container, passed before publication."
+            toolchain_notes="These Linux x86-64, macOS arm64 and Windows x86-64 archives contain the compiler with sibling clang/lld, LLVM resources, licenses, language inputs and package checksums. Linux links with bundled ld.lld. macOS requires Apple's SDK and system linker; its bundled libLTO is used for LTO. Windows needs no Visual Studio, Windows SDK, Rust or LLVM: extract whitefootc-windows-x86_64-bundled.zip into any directory and run bin\\whitefootc.exe, which compiles for x86_64-w64-windows-gnu (MinGW headers and import libraries, the Universal C Runtime that ships with Windows) with the bundled clang and lld. Exact-archive package acceptance, including verified macOS host-clang isolation and a clean Windows Server 2022 container (no other Windows release was checked), passed before publication."
             toolchain_notes="$toolchain_notes
           The Linux qualification test host is Ubuntu 24.04. Install its host prerequisites with:
           sudo apt-get install libc6-dev libgcc-13-dev libstdc++6 zlib1g libxml2 libicu74 liblzma5
