@@ -512,7 +512,7 @@ impl<'unit> TypeContext<'unit> {
                         .goal
                         .as_ref()
                         .map(|_| failure.rendered_goal.as_str()),
-                    &failure.anchor,
+                    &failure.replaced,
                     failure.widened,
                     failure.entered,
                     failure.member,

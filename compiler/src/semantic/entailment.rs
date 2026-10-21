@@ -1363,6 +1363,9 @@ pub(crate) struct SealingFailure {
     pub(crate) clause: Option<NodePath>,
     /// The anchor as a residual renders it.
     pub(crate) anchor: String,
+    /// The place whose whole replacement removes the debt: the anchor, or
+    /// the place its first unknown position lies in.
+    pub(crate) replaced: String,
     /// The instance not established; `None` for a cover or an anchor at the
     /// unknown position, which form none.
     pub(crate) goal: Option<ConcreteGoal>,

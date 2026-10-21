@@ -930,19 +930,13 @@ impl Input<'_, '_> {
             .collect()
     }
 
-    /// The anchor as a residual renders it; an anchor at the unknown
-    /// position, which forms no term, is named by the place that position
-    /// lies in.
+    /// The anchor as a residual renders it.
     fn render_anchor(&self, anchor: &ResolvedPlace) -> String {
-        let mut named = anchor.clone();
-        if let Some(at) = named.path.iter().position(unknown_step) {
-            named.path.truncate(at);
-        }
-        self.sealed_prefix_types(&named)
+        self.sealed_prefix_types(anchor)
             .last()
             .copied()
             .flatten()
-            .and_then(|ty| self.goal_place_datum(&named, ty))
+            .and_then(|ty| self.goal_place_datum(anchor, ty))
             .map(|image| self.render_concrete_goal(&image))
             .unwrap_or_else(|| match anchor.root {
                 PlaceRoot::Binding(binding) => self
@@ -1177,6 +1171,13 @@ impl Judging<'_, '_, '_> {
                 false,
             ),
         };
+        // A replacement removes the debt at the place an unknown position
+        // lies in [TYPE-11.S3].
+        let mut replaced = anchor.clone();
+        if let Some(at) = replaced.path.iter().position(unknown_step) {
+            replaced.path.truncate(at);
+        }
+        let replaced = self.input.render_anchor(&replaced);
         let anchor = self.input.render_anchor(&anchor);
         let rendered_goal = goal
             .as_ref()
@@ -1187,6 +1188,7 @@ impl Judging<'_, '_, '_> {
             site: site.clone(),
             clause,
             anchor,
+            replaced,
             goal: goal.map(ConcreteGoal::new),
             rendered_goal,
             events: first.events.clone(),
