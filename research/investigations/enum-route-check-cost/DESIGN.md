@@ -551,11 +551,11 @@ merged head) and stopped in the source adaptation, before any timing
 every field listed, and main gave `Inputs` a `host_paths` field after the
 pre-#431 compiler and after the head before the second merge. No source that
 the merged compiler accepts is accepted by those two compilers, so a
-branch/base ratio on one source is not measurable at this head: the earlier
-branch/base figures (0.978 before the first merge, 0.678 on the first merge)
-stay the evidence for that ratio and are not repeated. The adapt step now also
-appends the missing field with an unused binding, and the sides are the two
-compilers that accept the adapted source.
+branch/base ratio on one source is not measurable. The adapt step now also
+appends the missing field with an unused binding, and this run's sides are the
+two compilers that accept the adapted source. The ratio to pre-#431 main needs
+a base column on a source without that one binding; the baseline run recorded
+after the final-head re-measurement below adds it.
 
 Same method as the first merge's Firn run otherwise: five interleaved rounds,
 compiler user+sys CPU, no check cache, then one work-counter run per compiler.
@@ -596,13 +596,14 @@ The branch's five-round range lies wholly below 1 and the twin's straddles 1,
 so on this source the fix still removes 17.8% of main's Firn check CPU (ratio
 of medians), with 75% fewer joins, 15.4% fewer join pairs and 23.8% fewer
 closure cells. The ranges are the min and max of five paired rounds, not
-confidence intervals. Both counter columns equal those the first merge's run
-recorded (main 7,448,963 pairs and 80.6M cells; branch 6,304,847 pairs and
-61.4M cells), so the later merges of main left Firn's work unchanged on both
-sides. What this run does not show is the ratio to pre-#431 main on this
-head: that compiler cannot check the adapted source, so the figures 0.978
-(before the first merge) and 0.678 (on the first merge) remain the evidence
-for that ratio and belong to those heads.
+confidence intervals. The first merge's run recorded the same join pairs in
+both columns (main 7,448,963; branch 6,304,847) and closure cells 1,110 lower
+in both (80,598,778 and 61,389,173); intern calls differ by 1,290 and closure
+rows by 210 in both columns as well. That equal shift in both columns is the
+one more binding of the adapted source, not a change in what the fix does. This
+run has no base column, so it does not give the ratio to pre-#431 main; the
+figures 0.978 (before the first merge) and 0.678 (on the first merge) belong to
+those heads.
 
 ### Re-measurement on the final head, after the third merge of main (`643931102`)
 
@@ -611,31 +612,60 @@ Main advanced again (`7b11c52fb`) with changes under `semantic/check/`
 under `semantic/entailment/flow`, `semantic/places` or `resolution/engine`. A
 measurement counts only for the head that merges, so all three workloads are
 timed once more in one run on this head; later advances of main that leave this
-branch's head unchanged are not timed again. Method as before: five interleaved
+branch's head unchanged are not timed again. Firn's direct ratio to pre-#431
+main is measured in the baseline run that follows this one. Method as before: five interleaved
 rounds (three for `pkg::test`, main once), compiler user+sys CPU, no check
 cache, one work-counter run per compiler, sources adapted by applying the
 earlier runs' adaptation diffs and then the compiler's own mechanical fixes.
 Sides and what each result shows:
 
-- `base` (Halo only; `7d9118eba` for `pkg::vm`, `d837678c6905` for
-  `pkg::test`): the denominator of the acceptance rows. Branch/base at most
-  1.03 for `pkg::vm`, and at most 1.5 for `pkg::test`, meets them; a larger
-  median rejects them.
-- `twin`: the `base` binary run again (for Firn, which has no base, the `main`
-  binary run again); the median and min–max of its ratio are this run's noise.
-  A twin median outside the min–max of its own rounds around 1 is not noise,
-  and the run is repeated.
+- `base` (Halo only in this run; `7d9118eba` for `pkg::vm`, `d837678c6905`
+  for `pkg::test`): the denominator of the acceptance rows. Branch/base at
+  most 1.03 for `pkg::vm`, and at most 1.5 for `pkg::test`, meets them; a
+  larger median rejects them.
+- `twin`: the `base` binary run again (for Firn, which has no base column in
+  this run, the `main` binary run again); the median and min–max of its ratio
+  are this run's noise. A twin median outside the min–max of its own rounds
+  around 1 is not noise, and the run is repeated.
 - `main` (`7b11c52fb`, with the #431 regression): branch/main isolates the fix.
-  For Firn the acceptance row asks that the branch's five-round range lies
-  wholly below 1 while the twin's straddles 1; a branch range reaching 1 or
-  above rejects it.
-- `branch` (the merged head): for Firn also the work counters `join:join`,
-  `join:pairs_evaluated` and `closure:cells_sum`, compared with the branch
-  column of the first merge's run (39610827470), the one measured at 0.678 of
-  the pre-#431 compiler. Equal counts carry that ratio to this head; the
-  counts of a source with one more binding can differ by what that binding
-  adds, which the main column then shows equally; a branch column that moves
-  differently from the main column rejects the carry-over.
+  A branch range reaching 1 or above rejects the claim that the fix still
+  pays on this head.
+- `branch` (the merged head): the work counters `join:join`,
+  `join:pairs_evaluated` and `closure:cells_sum` of both compilers say where
+  the work differs from main.
+
+### Firn baseline column on the final head
+
+The acceptance row for Firn asks for the median ratio of the merged head to
+pre-#431 main (`7d9118eba`) of at most 1.03, measured in a run on the final
+head. The final-head run above timed Firn without that column, because the
+baseline compiler cannot check the adapted source (it has no `host_paths`
+field) and the column was judged unmeasurable until the acceptance returned to
+the direct criterion; the missing column could not be foreseen before the run.
+This run adds it, for Firn only, in one run on the same hosted machine type:
+five interleaved rounds, compiler user+sys CPU, no check cache, and one
+work-counter run per compiler.
+
+The baseline compiler checks a copy of the adapted source with the one
+`host_paths` binding removed; the merged compilers check the adapted source
+with it. That binding is the whole difference between the two sources.
+Columns and what each result shows:
+
+- `base`: `7d9118eba` on the source without the binding, the denominator. A
+  branch/base median of at most 1.03 meets the row; a larger median rejects
+  it.
+- `twin`: the `base` binary on the same source again; the median and min–max of
+  its ratio to `base` are this run's noise, read as before.
+- `main` (`7b11c52fb`, with the #431 regression) and `branch` (the final head),
+  both on the source with the binding: the join, join-pair and closure-cell
+  counters of the two columns show the work the fix removes. The binding's own
+  contribution is bounded by the shift between the first merge's run (source
+  without the binding) and the final-head run (with it): +1,110 closure cells,
+  +1,290 intern calls and +210 closure rows in both columns, no change in join
+  pairs, against 61.4M cells, 32.4M intern calls and 2.37M rows in the branch
+  column. The bound is on those work counters, not on CPU time; a branch/base
+  median above 1.03 by less than what the counters leave room for would still
+  be reported as above 1.03.
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
