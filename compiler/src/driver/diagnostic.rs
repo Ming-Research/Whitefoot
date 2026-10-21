@@ -931,6 +931,7 @@ impl Report for SemanticIssueKind {
             ConstArgumentOutOfRange { parameter_type, value };
             ConstRuntimeArithmeticMode { mechanical_fix };
             TypeMismatch { expected, found, mechanical_fix };
+            BorrowOfDerivedMeasure { mechanical_fix };
             UnadmittedOperandShape { expected, mechanical_fix };
             BehaviorArgumentMismatch { expected, mechanical_fix };
             UnforwardedGroupApplication { mechanical_fix };
@@ -950,6 +951,7 @@ impl Report for SemanticIssueKind {
             ReservedPseudoField { spelling, mechanical_fix };
             ReadonlyWriteTarget { spelling, mechanical_fix };
             FrozenForbiddenPart { part, mechanical_fix };
+            SharedStateHoldsOwnHandle { part, handle, mechanical_fix };
             FrozenContentConsume { mechanical_fix };
             MoveOfCopy { binding, ty, reason, mechanical_fix };
             BareAffineUse { binding, ty, reason, mechanical_fix };

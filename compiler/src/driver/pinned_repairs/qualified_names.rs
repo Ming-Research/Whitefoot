@@ -118,7 +118,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "MOD-5",
         sentences: &[
-            "\n  mechanical_fix: replace `Missing` with an accessible name declared in `std::process` for this grammar position: `ExitStatus`, `Inputs`, `MemoryMeter`, `StopKind`, `StopListener`, `StopSignals` [MOD-5]\n",
+            "\n  mechanical_fix: replace `Missing` with an accessible name declared in `std::process` for this grammar position: `ExitStatus`, `Inputs`, `MemoryMeter`, `OpenFilesLimit`, `StopKind`, `StopListener`, `StopSignals` [MOD-5]\n",
         ],
         repaired: &[
             br#"fn probe() -> result: std::process::ExitStatus pure {
