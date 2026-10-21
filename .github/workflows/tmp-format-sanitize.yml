@@ -18,10 +18,12 @@ jobs:
       - name: Prepare the Rust toolchain
         run: |
           rustup default stable
-          rustup component add rustfmt
+          rustup component add clippy rustfmt
           cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Format check
-        run: perl .github/run-check.pl tmp/format-check cargo fmt --manifest-path compiler/Cargo.toml --all -- --check
+        working-directory: compiler
+        run: perl ../.github/run-check.pl tmp/format-check cargo fmt --all -- --check
       - name: Formatting and sanitize option tests
+        working-directory: compiler
         run: |
-          perl .github/run-check.pl tmp/format-bin-tests cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc -- formatting sanitize
+          perl ../.github/run-check.pl tmp/format-bin-tests cargo test --profile gate --locked --offline --bin whitefootc -- formatting sanitize
