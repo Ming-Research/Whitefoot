@@ -12,6 +12,12 @@ Nodes: language/surface-form/measure-spelling, language/effects
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the two specification clarifications of Whitefoot#462 (the ground for refusing a measure borrow is written into MSR-1; EFF-2 states that a declared write must be exhibited by a write) and its design-tree decision?" (translated), shown at head commit 13b5d5dd9, whose background stated the new measure-spelling decision and the rejected alternative. The revision merged here differs from 13b5d5dd9 by the merge of main and the renumbering of the specification from v0.152 to v0.156, because main reached v0.155 first.
 
 Summary: Borrowing a measure with no field declaration is refused at the complete path under MSR-1 and the measure is read by value, because the observation supplies a value rather than a borrowable declared field, instead of materializing a temporary reference target. The effect-visibility decision in language/effects is reworded to cite the body's covering write as exhibiting the entry under the tabulated EFF-2; its choice is unchanged.
+## 2026-10-21 Safety claims are stated on one checked page
+
+Nodes: language/safety-claims
+
+Summary: The safety claims were spread over the README, the constitution, the specification and articles, with no place that connected each claim to the rules and cases behind it. A new node puts them on one page whose rows cite specification rules and conformance cases, with the limits quoted from the specification and the trusted base sized, and `make static` holds every citation to the specification and the manifest and the presence of each limit, because a page nothing reads drifts, which the refused rule-to-ground ledger already showed. Tagging cases in the manifest, generating the page from the manifest, leaving the page unchecked and holding the size figures to the checkout are rejected.
+
 ## 2026-10-20 Programs open host paths through an explicit authority no program can construct, and an open of an existing directory never creates one
 
 Nodes: language/system-interface/host-paths
