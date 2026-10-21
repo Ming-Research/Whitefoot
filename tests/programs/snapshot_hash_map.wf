@@ -135,7 +135,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let keys = Keys(seed: 0_u64);
   let pairs = hash_map_new::<u64, u64, ceiling>(capacity: 8_u64);
   for (key in 1_u64..6_u64) {
-    let outcome = hash_map_put::<Key, u64, ceiling>(map: &pairs, key: key, value: key +wrap 100_u64, env: &keys);
+    let value = key +wrap 100_u64;
+    let outcome = hash_map_put::<Key, u64, ceiling>(map: &pairs, key: key, value: value, env: &keys);
     match outcome {
       HashMapInserted() => {
       }
