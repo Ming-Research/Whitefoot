@@ -2,16 +2,12 @@ fn select(table: &[Slots<u8, 8>], x: &u64, y: &u64, i: u64) -> result: u8 reads(
   requires x^ < table^.len;
   requires y^ < table^.len;
 } {
-  doc "ENT-5 and REF-1: selected captures the old dereferenced selector once. Rebinding that selector preserves selected's captured row but cannot identify it with the newly selected row. The two outer guards prove each row's formation; only the final inner bound is missing.";
+  doc "ENT-5 and REF-1: selected captures the old dereferenced selector once. Rebinding that selector preserves selected's captured row but cannot identify it with the newly selected row. The two requirements prove each row's formation; only the final inner bound is missing.";
   let selector = x;
-  if selector^ < table^.len {
-    let selected = &table^[selector^];
-    set selector = y;
-    if selector^ < table^.len {
-      if i < selected^.len {
-        return table^[selector^][i];
-      }
-    }
+  let selected = &table^[selector^];
+  set selector = y;
+  if i < selected^.len {
+    return table^[selector^][i];
   }
   return 0_u8;
 }

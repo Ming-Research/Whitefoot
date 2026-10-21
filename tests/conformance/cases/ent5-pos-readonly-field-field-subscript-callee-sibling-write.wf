@@ -15,9 +15,7 @@ fn select(table: &[Slots<u8, 8>], s: &Cursor, i: u64) -> result: u8 reads(table)
   doc "ENT-5 and EFF-2: the callee's sibling-field write projects onto storage disjoint from the offset, preserving the selected row's bound.";
   if i < table^[s^.k].len {
     touch(s: s);
-    if s^.k < table^.len {
-      return table^[s^.k][i];
-    }
+    return table^[s^.k][i];
   }
   return 0_u8;
 }

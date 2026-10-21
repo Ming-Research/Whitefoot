@@ -11,9 +11,7 @@ fn select(table: &[Slots<u8, 8>], s: &Cursor, i: u64, change: Bool) -> result: u
     if change {
       set s^.other = 0_u64;
     }
-    if s^.k < table^.len {
-      return table^[s^.k][i];
-    }
+    return table^[s^.k][i];
   }
   return 0_u8;
 }

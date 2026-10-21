@@ -9,11 +9,9 @@ fn select(table: &[Slots<u8, 8>], s: &Cursor, i: u64, stop: Bool) -> result: u8 
   doc "ENT-5: a continuing sibling-field write overlaps no offset support, so the pre-loop row-length guard remains available at the ordinary loop head.";
   if i < table^[s^.k].len {
     loop {
-      if s^.k < table^.len {
-        let observed = table^[s^.k][i];
-        if stop {
-          return observed;
-        }
+      let observed = table^[s^.k][i];
+      if stop {
+        return observed;
       }
       set s^.other = 0_u64;
     }
