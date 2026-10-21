@@ -337,6 +337,18 @@ fn repeats_construct(grammar: &Grammar, node: &model::Node, targets: &[usize]) -
     )
 }
 
+/// The prefix-word position that names no atom: `SELECT_ATOMS.get` finds
+/// nothing at this index because the table never reaches it.
+const ABSENT_ATOM: u16 = u16::MAX;
+
+/// The position of `token` in the shared atom table, appended when new.
+fn intern(atoms: &mut Vec<Tok>, atom_index: &mut BTreeMap<Tok, usize>, token: Tok) -> usize {
+    *atom_index.entry(token).or_insert_with(|| {
+        atoms.push(token);
+        atoms.len() - 1
+    })
+}
+
 fn atom_text(token: Tok) -> String {
     let provenance = match token.prov {
         Some(node) => format!("Some(GrammarNodeId::new({node}))"),
@@ -516,41 +528,6 @@ fn emit(
         |row| row.clone(),
     );
 
-    // Diagnostic continuations use the actual parser task stack. These
-    // unpadded words let it concatenate nullable suffixes without importing
-    // another caller's FOLLOW set or enumerating runtime derivations.
-    let mut prefixes = Vec::new();
-    for (name, sets) in [
-        ("NODE_PREFIX_RANGES", &first.node),
-        ("TAIL_PREFIX_RANGES", &first.tail),
-    ] {
-        let mut ranges = Vec::new();
-        for set in sets {
-            ranges.push((prefixes.len(), set.len()));
-            for word in set {
-                let atoms: Vec<_> = (0..2)
-                    .map(|index| {
-                        word.get(index).map_or_else(
-                            || "None".to_string(),
-                            |token| format!("Some({})", atom_text(*token)),
-                        )
-                    })
-                    .collect();
-                prefixes.push(format!("[{}, {}]", atoms[0], atoms[1]));
-            }
-        }
-        static_table(&mut out, name, "[usize; 2]", &ranges, |(start, len)| {
-            format!("[{start}, {len}]")
-        });
-    }
-    static_table(
-        &mut out,
-        "GRAMMAR_PREFIXES",
-        "[Option<SelectAtom>; 2]",
-        &prefixes,
-        |row| row.clone(),
-    );
-
     let mut atoms: Vec<Tok> = Vec::new();
     let mut atom_index: BTreeMap<Tok, usize> = BTreeMap::new();
     let mut rows: Vec<String> = Vec::new();
@@ -561,14 +538,8 @@ fn emit(
     for (index, decision) in decisions.iter().enumerate() {
         let mut buckets: BTreeMap<Pred, Vec<usize>> = BTreeMap::new();
         for (offset, row) in decision.rows.iter().enumerate() {
-            let mut resolve = |token: Tok| -> usize {
-                *atom_index.entry(token).or_insert_with(|| {
-                    atoms.push(token);
-                    atoms.len() - 1
-                })
-            };
-            let first = resolve(row.first);
-            let second = resolve(row.second);
+            let first = intern(&mut atoms, &mut atom_index, row.first);
+            let second = intern(&mut atoms, &mut atom_index, row.second);
             rows.push(format!("SelectRow::new({}, {first}, {second})", row.arm));
             buckets
                 .entry(row.first.pred)
@@ -590,6 +561,42 @@ fn emit(
         ));
         start += decision.rows.len();
     }
+
+    // Diagnostic continuations use the actual parser task stack. These
+    // unpadded words let it concatenate nullable suffixes without importing
+    // another caller's FOLLOW set or enumerating runtime derivations. A word
+    // names its positions in the shared atom table, as a row does, and a
+    // position the word lacks is the index one past the table's end.
+    let mut prefixes: Vec<[u16; 2]> = Vec::new();
+    for (name, sets) in [
+        ("NODE_PREFIX_RANGES", &first.node),
+        ("TAIL_PREFIX_RANGES", &first.tail),
+    ] {
+        let mut ranges = Vec::new();
+        for set in sets {
+            ranges.push((prefixes.len(), set.len()));
+            for word in set {
+                let mut position = |index: usize| -> u16 {
+                    word.get(index).map_or(ABSENT_ATOM, |token| {
+                        let atom = intern(&mut atoms, &mut atom_index, *token);
+                        u16::try_from(atom).expect("atom indexes fit a prefix word")
+                    })
+                };
+                prefixes.push([position(0), position(1)]);
+            }
+        }
+        static_table(&mut out, name, "[usize; 2]", &ranges, |(start, len)| {
+            format!("[{start}, {len}]")
+        });
+    }
+    assert!(
+        atoms.len() < usize::from(ABSENT_ATOM),
+        "the atom table must leave the absent index free"
+    );
+    static_table(&mut out, "GRAMMAR_PREFIXES", "[u16; 2]", &prefixes, |word| {
+        format!("[{}, {}]", word[0], word[1])
+    });
+
     table(&mut out, "DECISIONS", "Decision", &records, |row| {
         row.clone()
     });

@@ -33,7 +33,7 @@ fn starts_segment(line: &[u8], graph: bool) -> bool {
         &[Production::Item]
     };
     productions.iter().any(|production| {
-        grammar_prefixes(production.root(), false).iter().any(|row| {
+        grammar_prefixes(production.root(), false).any(|row| {
             row[0].is_some_and(|atom| match atom.predicate() {
                 LookaheadPredicate::Terminal(TerminalPredicate::Fixed(terminal)) => {
                     word == terminal.spelling_bytes()
