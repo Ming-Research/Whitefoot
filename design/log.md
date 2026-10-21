@@ -10,6 +10,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/ownership/exchange
 
 Summary: A new decision records the relation under which `swap` tolerates equality: two equal-depth slots whose containing paths are identical step for step or differ only in index steps are the same slot or disjoint storage, so an exchange between two runtime-selected rows needs no proof that the rows are the same, instead of limiting the allowance to slots under one identical array or window. The specification states the relation the checker already applied; the checker is unchanged. Refused: tightening the checker to require one identical array or window.
+
 ## 2026-10-13 Rejection text spells source constructs as the writer wrote them
 
 Nodes: compiler/rejection-payloads, compiler/diagnostic-rendering
