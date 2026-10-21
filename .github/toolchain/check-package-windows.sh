@@ -43,14 +43,15 @@ package="$work/relocated package"
 cp "$fixtures/waiting.wf" "$work/waiting.wf"
 cp "$fixtures/stack-exhaustion.wf" "$work/stack-exhaustion.wf"
 # The README's example program, the recursive search, and a tree for it to
-# walk: two levels, the pattern in a file of each.
+# walk: two levels, the pattern in a file of each. It takes a relative root, so
+# the tree sits in the directory the container commands start from.
 wfgrep="$fixtures/../programs/wfgrep.wf"
 test -f "$wfgrep"
 cp "$wfgrep" "$work/wfgrep.wf"
-mkdir -p "$work/search-root/nested"
-cp "$fixtures/stack-exhaustion.wf" "$work/search-root/stack-exhaustion.wf"
-cp "$fixtures/stack-exhaustion.wf" "$work/search-root/nested/again.wf"
-cp "$fixtures/waiting.wf" "$work/search-root/waiting.wf"
+mkdir -p "$work/unrelated cwd/search-root/nested"
+cp "$fixtures/stack-exhaustion.wf" "$work/unrelated cwd/search-root/stack-exhaustion.wf"
+cp "$fixtures/stack-exhaustion.wf" "$work/unrelated cwd/search-root/nested/again.wf"
+cp "$fixtures/waiting.wf" "$work/unrelated cwd/search-root/waiting.wf"
 cat > "$work/builtin-headers.c" <<'C'
 #include <stddef.h>
 #include <stdatomic.h>
@@ -183,7 +184,7 @@ test "$code" = 0
 # The README's example, built and run from the package alone: it prints
 # PATH:LINE:TEXT for each matching line of the files under the root it is given.
 cexec wfgrep-build "$compiler" -o 'C:\work\out\wfgrep.exe' 'C:\work\wfgrep.wf'
-cexec wfgrep-run 'C:\work\out\wfgrep.exe' 'fn spine' 'C:\work\search-root'
+cexec wfgrep-run 'C:\work\out\wfgrep.exe' 'fn spine' search-root
 test "$(grep -c 'stack-exhaustion.wf:[0-9]*:fn spine(' "$logs/wfgrep-run.txt")" = 1
 test "$(grep -c 'nested.again.wf:[0-9]*:fn spine(' "$logs/wfgrep-run.txt")" = 1
 test "$(wc -l < "$logs/wfgrep-run.txt")" -eq 2
