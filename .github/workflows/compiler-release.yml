@@ -11,8 +11,8 @@
 # that compiler-release-cleanup.yml removed. An unmerged compiler change a
 # downstream wants to try, such as a performance experiment, gets an
 # experiment release, `wf-exp-` and the commit's first 12 hex digits, of any
-# commit whose own gate run passed on both platforms (a draft push runs only
-# Linux; dispatch gate.yml on the branch to qualify its tip):
+# commit whose own gate run passed on both platforms (a draft pull request's
+# push starts no gate; dispatch gate.yml on the branch to qualify its tip):
 #
 #   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true
 #
@@ -215,7 +215,7 @@ jobs:
             echo "dry run: $commit changes workflow files, so a dispatch would refuse it"
           fi
           # A successful gate run qualifies the revision when its matrix
-          # included macOS: a draft push runs the groups on Linux only.
+          # included macOS; a run that skipped its checks has no such job.
           gate_run=
           for run in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$commit&status=success&per_page=100" --jq '.workflow_runs[].id'); do
             macos=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
