@@ -215,6 +215,125 @@ otherwise unchanged, so the 10,000-pair memory cell still regresses and goes
 to the owner with its size; iteration slower than in the first comparison,
 32-byte nodes against 24-byte slots, and still faster than linear probing.
 
+### Second comparison: the link word in the node
+
+Measured on the 14900K on 2026-10-21 with `hash-map-bench.yml`, candidate
+Ming-Research/Whitefoot@042b5074308c, base its merge base with main
+Ming-Research/Whitefoot@c40acc366f28, instrument
+Ming-Research/Whitefoot@d8d0d0f5e5d6, clang 22.1.8, timed processes pinned
+to CPU 2. The compiler source had taken more than 300 commits of main since
+the first floor, so the floor was measured again first (run 39584437837);
+the judged run is 39604313267. One cell, lookup hit at 1,000 pairs, had a
+spread above its floor and is not counted. Candidate-to-base time ratios
+with their 95% intervals:
+
+| cell | 1,000 | 10,000 | 1,000,000 |
+| --- | --- | --- | --- |
+| insert, presized | 0.75 [0.73, 0.76] | 0.45 [0.45, 0.45] | 0.48 [0.48, 0.54] |
+| insert, growing | 0.80 [0.75, 0.82] | 0.57 [0.55, 0.58] | 0.64 [0.63, 0.69] |
+| lookup hit | not counted (0.86) | 0.65 [0.64, 0.66] | 1.19 [1.18, 1.19] |
+| lookup miss | 0.69 [0.69, 0.70] | 0.45 [0.45, 0.46] | 0.79 [0.77, 0.84] |
+| remove | 1.05 [1.01, 1.08] | 0.69 [0.68, 0.70] | 1.12 [1.08, 1.15] |
+| remove then insert | 0.82 [0.81, 0.83] | 0.67 [0.67, 0.68] | 0.90 [0.90, 0.97] |
+| iterate | 0.23 [0.23, 0.23] | 0.15 [0.15, 0.15] | 0.16 [0.16, 0.17] |
+
+Retained bytes, candidate against base: 40,992 against 49,168 at 1,000
+pairs, 655,392 against 393,232 at 10,000 and 41,943,072 against 50,331,664
+at 1,000,000; peaks 45,104 against 73,760, 720,944 against 589,856 and
+46,137,392 against 75,497,504. Hold: H1 passed (p99 2,064 ns at 32,000,000
+pairs against 1,863 ns at 4,000,000), H2 passed (1,257 ns at 1,000,000) and
+the three H3 chains passed (medians 142, 1,711 and 107,707 ns against bounds
+of 1,815, 29,033 and 1,858,138 ns).
+
+Against the predictions: lookup hit and removal at 1,000,000 pairs moved
+from 1.30 and 1.20 to 1.19 and 1.12 and are still regressions, removal at
+1,000 from 1.19 to 1.05; retained bytes fell by 16 at every size and the
+10,000-pair cell still regresses by the same ratio; iteration stayed far
+faster than linear probing. Three timed cells and the 10,000-pair memory
+cell regress, so the acceptance does not pass.
+
+Diagnosis, inferred and not measured apart: a hit still reads a head word
+and then a node, two dependent reads, where linear probing reads one run of
+slots. At 1,000,000 pairs the head array is 8 MB and the nodes 32 MB, so
+both reads miss the 36 MB cache for most keys. No layout that reaches a pair
+through a separate head word avoids the second read.
+
+## Next representation: linear probing with high-bit homes
+
+The coverage argument above uses only two properties of the chains: a pair
+is found from its home, and the homes of 2^k buckets are the 2^k equal
+intervals of the mixed hash space. Linear probing has both when its slot
+count is a power of two and its home is the top bits of the mixed hash
+instead of `hash % capacity`. The pairs then stay in one array of slots,
+as on main: a hit reads one run of slots, and the slot is the 24 bytes of
+main for `u64` pairs.
+
+Coverage, deduced and to be tested by the existing scan program and Firn's
+witness. In linear probing a pair stored at slot p with home h has every
+slot from h to p, cyclically, filled or deleted, never vacant, because
+insertion took the first available slot from h and removal leaves a deleted
+mark. A call from home b with limit L walks slots from b and stops at the
+first vacant slot at or after b + L; every pair whose home lies in
+[b, b + L) is stored in that walk, so it is lent. The returned cursor is the
+start of home b + L, or zero when b + L passes the last home, in which case
+the walk continues across the wrap to the first vacant slot. Rebuilding,
+growth and shrinking move pairs but never change which hash interval a home
+covers at a given count, so the induction of the chain argument carries
+over unchanged: growth splits intervals and shrinking merges them.
+
+Which pairs a call lends: the walk can also pass pairs whose home lies
+before b (the end of the previous call's run) or at or after b + L (the
+run that crosses b + L). To lend each pair once in a pass with no change, a
+call hashes only the filled slots of the leading run, before the first
+vacant slot, and of the trailing run, at or after b + L, and skips those
+whose home lies outside [b, b + L); a pair between them has its home inside
+by the run property. Under uniform hashes at load at most three quarters
+both runs are a few slots long on average.
+
+Work per call: L slots plus the two runs. A run is bounded by the number of
+filled and deleted slots in it, so m pairs of identical hash make one run
+of m and H3 holds as for a chain; uniform hashes keep runs short, so H1 and
+H2 are expected to pass. Unlike chains, keys of different hashes whose
+homes are adjacent can merge into one long run, a primary cluster; under
+the hint semantics the owner ruled this lengthens a call as a long chain
+does, and the same H1 to H3 measure it.
+
+Capacity: the slot count is zero or a power of two, at least two, and the
+public capacity is the number of pairs the map holds before it rebuilds,
+three quarters of the slots, so `hash_map_new(capacity)` takes the least
+power-of-two slot count whose three quarters is at least the capacity.
+Growth, the deleted-mark count and the rebuild of main stay as they are,
+counted against that capacity, and the ceiling bounds the pair count, not
+the slot count. For the sizes measured this gives main's slot counts, so
+memory equals main's: the 10,000-pair cell no longer regresses and the
+1,000 and 1,000,000-pair cells no longer improve. This replaces two ruled
+rules of the capacity card: pairs move when the map rebuilds, and the
+three-quarter mark and the deleted count return.
+
+Predictions, exploratory and not acceptance: every lookup, removal and
+insertion cell no slower than main, since the walk is main's and the home
+is a multiplication and a shift where main divides; iteration no slower
+than main and slower than the chains; memory equal to main at the three
+sizes; H1 to H3 pass.
+
+Alternatives for this round:
+
+- Valkey 8.1's bucketed open addressing: buckets of one cache line holding
+  several entries and a metadata word with hash fingerprints and an
+  "ever full" bit that tells a lookup or scan to continue into the next
+  bucket. Valkey stores pointers; for inline `u64` pairs a 64-byte bucket
+  holds two pairs beside the metadata, so it adds memory over plain slots
+  and its fingerprint advantage, skipping key comparisons, matters only
+  for expensive keys.
+- Pairs inline in the chain heads, overflow in nodes, the round the design
+  card for the first comparison named: a hit on the first pair of a chain
+  reads one line, but every head slot holds a pair or nothing, so at 10,000
+  pairs the array is 16,384 heads of 32 bytes plus the overflow nodes, more
+  than main's 16,384 slots of 24 bytes, and removing a head pair moves the
+  next pair of its chain into the head.
+- Accepting the chains with the numbers above, or the stable-identifier
+  directory, the ruled fallback, whose memory is main's plus a directory.
+
 ## What the two maps already provide
 
 The ordinary [HashMap interface](../../../lib/std/collections/hash_map/module.wfm)
