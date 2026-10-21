@@ -99,7 +99,12 @@ The twin is the null control in every run. The slow control, the workflow's
 argument that repeats every fourth operation of every timed batch inside the
 interval (a lookup, a removal that finds nothing, or a put that replaces;
 for iterate, every fourth pass), from about 5% to 25% more work, so the
-repetition is the only difference between the arms; `compare.py reduce
+repetition is the only difference between the arms. The repetition is
+selected by a bit mask passed as data, all ones in every other run, so every
+run executes the same machine code: with a run-time switch, the compiler
+split each timed loop into a copy with and a copy without the repetition,
+and on a hosted runner the copy with 25% more lookups ran 11% faster at
+10,000 pairs; `compare.py reduce
 --expect-regression` fails unless every timed cell is judged a regression.
 The repeated operations' results go to a separate field, so the checks stay
 those of the workload. `compare.py self-test` exercises the interval, the

@@ -117,13 +117,10 @@ fn order(step: u64, size: u64) -> index: u64 pure contract {
   return scaled % size;
 }
 
-fn slow_turn(slow: Bool, step: u64) -> repeat: Bool pure {
-  doc "Whether the slow control repeats the operation at step: every fourth one.";
-  if slow {
-    let phase = iand(step, 3_u64);
-    return phase == 3_u64;
-  }
-  return False();
+fn slow_turn(mask: u64, step: u64) -> repeat: Bool pure {
+  doc "Whether the slow control repeats the operation at step: when every bit of mask is set in step. The slow control passes 3, every fourth step; every other run passes all ones, which no step below 2^64 - 1 matches. The mask is data, so every run executes the same loops: a run-time Bool lets the compiler split each loop into a copy with and a copy without the repetition, and the two copies differ in more than the repetition.";
+  let phase = iand(step, mask);
+  return phase == mask;
 }
 
 fn reps_for(size: u64) -> reps: u64 pure contract {
@@ -217,7 +214,7 @@ fn release_map(map: HashMap<u64, u64, ceiling>) -> result: unit pure {
   return unit;
 }
 
-fn build_sample(size: u64, capacity: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(clock) contract {
+fn build_sample(size: u64, capacity: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(clock) contract {
   requires size > 0_u64;
   requires capacity <= 1000000_u64;
 } {
@@ -232,7 +229,7 @@ fn build_sample(size: u64, capacity: u64, slow: Bool, keys: &BenchKeys, clock: &
     for (index in 0_u64..size) {
       let refused = put_one(map: &map, index: index, keys: keys);
       set check = check +wrap refused;
-      let repeat = slow_turn(slow: slow, step: index);
+      let repeat = slow_turn(mask: mask, step: index);
       if repeat {
         replace_one(map: &map, index: index, keys: keys, tally: &tally);
       }
@@ -249,7 +246,7 @@ fn build_sample(size: u64, capacity: u64, slow: Bool, keys: &BenchKeys, clock: &
   return Sample(ns: total, ops: ops, check: check, extra: extra);
 }
 
-fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(map), reads(keys), writes(clock) contract {
+fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(map), reads(keys), writes(clock) contract {
   requires size > 0_u64;
 } {
   doc "Looks up reps times the keys of offset + order(step) for every step below size, in one interval: offset zero finds every key of a map holding indexes 0..size, offset size finds none.";
@@ -261,7 +258,7 @@ fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, slow:
       let position = order(step: step, size: size);
       let index = offset +wrap position;
       lookup_one(map: map, index: index, keys: keys, tally: &tally);
-      let repeat = slow_turn(slow: slow, step: step);
+      let repeat = slow_turn(mask: mask, step: step);
       if repeat {
         relookup_one(map: map, index: index, keys: keys, tally: &tally);
       }
@@ -275,7 +272,7 @@ fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, slow:
   return Sample(ns: ns, ops: ops, check: check, extra: extra);
 }
 
-fn remove_sample(size: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(clock) contract {
+fn remove_sample(size: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(clock) contract {
   requires size > 0_u64;
 } {
   doc "Builds reps maps of size pairs outside the interval and times removing every pair of each in order(step) order; the slow control removes every fourth key a second time, which finds nothing.";
@@ -290,7 +287,7 @@ fn remove_sample(size: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> samp
       let index = order(step: step, size: size);
       let found = remove_one(map: &map, index: index, keys: keys);
       set check = check +wrap found;
-      let repeat = slow_turn(slow: slow, step: step);
+      let repeat = slow_turn(mask: mask, step: step);
       if repeat {
         let again = remove_one(map: &map, index: index, keys: keys);
         let counted = again +wrap 1_u64;
@@ -309,7 +306,7 @@ fn remove_sample(size: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> samp
   return Sample(ns: total, ops: ops, check: check, extra: extra);
 }
 
-fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(map), writes(clock) contract {
+fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(map), writes(clock) contract {
   requires size > 0_u64;
 } {
   doc "With the map holding indexes oldest..oldest + size, reps times size steps each remove the oldest pair and put the next new one, so the map keeps size pairs; the slow control puts every fourth new pair a second time, which replaces it.";
@@ -325,7 +322,7 @@ fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, slow: 
     let arriving = leaving +wrap size;
     let refused = put_one(map: map, index: arriving, keys: keys);
     set check = check +wrap refused;
-    let repeat = slow_turn(slow: slow, step: step);
+    let repeat = slow_turn(mask: mask, step: step);
     if repeat {
       replace_one(map: map, index: arriving, keys: keys, tally: &tally);
     }
@@ -338,7 +335,7 @@ fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, slow: 
   return Sample(ns: ns, ops: ops, check: check, extra: extra);
 }
 
-fn each_sample(map: &HashMap<u64, u64, ceiling>, size: u64, slow: Bool, clock: &Clock) -> sample: Sample reads(map), writes(clock) contract {
+fn each_sample(map: &HashMap<u64, u64, ceiling>, size: u64, mask: u64, clock: &Clock) -> sample: Sample reads(map), writes(clock) contract {
   requires size > 0_u64;
 } {
   doc "Visits every pair reps times in one interval, eight times the other cells' batches since a visit costs so little; the slow control makes every fourth pass run twice.";
@@ -348,7 +345,7 @@ fn each_sample(map: &HashMap<u64, u64, ceiling>, size: u64, slow: Bool, clock: &
   let started = now(clock: clock);
   for (rep in 0_u64..reps) {
     hash_map_each::<u64, u64, Tally, fn bench_visit, ceiling>(map: map, env: &tally);
-    let repeat = slow_turn(slow: slow, step: rep);
+    let repeat = slow_turn(mask: mask, step: rep);
     if repeat {
       hash_map_each::<u64, u64, Tally, fn bench_revisit, ceiling>(map: map, env: &tally);
     }
@@ -478,7 +475,7 @@ fn emit(factory: &HandleFactory, output: &OutputStream, operation: u64, size: u6
   return write_line(factory: factory, output: output, line: &line);
 }
 
-fn run_timed(operation: u64, size: u64, samples: u64, slow: Bool, clock: &Clock, factory: &HandleFactory, output: &OutputStream) -> failed: u8 writes(clock), writes(factory), writes(output) waits contract {
+fn run_timed(operation: u64, size: u64, samples: u64, mask: u64, clock: &Clock, factory: &HandleFactory, output: &OutputStream) -> failed: u8 writes(clock), writes(factory), writes(output) waits contract {
   requires size > 0_u64;
   requires size <= 1000000_u64;
 } {
@@ -501,26 +498,26 @@ fn run_timed(operation: u64, size: u64, samples: u64, slow: Bool, clock: &Clock,
   for (index in 0_u64..count) {
     let sample = Sample(ns: 0_u64, ops: 0_u64, check: 0_u64, extra: 0_u64);
     if operation == 1_u64 {
-      set sample = build_sample(size: size, capacity: size, slow: slow, keys: &keys, clock: clock);
+      set sample = build_sample(size: size, capacity: size, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 2_u64 {
-      set sample = build_sample(size: size, capacity: 0_u64, slow: slow, keys: &keys, clock: clock);
+      set sample = build_sample(size: size, capacity: 0_u64, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 3_u64 {
-      set sample = lookup_sample(map: &map, size: size, offset: 0_u64, slow: slow, keys: &keys, clock: clock);
+      set sample = lookup_sample(map: &map, size: size, offset: 0_u64, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 4_u64 {
-      set sample = lookup_sample(map: &map, size: size, offset: size, slow: slow, keys: &keys, clock: clock);
+      set sample = lookup_sample(map: &map, size: size, offset: size, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 5_u64 {
-      set sample = remove_sample(size: size, slow: slow, keys: &keys, clock: clock);
+      set sample = remove_sample(size: size, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 6_u64 {
-      set sample = churn_sample(map: &map, size: size, oldest: oldest, slow: slow, keys: &keys, clock: clock);
+      set sample = churn_sample(map: &map, size: size, oldest: oldest, mask: mask, keys: &keys, clock: clock);
       set oldest = oldest +wrap sample.ops;
     }
     if operation == 7_u64 {
-      set sample = each_sample(map: &map, size: size, slow: slow, clock: clock);
+      set sample = each_sample(map: &map, size: size, mask: mask, clock: clock);
     }
     let written = emit(factory: factory, output: output, operation: operation, size: size, index: index, sample: &sample);
     set failed = ior(failed, written);
@@ -595,14 +592,17 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   if slow_flag > 1_u64 {
     return exit_status(code: 2_u8);
   }
-  let slow = slow_flag == 1_u64;
+  let mask = 18446744073709551615_u64;
+  if slow_flag == 1_u64 {
+    set mask = 3_u64;
+  }
   if size > 0_u64 {
     if size <= 1000000_u64 {
       if operation == 8_u64 {
         let failed = run_memory(size: size, meter: &meter, factory: &factory, output: &output);
         return exit_status(code: failed);
       }
-      let failed = run_timed(operation: operation, size: size, samples: samples, slow: slow, clock: &clock, factory: &factory, output: &output);
+      let failed = run_timed(operation: operation, size: size, samples: samples, mask: mask, clock: &clock, factory: &factory, output: &output);
       return exit_status(code: failed);
     }
   }
