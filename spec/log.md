@@ -10,6 +10,12 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
+## 2026-10-20 v0.152: a condition the checker decides is redundant source
+
+Rules: changed OP-5, GRAM-6, ENT-6, MSR-4
+
+Summary: OP-5 adds a source redundancy judgment for the condition of every `if` and `value_if`, `else if` links included, queried after the condition's own evaluation and before its branch-entry facts. In a noncontradictory entering state the condition is decided True when every fact the then-block's entry would establish is already derivable (each goal origin through the Signed Goal query, the comparison origin in the closed L0 state), and False when the same holds for the else side; a decided condition is a hard error with residual `RedundantCondition` and a repair that deletes the test and its dead branch, so the deletion removes no fact a later goal could use. A generic body is judged once at the symbolic instance of its own parameters, a contradictory entering state admits the condition, leaving reachability to FN-1, and a condition with neither a goal origin nor a comparison origin, such as a user function's result, has no derivable truth and is admitted. GRAM-6 points a condition's redundancy to OP-5, ENT-6 names OP-5 as a Signed Goal consumer, and MSR-4 lists OP-5 among the numeric disposition's consumers and lets OP-5 state its own result judgment. The worked example returns the converted value as the exit status instead of testing it, because the old test is itself a decided condition; the rule text first drafted against v0.136 is renumbered to v0.152 because main reached v0.151 first. Selection ground: executable source should contain only the tests its run needs, since a decided test costs run time and tells a reader, often an agent, that an excluded case is still possible.
+
 ## 2026-10-13 v0.151: key sets and concurrent hash maps have nonempty release, and the executable release graph is defined apart from the type ownership closure
 
 Rules: changed PROV-6, STOR-3, SHARE-1

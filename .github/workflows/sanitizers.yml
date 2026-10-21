@@ -11,15 +11,19 @@
 # into three shards beside a job for the rest of the corpus target.
 #
 # These checks run on the revisions gate.yml checks, decided the same way by
-# .github/gate-scope.sh: a push to main, a push to a branch with an open pull
-# request, the opening or reopening of a pull request, and a manual run. Any
-# other push ends after the first job with every check skipped.
+# .github/gate-scope.sh: a push to main, a push to a branch with an open ready
+# pull request, the opening or reopening of a ready pull request, the event of
+# marking one ready, which skips when its head already has a successful manual
+# run of this workflow, and a manual run. Any other push, a draft pull
+# request's included, ends after the first job with every check skipped; the
+# author starts this workflow by hand once, after the review has passed
+# (AGENTS.md, "Checks").
 name: sanitizers
 
 on:
   push:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -28,9 +32,10 @@ permissions:
   pull-requests: read
 
 # As in io-hosts.yml: pushes to one branch share a group, and the opening or
-# reopening of a pull request and a manual run each have a group of their own.
+# reopening of a pull request, the event of marking one ready and a manual run
+# each have a group of their own.
 concurrency:
-  group: sanitizers-${{ github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
+  group: sanitizers-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -56,6 +61,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ ! -f .github/gate-scope.sh ]; then
+            echo "::error::.github/gate-scope.sh is missing from the checked-out head: the branch was cut from main before main gained it. Merge main into the branch and push again."
+            exit 1
+          fi
           scope=$(sh .github/gate-scope.sh)
           echo "$scope"
           echo "$scope" >> "$GITHUB_OUTPUT"

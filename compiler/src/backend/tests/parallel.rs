@@ -310,7 +310,7 @@ fn conditional_call_refusals_keep_the_branch_and_name_the_reason() {
         (
             "else if",
             "",
-            "  if go {\n    fill(v: a);\n  } else if go {\n    fill(v: a);\n  }",
+            "  let n = a^.len;\n  if go {\n    fill(v: a);\n  } else if n > 0_u64 {\n    fill(v: a);\n  }",
             None,
         ),
         (
@@ -369,16 +369,16 @@ fn conditional_call_refusals_keep_the_branch_and_name_the_reason() {
 
 #[test]
 fn conditional_call_recursion_keeps_its_offer_and_budget_family() {
-    let source = br#"fn walk(t: &[u64]) -> result: unit writes(t) {
+    let source = br#"fn walk(t: &[u64], go: Bool) -> result: unit writes(t) {
   let n = t^.len;
   if n > 1_u64 {
     let m = n / 2_u64;
     let left = &t^[0_u64..m];
     let right = &t^[m..n];
-    if m > 0_u64 {
-      walk(t: left);
+    if go {
+      walk(t: left, go: go);
     }
-    walk(t: right);
+    walk(t: right, go: go);
     return unit;
   }
   if n == 1_u64 {
@@ -390,7 +390,8 @@ fn conditional_call_recursion_keeps_its_offer_and_budget_family() {
 fn main() -> status: std::process::ExitStatus pure {
   let cells = array_filled::<u64, 4>(value: 0_u64);
   let whole = &cells[0_u64..4_u64];
-  walk(t: whole);
+  let go = True();
+  walk(t: whole, go: go);
   let first = cells[0_u64] +wrap cells[1_u64];
   let second = cells[2_u64] +wrap cells[3_u64];
   let total = first +wrap second;
@@ -2211,10 +2212,8 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 4_u8);
   }
   set first.left = 41_u64;
-  if second.left != 33_u64 {
-    return std::process::exit_status(code: 5_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let second_code = cvt::<u64, u8>(second.left);
+  return std::process::exit_status(code: second_code);
 }
 "#;
 
@@ -2244,7 +2243,7 @@ fn owned_pair_results_survive_ordinary_join_and_forced_refusal() {
     assert!(thunk.contains(&format!("store {result} %result, ptr %slot")));
     assert!(main.contains(&format!(" = call {result} @wf_make(i64 ")));
     assert!(main.contains(&format!(" = phi {result} [ ")));
-    run_owned_lane_cases(OWNED_PAIR_RESULTS, &module, 0, 1, 0, 0, 1);
+    run_owned_lane_cases(OWNED_PAIR_RESULTS, &module, 33, 1, 0, 0, 1);
 }
 
 /// Both Empty and a partial window of Box owners cross argument and result
