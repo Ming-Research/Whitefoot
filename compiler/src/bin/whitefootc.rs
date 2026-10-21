@@ -16,7 +16,7 @@ use whitefoot::{
     ModuleEntry, ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM,
     ORDINARY_VALUES_SOURCE, OverlapLowering, RESTRICTED_CHILD_COMPILE_ARGUMENTS, RecursionBudget,
     SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
-    SCHED_PRIM_HEADER, SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, SourceInput,
+    SCHED_PRIM_HEADER, SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, Sanitizer, SourceInput,
     WINDOWS_RUNTIME_HEADER, build_module_entry_for_emission, check, check_module_program,
     check_with_cache, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
     form_module_program_graph, module_verdict, prepare_toolchain, render_driver_failure,
@@ -41,7 +41,7 @@ use whitefoot::{
 };
 
 const USAGE: &str = "usage: whitefootc [--emit-llvm] [--par] [--par-call-grain auto|off] [--par-sequential-refusal] [--par-recursive-frontier auto|N|off] [--no-overlap] [--par-ledger] \
-[--stack-ledger] [--dispatch-ledger] [--lock-ledger] [--diagnostic-format text|json] [--check] [--cache DIR [--fragments module|function] | --full-lto] [--report] [-o OUTPUT] (SOURCE... | --graph modules.wfg [--entry NAME | --function pkg::module::name | --check-module pkg::module | --check-interface pkg::module | --check-modules | --render-interface pkg::module | --compare-interface pkg::module --against OTHER/modules.wfg])";
+[--stack-ledger] [--dispatch-ledger] [--lock-ledger] [--diagnostic-format text|json] [--check] [--cache DIR [--fragments module|function] | --full-lto] [--sanitize address|thread] [--report] [-o OUTPUT] (SOURCE... | --graph modules.wfg [--entry NAME | --function pkg::module::name | --check-module pkg::module | --check-interface pkg::module | --check-modules | --render-interface pkg::module | --compare-interface pkg::module --against OTHER/modules.wfg])";
 
 // The compiler walks typed source and lowering trees recursively. Windows
 // gives the process's primary thread a 1 MiB stack by default, which is small
@@ -806,6 +806,14 @@ fn finish(
             println!("{line}");
         }
     }
+    let sanitized;
+    let module = match options.sanitize {
+        Some(sanitizer) => {
+            sanitized = module.clone().sanitized(sanitizer);
+            &sanitized
+        }
+        None => module,
+    };
     if options.emit_llvm {
         if let Some(output) = &options.output {
             std::fs::write(output, module).map_err(|error| {
@@ -830,6 +838,7 @@ fn finish(
         cache,
         fragments.as_deref(),
         options.full_lto,
+        options.sanitize,
         report,
     )
     .map_err(Stop::toolchain)?;
@@ -954,6 +963,7 @@ fn compile_executable(
     cache: Option<&BuildCache>,
     fragments: Option<&[String]>,
     full_lto: bool,
+    sanitizer: Option<Sanitizer>,
     report: &mut BuildReport,
 ) -> Result<(), String> {
     whitefoot::require_executable_runner(llvm)?;
@@ -982,12 +992,12 @@ fn compile_executable(
         }
         if let Some(cache) = cache {
             return link_cached_objects(
-                cache, &directory, &staged, &compiled, llvm, output, fragments, report,
+                cache, &directory, &staged, &compiled, llvm, output, fragments, sanitizer, report,
             );
         }
         let linking = std::time::Instant::now();
         let mut command = resolved_toolchain()?.link_command();
-        unit_arguments(&mut command, &directory);
+        unit_arguments(&mut command, &directory, sanitizer);
         for relative_path in &compiled {
             let restricted = restricted_child_arguments(relative_path);
             if !restricted.is_empty() {
@@ -995,7 +1005,7 @@ fn compile_executable(
                 // sanitizers. Compile only the child closure separately.
                 let object = directory.join(relative_path).with_extension("o");
                 let mut child = resolved_toolchain()?.command();
-                unit_arguments(&mut child, &directory);
+                unit_arguments(&mut child, &directory, sanitizer);
                 child.args(HOST_OPTIMIZATION_ARGUMENTS).args(restricted);
                 if full_lto {
                     child.arg("-flto=full");
@@ -1032,8 +1042,10 @@ fn compile_executable(
     result
 }
 
-/// The arguments every compiler-owned runtime unit compiles with.
-fn unit_arguments(command: &mut Command, directory: &Path) {
+/// The arguments every compiler-owned runtime unit compiles with. A
+/// sanitizer's arguments come before any restricted child unit's, whose
+/// `-fno-sanitize=all` then keeps that closure uninstrumented.
+fn unit_arguments(command: &mut Command, directory: &Path, sanitizer: Option<Sanitizer>) {
     // The compiler-owned C units are written to C11 and the repository gate
     // compiles them as `-std=c11`. Naming the dialect here too is what makes
     // that gate a statement about this link: clang's default is a GNU
@@ -1045,7 +1057,13 @@ fn unit_arguments(command: &mut Command, directory: &Path) {
         .arg("-I")
         .arg(directory)
         .arg("-I")
-        .arg(directory.join("completion"));
+        .arg(directory.join("completion"))
+        .args(sanitizer_arguments(sanitizer));
+}
+
+/// The arguments a sanitized build adds to every compile and its link.
+fn sanitizer_arguments(sanitizer: Option<Sanitizer>) -> &'static [&'static str] {
+    sanitizer.map_or(&[], Sanitizer::clang_arguments)
 }
 
 /// Options required by the restricted child closure, in every build mode.
@@ -1087,9 +1105,11 @@ fn link_cached_objects(
     llvm: &str,
     output: &Path,
     fragments: Option<&[String]>,
+    sanitizer: Option<Sanitizer>,
     report: &mut BuildReport,
 ) -> Result<(), String> {
     let host = host_compiler_identity()?;
+    let sanitizing = sanitizer_arguments(sanitizer);
     let thin: &[&str] = if fragments.is_some() {
         &["-flto=thin"]
     } else {
@@ -1111,7 +1131,7 @@ fn link_cached_objects(
         material.extend_from_slice(&runtime);
         material.extend_from_slice(
             format!(
-                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?} {:?}\n", restricted_child_arguments(relative_path)
+                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?} {sanitizing:?} {:?}\n", restricted_child_arguments(relative_path)
             )
             .as_bytes(),
         );
@@ -1120,9 +1140,10 @@ fn link_cached_objects(
             if unit_language(relative_path) == "ir" {
                 command
                     .args(TARGET_COMPILE_ARGUMENTS)
+                    .args(sanitizing)
                     .arg("-Wno-override-module");
             } else {
-                unit_arguments(command, directory);
+                unit_arguments(command, directory, sanitizer);
             }
             command
                 .args(thin)
@@ -1147,14 +1168,17 @@ fn link_cached_objects(
         material.extend_from_slice(&host);
         material.extend_from_slice(&content_digest(text.as_bytes()));
         material.extend_from_slice(
-            format!("\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?}\n")
-                .as_bytes(),
+            format!(
+                "\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?} {sanitizing:?}\n"
+            )
+            .as_bytes(),
         );
         let object = directory.join(format!("program-{index}.o"));
         let reused = cached_object(cache, "program-objects", &material, &object, |command| {
             command
                 .current_dir(directory)
                 .args(TARGET_COMPILE_ARGUMENTS)
+                .args(sanitizing)
                 .args(thin)
                 .arg("-Wno-override-module")
                 .arg("-x")
@@ -1177,6 +1201,7 @@ fn link_cached_objects(
     let mut command = resolved_toolchain()?.link_command();
     command
         .args(TARGET_COMPILE_ARGUMENTS)
+        .args(sanitizing)
         .args(HOST_OPTIMIZATION_ARGUMENTS)
         .args(&objects)
         .args(TARGET_LINK_LIBRARIES);
@@ -1504,6 +1529,9 @@ struct Options {
     /// modular compilation design measures fragment builds against, not a
     /// build mode for programs.
     full_lto: bool,
+    /// Instrument the linked program and its runtime with a host sanitizer
+    /// (compiler/sanitized-builds).
+    sanitize: Option<Sanitizer>,
     /// Print this module's resolved public interface [MOD-6, MOD-8].
     render_interface: Option<String>,
     /// The other revision's graph the rendered interface is compared with.
@@ -1535,6 +1563,7 @@ impl Options {
         let mut cache = None;
         let mut fragments = None;
         let mut full_lto = false;
+        let mut sanitize = None;
         let mut render_interface = None;
         let mut against = None;
         let mut diagnostic_format = false;
@@ -1602,6 +1631,16 @@ impl Options {
                 }
                 "--no-overlap" => no_overlap = true,
                 "--full-lto" => full_lto = true,
+                "--sanitize" => {
+                    cursor += 1;
+                    let sanitizer = arguments
+                        .get(cursor)
+                        .and_then(|word| Sanitizer::parse(word))
+                        .ok_or_else(|| "--sanitize requires address or thread".to_owned())?;
+                    if sanitize.replace(sanitizer).is_some() {
+                        return Err("--sanitize may be written only once".to_owned());
+                    }
+                }
                 "--check" => check = true,
                 "--check-modules" => check_modules = true,
                 "--report" => report = true,
@@ -1749,6 +1788,21 @@ impl Options {
         {
             return Err("--full-lto links one optimization region over a whole build: write no --cache, --emit-llvm or check".to_owned());
         }
+        if sanitize.is_some()
+            && (stack_ledger
+                || check
+                || check_modules
+                || check_module.is_some()
+                || render_interface.is_some())
+        {
+            return Err(
+                "--sanitize instruments a linked program: write no --stack-ledger or check"
+                    .to_owned(),
+            );
+        }
+        if cfg!(target_os = "windows") && sanitize.is_some() {
+            return Err("--sanitize builds on Linux and macOS hosts only".to_owned());
+        }
         if graph.is_none() && (entry.is_some() || function.is_some()) {
             return Err(
                 "--entry and --function select a module program's entry: write --graph".to_owned(),
@@ -1837,6 +1891,7 @@ impl Options {
             cache,
             fragments,
             full_lto,
+            sanitize,
             render_interface,
             against,
             output,
@@ -1957,6 +2012,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             &mut super::BuildReport::default(),
         )
         .expect_err("runner check happens before native construction");
@@ -2705,6 +2761,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn sanitize_names_one_sanitizer_for_a_linked_program() {
+        assert!(super::USAGE.contains("--sanitize address|thread"));
+        for (word, sanitizer) in [
+            ("address", super::Sanitizer::Address),
+            ("thread", super::Sanitizer::Thread),
+        ] {
+            let options = parse(&["--sanitize", word, "value.wf"]);
+            #[cfg(not(target_os = "windows"))]
+            assert_eq!(
+                options.expect("a sanitized build").sanitize,
+                Some(sanitizer)
+            );
+            #[cfg(target_os = "windows")]
+            assert!(options.is_err(), "{sanitizer:?} is refused on Windows");
+        }
+        for refused in [
+            &["--sanitize", "memory", "value.wf"][..],
+            &["value.wf", "--sanitize"][..],
+            &["--sanitize", "address", "--sanitize", "thread", "value.wf"][..],
+            &["--sanitize", "address", "--check", "value.wf"][..],
+            &["--sanitize", "thread", "--stack-ledger", "value.wf"][..],
+        ] {
+            assert!(parse(refused).is_err(), "{refused:?} must be refused");
+        }
+    }
+
     /// [MOD-8] a cached build links the emitted module's native fragments
     /// with ThinLTO: the executable runs as the program says, a warm build
     /// compiles no object, and an edit to one function's body recompiles
@@ -2742,6 +2825,7 @@ mod tests {
                     Some(&cache),
                     Some(&fragments),
                     false,
+                    None,
                     &mut report,
                 )
                 .expect("the fragments link");
@@ -2791,6 +2875,7 @@ mod tests {
             None,
             None,
             true,
+            None,
             &mut super::BuildReport::default(),
         )
         .expect("the full-LTO link");

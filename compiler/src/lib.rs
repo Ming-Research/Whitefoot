@@ -158,7 +158,7 @@ pub use backend::{
     SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, WINDOWS_RUNTIME_HEADER, WINDOWS_RUNTIME_SOURCE,
     module_requires_heap_runtime, module_requires_parallel_runtime, stack_ledger,
 };
-pub use backend::{FragmentGranularity, LlvmModule, SplitFailure, split_module};
+pub use backend::{FragmentGranularity, LlvmModule, Sanitizer, SplitFailure, split_module};
 pub use driver::*;
 pub use graph::*;
 /// Where one call into an actualized recursive component starts counting the

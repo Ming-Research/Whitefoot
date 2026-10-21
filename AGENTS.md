@@ -82,7 +82,10 @@ Whitefoot's extra merge preconditions:
 2. Each specification change is recorded in `spec/log.md`.
 3. When the merge changes the concurrent map's runtime or its test,
    `map-sanitizers.yml` passes on the exact revision being merged.
-4. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
+4. `sanitizers.yml` passes on the exact revision being merged: no sanitizer
+   reports on an accepted program
+   ([sanitized builds](design/compiler/sanitized-builds.md)).
+5. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
    pull request states what changed and its selection ground, answered
    against the exact revision being merged. The specification's bytes are its
    identity, the released archives are immutable, and git is the history.
@@ -224,9 +227,10 @@ build time apart from test and program execution.
   so the result for what a change touches comes from a temporary workflow
   (below). Once the review has passed, delete the `tmp-` file, merge `main`
   into the branch, push, and start the full check on that head by hand:
-  `gh workflow run gate.yml --ref <branch>` and `gh workflow run io-hosts.yml
-  --ref <branch>`. Green on that head is the last run: marking the pull
-  request ready then starts no second gate or I/O run for it. A red is fixed
+  `gh workflow run gate.yml --ref <branch>`, `gh workflow run io-hosts.yml
+  --ref <branch>` and `gh workflow run sanitizers.yml --ref <branch>`. Green
+  on that head is the last run: marking the pull request ready then starts no
+  second gate, I/O or sanitizer run for it. A red is fixed
   with a temporary workflow again, and the full check is started again once
   the review has seen the fix; a push after a green needs its own run.
   `compute-regression.yml` runs when the pull request is marked ready and
@@ -234,6 +238,10 @@ build time apart from test and program execution.
 - `make design-ready` runs in `design-readiness.yml`.
 - CI only: `io-hosts.yml`, on the same revisions as the gate (Linux io_uring
   and Windows IOCP),
+  `sanitizers.yml` on the same revisions as the gate (the corpus target's
+  programs and running conformance cases, the cases also with `--par`, under
+  AddressSanitizer with UndefinedBehaviorSanitizer and under ThreadSanitizer;
+  any report fails it),
   `map-sanitizers.yml` on every push to a PR that changes the concurrent
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
