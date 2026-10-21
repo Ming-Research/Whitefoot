@@ -18,6 +18,8 @@ mod clause_requirements;
 mod collisions_and_killed_facts;
 mod common_syntax;
 mod content_moves;
+mod derived_measures;
+mod effect_row_categories;
 mod enum_routed_ensures;
 mod entry_formers;
 mod floats;

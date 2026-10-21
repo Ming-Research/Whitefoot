@@ -1,4 +1,4 @@
-# Kernel Specification v0.159
+# Kernel Specification v0.160
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -620,7 +620,7 @@ The places a value can take are a binding, a value parameter, a result, a field,
 [TYPE-10] Window parts are names, not declarations.
 `len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes, the key set and the entries [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and they change only through the operations of [OP-10] and [OP-13], the key-set insertions of [SHARE-1], and a replacement [SET-1] or exchange [OP-11] of the whole value that holds them.
 `next`, `last`, `filled`, and `free` are the four window parts [WIN-2]; they are vocabulary for effect rows and the overlap judgment only, selected by the window type of the place they follow, and they occupy no declaration domain and reserve nothing: a binding, a field of another type, or a label may carry the same spelling.
-`pages` following a `Paged` place is a selector, not a field, and occupies no declaration domain. It is admitted only in the measure `p.pages.len` [MSR-1], as the base of a page subscript whose use [OP-4] judges, and in a page-selection effect path [EFF-1]; a different use is a hard error citing TYPE-10 at the complete `place`.
+`pages` following a `Paged` place is a selector, not a field, and occupies no declaration domain. Its measure use `p.pages.len` is judged by [MSR-1], its use as the base of a page subscript by [OP-4], and its page-selection effect path by [EFF-1]; a different use is a hard error citing TYPE-10 at the complete `place`.
 A read of a window part, a `borrow_expr` over one, and a write of one are each a hard error citing TYPE-10 at the complete `place`, with a repair [DIAG-1].
 
 [TYPE-7] Reading through a reference is explicit.
@@ -1116,7 +1116,7 @@ Conversion that ROUNDS into a float format is `cvt.nearest` [OP-6], whose suffix
 [OP-4] An element subscript `p[i]` selects one element place of an indexable base: the base place `p`'s final selection must be `Array<T, N>`, `Array<T>`, `Slots<T, N>`, `Slots<T>`, `Ring<T, N>`, `Ring<T>`, `Paged<T>`, an `Entries<V>`, whose element type T is `Option<V>` [SHARE-2], a `ConcurrentHashMap<V>`, whose element type T is `Option<V>` [SHARE-2], or a run of T elements selected below or named by a range reference `&[T]` or `&Run<T>` [TYPE-9, REF-4], a runtime-capacity form, an `Entries`, a `ConcurrentHashMap` and a range reference alike being reached through `^` [TYPE-7], and the subscripted place's selected type is exactly that element type T — derived from the base place's already-fixed type [TYPE-5] — written where the binding carries an annotation, derived at a body `let` — by the same declared-type selection that types a field suffix, never from expected type or cross-statement inference; an element subscript whose base's final selection is not one of those indexable types or runs is a hard error citing OP-4 at that subscript's `psuffix` node.
 A `const` item whose type is `Array<T, N>` is indexable on the same terms [CONST-2].
 A segment subscript `s[i]` of a `Segments<T>` place and a page subscript `p.pages[k]` of a `Paged<T>` place select runs of T elements [REF-4], with bases `s` and `p.pages` respectively; the following bounds and offset judgments apply to each run selector as to an element subscript.
-A run-selecting place is admitted exactly as the complete place of its [REF-4] borrow, as the base of its `len` measure read [MSR-1], or as the base of a further element subscript, whose element place is an ordinary element place [OP-4]; every other use of the run-selecting place is a hard error citing [OP-4] at the run selector's `psuffix`.
+A run-selecting place is admitted exactly as the complete place of its [REF-4] borrow, as the base of its `len` measure [MSR-1], or as the base of a further element subscript, whose element place is an ordinary element place [OP-4]; every other use of the run-selecting place is a hard error citing [OP-4] at the run selector's `psuffix`.
 A run-selecting place denotes exactly the [REF-1] place its borrow resolves to, with the same effect attribution [EFF-2], overlap judgment [OWN-7] and parallel permission [PAR-1, PAR-2].
 A `ConcurrentHashMap<V>` subscript's offset atom has type `&[u8]` or is a place of type `KeySet`, admitted as the complete place of a `borrow_expr` alone; [SHARE-2] defines both selections. A `ConcurrentHashMap` subscript carries no obligation and reads or writes with no runtime check in every build mode, since a map holds an entry under every key [SHARE-1]. An offset of another type, and a `KeySet` offset outside a `borrow_expr`, are each a hard error citing OP-4 at the offset `atom`, with a repair [DIAG-1].
 A subscript of every base but a `ConcurrentHashMap` carries the bounds obligation `i < p.len` [ENT-6], and `i` is a logical offset whose storage slot [WIN-1] fixes, so the obligation is against `p.len` for every indexable base and never against `p.cap`.
@@ -1654,13 +1654,29 @@ One row states each access once. An entry is covered by another entry of the row
 [EFF-2] A concrete function declaration exhibits the union of its resolved body accesses and calls.
 The body contribution is syntactic over the complete function body. Erased definitions and contracts [FN-8, FN-9], proofs, and the compiler-owned captures, comparison and update of a counted loop contribute nothing. Contract-read separation at a call is governed by [EFF-5].
 Every source occurrence contributes even in an FN-8 uninhabited instance. No path condition, constant evaluation, proof, optimizer result, or backend reachability narrows the conservative structural normal-control graph [FN-1].
-An allocation or a release contributes no path [STOR-8].
+
+Body operations contribute the following access categories; target, operand, offset and endpoint evaluations contribute through their own operations, and the following paragraphs attribute and project the resulting paths.
+
+| body operation | exhibited access categories |
+|---|---|
+| Reading a value from a place [TYPE-7, OP-15] | Read of the selected storage |
+| Dispatching a `match` on an enum place [OWN-13] | Read of the scrutinee storage, which holds the enum tag |
+| Beginning an atomic statement [SHARE-2] | Read of each target's handle place and of the storage its index atom names |
+| Committing a value assignment to a target live at statement entry [SET-1] | Write of the target storage |
+| Reinitializing a complete binding dead at statement entry [SET-1] | No target-storage access contribution |
+| Read-modify-write `set p = p +wrap x;` [SET-1, OP-2] | Read of p through the right-hand side and write of p at commit |
+| Atomic in-place update [OP-12] | The effect [OP-12] states |
+| Handing over a value by `move`, `give`, `return`, or structural repacking [GIVE-1, FN-1, OWN-1] | Contributions of value evaluation; the transfer adds no read or write |
+| Forming a reference to a path or range [REF-1, REF-4] | Contributions of offset and endpoint evaluation; naming the referent adds no read or write of its contents |
+| Forming a page reference `&p.pages[k]` [REF-4] | The read specified by [REF-4] |
+| Calling a callable [EFF-1, EFF-5] | Read for each projected `reads` entry and write for each projected `writes` entry |
+| Allocation or release [STOR-8] | No access contribution |
 
 At a function-kind parameter or named member call [FN-5], the instantiated formal's written row is the authoritative callable boundary. Its paths undergo the same resolved-place projection and ENT-5 support kill as ordinary callee paths; the selected actual's narrower covered row never substitutes for that boundary. Generic spelling checking retains formal-rooted contributions under the written bounds, including an owned parameter that later has a copy instance. Concrete rechecking verifies the fixed containing declaration's row under the same formal interface and independently checks each actual against FN-4 and its own row. No adapter, dummy read, widened runtime access, or law supplies an exhibited path.
 
 Every read or write is attributed after ordinary place resolution [REF-1]. A reference parameter's effect path names the path the reference names rather than the reference variable. An access rooted in a formal contributes the most precise static path EFF-1 admits for that resolved place; a dynamic element or range maps to its nearest statically nameable enclosing path.
 An unknown descendant cover maps to its nearest statically nameable containing prefix by the same rule; no wildcard is written in an effect row. Substitution retains the actual's captured target and the declared finite suffix for [OWN-7], rather than treating the actual as equal to its anchor.
-Moving, returning, or structurally repacking an owner contributes no read or write merely by transferring it. After transfer into a local binding or aggregate field, subsequent accesses are attributed to that destination's resolved storage. A whole-place replacement changes the value at that place without changing the place's effect root. No effect root follows an owned value through moves, results, or replacements.
+After transfer into a local binding or aggregate field, subsequent accesses are attributed to that destination's resolved storage. A whole-place replacement changes the value at that place without changing the place's effect root. No effect root follows an owned value through moves, results, or replacements.
 A const root and `immutable-const` contribute no read effect. An access rooted only in local storage contributes no enclosing formal-rooted effect, including through a local reference; the checked access and its ordinary footprint remain.
 A write is admitted only where ordinary ownership already admits it [SET-1]. An effect path grants no permission.
 
@@ -1668,8 +1684,14 @@ At a call, each declared effect path selects its root formal's actual argument a
 The actuals' call data are captured after argument evaluation and before the call. Each projected write applies [ENT-5]'s support-survival classification, then CALL-6 instantiates entry terms from that call datum and exit terms from the actual's resolved return place. This substitution does not inspect the callee body and retains no owned-result or exclusive-referent ancestry.
 Framing an action out of an enclosing row removes no checked action or ordinary effect footprint. Optimization is governed by EFF-3 and the source's value, ownership and control semantics.
 
-A SET-1 commit contributes a write. SET-1's reinitialization of a complete binding already dead at statement entry keeps its no-previous-owner exception. Target and right-hand-side evaluation contribute ordinarily.
-A declared entry is exhibited when the body accesses storage at or below its path. Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
+A declared entry is exhibited by an access at or below its path whose category is admitted by this table:
+
+| declared entry | exhibited access categories |
+|---|---|
+| `writes(path)` | Write |
+| `reads(path)` | Read or write |
+
+Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
 A PRE-1 or PRE-2 function signature is the ordinary declared boundary; its supplied definition must satisfy the same boundary [SCOPE-3, PRE-1, PRE-2]. No source body is fabricated for it and no alternate effect rule applies to its calls.
 
 [EFF-3] A call whose row is `pure`, whose boundary is decision-cell-free [SHARE-3], which is not a waiting call [WAIT-1], and which allocates nothing licenses deduplication and reordering with equal arguments.
@@ -3699,6 +3721,8 @@ The subscript admission is what makes `table[i].len` a term, so a storage whose 
 Its subscripts and their offsets are those [ENT-2] clause (b) admits.
 
 For an admitted measure place P of type `Paged<T>`, `P.pages.len` is additionally a u64 measure term with value `ceil(P.len / B)`, the number of pages holding initialized elements, using [OP-13]'s B and mathematical arithmetic. It is zero for an empty window and counts no page that holds only free slots. Its support is [MSR-2], and it adds no term relating an element index to a page index.
+
+A `borrow_expr` whose complete `place` selects a measure with no field declaration — the `len` of `&[T]` or `&Run<T>`, the `len` of a run-selecting place [OP-4], or a `Paged` page count — is a hard error citing MSR-1 at that complete `place`, with a repair [DIAG-1], and the measure is read by value [OP-15].
 
 The table classifies the prelude's readonly measure fields and reference lengths by what each denotes and whether it is *exact* or *bounded*; the page count is the derived measure defined above.
 The rule is that the table exists, gives every measured type a row, and gives every cell exactly one of *exact*, *bounded*, or *absent*.

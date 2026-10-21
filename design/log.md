@@ -11,6 +11,14 @@ Nodes: language/system-interface, language/system-interface/clocks, language/sys
 
 Summary: Four decisions are added or widened. `process_id: Option<u64>` is an ordinary `Inputs` field, because the identifier is fixed for the run like the driver count and a target without processes needs a total answer (refused: a nullary pure function, a read through the memory meter or the stop signals, a bare `u64` with zero for missing). `local_offset_seconds` reads the wall clock, with the offset bounded to less than a day by two postconditions on `Some` and `None` otherwise, because the zone rule is host state that changes between reads and the bound lets a caller add it with no overflow check (refused: a nullary function and the Windows zone API, which ignores `TZ`). The open-files limit is read and raised through the handle factory, because a raise changes the factory's credit budget and must be ordered with acquisitions through it, and a request above the soft limit, the hard limit included, goes to the host, which refuses what it will not set. `HandleFactory` joins the self-changing host handles that an atomic statement's guard cannot reach, because another process can change the limit with no write that wakes a guard (refused: keeping factories readable in guards and waking on a raise). Evidence is the conformance and corpus cases that compare the identifier with the child's, the offset with the C library at fixed instants in several zones, and the limit under `ulimit`.
 
+## 2026-10-21 Borrowing a measure with no field declaration is refused under MSR-1
+
+Nodes: language/surface-form/measure-spelling, language/effects
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the two specification clarifications of Whitefoot#462 (the ground for refusing a measure borrow is written into MSR-1; EFF-2 states that a declared write must be exhibited by a write) and its design-tree decision?" (translated), shown at head commit 13b5d5dd9, whose background stated the new measure-spelling decision and the rejected alternative. The revision merged here differs from 13b5d5dd9 by the merge of main and the renumbering of the specification from v0.152 to v0.159, because main reached v0.158 first.
+
+Summary: Borrowing a measure with no field declaration is refused at the complete path under MSR-1 and the measure is read by value, because the observation supplies a value rather than a borrowable declared field, instead of materializing a temporary reference target. The effect-visibility decision in language/effects is reworded to cite the body's covering write as exhibiting the entry under the tabulated EFF-2; its choice is unchanged.
+
 ## 2026-10-21 The specification's soundness is evidenced by a Lean proof over an executable model checked in the same work
 
 Nodes: language/soundness-proof
