@@ -3217,8 +3217,8 @@ fn derive_syntax(
     Ok(parsed)
 }
 
-/// Runs the syntax stages up to finalization, the point where the canonical
-/// unit's audit and the formatting request's rendering part ways.
+/// Finalizes a complete derivation, the point where the canonical unit's
+/// audit and the formatting request's rendering part ways.
 fn finalize_syntax(
     parsed: crate::ParsedBundle,
     limits: CompilerLimits,
@@ -3541,10 +3541,10 @@ fn lower_selected(
 #[cfg(test)]
 mod formatting_tests {
     use super::{
-        CompilationFailureKind, CompilationStage, CompilerLimits, FormatGrammar, canonical_format,
-        check,
+        CompilationFailureKind, CompilationStage, CompilerLimits, DiagnosticFormat, FormatGrammar,
+        canonical_format, canonical_syntax, check, derive_syntax,
     };
-    use crate::SourceInput;
+    use crate::{SourceBundle, SourceInput};
 
     #[test]
     fn formatting_grammar_is_independent_of_logical_and_display_paths() {
@@ -3627,6 +3627,52 @@ mod formatting_tests {
             assert_eq!(formatted.kind(), checked.kind());
             assert_eq!(formatted.rule_id(), checked.rule_id());
             assert_eq!(formatted.to_string(), checked.to_string());
+        }
+    }
+
+    /// Formatting derives through the segment admission checking uses. A
+    /// declaration keyword at the start of a line that is inside a declaration,
+    /// and two independent bad declarations, are rejected only by that
+    /// admission: the whole token sequence derives in the first case and stops
+    /// at one defect in the second. Both requests must report what the
+    /// front end reports for the same bundle.
+    #[test]
+    fn formatting_reports_the_segment_rejections_checking_reports() {
+        let limits = CompilerLimits::default();
+        let split = [SourceInput::new(
+            "split.wf",
+            b"public\nfn f() -> r: unit pure {\n  return unit;\n}\n",
+        )];
+        let two = [
+            SourceInput::new("first.wf", b"fn first() -> r: unit {\n  return unit;\n}\n"),
+            SourceInput::new(
+                "second.wf",
+                b"fn second() -> r: unit pure {\n  // bad\n}\n",
+            ),
+        ];
+        let row = [SourceInput::new("split.wfg", b"pkg: [\nother\n];\n")];
+        for (inputs, grammar, diagnostics) in [
+            (&split[..], FormatGrammar::Program, None),
+            (&two[..], FormatGrammar::Program, Some(2)),
+            (&row[..], FormatGrammar::Graph, None),
+        ] {
+            let graph = grammar == FormatGrammar::Graph;
+            let bundle = SourceBundle::with_limits(inputs, limits.source).expect("bundle");
+            if diagnostics.is_none() {
+                derive_syntax(&bundle, limits, graph, false)
+                    .expect("the complete token sequence derives");
+            }
+            let checked = canonical_syntax(&bundle, limits, graph)
+                .expect_err("independent segment failures precede canonical rendering");
+            let formatted = canonical_format(inputs, grammar, limits)
+                .expect_err("formatting needs every segment to derive");
+            assert_eq!(
+                formatted.render(DiagnosticFormat::Json),
+                checked.render(DiagnosticFormat::Json)
+            );
+            if let Some(count) = diagnostics {
+                assert_eq!(formatted.diagnostics().count(), count);
+            }
         }
     }
 
