@@ -10,13 +10,11 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
-## 2026-10-13 v0.154: a call forgets only the paths its effect row writes
+## 2026-10-21 v0.154: a call forgets every projection that overlaps a path its effect row writes
 
 Rules: changed RANGE-2
 
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the one-sentence specification change and the two range-judgment design decisions in #466 (head 2f5f1d0)?" (translated), after choosing option A the same day on the direction card "when a callee's effect row writes only one field of an argument (such as `writes(row.g)`), does the call forget the per-element facts on that field, or on the whole argument element?" (translated): forget only the written path. The amendment was written as v0.150 and renumbered to v0.151 because main reached v0.150 first, to v0.152 because main reached v0.151 first, and to v0.154 because main reached v0.153 first.
-
-Summary: RANGE-2's call sentence said a call forgets every location the callee's row writes through a reference argument, one element where the argument names one element; "location" was read as a whole versioned storage, so a call writing `row.g` forgot the range facts on `row.f` of the same element. It now forgets each path the callee's row writes after substituting the reference argument's path [EFF-5], and every path below it, within that element where the argument names one element. Selection ground: effect rows, ordinary facts killed by calls and the range judgment's direct assignments already distinguish paths, so the call was the one coarser place; the written path is still forgotten, so no fact survives a write that could change it.
+Summary: RANGE-2's call sentence said a call forgets every location the callee's row writes through a reference argument, one element where the argument names one element; "location" was read as a whole versioned storage, so a call writing `row.g` forgot the range facts on `row.f` of the same element. It now forgets each projection that overlaps a path the callee's row writes after substituting the reference argument's path [EFF-5], under the overlap relation of [OWN-7] and the window parts of [WIN-2], within that element where the argument names one element. Selection ground: effect rows, the ordinary facts a call deletes and the range judgment's direct assignments already distinguish paths, and a write in the same section already forgets what [OWN-7] overlaps, so the call was the one coarser place; naming overlap rather than only the written path and the paths below it keeps the ancestors of a written path, an element against its page and a window part against the elements forgotten, so no fact survives a write that could change it.
 
 ## 2026-10-20 v0.153: two index steps read through one tracked field or dereference term are the same while its support is unwritten
 
