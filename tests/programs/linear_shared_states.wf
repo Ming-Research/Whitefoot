@@ -50,11 +50,9 @@ fn serve(queue: Shared<Ring<Ticket, 4>>, count: u64) -> result: u64 pure waits {
       let front = take_front(window: items);
       place_back(window: &out, value: move front);
     }
-    if out.len > 0_u64 {
-      let ticket = take_back(window: &out);
-      let id = redeem(ticket: move ticket);
-      set sum = sum +wrap id;
-    }
+    let ticket = take_back(window: &out);
+    let id = redeem(ticket: move ticket);
+    set sum = sum +wrap id;
     free_empty(window: move out);
   }
   let left = finish(queue: move queue);
@@ -83,13 +81,13 @@ fn close_desk(desk: Shared<Slots<Pen, 1>>) -> result: u64 pure waits {
 fn write_turns(desk: Shared<Slots<Pen, 1>>, turns: u64) -> result: u64 pure waits {
   doc "Each turn takes the one pen off the desk in an atomic statement, writes a stroke with it outside the statements, and puts it back.";
   for @turn (index in 0_u64..turns) {
-    let held = slots_new::<Pen, 1>();
+    let hand = slots_new::<Pen, 1>();
     atomic home = &desk when home^.len > 0_u64 {
       let taken = take_back(window: home);
-      place_back(window: &held, value: move taken);
+      place_back(window: &hand, value: move taken);
     }
-    let pen = take_back(window: &held);
-    free_empty(window: move held);
+    let pen = take_back(window: &hand);
+    free_empty(window: move hand);
     let Pen(strokes: count) = move pen;
     let more = count +wrap 1_u64;
     let next = Pen(strokes: more);

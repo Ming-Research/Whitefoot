@@ -17,28 +17,25 @@ fn close_desk(desk: Shared<Slots<WriteFile, 1>>, factory: &HandleFactory) -> res
 }
 
 fn lead(desk: &Shared<Slots<WriteFile, 1>>, factory: &HandleFactory, batch: &[u8]) -> result: Bool reads(desk), reads(batch), writes(factory) waits {
-  let held = slots_new::<WriteFile, 1>();
+  let hand = slots_new::<WriteFile, 1>();
   atomic home = &desk^ when home^.len > 0_u64 {
     let taken = take_back(window: home);
-    place_back(window: &held, value: move taken);
+    place_back(window: &hand, value: move taken);
   }
+  let file = take_back(window: &hand);
+  free_empty(window: move hand);
   let appended = False();
-  if held.len > 0_u64 {
-    let file = take_back(window: &held);
-    let end = batch^.len;
-    match std::fs::append_once(factory: factory, file: &file, source: batch, start: 0_u64, end: end) {
-      Ok(value: next) => {
-        set appended = True();
-      }
-      Err(error: problem) => {
-        set appended = False();
-      }
+  let end = batch^.len;
+  match std::fs::append_once(factory: factory, file: &file, source: batch, start: 0_u64, end: end) {
+    Ok(value: next) => {
+      set appended = True();
     }
-    atomic home = &desk^ when home^.len < home^.cap {
-      place_back(window: home, value: move file);
+    Err(error: problem) => {
     }
   }
-  free_empty(window: move held);
+  atomic home = &desk^ when home^.len < home^.cap {
+    place_back(window: home, value: move file);
+  }
   return appended;
 }
 

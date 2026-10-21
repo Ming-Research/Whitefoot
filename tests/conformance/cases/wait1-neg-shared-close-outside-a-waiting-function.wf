@@ -2,8 +2,8 @@ nodrop struct Ticket {
   id: u8;
 }
 
-fn settle(held: Shared<Ticket>) -> result: u8 pure {
-  match shared_close::<Ticket>(shared: move held) {
+fn settle(kept: Shared<Ticket>) -> result: u8 pure {
+  match shared_close::<Ticket>(shared: move kept) {
     Some(value: last) => {
       let Ticket(id: number) = move last;
       return number;

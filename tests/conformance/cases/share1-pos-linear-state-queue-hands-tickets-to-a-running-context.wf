@@ -41,11 +41,8 @@ fn serve(queue: Shared<Ring<Ticket, 4>>) -> result: u8 pure waits {
     let front = take_front(window: items);
     place_back(window: &out, value: move front);
   }
-  let seen = 0_u8;
-  if out.len > 0_u64 {
-    let ticket = take_back(window: &out);
-    set seen = redeem(ticket: move ticket);
-  }
+  let ticket = take_back(window: &out);
+  let seen = redeem(ticket: move ticket);
   free_empty(window: move out);
   let left = finish(queue: move queue);
   return seen +wrap left;

@@ -2,8 +2,8 @@ nodrop struct Ticket {
   id: u8;
 }
 
-fn settle(held: Shared<Ticket>) -> result: u8 pure waits {
-  match shared_close::<Ticket>(shared: move held) {
+fn settle(kept: Shared<Ticket>) -> result: u8 pure waits {
+  match shared_close::<Ticket>(shared: move kept) {
     Some(value: last) => {
       let Ticket(id: number) = move last;
       return number;
@@ -16,10 +16,10 @@ fn settle(held: Shared<Ticket>) -> result: u8 pure waits {
 
 fn main() -> status: std::process::ExitStatus pure waits {
   let ticket = Ticket(id: 1_u8);
-  let held = shared_new::<Ticket>(value: move ticket);
-  let other = shared_share::<Ticket>(shared: &held);
+  let kept = shared_new::<Ticket>(value: move ticket);
+  let other = shared_share::<Ticket>(shared: &kept);
   let seen = 0_u8;
-  atomic state = &held {
+  atomic state = &kept {
     set seen = state^.id;
     match shared_close::<Ticket>(shared: move other) {
       Some(value: inner) => {
@@ -29,6 +29,6 @@ fn main() -> status: std::process::ExitStatus pure waits {
       }
     }
   }
-  let last = settle(held: move held);
+  let last = settle(kept: move kept);
   return std::process::exit_status(code: last);
 }

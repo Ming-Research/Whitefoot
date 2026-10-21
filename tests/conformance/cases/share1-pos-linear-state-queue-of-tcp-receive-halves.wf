@@ -37,10 +37,8 @@ fn serve(queue: Shared<Ring<TcpReceive, 4>>, factory: HandleFactory) -> result: 
     let front = take_front(window: items);
     place_back(window: &out, value: move front);
   }
-  if out.len > 0_u64 {
-    let receive = take_back(window: &out);
-    let closed = std::net::close_receive(factory: &factory, receive: move receive);
-  }
+  let receive = take_back(window: &out);
+  let closed = std::net::close_receive(factory: &factory, receive: move receive);
   free_empty(window: move out);
   finish(queue: move queue, factory: &factory);
   return unit;

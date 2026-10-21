@@ -2,8 +2,8 @@ nodrop struct Ticket {
   id: u8;
 }
 
-fn watch(held: &Shared<Ticket>) -> result: SharedRead<Ticket> reads(held) {
-  return shared_read::<Ticket>(shared: held);
+fn watch(kept: &Shared<Ticket>) -> result: SharedRead<Ticket> reads(kept) {
+  return shared_read::<Ticket>(shared: kept);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
