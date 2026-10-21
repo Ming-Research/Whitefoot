@@ -1,0 +1,77 @@
+# Temporary: check-time panel for the disjoint-write change (acceptance row 3).
+# Times `whitefootc --check` over every single-file conformance case with the
+# base compiler (merge base of this branch and main) and the candidate
+# compiler, in three interleaved rounds, and records each case's exit status.
+# Remove this file before the branch is ready.
+name: tmp-check-cost
+
+on:
+  push:
+    branches: [claude/disjoint-write-facts]
+
+jobs:
+  panel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: |
+          rustup default stable
+          cargo --version
+
+      - name: Build candidate and base compilers
+        run: |
+          set -eu
+          base=$(git merge-base origin/main HEAD)
+          echo "base=$base candidate=$(git rev-parse HEAD)"
+          git worktree add "$RUNNER_TEMP/base" "$base"
+          perl .github/run-check.pl build-candidate \
+            cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
+          perl .github/run-check.pl build-base \
+            cargo build --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" --profile gate --locked --offline --bin whitefootc
+          cp compiler/target/gate/whitefootc "$RUNNER_TEMP/whitefootc-candidate"
+          cp "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" "$RUNNER_TEMP/whitefootc-base"
+
+      - name: Interleaved check-time panel
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "7200"
+        run: |
+          set -u
+          out="$RUNNER_TEMP/panel"
+          mkdir -p "$out"
+          find tests/conformance/cases -name '*.wf' | sort > "$out/files.txt"
+          wc -l < "$out/files.txt"
+          # One pass: a shell loop over every file, recording the exit status
+          # per file and the user plus system CPU seconds of the whole loop.
+          pass() {
+            local bin=$1 tag=$2
+            local t
+            t=$( { TIMEFORMAT='%U %S'; time (
+              while read -r f; do
+                "$bin" --check "$f" >/dev/null 2>&1
+                echo "$f $?" >> "$out/$tag.verdicts"
+              done < "$out/files.txt"
+            ) ; } 2>&1 | tail -1 )
+            echo "$tag $t" >> "$out/cpu.txt"
+          }
+          rm -f "$out/cpu.txt"
+          for r in 1 2 3; do
+            if [ $((r % 2)) -eq 1 ]; then
+              rm -f "$out/base.verdicts"; pass "$RUNNER_TEMP/whitefootc-base" base
+              rm -f "$out/candidate.verdicts"; pass "$RUNNER_TEMP/whitefootc-candidate" candidate
+            else
+              rm -f "$out/candidate.verdicts"; pass "$RUNNER_TEMP/whitefootc-candidate" candidate
+              rm -f "$out/base.verdicts"; pass "$RUNNER_TEMP/whitefootc-base" base
+            fi
+            echo "round $r done" >> "$out/cpu.txt"
+          done
+          echo "== CPU (user sys) per pass =="
+          cat "$out/cpu.txt"
+          echo "== verdict differences (base vs candidate, last round) =="
+          diff "$out/base.verdicts" "$out/candidate.verdicts" || true
+          echo "== verdict counts =="
+          awk '{ print ($2 == 0 ? "accept" : "reject") }' "$out/candidate.verdicts" | sort | uniq -c
