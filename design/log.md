@@ -10,6 +10,12 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/checker-facts
 
 Summary: A new decision has fact invalidation submit index and range separation questions only between a write and live support positions with the same containing place, through the ordinary proof families in that write's context, because the specification keeps a fact whose support is provably disjoint from the write even when no earlier call or reference check asked that question, instead of relying only on separations asked elsewhere or comparing unrelated bases. Each live item's support is collected once and identical positions are removed before path resolution; proved answers are shared across that write's supports only, keyed by the subscripts' current binding identity, instead of being published as immutable captured relations; and no support is pruned because it would be kept anyway, since its numeric separation may protect another support that cannot ask the question. Measured: Halo's check time is 1.021 times main's, under the 1.03 rejection line set beforehand. Known limit, not decided here: a support whose containing place differs from the write's only in index steps is not asked, so such a fact can still be removed although OWN-7 proves the places disjoint; this is the follow-up item wf-disjoint-write-outer-index.
+## 2026-10-13 An allocation that does not fit the heap names its type, layout, limit and call
+
+Nodes: compiler/diagnostic-rendering
+
+Summary: A target layout failure caused by a runtime allocation now names the payload type, its size and alignment, the violated target limit with its value, and the nearest writer-written call requiring the allocation, found through the call origins lowering already records, because a writer can repair a source-valid program only from those; an unlocated allocation category, guessing the call from source text or symbol names, and moving target representability into source acceptance were rejected, the last because STOR-6 places it after checking. Allocation obligations are checked before the program-wide layout walk so the failure keeps its allocation; every check still runs before emission and the failure cites no source-language rule.
+
 ## 2026-10-13 Rebinding a reference variable is its own invalidation event
 
 Nodes: compiler/checker-facts
