@@ -7,10 +7,11 @@
 # applies the rule to the stage times in CI logs; the Linux columns were last
 # recomputed on 2026-10-21 over the 50 most recent runs of each stage and class
 # (research/investigations/test-economy/time-budgets.md, "Recomputing the Linux
-# budgets").
-# A model with fewer than 20 runs has no column unless the owner adds one (see
-# xeon-8573c below). An unmapped model uses the stage's largest Linux class
-# budget and is reported by name. Unsampled rows
+# budgets"). A cell with fewer than 20 runs of its class keeps its value, except
+# in a column the owner added (see xeon-8573c below).
+# A model with fewer than 20 runs has no column unless the owner adds one. An
+# unmapped model uses the stage's largest Linux class budget and is reported by
+# name. Unsampled rows
 # retain the former Linux values until per-CPU runs are recorded in
 # research/investigations/test-economy/time-budgets.md.
 #
@@ -33,10 +34,10 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 # class: the unit group's rows, recomputed on 2026-10-21 from the CPU's own runs,
 # and the other gate rows with enough runs, recomputed with
 # .github/recompute-time-budgets.py. With fewer, the value is the larger of the
-# row's largest class value and, where a run on this CPU was found, that run's
-# time by the rule above (one compute-regression run for the compute rows; no
-# run for the others). Only performance-baseline-compiler rises above the
-# largest class. Evidence:
+# row's largest recomputed class value and, where a run on this CPU was found,
+# that run's time by the rule above (one compute-regression run for the compute
+# rows; no run for the others). Only performance-baseline-compiler rises above
+# the largest class. Evidence:
 # research/investigations/test-economy/time-budgets.md.
 # performance-candidate-compiler is 145 s for every Linux class, set by the
 # owner on 2026-10-13 (it was 130 s).
@@ -87,13 +88,15 @@ linux-runtime-tsan              10         10         10         10          -  
 
 # sanitizers.yml: the corpus target under one sanitizer, building its test
 # binary, as one conformance shard of three or the rest of the target.
-# The conformance rows follow the rule since 2026-10-21 (21 and 34 runs on
-# epyc-7763; the other classes take that class's value). The programs rows stay
-# provisional until 20 runs are recorded on a class: 1.5 times the first run's
-# slowest job (315 s, on epyc-7763).
-compiler/corpus-asan-conformance 320        320        320        320         -      -
+# Provisional until 20 runs are recorded on a class: 1.5 times the first run's
+# slowest job (conformance 276 s, programs 315 s, on epyc-7763). The two
+# conformance rows of epyc-7763 follow the rule since 2026-10-21 (39 and 50
+# runs); epyc-9v74 and epyc-9v45 have 10 to 16 runs of them and keep 415 s,
+# and xeon-8573c, with 5, takes the epyc-7763 value (its own runs give less).
+# The programs rows have fewer than 20 runs on every class and stay as they were.
+compiler/corpus-asan-conformance 320        415        415        320         -      -
 compiler/corpus-asan-programs   475        475        475        475         -      -
-compiler/corpus-tsan-conformance 335        335        335        335         -      -
+compiler/corpus-tsan-conformance 335        415        415        335         -      -
 compiler/corpus-tsan-programs   475        475        475        475         -      -
 
 # map-sanitizers.yml, on changes to the concurrent map's runtime or test

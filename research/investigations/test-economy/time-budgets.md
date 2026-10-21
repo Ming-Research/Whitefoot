@@ -1027,6 +1027,16 @@ rule of the ruling above is unchanged (the owner chose to keep it and
 recompute the table, on the card of item wf-gate-budget-noise); this section
 records why the table was stale and how it was recomputed.
 
+**The failures.** The gate of main at commit b59f94622 (run 39615818017) failed
+only on `compiler/test-corpus` on EPYC 7763: 238.4 s against a 235 s budget,
+every test green. Three attempts of the gate of one open pull request failed in
+the same group: the first, on EPYC 7763, took 243.9 s in `compiler/test-corpus`
+and 365.0 s in `check/corpus` (budgets 235 s and 360 s); the second, also on
+EPYC 7763, 238.5 s in `compiler/test-corpus`; the third, on EPYC 9V45, 238.9 s
+in `check/corpus`, 90.0 s in `compiler/test-build-corpus` and 148.8 s in
+`compiler/test-corpus` (budgets 220 s, 85 s and 140 s). Each of these times is
+below the new budget of its cell in the table below.
+
 **Sources.** The `== END <label>` lines of the job logs of 596 `gate.yml` runs
 created from 2026-10-13 to 09:51 UTC on 2026-10-21 (2,466 jobs, 5,265 stage
 lines; reruns counted once) and of 63 `sanitizers.yml` runs (287 jobs; the
@@ -1081,15 +1091,18 @@ prints each Linux cell's runs, median, maximum, old and new budget and with
 `--write` rewrites the table, and `replay` judges the recorded jobs as a table
 recomputed every few days would have, with every stage of a job scaled by a
 slowdown as a control. A class column with 20 or more runs is recomputed from
-its newest 50 (all of them if fewer). A class with fewer takes the larger of
-the row's recomputed class values and its own runs by the rule, the treatment
-the Xeon column received on 2026-10-13. `--keep` leaves rows alone. Its
+its newest 50 (all of them if fewer). A cell with fewer keeps its value, except
+in the column the owner added for a model with too few runs (the Xeon column,
+`OWNER_COLUMNS` in the script), where it takes the larger of the row's
+recomputed class values and the column's own runs by the rule, the treatment
+that column received on 2026-10-13. `--keep` leaves rows alone. Its
 self-test runs in `make repository-invariants`; a temporary workflow ran the
 self-test against deliberately faulty copies of the script (margin, minimum run
-count, floor, rounding, failed runs counted, thin-class rule, slowdown scaling,
-window, repeated attempts counted, jobs without a CPU model, largest class
-taken as smallest, recompute period, first day judged, logged budget) and each
-was rejected.
+count, floor, rounding, failed runs counted, owner-column rule, slowdown
+scaling, window, repeated attempts counted, jobs without a CPU model, largest
+class taken as smallest, recompute period, first day judged, logged budget,
+and a cell with too few runs outside the owner's column recomputed like it)
+and each was rejected.
 
 **New budgets.** Rows recomputed with the 50 newest runs per class (the Linux
 columns only; macOS and Windows are untouched). The three unit-group rows
@@ -1130,23 +1143,30 @@ fewer than 20 runs in every class and keep their provisional 475 s.
 | `check/runtime` | epyc-9v45 | 50 | 16.1 | 18.8 | 20 | 25 |
 | `check/runtime` | xeon-8573c | 38 | 24.0 | 26.1 | 25 | 30 |
 | `compiler/corpus-asan-conformance` | epyc-7763 | 39 | 252.9 | 290.6 | 415 | 320 |
-| `compiler/corpus-asan-conformance` | epyc-9v74 | 14 | 213.6 | 274.6 | 415 | 320 |
-| `compiler/corpus-asan-conformance` | epyc-9v45 | 16 | 174.5 | 194.8 | 415 | 320 |
+| `compiler/corpus-asan-conformance` | epyc-9v74 | 14 | 213.6 | 274.6 | 415 | 415 |
+| `compiler/corpus-asan-conformance` | epyc-9v45 | 16 | 174.5 | 194.8 | 415 | 415 |
 | `compiler/corpus-asan-conformance` | xeon-8573c | 5 | 229.6 | 245.4 | 415 | 320 |
 | `compiler/corpus-tsan-conformance` | epyc-7763 | 50 | 256.3 | 302.3 | 415 | 335 |
-| `compiler/corpus-tsan-conformance` | epyc-9v74 | 12 | 222.7 | 283.9 | 415 | 335 |
-| `compiler/corpus-tsan-conformance` | epyc-9v45 | 10 | 183.4 | 214.4 | 415 | 335 |
+| `compiler/corpus-tsan-conformance` | epyc-9v74 | 12 | 222.7 | 283.9 | 415 | 415 |
+| `compiler/corpus-tsan-conformance` | epyc-9v45 | 10 | 183.4 | 214.4 | 415 | 415 |
 | `compiler/corpus-tsan-conformance` | xeon-8573c | 5 | 250.4 | 266.3 | 415 | 335 |
 
-Two listed cells keep their value: `repository-invariants` on EPYC 9V45, and
-`check/corpus` on the Xeon, which has 29 runs and so follows the rule on its
-own maximum (326.1 s, giving 360 s) rather than taking the 400 s of EPYC 7763.
+Six listed cells keep their value. `repository-invariants` on EPYC 9V45 does
+by the rule. `check/corpus` on the Xeon has 29 runs and so follows the rule on
+its own maximum (326.1 s, giving 360 s) rather than taking the 400 s of EPYC
+7763. The four `conformance` sanitizer cells of EPYC 9V74 and EPYC 9V45 have 10
+to 16 runs of their class (the workflow is new): the rule sets no value from so
+few, and only the column the owner added takes the row's recomputed value, so
+they keep their provisional 415 s.
 
-Three cells fall: `check/static` and `compiler/lint` on EPYC 9V74 (85 to 80
-and 60 to 45, 23 runs each; the earlier values rested on the 10-13 sample, whose
-maxima were 73.2 s over 36 runs and 50.3 s over 29) and `compiler/test-corpus`
-on the Xeon (235 to 225, now 29 runs). The sanitizer conformance rows fall from
-the provisional 415 s to 320 s and 335 s.
+Seven cells fall: `check/static` and `compiler/lint` on EPYC 9V74 (85 to 80 and
+60 to 45, 23 runs each; the earlier values rested on the 10-13 sample, whose
+maxima were 73.2 s over 36 runs and 50.3 s over 29, so the new `compiler/lint`
+value is below that earlier maximum), `compiler/test-corpus` on the Xeon (235 to
+225, now 29 runs), and the `conformance` sanitizer cells of EPYC 7763 and the
+Xeon, from the provisional 415 s to 320 s and 335 s. The Xeon has 5 runs of each
+of those two rows, whose own maxima (245.4 s and 266.3 s) give 270 s and 295 s,
+less than the row's recomputed 320 s and 335 s that it takes.
 
 **Replay.** Jobs of the gate runs from 2026-10-19 (1,077 jobs; a stage is
 judged once 20 runs of its class precede its recompute period, which leaves
