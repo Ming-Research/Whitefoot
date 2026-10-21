@@ -12,6 +12,26 @@ Nodes: compiler/checker-facts
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree decision added for how subscripts with a field or a dereference record their identity? (#454, head commit ef598ae35)" (translated).
 
 Summary: A subscript such as `table^[s^.k]`, `nodes^[n^.parent_slot]` or `nodes^[r^]` is identified by a captured place id (its root and field or dereference steps) or, in a contract, a formal offset id (a parameter-relative suffix), both interned in one compilation-owned table shared by the checker's parts. While its support is unchanged the id stands for the current value with its complete support; a write or rebinding of any support place degrades it to an immutable capture with no support. At a call the actual's path is joined to the formal's remaining suffix and interned again. Small copyable ids let parallel checking and contract substitution share one identity and support without conflating sibling fields, captured and later values, or formal and body names; refused were root-only identity (which cannot separate `n.a` from `n.b`), embedding the recursive path in every capture, and per-part identity and support tables.
+## 2026-10-13 A Slab reserves capacity up to its type limit without disturbing handles
+
+Nodes: language/data-model/slab-storage
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve: the new decision and the two rewordings take effect; write the design-tree approval record, mark ready, run the gate on both platforms, merge through the coordinator's queue and release to Firn" (translated), on the card "approve the Slab storage design node's changes (Whitefoot#448, head commit 2c2890351119)?" (translated), whose background listed the new reservation decision, its three refused alternatives and the two rewordings.
+
+Summary: A Slab may reserve capacity explicitly up to its type limit through the ordinary window growth, so existing slots, indices and generations stay and old handles remain valid while a value's address may change; the free list's end marker becomes the type limit instead of the initial capacity, which growth would turn into a valid index. A request beyond the limit returns Err without mutation and a sufficient capacity returns Ok without shrinking, as HashMap reservation does. Fixed capacity after construction, rebuilding the slot records on growth and promising stable value addresses were refused. The first decision now says the Slab uses (not reserves) one backing and keeps slot indices, and the refused dense-array alternative is refused for changing another value's slot index.
+
+## 2026-10-21 The gate runs on Linux only for now
+
+Nodes: compiler/verification
+
+Summary: The hosted gate stops adding macOS for ready pull requests, the main line and manual runs, and its final job requires every group green on Linux alone. The hosted macOS runners take five jobs at a time; with several ready pull requests at once, a run's macOS jobs waited about 43 minutes for a runner while five ran and ten more queued, and merges waited behind them. The change is provisional: macOS returns, in a form still to be chosen, before the first release, whose release workflow still requires a gate run with macOS jobs on the released commit. The decision on a failed scope query no longer mentions dropping macOS.
+
+## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
+
+Nodes: compiler/verification
+
+Summary: The hosted gate and the I/O host checks no longer run for a push to a draft pull request's branch or for a draft's opening or reopening; they run for the main line, a ready pull request's pushes, a hand-started run and the event of marking a pull request ready, which skips when the head already has a successful manual run of the same workflow. With the draft pushes gone, every run that checks a revision runs both platforms, so the Linux-only run is retired and the earlier refusal of both platforms on every push is restated for the case that no longer holds. The gate also fails while a `tmp-` workflow file exists in the checked head, and the performance comparison skips a draft as the design-readiness job already does. The run record of a week shows 122 checked runs on 40 branches other than the main line, up to 10 on one branch ([measurements](../research/investigations/test-economy/time-budgets.md#gate-at-ready-not-at-each-draft-push)); the author now gets results from a temporary workflow while writing.
+
 ## 2026-10-20 Conditions the checker decides are rejected
 
 Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
