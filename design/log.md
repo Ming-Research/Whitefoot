@@ -5,6 +5,13 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-13 One compilation lists every non-exhaustive match
+
+Nodes: compiler/rejection-payloads
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the decision that Whitefoot#444 (one compilation lists every non-exhaustive match) adds to the design tree?" (translated), shown at head commit 4cca9198f.
+
+Summary: A non-exhaustive match records its edit site and the same structural walk continues over the written arms and later functions, reporting the first established event with every recorded site, because ERR-2 promises site-enumerated edit lists and one site per compile costs an agent a round per match when adding a variant, instead of stopping at the first site. Missing arms contribute no path or guessed binding, pending sites fail before proof analysis or receipt publication, and a same-node rejection under an earlier-defined rule still wins under DIAG-1; re-running with masked matches or a second checker and narrowing ERR-2 to the first site are rejected.
 ## 2026-10-13 Release packages carry their own clang, and macOS stack probing follows the clang in use
 
 Nodes: compiler/toolchain-resolution, compiler/resource-exhaustion-floor, compiler/downstream-releases
