@@ -29,13 +29,14 @@ fn lift() -> result: unit pure {
     None() => {
     }
   }
-  match &y {
+  match move y {
     Some(value: first) => {
-      set y = move y.Some.value.inner.next;
+      let node = move first.inner;
+      let rest = move node.next;
+      drop_chain(chain: move rest);
     }
     None() => {
     }
   }
-  drop_chain(chain: move y);
   return unit;
 }

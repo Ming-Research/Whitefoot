@@ -1297,6 +1297,7 @@ impl Analyzer<'_, '_> {
             judgment.reached &= self.judging().judge_call_separations(carrier, states);
         }
         self.capture_operation_intervals(expression, &states.facts);
+        self.seal_expression(expression, states);
         judgment
     }
 

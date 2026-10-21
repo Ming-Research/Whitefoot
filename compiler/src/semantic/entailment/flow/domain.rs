@@ -1427,6 +1427,7 @@ impl Judging<'_, '_, '_> {
                 .collect(),
             measure_kills: join_measure_kills(&contributing),
             continuing,
+            debts: Debts::default(),
         }
     }
 }

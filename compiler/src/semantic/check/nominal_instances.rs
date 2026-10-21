@@ -1886,6 +1886,7 @@ impl<'unit> TypeContext<'unit> {
             linear: template.linear,
             nocopy: template.nocopy,
             type_invariant: false,
+            affine_invariants: Vec::new(),
         });
         self.nominals_by_declaration
             .entry(template.declaration)

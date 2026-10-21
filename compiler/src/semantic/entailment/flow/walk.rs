@@ -327,6 +327,9 @@ impl Analyzer<'_, '_> {
         let affine_value = self
             .reasoning()
             .affine_expression_form(value, &mut state.affine);
+        // [TYPE-11.S3, TYPE-11.S4] the right-hand side is handed off, or a
+        // continuation takes its debts, before the statement's own kills.
+        let sealed = self.seal_set_before(node_path, target, value, state);
         let judgment = self.expression_effects(value, state);
         self.reasoning()
             .finish_result(value, &judgment, &mut result, state);
@@ -410,6 +413,8 @@ impl Analyzer<'_, '_> {
         } else {
             self.apply_kills(state, &target_kills);
         }
+        // [TYPE-11.S3] the commit's write row, after its kills.
+        self.seal_set_after(node_path, target, sealed, state);
         // [MSR-3] the placement's second half, after the target's own kills:
         // the committed place's measures are the datums minted before them.
         if commit_reached
@@ -637,6 +642,9 @@ impl Analyzer<'_, '_> {
                     .reasoning()
                     .mint_construct_placements(node_path, value, state);
                 let mut result = self.capture_result(node_path, value, state);
+                // [TYPE-11.S3] a continuation takes the moved or copied
+                // value's debts before the initializer's own kills.
+                let taken = self.sealed_continuation(value, *binding, state);
                 let judgment = self.expression_effects(value, state);
                 self.reasoning()
                     .finish_result(value, &judgment, &mut result, state);
@@ -644,6 +652,8 @@ impl Analyzer<'_, '_> {
                     state.results.insert(*binding, result);
                 }
                 self.declare(*binding);
+                self.finish_continuation(*binding, taken, state);
+                self.seal_let_datum(*binding, value, state);
                 if judgment.reached
                     && self.input.affine_binding_type(*binding).is_some()
                     && let Some(value) = affine_value
@@ -793,10 +803,20 @@ impl Analyzer<'_, '_> {
                 let taken = self
                     .reasoning()
                     .mint_destructuring_placements(node_path, bindings, value, state);
+                // [TYPE-11.S3] each binder of a struct's field takes the
+                // field's debts; a call's result list carries none.
+                let sealed = bindings
+                    .iter()
+                    .map(|(binding, _, field)| {
+                        let step = PlaceStep::Field(*field);
+                        self.sealed_part_continuation(value, step, *binding, state)
+                    })
+                    .collect::<Vec<_>>();
                 let judgment = self.expression_effects(value, state);
                 let mut destinations = Vec::with_capacity(bindings.len());
-                for (binding, ty, _) in bindings {
+                for ((binding, ty, _), sealed) in bindings.iter().zip(sealed) {
                     self.declare(*binding);
+                    self.finish_continuation(*binding, sealed, state);
                     // A call's result list has no single expression image to
                     // copy into each destination. Each fragment result still
                     // receives its own current-value atom, so S12's ordinary
@@ -849,11 +869,25 @@ impl Analyzer<'_, '_> {
                 ..
             } => {
                 let mut result = self.capture_result(node_path, scrutinee, state);
+                // [TYPE-11.S3, TYPE-11.S4] before the operand's own events,
+                // the error exit hands off its `Err` payload and the `Ok`
+                // binder takes the debts of the `Ok` payload.
+                let taken = self.sealed_part_continuation(scrutinee, RESULT_OK, *binding, state);
+                if !state.debts.is_empty() {
+                    let mut exit = state.clone();
+                    self.seal_error_payload(scrutinee, node_path, &mut exit);
+                }
                 let judgment = self.expression_effects(scrutinee, state);
                 self.reasoning()
                     .finish_result(scrutinee, &judgment, &mut result, state);
                 // [TYPE-11] the error edge returns, leaving any atomic block.
                 self.judge_atomic_exit(node_path, state);
+                // [TYPE-11.S4] that exit also hands off every written
+                // referent; the success edge keeps its debts.
+                if !state.debts.is_empty() {
+                    let mut exit = state.clone();
+                    self.seal_exit(&[], true, node_path, &mut exit);
+                }
                 // [FN-9] and it is a selected return of every unrouted
                 // clause, judged over the state that edge leaves with, and of
                 // every route over the `Err` field, judged in the operand's
@@ -867,6 +901,7 @@ impl Analyzer<'_, '_> {
                     std::slice::from_ref(&result),
                 );
                 self.declare(*binding);
+                self.finish_continuation(*binding, taken, state);
                 if let Some(success) = result.iter().find(|result| result.success) {
                     self.reasoning()
                         .select_result(node_path, success, *binding, state);
@@ -1220,6 +1255,9 @@ impl Analyzer<'_, '_> {
                     .iter()
                     .map(|value| self.capture_result(node_path, value, state))
                     .collect::<Vec<_>>();
+                // [TYPE-11.S4] the return hands off each value it hands back,
+                // before a construction in it hands off its operands.
+                self.seal_exit(&returned, false, node_path, state);
 
                 let affine_result = self
                     .reasoning()
@@ -1259,6 +1297,9 @@ impl Analyzer<'_, '_> {
 
                 // [TYPE-11] a return inside an atomic block leaves it.
                 self.judge_atomic_exit(node_path, state);
+                // [TYPE-11.S4] and every written referent, after the
+                // returned expression's own effects.
+                self.seal_exit(&[], true, node_path, state);
                 self.judge_postcondition_places(node_path, state, &results);
                 self.judging().judge_postcondition_return(
                     node_path,
@@ -1284,6 +1325,8 @@ impl Analyzer<'_, '_> {
                     .is_some_and(|frame| value_carrier(frame.result_mode, frame.result_type, value))
                     .then(|| self.reasoning().mint_value_carrier(node_path, value, state));
                 let mut result = self.capture_result(node_path, value, state);
+                // [TYPE-11.S4] the given value is handed off.
+                self.seal_value_hand_off(value, node_path, state);
                 let judgment = self.expression_effects(value, state);
                 self.reasoning()
                     .finish_result(value, &judgment, &mut result, state);
@@ -1470,10 +1513,19 @@ impl Analyzer<'_, '_> {
                         event,
                     );
                 }
+                for target in targets {
+                    self.seal_atomic_entry(
+                        target.binding,
+                        !target.invariants.is_empty(),
+                        &target.node_path,
+                        state,
+                    );
+                }
                 let enclosing = self.frames.atomic.replace(AtomicFrame {
                     loop_depth: self.frames.loops.len(),
                     give_depth: self.frames.gives.len(),
                     invariants: invariants.clone(),
+                    targets: targets.iter().map(|target| target.binding).collect(),
                 });
                 let mut continues = true;
                 for statement in body {
@@ -1565,6 +1617,7 @@ impl Analyzer<'_, '_> {
                     .cloned()
                     .map(|site| self.capture_result(&site, scrutinee, state))
                     .unwrap_or_default();
+                let sealed = self.sealed_binders(scrutinee, arms, state);
                 let judgment = self.expression_effects(scrutinee, state);
                 self.reasoning()
                     .finish_result(scrutinee, &judgment, &mut result, state);
@@ -1579,7 +1632,7 @@ impl Analyzer<'_, '_> {
                     let payload = payload.iter().find(|payload| {
                         arm.selection == CheckedMatchSelection::Variant(payload.tag)
                     });
-                    exits.extend(self.walk_arm(arm, state, &facts, payload, &result));
+                    exits.extend(self.walk_arm(arm, state, &facts, payload, &result, &sealed));
                 }
                 if exits.is_empty() {
                     false
@@ -1608,6 +1661,7 @@ impl Analyzer<'_, '_> {
                     CheckedMatchType::Integer(_) => Vec::new(),
                 };
                 let mut result = self.capture_result(node_path, scrutinee, state);
+                let sealed = self.sealed_binders(scrutinee, arms, state);
                 let judgment = self.expression_effects(scrutinee, state);
                 self.reasoning()
                     .finish_result(scrutinee, &judgment, &mut result, state);
@@ -1635,7 +1689,7 @@ impl Analyzer<'_, '_> {
                     let payload = payload.iter().find(|payload| {
                         arm.selection == CheckedMatchSelection::Variant(payload.tag)
                     });
-                    let _ = self.walk_arm(arm, state, &facts, payload, &result);
+                    let _ = self.walk_arm(arm, state, &facts, payload, &result, &sealed);
                 }
                 let frame = self
                     .frames
@@ -1687,6 +1741,7 @@ impl Analyzer<'_, '_> {
                 self.reasoning().apply_loop_kills(state, &kills, None);
                 self.reasoning()
                     .activate_loop_invariant_batch(*id, invariants, base_batch, state);
+                self.seal_loop_header(*id, state);
                 let head_entry_images = state.entry_images.clone();
                 self.frames.loops.push(LoopFrame {
                     id: *id,
@@ -1726,6 +1781,7 @@ impl Analyzer<'_, '_> {
                     backedges.extend(body_frontier);
                 }
                 backedges.sort_by(|a, b| a.site.components().cmp(b.site.components()));
+                self.seal_backedges(*id, None, &mut backedges);
                 let batches =
                     self.prove_induction_frontier(*id, invariants, &backedges, None, &kills);
                 self.judging()
@@ -1887,6 +1943,7 @@ impl Analyzer<'_, '_> {
                 state.affine.values.insert(*binder, header_binder);
                 self.reasoning()
                     .activate_loop_invariant_batch(*id, invariants, base_batch, state);
+                self.seal_loop_header(*id, state);
 
                 let head = state.clone();
                 let invariant_declarations = invariants
@@ -1944,6 +2001,7 @@ impl Analyzer<'_, '_> {
                     backedges.extend(body_frontier);
                 }
                 backedges.sort_by(|a, b| a.site.components().cmp(b.site.components()));
+                self.seal_backedges(*id, Some(*binder), &mut backedges);
                 let batches = self.prove_induction_frontier(
                     *id,
                     invariants,
@@ -2043,6 +2101,7 @@ impl Analyzer<'_, '_> {
         facts: &ArmFacts,
         payload: Option<&PayloadPlacement>,
         results: &[ResultEvidence],
+        sealed: &[(BindingId, Vec<Debt>)],
     ) -> Vec<FlowEdge> {
         let mut state = entry.clone();
         let mut frontier = Vec::new();
@@ -2099,6 +2158,7 @@ impl Analyzer<'_, '_> {
         self.frames
             .scopes
             .push(arm.binders.iter().map(|b| b.binding).collect());
+        self.bind_sealed(arm, sealed, &mut state);
         for binder in &arm.binders {
             if let CheckedType::Integer(ty) = binder.ty
                 && matches!(binder.mode, CheckedMode::Own)

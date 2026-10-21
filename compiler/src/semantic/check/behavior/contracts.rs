@@ -22,7 +22,6 @@ use super::super::super::model::{
 };
 use super::super::super::postcondition::{ParameterDenotation, PostconditionConstantOrigin};
 use super::super::requires::{ExpandedClauseDatum, ExpandedClauseExpression};
-use super::super::type_invariants::{substitute_expanded, substitute_relation};
 use super::super::{CheckStop, Checker, ControlCounters, FunctionSignature};
 
 #[derive(Eq, PartialEq)]
@@ -253,12 +252,10 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(signature.node, Production::ContractBlock)?
         else {
-            let mut contracts = InterfaceContracts {
+            return Ok(InterfaceContracts {
                 requires: Vec::new(),
                 ensures: Vec::new(),
-            };
-            self.append_type_invariant_contracts(signature, &mut contracts)?;
-            return Ok(contracts);
+            });
         };
         let mut bindings = HashMap::new();
         for (ordinal, parameter) in signature.parameters.iter().enumerate() {
@@ -390,49 +387,7 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .declarations
             .check_published_relation_consistency(signature, &selectors, &relations)?;
-        let mut contracts = InterfaceContracts { requires, ensures };
-        self.append_type_invariant_contracts(signature, &mut contracts)?;
-        Ok(contracts)
-    }
-
-    /// [TYPE-11] a boundary's type invariants after its written clauses: a
-    /// `fn_sig` or `fn_decl` requires and promises them exactly as its
-    /// declaration does, so a bound call owes and receives them and FN-4
-    /// compares them like written clauses.
-    fn append_type_invariant_contracts(
-        &mut self,
-        signature: &FunctionSignature,
-        contracts: &mut InterfaceContracts,
-    ) -> Result<(), CheckStop> {
-        for requirement in self.implicit_type_invariant_requirements(signature)? {
-            contracts.requires.push(InterfaceRequirement {
-                clause: requirement.clause,
-                template: requirement.template,
-                places: Vec::new(),
-                subject: requirement.subject,
-            });
-        }
-        let mut relation_ordinal = u32::try_from(contracts.ensures.len())
-            .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-        for (invariant, subject, selector) in
-            self.type_invariant_postcondition_selectors(signature)?
-        {
-            contracts.ensures.push(InterfaceEnsures {
-                clause: invariant.clause.clone(),
-                ordinal: selector.ordinal,
-                variant: None,
-                field: None,
-                result_type: selector.result_type,
-                expression: substitute_expanded(&invariant.expanded, subject),
-                relation_ordinal,
-                selector,
-                relation: substitute_relation(&invariant.relation, subject),
-            });
-            relation_ordinal = relation_ordinal
-                .checked_add(1)
-                .ok_or(SemanticCompilerFailure::CounterOverflow)?;
-        }
-        Ok(())
+        Ok(InterfaceContracts { requires, ensures })
     }
 }
 

@@ -3357,6 +3357,7 @@ impl Analyzer<'_, '_> {
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
             continuing: Vec::new(),
+            debts: Debts::default(),
         };
         // The forward substitution happens above before the ordinary edge
         // kills, so the carrier's own branch scope cannot delete a
@@ -3458,6 +3459,7 @@ impl Analyzer<'_, '_> {
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
             continuing: Vec::new(),
+            debts: Debts::default(),
         };
         self.kill_scopes_to(&mut image, context.scope_depth);
         self.exit_counted_loops_from(&mut image, context.loop_depth);

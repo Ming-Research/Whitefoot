@@ -1,0 +1,51 @@
+# Temporary: the focused checks of the sealed type invariant work (the
+# compiler build, the type-invariant and fact-source unit tests, and every
+# conformance case's verdict with each failing case listed). Removed before
+# the branch is ready.
+name: tmp-sealed-invariants
+
+on:
+  push:
+    branches: [claude/invariant-sealed-values]
+
+permissions:
+  contents: read
+
+jobs:
+  sealed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo --version
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Build the compiler
+        run: |
+          perl .github/run-check.pl sealed-build cargo build --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --bin whitefootc
+      - name: Run the type-invariant and fact-source unit tests
+        run: |
+          perl .github/run-check.pl sealed-unit cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --lib -- \
+            type_invariant entailment_sources sealing invariant_payload
+      - name: Reach every conformance verdict and list each failing case
+        if: always()
+        run: |
+          set +e
+          perl .github/run-check.pl sealed-corpus cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --test corpus -- \
+            conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path \
+            --nocapture > "$RUNNER_TEMP/corpus.log" 2>&1
+          status=$?
+          set -e
+          grep -E '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
+          grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
+          exit "$status"

@@ -1195,6 +1195,13 @@ impl Reasoning<'_, '_, '_> {
         self.apply_affine_kills(separations, &mut states.affine, events);
         self.invalidate_entry_images(states, separations, events, shared_event);
         states.record_writes(events);
+        // [TYPE-11.S3] a consumed root binding's debts die with it; a
+        // continuation took the moved value's debts before this event.
+        for event in events {
+            if let KillEvent::Consume { binding, .. } = event {
+                states.debts.remove_rooted(*binding);
+            }
+        }
     }
 
     /// [WIN-2, ENT-5] the indices the entry state of `events` proves live,
@@ -1551,6 +1558,8 @@ impl Analyzer<'_, '_> {
     /// component: the Result states, the facts and the affine images, in that
     /// order. Both scope transfers apply them through here.
     pub(super) fn exit_scope_components(&mut self, states: &mut ProofFlowState, depth: usize) {
+        // [TYPE-11.S3] restoration is offered before the scope's kills.
+        self.seal_scope_exit(states, depth);
         self.exit_result_scopes(states, depth);
         self.exit_scopes_to_one(&mut states.facts, depth);
         self.exit_affine_scopes_to(&mut states.affine, depth);

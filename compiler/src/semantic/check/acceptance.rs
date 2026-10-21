@@ -16,7 +16,7 @@ use crate::{
 
 use super::super::entailment::{
     CallGoalDisposition, FunctionEntailment, ObligationFamily, PostconditionDisposition,
-    RangeEndpointReading, SourceProofCertificateFailure, TermRead,
+    RangeEndpointReading, SealingFailure, SealingRule, SourceProofCertificateFailure, TermRead,
 };
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedNumericType, FunctionId};
@@ -35,6 +35,23 @@ use super::{CheckStop, references, repairs};
 enum ProofPosition {
     Child(u32),
     AfterSubtree,
+}
+
+/// One candidate rejection: an undischarged record, or a hand-off that left
+/// a debt unrestored [TYPE-11.S4].
+#[derive(Clone, Copy)]
+enum Rejection<'record> {
+    Record(&'record ObligationRecord, RecordAnswer),
+    Sealing(&'record SealingFailure),
+}
+
+/// The rule a failed hand-off cites [TYPE-11.S4].
+const fn sealing_rule(rule: SealingRule) -> SemanticRule {
+    match rule {
+        SealingRule::Fn8 => SemanticRule::Fn8,
+        SealingRule::Fn9 => SemanticRule::Fn9,
+        SealingRule::Type11 => SemanticRule::Type11,
+    }
 }
 
 /// The payload disposition and the repair's disposition of one goal no step
@@ -415,39 +432,92 @@ impl<'unit> TypeContext<'unit> {
                 continue;
             }
             if record.rule == SemanticRule::Fn9 {
-                relations.push((record, answer));
+                relations.push(Rejection::Record(record, answer));
             } else {
                 body.push((
                     self.declarations
                         .proof_position(record, answer, entailment)?,
-                    record,
-                    answer,
+                    record.rule,
+                    Rejection::Record(record, answer),
                 ));
             }
+        }
+        // [TYPE-11.S4] a failed hand-off is decided at its site, as a call
+        // requirement is.
+        for failure in &entailment.sealing_failures {
+            body.push((
+                failure
+                    .site
+                    .components()
+                    .iter()
+                    .copied()
+                    .map(ProofPosition::Child)
+                    .collect(),
+                sealing_rule(failure.rule),
+                Rejection::Sealing(failure),
+            ));
         }
         // `min_by` keeps the first of several equal minima, so the selection
         // depends only on this order and on record order, never on a hash.
         let selected = body
             .into_iter()
             .min_by(|left, right| {
-                left.0.cmp(&right.0).then_with(|| {
-                    left.1
-                        .rule
-                        .definition_rank()
-                        .cmp(&right.1.rule.definition_rank())
-                })
+                left.0
+                    .cmp(&right.0)
+                    .then_with(|| left.1.definition_rank().cmp(&right.1.definition_rank()))
             })
-            .map(|(_, record, answer)| (record, answer))
+            .map(|(_, _, rejection)| rejection)
             .or_else(|| relations.into_iter().next());
-        if let Some((record, answer)) = selected {
-            return Err(CheckStop::source_issue(
-                self.undischarged_issue(function, record, answer)?,
-            ));
+        if let Some(rejection) = selected {
+            let issue = match rejection {
+                Rejection::Record(record, answer) => {
+                    self.undischarged_issue(function, record, answer)?
+                }
+                Rejection::Sealing(failure) => self.unrestored_type_invariant(failure)?,
+            };
+            return Err(CheckStop::source_issue(issue));
         }
         if inconclusive.is_empty() && entailment.answers.iter().any(Option::is_none) {
             return Err(SemanticCompilerFailure::ObligationContract.into());
         }
         Ok(())
+    }
+    /// [TYPE-11.S4, DIAG-1] the issue one hand-off that left a debt
+    /// unrestored reports: the anchor, the invariant, the first conclusion
+    /// not established and each breaking event.
+    fn unrestored_type_invariant(
+        &self,
+        failure: &SealingFailure,
+    ) -> Result<SemanticIssue, CheckStop> {
+        let type_invariant = failure
+            .clause
+            .as_ref()
+            .map(|clause| self.declarations.node_location(clause))
+            .transpose()?;
+        let breaking_events = failure
+            .events
+            .iter()
+            .map(|event| self.declarations.source_location(event))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(SemanticIssue {
+            rule: sealing_rule(failure.rule),
+            location: self.declarations.source_location(&failure.site)?,
+            kind: SemanticIssueKind::UnrestoredTypeInvariant {
+                type_invariant,
+                anchor: failure.anchor.clone(),
+                instantiated_goal: failure.rendered_goal.clone(),
+                breaking_events,
+                mechanical_fix: repairs::unrestored_type_invariant(
+                    failure
+                        .goal
+                        .as_ref()
+                        .map(|_| failure.rendered_goal.as_str()),
+                    &failure.anchor,
+                    failure.widened,
+                ),
+            },
+            request: None,
+        })
     }
     /// The issue one undischarged record reports: its rule selects the kind,
     /// and the record with the judgment that answered it fill it in.

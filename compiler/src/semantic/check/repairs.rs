@@ -940,6 +940,20 @@ pub(super) fn constant_construction_invariant(text: &str) -> String {
     )
 }
 
+/// [TYPE-11.S4] a hand-off of `anchor`'s value while a write since the
+/// hand-off that delivered it may have broken `goal`; `None` when the debt
+/// forms no instance, as a cover or an unknown position does.
+pub(super) fn unrestored_type_invariant(goal: Option<&str>, anchor: &str, widened: bool) -> String {
+    match goal {
+        Some(goal) if !widened => format!(
+            "`{goal}` is not restored since a write that may have broken it: restore it before this hand-off, writing the fields it relates so the body shows it holds, or replace `{anchor}` whole with a value a construction or a call returns"
+        ),
+        _ => format!(
+            "a write reached `{anchor}` through a position or reference that no relation can name any more, so its type invariants cannot be restored: replace `{anchor}` whole with a value a construction or a call returns before this hand-off, or make the write through a place the body still names"
+        ),
+    }
+}
+
 /// [TYPE-11] a type invariant of an object's state at an edge that leaves
 /// an atomic block.
 pub(super) fn atomic_exit_invariant(case: &GoalCase<'_>) -> String {

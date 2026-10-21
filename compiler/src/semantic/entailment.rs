@@ -147,6 +147,8 @@ pub(crate) struct EntailmentCallee {
     /// `None` for a body-less row, whose declared row is all there is.
     pub(crate) parameter_exhibited_writes: Option<Vec<Vec<Vec<super::model::CheckedEffectStep>>>>,
     pub(crate) parameter_transports: Vec<CallTransport>,
+    /// [TYPE-11.S4] whether the call hands its arguments off.
+    pub(crate) sealing: CalleeSealing,
 }
 
 impl EntailmentCallee {
@@ -177,6 +179,7 @@ impl EntailmentCallee {
         Self {
             range_boundary: false,
             relocation: false,
+            sealing: CalleeSealing::HandsOff,
             parameter_exhibited_writes: exhibited.map(rooted),
             parameter_declarations: parameters
                 .iter()
@@ -1335,6 +1338,53 @@ pub(crate) struct FunctionEntailment {
     /// Canonical term and goal identities moved from the analyzer so every
     /// retained dense ID remains exact and interpretable after analysis.
     pub(crate) inventory: DerivationInventory,
+    /// [TYPE-11.S4] each hand-off that left a debt unrestored, in walk order.
+    pub(crate) sealing_failures: Vec<SealingFailure>,
+}
+
+/// [TYPE-11.S4] the rule one failed hand-off cites.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SealingRule {
+    /// A call argument, at the `call` [FN-8].
+    Fn8,
+    /// A return or a propagated error exit [FN-9].
+    Fn9,
+    /// A give, a construction operand or a stored right-hand side [TYPE-11].
+    Type11,
+}
+
+/// One hand-off that left a debt unrestored [TYPE-11.S4]: the anchor, the
+/// invariant, the first conclusion not established and each breaking event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SealingFailure {
+    pub(crate) rule: SealingRule,
+    /// The hand-off's site: the `call`, `return_stmt`, `let_stmt`,
+    /// `give_stmt` or `set_stmt`.
+    pub(crate) site: NodePath,
+    /// The `type_invariant` the debt names; for a cover, the first one its
+    /// place's struct declares, when it declares one.
+    pub(crate) clause: Option<NodePath>,
+    /// The anchor as a residual renders it.
+    pub(crate) anchor: String,
+    /// The instance not established; `None` for a cover or an anchor at the
+    /// unknown position, which form none.
+    pub(crate) goal: Option<ConcreteGoal>,
+    pub(crate) rendered_goal: String,
+    /// The writes that created the debt, in walk order.
+    pub(crate) events: Vec<NodePath>,
+    /// Whether a widening lost the identity the debt was restorable through.
+    pub(crate) widened: bool,
+}
+
+/// [TYPE-11.S3, TYPE-11.S4] what a call does with the values its arguments
+/// name: an ordinary call hands them off, and the supplied `swap` and
+/// `release` exchange or release them without reading them.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum CalleeSealing {
+    #[default]
+    HandsOff,
+    Exchange,
+    Release,
 }
 
 /// Answers each obligation record of `function` with the judgment that

@@ -1139,6 +1139,22 @@ pub(crate) struct CheckedNominal {
     /// invariants, which an enum payload of its type carries across a
     /// function boundary.
     pub(crate) type_invariant: bool,
+    /// [TYPE-11.S1] the affine type invariants of this struct, in
+    /// declaration order: the ones every value of it a body receives
+    /// satisfies until a write breaks one.
+    pub(crate) affine_invariants: Vec<CheckedAffineInvariant>,
+}
+
+/// [TYPE-11.S1] one affine type invariant, as a requirement of a function
+/// whose parameter zero is a value of the struct [FN-8], with the projection
+/// of each binder datum it reads from parameter zero.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedAffineInvariant {
+    /// The `type_invariant` occurrence.
+    pub(crate) clause: NodePath,
+    pub(crate) goal: super::goal::GoalExpression,
+    /// Each binder datum's projection from parameter zero, once each.
+    pub(crate) data: Vec<Vec<super::goal::GoalProjection>>,
 }
 
 impl CheckedNominal {

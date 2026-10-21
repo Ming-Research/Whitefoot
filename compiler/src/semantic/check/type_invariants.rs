@@ -4,8 +4,9 @@
 //! function whose one parameter is the invariant's binder, into a predicate
 //! over a parameter at ordinal zero [FN-8] and a difference-bound relation
 //! over that parameter's exit state [FN-9]. Every use substitutes its own
-//! subject for ordinal zero: a callable's parameter or referent, its exit
-//! state, a result ordinal, or a construction's field operands.
+//! subject for ordinal zero: a parameter or referent the contract-read
+//! footprint reads, a construction's field operands, an atomic target's
+//! referent, or a sealed anchor [TYPE-11.S1].
 
 use std::collections::HashMap;
 
@@ -14,10 +15,10 @@ use super::*;
 use crate::semantic::goal::{
     CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalProjection, GoalTemplate,
 };
+use crate::semantic::model::CheckedAffineInvariant;
 use crate::semantic::postcondition::{
-    CheckedPostconditionSelector, CheckedRoutedRequirement, NormalizedRelation, ParameterDenotation,
-    PayloadRoute, PostconditionPlace, PostconditionPlaceRoot, RelationDatum, RelationTemplate,
-    RelationTerm,
+    NormalizedRelation, ParameterDenotation, PostconditionPlace, PostconditionPlaceRoot,
+    RelationDatum, RelationTemplate,
 };
 use crate::FixedTerminal;
 
@@ -39,21 +40,15 @@ pub(super) struct TypeInvariantTemplate {
     /// The predicate, as a requirement of a function whose parameter zero is
     /// a value of the struct [FN-8].
     pub(super) goal: GoalTemplate,
-    /// The same relation, as a postcondition over parameter zero's exit
-    /// state [FN-9, MSR-3].
+    /// The same relation over parameter zero's exit state [FN-9, MSR-3],
+    /// which a constant construction evaluates.
     pub(super) relation: RelationTemplate,
-    /// The clause as a contract expression over parameter zero's exit
-    /// state, the form a callable boundary compares [FN-4].
-    pub(super) expanded: ExpandedClauseExpression,
-    /// The binder's origin, the source candidate of every selector the
-    /// relation's postconditions carry.
-    pub(super) binder: crate::SourceOrigin,
 }
 
 impl<'unit> Checker<'_, 'unit> {
     /// [TYPE-11] forms every struct's type invariants once, before any
-    /// function is checked, so that each callable taking or returning the
-    /// struct receives them as implicit clauses.
+    /// function is checked, so that every construction, atomic target and
+    /// sealed anchor of the struct reads them.
     pub(super) fn collect_type_invariants(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -177,6 +172,7 @@ impl<'unit> Checker<'_, 'unit> {
                 && let Some(record) = self.types.nominals.get_mut(nominal.0 as usize)
             {
                 record.type_invariant = true;
+                record.affine_invariants = formed.iter().map(affine_invariant).collect();
             }
             self.types.type_invariants.insert(nominal, formed);
         }
@@ -307,15 +303,11 @@ impl<'unit> Checker<'_, 'unit> {
                 .into_goal_expression()
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?,
         );
-        let relation = self
-            .types
-            .type_invariant_relation(invariant, expanded.clone())?;
+        let relation = self.types.type_invariant_relation(invariant, expanded)?;
         Ok(TypeInvariantTemplate {
             clause,
             goal,
             relation,
-            expanded,
-            binder: binder.origin().clone(),
         })
     }
 
@@ -340,13 +332,10 @@ impl<'unit> Checker<'_, 'unit> {
             .then_some(nominal)
     }
 
-    /// [TYPE-11] the requirements a callable's type invariants add after its
-    /// written ones: each invariant of each parameter's declared struct, in
-    /// parameter order. The prelude's `shared_new` and `frozen_new` take
-    /// their argument's this way, as a parameter of type T at the struct
-    /// [SHARE-1]; atomic targets establish a shared state's, and no read of
-    /// a frozen value establishes them yet (board item
-    /// `proof-bl-frozen-invariant-reads`).
+    /// [TYPE-11, FN-3] each invariant of each parameter's declared struct,
+    /// over that parameter or its referent, in parameter order: the places
+    /// they read belong to the callable's contract-read footprint. A call
+    /// owes them only as the debts its hand-offs require [TYPE-11.S4].
     pub(super) fn implicit_type_invariant_requirements(
         &self,
         signature: &FunctionSignature,
@@ -411,186 +400,6 @@ impl<'unit> Checker<'_, 'unit> {
                 subject: Some(ordinal),
             })
             .collect()
-    }
-
-    /// [TYPE-11] each variant field of an own enum type that holds a struct
-    /// with type invariants, with that struct, in variant and then field
-    /// declaration order. The type is a parameter's or result's after the
-    /// function instance's substitution [FN-2], so a payload written as a
-    /// type parameter that the instance binds to such a struct is one.
-    pub(super) fn invariant_payload_routes(
-        &self,
-        ty: CheckedType,
-    ) -> Result<Vec<(PayloadRoute, NominalId)>, CheckStop> {
-        let CheckedType::Nominal(nominal) = ty else {
-            return Ok(Vec::new());
-        };
-        let CheckedNominalKind::Enum { variants } = &self.types.nominal(nominal)?.kind else {
-            return Ok(Vec::new());
-        };
-        let mut routes = Vec::new();
-        for (variant_index, variant) in variants.iter().enumerate() {
-            for (field_index, field) in variant.fields.iter().enumerate() {
-                let CheckedType::Nominal(payload) = field.ty else {
-                    continue;
-                };
-                if self
-                    .types
-                    .type_invariants
-                    .get(&payload)
-                    .is_some_and(|invariants| !invariants.is_empty())
-                {
-                    routes.push((
-                        PayloadRoute {
-                            variant: u32::try_from(variant_index)
-                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                            field: u32::try_from(field_index)
-                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                            tag: variant.tag,
-                        },
-                        payload,
-                    ));
-                }
-            }
-        }
-        Ok(routes)
-    }
-
-    /// [TYPE-11] the requirements an own parameter of enum type adds: each
-    /// type invariant of each struct one of its variant fields holds,
-    /// restricted to a value holding that variant [FN-8], in parameter
-    /// order and then route and declaration order.
-    pub(super) fn routed_type_invariant_requirements(
-        &self,
-        signature: &FunctionSignature,
-    ) -> Result<Vec<CheckedRoutedRequirement>, CheckStop> {
-        let mut requirements = Vec::new();
-        for (ordinal, parameter) in signature.parameters.iter().enumerate() {
-            if parameter.mode != CheckedMode::Own {
-                continue;
-            }
-            let subject =
-                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-            for (route, payload) in self.invariant_payload_routes(parameter.ty)? {
-                for invariant in self
-                    .types
-                    .type_invariants
-                    .get(&payload)
-                    .into_iter()
-                    .flatten()
-                {
-                    requirements.push(CheckedRoutedRequirement {
-                        clause: invariant.clause.clone(),
-                        subject,
-                        route,
-                        payload: CheckedType::Nominal(payload),
-                        goal: invariant.goal.clone(),
-                        relation: substitute_relation(
-                            &invariant.relation,
-                            InvariantSubject::Result(0),
-                        ),
-                    });
-                }
-            }
-        }
-        Ok(requirements)
-    }
-
-    /// [TYPE-11] each type invariant a callable's boundary promises after its
-    /// written postconditions [FN-9]: over the exit state of each reference
-    /// parameter whose row writes it, then over each result ordinal, each
-    /// with the invariant, its subject and a selector of every explicit
-    /// return. Each position's type is the instance's [FN-2]. A callable
-    /// whose definition the build supplies promises none, since no body
-    /// proves them: `take_back` at a struct with type invariants hands out
-    /// a storage element nothing checked.
-    pub(super) fn type_invariant_postcondition_selectors(
-        &self,
-        function: &FunctionSignature,
-    ) -> Result<
-        Vec<(
-            TypeInvariantTemplate,
-            InvariantSubject,
-            CheckedPostconditionSelector,
-        )>,
-        CheckStop,
-    > {
-        if self.supplied_definition(function)? {
-            return Ok(Vec::new());
-        }
-        let mut subjects = Vec::new();
-        for (ordinal, parameter) in function.parameters.iter().enumerate() {
-            if parameter.mode != CheckedMode::Reference
-                || !super::ensures::parameter_has_exit_state(function, parameter)
-            {
-                continue;
-            }
-            if let Some(nominal) = self.declared_invariant_struct(parameter) {
-                let ordinal =
-                    u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                subjects.push((nominal, InvariantSubject::ExitParameter(ordinal), 0, None));
-            }
-        }
-        for (ordinal, result) in function.results.iter().enumerate() {
-            let CheckedType::Nominal(nominal) = result.ty else {
-                continue;
-            };
-            if result.mode != CheckedMode::Own || !self.types.type_invariants.contains_key(&nominal)
-            {
-                continue;
-            }
-            let ordinal =
-                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-            subjects.push((nominal, InvariantSubject::Result(ordinal), ordinal, None));
-        }
-        for (ordinal, result) in function.results.iter().enumerate() {
-            if result.mode != CheckedMode::Own {
-                continue;
-            }
-            let ordinal =
-                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-            for (route, payload) in self.invariant_payload_routes(result.ty)? {
-                subjects.push((
-                    payload,
-                    InvariantSubject::Result(ordinal),
-                    ordinal,
-                    Some(route),
-                ));
-            }
-        }
-        let mut selectors = Vec::new();
-        for (nominal, subject, result_ordinal, route) in subjects {
-            for invariant in self
-                .types
-                .type_invariants
-                .get(&nominal)
-                .into_iter()
-                .flatten()
-            {
-                let selector = CheckedPostconditionSelector {
-                    function: function.id,
-                    block: invariant.clause.clone(),
-                    selector: invariant.clause.clone(),
-                    candidate: invariant.binder.clone(),
-                    ordinal: result_ordinal,
-                    variant: None,
-                    field: None,
-                    route,
-                    generated: true,
-                    // A routed ordinal's datum is the routed field's value.
-                    result_type: if route.is_some() {
-                        CheckedType::Nominal(nominal)
-                    } else {
-                        function
-                            .results
-                            .get(result_ordinal as usize)
-                            .map_or(function.result, |result| result.ty)
-                    },
-                };
-                selectors.push((invariant.clone(), subject, selector));
-            }
-        }
-        Ok(selectors)
     }
 
     /// [TYPE-11] each type invariant a construction of `nominal` owes, over
@@ -1058,6 +867,39 @@ fn construct_goal(
 
 /// [TYPE-11] the predicate over an atomic statement's binder: parameter
 /// zero's place is the place the binder names.
+/// [TYPE-11.S1] one formed invariant as the sealing rules read it: its
+/// predicate over parameter zero, and the projection of each binder datum.
+fn affine_invariant(template: &TypeInvariantTemplate) -> CheckedAffineInvariant {
+    let mut data = Vec::new();
+    binder_data(&template.goal.root, &mut data);
+    CheckedAffineInvariant {
+        clause: template.clause.clone(),
+        goal: template.goal.root.clone(),
+        data,
+    }
+}
+
+/// Each distinct projection from parameter zero that `expression` reads.
+fn binder_data(expression: &GoalExpression, data: &mut Vec<Vec<GoalProjection>>) {
+    match expression {
+        GoalExpression::Datum(GoalDatum::Parameter {
+            ordinal: 0,
+            projections,
+            ..
+        }) => {
+            if !data.contains(projections) {
+                data.push(projections.clone());
+            }
+        }
+        GoalExpression::Datum(_) => {}
+        GoalExpression::Operation { arguments, .. } => {
+            for argument in arguments {
+                binder_data(argument, data);
+            }
+        }
+    }
+}
+
 fn binder_goal(expression: &GoalExpression, binding: BindingId) -> Option<GoalExpression> {
     match expression {
         GoalExpression::Datum(GoalDatum::Parameter {
@@ -1088,144 +930,5 @@ fn binder_goal(expression: &GoalExpression, binding: BindingId) -> Option<GoalEx
                 .map(|argument| binder_goal(argument, binding))
                 .collect::<Option<Vec<_>>>()?,
         }),
-    }
-}
-
-/// Where a type invariant's relation is a postcondition [TYPE-11, FN-9].
-#[derive(Clone, Copy)]
-pub(super) enum InvariantSubject {
-    /// The exit state of the reference parameter at this ordinal.
-    ExitParameter(u32),
-    /// The declared result at this ordinal.
-    Result(u32),
-}
-
-/// [TYPE-11] the relation over `subject` in place of parameter zero's exit
-/// state.
-pub(super) fn substitute_relation(
-    relation: &RelationTemplate,
-    subject: InvariantSubject,
-) -> RelationTemplate {
-    let term = |term: &RelationTerm| RelationTerm {
-        datum: substitute_relation_datum(&term.datum, subject),
-        displacement: term.displacement,
-        parameter: term
-            .parameter
-            .as_ref()
-            .map(|datum| substitute_relation_datum(datum, subject)),
-    };
-    RelationTemplate {
-        operation: relation.operation,
-        operands: [term(&relation.operands[0]), term(&relation.operands[1])],
-        normalized: relation.normalized,
-    }
-}
-
-fn substitute_relation_datum(datum: &RelationDatum, subject: InvariantSubject) -> RelationDatum {
-    match (datum, subject) {
-        (
-            RelationDatum::Parameter {
-                ordinal: 0,
-                projections,
-                ty,
-                denotation: ParameterDenotation::ExitState,
-            },
-            InvariantSubject::ExitParameter(ordinal),
-        ) => RelationDatum::Parameter {
-            ordinal,
-            projections: std::iter::once(GoalProjection::Deref)
-                .chain(projections.iter().copied())
-                .collect(),
-            ty: *ty,
-            denotation: ParameterDenotation::ExitState,
-        },
-        (
-            RelationDatum::Parameter {
-                ordinal: 0,
-                projections,
-                ty,
-                denotation: ParameterDenotation::ExitState,
-            },
-            InvariantSubject::Result(ordinal),
-        ) => RelationDatum::Result {
-            ordinal,
-            projections: projections.clone(),
-            ty: *ty,
-        },
-        (
-            RelationDatum::Measure(
-                measure,
-                PostconditionPlace {
-                    root: PostconditionPlaceRoot::ExitParameter { ordinal: 0 },
-                    projections,
-                    ty,
-                },
-            ),
-            subject,
-        ) => RelationDatum::Measure(
-            *measure,
-            match subject {
-                InvariantSubject::ExitParameter(ordinal) => PostconditionPlace {
-                    root: PostconditionPlaceRoot::ExitParameter { ordinal },
-                    projections: std::iter::once(GoalProjection::Deref)
-                        .chain(projections.iter().copied())
-                        .collect(),
-                    ty: *ty,
-                },
-                InvariantSubject::Result(ordinal) => PostconditionPlace {
-                    root: PostconditionPlaceRoot::Result { ordinal },
-                    projections: projections.clone(),
-                    ty: *ty,
-                },
-            },
-        ),
-        (datum, _) => datum.clone(),
-    }
-}
-
-/// [TYPE-11] the clause as a contract expression over `subject` in place of
-/// parameter zero's exit state [FN-4].
-pub(super) fn substitute_expanded(
-    expression: &ExpandedClauseExpression,
-    subject: InvariantSubject,
-) -> ExpandedClauseExpression {
-    match expression {
-        ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
-            ordinal: 0,
-            projections,
-            ty,
-            denotation: ParameterDenotation::ExitState,
-        }) => ExpandedClauseExpression::Datum(match subject {
-            InvariantSubject::ExitParameter(ordinal) => ExpandedClauseDatum::Parameter {
-                ordinal,
-                projections: std::iter::once(GoalProjection::Deref)
-                    .chain(projections.iter().copied())
-                    .collect(),
-                ty: *ty,
-                denotation: ParameterDenotation::ExitState,
-            },
-            InvariantSubject::Result(ordinal) => ExpandedClauseDatum::Result {
-                ordinal,
-                projections: projections.clone(),
-                ty: *ty,
-            },
-        }),
-        ExpandedClauseExpression::Operation {
-            row,
-            type_arguments,
-            const_arguments,
-            result,
-            arguments,
-        } => ExpandedClauseExpression::Operation {
-            row: *row,
-            type_arguments: type_arguments.clone(),
-            const_arguments: const_arguments.clone(),
-            result: *result,
-            arguments: arguments
-                .iter()
-                .map(|argument| substitute_expanded(argument, subject))
-                .collect(),
-        },
-        other => other.clone(),
     }
 }

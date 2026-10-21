@@ -42,6 +42,7 @@ mod prover;
 mod relations;
 mod render;
 mod results;
+mod sealing;
 mod sources;
 mod walk;
 
@@ -56,6 +57,7 @@ use loop_summary::*;
 use postconditions::*;
 use prover::*;
 use relations::*;
+use sealing::*;
 use walk::*;
 
 use sources::{bound_place, capture_counted_preheader};
@@ -119,7 +121,7 @@ use super::{
     LoopInvariantProof, MeasureKillNote, ObligationFamily, ObligationOutcome,
     PostconditionAggregate, PostconditionDisposition, PostconditionEntryImage,
     PostconditionEntryImageOutcome, PostconditionExit, RangeEndpointReading, RangeLengthReading,
-    SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
+    SealingFailure, SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
     VerifiedPostconditionSummaryRef, fragment_type, overflow_conjuncts_for_values,
 };
 
@@ -258,6 +260,8 @@ struct AtomicFrame {
     loop_depth: usize,
     give_depth: usize,
     invariants: Vec<crate::semantic::goal::CheckedCallRequirement>,
+    /// The target bindings, whose referents no read seals [TYPE-11.S7].
+    targets: Vec<BindingId>,
 }
 
 /// A value initializer collecting give-edge states for its continuation.
@@ -363,6 +367,9 @@ struct ProofFlowState {
     /// edge every one must be an event of the summary its head subtracted
     /// [ENT-5].
     continuing: Vec<KillEvent>,
+    /// [TYPE-11.S2] the writes on this edge that may have broken an affine
+    /// type invariant of a value since the hand-off that delivered it.
+    debts: Debts,
 }
 
 /// [DIAG-1] one write that reached a measure term: the statement that wrote,
@@ -1356,6 +1363,7 @@ fn analyze_candidate_inner(
         unrecorded: Vec::new(),
         derivations: run.derivations,
         inventory: run.inventory,
+        sealing_failures: run.sealing_failures,
     };
     (entailment.answers, entailment.unrecorded) = super::answer_records(function, &entailment);
     entailment
@@ -1375,11 +1383,39 @@ struct AnalysisRun {
     permission_separations: Vec<PermissionSeparationProof>,
     derivations: DerivationLedger,
     inventory: DerivationInventory,
+    sealing_failures: Vec<SealingFailure>,
 }
 
+/// [TYPE-11.S6] walks the body from empty loop-header debts, and again from
+/// the debts the last walk found on each loop's backedges, until no backedge
+/// carries a debt its header did not start with: the least set, reached by
+/// monotone iteration, since a walk from more debts leaves no fewer.
 fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisRun {
     let _work = super::work::function(&function.name);
+    let mut seeds = HashMap::new();
+    loop {
+        let (run, backedges) = run_seeded(function, context, &seeds);
+        let settled = backedges.iter().all(|(id, debts)| {
+            seeds
+                .get(id)
+                .is_some_and(|seed: &Debts| debts.keys_within(seed))
+        });
+        if settled {
+            return run;
+        }
+        for (id, debts) in backedges {
+            seeds.entry(id).or_default().union(&debts);
+        }
+    }
+}
+
+fn run_seeded(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    seeds: &HashMap<CheckedLoopId, Debts>,
+) -> (AnalysisRun, HashMap<CheckedLoopId, Debts>) {
     let mut analyzer = Analyzer::new(context, function);
+    analyzer.input.debt_seeds = seeds.clone();
     analyzer.input.collect_bindings();
     analyzer.input.collect_postcondition_entry_images();
     let mut state = ProofFlowState {
@@ -1419,6 +1455,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
             .establish_requirement_affine_images(requirement, ordinal, &mut state);
     }
     analyzer.establish_routed_requirements(&mut state);
+    analyzer.seal_body_entry(&mut state);
     let body_disposition = {
         let closed = close(
             &state.facts,
@@ -1460,7 +1497,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         measure_bounds,
         goals: analyzer.vocabulary.goals.into_inventory(),
     };
-    AnalysisRun {
+    let run = AnalysisRun {
         operation_intervals: analyzer.output.operation_intervals,
         body_disposition,
         obligations: analyzer.output.obligations,
@@ -1474,7 +1511,9 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         permission_separations,
         derivations: analyzer.vocabulary.derivations,
         inventory,
-    }
+        sealing_failures: analyzer.output.sealing_failures,
+    };
+    (run, analyzer.output.debt_backedges)
 }
 
 impl<'check, 'unit> Analyzer<'check, 'unit> {
@@ -1491,6 +1530,11 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 places: PlaceMap::default(),
                 entry_images: Vec::new(),
                 postcondition_entry_images: Vec::new(),
+                sealing: context
+                    .nominals
+                    .iter()
+                    .any(|nominal| !nominal.affine_invariants.is_empty()),
+                debt_seeds: HashMap::new(),
             },
             vocabulary: Vocabulary {
                 terms: TermTable::new(),
@@ -1536,6 +1580,8 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                     })
                     .collect(),
                 judged_separations: HashSet::new(),
+                sealing_failures: Vec::new(),
+                debt_backedges: HashMap::new(),
             },
             frames: Frames {
                 branches: Vec::new(),
@@ -1884,6 +1930,12 @@ struct Input<'check, 'unit> {
     /// flow state tracks invalidation once per structural image, while each
     /// FN-9 proof consults only the images its own relation references.
     postcondition_entry_images: Vec<Vec<usize>>,
+    /// [TYPE-11] whether some struct of the program declares an affine type
+    /// invariant; without one no write records a debt.
+    sealing: bool,
+    /// [TYPE-11.S6] the debts an earlier walk of this body found on each
+    /// loop's backedges, which its header starts with.
+    debt_seeds: HashMap<CheckedLoopId, Debts>,
 }
 
 /// The terms, goals, affine atoms and derivation ledger every judgment is
@@ -1965,6 +2017,10 @@ struct Output {
     /// The effect and demanded reference-preservation questions already
     /// judged, distinguished by query even when they share a write event.
     judged_separations: HashSet<usize>,
+    /// [TYPE-11.S4] each hand-off that left a debt unrestored.
+    sealing_failures: Vec<SealingFailure>,
+    /// [TYPE-11.S6] the debts left on each loop's backedges and `continue`s.
+    debt_backedges: HashMap<CheckedLoopId, Debts>,
 }
 
 /// The walk's own frames: open scopes, loops and value initializers, and the

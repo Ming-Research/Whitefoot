@@ -48,7 +48,9 @@ use crate::{
     SemanticRule,
 };
 
-use super::entailment::{EntailmentCallee, collect_statement_calls, finalize_function_entailment};
+use super::entailment::{
+    CalleeSealing, EntailmentCallee, collect_statement_calls, finalize_function_entailment,
+};
 use super::goal::{
     CheckedCallRequirement, CheckedRequirement, ConcreteGoal, GoalDatum, GoalExpression,
     GoalOperation, GoalProjection,
@@ -1967,7 +1969,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // judgment below reaches once an operand fixes W. Every other generic
         // row, prelude or source, keeps its symbolic judgment.
         let unsupplied_window_row = self.types.has_unsupplied_window_type_parameter(signature)?;
-        let (mut requirements, mut requirement_places) = if let Some(node) = self
+        let (requirements, requirement_places) = if let Some(node) = self
             .types
             .declarations
             .tree
@@ -1989,11 +1991,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         } else {
             (Vec::new(), Vec::new())
         };
-        for requirement in self.implicit_type_invariant_requirements(signature)? {
-            requirements.push(requirement);
-            requirement_places.push(Vec::new());
-        }
-        let routed_requirements = self.routed_type_invariant_requirements(signature)?;
 
         let mut postcondition_selectors = if unsupplied_window_row {
             Vec::new()
@@ -2205,22 +2202,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 },
             );
         }
-        // [TYPE-11, FN-2] generated promises follow the written clauses in
-        // both concrete and symbolic instances. A known invariant struct
-        // supplies its ordinary integer relations even while another type
-        // remains symbolic. Schema admission and renamed-instance reuse
-        // must retain those clauses with the written ones, so FN-4's actual
-        // premises have the FN-9 summaries a bound call requires.
-        for (invariant, subject, selector) in
-            self.type_invariant_postcondition_selectors(signature)?
-        {
-            postcondition_selectors.push(selector);
-            postcondition_relations.push(type_invariants::substitute_relation(
-                &invariant.relation,
-                subject,
-            ));
-            postcondition_places.push(Vec::new());
-        }
         let postconditions = if signature.substitution.is_concrete(&self.types.elements) {
             postcondition_selectors
                 .into_iter()
@@ -2340,7 +2321,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             held_parameters: signature.checked_held_parameters()?,
             held_calls: std::mem::take(&mut self.body.checked_held_calls),
             requirement_places,
-            routed_requirements,
+            routed_requirements: Vec::new(),
             postconditions,
             range_facts: std::mem::take(&mut self.body.range_facts),
             body: (!declaration_only || supplied_release).then_some(checked.statements),
@@ -3340,8 +3321,16 @@ impl<'unit> TypeContext<'unit> {
                 &signature.declared_effects.writes,
                 self.exhibited_writes.get(&signature.id).map(Vec::as_slice),
             );
-            callee.relocation = matches!(signature.name.as_str(), "grow" | "grow_paged")
-                && self.declarations.tree.is_prelude_node(signature.node)?;
+            let prelude = self.declarations.tree.is_prelude_node(signature.node)?;
+            callee.relocation = matches!(signature.name.as_str(), "grow" | "grow_paged") && prelude;
+            // [TYPE-11.S3] the arguments of `swap` and `release` are no
+            // hand-offs: their supplied definitions exchange or release
+            // values and read none.
+            callee.sealing = match signature.name.as_str() {
+                "swap" if prelude => CalleeSealing::Exchange,
+                "release" if prelude => CalleeSealing::Release,
+                _ => CalleeSealing::HandsOff,
+            };
             callees.push(callee);
         }
         for (callee, checked) in callees.iter_mut().zip(functions) {
