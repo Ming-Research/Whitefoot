@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/safety-claims
 
 Summary: The safety claims were spread over the README, the constitution, the specification and articles, with no place that connected each claim to the rules and cases behind it. A new node puts them on one page whose rows cite specification rules and conformance cases, with the limits quoted from the specification and the trusted base sized, and `make static` holds every citation to the specification and the manifest and the presence of each limit, because a page nothing reads drifts, which the refused rule-to-ground ledger already showed. Tagging cases in the manifest, generating the page from the manifest, leaving the page unchecked and holding the size figures to the checkout are rejected.
+## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
+
+Nodes: compiler/verification
+
+Summary: The hosted gate and the I/O host checks no longer run for a push to a draft pull request's branch or for a draft's opening or reopening; they run for the main line, a ready pull request's pushes, a hand-started run and the event of marking a pull request ready, which skips when the head already has a successful manual run of the same workflow. With the draft pushes gone, every run that checks a revision runs both platforms, so the Linux-only run is retired and the earlier refusal of both platforms on every push is restated for the case that no longer holds. The gate also fails while a `tmp-` workflow file exists in the checked head, and the performance comparison skips a draft as the design-readiness job already does. The run record of a week shows 122 checked runs on 40 branches other than the main line, up to 10 on one branch ([measurements](../research/investigations/test-economy/time-budgets.md#gate-at-ready-not-at-each-draft-push)); the author now gets results from a temporary workflow while writing.
 
 ## 2026-10-20 Conditions the checker decides are rejected
 
