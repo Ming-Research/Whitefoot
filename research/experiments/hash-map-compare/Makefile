@@ -28,7 +28,10 @@ $(BUILD)/bench-peak.ll: $(HERE)/bench.wf $(WFC) $(HERE)/Makefile
 $(BUILD)/bench-peak.o: $(BUILD)/bench-peak.ll $(NATIVE_CONFIG)
 	$(CLANG) $(NATIVE_OPTIMIZATION_FLAGS) -Wno-override-module -x ir -c "$<" -o "$@"
 
-$(BUILD)/peak.o: $(HERE)/peak.c $(NATIVE_CONFIG) $(HERE)/Makefile
+# peak.c mirrors the runtime's copy threshold for small reallocations; the
+# grep fails the build when the runtime's definition changes.
+$(BUILD)/peak.o: $(HERE)/peak.c $(ROOT)/compiler/src/backend/heap.c $(NATIVE_CONFIG) $(HERE)/Makefile
+	grep -q '^#define WF_HEAP_RETAKE_COPY_BELOW UINT64_C(1024)$$' "$(ROOT)/compiler/src/backend/heap.c"
 	$(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -c "$<" -o "$@"
 
 $(BUILD)/bench-peak: $(BUILD)/bench-peak.o $(BUILD)/peak.o $(NATIVE_OBJECTS)

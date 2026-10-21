@@ -52,7 +52,9 @@ measurement.
 The memory cell builds a map of N pairs from capacity zero. Its observed
 image renames the program's heap calls to `peak.c`, which reads after each
 the heap counter that `std::process::heap_in_use` reports and keeps its
-maximum. The cell reports the bytes the built map retains and the peak
+maximum; for a block below the runtime's copy threshold, which grows by
+taking the new block before giving the old one back, it also counts the
+moment both are held. The cell reports the bytes the built map retains and the peak
 above the reading before building, and the maximum resident set as a
 descriptive figure. Both are deterministic; each arm runs twice and the two
 runs must agree.

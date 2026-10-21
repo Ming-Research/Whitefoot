@@ -1,5 +1,5 @@
 # Temporary quick check for board item wf-hash-map-bench, removed before the
-# branch is ready: runs hash-map-bench.yml's scripts on a hosted runner with a
+# branch is ready: runs hash-map-bench.yml itself on a hosted runner with a
 # small sample, once plainly and once with the slow control, comparing
 # Ming-Research/Whitefoot#487's head with its merge base.
 name: tmp-hash-map-bench
@@ -8,78 +8,21 @@ on:
   push:
     branches: [wf-hash-map-bench]
 
-defaults:
-  run:
-    shell: bash
-
-env:
-  CARGO_TERM_COLOR: never
-  CARGO_INCREMENTAL: 0
-
 jobs:
-  sample:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Install the host toolchain
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          rustup default stable
-          /usr/bin/clang --version
-          nproc
-      - name: Self-test the reducer
-        run: python3 -B research/experiments/hash-map-compare/compare.py self-test
-      - name: Build the base and candidate compilers
-        run: |
-          mkdir -p "$RUNNER_TEMP/out"
-          bash research/experiments/hash-map-compare/arms.sh claude/hash-scan-resume "" "$RUNNER_TEMP/out"
-      - name: Check every program with every compiler that builds it
-        run: |
-          arms="$RUNNER_TEMP/out/arms"
-          dir=research/experiments/hash-map-compare
-          status=0
-          for arm in base candidate; do
-            "$arms/$arm/compiler/target/gate/whitefootc" --check "$dir/bench.wf" || status=1
-          done
-          "$arms/candidate/compiler/target/gate/whitefootc" --check "$dir/hold.wf" || status=1
-          exit "$status"
-      - name: Build the images
-        run: |
-          arms="$RUNNER_TEMP/out/arms"
-          python3 -B research/experiments/hash-map-compare/compare.py build \
-            --base-wfc "$arms/base/compiler/target/gate/whitefootc" \
-            --candidate-wfc "$arms/candidate/compiler/target/gate/whitefootc" \
-            --runtime-root "$arms/candidate" --out "$RUNNER_TEMP/out"
-          mkdir -p "$RUNNER_TEMP/slow"
-          cp -R "$RUNNER_TEMP/out/images" "$RUNNER_TEMP/slow/images"
-          cp "$RUNNER_TEMP/out/manifest.txt" "$RUNNER_TEMP/slow/manifest.txt"
-      - name: Measure a small sample
-        run: |
-          python3 -B research/experiments/hash-map-compare/compare.py measure --out "$RUNNER_TEMP/out" \
-            --cpu 1 --min-rounds 6 --max-rounds 6
-          python3 -B research/experiments/hash-map-compare/compare.py reduce --out "$RUNNER_TEMP/out"
-      - name: Measure with the slow control
-        run: |
-          python3 -B research/experiments/hash-map-compare/compare.py measure --out "$RUNNER_TEMP/slow" \
-            --cpu 1 --min-rounds 6 --max-rounds 150 --slow
-          python3 -B research/experiments/hash-map-compare/compare.py reduce --out "$RUNNER_TEMP/slow" \
-            --expect-regression
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: tmp-hash-map-bench
-          if-no-files-found: warn
-          path: |
-            ${{ runner.temp }}/out/manifest.txt
-            ${{ runner.temp }}/out/*.tsv
-            ${{ runner.temp }}/out/summary.txt
-            ${{ runner.temp }}/slow/manifest.txt
-            ${{ runner.temp }}/slow/*.tsv
-            ${{ runner.temp }}/slow/summary.txt
+  plain:
+    uses: ./.github/workflows/hash-map-bench.yml
+    with:
+      candidate: claude/hash-scan-resume
+      runner: github
+      min_rounds: "6"
+      max_rounds: "6"
+      control: none
+
+  slow:
+    uses: ./.github/workflows/hash-map-bench.yml
+    with:
+      candidate: claude/hash-scan-resume
+      runner: github
+      min_rounds: "6"
+      max_rounds: "150"
+      control: slow
