@@ -164,3 +164,22 @@ two candidates were not timed in one panel, so the reduction is attributed to
 the collection changes only by this cross-run comparison. Firn was not
 measured: its current main source names a local `held`, a keyword since
 v0.147, which the base compiler rejects.
+
+Whole conformance corpus: a temporary workflow ran `whitefootc --check` over
+the 3,044 single-file cases (module-form cases excluded) with the merge-base
+compiler (`23aefb63e`) and the candidate (`644892cd3`, then `7425067b2`), gate
+profile, `ubuntu-24.04` hosted runner, compiler CPU as user plus system time.
+Without a twin
+([run 39523567779](https://github.com/Ming-Research/Whitefoot/actions/runs/39523567779),
+three alternating rounds) candidate/base was 1.0206 median (min 1.0095, max
+1.0247). With a byte-identical base twin and a rotation that puts every
+compiler in every position
+([run 39525086802](https://github.com/Ming-Research/Whitefoot/actions/runs/39525086802))
+candidate/base was 1.0066 median (min 1.0053, max 1.0164) and twin/base 1.0037
+(min 0.9952, max 1.0194). The twin's spread exceeds the candidate's median
+difference, so this corpus resolves neither a regression nor an improvement
+from the base; the two panels bound the cost below the 1.03 line and agree
+with Halo's 1.0213. The panels sampled the corpus only; they do not bound the
+cost of other programs. Exactly three case verdicts differ between the base
+and candidate compilers, all reject to accept: the symbolic, nested and
+literal/symbolic positives; the base twin differs from base in none.
