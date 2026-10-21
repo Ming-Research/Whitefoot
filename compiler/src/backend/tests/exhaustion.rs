@@ -34,16 +34,6 @@ use std::process::Command;
 
 use super::{build_linked_executable, compile, test_directory};
 
-/// The attribute group [`crate::backend::emitter`] gives every definition, and
-/// the value it carries on this host.
-///
-/// The value is the host C compiler's own frame-probing helper, so a generated
-/// frame walks its pages exactly the way the runtime's translation unit does.
-#[cfg(target_os = "macos")]
-const HOST_STACK_PROBE: &str = "\"probe-stack\"=\"__chkstk_darwin\"";
-#[cfg(not(target_os = "macos"))]
-const HOST_STACK_PROBE: &str = "\"probe-stack\"=\"inline-asm\"";
-
 /// A program that reaches several kinds of generated definition at once: a
 /// heap box and its compiler-generated drop glue, a recursive walk, a system
 /// transfer, and the entry itself.
@@ -113,7 +103,7 @@ fn buffer_module() -> String {
 }
 
 /// Every definition the module emits carries the probe attribute, and the
-/// group it names is the host's.
+/// group it names matches the resolved consumer's measured capability.
 ///
 /// The count equality is the point of the case. Containment is a completeness
 /// property — one unprobed large frame is enough to jump the guard region into
@@ -154,9 +144,12 @@ pub(super) fn assert_stack_probes(module: &str) {
         1,
         "the module declares its one attribute group once:\n{module}"
     );
+    let target = crate::target::TargetLayout::host().expect("the native host is supported");
+    let attributes =
+        target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper);
     assert!(
-        module.contains(&format!("attributes #0 = {{ {HOST_STACK_PROBE} uwtable }}")),
-        "the group must name this host's probing helper:\n{module}"
+        module.contains(&format!("attributes #0 = {{ {attributes} uwtable }}")),
+        "the group must name the resolved consumer's probing method:\n{module}"
     );
 }
 
@@ -1099,7 +1092,7 @@ fn assert_native_spine_probe_was_ablated(probed: &str, ablated: &str) {
     let ablated = native_function_body(ablated, label);
     let has_probe = |body: &str| {
         if cfg!(target_os = "macos") {
-            body.contains("chkstk")
+            darwin_native_stack_probe(body)
         } else if cfg!(target_arch = "x86_64") {
             body.contains("subq\t$4096, %rsp") && body.contains("movq\t$0, (%rsp)")
         } else if cfg!(target_arch = "aarch64") {
@@ -1116,6 +1109,139 @@ fn assert_native_spine_probe_was_ablated(probed: &str, ablated: &str) {
         !has_probe(ablated),
         "the negative-control spine still contains a native stack probe:\n{ablated}"
     );
+}
+
+/// Darwin's helper call or a complete inline page walk in this function.
+/// Inline recognition requires adjacent descent, touch, SP/target comparison
+/// and a backedge to that descent; scattered prologue substrings are no proof.
+fn darwin_native_stack_probe(body: &str) -> bool {
+    body.lines().any(|line| {
+        let mut words = line.split_whitespace();
+        matches!(words.next(), Some("bl" | "call" | "callq"))
+            && words
+                .next()
+                .is_some_and(|callee| callee.trim_start_matches('_') == "chkstk_darwin")
+    }) || darwin_indirect_helper_call(body)
+        || darwin_inline_stack_probe(body)
+}
+
+/// Apple's AArch64 backend may reach the helper through the GOT: it loads
+/// `___chkstk_darwin@GOTPAGEOFF` into a register and later branches through
+/// that register with `blr`, rather than a direct `bl`.
+fn darwin_indirect_helper_call(body: &str) -> bool {
+    let mut loaded: Option<String> = None;
+    for line in body.lines() {
+        let code = line.split(';').next().unwrap_or_default().trim();
+        let mut words = code.split_whitespace();
+        match words.next() {
+            Some("ldr") => {
+                let operands: String = words.collect();
+                if operands.contains("chkstk_darwin@GOTPAGEOFF]") {
+                    loaded = operands.split(',').next().map(str::to_owned);
+                }
+            }
+            Some("blr") if loaded.is_some() && words.next() == loaded.as_deref() => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+// This exact inline sequence is qualified only for AArch64. Intel Darwin
+// retains its helper check; recognizing another backend's loop needs evidence.
+fn darwin_inline_stack_probe(body: &str) -> bool {
+    let mut instructions = Vec::new();
+    let mut labels = std::collections::HashMap::new();
+    for original in body.lines() {
+        let line = original
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .split("//")
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(label) = line.strip_suffix(':') {
+            if labels.insert(label.to_owned(), instructions.len()).is_some() {
+                return false;
+            }
+            continue;
+        }
+        if line.starts_with('.') {
+            continue; // Assembler and CFI directives emit no instruction.
+        }
+        let end = line.find(char::is_whitespace).unwrap_or(line.len());
+        let mnemonic = &line[..end];
+        let operands: String = line[end..].chars().filter(|c| !c.is_whitespace()).collect();
+        instructions.push((mnemonic, operands));
+    }
+    for (index, window) in instructions.windows(4).enumerate() {
+        let [(sub, decrement), (store, touch), (cmp, comparison), (branch, target)] = window else {
+            unreachable!("windows(4) always contains four instructions")
+        };
+        let arm = *sub == "sub"
+            && matches!(
+                decrement.as_str(),
+                "sp,sp,#4096" | "sp,sp,#0x1000" | "sp,sp,#1,lsl#12" | "sp,sp,#0x1,lsl#12"
+            )
+            && *store == "str"
+            && touch == "xzr,[sp]"
+            && *cmp == "cmp"
+            && arm_sp_target_comparison(comparison)
+            && *branch == "b.ne";
+        if arm && labels.get(target).copied() == Some(index) {
+            return true;
+        }
+    }
+    false
+}
+
+fn arm_sp_target_comparison(operands: &str) -> bool {
+    let mut parts = operands.split(',');
+    if parts.next() != Some("sp") {
+        return false;
+    }
+    let Some(register) = parts.next().and_then(|part| part.strip_prefix('x')) else {
+        return false;
+    };
+    if !register.bytes().all(|byte| byte.is_ascii_digit())
+        || !register.parse::<u8>().is_ok_and(|number| number <= 30)
+    {
+        return false;
+    }
+    matches!(parts.next(), None | Some("uxtx" | "uxtx#0")) && parts.next().is_none()
+}
+
+#[test]
+fn darwin_probe_recognizer_requires_a_complete_backward_page_walk() {
+    let assembly = "Lprobe:\n\tsub sp, sp, #1, lsl #12\n\tstr xzr, [sp]\n\tcmp sp, x9\n\tb.ne Lprobe\nLafter:\n\tret\n";
+    assert!(darwin_inline_stack_probe(assembly), "{assembly}");
+    for malformed in [
+        assembly.replace("str xzr, [sp]", "nop"),
+        assembly.replace("#1, lsl #12", "#2, lsl #12"),
+        assembly.replace("b.ne Lprobe", "b.ne Lafter"),
+        assembly.replace("cmp sp, x9", "cmp x10, x9"),
+        assembly.replace("cmp sp, x9", "cmp sp, #0"),
+    ] {
+        assert!(!darwin_inline_stack_probe(&malformed), "{malformed}");
+    }
+    assert!(darwin_native_stack_probe("\tbl ___chkstk_darwin\n"));
+    assert!(darwin_native_stack_probe("\tcallq ___chkstk_darwin\n"));
+    assert!(!darwin_native_stack_probe("; ___chkstk_darwin\n\tbl _other\n"));
+    let indirect = "\tadrp x16, ___chkstk_darwin@GOTPAGE\n\tldr x16, [x16, ___chkstk_darwin@GOTPAGEOFF]\n\tblr x16\n";
+    assert!(darwin_native_stack_probe(indirect), "{indirect}");
+    for malformed in [
+        indirect.replace("blr x16", "blr x17"),
+        indirect.replace("\tblr x16\n", ""),
+        indirect.replace("___chkstk_darwin@GOTPAGEOFF", "_other@GOTPAGEOFF"),
+    ] {
+        assert!(!darwin_native_stack_probe(&malformed), "{malformed}");
+    }
 }
 
 fn native_function_body<'assembly>(assembly: &'assembly str, label: &str) -> &'assembly str {

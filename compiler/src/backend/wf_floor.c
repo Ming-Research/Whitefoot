@@ -76,12 +76,14 @@ static _Thread_local int wf__floor_stack_known;
  *
  * This is the probe's geometry, not a margin of comfort. Every generated
  * definition carries the target's `probe-stack` attribute, so a frame walks
- * its pages on the way down in strides of one page: the first touch below the
- * stack is at most one stride under it, and no descent can step past the guard
- * page into whatever lies beyond. Below that a leaf may touch its ABI red zone
- * without moving the stack pointer at all, which is 128 bytes on x86-64 and
- * none on AArch64. One stride plus the red zone is therefore the whole set of
- * addresses a thread running out can fault at.
+ * its pages on the way down in strides no larger than one host page: the first
+ * touch below the stack is at most one stride under it, and no descent can
+ * step past the guard page into whatever lies beyond. Below that a leaf may
+ * touch its ABI red zone without moving the stack pointer at all, which is
+ * 128 bytes on x86-64 and none on AArch64. One host page plus the red zone
+ * therefore bounds the set of addresses a thread running out can fault at,
+ * including Apple's helper and upstream LLVM's explicit 4096-byte walk on
+ * hosts with larger pages.
  *
  * Sizing it any wider is not free slack: every extra byte is a range of wild
  * faults reported as exhaustion, which is exactly the misdirection this file
@@ -89,7 +91,7 @@ static _Thread_local int wf__floor_stack_known;
  * roughly 128,000 times further from the stack than a legitimate overflow
  * lands.
  *
- * The stride is the host's page size, read once outside signal context because
+ * The bound uses the host's page size, read once outside signal context because
  * `sysconf` is not async-signal-safe. Setup must establish it before any WF
  * code runs; an unavailable page size cannot silently narrow the floor. */
 #define WF_FLOOR_RED_ZONE_BYTES ((unsigned long)128u)

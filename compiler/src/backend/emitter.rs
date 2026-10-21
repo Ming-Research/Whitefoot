@@ -43,7 +43,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
-use super::emission::{DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature};
+use super::emission::{
+    DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature,
+};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, IncomingSnapshots, is_stored_aggregate};
 use crate::target::{
@@ -85,6 +87,8 @@ pub enum BackendFailure {
     SnapshotTargetUnsupported,
     CounterOverflow,
     TextEmission,
+    /// The selected native toolchain or its required probe environment failed.
+    Toolchain,
 }
 
 impl From<std::fmt::Error> for BackendFailure {
@@ -282,6 +286,7 @@ fn emit_module(
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
 ) -> Result<LlvmModule, BackendFailure> {
+    crate::toolchain::prepare_toolchain().map_err(|_| BackendFailure::Toolchain)?;
     if snapshot::required(program) && target.triple() != "x86_64-unknown-linux-gnu" {
         return Err(BackendFailure::SnapshotTargetUnsupported);
     }
@@ -691,7 +696,13 @@ fn emit_module(
     {
         text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
     }
-    text.attribute_group(0, format!("\"probe-stack\"=\"{}\" uwtable", target.stack_probe()));
+    text.attribute_group(
+        0,
+        format!(
+            "{} uwtable",
+            target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
+        ),
+    );
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     // Emit source acquisition decisions once, independently of backend clones
@@ -2041,12 +2052,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn emit(mut self) -> Result<Module, BackendFailure> {
-        if let Some(module) = snapshot::definition(
-            self.program,
-            self.target,
-            self.function,
-            self.intrinsics,
-        )? {
+        if let Some(module) =
+            snapshot::definition(self.program, self.target, self.function, self.intrinsics)?
+        {
             return Ok(module);
         }
         let declaration = self.function.blocks().is_empty();
