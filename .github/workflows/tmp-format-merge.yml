@@ -1,0 +1,33 @@
+# Temporary: checks the merge of main's segmented syntax diagnostics (#430)
+# with the formatting request (coord-wfbl-10-05). Removed before the full check.
+name: tmp-format-merge
+
+on:
+  push:
+    branches: [claude/format-command]
+
+permissions:
+  contents: read
+
+jobs:
+  quick:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare the Rust toolchain
+        run: |
+          rustup default stable
+          rustup component add clippy
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Lint
+        working-directory: compiler
+        run: perl ../.github/run-check.pl tmp/lint cargo clippy --all-targets --locked --offline -- -D warnings
+      - name: Formatting tests of the library and the binary
+        working-directory: compiler
+        run: |
+          perl ../.github/run-check.pl tmp/format-lib-tests cargo test --profile gate --locked --offline --lib -- formatting_tests
+          perl ../.github/run-check.pl tmp/format-bin-tests cargo test --profile gate --locked --offline --bin whitefootc -- formatting sanitize
+      - name: Canonical corpus test
+        working-directory: compiler
+        run: perl ../.github/run-check.pl tmp/format-corpus cargo test --profile gate --locked --offline --test corpus -- canonical_corpus
