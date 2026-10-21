@@ -14,6 +14,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
     let captured_places = crate::semantic::places::CapturedPlaceTable::default();
     let context = EntailmentContext {
         captured_places: &captured_places,
+        judge_conditions: true,
         declarations: &[],
         callees: &[],
         constants: &[],
@@ -1025,6 +1026,221 @@ fn affine_index_cache_rebuilds_after_facts_kills_and_joins() {
 }
 
 #[test]
+fn affine_caches_share_signed_only_views_and_reject_new_numeric_premises() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let x = cache_measure(analyzer, 0);
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, x, ZERO, 9);
+        let a = analyzer.vocabulary.measure_atom(x, &affine);
+        let target = AffineInequality::from_bounded_forms(
+            &a,
+            &AffineForm::constant(0),
+            8,
+            &mut AffineCheckState::new(),
+        )
+        .unwrap();
+        let (ordinary, index) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&facts, &affine));
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_model_refutes(&target, &[], &ordinary, &index)
+        );
+        assert_eq!(analyzer.vocabulary.affine_models.len(), 1);
+
+        let goal = analyzer
+            .reasoning()
+            .intern_goal_expression(GoalExpression::Datum(GoalDatum::Literal(
+                CheckedValue::Bool(true),
+            )));
+        let mut view = facts.clone();
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S1, None);
+        view.establish_goal(
+            goal,
+            GoalSign::Positive,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+            event,
+        );
+        let (signed, shared) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&view, &affine));
+        assert!(
+            !Rc::ptr_eq(&ordinary, &signed),
+            "the signed view has its own closure"
+        );
+        assert!(
+            Rc::ptr_eq(&index, &shared),
+            "signed facts add no numeric premise"
+        );
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_model_refutes(&target, &[], &signed, &shared)
+        );
+        assert_eq!(
+            analyzer.vocabulary.affine_models.len(),
+            1,
+            "the same model was reused"
+        );
+
+        // A new explicit affine premise must not retain the old falsifying
+        // point even though the L0 index is unchanged.
+        let assumptions = [affine_premise(target.clone(), 0)];
+        assert!(!analyzer.reasoning().affine_model_refutes(
+            &target,
+            &assumptions,
+            &signed,
+            &shared
+        ));
+        assert_eq!(analyzer.vocabulary.affine_models.len(), 2);
+
+        // An origin equality/projection that changes L0 must miss both
+        // caches: the old point x = 9 no longer satisfies the view.
+        cache_bound(analyzer, &mut view, x, ZERO, 8);
+        let (stronger, rebuilt) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&view, &affine));
+        assert!(!Rc::ptr_eq(&shared, &rebuilt));
+        assert!(
+            !analyzer
+                .reasoning()
+                .affine_model_refutes(&target, &[], &stronger, &rebuilt)
+        );
+        let observed = analyzer
+            .reasoning()
+            .affine_target_proof(&target, &[], ProofContext::new(&view, &affine))
+            .unwrap();
+        analyzer.vocabulary.affine_l0_cache = None;
+        analyzer.vocabulary.affine_models.clear();
+        let fresh = analyzer
+            .reasoning()
+            .affine_target_proof(&target, &[], ProofContext::new(&view, &affine))
+            .unwrap();
+        assert_eq!(observed.parents, fresh.parents);
+        assert_eq!(observed.premises, fresh.premises);
+    });
+}
+
+/// An exclusion shares every L0 store with the state it extends, yet it
+/// tightens the closed bounds the lazy index memoizes: excluding the upper
+/// endpoint 5 of `x <= 5` closes `x <= 4`. Reusing the index across the two
+/// states would answer from the looser bound.
+#[test]
+fn affine_index_cache_misses_when_only_an_exclusion_differs() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let x = cache_measure(analyzer, 0);
+        let _ = analyzer.vocabulary.measure_atom(x, &affine);
+        let mut plain = FactState::new();
+        cache_bound(analyzer, &mut plain, x, ZERO, 5);
+        let (before, index) =
+            assert_affine_index_matches_rebuild(analyzer, ProofContext::new(&plain, &affine));
+        assert_eq!(before.tight_bound(x, ZERO), Some(5));
+
+        let expression = analyzer
+            .reasoning()
+            .intern_goal_expression(GoalExpression::Datum(GoalDatum::Place {
+                root: BindingId(0),
+                projections: Vec::new(),
+                ty: CheckedType::Integer(IntegerType::U64),
+                admission: GoalAdmission::default(),
+            }));
+        let values: std::sync::Arc<[i128]> = [5].into();
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S17, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::IntegerExclusion {
+                detail: Box::new(ExclusionProof {
+                    projection: Some((x, 0)),
+                    expression,
+                    values: std::sync::Arc::clone(&values),
+                    conclusion: ExclusionConclusion::Set,
+                    event: Some(event),
+                    parents: Vec::new(),
+                }),
+            });
+        let mut excluded = plain.clone();
+        excluded.establish_exclusion(Exclusion::from_view(
+            expression,
+            values,
+            Some((x, 0)),
+            proof,
+            &analyzer.vocabulary.goals,
+        ));
+        let (after, rebuilt) =
+            assert_affine_index_matches_rebuild(analyzer, ProofContext::new(&excluded, &affine));
+        assert_eq!(after.tight_bound(x, ZERO), Some(4));
+        assert!(
+            !Rc::ptr_eq(&index, &rebuilt),
+            "the exclusion changes the closed bounds the index memoizes"
+        );
+    });
+}
+
+#[test]
+fn affine_cache_reads_current_parents_for_equal_bounds_with_different_proofs() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let x = cache_measure(analyzer, 0);
+        let a = analyzer.vocabulary.measure_atom(x, &affine);
+        let target = AffineInequality::from_bounded_forms(
+            &a,
+            &AffineForm::constant(0),
+            9,
+            &mut AffineCheckState::new(),
+        )
+        .unwrap();
+        let mut first = FactState::new();
+        cache_bound(analyzer, &mut first, x, ZERO, 9);
+        let (closed, index) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&first, &affine));
+        let parent = closed
+            .bound_proof(x, ZERO, 9, &mut analyzer.vocabulary.derivations)
+            .unwrap();
+        let mut second = FactState::new();
+        cache_bound(analyzer, &mut second, x, ZERO, 9);
+        let (changed, rebuilt) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&second, &affine));
+        let next_parent = changed
+            .bound_proof(x, ZERO, 9, &mut analyzer.vocabulary.derivations)
+            .unwrap();
+        assert_ne!(
+            parent, next_parent,
+            "equal bounds retain their own source event"
+        );
+        assert!(
+            !Rc::ptr_eq(&index, &rebuilt),
+            "different L0 proof stores are not shared"
+        );
+        let observed = analyzer
+            .reasoning()
+            .affine_target_proof(&target, &[], ProofContext::new(&second, &affine))
+            .unwrap();
+        assert!(observed.parents.contains(&next_parent));
+        assert!(!observed.parents.contains(&parent));
+        analyzer.vocabulary.affine_l0_cache = None;
+        let fresh = analyzer
+            .reasoning()
+            .affine_target_proof(&target, &[], ProofContext::new(&second, &affine))
+            .unwrap();
+        assert_eq!(observed.parents, fresh.parents);
+        assert_eq!(observed.premises, fresh.premises);
+    });
+}
+
+#[test]
 fn affine_index_cache_keys_complete_current_images_even_with_a_closed_context() {
     with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
         let facts = FactState::new();
@@ -1161,7 +1377,10 @@ fn affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction() {
         assert_eq!(view.tight_bound(fresh, ZERO), Some(i128::from(u64::MAX)));
         assert!(!view.derives_bound(fresh, ZERO, 2));
         assert!(view.derives_goal(goal, GoalSign::Positive, &analyzer.vocabulary.goals));
-        assert!(!Rc::ptr_eq(&before, &projected));
+        assert!(
+            Rc::ptr_eq(&before, &projected),
+            "goal metadata adds no L0 relation"
+        );
         facts.establish_goal(
             goal,
             GoalSign::Negative,
@@ -1268,7 +1487,12 @@ fn affine_index_cache_preserves_direct_auto_families_and_selected_parents() {
             // as success; an incomplete final-image family must fail here.
             let full = affine_l0_index(&primed.candidates, &closed, &mut check);
             analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
-                closed: Rc::clone(&closed),
+                l0: AffineL0Content::new(
+                    &facts,
+                    &analyzer.vocabulary.terms,
+                    &analyzer.vocabulary.derivations,
+                    &closed,
+                ),
                 index: Rc::new(full_affine_query_index(primed.candidates.clone(), &full)),
             });
             let rebuilt = analyzer
@@ -1527,9 +1751,10 @@ fn compare_final_filter(
         .reference_affine_target_proof(target, &[], context)
         .map(|proof| (proof.premises, proof.parents));
     let scope = work::AffineTestScope::new();
+    // Exercise the final-family filter even when a countermodel could skip AUTO.
     let actual = analyzer
         .reasoning()
-        .affine_target_proof(target, &[], context)
+        .affine_target_search(target, &[], context, false)
         .map(|proof| (proof.premises, proof.parents));
     assert_eq!(
         actual, expected,
@@ -1578,10 +1803,12 @@ fn final_l0_filter_rebuilds_infeasible_exceptions_after_changed_facts_or_images(
             let mut auto = AffineAutoQuery::new(&affine, &assumptions);
             let mut facts = FactState::new();
             cache_bound(analyzer, &mut facts, r, ZERO, 0);
+            // Populate the final-family classification even when a countermodel
+            // could otherwise bypass the filter whose invalidation this tests.
             assert!(
                 analyzer
                     .reasoning()
-                    .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+                    .prepared_affine_target_search(&target, &facts, None, &mut auto, false)
                     .is_none()
             );
             assert!(
@@ -1620,7 +1847,7 @@ fn final_l0_filter_rebuilds_infeasible_exceptions_after_changed_facts_or_images(
             let scope = work::AffineTestScope::new();
             let actual = analyzer
                 .reasoning()
-                .prepared_affine_target_proof(&target, &facts, None, &mut auto)
+                .prepared_affine_target_search(&target, &facts, None, &mut auto, false)
                 .unwrap();
             assert_eq!(actual.parents, expected.parents);
             assert_eq!(actual.premises, expected.premises);
@@ -1890,7 +2117,12 @@ fn affine_index_cache_promoted_final_family_keeps_disjoint_images_and_late_winne
         let full = affine_l0_index(&candidates, &closed, &mut check);
         for upper in [0, -1] {
             analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
-                closed: Rc::clone(&closed),
+                l0: AffineL0Content::new(
+                    &facts,
+                    &analyzer.vocabulary.terms,
+                    &analyzer.vocabulary.derivations,
+                    &closed,
+                ),
                 index: Rc::clone(&lazy),
             });
             let target = AffineInequality::from_bounded_forms(
@@ -1900,9 +2132,11 @@ fn affine_index_cache_promoted_final_family_keeps_disjoint_images_and_late_winne
                 &mut check,
             )
             .unwrap();
+            // The exhaustive traversal: a refuting point would end the
+            // failing search before the final family promotes the index.
             let observed = analyzer
                 .reasoning()
-                .affine_target_proof(&target, &[], context)
+                .affine_target_search(&target, &[], context, false)
                 .map(|proof| (proof.premises, proof.parents));
             assert_eq!(observed.is_some(), upper == 0);
             assert!(
@@ -1911,19 +2145,621 @@ fn affine_index_cache_promoted_final_family_keeps_disjoint_images_and_late_winne
             );
             assert!(lazy.exact.borrow().is_empty());
             analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
-                closed: Rc::clone(&closed),
+                l0: AffineL0Content::new(
+                    &facts,
+                    &analyzer.vocabulary.terms,
+                    &analyzer.vocabulary.derivations,
+                    &closed,
+                ),
                 index: Rc::new(full_affine_query_index(candidates.clone(), &full)),
             });
             let expected = analyzer
                 .reasoning()
-                .affine_target_proof(&target, &[], context)
+                .affine_target_search(&target, &[], context, false)
                 .map(|proof| (proof.premises, proof.parents));
             assert_eq!(observed, expected);
+            let refutable = analyzer
+                .reasoning()
+                .affine_target_proof(&target, &[], context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(observed, refutable, "a refuting point changes no result");
         }
         assert_eq!(
             lazy.entry(b.terms(), &closed, &mut check).unwrap().left,
             candidates[3].term
         );
+    });
+}
+
+#[test]
+fn affine_refuting_point_ends_only_searches_the_traversal_fails() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b.clone());
+        let candidates = analyzer.reasoning().affine_l0_candidates(&affine);
+        let mut facts = FactState::new();
+        // a < b <= 10, so a <= 9 holds and nothing tighter does.
+        cache_bound(
+            analyzer,
+            &mut facts,
+            candidates[1].term,
+            candidates[2].term,
+            -1,
+        );
+        cache_bound(analyzer, &mut facts, candidates[2].term, ZERO, 10);
+        let context = ProofContext::new(&facts, &affine);
+        let mut check = AffineCheckState::new();
+        let zero = AffineForm::constant(0);
+        let a_less_b = a.subtract(&b, &mut check).unwrap();
+        let b_less_a = b.subtract(&a, &mut check).unwrap();
+        let mut at_most = |form: &AffineForm, upper| {
+            AffineInequality::from_bounded_forms(form, &zero, upper, &mut check).unwrap()
+        };
+        let cases = [
+            (at_most(&a, 9), true),
+            (at_most(&a, 8), false),
+            (at_most(&a_less_b, -1), true),
+            (at_most(&a_less_b, -2), false),
+            (at_most(&b_less_a, 0), false),
+        ];
+        for (target, provable) in cases {
+            analyzer.vocabulary.affine_l0_cache = None;
+            analyzer.vocabulary.affine_models.clear();
+            let (_, lazy) = analyzer.reasoning().affine_query_view(context);
+            let refuting = analyzer
+                .reasoning()
+                .affine_target_proof(&target, &[], context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(refuting.is_some(), provable, "{target:?}");
+            assert_eq!(
+                analyzer
+                    .vocabulary
+                    .affine_models
+                    .iter()
+                    .any(|cache| cache.refuted_target() == Some(&target)),
+                !provable,
+                "a point falsifies exactly the unprovable targets: {target:?}"
+            );
+            // The exhaustive traversal of an unprovable target always ends
+            // in the final family, which promotes the index.
+            assert!(
+                lazy.complete.borrow().is_none(),
+                "a refuted search never enters the final family: {target:?}"
+            );
+            analyzer.vocabulary.affine_l0_cache = None;
+            let (_, exhaustive_index) = analyzer.reasoning().affine_query_view(context);
+            let exhaustive = analyzer
+                .reasoning()
+                .affine_target_search(&target, &[], context, false)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(
+                exhaustive_index.complete.borrow().is_some(),
+                !provable,
+                "{target:?}"
+            );
+            assert_eq!(refuting, exhaustive, "{target:?}");
+        }
+        // Step 6 over the right term Z reads the bridge images a <= 9 and
+        // b <= 10, which hold at the point falsifying a <= 8.
+        let unprovable = at_most(&a, 8);
+        let provable = at_most(&a, 9);
+        assert!(
+            analyzer
+                .reasoning()
+                .numeric_affine_proof(&unprovable, Some(ZERO), context)
+                .is_none()
+        );
+        assert!(
+            analyzer
+                .reasoning()
+                .numeric_affine_proof(&provable, Some(ZERO), context)
+                .is_some()
+        );
+    });
+}
+
+/// An explicit affine premise as the source records it.
+fn affine_premise(inequality: AffineInequality, ordinal: u32) -> ActiveAffineFact {
+    ActiveAffineFact {
+        inequality,
+        evidence: AffineFactEvidence::Source(SourceAffineFactRef::LoopInvariant(
+            SourceLoopInvariantRef {
+                loop_id: CheckedLoopId(0),
+                source_ordinal: ordinal,
+            },
+        )),
+    }
+}
+
+fn affine_target(terms: &[(AffineTermId, i128)], upper: i128) -> AffineInequality {
+    AffineInequality::from_terms(terms, upper, &mut AffineCheckState::new()).unwrap()
+}
+
+/// What one target does with a fresh cache, with the refutation enabled and
+/// as the exhaustive traversal.
+struct RefutationObserved {
+    /// The refutation-enabled search found a proof.
+    found: bool,
+    /// Its proof, or its absence, equals the exhaustive traversal's.
+    same_as_traversal: bool,
+    /// A point falsifying exactly this target is recorded in the view.
+    refuted: bool,
+    /// The search entered the final family, which promotes the index.
+    promoted: bool,
+}
+
+fn observe_refutation(
+    analyzer: &mut Analyzer<'_, '_>,
+    target: &AffineInequality,
+    assumptions: &[ActiveAffineFact],
+    context: ProofContext<'_>,
+) -> RefutationObserved {
+    analyzer.vocabulary.affine_l0_cache = None;
+    analyzer.vocabulary.affine_models.clear();
+    let (_, lazy) = analyzer.reasoning().affine_query_view(context);
+    let refuting = analyzer
+        .reasoning()
+        .affine_target_proof(target, assumptions, context)
+        .map(|proof| (proof.premises, proof.parents));
+    let refuted = analyzer
+        .vocabulary
+        .affine_models
+        .iter()
+        .any(|cache| cache.refuted_target() == Some(target));
+    let promoted = lazy.complete.borrow().is_some();
+    analyzer.vocabulary.affine_l0_cache = None;
+    let exhaustive = analyzer
+        .reasoning()
+        .affine_target_search(target, assumptions, context, false)
+        .map(|proof| (proof.premises, proof.parents));
+    RefutationObserved {
+        found: refuting.is_some(),
+        same_as_traversal: refuting == exhaustive,
+        refuted,
+        promoted,
+    }
+}
+
+/// Guard: `ModelView::new` reads the explicit affine premises into `facts`,
+/// and every point it searches satisfies them.
+///
+/// Without the premise `a <= 5` the point `a = i32::MAX` falsifies
+/// `a <= 5`; a model that ignored `facts` would keep that point and report
+/// the provable target refuted, so the search would skip the traversal that
+/// finds the proof. The test fails then at the first assertion, and the
+/// premise-free control shows the model does refute the same target when no
+/// premise forbids the point.
+#[test]
+fn affine_refutation_respects_explicit_premises() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let a_term = a.unit_term().unwrap();
+        let at_most_five = affine_target(&[(a_term, 1)], 5);
+        let at_most_four = affine_target(&[(a_term, 1)], 4);
+        let premise = vec![affine_premise(at_most_five.clone(), 0)];
+
+        // a <= 5 under the premise a <= 5: no point falsifies it.
+        analyzer.vocabulary.affine_models.clear();
+        assert!(
+            !analyzer
+                .reasoning()
+                .affine_model_refutes(&at_most_five, &premise, &closed, &index),
+            "a point violating the premise a <= 5 must not refute a <= 5"
+        );
+        assert!(
+            !analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .any(|cache| cache.refuted_target().is_some())
+        );
+        let observed = observe_refutation(analyzer, &at_most_five, &premise, context);
+        assert!(observed.found, "the premise proves its own bound");
+        assert!(!observed.refuted);
+        assert!(observed.same_as_traversal);
+
+        // a <= 4 under the same premise: a = 5 falsifies it.
+        assert!(analyzer.reasoning().affine_model_refutes(
+            &at_most_four,
+            &premise,
+            &closed,
+            &index
+        ));
+        assert!(
+            analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .any(|cache| cache.refuted_target() == Some(&at_most_four))
+        );
+        let observed = observe_refutation(analyzer, &at_most_four, &premise, context);
+        assert!(!observed.found);
+        assert!(observed.refuted);
+
+        // Control: with no premise, a = i32::MAX falsifies a <= 5.
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_model_refutes(&at_most_five, &[], &closed, &index)
+        );
+    });
+}
+
+/// Guard: step 6 skips its bridge loop only when `bridges_hold` finds the
+/// refuting point satisfying every bridge image `candidate - right <= bound`.
+///
+/// `R` is a term with an affine image `r` that no L0 candidate has, so the
+/// view's pair images say nothing of `R`; the L0 fact `a - R <= 0` and the
+/// affine premise `r <= 3` prove `a <= 3` only through step 6 (residual
+/// `r <= 3`). The recorded point has `a = i32::MAX` and `r = 3`, which
+/// violates the bridge image `a - r <= 0`, so `bridges_hold` is `None` and
+/// step 6 must run. If the guard were dropped, so that any recorded
+/// refutation skipped the loop, `numeric_affine_proof` would return no proof
+/// and the last assertion fails. The two direct calls pin the guard from
+/// both sides: the same refutation also satisfies every bridge image to
+/// the zero term, so a guard that never held would fail the second.
+#[test]
+fn affine_refutation_does_not_skip_step_six_when_a_bridge_image_fails() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let r = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        // The function has two parameters, so binding 2 has no integer type
+        // and is neither an L0 candidate nor a step-6 candidate, while its
+        // image is still the value of the place term `right`.
+        affine.values.insert(BindingId(2), r.clone());
+        let candidates = analyzer.reasoning().affine_l0_candidates(&affine);
+        assert_eq!(candidates.len(), 3, "Z and the two parameters only");
+        let right = analyzer.vocabulary.terms.intern(TermKind::Place(
+            ResolvedPlace::spelled(PlaceRoot::Binding(BindingId(2)), false, Vec::new()),
+            IntegerType::I32,
+        ));
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, candidates[1].term, right, 0);
+        let mut check = AffineCheckState::new();
+        let zero = AffineForm::constant(0);
+        let r_at_most_three =
+            AffineInequality::from_bounded_forms(&r, &zero, 3, &mut check).unwrap();
+        affine.facts.push(affine_premise(r_at_most_three, 0));
+        let target = AffineInequality::from_bounded_forms(&a, &zero, 3, &mut check).unwrap();
+        let assumptions = affine_facts(&affine);
+        let context = ProofContext::new(&facts, &affine);
+
+        analyzer.vocabulary.affine_l0_cache = None;
+        analyzer.vocabulary.affine_models.clear();
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_target_proof(&target, &assumptions, context)
+                .is_none(),
+            "only step 6 proves a <= 3"
+        );
+        assert!(
+            analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .any(|cache| cache.refuted_target() == Some(&target)),
+            "a point (a = i32::MAX, r = 3) falsifies the step-1 target"
+        );
+        let (closed, _) = analyzer.reasoning().affine_query_view(context);
+        let bridges = analyzer.reasoning().affine_right_bridge_candidates(&affine);
+        assert_eq!(bridges.len(), 2);
+        let right_value = analyzer
+            .vocabulary
+            .affine_term_value(right, &affine)
+            .unwrap();
+        assert!(
+            !analyzer.reasoning().affine_bridges_refuted(
+                &target,
+                &assumptions,
+                &closed,
+                right,
+                &right_value,
+                &bridges
+            ),
+            "the point violates the bridge image a - r <= 0"
+        );
+        assert!(
+            analyzer.reasoning().affine_bridges_refuted(
+                &target,
+                &assumptions,
+                &closed,
+                ZERO,
+                &zero,
+                &bridges
+            ),
+            "the same point satisfies every bridge image to Z"
+        );
+        assert!(
+            analyzer
+                .reasoning()
+                .numeric_affine_proof(&target, Some(right), context)
+                .is_some(),
+            "step 6 submits the residual r <= 3 and proves it"
+        );
+    });
+}
+
+/// Guard: `refute` gives a target atom outside the view the endpoint of its
+/// own range that makes the target's left side largest (the `extension`),
+/// and counts that value in the least sum the view's atoms must reach.
+///
+/// `c` has the range [0, 4] and is read by no candidate or premise. Using its
+/// minimum instead of the maximum for a positive factor fails
+/// `c <= 3` and `a + c <= i32::MAX + 3`, which only `c = 4` falsifies; treating
+/// it as unbounded fails `c <= 4` and `a + c <= i32::MAX + 4`, which hold for
+/// every value in its range. A negative factor takes the minimum.
+#[test]
+fn affine_refutation_values_target_atoms_outside_the_view_at_their_range() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let c = analyzer
+            .vocabulary
+            .new_affine_atom_with_interval(IntegerType::I32, 0, 4, false);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let (a_term, c_term) = (a.unit_term().unwrap(), c.unit_term().unwrap());
+        let max = i128::from(i32::MAX);
+        let cases = [
+            (affine_target(&[(c_term, 1)], 3), true),
+            (affine_target(&[(c_term, 1)], 4), false),
+            (affine_target(&[(c_term, -1)], -1), true),
+            (affine_target(&[(c_term, -1)], 0), false),
+            (affine_target(&[(a_term, 1), (c_term, 1)], 10), true),
+            (affine_target(&[(a_term, 1), (c_term, 1)], max + 3), true),
+            (affine_target(&[(a_term, 1), (c_term, 1)], max + 4), false),
+        ];
+        for (target, refuted) in cases {
+            assert_eq!(
+                analyzer
+                    .reasoning()
+                    .affine_model_refutes(&target, &[], &closed, &index),
+                refuted,
+                "{target:?}"
+            );
+            assert_eq!(
+                analyzer
+                    .vocabulary
+                    .affine_models
+                    .iter()
+                    .any(|cache| cache.refuted_target() == Some(&target)),
+                refuted,
+                "{target:?}"
+            );
+        }
+        // The search agrees: c <= 4 is proved by the range, c <= 3 is not.
+        let provable = affine_target(&[(c_term, 1)], 4);
+        let observed = observe_refutation(analyzer, &provable, &[], context);
+        assert!(observed.found);
+        assert!(observed.same_as_traversal);
+        let unprovable = affine_target(&[(c_term, 1)], 3);
+        let observed = observe_refutation(analyzer, &unprovable, &[], context);
+        assert!(!observed.found);
+        assert!(observed.refuted);
+        assert!(observed.same_as_traversal);
+    });
+}
+
+/// Guard: every arithmetic step of the model is checked `i128`; an overflow
+/// finds no point, so the exhaustive traversal decides.
+///
+/// A coefficient of 2^100 (or 2^64 on a `u64` atom) overflows the target's
+/// value at an `i64`/`u64` endpoint, for an atom the view reads and for one it
+/// does not. If any of those products wrapped or saturated, the model would
+/// report a falsifying point for the unprovable targets and the first
+/// assertion of each case fails; the traversal-equality and final-family
+/// assertions show the traversal ran. The controls at the ranges' last
+/// values show the extreme ranges alone do not disable the model.
+#[test]
+fn affine_refutation_finds_no_point_when_arithmetic_overflows() {
+    with_integer_parameters(&[IntegerType::I64; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I64);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I64);
+        let c = analyzer.vocabulary.new_affine_atom(IntegerType::U64);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let (a_term, c_term) = (a.unit_term().unwrap(), c.unit_term().unwrap());
+        let big = 1_i128 << 100;
+        let overflowing = [
+            affine_target(&[(c_term, 1 << 64)], 0),
+            affine_target(&[(a_term, big)], 0),
+            affine_target(&[(a_term, -big)], 0),
+        ];
+        for target in overflowing {
+            assert!(
+                !analyzer
+                    .reasoning()
+                    .affine_model_refutes(&target, &[], &closed, &index),
+                "{target:?}"
+            );
+            let observed = observe_refutation(analyzer, &target, &[], context);
+            assert!(!observed.refuted, "{target:?}");
+            assert!(!observed.found, "{target:?}");
+            assert!(observed.same_as_traversal, "{target:?}");
+            assert!(observed.promoted, "the full traversal ran: {target:?}");
+        }
+        let (i64_max, u64_max) = (i128::from(i64::MAX), i128::from(u64::MAX));
+        let controls = [
+            (affine_target(&[(a_term, 1)], i64_max - 1), true),
+            (affine_target(&[(a_term, 1)], i64_max), false),
+            (affine_target(&[(c_term, 1)], u64_max - 1), true),
+            (affine_target(&[(c_term, 1)], u64_max), false),
+        ];
+        for (target, refuted) in controls {
+            assert_eq!(
+                analyzer
+                    .reasoning()
+                    .affine_model_refutes(&target, &[], &closed, &index),
+                refuted,
+                "{target:?}"
+            );
+        }
+    });
+}
+
+/// Guard: `ModelView::new` returns `None`, and no query in the view is
+/// refuted, when the atoms' ranges are empty or the premises have no
+/// integer point.
+///
+/// With the empty range [5, 3] of the first case (minimum above maximum),
+/// the search would start from the "minimum" 5 and `a <= 0` would be
+/// falsified at it: a point outside the atom's range. Without the range
+/// check the model reports the target refuted. In the second case the premises
+/// `a <= 0` and `a >= 1` have no point; the upward search from the minimums
+/// fails, and the view must record no refutation.
+#[test]
+fn affine_refutation_needs_a_view_with_a_point() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let empty =
+            analyzer
+                .vocabulary
+                .new_affine_atom_with_interval(IntegerType::I32, 5, 3, false);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), empty.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let empty_term = empty.unit_term().unwrap();
+        let target = affine_target(&[(empty_term, 1)], 0);
+        assert!(
+            !analyzer
+                .reasoning()
+                .affine_model_refutes(&target, &[], &closed, &index)
+        );
+        assert!(
+            analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .all(|cache| cache.refuted_target().is_none())
+        );
+        let observed = observe_refutation(analyzer, &target, &[], context);
+        assert!(!observed.refuted);
+        assert!(observed.same_as_traversal);
+    });
+
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a.clone());
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        let a_term = a.unit_term().unwrap();
+        let contradictory = vec![
+            affine_premise(affine_target(&[(a_term, 1)], 0), 0),
+            affine_premise(affine_target(&[(a_term, -1)], -1), 1),
+        ];
+        let target = affine_target(&[(a_term, 1)], -5);
+        assert!(!analyzer.reasoning().affine_model_refutes(
+            &target,
+            &contradictory,
+            &closed,
+            &index
+        ));
+        assert!(
+            analyzer
+                .vocabulary
+                .affine_models
+                .iter()
+                .all(|cache| cache.refuted_target().is_none())
+        );
+        let observed = observe_refutation(analyzer, &target, &contradictory, context);
+        assert!(!observed.refuted);
+        assert!(observed.same_as_traversal);
+    });
+}
+
+/// Guard: `MODEL_ROUNDS` bounds the repair, and a search that does not settle
+/// within it finds no point.
+///
+/// The premises `x0 <= x1 <= ... <= x(n-1)` are listed from the last link to
+/// the first, followed by `x0 >= 1`; the repair raises one atom per round, so
+/// it settles after `n + 1` rounds. For `n = 3` that is within the limit and
+/// the target `x2 <= 100`, which the greatest point falsifies, is refuted.
+/// For `n = 12` the upward search from the minimums runs out of rounds, the
+/// view has no point, and the search falls back to the exhaustive traversal.
+/// If the round limit were removed or raised past 13, the second case would
+/// be refuted and its first assertion fails.
+#[test]
+fn affine_refutation_gives_up_when_the_repair_needs_too_many_rounds() {
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        affine.values.insert(BindingId(0), a);
+        affine.values.insert(BindingId(1), b);
+        let facts = FactState::new();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        for (length, refuted) in [(3_usize, true), (12, false)] {
+            let terms = (0..length)
+                .map(|_| {
+                    analyzer
+                        .vocabulary
+                        .new_affine_atom(IntegerType::I32)
+                        .unit_term()
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            let mut inequalities = (0..length - 1)
+                .rev()
+                .map(|at| affine_target(&[(terms[at], 1), (terms[at + 1], -1)], 0))
+                .collect::<Vec<_>>();
+            inequalities.push(affine_target(&[(terms[0], -1)], -1));
+            let chain = inequalities
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, inequality)| {
+                    affine_premise(inequality, u32::try_from(ordinal).unwrap())
+                })
+                .collect::<Vec<_>>();
+            let target = affine_target(&[(terms[length - 1], 1)], 100);
+            assert_eq!(
+                analyzer
+                    .reasoning()
+                    .affine_model_refutes(&target, &chain, &closed, &index),
+                refuted,
+                "chain of {length}"
+            );
+            let observed = observe_refutation(analyzer, &target, &chain, context);
+            assert!(!observed.found, "chain of {length}");
+            assert_eq!(observed.refuted, refuted, "chain of {length}");
+            assert!(observed.same_as_traversal, "chain of {length}");
+            if !refuted {
+                assert!(
+                    observed.promoted,
+                    "the full traversal ran: chain of {length}"
+                );
+            }
+        }
     });
 }
 
@@ -2263,7 +3099,22 @@ fn discarded_atoms_leave_no_record_naming_a_reused_index() {
         let power = discarded.unit_term().unwrap();
         let shift = amount.unit_term().unwrap();
         vocabulary.product_atoms.insert(power, (shift, shift));
+        let affine = AffineFlowState::default();
+        affine_test_datums(analyzer, &affine, std::slice::from_ref(&discarded));
+        let facts = FactState::new();
+        let target = affine_test_target(&discarded, &AffineForm::constant(0), -1);
+        let (closed, index) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&facts, &affine));
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_model_refutes(&target, &[], &closed, &index)
+        );
+        assert!(!analyzer.vocabulary.affine_models.is_empty());
+        let vocabulary = &mut analyzer.vocabulary;
         vocabulary.discard_atoms_from(start);
+        assert!(vocabulary.affine_models.is_empty());
         let unrelated = vocabulary.new_affine_atom(IntegerType::U64);
         assert_eq!(unrelated, discarded);
         assert!(!vocabulary.product_atoms.contains_key(&power));
@@ -2565,4 +3416,380 @@ pub(super) fn reference_first_two_premise_candidate<T>(
         }
     }
     None
+}
+
+fn condition_not(expression: GoalExpression) -> GoalExpression {
+    GoalExpression::Operation {
+        row: GoalOperation::Boolean(CheckedBooleanOperation::Not),
+        type_arguments: Vec::new(),
+        const_arguments: Vec::new(),
+        result: CheckedType::Bool,
+        arguments: vec![expression],
+    }
+}
+
+#[test]
+fn condition_view_rejects_an_existing_negation_origin_class() {
+    use crate::semantic::entailment::state::GoalOrigin;
+
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let ty = CheckedType::Integer(IntegerType::I32);
+        let compare = |binding| GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::LessEqual,
+                operand_type: ty,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![
+                goal_binding_place(BindingId(binding), [], ty),
+                GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                    ty: IntegerType::I32,
+                    bits: 0,
+                })),
+            ],
+        };
+        // z's integer operand is an ordinary-let alias of x's operand.
+        // Only x's operand still has an affine image. Numeric term views
+        // choose the alias, collected before its definition, so no term
+        // view of `bnot z` introduces the absent `bnot x`.
+        let x = compare(0);
+        let z = compare(1);
+        let w = goal_binding_place(BindingId(2), [], CheckedType::Bool);
+        let negative_conjunction = GoalExpression::Operation {
+            row: GoalOperation::Boolean(CheckedBooleanOperation::And),
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![condition_not(z), w.clone()],
+        };
+        let mut state = ProofFlowState::default();
+        state
+            .affine
+            .values
+            .insert(BindingId(0), AffineForm::constant(1));
+        let definition = analyzer
+            .reasoning()
+            .intern_goal_expression(goal_binding_place(BindingId(0), [], ty));
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding: BindingId(1),
+                value: definition,
+                event,
+            });
+        state.facts.goal_origins.insert(
+            BindingId(1),
+            GoalOrigin {
+                goal: definition,
+                proof,
+            },
+        );
+        let conjunction = analyzer
+            .reasoning()
+            .intern_goal_expression(negative_conjunction);
+        let w_goal = analyzer.reasoning().intern_goal_expression(w);
+        let x_goal = analyzer.reasoning().intern_goal_expression(x.clone());
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::S1, None);
+        for (goal, sign) in [
+            (conjunction, GoalSign::Negative),
+            (w_goal, GoalSign::Positive),
+        ] {
+            state.facts.establish_goal(
+                goal,
+                sign,
+                &analyzer.vocabulary.goals,
+                &mut analyzer.vocabulary.derivations,
+                event,
+            );
+        }
+        let context = ProofContext::new(&state.facts, &state.affine);
+        // Check the class guard independently of the outer guard that also
+        // rejects a contradictory enlarged view.
+        assert!(
+            analyzer
+                .reasoning()
+                .try_condition_origin_view(context, &condition_not(x.clone()))
+                .is_none()
+        );
+        let expected = analyzer.reasoning().prove(
+            context,
+            ProofGoal::Signed {
+                expression: &x,
+                affine: None,
+            },
+        );
+        assert_eq!(expected.disposition, ProofDisposition::Unknown);
+        let mut views = HashMap::new();
+        let actual = analyzer
+            .reasoning()
+            .prove_condition_origin(context, x_goal, true, &mut views);
+        assert_eq!(actual.disposition, expected.disposition);
+        assert_eq!(actual.route, expected.route);
+        assert_eq!(actual.derivation, expected.derivation);
+        assert!(views.is_empty(), "the old bnot z member prohibits sharing");
+
+        // Demonstrate the fault, rather than merely checking the guard:
+        // +bnot x is affine, transports to bnot z, and contradicts the
+        // entering -band(bnot z,w) together with +w.
+        let wrong = analyzer
+            .reasoning()
+            .origin_query_view(context, Some(&condition_not(x.clone())));
+        let closed = close(
+            &wrong,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(
+            closed.contradictory(),
+            "unrestricted sharing would decide True"
+        );
+        let wrong_answer = analyzer.reasoning().prove(
+            ProofContext {
+                facts: &wrong,
+                affine: &state.affine,
+                closed: None,
+                origin_view: OriginView::Prepared,
+            },
+            ProofGoal::Signed {
+                expression: &x,
+                affine: None,
+            },
+        );
+        assert_eq!(wrong_answer.disposition, ProofDisposition::Proved);
+        assert_eq!(wrong_answer.route, Some(ProofRoute::Contradiction));
+
+        // True fails on x; False fails on w. The complete judgment admits
+        // the condition, whereas using the contradictory view for True
+        // would discharge both positive origins and reject it.
+        analyzer.judging().judge_condition(
+            &crate::NodePath {
+                components: Vec::new(),
+            },
+            &ArmFacts {
+                goals: vec![x_goal, w_goal],
+                ..ArmFacts::default()
+            },
+            &state,
+        );
+        assert_eq!(analyzer.output.conditions.last().unwrap().decided, None);
+    });
+}
+
+#[test]
+fn condition_new_negation_class_keeps_dispositions_and_selected_parents() {
+    use crate::semantic::entailment::state::GoalOrigin;
+
+    with_analyzer(|analyzer| {
+        let x = goal_binding_place(BindingId(0), [], CheckedType::Bool);
+        let y = goal_binding_place(BindingId(1), [], CheckedType::Bool);
+        let x_goal = analyzer.reasoning().intern_goal_expression(x.clone());
+        let y_goal = analyzer.reasoning().intern_goal_expression(y);
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding: BindingId(0),
+                value: y_goal,
+                event,
+            });
+        let mut facts = FactState::new();
+        facts.goal_origins.insert(
+            BindingId(0),
+            GoalOrigin {
+                goal: y_goal,
+                proof,
+            },
+        );
+        let affine = AffineFlowState::default();
+        // Unknown under both truths exercises actual reuse on False; adding
+        // +y exercises the retained origin-transport parent on True.
+        for established in [false, true] {
+            if established {
+                let event = analyzer
+                    .vocabulary
+                    .derivations
+                    .event(FlowEventKind::S1, None);
+                facts.establish_goal(
+                    y_goal,
+                    GoalSign::Positive,
+                    &analyzer.vocabulary.goals,
+                    &mut analyzer.vocabulary.derivations,
+                    event,
+                );
+            }
+            let context = ProofContext::new(&facts, &affine);
+            let mut views = HashMap::new();
+            for truth in [true, false] {
+                let expression = if truth {
+                    x.clone()
+                } else {
+                    condition_not(x.clone())
+                };
+                let expected = analyzer.reasoning().prove(
+                    context,
+                    ProofGoal::Signed {
+                        expression: &expression,
+                        affine: None,
+                    },
+                );
+                let actual = analyzer
+                    .reasoning()
+                    .prove_condition_origin(context, x_goal, truth, &mut views);
+                assert_eq!(actual.disposition, expected.disposition);
+                assert_eq!(actual.route, expected.route);
+                assert_eq!(actual.derivation, expected.derivation);
+                assert!(
+                    views.contains_key(&x_goal),
+                    "a new negation class is shared"
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn condition_new_negation_class_rejects_a_changed_contradiction_parent() {
+    use crate::semantic::entailment::state::GoalOrigin;
+
+    with_integer_parameters(&[IntegerType::I32; 2], |analyzer| {
+        let ty = CheckedType::Integer(IntegerType::I32);
+        let literal = |bits| {
+            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                ty: IntegerType::I32,
+                bits,
+            }))
+        };
+        let x_value = goal_binding_place(BindingId(0), [], ty);
+        let z_value = goal_binding_place(BindingId(1), [], ty);
+        let doubled = GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::MultiplyExact,
+                operand_type: ty,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: ty,
+            arguments: vec![literal(2), x_value.clone()],
+        };
+        let x = GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::LessEqual,
+                operand_type: ty,
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![doubled, literal(0)],
+        };
+        let mut state = ProofFlowState::default();
+        state
+            .affine
+            .values
+            .insert(BindingId(0), AffineForm::constant(1));
+        let definition = analyzer.reasoning().intern_goal_expression(x_value);
+        let event = analyzer
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, None);
+        let proof = analyzer
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding: BindingId(1),
+                value: definition,
+                event,
+            });
+        state.facts.goal_origins.insert(
+            BindingId(1),
+            GoalOrigin {
+                goal: definition,
+                proof,
+            },
+        );
+        let z = analyzer.reasoning().goal_side(&z_value).unwrap().0;
+        cache_bound(analyzer, &mut state.facts, z, ZERO, 0);
+        let x_goal = analyzer.reasoning().intern_goal_expression(x.clone());
+        assert!(
+            analyzer.vocabulary.goals.projection(x_goal).is_none(),
+            "coefficient two excludes the ordinary L0 projection"
+        );
+        let target = analyzer
+            .reasoning()
+            .affine_goal_ordering_target(&x, &state.affine)
+            .unwrap();
+        let context = ProofContext::new(&state.facts, &state.affine);
+        let ordinary = analyzer.reasoning().prove(
+            ProofContext {
+                origin_view: OriginView::Ordinary,
+                ..context
+            },
+            ProofGoal::Signed {
+                expression: &x,
+                affine: Some(&target),
+            },
+        );
+        assert_eq!(ordinary.disposition, ProofDisposition::Unknown);
+
+        // The origin equality supplies x <= 0. Its affine image is the false
+        // constant inequality 1 <= 0, used twice to prove 2*x <= 0. That proof
+        // stays a signed affine consequence: it adds no numeric contradiction.
+        let original = analyzer.reasoning().origin_query_view(context, Some(&x));
+        let closed = close(
+            &original,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(!closed.contradictory());
+        let expected = analyzer.reasoning().prove(
+            context,
+            ProofGoal::Signed {
+                expression: &x,
+                affine: Some(&target),
+            },
+        );
+        assert_eq!(expected.disposition, ProofDisposition::Proved);
+        assert_eq!(expected.route, Some(ProofRoute::OriginTransport));
+
+        // The new negation class has no old alias, but +bnot X is also
+        // affine-provable (0 < 2). Alongside +X it makes the enlarged view
+        // contradictory and would replace True's retained affine parent.
+        let negated = condition_not(x.clone());
+        let widened = analyzer
+            .reasoning()
+            .origin_query_view(context, Some(&negated));
+        let widened_closed = close(
+            &widened,
+            &analyzer.vocabulary.terms,
+            &analyzer.vocabulary.goals,
+            &mut analyzer.vocabulary.derivations,
+        );
+        assert!(widened_closed.contradictory());
+        let mut views = HashMap::new();
+        let actual = analyzer
+            .reasoning()
+            .prove_condition_origin(context, x_goal, true, &mut views);
+        assert_eq!(actual.disposition, expected.disposition);
+        assert_eq!(actual.route, expected.route);
+        assert_eq!(actual.derivation, expected.derivation);
+        assert!(
+            views.is_empty(),
+            "a contradictory enlarged view cannot be shared"
+        );
+    });
 }

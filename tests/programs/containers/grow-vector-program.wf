@@ -200,7 +200,7 @@ fn linear_consumption() -> code: u64 pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Scalar, droppable owning and must-consume owning chains exercise construction, growth, ceiling saturation, ordered insert/remove, swap-remove, original-order truncation/drain, empty and singleton boundaries, reuse and final cleanup. The observer checks every allocation identity. Allocation is total [STOR-8], so no operation carries a refusal arm.";
+  doc "Scalar, droppable owning and must-consume owning chains exercise construction, growth, ceiling saturation, ordered insert/remove, swap-remove, original-order truncation/drain, empty and singleton boundaries, reuse and final cleanup. The observer checks every allocation identity. The exit status is 100 plus the lengths read after the appends, the inserts and the drain, for the harness to compare. Allocation is total [STOR-8], so no operation carries a refusal arm.";
   let zero = grow_vector_new::<u64, 0>();
   let zero_length = zero.storage.inner.len;
   let zero_capacity = zero.storage.inner.cap;
@@ -212,6 +212,7 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 14_u8);
   }
+  let lengths = 100_u64;
   let values = grow_vector_new::<u64, 3>();
   let values_start = values.storage.inner.len;
   if values_start == 0_u64 {
@@ -221,16 +222,10 @@ fn main() -> status: ExitStatus pure {
   let first = grow_vector_append::<u64, 3>(values: &values, value: 11_u64);
   let second = grow_vector_append::<u64, 3>(values: &values, value: 33_u64);
   let before_insert = values.storage.inner.len;
-  if before_insert == 2_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  set lengths = lengths + before_insert;
   let middle = grow_vector_insert::<u64, 3>(values: &values, index: 1_u64, value: 22_u64);
   let observed = values.storage.inner.len;
-  if observed == 3_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  set lengths = lengths + observed;
   let first_value = values.storage.inner[0_u64];
   let middle_value = values.storage.inner[1_u64];
   let last_value = values.storage.inner[2_u64];
@@ -261,10 +256,7 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 17_u8);
   }
   let empty = values.storage.inner.len;
-  if empty == 0_u64 {
-  } else {
-    return exit_status(code: 7_u8);
-  }
+  set lengths = lengths + empty;
   let owners = grow_vector_new::<Box<OwnedItem>, 3>();
   let owners_start = owners.storage.inner.len;
   if owners_start == 0_u64 {
@@ -278,18 +270,12 @@ fn main() -> status: ExitStatus pure {
   let third_cell = box_new::<OwnedItem>(value: third_item);
   let owned_third = grow_vector_append::<Box<OwnedItem>, 3>(values: &owners, value: move third_cell);
   let before_owned_insert = owners.storage.inner.len;
-  if before_owned_insert == 2_u64 {
-  } else {
-    return exit_status(code: 8_u8);
-  }
+  set lengths = lengths + before_owned_insert;
   let second_item = OwnedItem(id: 202_u64);
   let second_cell = box_new::<OwnedItem>(value: second_item);
   let owned_middle = grow_vector_insert::<Box<OwnedItem>, 3>(values: &owners, index: 1_u64, value: move second_cell);
   let owned_length = owners.storage.inner.len;
-  if owned_length == 3_u64 {
-  } else {
-    return exit_status(code: 9_u8);
-  }
+  set lengths = lengths + owned_length;
   let taken = grow_vector_remove::<Box<OwnedItem>, 3>(values: &owners, index: 1_u64);
   let taken_id = taken.inner.id;
   if taken_id == 202_u64 {
@@ -339,5 +325,6 @@ fn main() -> status: ExitStatus pure {
   if linear_code != 0_u64 {
     return exit_status(code: 22_u8);
   }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<u64, u8>(lengths);
+  return exit_status(code: status_code);
 }

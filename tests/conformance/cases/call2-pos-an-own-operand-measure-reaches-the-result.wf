@@ -10,14 +10,11 @@ fn measure<const n: u64>(source: Slots<u8, n>) -> size: u64 pure contract {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "The result of a call carries exactly the callee's declared relations. The own argument is affine, so the call is a consuming use and every fact supported by line dies at it; the declared relation names that operand's measure, which at the caller denotes the call datum, and a datum has empty support, so the consume the same statement performs cannot kill it. The caller therefore knows size == 2 after the call and knows it only from the contract.";
+  doc "The result of a call carries exactly the callee's declared relations. The own argument is affine, so the call is a consuming use and every fact supported by line dies at it; the declared relation names that operand's measure, which at the caller denotes the call datum, and a datum has empty support, so the consume the same statement performs cannot kill it. The caller therefore knows size == 2 after the call and knows it only from the contract, which proves the conversion of the size it returns as its exit status.";
   let line = slots_new::<u8, 4>();
   place_back(window: &line, value: 7_u8);
   place_back(window: &line, value: 7_u8);
   let size = measure::<4>(source: move line);
-  if size == 2_u64 {
-  } else {
-    return exit_status(code: 201_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(size);
+  return exit_status(code: code);
 }

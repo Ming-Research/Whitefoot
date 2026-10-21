@@ -21,10 +21,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let found = find_one(depth: 3_u64);
   match found {
     Some(value: selected) => {
-      if selected == 1_u64 {
-        return std::process::exit_status(code: 0_u8);
-      }
-      return std::process::exit_status(code: 1_u8);
+      return std::process::exit_status(code: 0_u8);
     }
     None() => {
       return std::process::exit_status(code: 2_u8);

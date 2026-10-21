@@ -1113,12 +1113,10 @@ fn insert_item(env: &Client, value: &Entry, input: &[u8], pivot: Span, element: 
       let length = list^.inner.len;
       let found = length;
       for @seek (index in 0_u64..length) {
-        if index < list^.inner.len {
-          let same = element_is(element: &list^.inner[index], input: input, span: pivot);
-          if same {
-            set found = index;
-            break @seek;
-          }
+        let same = element_is(element: &list^.inner[index], input: input, span: pivot);
+        if same {
+          set found = index;
+          break @seek;
         }
       }
       if found >= length {
@@ -1388,11 +1386,9 @@ fn run_lpos(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   if counted {
     reply_array(client: client, count: found);
     for @answers (at in 0_u64..found) {
-      if at < positions.inner.len {
-        let position = positions.inner[at];
-        let signed = cvt.wrap::<u64, i64>(position);
-        reply_integer(client: client, value: signed);
-      }
+      let position = positions.inner[at];
+      let signed = cvt.wrap::<u64, i64>(position);
+      reply_integer(client: client, value: signed);
     }
     return unit;
   }
@@ -1551,14 +1547,9 @@ fn run_lmove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   let now = time^.check;
   set client^.state = state_absent;
   atomic slots = &store^.keys[keys], m = &store^.meta {
-    let found = entry_none;
-    if source < keys.len {
-      set found = list_kind(slot: &slots^[source], now: now);
-    }
+    let found = list_kind(slot: &slots^[source], now: now);
     if found == entry_lapsed {
-      if source < keys.len {
-        set slots^[source] = None<Entry>();
-      }
+      set slots^[source] = None<Entry>();
       if store^.logging {
         log_removal(log: &m^.log, key: source_key);
       }
@@ -1567,31 +1558,22 @@ fn run_lmove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
       set client^.state = state_wrong;
     }
     if found == entry_wanted {
-      let target = entry_none;
-      if destination < keys.len {
-        set target = list_kind(slot: &slots^[destination], now: now);
-      }
+      let target = list_kind(slot: &slots^[destination], now: now);
       if target == entry_lapsed {
-        if destination < keys.len {
-          set slots^[destination] = None<Entry>();
-        }
+        set slots^[destination] = None<Entry>();
         if store^.logging {
           log_removal(log: &m^.log, key: destination_key);
         }
       }
       if target == entry_other {
         set client^.state = state_wrong;
-      } else if source < keys.len {
+      } else {
         let popped = take_element(slot: &slots^[source], from_head: from_head, client: client);
         let left = client^.number;
         match move popped {
           Some(value: element) => {
             reply_bulk(client: client, stored: &element);
-            if destination < keys.len {
-              place_element(slot: &slots^[destination], element: move element, to_head: to_head);
-            } else {
-              let dropped = move element;
-            }
+            place_element(slot: &slots^[destination], element: move element, to_head: to_head);
             if left == 0_u64 {
               if source != destination {
                 set slots^[source] = None<Entry>();

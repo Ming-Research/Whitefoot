@@ -1084,6 +1084,7 @@ mod tests {
         let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
             captured_places: &captured_places,
+            judge_conditions: true,
             declarations: &[],
             callees: &[],
             constants: &[],
