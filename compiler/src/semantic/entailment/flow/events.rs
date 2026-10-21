@@ -1367,23 +1367,7 @@ impl Reasoning<'_, '_, '_> {
             .vocabulary
             .terms
             .interned(&TermKind::Measure(CheckedMeasure::Length, window.clone()))?;
-        let offset = match (index.capture, index.term) {
-            // A place's term identity reads a binding offset by its spelling,
-            // whose current value is the binding's own term [ENT-2].
-            (CaptureId::SpellingDetermined, CapturedTerm::Binding(binding)) => {
-                self.vocabulary.terms.interned(&TermKind::Place(
-                    ResolvedPlace::binding(binding),
-                    IntegerType::U64,
-                ))
-            }
-            (CaptureId::SpellingDetermined, CapturedTerm::Place(id)) => {
-                self.vocabulary.terms.interned(&TermKind::Place(
-                    self.input.context.captured_places.get(id),
-                    IntegerType::U64,
-                ))
-            }
-            _ => self.captured_index_term(index),
-        }?;
+        let offset = self.captured_index_term(index)?;
         let affine_offset = match index.capture {
             CaptureId::Source(_) | CaptureId::ContractRead { .. } => {
                 states.affine.indices.get(&index.capture).cloned()
@@ -1506,20 +1490,39 @@ impl Reasoning<'_, '_, '_> {
 
 impl Analyzer<'_, '_> {
     pub(super) fn apply_kills(&mut self, states: &mut ProofFlowState, events: &[KillEvent]) {
+        self.apply_kills_with_pending_results(states, events, &mut [], None);
+    }
+
+    /// One commit uses one set of preservation answers for both its pending
+    /// value and the continuing state, before publishing the new value.
+    pub(super) fn apply_kills_with_pending_results(
+        &mut self,
+        states: &mut ProofFlowState,
+        events: &[KillEvent],
+        pending_results: &mut [results::ResultEvidence],
+        shared_event: Option<FlowEventId>,
+    ) {
         if events.is_empty() {
             return;
         }
         self.record_continuing(states, events);
         self.vocabulary.promote_flow_contradiction(states);
-        let ledger = states.separations.clone();
+        let ledger = self
+            .reasoning()
+            .event_write_separations(states, events, pending_results);
         let live = self.reasoning().event_live_bounds(states, events);
         let separations = EventSeparations {
             ledger: &ledger,
             live: &live,
         };
-        self.reasoning().kill_result_evidence(states, events);
+        for result in pending_results {
+            self.reasoning()
+                .apply_kills_one(&separations, &mut result.facts, events);
+        }
         self.reasoning()
-            .kill_path_components(&separations, states, events, None);
+            .kill_result_evidence(&separations, states, events);
+        self.reasoning()
+            .kill_path_components(&separations, states, events, shared_event);
     }
 
     /// Applies each event on its own and in order, invalidating entry images
@@ -1537,21 +1540,20 @@ impl Analyzer<'_, '_> {
             self.vocabulary.promote_flow_contradiction(states);
         }
         self.record_continuing(states, events);
-        let ledger = states.separations.clone();
         let live = self.reasoning().event_live_bounds(states, events);
-        let separations = EventSeparations {
-            ledger: &ledger,
-            live: &live,
-        };
-        self.reasoning().kill_result_evidence(states, events);
         for event in events {
+            let events = std::slice::from_ref(event);
+            let ledger = self.reasoning().event_write_separations(states, events, &[]);
+            let current_live = self.reasoning().event_live_bounds(states, events);
+            let separations = EventSeparations {
+                ledger: &ledger,
+                live: &current_live,
+            };
+            self.reasoning()
+                .kill_result_evidence(&separations, states, events);
             let proof_event = transfer_event(self, event);
-            self.reasoning().kill_path_components(
-                &separations,
-                states,
-                std::slice::from_ref(event),
-                Some(proof_event),
-            );
+            self.reasoning()
+                .kill_path_components(&separations, states, events, Some(proof_event));
         }
         live
     }
