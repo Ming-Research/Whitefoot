@@ -42,12 +42,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use whitefoot::{
     BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
     DiagnosticFormat, HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry,
-    ModuleProgramFailure, SourceInput, check, check_module_entry, check_module_program,
-    check_with_cache, compile, compile_module_program, discover_module_sources, entry_verdict,
-    form_module_program_graph, module_verdict,
+    ModuleProgramFailure, OverlapLowering, SourceInput, check, check_module_entry,
+    check_module_program, check_with_cache, compile, compile_module_program, compile_with_overlap,
+    discover_module_sources, entry_verdict, form_module_program_graph, module_verdict,
 };
 
-use crate::support::{PROGRAM_DEADLINE, ProgramChild, append_runtime_objects};
+use crate::support::{
+    PROGRAM_DEADLINE, ProgramChild, append_runtime_objects, require_sanitized, sanitized, sanitizer,
+};
 
 use super::corpus::{self, Arrangement, Case, Expectation, FixtureContent, Span, Verdict};
 use super::json;
@@ -71,6 +73,7 @@ struct Reached {
 fn reach_module_program(
     case: &Case,
     root: &Path,
+    overlap: OverlapLowering,
 ) -> Result<Option<whitefoot::LlvmModule>, CompilationFailure> {
     let graph =
         match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default()) {
@@ -105,9 +108,31 @@ fn reach_module_program(
             &inputs,
             ModuleEntry::Named("main"),
             CompilerLimits::default(),
-            whitefoot::OverlapLowering::Off,
+            overlap,
         )
         .map(Some),
+    }
+}
+
+/// Checks the case, or compiles it with `overlap` when it needs the complete
+/// toolchain.
+fn build(
+    case: &Case,
+    overlap: OverlapLowering,
+) -> Result<Option<whitefoot::LlvmModule>, CompilationFailure> {
+    if let Some(root) = case.module_root() {
+        return reach_module_program(case, &root, overlap);
+    }
+    let source = case.source();
+    let path = case.logical_path();
+    let inputs = [SourceInput::new(&path, &source)];
+    match &case.expect {
+        Expectation::Accept | Expectation::Reject(_) => {
+            check(&inputs, CompilerLimits::default()).map(|()| None)
+        }
+        Expectation::Run(_) | Expectation::Unsupported => {
+            compile_with_overlap(&inputs, CompilerLimits::default(), overlap).map(Some)
+        }
     }
 }
 
@@ -118,22 +143,7 @@ fn reach(case: &Case) -> Reached {
     // change either one. A runtime or unsupported expectation still needs the
     // complete toolchain: the former executes its module, while the latter may
     // name a capability first encountered during lowering.
-    let module = if let Some(root) = case.module_root() {
-        reach_module_program(case, &root)
-    } else {
-        let source = case.source();
-        let path = case.logical_path();
-        let inputs = [SourceInput::new(&path, &source)];
-        match &case.expect {
-            Expectation::Accept | Expectation::Reject(_) => {
-                check(&inputs, CompilerLimits::default()).map(|()| None)
-            }
-            Expectation::Run(_) | Expectation::Unsupported => {
-                compile(&inputs, CompilerLimits::default()).map(Some)
-            }
-        }
-    };
-    let module = match module {
+    let module = match build(case, OverlapLowering::Off) {
         Ok(module) => module,
         Err(failure) => {
             let note = Some(failure.to_string());
@@ -147,13 +157,29 @@ fn reach(case: &Case) -> Reached {
             note: None,
         };
     }
+    let module = module.expect("a run expectation uses the complete compiler path");
+    let verdict = execute(&sanitized(module), case.arrange.as_ref());
+    // A sanitized run also builds the case with the `--par` lowering, which
+    // hands work the compiler proved independent to worker threads, so the
+    // sanitizers see the same program run in parallel; both builds must reach
+    // one verdict (compiler/sanitized-builds).
+    if sanitizer().is_some() && matches!(verdict, Verdict::Run(_)) {
+        let parallel = match build(case, OverlapLowering::OnWithCallGrain) {
+            Ok(Some(module)) => execute(&sanitized(module), case.arrange.as_ref()),
+            Ok(None) => unreachable!("a run expectation uses the complete compiler path"),
+            Err(failure) => Verdict::Stopped(format!("the --par build failed: {failure}")),
+        };
+        if parallel != verdict {
+            return Reached {
+                verdict: Verdict::Stopped(format!(
+                    "the --par build reached {parallel:?}, the ordinary build {verdict:?}"
+                )),
+                note: None,
+            };
+        }
+    }
     Reached {
-        verdict: execute(
-            module
-                .as_deref()
-                .expect("a run expectation uses the complete compiler path"),
-            case.arrange.as_ref(),
-        ),
+        verdict,
         note: None,
     }
 }
@@ -267,6 +293,25 @@ fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
     )
 }
 
+/// The part of the manifest this process walks: every case by default, or
+/// with `WHITEFOOT_CONFORMANCE_SHARD=INDEX/COUNT` every COUNT-th case from
+/// the INDEX-th, counting from 1, so that COUNT processes together walk each
+/// case once. The sanitizer workflow splits its slow walk this way
+/// (compiler/sanitized-builds).
+fn shard() -> (usize, usize) {
+    let Ok(selection) = std::env::var("WHITEFOOT_CONFORMANCE_SHARD") else {
+        return (0, 1);
+    };
+    let parsed = selection
+        .split_once('/')
+        .and_then(|(index, count)| Some((index.parse().ok()?, count.parse().ok()?)))
+        .filter(|&(index, count): &(usize, usize)| (1..=count).contains(&index));
+    let (index, count) = parsed.unwrap_or_else(|| {
+        panic!("WHITEFOOT_CONFORMANCE_SHARD names INDEX/COUNT with 1 <= INDEX <= COUNT, not {selection:?}")
+    });
+    (index - 1, count)
+}
+
 fn invocation_directory() -> PathBuf {
     let sequence = NEXT_INVOCATION.fetch_add(1, Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
@@ -280,6 +325,7 @@ fn invocation_directory() -> PathBuf {
 fn link(module: &str, directory: &Path) -> PathBuf {
     let assembly = directory.join("case.ll");
     let executable = directory.join("case");
+    require_sanitized(module);
     std::fs::write(&assembly, module).expect("write the case's emitted module");
     let mut command = Command::new("/usr/bin/clang");
     command.arg("-x").arg("ir").arg(&assembly);
@@ -340,7 +386,7 @@ fn executable_cases_with_unit_and_exit_status_keep_running() {
             CompilerLimits::default(),
         )
         .expect("the executable entry checks");
-        assert_eq!(execute(&module, None), Verdict::Run(expected));
+        assert_eq!(execute(&sanitized(module), None), Verdict::Run(expected));
     }
 }
 
@@ -379,7 +425,8 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     );
     let mut tally: BTreeMap<Outcome, usize> = BTreeMap::new();
     let mut reports = Vec::new();
-    for case in &cases {
+    let (shard, shards) = shard();
+    for case in cases.iter().skip(shard).step_by(shards) {
         let reached = reach(case);
         let outcome = outcome(case, &reached.verdict);
         *tally.entry(outcome).or_default() += 1;
