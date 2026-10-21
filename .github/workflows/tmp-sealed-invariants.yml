@@ -59,11 +59,6 @@ jobs:
             perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check "$2"
             echo "exit $?"
           }
-          # The same with the temporary sealing instrument's trace.
-          trace() {
-            echo "== trace of $1"
-            WHITEFOOT_DEBUG_SEALING=1 ./compiler/target/gate/whitefootc --check "$2" 2>&1 | head -400
-          }
           for case in range2-pos-module-boxed-dispatch-backedge type11-pos-loop-reference-restored \
             type11-neg-loop-reference-cover type11-pos-reference-two-targets-restored \
             type11-neg-reference-rebound-before-restored type11-neg-range-parameter-element-broken \
@@ -264,10 +259,36 @@ jobs:
             let got = inspect(link: &head);
             return got;
           }" "$main"
-          for name in walk-const walk-guard; do
-            trace "$name" "$probe/$name.wf"
-          done
-          for case in type11-pos-loop-reference-restored type11-pos-reference-two-targets-restored \
-            type11-neg-reference-rebound-before-restored; do
-            trace "$case" "tests/conformance/cases/$case.wf"
+          # A member an ancestor's invariant reads, replaced whole by a
+          # construction that keeps the invariant, by one that breaks it, and
+          # moved out, changed and moved back.
+          member='struct Member {
+            index: u64;
+          }'
+          holder='struct Holder {
+            member: Member;
+            size: u64;
+            invariant fits(holder): holder.member.index < holder.size;
+          }'
+          pick='fn pick(holder: &Holder) -> result: u64 reads(holder) {
+            let got = holder^.member.index;
+            return got;
+          }'
+          for variant in fits breaks moved; do
+            case "$variant" in
+              fits) update='  let fresh = Member(index: 3_u64);
+            set holder.member = move fresh;' ;;
+              breaks) update='  let fresh = Member(index: 9_u64);
+            set holder.member = move fresh;' ;;
+              moved) update='  let taken = move holder.member;
+            set taken.index = 5_u64;
+            set holder.member = move taken;' ;;
+            esac
+            write "replace-$variant" "$member" "$holder" "$pick" "fn replace() -> result: u64 pure {
+            let first = Member(index: 1_u64);
+            let holder = Holder(member: move first, size: 8_u64);
+          $update
+            let got = pick(holder: &holder);
+            return got;
+          }" "$main"
           done

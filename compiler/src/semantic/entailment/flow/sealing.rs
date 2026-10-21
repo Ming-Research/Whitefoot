@@ -569,13 +569,6 @@ impl Input<'_, '_> {
             };
             for (index, invariant) in invariants.iter().enumerate() {
                 if self.write_reaches_read_set(oracle, written, &anchor, invariant) {
-                    if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_some() {
-                        eprintln!(
-                            "[sealing] write {} adds {} {index}",
-                            self.render_place(written),
-                            self.render_place(&anchor)
-                        );
-                    }
                     debts.add(Debt {
                         anchor: anchor.clone(),
                         invariant: Some(index),
@@ -1010,79 +1003,17 @@ impl Input<'_, '_> {
 }
 
 impl Reasoning<'_, '_, '_> {
-    /// TEMPORARY instrument for the quick workflow's probes
-    /// (firn-req-invariant-through-fields); removed before review.
-    pub(super) fn debug_sealing(&self, label: &str, state: &ProofFlowState) {
-        if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_none() {
-            return;
-        }
-        eprintln!("[sealing] {label}");
-        for debt in &state.debts.0 {
-            eprintln!(
-                "[sealing]   debt {} {:?} widened={} through={:?}",
-                self.input.render_place(&debt.anchor),
-                debt.invariant,
-                debt.widened,
-                debt.through
-            );
-        }
-        for (left, right, bound, _) in state.facts.bounds.cells() {
-            eprintln!(
-                "[sealing]   fact {} - {} <= {bound}",
-                self.render_term(left),
-                self.render_term(right)
-            );
-        }
-        for fact in &state.affine.facts {
-            eprintln!("[sealing]   affine {:?}", fact.inequality);
-        }
-        for (goal, sign) in &state.facts.opaque {
-            eprintln!(
-                "[sealing]   goal {:?} {}",
-                sign,
-                self.input
-                    .render_concrete_goal(self.vocabulary.goals.expression(*goal))
-            );
-        }
-    }
-
     /// [TYPE-11.S5] whether `debt` is restored in `state`: its restoring
     /// instance is proved by [MSR-4]'s disposition of an [FN-8] goal.
     fn sealed_debt_restored(&mut self, debt: &Debt, state: &ProofFlowState) -> bool {
-        let Some(index) = debt.invariant else {
-            if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_some() {
-                eprintln!(
-                    "[sealing] offered cover {}",
-                    self.input.render_place(&debt.anchor)
-                );
-            }
-            return false;
-        };
         let Some(goal) = self.input.restoration_instance(debt) else {
-            if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_some() {
-                eprintln!(
-                    "[sealing] offered {} {index} with no instance",
-                    self.input.render_place(&debt.anchor)
-                );
-            }
             return false;
         };
-        let rendered = self.input.render_concrete_goal(&goal);
         let (disposition, _, _) = self.call_goal_disposition(
             &ConcreteGoal::new(goal),
             ProofContext::new(&state.facts, &state.affine),
         );
-        let restored = disposition == CallGoalDisposition::Discharged;
-        if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_some() {
-            eprintln!(
-                "[sealing] offered {} goal {rendered} restored={restored}",
-                self.input.render_place(&debt.anchor)
-            );
-            if !restored {
-                self.debug_sealing("state of the unrestored offer", state);
-            }
-        }
-        restored
+        disposition == CallGoalDisposition::Discharged
     }
 
     /// Offers each debt of `state` that `select` picks for restoration in
@@ -1233,17 +1164,10 @@ impl Analyzer<'_, '_> {
             let anchor = ResolvedPlace::binding(parameter.binding);
             for index in 0..self.input.affine_invariants(ty).len() {
                 if let Some(goal) = self.input.sealed_instance(&anchor, index) {
-                    if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_some() {
-                        eprintln!(
-                            "[sealing] body entry instance {}",
-                            self.input.render_concrete_goal(&goal)
-                        );
-                    }
                     self.establish_sealed_instance(&anchor, index, goal, state);
                 }
             }
         }
-        self.reasoning().debug_sealing("after body entry", state);
     }
 
     /// [TYPE-11.S4] a `return_stmt` or a propagated error exit hands off the
@@ -1359,19 +1283,7 @@ impl Analyzer<'_, '_> {
             return;
         }
         for read in self.input.read_anchors(expression) {
-            if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_some() {
-                eprintln!(
-                    "[sealing] read {} members {:?} sealed={}",
-                    self.input.render_expression(expression),
-                    read.members
-                        .iter()
-                        .map(|member| self.input.render_place(member))
-                        .collect::<Vec<_>>(),
-                    self.sealed_members(&read, state)
-                );
-            }
             if !self.sealed_members(&read, state) {
-                self.reasoning().debug_sealing("unsealed read", state);
                 continue;
             }
             let Some(goal) = read
@@ -1531,8 +1443,6 @@ impl Analyzer<'_, '_> {
         }
         let mut left = Debts::default();
         for edge in edges {
-            self.reasoning()
-                .debug_sealing("backedge before restoration", &edge.state);
             if let Some(binder) = binder {
                 self.seal_binding_change(&mut edge.state, binder);
             }
@@ -1556,7 +1466,6 @@ impl Analyzer<'_, '_> {
         if let Some(seed) = self.input.debt_seeds.get(&id) {
             state.debts.union(seed);
         }
-        self.reasoning().debug_sealing("loop header", state);
     }
 
     /// [TYPE-11.S3] a continuation from the places `value` names into the

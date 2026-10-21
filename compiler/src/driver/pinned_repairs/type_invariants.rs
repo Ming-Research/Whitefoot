@@ -1,6 +1,8 @@
 //! [TYPE-11] a struct's type invariants: their formation, a hand-off
-//! before a broken invariant is restored, a construction that does not
-//! establish one, and an atomic block that leaves one unproved.
+//! before a broken invariant is restored, after the identity a debt was
+//! restorable through changed, or with no relation naming its anchor, a
+//! construction that does not establish one, and an atomic block that
+//! leaves one unproved.
 
 use super::RepairPair;
 
@@ -235,6 +237,158 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: code);
 }
 "#],
+    },
+    RepairPair {
+        name: "a-cursor-writes-below-a-hidden-anchor.wf",
+        rejected: br#"struct Wrap {
+  inner: Link;
+  invariant small(wrap): wrap.inner.v < 16_u64;
+}
+
+struct Link {
+  v: u64;
+  next: Option<Box<Wrap>>;
+}
+
+fn inspect(wrap: &Wrap) -> result: u64 reads(wrap.inner.v) {
+  let got = wrap^.inner.v;
+  return got;
+}
+
+fn walk() -> result: u64 pure {
+  let end = None<Box<Wrap>>();
+  let last = Link(v: 3_u64, next: move end);
+  let wrapped = Wrap(inner: move last);
+  let boxed = box_new::<Wrap>(value: move wrapped);
+  let more = Some<Box<Wrap>>(value: move boxed);
+  let first = Link(v: 2_u64, next: move more);
+  let top = Wrap(inner: move first);
+  let cursor = &top.inner;
+  for (i in 0_u64..1_u64) {
+    match cursor^.next {
+      Some(value: child) => {
+        set cursor = &child^.inner.inner;
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  set cursor^.v = 9_u64;
+  set top.inner.v = 1_u64;
+  let got = inspect(wrap: &top);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = walk();
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "]: UnrestoredTypeInvariant\n",
+            "\n  mechanical_fix: a write reached `top.inner` through a position or reference that no relation can name any more, so its type invariants cannot be restored: replace `top.inner` whole with a value a construction or a call returns before this hand-off, or make the write through a place the body still names\n",
+        ],
+        repaired: &[
+            br#"struct Wrap {
+  inner: Link;
+  invariant small(wrap): wrap.inner.v < 16_u64;
+}
+
+struct Link {
+  v: u64;
+  next: Option<Box<Wrap>>;
+}
+
+fn inspect(wrap: &Wrap) -> result: u64 reads(wrap.inner.v) {
+  let got = wrap^.inner.v;
+  return got;
+}
+
+fn walk() -> result: u64 pure {
+  let end = None<Box<Wrap>>();
+  let last = Link(v: 3_u64, next: move end);
+  let wrapped = Wrap(inner: move last);
+  let boxed = box_new::<Wrap>(value: move wrapped);
+  let more = Some<Box<Wrap>>(value: move boxed);
+  let first = Link(v: 2_u64, next: move more);
+  let top = Wrap(inner: move first);
+  let cursor = &top.inner;
+  for (i in 0_u64..1_u64) {
+    match cursor^.next {
+      Some(value: child) => {
+        set cursor = &child^.inner.inner;
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  set cursor^.v = 9_u64;
+  let rest = None<Box<Wrap>>();
+  let fresh = Link(v: 1_u64, next: move rest);
+  set top.inner = move fresh;
+  set top.inner.v = 1_u64;
+  let got = inspect(wrap: &top);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = walk();
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+            br#"struct Wrap {
+  inner: Link;
+  invariant small(wrap): wrap.inner.v < 16_u64;
+}
+
+struct Link {
+  v: u64;
+  next: Option<Box<Wrap>>;
+}
+
+fn inspect(wrap: &Wrap) -> result: u64 reads(wrap.inner.v) {
+  let got = wrap^.inner.v;
+  return got;
+}
+
+fn walk() -> result: u64 pure {
+  let end = None<Box<Wrap>>();
+  let last = Link(v: 3_u64, next: move end);
+  let wrapped = Wrap(inner: move last);
+  let boxed = box_new::<Wrap>(value: move wrapped);
+  let more = Some<Box<Wrap>>(value: move boxed);
+  let first = Link(v: 2_u64, next: move more);
+  let top = Wrap(inner: move first);
+  let cursor = &top.inner;
+  for (i in 0_u64..1_u64) {
+    match cursor^.next {
+      Some(value: child) => {
+        set cursor = &child^.inner.inner;
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  let named = &top.inner;
+  set named^.v = 9_u64;
+  set top.inner.v = 1_u64;
+  let got = inspect(wrap: &top);
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = walk();
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        ],
     },
     RepairPair {
         name: "type-invariant-on-an-opaque-struct.wf",

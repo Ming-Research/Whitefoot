@@ -199,10 +199,6 @@ impl Reasoning<'_, '_, '_> {
                     .components
                     .push(proof.derivation.expect("proved component has evidence"));
             } else {
-                if std::env::var_os("WHITEFOOT_DEBUG_SEALING").is_some() {
-                    eprintln!("[sealing] relation component unproved: {inequality:?} right {right:?}");
-                    self.debug_sealing("relation unproved", &view);
-                }
                 evidence.failing_component = Some(component as u8);
                 let refuted = inequality
                     .negated(&mut AffineCheckState::new())
