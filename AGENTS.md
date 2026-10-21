@@ -32,8 +32,9 @@ of those is probably not the next work.
 
 The active specification `spec/kernel-spec.md`, including its normative worked
 example, defines the language and toolchain judgments, and the conformance
-results state what the compiler implements. Compiler behavior, tests,
-archived code and design prose do not define the language.
+results state what the compiler implements. Compiler behavior, tests, the
+Lean model under `proof/`, archived code and design prose do not define the
+language.
 `docs/constitution.md` owns purpose, objectives, tradeoffs and conditional
 design principles.
 
@@ -89,6 +90,8 @@ Whitefoot's extra merge preconditions:
    pull request states what changed and its selection ground, answered
    against the exact revision being merged. The specification's bytes are its
    identity, the released archives are immutable, and git is the history.
+6. When the merge changes `spec/kernel-spec.md` or `proof/`, `proof.yml`
+   passes on the exact revision being merged.
 
 **Conformance evidence** is `tests/conformance` case source and manifest
 content, its runner and adapter, gate-integrity tests, and any collection or
@@ -125,7 +128,8 @@ read.
   comparing and recording semantic differences, and only when meanings match.
 - When the spec changes, bring everything derived from it to the newest version
   in the same work: conformance cases and verdicts, the lexer/parser and
-  generated syntax data, tests and docs.
+  generated syntax data, tests and docs, and the Lean model under `proof/` with
+  its coverage list and proofs.
 - Conformance verdicts and evidence change only with the specification;
   editing a verdict or regenerating evidence to go green is a governance
   breach. A compiler limitation, internal error, timeout or unimplemented
@@ -250,6 +254,9 @@ build time apart from test and program execution.
   `map-sanitizers.yml` on every push to a PR that changes the concurrent
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
+  `proof.yml` on every push to a PR that changes the specification, `proof/`
+  or that workflow, drafts included, and on such a push to `main` (the Lean
+  model's sentence coverage and proofs, on the PR's head),
   `compute-regression.yml` on ready PRs that touch measured inputs (paired
   WF-to-WF timing; a draft shows it skipped; each push to `main` there only
   builds and caches that commit's compiler for later PRs' merge-base

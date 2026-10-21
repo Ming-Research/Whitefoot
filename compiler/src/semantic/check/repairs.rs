@@ -44,6 +44,11 @@ use super::super::model::{
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
 
+/// [MSR-1] observe the measure that has no declared field to reference.
+pub(super) fn derived_measure_borrow(place: &str) -> String {
+    format!("read the measure by value with `let n = {place};`")
+}
+
 /// [MSR-3] an entry former outside a postcondition cannot select entry state.
 pub(super) const fn entry_outside_postcondition_repair() -> &'static str {
     "if this expression should read the current value, replace this `entry(...)` former with the place inside its parentheses; entry-state reads belong only in an ensures clause on a reference parameter whose declared row writes it"
