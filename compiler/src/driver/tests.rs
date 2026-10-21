@@ -2377,8 +2377,8 @@ fn a_counted_loop_a_give_can_leave_is_denied_by_condition_four() {
     let source = b"fn scan_until(src: &Slots<u64, 64>, needle: u64) -> result: u64 reads(src) {
   let count = src^.len;
   let acc = 0_u64;
-  let always = True();
-  let answer = if always {
+  let searching = needle != 0_u64;
+  let answer = if searching {
     for @scan (i in 0_u64..count) {
       let v = src^[i];
       set acc = acc +wrap v;
@@ -2437,8 +2437,8 @@ fn main() -> status: std::process::ExitStatus pure {
     let contained = b"fn scan_until(src: &Slots<u64, 64>, needle: u64) -> result: u64 reads(src) {
   let count = src^.len;
   let acc = 0_u64;
-  let always = True();
-  let answer = if always {
+  let searching = needle != 0_u64;
+  let answer = if searching {
     for @scan (i in 0_u64..count) {
       let v = src^[i];
       set acc = acc +wrap v;

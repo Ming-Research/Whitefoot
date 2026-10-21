@@ -11,6 +11,11 @@ Nodes: compiler/verification
 
 Summary: The hosted gate and the I/O host checks no longer run for a push to a draft pull request's branch or for a draft's opening or reopening; they run for the main line, a ready pull request's pushes, a hand-started run and the event of marking a pull request ready, which skips when the head already has a successful manual run of the same workflow. With the draft pushes gone, every run that checks a revision runs both platforms, so the Linux-only run is retired and the earlier refusal of both platforms on every push is restated for the case that no longer holds. The gate also fails while a `tmp-` workflow file exists in the checked head, and the performance comparison skips a draft as the design-readiness job already does. The run record of a week shows 122 checked runs on 40 branches other than the main line, up to 10 on one branch ([measurements](../research/investigations/test-economy/time-budgets.md#gate-at-ready-not-at-each-draft-push)); the author now gets results from a temporary workflow while writing.
 
+## 2026-10-20 Conditions the checker decides are rejected
+
+Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
+
+Summary: A new node rejects an `if` or `value_if` condition when every fact its selected branch establishes at entry is already derivable, with a repair that deletes the test and its dead branch; it judges a generic body once at its own parameters' symbolic instance and admits a condition in a contradictory state. It rejects judging only the goal origins and a language facility for a program to check its own final result, since the harness can compare the output. The acceptance-records decision adds the redundancy judgment to the obligations the structural checker records. The proof-query-context decision keeps reusing a closed view when goals are appended, after checking them for newly derivable contradictions, so the redundancy queries share preparation without changing a judgment.
 ## 2026-10-20 The merge-base compiler is cached per main commit, and its cold build is report-only
 
 Nodes: compiler/verification, compiler/merge-base-compiler-cache
