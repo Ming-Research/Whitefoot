@@ -33,8 +33,9 @@ The design study that preceded the ruling compared five candidates and named
 three points a soundness argument must settle before implementation:
 restoration obligations across reference joins, a finite representation of
 container evidence, and a polynomial bound on the added checking work. This
-note settles them, the third apart from the debts an atomic block's entry
-and a map or `Entries` parameter's body entry start with ([result
+note settles them, the third as a bound polynomial in the body's size and
+in the number of debts an atomic block's entry and a map or `Entries`
+parameter's body entry start with ([result
 3](#result-3-the-bound-on-the-added-work)), states the rule precisely
 enough to implement and review,
 and lists the specification rules and conformance cases the change needs.
@@ -264,12 +265,12 @@ induction that every hand-off in the chain was proved.
 
 ### Transfer rules
 
-T1 **Body entry.** D holds one debt for each anchor that an entry of a
-reference parameter of type `&ConcurrentHashMap<V>` or `&Entries<V>` owns
-or is, and nothing else. Each entry and element position in it is `[?]`,
-and a value whose type is that of a value above it on its path from the
-parameter's referent contributes the cover of its place instead of the
-anchors at or below it, so the set is finite. Every parameter value
+T1 **Body entry.** D is the union of the unfoldings [TYPE-11.S2] below
+the referents of the reference parameters of type `&ConcurrentHashMap<V>`
+or `&Entries<V>`: a debt for each invariant of each struct value an entry
+owns or is, `[?]` at every index position, and the cover of a
+value whose type is that of a value above it on its path, so the set is
+finite. Every parameter value
 and every reference parameter's referent is sealed, because each caller
 proved it at the call (T5); the build establishes the same for the entry's
 arguments [PROG-3]. That proof covers no entry of a map or an `Entries`
@@ -850,7 +851,12 @@ of type `Nk` starts with 2^k debts from k + 1 declarations (derived from
 `owned_anchor_debts`, not run). The checker keeps the debt set as a list
 and finds a key by a linear search at each addition, so forming that set
 takes on the order of 4^k key comparisons, and every later join, loop
-header and hand-off walks it. A body pays at each such parameter whether
+header and hand-off walks it. A continuation of a value below an entry into
+a local binding (T4) rebases every debt at or below it onto the local, so
+each such continuation adds as many keys again: c of them in a body give
+about (c + 1)·2^k keys, formed in on the order of (c + 1)²·4^k comparisons.
+Result 3's bound is accordingly polynomial in the body's size and in U, not
+in the body's size apart from U. A body pays at each such parameter whether
 or not it reaches an entry, once any struct of the program declares an
 affine invariant; a part of the type that holds no invariant-bearing struct
 adds nothing. No downstream program pays it today: in Firn, Halo and
