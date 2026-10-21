@@ -735,7 +735,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   invariant bounded(index): index.value < 16_u64;
 }
 
-struct Holder {
+nocopy struct Holder {
   index: Index;
 }
 
@@ -773,7 +773,7 @@ fn main() -> status: std::process::ExitStatus pure {
   invariant bounded(index): index.value < 16_u64;
 }
 
-struct Holder {
+nocopy struct Holder {
   index: Index;
 }
 
@@ -805,7 +805,7 @@ fn main() -> status: std::process::ExitStatus pure {
   invariant bounded(index): index.value < 16_u64;
 }
 
-struct Holder {
+nocopy struct Holder {
   index: Index;
 }
 

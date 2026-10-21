@@ -69,18 +69,9 @@ jobs:
         include:
           - label: reviewed-head
             commit: f997714d31528e0f8e2c98b510d1e39de8ebe861
+            # The other cases of this round ran with it in run 39568749252.
             cases: >-
-              type11-neg-loop-swap-into-recursive-part
-              type11-neg-swap-below-level-becomes-cover
-              type11-neg-range-spelled-element-keeps-debt
-              type11-neg-range-spelled-write-denies-read
-              type11-pos-range-spelled-element-beside-debt
-              type11-pos-range-spelled-write-beside-read
               type11-neg-segment-element-write-keeps-debt
-              type11-neg-map-entry-read-unchecked
-              type11-neg-entries-entry-handed-unchecked
-              type11-pos-entries-entry-checked-before-hand-off
-              type11-pos-entries-entry-left-broken
           # The pushed head with the widening row for written offsets
           # [TYPE-11.S3] switched off, which the negative case must need.
           - label: head-without-offset-widening
@@ -127,7 +118,9 @@ jobs:
   # The trial compile: each module of the downstream programs checked with
   # the branch's compiler and the base's, one module at a time so that one
   # rejection hides no other, then Firn's entry composed, which also judges
-  # the standard library modules it selects. The programs predate the base's
+  # the standard library modules it selects. Both verdicts and both lists of
+  # errors are compared, since a module the base already rejects can hide a
+  # new rejection behind the old one. The programs predate the base's
   # reserved words `held`, `not` and `unchanged` and its prelude variant
   # `Open`, so their copies rename each before either compiler reads them.
   trial:
@@ -174,6 +167,7 @@ jobs:
           same_accepted=0
           same_rejected=0
           differ=0
+          errors_differ=0
           branch="$PWD/compiler/target/gate/whitefootc"
           base="$RUNNER_TEMP/base/compiler/target/gate/whitefootc"
           # One judgment with both compilers, run in the given directory; a
@@ -192,6 +186,17 @@ jobs:
             done
             mine=$(cat "$work/logs/$label.branch.exit")
             theirs=$(cat "$work/logs/$label.base.exit")
+            for compiler in branch base; do
+              grep -E '^[^ ]+:[0-9]+:[0-9]+: error\[' "$work/logs/$label.$compiler" | sort \
+                > "$work/logs/$label.$compiler.errors"
+            done
+            if ! cmp -s "$work/logs/$label.branch.errors" "$work/logs/$label.base.errors"; then
+              errors_differ=$((errors_differ + 1))
+              echo "---- $label errors only the branch reports:"
+              comm -23 "$work/logs/$label.branch.errors" "$work/logs/$label.base.errors"
+              echo "---- $label errors only the base reports:"
+              comm -13 "$work/logs/$label.branch.errors" "$work/logs/$label.base.errors"
+            fi
             seconds=$(sed -n 's/^== END [^:]*: \([0-9.]*\) s.*/\1/p' "$work/logs/$label.branch" | tr '\n' ' ')
             printf '%-50s branch %s base %s (%s s)\n' "$label" "$mine" "$theirs" "$seconds"
             quiet='^== (START|RUNNING|BUDGET)'
@@ -224,4 +229,6 @@ jobs:
           done
           graph firn "$work/Firn-wf/firn"
           judge "firn composed" "$work/Firn-wf/firn" --graph modules.wfg --check-modules
-          echo "accepted by both $same_accepted, rejected by both $same_rejected, verdicts that differ $differ"
+          echo "accepted by both $same_accepted, rejected by both $same_rejected, verdicts that differ $differ, error lists that differ $errors_differ"
+          cat "$work"/logs/*.branch.errors | sed 's/.*error\[\([^]]*\)\].*/\1/' | sort | uniq -c | sed 's/^/branch errors by rule: /'
+          cat "$work"/logs/*.base.errors | sed 's/.*error\[\([^]]*\)\].*/\1/' | sort | uniq -c | sed 's/^/base errors by rule: /'
