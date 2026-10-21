@@ -10,6 +10,12 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/verification/documentation-examples
 
 Summary: A claim in user documentation must stay bound to the program it describes. Complete programs in `docs/guide/` and both READMEs sit in ```whitefoot blocks whose info string states the outcome (accepted as `--check` does, `run exit=N`, or `reject RULE`), matching the annotation Whitefoot-kit already uses; a Rust test in the corpus integration target checks every block through the same entry `--check` uses and the existing build-and-run support, reporting every failing block; and an optional ```whitefoot-output block after a rejection is compared byte for byte, because the rejection text is part of the example and changes only when its author changes it. Refused: a Python extractor (the compiler is checked through cargo test), treating unmarked blocks as programs (articles hold fragments and output), and checking every file under `docs/` with the current compiler (15 article and essay programs disagree with it by the articles' own convention of naming their compiler revision; recorded on the first-release articles item).
+## 2026-10-13 Rejection text spells source constructs as the writer wrote them
+
+Nodes: compiler/rejection-payloads, compiler/diagnostic-rendering
+
+Summary: Proof-goal places share the one canonical place renderer; a computed call argument or range endpoint is spelled by the source text retained at that occurrence, kept out of proof identities, and a binding rewritten since then still prints `?`, replacing the earlier refusal to invent an expression for a computed index with refusals of invented text and of a rewritten binding's current name; a callee keeps the alias or `pkg::` prefix written at the call with its generic arguments. A normalized relation keeps its mathematical form and writes each constant as a legal literal or exact literal expression, because normalization can produce a negative bound from unsigned operands. A failed postcondition keeps `relation` and adds `clause`, the written comparison with each result datum replaced by the returned value, because normalization can reverse and fold what the writer wrote. Text-format list items that are strings are double-quoted, because a string can contain the list separator.
+
 ## 2026-10-21 Safety claims are stated on one checked page
 
 Nodes: language/safety-claims

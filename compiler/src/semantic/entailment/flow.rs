@@ -39,6 +39,7 @@ mod judge;
 mod loop_summary;
 pub(crate) mod operation_facts;
 mod origin_transport;
+mod postcondition_render;
 mod postconditions;
 mod preservation;
 mod prover;
@@ -2237,6 +2238,10 @@ mod indexed_goal_kill_tests {
         let const_parameter_types = HashMap::new();
         let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            source_spellings: &HashMap::new(),
+            postcondition_clauses: &HashMap::new(),
+            postcondition_sources: &HashMap::new(),
+            type_spellings: &HashMap::new(),
             captured_places: &captured_places,
             judge_conditions: true,
             declarations: &[],
@@ -2484,6 +2489,10 @@ mod range_argument_kill_tests {
         let const_parameter_types = HashMap::new();
         let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            source_spellings: &HashMap::new(),
+            postcondition_clauses: &HashMap::new(),
+            postcondition_sources: &HashMap::new(),
+            type_spellings: &HashMap::new(),
             captured_places: &captured_places,
             judge_conditions: true,
             declarations: &[],
