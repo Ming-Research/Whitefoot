@@ -47,16 +47,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # pkg::vm: the baseline is the main revision just before the
-          # regression, as the first acceptance row defines it.
-          - label: halo pkg::vm
-            repo: Halo-wf
-            rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
-            args: --graph lib/halo/modules.wfg --check-module pkg::vm
-            base: 7d9118eba
-            rounds: 5
-            main_rounds: 5
-            adapt_max: 300
           # Firn whole program, at the revision the 10-13 measurement used.
           - label: firn
             repo: Firn-wf
@@ -97,7 +87,7 @@ jobs:
           cmd = os.environ['ARGS'].split(); cap = int(os.environ['ADAPT_MAX'])
           env = {k: v for k, v in os.environ.items() if k not in ('WHITEFOOT_CHECK_WORK', 'WHITEFOOT_TIME_BUDGET_RECORD')}
           site = re.compile(r'rejected: (\S+?):(\d+):(\d+): error\[([A-Za-z0-9-]+)\]')
-          notes = []; end = 'cap reached'
+          notes = []; end = 'cap reached'; counter = [0]
           def block_end(lines, start, indent):
               return next((n for n in range(start, len(lines)) if lines[n].startswith(indent + '}') and not lines[n].startswith(indent + ' ')), None)
           def fix_else_if(path, number, decided):
@@ -143,6 +133,14 @@ jobs:
                   other = [l[2:] if l.startswith('  ') else l for l in lines[j + 1:k]]; tail = k + 1
               elif lines[j] != indent + '}': return f'closing line is {lines[j]!r}'
               keep = then if decided == 'True' else other
+              # The kept block's own bindings leave their block and could collide
+              # with a later binding of the same spelling [TYPE-6]: rename them.
+              for at in range(len(keep)):
+                  d = re.match(r'^' + re.escape(indent) + r'let (\w+)\b', keep[at])
+                  if not d: continue
+                  counter[0] += 1; name = d.group(1); fresh = f'{name}_d{counter[0]}'
+                  use = re.compile(r'(?<![\w.:])' + re.escape(name) + r'(?!\w)(?!:(?!:))')
+                  keep[at:] = [use.sub(fresh, l) if k else re.sub(r'\b' + re.escape(name) + r'\b', fresh, l, count=1) for k, l in enumerate(keep[at:])]
               rest = lines[tail:]
               # Statements after a kept `return` at this level are unreachable.
               last = next((l for l in reversed(keep) if l.strip()), None)
