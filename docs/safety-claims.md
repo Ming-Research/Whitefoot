@@ -51,7 +51,7 @@ The cases show that the checker rejects each unsafe shape it is declared to reje
 
 ### No data races
 
-The specification mentions its data-race guarantee only in `CAP-1`, which makes it subject to the trusted base and says it does not exclude general race conditions. This page reads the guarantee through the rules below, and the reading is the page's, not a rule of its own: a spawned context is given only the storage its arguments moved or copied into it; the state of a shared object is reached only through the targets of an atomic statement; the shared effects take effect in one total order; and an implementation may overlap statements or loop iterations only where their footprints are disjoint. [Not claimed](#not-claimed) says what the guarantee leaves out.
+The specification mentions its data-race guarantee only in `CAP-1`, which makes it subject to the trusted base and says it does not exclude general race conditions. This page reads the guarantee through the rules below, and the reading is the page's, not a rule of its own: a spawned context is given only the storage its arguments moved or copied into it; the state of a shared object is reached only through the targets of an atomic statement; the shared effects take effect in one total order; and an implementation may overlap two adjacent statements only where each one's write paths are disjoint from the other's read and write paths (`PAR-1`), and loop iterations only under the conditions `PAR-2` states on the loop body's footprint. [Not claimed](#not-claimed) says what the guarantee leaves out.
 
 | Rule | Contribution | Rejecting cases | Accepting cases | Other evidence |
 |---|---|---|---|---|

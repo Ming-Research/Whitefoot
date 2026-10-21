@@ -10,6 +10,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/safety-claims
 
 Summary: The safety claims were spread over the README, the constitution, the specification and articles, with no place that connected each claim to the rules and cases behind it. A new node puts them on one page whose rows cite specification rules and conformance cases, with the limits quoted from the specification and the trusted base sized, and `make static` holds every citation to the specification and the manifest and the presence of each limit, because a page nothing reads drifts, which the refused rule-to-ground ledger already showed. Tagging cases in the manifest, generating the page from the manifest, leaving the page unchecked and holding the size figures to the checkout are rejected.
+
 ## 2026-10-20 The merge-base compiler is cached per main commit, and its cold build is report-only
 
 Nodes: compiler/verification, compiler/merge-base-compiler-cache
