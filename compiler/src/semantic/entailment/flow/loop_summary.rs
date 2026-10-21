@@ -274,6 +274,7 @@ impl Reasoning<'_, '_, '_> {
             live: &live,
         };
         self.kill_result_evidence(&separations, states, &kills.events);
+        self.invalidate_lost_headers(&separations, states, &kills.events);
         let removed = self.apply_loop_kills_one(&separations, &mut states.facts, kills);
         self.record_measure_kills(&separations, states, &kills.events, &removed);
         self.apply_affine_kills(&separations, &mut states.affine, &kills.events);
