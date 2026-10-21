@@ -73,6 +73,7 @@ pub fn render_driver_failure(category: &str, message: &str, format: DiagnosticFo
             kind: None,
             at: None,
             detail: vec![("message", Value::Text(message.to_owned()))],
+            expected: None,
         }
         .json(&Head {
             verdict: String::new(),
@@ -99,6 +100,7 @@ pub(crate) struct Record {
     kind: Option<String>,
     at: Option<Place>,
     detail: Vec<(&'static str, Value)>,
+    expected: Option<Vec<String>>,
 }
 
 impl Record {
@@ -130,6 +132,15 @@ impl Record {
             kind: Some(kind.to_owned()),
             at,
             detail: fields.detail,
+            expected: issue.expected_terminals().map(|expected| {
+                expected
+                    .iter()
+                    .map(|predicate| match predicate {
+                        LookaheadPredicate::Terminal(terminal) => terminal.spelling().to_owned(),
+                        LookaheadPredicate::SourceEnd => "end of source".to_owned(),
+                    })
+                    .collect()
+            }),
         }
     }
 
@@ -157,7 +168,18 @@ impl Record {
             kind: (!kind.is_empty()).then_some(kind),
             at: None,
             detail: vec![("payload", Value::Text(payload))],
+            expected: None,
         }
+    }
+
+    /// The grammar-selected terminal labels retained independently of rendering.
+    pub(super) fn expected_terminals(&self) -> Option<&[String]> {
+        self.expected.as_deref()
+    }
+
+    /// Rebinds a segment-local record to its original source coordinate.
+    pub(super) fn relocate(&mut self, bundle: &SourceBundle, coordinate: SyntaxCoordinate) {
+        self.at = Place::resolve(bundle, coordinate, Anchor::Start);
     }
 
     /// A target-stage stop may still name the checked source allocation that
@@ -171,6 +193,7 @@ impl Record {
             kind: Some("TargetLayout".to_owned()),
             at: coordinate.and_then(|at| Place::resolve(bundle, at, Anchor::Start)),
             detail: vec![("reason", Value::Text(message))],
+            expected: None,
         }
     }
 
@@ -480,6 +503,11 @@ impl Fields<'_> {
 pub(super) trait Report {
     /// Adds every payload field to `fields` and returns the kind name.
     fn report(&self, fields: &mut Fields<'_>) -> &'static str;
+
+    /// Grammar diagnostics retain their typed set for recorded verdicts.
+    fn expected_terminals(&self) -> Option<ExpectedTerminals> {
+        None
+    }
 }
 
 /// A payload structure whose fields flatten into the record that holds it.
@@ -1049,7 +1077,7 @@ impl Report for ResolutionIssue {
             LibraryNamesItself { path };
             UnknownModule { path };
             MissingModuleEdge { from, to };
-            QualifiedNameNotFound { spelling, module, role };
+            QualifiedNameNotFound { spelling, module, role, mechanical_fix };
             PrivateDeclaration { spelling, module };
             UnknownOwnedVariant { spelling, reason };
             MisplacedPublication { reason };
@@ -1065,7 +1093,11 @@ impl Report for ResolutionIssue {
 /// offending bytes are printed escaped because they are often invisible.
 impl Report for SourceIssue {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
-        let Self { span, kind } = self;
+        let Self {
+            span,
+            kind,
+            mechanical_fix,
+        } = self;
         fields.field(
             "found",
             &Spelled(SyntaxCoordinate::new(
@@ -1074,6 +1106,7 @@ impl Report for SourceIssue {
                 span.end(),
             )),
         );
+        fields.field("mechanical_fix", mechanical_fix);
         kind.name()
     }
 }
@@ -1082,7 +1115,11 @@ impl Report for SourceIssue {
 /// is the envelope's rule.
 impl Report for TerminalIssue {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
-        let Self { token, owner: _ } = self;
+        let Self {
+            token,
+            owner: _,
+            mechanical_fix,
+        } = self;
         fields.field(
             "found",
             &Spelled(SyntaxCoordinate::new(
@@ -1091,6 +1128,7 @@ impl Report for TerminalIssue {
                 token.end(),
             )),
         );
+        fields.field("mechanical_fix", mechanical_fix);
         "UnclassifiedToken"
     }
 }
@@ -1098,6 +1136,10 @@ impl Report for TerminalIssue {
 /// The grammar's expected-terminal set at the failure boundary and what the
 /// source has there instead [DIAG-1].
 impl Report for SyntaxIssue {
+    fn expected_terminals(&self) -> Option<ExpectedTerminals> {
+        Some(self.expected())
+    }
+
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         let Self {
             rule: _,
@@ -1120,9 +1162,11 @@ impl Report for CanonicalIssue {
             location: _,
             expected,
             found,
+            mechanical_fix,
         } = self;
         fields.field("expected", &Exact(expected));
         fields.field("found", &Exact(found));
+        fields.field("mechanical_fix", mechanical_fix);
         "NonCanonicalTrivia"
     }
 }

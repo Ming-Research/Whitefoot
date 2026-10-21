@@ -155,8 +155,8 @@ fn every_recorded_consumer_names_the_failed_callee_in_the_other_file() {
             );
         }
         for repaired in pair.callee.repaired {
-            let mut functions = super::declared_functions(pair.caller);
-            functions.extend(super::declared_functions(repaired));
+            let mut functions = super::harness::declared_functions(pair.caller);
+            functions.extend(super::harness::declared_functions(repaired));
             let contradictions = super::super::with_checked_program(
                 &[
                     super::SourceInput::new(pair.caller_name, pair.caller),
@@ -291,7 +291,7 @@ fn recursive_component_does_not_blame_its_induction_hypothesis() {
             assert_eq!(components.len(), 2, "both recursive functions are present");
             assert_eq!(components[0], components[1], "the calls form one component");
             let contradictions =
-                program.contradictory_successes(&super::declared_functions(accepted));
+                program.contradictory_successes(&super::harness::declared_functions(accepted));
             assert!(contradictions.is_empty(), "{contradictions:?}");
             Ok(())
         },
