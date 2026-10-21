@@ -819,18 +819,86 @@ the same unfolding of its entry type at body entry (T1), in every body
 with such a parameter whether or not it reaches an entry. T5 names it as
 the price of a map owning none of its entries, which the provisional
 atomic rule requires, so the same ruling reopens it; U is zero for a body
-with neither. Both costs stand, recorded with the provisional decision.
+with neither. Both costs stand as a provisional choice
+([entry unfoldings](#entry-unfoldings)).
 
 **What remains to measure.** The bound is polynomial in the body's size
 and U; whether it is cheap
 is an empirical question the criterion below answers. The common case is one
 walk per loop (every key restored on the backedge on the first round), and a
-function that writes no invariant data has no debts at all.
+function that writes no invariant data, has no map or `Entries` reference
+parameter and enters no atomic block has no debts at all.
 
 **Confidence: 4/5** for the bound. What could overturn practicality (not
 the bound): the T13 instances turning many more functions into range-judgment
 participants [RANGE-2] when structs with range invariants are read widely;
 the measurement below separates that cost.
+
+### Entry unfoldings
+
+Two debt sets come from unfolding a type rather than from writes: an atomic
+block's entry, under the provisional atomic rule, and a map or `Entries`
+reference parameter's body entry (T1). Each holds a debt for every
+invariant of every struct value the type holds, `[?]` at each entry and
+element position, and the cover of a value whose type is that of a value
+above it on its path.
+
+*Cost.* For a tree-shaped type the count is linear in the type's size. For
+distinct struct types shared along paths it is exponential: with `N0`
+declaring an invariant and each `Ni` holding two `N(i-1)` fields, an entry
+of type `Nk` starts with 2^k debts from k + 1 declarations (derived from
+`owned_anchor_debts`, not run). The checker keeps the debt set as a list
+and finds a key by a linear search at each addition, so forming that set
+takes on the order of 4^k key comparisons, and every later join, loop
+header and hand-off walks it. A body pays at each such parameter whether
+or not it reaches an entry, once any struct of the program declares an
+affine invariant; a part of the type that holds no invariant-bearing struct
+adds nothing. No downstream program pays it today: in Firn, Halo and
+Snowghost no struct type invariant lies below a map entry or a shared state
+(read from their sources: Firn's invariants are all loop invariants, Halo
+uses `Entries` only in research witnesses, and Snowghost uses no map).
+
+*Alternatives.*
+
+- An on-demand form reaching the same verdicts (proposed, not built). One
+  region debt would stand for a parameter's whole set, which holds only
+  `[?]` anchors and covers and is never restored, and a read would test its
+  path against the region. A hand-off below an entry still owes every
+  instance the handed value holds: it would enumerate them depth first,
+  stop at the first it cannot prove, and skip each subtree whose
+  invariants hold with no facts, decided once per type; a body of
+  polynomial size supplies facts for polynomially many places, so the
+  enumeration stays polynomial (deduced). A value copied out of an entry,
+  and an atomic entry's fixed-position debts, are restored one by one, so
+  a region would also record its restored subtrees, intersected at joins,
+  and every event row (write, rebasing, exchange, widening, join, header,
+  hand-off, release) would handle regions. It needs its own argument that
+  its verdicts equal the eager set's, and its diagnostics would name the
+  first unrestored debt the enumeration meets.
+- The on-demand form for the parameters alone: their regions need no
+  restored subtrees, but a copy of an entry value into a local unfolds
+  again, so the exponential case remains, only no longer at every
+  parameter.
+- Cutting every repeated type of the unfolding to a cover: polynomial, but
+  a value holding two fields of one invariant-bearing struct could then
+  never be handed off whole, even after both are checked, which the
+  boundary-only invariants accepted.
+- Restoring a value read from an entry only as a whole: its hand-off still
+  proves every instance the value holds, so it saves no enumeration, and it
+  refuses the partial restorations that per-anchor debts accept.
+
+*Choice.* The eager unfolding stays as a provisional choice, against the
+design tree's root decision that no checking work grows exponentially with
+program size. Both sets follow from the provisional atomic rule, and the
+shared-object model that settles it can remove both: a block that may
+trust the state it enters starts with no entry debts, and a map may then
+own its entries, so a parameter's entries arrive sealed (deduced; board
+item `shared-invariant-through-reads` carries the argument and the removal
+of this cost). Building the on-demand form now would rebuild the debt
+representation that ruling may make unnecessary. The uncertainty is whether
+the shared-object model removes the entry debts. The choice is reopened
+when that model's design is settled, or when a program whose entry or
+state type is shared deeply makes checking noticeably slower.
 
 ## Generic structs
 
