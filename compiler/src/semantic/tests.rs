@@ -242,6 +242,22 @@ fn with_resolved_semantics_inputs<ResultValue>(
     inputs: &[SourceInput<'_>],
     run: impl FnOnce(&crate::ResolvedSyntaxUnit, SemanticOutcome) -> ResultValue,
 ) -> ResultValue {
+    // Every test passes its own closure, so this function is instantiated once
+    // per test. The front end's driving code lives in the function below,
+    // which takes the callback as a trait object and is compiled once.
+    let mut run = Some(run);
+    let mut result = None;
+    run_resolved_semantics(inputs, &mut |resolved, outcome| {
+        let run = run.take().expect("the semantic test callback runs once");
+        result = Some(run(resolved, outcome));
+    });
+    result.expect("the semantic test callback ran")
+}
+
+fn run_resolved_semantics(
+    inputs: &[SourceInput<'_>],
+    run: &mut dyn FnMut(&crate::ResolvedSyntaxUnit, SemanticOutcome),
+) {
     let Ok(bundle) = SourceBundle::with_prelude(inputs, SOURCE_LIMITS) else {
         panic!("semantic test bundle must be valid");
     };
