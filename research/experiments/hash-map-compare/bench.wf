@@ -118,7 +118,7 @@ fn order(step: u64, size: u64) -> index: u64 pure contract {
 }
 
 fn slow_turn(mask: u64, step: u64) -> repeat: Bool pure {
-  doc "Whether the slow control repeats the operation at step: when every bit of mask is set in step. The slow control passes 3, every fourth step; every other run passes all ones, which no step below 2^64 - 1 matches. The mask is data, so every run executes the same loops: a run-time Bool lets the compiler split each loop into a copy with and a copy without the repetition, and the two copies differ in more than the repetition.";
+  doc "Whether the slow control repeats the operation at step: when every bit of mask is set in step. The slow control passes 3, every fourth step; every other run passes all ones, which no step below 2^64 - 1 matches. The mask is data, so every run executes the same loops; a run-time Bool would let the compiler split each loop into a copy with and a copy without the repetition, which can differ in more than the repetition.";
   let phase = iand(step, mask);
   return phase == mask;
 }
