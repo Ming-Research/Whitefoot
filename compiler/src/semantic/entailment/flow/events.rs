@@ -198,7 +198,9 @@ impl Input<'_, '_> {
                 *element,
                 *relocation,
             ),
-            KillEvent::Consume { binding, .. } => root == PlaceRoot::Binding(*binding),
+            KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
+                root == PlaceRoot::Binding(*binding)
+            }
             KillEvent::EntryImageHolderConsume { .. } => false,
         }
     }
@@ -226,9 +228,9 @@ impl Input<'_, '_> {
         // Index/Measure or Range/Part pair. A measured element has an Index
         // after its range step and therefore does not take this case.
         //
-        // Both classifiers require complete, nonempty resolution. A holder
-        // rebind is a whole-place write with no Part/Measure suffix, while an
+        // Both classifiers require complete, nonempty resolution. An
         // unresolved write remains conservative and reaches the descriptor.
+        // A holder rebind is a separate event, not a storage write.
         if self.is_range_descriptor_support(support)
             && (element_write || self.is_window_extent_write(written))
         {
@@ -283,7 +285,7 @@ impl Input<'_, '_> {
             })
     }
 
-    /// [ENT-5] whether one event writes or consumes a binding an offset
+    /// [ENT-5] whether one event replaces or consumes a binding an offset
     /// occurring in `support` reads.
     ///
     /// The support of a measure term over P contains the support of every
@@ -295,21 +297,53 @@ impl Input<'_, '_> {
         support: &ResolvedPlace,
         event: &KillEvent,
     ) -> bool {
-        support.path.iter().any(|step| {
-            let Some(binding) = step.measure_offset_support() else {
-                return false;
-            };
-            let read = ResolvedPlace::binding(binding);
-            match event {
+        self.offset_support(support)
+            .iter()
+            .any(|(read, holders)| match event {
                 KillEvent::Write { place: written, .. }
                 | KillEvent::EntryImageHolderWrite { place: written, .. } => {
-                    self.resolved_places_overlap(separations, &read, written)
+                    self.resolved_places_overlap(separations, read, written)
+                        || holders.iter().any(|holder| {
+                            written.root == PlaceRoot::Binding(*holder) && written.path.is_empty()
+                        })
                 }
-                KillEvent::Consume {
-                    binding: consumed, ..
-                } => binding == *consumed,
+                KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
+                    read.root == PlaceRoot::Binding(*binding) || holders.contains(binding)
+                }
                 KillEvent::EntryImageHolderConsume { .. } => false,
+            })
+    }
+
+    /// Integer selectors read their exact field and reference-holder chain.
+    fn offset_support(&self, place: &ResolvedPlace) -> Vec<(ResolvedPlace, Vec<BindingId>)> {
+        let mut supports = Vec::new();
+        for step in &place.path {
+            let term = step
+                .measure_offset_support()
+                .map(CapturedTerm::Binding)
+                .or_else(|| step.projected_offset_support().map(CapturedTerm::Place));
+            let Some(term) = term else {
+                continue;
+            };
+            for read in self.context.captured_places.support(term) {
+                let holders = match read.root {
+                    PlaceRoot::Binding(root) if self.places.is_reference(root) => vec![root],
+                    _ => Vec::new(),
+                };
+                supports.push((read, holders));
             }
+        }
+        supports
+    }
+
+    fn scope_kills_offset_support(
+        &self,
+        place: &ResolvedPlace,
+        exited: &HashSet<BindingId>,
+    ) -> bool {
+        self.offset_support(place).iter().any(|(read, holders)| {
+            matches!(read.root, PlaceRoot::Binding(binding) if exited.contains(&binding))
+                || holders.iter().any(|holder| exited.contains(holder))
         })
     }
 
@@ -365,9 +399,12 @@ impl Input<'_, '_> {
                 place,
                 *relocation,
             ),
-            KillEvent::Consume {
-                binding: consumed, ..
-            } => binding == *consumed,
+            KillEvent::Rebind {
+                binding: changed, ..
+            }
+            | KillEvent::Consume {
+                binding: changed, ..
+            } => binding == *changed,
             KillEvent::EntryImageHolderConsume { .. } => false,
         }
     }
@@ -416,7 +453,8 @@ impl Input<'_, '_> {
                         None => self.write_kills_support(separations, &image.place, place, true),
                     }
             }
-            KillEvent::Consume { binding, .. }
+            KillEvent::Rebind { binding, .. }
+            | KillEvent::Consume { binding, .. }
             | KillEvent::EntryImageHolderConsume { binding, .. } => {
                 image.holders.contains(binding) || image.place.root == PlaceRoot::Binding(*binding)
             }
@@ -688,12 +726,15 @@ impl Input<'_, '_> {
                 place,
                 *relocation,
             ),
-            KillEvent::Consume {
-                binding: consumed, ..
+            KillEvent::Rebind {
+                binding: changed, ..
+            }
+            | KillEvent::Consume {
+                binding: changed, ..
             }
             | KillEvent::EntryImageHolderConsume {
-                binding: consumed, ..
-            } => binding == *consumed,
+                binding: changed, ..
+            } => binding == *changed,
         }
     }
 
@@ -706,6 +747,14 @@ impl Input<'_, '_> {
         target: &CheckedSetTarget,
     ) -> KillEvent {
         match target {
+            CheckedSetTarget::Place(place)
+                if place.fields.is_empty() && place.mode.is_reference() =>
+            {
+                KillEvent::Rebind {
+                    binding: place.binding,
+                    source: node_path.clone(),
+                }
+            }
             CheckedSetTarget::Place(place) => {
                 let spelled = ResolvedPlace::spelled(
                     PlaceRoot::Binding(place.binding),
@@ -774,10 +823,16 @@ impl Vocabulary {
     /// Whether leaving the scopes of `exited` kills a fact supported by
     /// `term`: the support contains every tracked place's root binding and
     /// every holder read through, which is the spelling root here.
-    pub(super) fn scope_kills_term(&self, term: TermId, exited: &HashSet<BindingId>) -> bool {
+    pub(super) fn scope_kills_term(
+        &self,
+        input: &Input<'_, '_>,
+        term: TermId,
+        exited: &HashSet<BindingId>,
+    ) -> bool {
         match self.terms.kind(term) {
             TermKind::Sum(left, right) => {
-                self.scope_kills_term(*left, exited) || self.scope_kills_term(*right, exited)
+                self.scope_kills_term(input, *left, exited)
+                    || self.scope_kills_term(input, *right, exited)
             }
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => false,
             TermKind::TargetMeasure { .. }
@@ -796,12 +851,7 @@ impl Vocabulary {
                     PlaceRoot::Binding(binding) => exited.contains(&binding),
                     PlaceRoot::Constant(_) => false,
                 };
-                rooted
-                    || place.path.iter().any(|projection| {
-                        projection
-                            .measure_offset_support()
-                            .is_some_and(|binding| exited.contains(&binding))
-                    })
+                rooted || input.scope_kills_offset_support(place, exited)
             }
         }
     }
@@ -902,7 +952,7 @@ impl Reasoning<'_, '_, '_> {
                     } => self
                         .input
                         .write_kills_support(separations, place, written, *relocation),
-                    KillEvent::Consume { binding, .. } => {
+                    KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
                         place.root == PlaceRoot::Binding(*binding)
                     }
                     KillEvent::EntryImageHolderConsume { .. } => false,
@@ -1031,7 +1081,7 @@ impl Reasoning<'_, '_, '_> {
                 } => self
                     .input
                     .write_kills_support(separations, &place, written, *relocation),
-                KillEvent::Consume { binding, .. } => {
+                KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
                     holders.contains(binding) || place.root == PlaceRoot::Binding(*binding)
                 }
                 KillEvent::EntryImageHolderConsume { .. } => false,
@@ -1044,11 +1094,7 @@ impl Reasoning<'_, '_, '_> {
             let (place, holders) = self.input.resolve_goal_support(support);
             holders.iter().any(|holder| exited.contains(holder))
                 || matches!(place.root, PlaceRoot::Binding(binding) if exited.contains(&binding))
-                || place.path.iter().any(|projection| {
-                    projection
-                        .measure_offset_support()
-                        .is_some_and(|binding| exited.contains(&binding))
-                })
+                || self.input.scope_kills_offset_support(&place, exited)
         })
     }
 
@@ -1343,17 +1389,7 @@ impl Reasoning<'_, '_, '_> {
             .vocabulary
             .terms
             .interned(&TermKind::Measure(CheckedMeasure::Length, window.clone()))?;
-        let offset = match (index.capture, index.term) {
-            // A place's term identity reads a binding offset by its spelling,
-            // whose current value is the binding's own term [ENT-2].
-            (CaptureId::SpellingDetermined, CapturedTerm::Binding(binding)) => {
-                self.vocabulary.terms.interned(&TermKind::Place(
-                    ResolvedPlace::binding(binding),
-                    IntegerType::U64,
-                ))
-            }
-            _ => self.captured_index_term(index),
-        }?;
+        let offset = self.captured_index_term(index)?;
         let affine_offset = match index.capture {
             CaptureId::Source(_) | CaptureId::ContractRead { .. } => {
                 states.affine.indices.get(&index.capture).cloned()
@@ -1476,20 +1512,39 @@ impl Reasoning<'_, '_, '_> {
 
 impl Analyzer<'_, '_> {
     pub(super) fn apply_kills(&mut self, states: &mut ProofFlowState, events: &[KillEvent]) {
+        self.apply_kills_with_pending_results(states, events, &mut [], None);
+    }
+
+    /// One commit uses one set of preservation answers for both its pending
+    /// value and the continuing state, before publishing the new value.
+    pub(super) fn apply_kills_with_pending_results(
+        &mut self,
+        states: &mut ProofFlowState,
+        events: &[KillEvent],
+        pending_results: &mut [results::ResultEvidence],
+        shared_event: Option<FlowEventId>,
+    ) {
         if events.is_empty() {
             return;
         }
         self.record_continuing(states, events);
         self.vocabulary.promote_flow_contradiction(states);
-        let ledger = states.separations.clone();
+        let ledger = self
+            .reasoning()
+            .event_write_separations(states, events, pending_results);
         let live = self.reasoning().event_live_bounds(states, events);
         let separations = EventSeparations {
             ledger: &ledger,
             live: &live,
         };
-        self.reasoning().kill_result_evidence(states, events);
+        for result in pending_results {
+            self.reasoning()
+                .apply_kills_one(&separations, &mut result.facts, events);
+        }
         self.reasoning()
-            .kill_path_components(&separations, states, events, None);
+            .kill_result_evidence(&separations, states, events);
+        self.reasoning()
+            .kill_path_components(&separations, states, events, shared_event);
     }
 
     /// Applies each event on its own and in order, invalidating entry images
@@ -1507,21 +1562,20 @@ impl Analyzer<'_, '_> {
             self.vocabulary.promote_flow_contradiction(states);
         }
         self.record_continuing(states, events);
-        let ledger = states.separations.clone();
         let live = self.reasoning().event_live_bounds(states, events);
-        let separations = EventSeparations {
-            ledger: &ledger,
-            live: &live,
-        };
-        self.reasoning().kill_result_evidence(states, events);
         for event in events {
+            let events = std::slice::from_ref(event);
+            let ledger = self.reasoning().event_write_separations(states, events, &[]);
+            let current_live = self.reasoning().event_live_bounds(states, events);
+            let separations = EventSeparations {
+                ledger: &ledger,
+                live: &current_live,
+            };
+            self.reasoning()
+                .kill_result_evidence(&separations, states, events);
             let proof_event = transfer_event(self, event);
-            self.reasoning().kill_path_components(
-                &separations,
-                states,
-                std::slice::from_ref(event),
-                Some(proof_event),
-            );
+            self.reasoning()
+                .kill_path_components(&separations, states, events, Some(proof_event));
         }
         live
     }
@@ -1548,7 +1602,7 @@ impl Analyzer<'_, '_> {
         if exited.is_empty() {
             return;
         }
-        state.kill(|term| self.vocabulary.scope_kills_term(term, &exited));
+        state.kill(|term| self.vocabulary.scope_kills_term(&self.input, term, &exited));
         self.reasoning()
             .kill_s12_candidates_for_scope(state, &exited);
         state.kill_goals(|goal| self.reasoning().scope_kills_goal(goal, &exited));

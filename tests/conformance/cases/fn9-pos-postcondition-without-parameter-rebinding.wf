@@ -7,12 +7,10 @@ fn reset(p: &u64) -> result: unit writes(p) contract {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "The published postcondition makes the divisor one.";
+  doc "The published postcondition makes the divisor one, and the quotient ten is the exit status.";
   let x = 5_u64;
   reset(p: &x);
   let quotient = 10_u64 / x;
-  if quotient == 10_u64 {
-    return std::process::exit_status(code: 0_u8);
-  }
-  return std::process::exit_status(code: 1_u8);
+  let code = cvt::<u64, u8>(quotient);
+  return std::process::exit_status(code: code);
 }

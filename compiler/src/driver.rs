@@ -195,6 +195,8 @@ pub enum CompilationFailureKind {
     TargetLayout,
     /// LLVM emission failed internally.
     Backend,
+    /// The selected native toolchain or its probe environment failed.
+    Toolchain,
 }
 
 /// One compiler stop: its stage, its category, the numbered rule when it is a
@@ -245,6 +247,14 @@ impl fmt::Display for SourceLocation {
 }
 
 impl CompilationFailure {
+    fn toolchain(message: String) -> Self {
+        Self::new(
+            CompilationStage::Backend,
+            CompilationFailureKind::Toolchain,
+            message,
+        )
+    }
+
     fn source_envelope(failure: crate::SourceBundleError) -> Self {
         use crate::{LogicalPathError, SourceBundleError};
 
@@ -297,6 +307,191 @@ impl CompilationFailure {
             }
         };
         Self::new(stage, kind, failure)
+    }
+
+    fn target_layout(
+        failure: crate::target::TargetLayoutFailure,
+        program: &crate::IrProgram,
+        resolved: &ResolvedSyntaxUnit,
+    ) -> Self {
+        let crate::target::TargetLayoutFailure::Allocation {
+            function,
+            result,
+            ty,
+            size,
+            alignment,
+            limit,
+        } = failure
+        else {
+            return Self::new(
+                CompilationStage::TargetLayout,
+                CompilationFailureKind::TargetLayout,
+                failure,
+            );
+        };
+        let coordinate = crate::syntax::views::SyntaxView::new(resolved.syntax())
+            .ok()
+            .and_then(|view| {
+                let bundle = resolved.syntax().classified_bundle().source_bundle();
+                let origin = |call: &crate::IrSourceCall| {
+                    let node = view.node_with_path(&call.origin)?;
+                    if view.is_prelude_node(node).ok()? {
+                        return None;
+                    }
+                    let coordinate = view.coordinate(node).ok()?;
+                    let module = bundle.module(bundle.file(coordinate.source())?.module())?;
+                    Some((coordinate, module.package() == crate::Package::Standard))
+                };
+                let mut fallback = None;
+                if let Some((coordinate, standard)) = program
+                    .functions()
+                    .get(function)
+                    .and_then(|function| {
+                        function
+                            .source_calls()
+                            .iter()
+                            .find(|call| call.result() == result)
+                    })
+                    .and_then(origin)
+                {
+                    if !standard {
+                        return Some(coordinate);
+                    }
+                    fallback = Some(coordinate);
+                }
+                // Walk retained call edges, never source spelling or filename
+                // heuristics. Standard-package frames lead to the caller that
+                // requests the allocation; their own first position is kept
+                // when the composition has no caller outside that package.
+                let mut pending = std::collections::VecDeque::from([function]);
+                let mut visited = BTreeSet::new();
+                while let Some(callee_index) = pending.pop_front() {
+                    if !visited.insert(callee_index) {
+                        continue;
+                    }
+                    for (caller_index, caller) in program.functions().iter().enumerate() {
+                        for block in caller.blocks() {
+                            for instruction in block.instructions() {
+                                let crate::IrInstruction::Define {
+                                    result,
+                                    operation:
+                                        crate::IrOperation::Call {
+                                            function: callee, ..
+                                        },
+                                    ..
+                                } = instruction
+                                else {
+                                    continue;
+                                };
+                                if *callee as usize != callee_index {
+                                    continue;
+                                }
+                                if let Some((coordinate, standard)) = caller
+                                    .source_calls()
+                                    .iter()
+                                    .find(|call| call.result() == *result)
+                                    .and_then(origin)
+                                {
+                                    if !standard {
+                                        return Some(coordinate);
+                                    }
+                                    fallback.get_or_insert(coordinate);
+                                }
+                                pending.push_back(caller_index);
+                            }
+                        }
+                    }
+                }
+                fallback
+            });
+        fn type_name(program: &crate::IrProgram, ty: crate::IrType) -> String {
+            let element_name = |element| program.element(element).map(|ty| type_name(program, ty));
+            match ty {
+                crate::IrType::Nominal(id) => program.nominal(id).map_or_else(
+                    || format!("{ty:?}"),
+                    |nominal| {
+                        nominal
+                            .stable_spelling()
+                            .unwrap_or(&nominal.name)
+                            .to_owned()
+                    },
+                ),
+                crate::IrType::Unit => "unit".to_owned(),
+                crate::IrType::Bool => "Bool".to_owned(),
+                crate::IrType::Integer { width, signed } => {
+                    format!("{}{width}", if signed { "i" } else { "u" })
+                }
+                crate::IrType::Float { width } => format!("f{width}"),
+                crate::IrType::Array { element, length } => element_name(element)
+                    .map(|element| format!("Array<{element}, {length}>"))
+                    .unwrap_or_else(|| format!("{ty:?}")),
+                crate::IrType::Buffer { element } => element_name(element)
+                    .map(|element| format!("Array<{element}>"))
+                    .unwrap_or_else(|| format!("{ty:?}")),
+                crate::IrType::Segments { element } => element_name(element)
+                    .map(|element| format!("Segments<{element}>"))
+                    .unwrap_or_else(|| format!("{ty:?}")),
+                crate::IrType::Window {
+                    shape,
+                    element,
+                    capacity,
+                } => element_name(element)
+                    .map(|element| {
+                        let shape = match shape {
+                            crate::IrWindowShape::Slots => "Slots",
+                            crate::IrWindowShape::Ring => "Ring",
+                            crate::IrWindowShape::Paged => "Paged",
+                        };
+                        match capacity {
+                            Some(capacity) => format!("{shape}<{element}, {capacity}>"),
+                            None => format!("{shape}<{element}>"),
+                        }
+                    })
+                    .unwrap_or_else(|| format!("{ty:?}")),
+                _ => format!("{ty:?}"),
+            }
+        }
+        let name = type_name(program, ty);
+        let layout = match (size, alignment) {
+            (Some(size), Some(alignment)) => {
+                format!("size {size} bytes, alignment {alignment} bytes")
+            }
+            _ => "size or alignment exceeds the u64 layout arithmetic domain".to_owned(),
+        };
+        let violated = match limit {
+            crate::target::AllocationLimit::Alignment { maximum } => format!(
+                "required allocation alignment exceeds the selected target allocation alignment limit {maximum} bytes"
+            ),
+            crate::target::AllocationLimit::AllocationSize { maximum } => format!(
+                "complete allocation including its descriptor and padding exceeds the selected target allocation byte limit {maximum}"
+            ),
+            crate::target::AllocationLimit::AddressDomain { maximum } => format!(
+                "element representation exceeds the selected target address-index byte limit {maximum}"
+            ),
+            crate::target::AllocationLimit::LayoutCeiling(ceiling) => {
+                let magnitude = |value| match value {
+                    crate::IrLayoutMagnitude::Finite(value) => value.to_string(),
+                    crate::IrLayoutMagnitude::AboveU64 => "above u64".to_owned(),
+                };
+                format!(
+                    "element layout exceeds its ceiling: size at most {} bytes, alignment at most {} bytes, stride at most {} bytes",
+                    magnitude(ceiling.size),
+                    ceiling.align,
+                    magnitude(ceiling.stride)
+                )
+            }
+        };
+        let reason = format!("type {name} (payload {layout}): {violated}");
+        Self {
+            stage: CompilationStage::TargetLayout,
+            kind: CompilationFailureKind::TargetLayout,
+            rule_id: None,
+            record: Box::new(Record::target_layout(
+                reason,
+                resolved.syntax().classified_bundle().source_bundle(),
+                coordinate,
+            )),
+        }
     }
 
     /// A composition rejection [MOD-8, MOD-9, STOR-8] located at a place
@@ -2333,6 +2528,7 @@ pub fn build_module_entry_for_emission(
     let mut selection = entry_selection(graph, entry)?;
     selection.fragments = fragments;
     let (modules, selected) = composition_inputs(graph, inputs, selection.module);
+    crate::toolchain::prepare_toolchain().map_err(CompilationFailure::toolchain)?;
     let material = entry_module_material(
         graph,
         &selection,
@@ -2383,9 +2579,12 @@ fn entry_module_material(
         composition_material(ENTRY_MODULES, graph, selection, inputs, RecordOrder::Read);
     material.extend_from_slice(
         format!(
-            "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\n",
+            "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\ndarwin-stack-probe-helper {}\n",
             selection.fragments,
-            toolchain.preserve_none, toolchain.no_capture_attribute, toolchain.coro_end_result,
+            toolchain.preserve_none,
+            toolchain.no_capture_attribute,
+            toolchain.coro_end_result,
+            toolchain.darwin_stack_probe_helper,
         )
         .as_bytes(),
     );
@@ -2935,22 +3134,24 @@ fn lower_selected(
             }
             Ok(Reported { module, ledger })
         })
-        .map_err(|failure: BackendFailure| {
-            if failure == BackendFailure::SnapshotTargetUnsupported {
-                return CompilationFailure::new(
-                    CompilationStage::Backend,
-                    CompilationFailureKind::Unsupported,
-                    "snapshot export requires Linux x86-64 with glibc; source checking succeeded",
-                );
+        .map_err(|failure: BackendFailure| match failure {
+            BackendFailure::TargetLayout(layout) => {
+                CompilationFailure::target_layout(layout, &ir, resolved)
             }
-            let (stage, kind) = match failure {
-                BackendFailure::TargetLayout(_) => (
-                    CompilationStage::TargetLayout,
-                    CompilationFailureKind::TargetLayout,
-                ),
-                _ => (CompilationStage::Backend, CompilationFailureKind::Backend),
-            };
-            CompilationFailure::new(stage, kind, failure)
+            BackendFailure::Toolchain => CompilationFailure::toolchain(
+                crate::toolchain::prepare_toolchain()
+                    .expect_err("Toolchain failure records the settled resolution/probe error"),
+            ),
+            BackendFailure::SnapshotTargetUnsupported => CompilationFailure::new(
+                CompilationStage::Backend,
+                CompilationFailureKind::Unsupported,
+                "snapshot export requires Linux x86-64 with glibc; source checking succeeded",
+            ),
+            failure => CompilationFailure::new(
+                CompilationStage::Backend,
+                CompilationFailureKind::Backend,
+                failure,
+            ),
         })
 }
 

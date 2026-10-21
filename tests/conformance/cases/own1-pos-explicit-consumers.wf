@@ -48,12 +48,9 @@ fn main() -> status: ExitStatus pure {
       return exit_status(code: 2_u8);
     }
   }
-  match original {
+  let saved_value = match original {
     Ok(value: saved) => {
-      if saved == 42_u8 {
-      } else {
-        return exit_status(code: 3_u8);
-      }
+      give saved;
     }
     Err(error: failure) => {
       return exit_status(code: 4_u8);
@@ -84,5 +81,5 @@ fn main() -> status: ExitStatus pure {
       return exit_status(code: 8_u8);
     }
   }
-  return exit_status(code: 0_u8);
+  return exit_status(code: saved_value);
 }
