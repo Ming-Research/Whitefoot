@@ -2782,9 +2782,8 @@ impl Judging<'_, '_, '_> {
             else {
                 continue;
             };
-            // [FN-9, TYPE-11] the forwarded value's context for the route
-            // this clause is restricted to, whether written or generated
-            // by a type invariant.
+            // [FN-9] the forwarded value's context for the route this clause
+            // is restricted to.
             let forwarded = forwarded_return(postcondition, forwarded);
             if conditional_return(&selected)
                 && forwarded.is_some_and(|result| result.definitely_err)
