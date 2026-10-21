@@ -484,3 +484,56 @@ jobs:
           graph firn "$work/Firn-wf/firn"
           judge "firn composed" "$work/Firn-wf/firn" --graph modules.wfg --check-modules
           echo "accepted by both $same_accepted, rejected by both $same_rejected, verdicts that differ $differ"
+      # The gate's corpus group overran its budgets on a host whose main runs
+      # stay within them: what the branch's checker adds to each conformance
+      # case, both compilers on this host in the order base, branch, branch,
+      # base.
+      - name: Time each conformance case's check with both compilers
+        run: |
+          python3 - "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" \
+            "$PWD/compiler/target/gate/whitefootc" <<'PY'
+          import os
+          import subprocess
+          import sys
+          import time
+          from concurrent.futures import ThreadPoolExecutor
+
+          root = "tests/conformance/cases"
+          cases = sorted(name for name in os.listdir(root) if name.endswith(".wf"))
+          compilers = {"base": sys.argv[1], "branch": sys.argv[2]}
+          workers = os.cpu_count() or 4
+
+
+          def check(binary, case):
+              start = time.perf_counter()
+              subprocess.run([binary, "--check", os.path.join(root, case)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+              return time.perf_counter() - start
+
+
+          times = {name: {case: [] for case in cases} for name in compilers}
+          for name in ("base", "branch", "branch", "base"):
+              start = time.perf_counter()
+              with ThreadPoolExecutor(workers) as pool:
+                  seconds = pool.map(lambda case: check(compilers[name], case), cases)
+                  for case, taken in zip(cases, seconds):
+                      times[name][case].append(taken)
+              print(f"{name}: {time.perf_counter() - start:.1f} s for {len(cases)} cases on {workers} workers",
+                    flush=True)
+
+
+          def mean(values):
+              return sum(values) / len(values)
+
+
+          base = sum(mean(times["base"][case]) for case in cases)
+          branch = sum(mean(times["branch"][case]) for case in cases)
+          print(f"case seconds, mean of two rounds: base {base:.1f}, branch {branch:.1f}, ratio {branch / base:.3f}")
+          slowed = sorted(cases, key=lambda case: mean(times["branch"][case]) - mean(times["base"][case]),
+                          reverse=True)
+          print("the 25 cases the branch slows most, seconds of each round:")
+          for case in slowed[:25]:
+              before = " ".join(f"{taken:.2f}" for taken in times["base"][case])
+              after = " ".join(f"{taken:.2f}" for taken in times["branch"][case])
+              print(f"  {case}: base {before}, branch {after}")
+          PY
