@@ -212,7 +212,10 @@ const TARGET_COMPILE_ARGUMENTS: &[&str] = &[];
 /// The linker a link-time-optimized link runs on this host, and the
 /// argument prefix naming the directory where a ThinLTO link of fragments
 /// keeps the optimized objects it produces: the host's own linker on macOS,
-/// whose LTO support ships with its toolchain, and LLD elsewhere.
+/// whose LTO support ships with its toolchain, and LLD elsewhere. On Linux,
+/// LLD's default layout gives the code segment a virtual address that differs
+/// from its file offset, which perf 6.17's DWARF unwinder resolves wrongly;
+/// `-z separate-code` page-aligns it so the unwinder finds the right frames.
 #[cfg(target_os = "macos")]
 const LTO_LINKER: &[&str] = &[];
 #[cfg(target_os = "macos")]
@@ -222,7 +225,7 @@ const LTO_LINKER: &[&str] = &["-fuse-ld=lld"];
 #[cfg(target_os = "windows")]
 const THIN_LINK_CACHE: &str = "-Wl,/lldltocache:";
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-const LTO_LINKER: &[&str] = &["-fuse-ld=lld"];
+const LTO_LINKER: &[&str] = &["-fuse-ld=lld", "-Wl,-z,separate-code"];
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 const THIN_LINK_CACHE: &str = "-Wl,--thinlto-cache-dir=";
 
@@ -2879,6 +2882,38 @@ mod tests {
         let status =
             super::process::run_command(&mut std::process::Command::new(&executable)).status;
         assert_eq!(status.code(), Some(9));
+        // LLD's default layout puts the code segment's virtual address 0x1000
+        // above its file offset, which perf 6.17's unwinder resolves wrongly.
+        // The segment table shows whether `-z separate-code` took effect.
+        #[cfg(target_os = "linux")]
+        {
+            let headers = std::process::Command::new("readelf")
+                .arg("-lW")
+                .arg(&executable)
+                .output()
+                .expect("run readelf on the executable");
+            assert!(headers.status.success(), "readelf reads the executable");
+            let listing = String::from_utf8_lossy(&headers.stdout);
+            let (offset, address) = listing
+                .lines()
+                .filter(|line| line.trim_start().starts_with("LOAD"))
+                .find_map(|line| {
+                    // Type, offset, virtual address, physical address, file
+                    // size, memory size, flags (one or more letters), alignment.
+                    let fields: Vec<&str> = line.split_whitespace().collect();
+                    let flags = &fields[6..fields.len() - 1];
+                    flags.contains(&"E").then(|| (fields[1], fields[2]))
+                })
+                .expect("the executable has a code load segment");
+            let number = |text: &str| {
+                u64::from_str_radix(text.trim_start_matches("0x"), 16).expect("a hex address")
+            };
+            assert_eq!(
+                number(offset),
+                number(address),
+                "the code segment's address equals its file offset"
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

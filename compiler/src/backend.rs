@@ -39,6 +39,10 @@ pub use stack_ledger::{Architecture, stack_ledger};
 /// `WF_SHARED_STATE_OFFSET` in `completion/bridge.h`.
 pub(crate) const SHARED_STATE_OFFSET: u64 = 64;
 
+/// Complete fixed Frozen allocation header, including the padding before its
+/// max_align_t payload. Pinned to sizeof/offsetof(wf_frozen) in bridge.c.
+pub(crate) const FROZEN_HEADER_BYTES: u64 = 16;
+
 /// Bytes of the record a lock of one table entry keeps in the frame; equals
 /// `WF_TABLE_ENTRY_SIZE` in `completion/bridge.h`
 /// (compiler/waiting-contexts/state-locks).

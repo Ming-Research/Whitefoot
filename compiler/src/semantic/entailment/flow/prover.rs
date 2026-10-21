@@ -1842,16 +1842,40 @@ impl Reasoning<'_, '_, '_> {
                     capture: value.capture,
                 })
             }
+            // A place's term identity reads an offset by its spelling, whose
+            // current value is the place's own term [ENT-2]: a binding, or a
+            // field of one projected from a formal.
+            CapturedTerm::Binding(binding)
+                if value.capture == CaptureId::SpellingDetermined =>
+            {
+                self.vocabulary.terms.interned(&TermKind::Place(
+                    ResolvedPlace::binding(binding),
+                    IntegerType::U64,
+                ))
+            }
+            CapturedTerm::Place(id) if value.capture == CaptureId::SpellingDetermined => {
+                self.vocabulary.terms.interned(&TermKind::Place(
+                    self.input.context.captured_places.get(id),
+                    IntegerType::U64,
+                ))
+            }
             // A superseded binding's capture still names the value its
             // formation read, which is the immutable term the capture minted.
-            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_)
+            CapturedTerm::Binding(_)
+            | CapturedTerm::Superseded(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
                 if matches!(value.capture, CaptureId::Source(_)) =>
             {
                 self.vocabulary.terms.interned(&TermKind::IndexCapture {
                     capture: value.capture,
                 })
             }
-            CapturedTerm::Binding(_) | CapturedTerm::Superseded(_) | CapturedTerm::Opaque => None,
+            CapturedTerm::Binding(_)
+            | CapturedTerm::Superseded(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => None,
         }
     }
 

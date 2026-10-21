@@ -1701,12 +1701,14 @@ fn runtime_allocation_headers_qualify_for_zero_and_nonzero_strides() {
             let exact = host.with_runtime_allocation_limits_for_test(header, 8);
             assert_eq!(validate_program(exact, program), Ok(()));
             let short = host.with_runtime_allocation_limits_for_test(header - 1, 8);
-            assert_eq!(
+            assert!(matches!(
                 validate_program(short, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    crate::target::TargetObject::RuntimeSizedAllocation
-                ))
-            );
+                Err(TargetLayoutFailure::Allocation {
+                    alignment: Some(1),
+                    limit: crate::target::AllocationLimit::AllocationSize { maximum },
+                    ..
+                }) if maximum == header - 1
+            ));
             if element == "Empty" {
                 // Narrow only the address domain, retaining enough space for
                 // the ordinary prelude's concrete nominal representations.
