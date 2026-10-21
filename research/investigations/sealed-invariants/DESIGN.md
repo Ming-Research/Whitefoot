@@ -851,18 +851,20 @@ of type `Nk` starts with 2^k debts from k + 1 declarations (derived from
 `owned_anchor_debts`, not run). The checker keeps the debt set as a list
 and finds a key by a linear search at each addition, so forming that set
 takes on the order of 4^k key comparisons, and every later join, loop
-header and hand-off walks it. A continuation of a value below an entry into
-a local binding (T4) rebases every debt at or below it onto the local, so
-each such continuation adds as many keys again: c of them in a body give
-about (c + 1)·2^k keys, formed in on the order of (c + 1)²·4^k comparisons.
+header and hand-off walks it. A continuation into a local binding (T4) of
+a value these debts lie at or below, such as a map entry's value or a field
+of an atomic target's state, rebases each of them onto the local, so each
+such continuation adds as many keys again: c of them in a body give about
+(c + 1)·2^k keys, formed in on the order of (c + 1)²·4^k comparisons.
 Result 3's bound is accordingly polynomial in the body's size and in U, not
-in the body's size apart from U. A body pays at each such parameter whether
-or not it reaches an entry, once any struct of the program declares an
-affine invariant; a part of the type that holds no invariant-bearing struct
-adds nothing. No downstream program pays it today: in Firn, Halo and
-Snowghost no struct type invariant lies below a map entry or a shared state
-(read from their sources: Firn's invariants are all loop invariants, Halo
-uses `Entries` only in research witnesses, and Snowghost uses no map).
+in the body's size apart from U. A body pays at each map or `Entries`
+reference parameter whether or not it reaches an entry, once any struct of
+the program declares an affine invariant; a part of the type that holds no
+invariant-bearing struct adds nothing. No downstream program pays it
+today: in Firn, Halo and Snowghost no struct type invariant lies below a map
+entry or a shared state (read from their sources: Firn's invariants are all
+loop invariants, Halo uses `Entries` only in research witnesses, and
+Snowghost uses no map).
 
 *Alternatives.*
 
