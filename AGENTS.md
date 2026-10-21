@@ -206,10 +206,9 @@ build time apart from test and program execution.
   push to a branch with an open pull request, draft or ready, the opening or
   reopening of a pull request and a manual run; any other push, to a branch
   with no open pull request, skips their checks, so work that needs CI opens
-  its Draft pull request first. `gate.yml` runs the groups on Linux, and on
-  macOS as well for a pull request marked ready, the event of marking one
-  ready, `main` and a manual run; its job `Gate on both platforms` passes
-  only when every group is green on both for the revision. That job's
+  its Draft pull request first. `gate.yml` runs the groups on Linux only
+  while macOS is off (wf-gate-no-macos); its job `Gate on both platforms`
+  passes only when every group is green on Linux for the revision. That job's
   success on the exact revision to be merged, a head current with `main`, is
   that revision's `make check`. It needs `python3`, `jq`, LLD on Linux
   (`ld.lld`) and the `time` utility.
