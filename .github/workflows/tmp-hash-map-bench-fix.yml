@@ -1,0 +1,49 @@
+# Temporary: builds the compiler and compiles the hash-map comparison's
+# measurement programs, to show every rejection at once. wf-hash-map-bench-fix
+# removes this file before the full check.
+name: tmp-hash-map-bench-fix
+
+on:
+  push:
+    branches: [wf-hash-map-bench-fix]
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+
+      - name: Build the compiler
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+
+      # Each program is compiled on its own and its status kept, so one
+      # rejection does not hide the other program's.
+      - name: Compile the measurement programs
+        run: |
+          wfc="$PWD/compiler/target/gate/whitefootc"
+          out="$RUNNER_TEMP/images"
+          mkdir -p "$out"
+          status=0
+          for program in bench hold; do
+            echo "== $program.wf"
+            "$wfc" "research/experiments/hash-map-compare/$program.wf" -o "$out/$program" || { echo "exit $? for $program.wf"; status=1; }
+          done
+          echo "== peak image"
+          make -s -C research/experiments/hash-map-compare peak ROOT="$PWD" WFC="$wfc" BUILD="$out/peak" || { echo "exit $? for the peak image"; status=1; }
+          exit "$status"
