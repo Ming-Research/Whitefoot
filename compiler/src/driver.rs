@@ -525,6 +525,8 @@ impl CompilationFailure {
                 resolved.syntax().classified_bundle().source_bundle(),
                 coordinate,
             )),
+            coordinate: None,
+            additional: Vec::new(),
         }
     }
 
