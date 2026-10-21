@@ -27,13 +27,12 @@
 cpu epyc-7763  AMD EPYC 7763 64-Core Processor
 cpu epyc-9v74  AMD EPYC 9V74 80-Core Processor
 cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
-# xeon-8573c is owner-directed (2026-10-13) although it has fewer than the 20
-# runs a class normally needs. Each value is the larger of the row's largest
-# earlier Linux class value and, where one run on this CPU was found, that
-# run's time by the rule above (one gate run for the unit and runtime rows, one
-# compute-regression run for the compute rows; no run for the others). Only
-# compiler/test-build-unit and performance-baseline-compiler rise above the
-# largest class. Evidence: research/investigations/test-economy/time-budgets.md.
+# xeon-8573c was added by the owner on 2026-10-13 with fewer than the 20 runs a
+# class needs. A row with 20 or more runs on this CPU follows the rule like any
+# class. With fewer, the value is the larger of the row's largest class value
+# and, where a run on this CPU was found, that run's time by the rule above
+# (the other rows have no run). Evidence:
+# research/investigations/test-economy/time-budgets.md.
 # performance-candidate-compiler is 145 s for every Linux class, set by the
 # owner on 2026-10-13 (it was 130 s).
 cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
@@ -41,8 +40,8 @@ cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
 label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  macos  windows
 
 # gate.yml, static group
-check/static                    80         85         65         85          125    -
-repository-invariants           25         25         25         25          30     -
+check/static                    95         80         80         95          125    -
+repository-invariants           30         30         25         30          30     -
 spec-archives                   10         10         10         10          10     -
 readme-translation              10         10         10         10          10     -
 spec-prose-integrity            10         10         10         10          10     -
@@ -51,7 +50,7 @@ source-size                     10         10         10         10          10 
 design-lint                     10         10         10         10          15     -
 conformance                     10         10         10         10          10     -
 performance-instrument          10         10         10         10          10     -
-compiler/lint                   55         60         40         60          75     -
+compiler/lint                   65         45         55         65          75     -
 
 # gate.yml, unit group: the library in test mode, then its cases
 check/unit                      385        320        225        385         425    -
@@ -60,13 +59,14 @@ compiler/test-unit              215        150        100        215         175
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
-check/corpus                    360        320        220        360         360    -
-compiler/test-build-corpus      135        115        85         135         175    -
-compiler/test-corpus            235        210        140        235         205    -
+check/corpus                    400        385        265        360         360    -
+compiler/test-build-corpus      150        140        105        140         175    -
+compiler/test-corpus            255        245        165        225         205    -
 
-# gate.yml, runtime group. The epyc-9v45 value is owner-set (2026-10-13): 15 s
-# failed eleven runs that did not touch the runtime, at most 16.84 s.
-check/runtime                   25         25         20         25          30     -
+# gate.yml, runtime group. The epyc-9v45 value was owner-set to 20 s on
+# 2026-10-13 (15 s failed eleven runs that did not touch the runtime, at most
+# 16.84 s); the 2026-10-21 recomputation gives 25 s.
+check/runtime                   30         30         25         30          30     -
 
 # io-hosts.yml, completion-linux
 linux-runtime                   50         50         50         50          -      -
@@ -77,11 +77,13 @@ linux-runtime-tsan              10         10         10         10          -  
 
 # sanitizers.yml: the corpus target under one sanitizer, building its test
 # binary, as one conformance shard of three or the rest of the target.
-# Provisional until 20 runs are recorded: 1.5 times the first run's slowest
-# job (conformance 276 s, programs 315 s, on epyc-7763).
-compiler/corpus-asan-conformance 415        415        415        415         -      -
+# The conformance rows follow the rule since 2026-10-21 (21 and 34 runs on
+# epyc-7763; the other classes take that class's value). The programs rows stay
+# provisional until 20 runs are recorded on a class: 1.5 times the first run's
+# slowest job (315 s, on epyc-7763).
+compiler/corpus-asan-conformance 320        320        320        320         -      -
 compiler/corpus-asan-programs   475        475        475        475         -      -
-compiler/corpus-tsan-conformance 415        415        415        415         -      -
+compiler/corpus-tsan-conformance 335        335        335        335         -      -
 compiler/corpus-tsan-programs   475        475        475        475         -      -
 
 # map-sanitizers.yml, on changes to the concurrent map's runtime or test

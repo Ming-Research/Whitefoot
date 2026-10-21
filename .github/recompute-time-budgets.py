@@ -258,6 +258,9 @@ def collect(repo, workflows, since, path, limit):
                      "-f", "per_page=100", "-f", "status=completed", "-f", f"created=>={since}",
                      "--jq", ".workflow_runs[] | {id, head_sha, head_branch, run_attempt, conclusion} | tojson")
         runs = [r for r in runs if r["conclusion"] in ("success", "failure")][:limit]
+        # A run's jobs are recorded together, so a run with a recorded job is done.
+        known = {job["run"] for job in samples["jobs"].values()}
+        runs = [r for r in runs if r["id"] not in known]
         with concurrent.futures.ThreadPoolExecutor(6) as pool:
             for done, found in enumerate(pool.map(lambda run: fetch(run, workflow), runs), 1):
                 samples["jobs"].update(found)

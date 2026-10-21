@@ -909,6 +909,146 @@ a run that finds no cache still builds it, and that cold build is report-only
 (`WHITEFOOT_BUDGET_REPORT_ONLY`), since the 115 s row is exceeded by a cold build
 (126.8 s and 127.0 s on the cache-miss runs of 10-20).
 
+### Recomputing the Linux budgets (2026-10-21)
+
+Gate runs kept failing on a time budget that no change had earned: the budgets
+of 2026-10-13 had not been recomputed since, while the stages kept growing. The
+rule of the ruling above is unchanged (the owner chose to keep it and
+recompute the table, on the card of item wf-gate-budget-noise); this section
+records why the table was stale and how it was recomputed.
+
+**Sources.** The `== END <label>` lines of the job logs of 543 `gate.yml` runs
+from 2026-10-13 12:10 to 2026-10-21 09:51 UTC (2,333 jobs, 5,099 stage lines;
+reruns counted once) and of 45 `sanitizers.yml` runs (197 jobs). Only stages
+that exited 0 count. The runs fall on five days (10-13, 10-14, 10-19, 10-20,
+10-21); the listing has no gate run from 10-15 to 10-18. The scratch inputs are
+not kept; `.github/recompute-time-budgets.py collect` rebuilds them.
+
+**Noise is small.** The same stage on the same commit and CPU class, run
+twice, differs little. Per-sample standard deviation of the log time, from 11
+to 13 same-commit pairs on EPYC 7763: `compiler/test-build-unit` 4.7% (largest
+ratio between two runs 1.19), `compiler/test-unit` 1.7% (1.05), `check/unit`
+3.0% (1.10), `check/runtime` 2.9% (1.13). A budget 10% above the maximum of
+many runs absorbs noise of that size. Stages of one job move together on a slow
+host: within one job, the log of a stage's time over its class median
+correlates 0.98 to 1.00 between `compiler/lint` and `check/static`, and 0.58 to
+0.94 between a build stage and the test stage that follows it.
+
+**The table was stale.** 176 stage runs exceeded an enforced budget between
+10-13 and 10-21. Against the median of the same stage and class on the same
+day, 64% had a budget below 1.08 times that median (a typical run was already
+within 8% of the limit), 18% took more than 1.25 times the median (a slow
+host), and 18% were the rest. The stage medians on EPYC 7763 rose from 10-13 to
+10-21: `check/corpus` 311.3 to 330.4 s (+6%), `compiler/test-corpus` 206.1 to
+217.1 s (+5%), `compiler/test-build-corpus` 103.9 to 112.4 s (+8%), medians of
+38 to 99 runs a day. A rule that takes the maximum of old runs and adds 10%
+falls behind growth of that size within days.
+
+**The tool.** `.github/recompute-time-budgets.py` applies the rule to the
+logged stage times: `collect` stores them (outside the repository), `table`
+prints each Linux cell's runs, median, maximum, old and new budget and with
+`--write` rewrites the table, and `replay` judges the recorded jobs as a table
+recomputed every few days would have, with every stage of a job scaled by a
+slowdown as a control. A class column with 20 or more runs is recomputed from
+its newest 50 (all of them if fewer). A class with fewer takes the larger of
+the row's recomputed class values and its own runs by the rule, the treatment
+the Xeon column received on 2026-10-13. `--keep` leaves rows alone. Its
+self-test runs in `make repository-invariants`; a temporary workflow ran the
+self-test against eight deliberately faulty copies of the script (margin,
+minimum run count, floor, rounding, failed runs counted, thin-class rule,
+slowdown scaling, window) and each was rejected.
+
+**New budgets.** Rows recomputed with the 50 newest runs per class (the Linux
+columns only; macOS and Windows are untouched). The three unit-group rows
+(`check/unit`, `compiler/test-build-unit`, `compiler/test-unit`) are left for
+the work that changes that group's tests and for Whitefoot#497. Cells whose
+budget is 10 s and stays 10 s are omitted. The `programs` sanitizer rows have
+fewer than 20 runs in every class and keep their provisional 475 s.
+
+| stage | class | runs | median s | max s | old | new |
+|---|---|---:|---:|---:|---:|---:|
+| `check/static` | epyc-7763 | 50 | 63.7 | 86.3 | 80 | 95 |
+| `check/static` | epyc-9v74 | 21 | 61.8 | 69.1 | 85 | 80 |
+| `check/static` | epyc-9v45 | 37 | 51.6 | 71.8 | 65 | 80 |
+| `check/static` | xeon-8573c | 14 | 61.4 | 74.0 | 85 | 95 |
+| `repository-invariants` | epyc-7763 | 50 | 24.3 | 24.6 | 25 | 30 |
+| `repository-invariants` | epyc-9v74 | 22 | 22.6 | 24.1 | 25 | 30 |
+| `repository-invariants` | xeon-8573c | 15 | 22.8 | 23.1 | 25 | 30 |
+| `compiler/lint` | epyc-7763 | 50 | 34.0 | 56.6 | 55 | 65 |
+| `compiler/lint` | epyc-9v74 | 21 | 32.7 | 38.8 | 60 | 45 |
+| `compiler/lint` | epyc-9v45 | 37 | 26.3 | 46.0 | 40 | 55 |
+| `compiler/lint` | xeon-8573c | 14 | 33.9 | 46.4 | 60 | 65 |
+| `check/corpus` | epyc-7763 | 50 | 330.5 | 360.7 | 360 | 400 |
+| `check/corpus` | epyc-9v74 | 50 | 259.3 | 346.8 | 320 | 385 |
+| `check/corpus` | epyc-9v45 | 50 | 214.7 | 240.1 | 220 | 265 |
+| `compiler/test-build-corpus` | epyc-7763 | 50 | 111.7 | 134.8 | 135 | 150 |
+| `compiler/test-build-corpus` | epyc-9v74 | 50 | 93.8 | 126.6 | 115 | 140 |
+| `compiler/test-build-corpus` | epyc-9v45 | 50 | 78.9 | 92.2 | 85 | 105 |
+| `compiler/test-build-corpus` | xeon-8573c | 30 | 112.3 | 123.8 | 135 | 140 |
+| `compiler/test-corpus` | epyc-7763 | 50 | 218.0 | 231.6 | 235 | 255 |
+| `compiler/test-corpus` | epyc-9v74 | 50 | 169.1 | 221.1 | 210 | 245 |
+| `compiler/test-corpus` | epyc-9v45 | 50 | 134.5 | 147.8 | 140 | 165 |
+| `compiler/test-corpus` | xeon-8573c | 29 | 190.5 | 204.1 | 235 | 225 |
+| `check/runtime` | epyc-7763 | 50 | 24.1 | 25.4 | 25 | 30 |
+| `check/runtime` | epyc-9v74 | 50 | 19.4 | 26.9 | 25 | 30 |
+| `check/runtime` | epyc-9v45 | 50 | 16.1 | 18.8 | 20 | 25 |
+| `check/runtime` | xeon-8573c | 38 | 24.0 | 26.1 | 25 | 30 |
+| `compiler/corpus-asan-conformance` | epyc-7763 | 21 | 250.1 | 290.6 | 415 | 320 |
+| `compiler/corpus-asan-conformance` | epyc-9v74 | 12 | 215.4 | 274.6 | 415 | 320 |
+| `compiler/corpus-asan-conformance` | epyc-9v45 | 11 | 173.1 | 192.4 | 415 | 320 |
+| `compiler/corpus-asan-conformance` | xeon-8573c | 4 | 232.3 | 245.4 | 415 | 320 |
+| `compiler/corpus-tsan-conformance` | epyc-7763 | 34 | 257.9 | 302.3 | 415 | 335 |
+| `compiler/corpus-tsan-conformance` | epyc-9v74 | 6 | 233.7 | 283.9 | 415 | 335 |
+| `compiler/corpus-tsan-conformance` | epyc-9v45 | 7 | 183.8 | 214.4 | 415 | 335 |
+| `compiler/corpus-tsan-conformance` | xeon-8573c | 5 | 250.4 | 266.3 | 415 | 335 |
+
+Three cells fall: `check/static` and `compiler/lint` on EPYC 9V74 (85 to 80
+and 60 to 45, 21 runs each; the earlier values rested on the 10-13 sample, whose
+maxima were 73.2 s over 36 runs and 50.3 s over 29) and `compiler/test-corpus`
+on the Xeon (235 to 225, now 29 runs). The sanitizer conformance rows fall from
+the provisional 415 s to 320 s and 335 s.
+
+**Replay.** Jobs of the gate runs from 2026-10-19 (1,041 jobs; a stage is
+judged once 20 runs of its class precede its recompute period, which leaves
+825 jobs for a daily recompute and 785 for one every three days). A job is over
+when any judged stage exceeds the budget. The first row is the budget the job
+actually ran against, from its log.
+
+| Budgets | +0% | +5% | +10% | +20% | +30% | +50% | +100% |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| table as logged | 12.0% | 40.9% | 67.5% | 83.1% | 95.4% | 99.6% | 100% |
+| rule, recomputed daily | 0.4% | 1.1% | 4.8% | 33.0% | 70.2% | 90.5% | 99.8% |
+| rule, recomputed every 3 days | 0.8% | 2.5% | 10.4% | 46.1% | 72.1% | 90.7% | 99.7% |
+
+The columns are the slowdown applied to every stage of the job together; the
++0% column is the share of jobs that exceeded a budget with no change at all.
+The logged table's share at +0% is the false alarms the table in force raised;
+with the rule recomputed daily it is 3 jobs of 825. The rule's replay says what
+the table would have caught at a given age, not that the 2026-10-21 table
+will stay this fresh: it needs recomputing as the stages grow.
+
+**What this does not do.** A 10% slowdown of every stage of a job is caught in
+4.8% of jobs: a budget set from the maximum of recent runs plus 10% cannot see
+a change smaller than the spread of its own samples, and the maximum is raised
+by the occasional slow host (one `check/corpus` run on EPYC 7763 took
+428 s on 10-21, against a median of 330 s). Seeing a change of 10% on a fast host needs paired measurement,
+as `compute-regression.yml` does. Raising a budget stays the owner's decision
+(AGENTS.md "Checks"); this recomputation applies the ruled rule to all rows at
+once, under the owner's ruling on that card.
+
+To recompute again:
+
+```sh
+python3 .github/recompute-time-budgets.py collect --repo Ming-Research/Whitefoot \
+    --workflow gate.yml --workflow sanitizers.yml --since <date> --samples <file>
+python3 .github/recompute-time-budgets.py table --samples <file> \
+    --keep check/unit --keep compiler/test-build-unit --keep compiler/test-unit --write
+python3 .github/recompute-time-budgets.py replay --samples <file> --from <date> --every 1
+```
+
+`collect` makes about seven GitHub requests per run; the quota is shared with
+every other session, so collect in parts.
+
 ### Gate at ready, not at each draft push
 
 Read from the Actions API on 2026-10-19: the 200 newest `gate.yml` runs, created
