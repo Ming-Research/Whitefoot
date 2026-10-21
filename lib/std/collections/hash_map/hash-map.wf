@@ -475,9 +475,12 @@ fn hash_map_scan<interface HashMapKey<K, E>, V, F, fn visit(env: &F, key: &K, va
   if start >= count {
     return 0_u64;
   }
-  let span = count - start;
-  if limit < span {
+  let rest = count - start;
+  let span = rest;
+  let end = count;
+  if limit < rest {
     set span = limit;
+    set end = start + limit;
   }
   let opened = False();
   for @walk (step in 0_u64..count) {
@@ -511,7 +514,6 @@ fn hash_map_scan<interface HashMapKey<K, E>, V, F, fn visit(env: &F, key: &K, va
       }
     }
   }
-  let end = start + span;
   if end >= count {
     return 0_u64;
   }
