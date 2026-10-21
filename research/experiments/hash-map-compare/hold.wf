@@ -47,7 +47,7 @@ fn hold_mix(key: u64) -> mixed: u64 pure {
 
 fn hold_hash(env: &HoldKeys, key: &u64) -> result: u64 reads(key) {
   let value = key^;
-  return hold_mix(value);
+  return hold_mix(key: value);
 }
 
 fn hold_same_hash(env: &HoldKeys, key: &u64) -> result: u64 reads(key) {

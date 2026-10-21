@@ -62,7 +62,7 @@ fn bench_mix(key: u64) -> mixed: u64 pure {
 
 fn bench_hash(env: &BenchKeys, key: &u64) -> result: u64 reads(key) {
   let value = key^;
-  return bench_mix(value);
+  return bench_mix(key: value);
 }
 
 fn bench_equal(env: &BenchKeys, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
@@ -211,7 +211,7 @@ fn grown(size: u64, keys: &BenchKeys) -> map: HashMap<u64, u64, ceiling> reads(k
   return map;
 }
 
-fn release(map: HashMap<u64, u64, ceiling>) -> result: unit pure {
+fn release_map(map: HashMap<u64, u64, ceiling>) -> result: unit pure {
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   hash_map_free::<BenchConsume, ceiling>(map: move map, env: &tally);
   return unit;
@@ -242,7 +242,7 @@ fn build_sample(size: u64, capacity: u64, slow: Bool, keys: &BenchKeys, clock: &
     set total = total +wrap elapsed;
     let length = hash_map_len::<u64, u64, ceiling>(map: &map);
     set check = check +wrap length;
-    release(map: move map);
+    release_map(map: move map);
   }
   let ops = reps *wrap size;
   let extra = tally.extra;
@@ -302,7 +302,7 @@ fn remove_sample(size: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> samp
     set total = total +wrap elapsed;
     let length = hash_map_len::<u64, u64, ceiling>(map: &map);
     set check = check +wrap length;
-    release(map: move map);
+    release_map(map: move map);
   }
   let ops = reps *wrap size;
   let extra = tally.extra;
@@ -527,7 +527,7 @@ fn run_timed(operation: u64, size: u64, samples: u64, slow: Bool, clock: &Clock,
     let written = emit(factory: factory, output: output, operation: operation, size: size, index: index, sample: &sample);
     set failed = ior(failed, written);
   }
-  release(map: move map);
+  release_map(map: move map);
   return failed;
 }
 
@@ -538,7 +538,7 @@ fn run_memory(size: u64, meter: &std::process::MemoryMeter, factory: &HandleFact
   let map = grown(size: size, keys: &keys);
   let after = std::process::heap_in_use(meter: meter);
   let length = hash_map_len::<u64, u64, ceiling>(map: &map);
-  release(map: move map);
+  release_map(map: move map);
   let retained = after -wrap before;
   let sample = Sample(ns: before, ops: size, check: retained, extra: length);
   return emit(factory: factory, output: output, operation: 8_u64, size: size, index: 0_u64, sample: &sample);
