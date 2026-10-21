@@ -61,11 +61,13 @@ linux-deque-tsan                10         10         10         -      -
 linux-runtime-tsan              10         10         10         -      -
 
 # sanitizers.yml: the corpus target under one sanitizer, building its test
-# binary, as one conformance shard of three or the rest of the target
-compiler/corpus-asan-conformance 600        600        600        -      -
-compiler/corpus-asan-programs   900        900        900        -      -
-compiler/corpus-tsan-conformance 600        600        600        -      -
-compiler/corpus-tsan-programs   900        900        900        -      -
+# binary, as one conformance shard of three or the rest of the target.
+# Provisional until 20 runs are recorded: 1.5 times the first run's slowest
+# job (conformance 276 s, programs 315 s, on epyc-7763).
+compiler/corpus-asan-conformance 415        415        415        -      -
+compiler/corpus-asan-programs   475        475        475        -      -
+compiler/corpus-tsan-conformance 415        415        415        -      -
+compiler/corpus-tsan-programs   475        475        475        -      -
 
 # map-sanitizers.yml, on changes to the concurrent map's runtime or test
 map-asan                        30         30         30         20     -

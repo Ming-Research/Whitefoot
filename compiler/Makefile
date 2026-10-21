@@ -199,6 +199,13 @@ SANITIZER_REPORTS := $(WHITEFOOT_SCRATCH_ROOT)/sanitizer-reports
 SANITIZER_FILTER ?=
 SANITIZER_STAGE ?=
 SANITIZER_LOG := log_path=$(SANITIZER_REPORTS)/report:exitcode=86
+# AddressSanitizer's notice that it leaves a stack larger than its 64 MiB
+# cleanup limit poisoned at a call that does not return. Every runtime thread
+# runs on a 1 GiB stack, so the notice is a limit of the tool, not a report on
+# the program; an error it lets through arrives as a report in the same file,
+# which then still fails the target.
+SANITIZER_NOTICE := -e 'WARNING: ASan is ignoring requested __asan_handle_no_return' \
+	-e 'False positive error reports may follow' -e 'google/sanitizers/issues/189'
 define sanitized_corpus
 	rm -rf "$(SANITIZER_REPORTS)" && mkdir -p "$(SANITIZER_REPORTS)"
 	status=0; $(NO_CORE_DUMPS) \
@@ -210,7 +217,9 @@ define sanitized_corpus
 		|| status=$$?; \
 	for report in "$(SANITIZER_REPORTS)"/*; do \
 		[ -e "$$report" ] || continue; \
-		echo "sanitizer report $$report:"; cat "$$report"; status=1; \
+		echo "sanitizer report $$report:"; cat "$$report"; \
+		if grep -v $(SANITIZER_NOTICE) "$$report" | grep -q .; then status=1; \
+		else echo "(only the stack cleanup notice above: not a report)"; fi; \
 	done; \
 	exit $$status
 endef
