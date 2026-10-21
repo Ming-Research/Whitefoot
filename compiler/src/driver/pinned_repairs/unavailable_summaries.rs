@@ -353,7 +353,7 @@ pub(super) const UNAVAILABLE_SUMMARIES: &[RepairPair] = &[
         sentences: &[
             "\n  instantiated_goal: budget^.end == budget^.popped\n",
             "cannot supply its summary `ensures budget^.end <= budget^.popped; ensures budget^.end >= budget^.popped;`",
-            "that callee's [FN-9] obligation `budget^.end - budget^.popped <= 0` declared at callee-withholds-two-needed-clauses.wf:13 fails at callee-withholds-two-needed-clauses.wf:24",
+            "that callee's [FN-9] obligation `budget^.end - budget^.popped <= 0_u64` declared at callee-withholds-two-needed-clauses.wf:13 fails at callee-withholds-two-needed-clauses.wf:24",
         ],
         repaired: &[budget_source!(
             "  ensures budget^.end <= budget^.popped;\n  ensures budget^.end >= budget^.popped;\n",
@@ -375,7 +375,7 @@ pub(super) const UNAVAILABLE_SUMMARIES: &[RepairPair] = &[
             "\n  concrete_callee: commit\n",
             "\n  instantiated_goal: budget^.end <= budget^.popped\n",
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: the call to `batch` at callee-loop-withholds-reference-summary.wf:2 cannot supply its summary `ensures budget^.end <= budget^.popped;` because that callee's [FN-9] obligation `budget^.end - budget^.popped <= 0` declared at callee-loop-withholds-reference-summary.wf:13 fails at callee-loop-withholds-reference-summary.wf:23; repair that obligation in `batch` so it proves the summary needed by this proof; for a loop-computed bound, carry the needed bound in a loop-header `invariant`\n",
+            "\n  mechanical_fix: the call to `batch` at callee-loop-withholds-reference-summary.wf:2 cannot supply its summary `ensures budget^.end <= budget^.popped;` because that callee's [FN-9] obligation `budget^.end - budget^.popped <= 0_u64` declared at callee-loop-withholds-reference-summary.wf:13 fails at callee-loop-withholds-reference-summary.wf:23; repair that obligation in `batch` so it proves the summary needed by this proof; for a loop-computed bound, carry the needed bound in a loop-header `invariant`\n",
         ],
         repaired: &[budget_source!(
             "  ensures budget^.end <= budget^.popped;\n",
@@ -408,7 +408,7 @@ fn main() -> status: std::process::ExitStatus pure {
         sentences: &[
             "\n  concrete_function: caller::<T>\n",
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: the call to `callee::<T, 1>` at partly-concrete-callee-summary-unavailable.wf:4 cannot supply its summary `ensures result >= floor;` because that callee's [FN-9] obligation `0 - 0 <= -1` declared at partly-concrete-callee-summary-unavailable.wf:9 fails at partly-concrete-callee-summary-unavailable.wf:11; repair that obligation in `callee::<T, 1>` so it proves the summary needed by this proof; for a loop-computed bound, carry the needed bound in a loop-header `invariant`\n",
+            "\n  mechanical_fix: the call to `callee::<T, 1>` at partly-concrete-callee-summary-unavailable.wf:4 cannot supply its summary `ensures result >= floor;` because that callee's [FN-9] obligation `0_u64 - 0_u64 <= -1_i64` declared at partly-concrete-callee-summary-unavailable.wf:9 fails at partly-concrete-callee-summary-unavailable.wf:11; repair that obligation in `callee::<T, 1>` so it proves the summary needed by this proof; for a loop-computed bound, carry the needed bound in a loop-header `invariant`\n",
         ],
         repaired: &[br#"fn caller<T: drop>(token: T) -> result: u64 pure contract {
   ensures result >= 1_u64;
