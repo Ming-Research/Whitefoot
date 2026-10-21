@@ -43,6 +43,16 @@ fn a_generic_clause_and_return_use_the_concrete_literal_type() {
 }
 
 #[test]
+fn a_generic_clause_uses_the_concrete_literal_type_whatever_the_parameter_is_called() {
+    let source = "fn zero<Num: Int>() -> result: Num pure contract {\n  ensures result == 0_Num;\n} {\n  return 1_Num;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let value = zero::<u64>();\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    let failure = assert_clause(source, "1_u64 == 0_u64");
+    assert!(
+        failure.to_string().contains("concrete_function: zero::<u64>"),
+        "{failure}"
+    );
+}
+
+#[test]
 fn a_routed_clause_substitutes_the_selected_constructor_field() {
     let source = format!("enum Choice {{\n  Number(value: u64);\n  Empty();\n}}\n\nfn small() -> result: Choice pure contract {{\n  ensures when result is Number(value: payload): payload < 10_u64;\n}} {{\n  return Choice::Number(value: 20_u64);\n}}\n{MAIN}");
     assert_clause(&source, "20_u64 < 10_u64");
