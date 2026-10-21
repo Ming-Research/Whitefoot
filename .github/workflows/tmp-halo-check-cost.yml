@@ -1,10 +1,16 @@
 # Temporary (board item enum-route-check-cost); remove before the branch is ready.
 # Re-measures Halo's pkg::vm and pkg::test checks and Firn's whole-program
-# check after origin/main was merged
-# into the branch, to confirm the merge left the work unchanged: the branch
-# before the merge (e2f2bfe2f), the main revision merged, and the merge itself,
-# against the pre-regression compilers the earlier measurements used. Compiler
-# CPU (user + system), interleaved rounds, plus one work-counter run each.
+# check after origin/main was merged into the branch, to confirm the merge left
+# the work unchanged: the branch before the merge, the main revision merged,
+# and the merge itself, against the pre-regression compilers the earlier
+# measurements used. Compiler CPU (user + system), interleaved rounds, plus one
+# work-counter run each.
+#
+# The downstream sources predate main's rule OP-5 (a conditional test whose
+# outcome the checker already knows is rejected), so the merged compiler rejects
+# them. The adapt step deletes each test OP-5 reports, one at a time, with the
+# merged compiler, so every compiler times the same accepted source; the
+# older compilers accept the shorter source too.
 name: tmp-halo-check-cost
 
 on:
@@ -34,7 +40,7 @@ env:
 jobs:
   measure:
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 300
     name: ${{ matrix.label }}
     strategy:
       fail-fast: false
@@ -45,10 +51,11 @@ jobs:
           - label: halo pkg::vm
             repo: Halo-wf
             rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
-            args: --graph tests/halo-vm/modules.wfg --check-module pkg::vm
+            args: --graph lib/halo/modules.wfg --check-module pkg::vm
             base: 7d9118eba
             rounds: 5
             main_rounds: 5
+            adapt_max: 200
           # pkg::test: the baseline is the compiler of the earlier run; main
           # takes about ten minutes a check, so it runs once.
           - label: halo pkg::test
@@ -58,8 +65,8 @@ jobs:
             base: d837678c6905
             rounds: 3
             main_rounds: 1
-          # Firn whole program: the current main of Firn-wf, and the main of
-          # the earlier measurement in case the current one needs newer rules.
+            adapt_max: 200
+          # Firn whole program, at the main the earlier measurement used last.
           - label: firn now
             repo: Firn-wf
             rev: 97037839080693708361bfd06d6ed789ed2a4808
@@ -67,18 +74,12 @@ jobs:
             base: 7d9118eba
             rounds: 5
             main_rounds: 5
-          - label: firn then
-            repo: Firn-wf
-            rev: cc8de63beb272279ec7af16e1eb0f6e578ee36e1
-            args: --graph firn/modules.wfg --entry firn --check
-            base: 7d9118eba
-            rounds: 5
-            main_rounds: 5
+            adapt_max: 150
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Prepare sources and compilers
+      - name: Prepare sources and worktrees
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           rustup default stable
@@ -88,8 +89,59 @@ jobs:
           git clone --quiet "https://github.com/Ming-Research/${{ matrix.repo }}.git" "$RUNNER_TEMP/halo"
           git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "${{ matrix.rev }}"
           git -C "$RUNNER_TEMP/halo" submodule update --init --quiet
-          { printf 'base=%s\nprebranch=%s\nmain=%s\nbranch=%s\nhalo=%s\n' "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/prebranch" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
-          for tree in "$RUNNER_TEMP/base" "$RUNNER_TEMP/prebranch" "$RUNNER_TEMP/main" "$GITHUB_WORKSPACE"; do
+          { printf 'base=%s\nprebranch=%s\nmain=%s\nbranch=%s\nsource=%s\n' "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/prebranch" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
+      - name: Build the merged compiler
+        run: |
+          perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
+          perl .github/run-check.pl compiler/build cargo build --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
+      - name: Adapt the source to the merged compiler's OP-5 rule
+        env:
+          ARGS: ${{ matrix.args }}
+          ADAPT_MAX: ${{ matrix.adapt_max }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re, subprocess
+          temp = pathlib.Path(os.environ['RUNNER_TEMP']); out = temp / 'out'; src = temp / 'halo'
+          binary = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / 'compiler/target/gate/whitefootc'
+          cmd = os.environ['ARGS'].split(); cap = int(os.environ['ADAPT_MAX'])
+          env = {k: v for k, v in os.environ.items() if k not in ('WHITEFOOT_CHECK_WORK', 'WHITEFOOT_TIME_BUDGET_RECORD')}
+          site = re.compile(r'rejected: (\S+?):(\d+):(\d+): error\[([A-Za-z0-9-]+)\]')
+          notes = []; fixed = 0; end = 'cap reached'
+          def delete_test(path, number):
+              lines = (src / path).read_text().split('\n'); i = number - 1
+              m = re.match(r'^(\s*)if (.*) \{$', lines[i])
+              if not m: return f'not a statement-form if: {lines[i]!r}'
+              indent = m.group(1)
+              j = next((n for n in range(i + 1, len(lines)) if lines[n].startswith(indent + '}') and not lines[n].startswith(indent + ' ')), None)
+              if j is None: return 'no closing brace at the same indent'
+              inner = [l[2:] if l.startswith('  ') else l for l in lines[i + 1:j]]
+              tail = j + 1
+              if lines[j] == indent + '} else {':
+                  k = next((n for n in range(j + 1, len(lines)) if lines[n].startswith(indent + '}') and not lines[n].startswith(indent + ' ')), None)
+                  if k is None or lines[k] != indent + '}': return 'else branch is not a plain block'
+                  tail = k + 1
+              elif lines[j] != indent + '}': return f'closing line is {lines[j]!r}'
+              (src / path).write_text('\n'.join(lines[:i] + inner + lines[tail:]))
+              return None
+          for n in range(cap + 1):
+              r = subprocess.run([str(binary), *cmd], cwd=src, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              if r.returncode == 0: end = 'accepted'; break
+              (out / 'adapt-last.log').write_text(r.stdout)
+              m = site.search(r.stdout)
+              if not m or m.group(4) != 'OP-5': end = 'stopped at a different rejection'; break
+              if n == cap: break
+              why = delete_test(m.group(1), int(m.group(2)))
+              if why: end = f'cannot delete the test at {m.group(1)}:{m.group(2)}: {why}'; break
+              fixed += 1; notes.append(f'{m.group(1)}:{m.group(2)}'); print('deleted', notes[-1], flush=True)
+          diff = subprocess.run(['git', 'diff'], cwd=src, stdout=subprocess.PIPE, text=True).stdout
+          (out / 'adapt.diff').write_text(diff)
+          line = f'## Adapt `{os.environ["ARGS"]}`: {fixed} tests deleted, ended: {end}\n'
+          print(line, flush=True)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(line)
+          PY
+      - name: Build the other compilers
+        run: |
+          for tree in "$RUNNER_TEMP/base" "$RUNNER_TEMP/prebranch" "$RUNNER_TEMP/main"; do
             perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
           done
@@ -125,7 +177,7 @@ jobs:
                   if w == 'main' and rnd > main_rounds: continue
                   rc, cpu = run(w, f'{w}-{rnd}'); paired[rnd][w] = cpu; status[rnd][w] = rc
                   print(rnd, w, f'rc={rc}', f'{cpu:.2f}', flush=True)
-          lines = [f'## Halo {module}: compiler CPU (user+sys), {rounds} interleaved rounds', '',
+          lines = [f'## {module}: compiler CPU (user+sys), {rounds} interleaved rounds', '',
                    'Exit codes by round: ' + '; '.join(f'r{r}: ' + ' '.join(f'{w}={status[r][w]}' for w in status[r]) for r in sorted(status)), '',
                    '| Compiler | Median CPU s | Ratio to base (median, min-max) | Ratio to prebranch (median, min-max) |', '|---|---:|---:|---:|']
           for w in order:
