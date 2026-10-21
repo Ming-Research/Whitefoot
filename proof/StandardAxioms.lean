@@ -20,7 +20,7 @@ depends on no axiom beyond `propext`, `Classical.choice` and `Quot.sound`. -/
 elab "#require_standard_axioms" : command => do
   let env ← getEnv
   let standard := [``propext, ``Classical.choice, ``Quot.sound]
-  let mut checked := 0
+  let mut checked : Nat := 0
   for i in [0:env.header.moduleNames.size] do
     if (`WhitefootProof).isPrefixOf env.header.moduleNames[i]! then
       for name in env.header.moduleData[i]!.constNames do
