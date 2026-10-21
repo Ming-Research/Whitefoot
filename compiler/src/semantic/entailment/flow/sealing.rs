@@ -2284,10 +2284,9 @@ impl Analyzer<'_, '_> {
             .map(|argument| self.input.sealed_places(argument))
             .collect::<Vec<_>>();
         if sealing == CalleeSealing::HandsOff {
-            for (argument, places) in arguments.iter().zip(&handed) {
-                let mut judging = self.judging();
-                judging.seal_closed_hand_off(argument, SealingRule::Fn8, call);
-                judging.seal_hand_off(state, places, SealingRule::Fn8, call);
+            for places in &handed {
+                self.judging()
+                    .seal_hand_off(state, places, SealingRule::Fn8, call);
             }
         }
         if sealing == CalleeSealing::Exchange {

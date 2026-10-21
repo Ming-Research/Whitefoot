@@ -1,0 +1,20 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+struct Slot {
+  closed: Option<State>;
+}
+
+fn close_into(cell: Shared<State>, slot: &Slot) -> result: unit writes(slot) waits {
+  atomic s = &cell {
+    set s^.single.value = 31_u64;
+  }
+  set slot^.closed = shared_close::<State>(shared: move cell);
+  return unit;
+}

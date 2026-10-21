@@ -1024,9 +1024,12 @@ with its substituted types, so a generic function that returns its
 `shared_close` result whole is refused at an instance whose state owns such
 a value. Cases: `type11-neg-shared-close-state-field-unchecked`,
 `type11-pos-shared-close-state-field-checked`,
-`type11-neg-shared-close-result-handed-whole`,
+`type11-neg-shared-close-result-stored-whole`,
+`type11-neg-shared-close-result-given-whole`,
 `type11-pos-shared-close-state-own-invariant` and
-`type11-neg-shared-close-generic-wrapper`.
+`type11-neg-shared-close-generic-wrapper`; a hand-off of the unbound result
+is a return, a `give` or a store, since a call argument and a construction
+operand are atoms [GRAM-5].
 
 **Module boundaries.** The sealing boundary is a property of declared types
 alone: parameters sealed at entry, written reference parameters sealed at

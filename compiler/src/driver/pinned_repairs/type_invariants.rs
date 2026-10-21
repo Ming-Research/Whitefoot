@@ -2,9 +2,10 @@
 //! before a broken invariant is restored, after the identity a debt was
 //! restorable through changed, with no relation naming its anchor, after a
 //! `swap` moved a value broken below its own level, of an element whose
-//! instance is unproved beside a lost position, or of a value an atomic
-//! block's target owns, a construction that does not establish one, and an
-//! atomic block that leaves one unproved.
+//! instance is unproved beside a lost position, of a value an atomic
+//! block's target owns, or of a value below the state a `shared_close`
+//! result holds or of that result unbound, a construction that does not
+//! establish one, and an atomic block that leaves one unproved.
 
 use super::RepairPair;
 
@@ -1083,6 +1084,163 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let got = claim(table: move table);
   let code = cvt.wrap::<u64, u8>(got);
   return std::process::exit_status(code: code);
+}
+"#],
+    },
+    RepairPair {
+        name: "a-shared-close-state-hands-off-an-unproved-field.wf",
+        rejected: br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn last(cell: Shared<State>) -> result: u64 pure waits {
+  let got = 0_u64;
+  match shared_close::<State>(shared: move cell) {
+    Some(value: state) => {
+      set got = lookup(index: &state.single);
+    }
+    None() => {
+    }
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let initial = State(single: seed);
+  let cell = shared_new::<State>(value: initial);
+  let got = last(cell: move cell);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "]: UnrestoredTypeInvariant\n",
+            "\n  mechanical_fix: `state.single.value < 16_u64` is not proved: a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, so prove it before this hand-off, such as by checking the fields it relates, or replace `state.single` whole with a value a construction or a call returns\n",
+        ],
+        repaired: &[br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn last(cell: Shared<State>) -> result: u64 pure waits {
+  let got = 0_u64;
+  match shared_close::<State>(shared: move cell) {
+    Some(value: state) => {
+      if state.single.value < 16_u64 {
+        set got = lookup(index: &state.single);
+      }
+    }
+    None() => {
+    }
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let initial = State(single: seed);
+  let cell = shared_new::<State>(value: initial);
+  let got = last(cell: move cell);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#],
+    },
+    RepairPair {
+        name: "a-shared-close-result-handed-off-unbound.wf",
+        rejected: br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn close_state(cell: Shared<State>) -> result: Option<State> pure waits {
+  return shared_close::<State>(shared: move cell);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let initial = State(single: seed);
+  let cell = shared_new::<State>(value: initial);
+  let closed = close_state(cell: move cell);
+  match closed {
+    Some(value: state) => {
+      let code = cvt.wrap::<u64, u8>(state.single.value);
+      return std::process::exit_status(code: code);
+    }
+    None() => {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+}
+"#,
+        rule: "FN-9",
+        sentences: &[
+            "]: UnrestoredTypeInvariant\n",
+            "\n  mechanical_fix: a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, and no relation names it while no binding holds the result: bind the result with `let`, then prove the invariants of the values below its state before handing it on, such as by checking the fields they relate\n",
+        ],
+        repaired: &[br#"struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn close_state(cell: Shared<State>) -> result: Option<State> pure waits {
+  let closed = shared_close::<State>(shared: move cell);
+  match closed {
+    Some(value: state) => {
+      if state.single.value < 16_u64 {
+        return Some<State>(value: state);
+      }
+      return None<State>();
+    }
+    None() => {
+      return None<State>();
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let seed = Index(value: 3_u64);
+  let initial = State(single: seed);
+  let cell = shared_new::<State>(value: initial);
+  let closed = close_state(cell: move cell);
+  match closed {
+    Some(value: state) => {
+      let code = cvt.wrap::<u64, u8>(state.single.value);
+      return std::process::exit_status(code: code);
+    }
+    None() => {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
 }
 "#],
     },
