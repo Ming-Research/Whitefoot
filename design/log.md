@@ -12,6 +12,12 @@ Nodes: compiler/checker-facts
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: pointing a reference variable elsewhere becomes its own kind of event that invalidates proof facts? (Ming-Research/Whitefoot#439, head b1ee96910)" (translated).
 
 Summary: A new decision makes a reference rebinding a distinct invalidation event that removes only the facts spelled through or reached through that reference variable, and loop summaries carry the event unchanged, because the specification says a rebinding writes no storage, instead of synthesizing a whole write of the variable and removing facts by its function-wide provenance list, which removed facts established through other names on the old or new target.
+## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
+
+Nodes: compiler/verification
+
+Summary: The hosted gate and the I/O host checks no longer run for a push to a draft pull request's branch or for a draft's opening or reopening; they run for the main line, a ready pull request's pushes, a hand-started run and the event of marking a pull request ready, which skips when the head already has a successful manual run of the same workflow. With the draft pushes gone, every run that checks a revision runs both platforms, so the Linux-only run is retired and the earlier refusal of both platforms on every push is restated for the case that no longer holds. The gate also fails while a `tmp-` workflow file exists in the checked head, and the performance comparison skips a draft as the design-readiness job already does. The run record of a week shows 122 checked runs on 40 branches other than the main line, up to 10 on one branch ([measurements](../research/investigations/test-economy/time-budgets.md#gate-at-ready-not-at-each-draft-push)); the author now gets results from a temporary workflow while writing.
+
 ## 2026-10-20 Conditions the checker decides are rejected
 
 Nodes: language/checks-and-proofs/redundant-tests, compiler/acceptance-records, compiler/proof-query-context
