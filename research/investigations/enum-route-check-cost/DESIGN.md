@@ -452,6 +452,55 @@ branch/old 1.005 (0.985–1.015), main/old 312.4. Joins were 840, 549,483,471
 and 840. The omitted unread computations cover this case without the
 contradiction-route snapshot change proposed separately.
 
+### Re-measurement after merging main (`c40acc366`)
+
+Merging main brought rule OP-5 (a conditional test whose outcome the checker
+already knows is rejected) and a grammar change that makes `held` unusable as
+a parameter name, so the merged compiler rejects the Halo and Firn sources the
+earlier rounds used. A temporary workflow applied the compiler's own
+mechanical fix for each rejection, one at a time, with the merged compiler
+(Halo `pkg::test` 2 fixes; Halo `pkg::vm` 132: 130 OP-5 tests and 2 EFF-2
+effect rows; Firn 240, including the `held` renames in its Halo dependency),
+so all four compilers checked the same accepted source and every exit code was
+0. The adapted sources and their diffs are workflow artifacts only. The four
+compilers: base `7d9118eba` (pre-#431 main), prebranch `e2f2bfe2f` (this
+fix before the merge), main `c40acc366` (the merged main, with the #431
+regression), and branch (this fix after the merge, `1c35e4d66`; its compiler
+tree is identical at `44f33c996`). Compiler user+sys CPU, interleaved rounds,
+no check cache:
+
+| Workload (host) | rounds | base s | prebranch s | main s | branch s | branch/base | branch/prebranch |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Halo `pkg::test` at 9de699da (EPYC 7763; [run](https://github.com/Ming-Research/Whitefoot/actions/runs/39577631558)) | 3 (main 1) | 1.99 | 1.99 | 588.99 | 1.97 | 0.990 | 0.990 |
+| Halo `pkg::vm` at 9de699da (EPYC 7763; [run](https://github.com/Ming-Research/Whitefoot/actions/runs/39585762233)) | 5 | 16.33 | 8.66 | 11.75 | 9.65 | 0.592 (0.585–0.601) | 1.117 (1.110–1.139) |
+| Firn whole program at b83b67fa (Xeon 8573C; [run](https://github.com/Ming-Research/Whitefoot/actions/runs/39610827470)) | 5 | 84.01 | 62.65 | 69.48 | 57.00 | 0.678 (0.667–0.691) | 0.918 (0.892–0.921) |
+
+Work counters (one counted run each; joins is the `join:join` count, pairs the
+`join:pairs_evaluated` count, cells the `closure:cells_sum` count):
+
+| Workload | base | prebranch | main | branch |
+|---|---:|---:|---:|---:|
+| Halo `pkg::test` joins / pairs | 827 / 641,730 | 827 / 641,730 | not counted | 827 / 565,698 |
+| Halo `pkg::vm` joins / pairs / cells | 25,170 / 1,122,732 / 8.29M | 28,568 / 1,176,523 / 8.39M | 290,038 / 1,554,023 / 14.03M | 28,568 / 1,176,621 / 9.61M |
+| Firn pairs / cells | 7,477,212 / 67.2M | 7,582,217 / 64.1M | 7,448,963 / 80.6M | 6,304,847 / 61.4M |
+
+What this shows, and no more: on the merged tree the omitted unread
+computations still remove the #431 cost. Against the unfixed merged main the
+branch is 0.820 on Firn (57.00 s against 69.48 s, ratio of medians) and 0.821
+on Halo `pkg::vm`, and Halo `pkg::test` stays at the pre-regression 2 s
+instead of 589 s; the Halo `pkg::vm` join count (28,568) equals the
+pre-merge branch's and is a tenth of main's, and Firn's closure cells fall
+from main's 80.6M to 61.4M, below base's 67.2M. The three
+branch/base ratios meet the 1.03 criterion, but they are flattered by
+unrelated speedups that main gained after `7d9118eba` (the pre-merge branch
+is already 0.528 and 0.746 of base on `pkg::vm` and Firn), so the comparison
+that isolates this fix is branch against main. Halo `pkg::vm` is 11.7% slower
+and its closure cells are 14.4% higher after the merge than before it, with
+the join work unchanged; that is main's own cost (for example OP-5 asks the
+checker one more question per conditional test), and attributing it would
+need a main without OP-5, which does not exist. Firn runs 8.2% faster after
+the merge with fewer join pairs and cells, so the merge did not add work there.
+
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
 record, ENT-5, the checker-facts decisions, and the directly affected fact-state
