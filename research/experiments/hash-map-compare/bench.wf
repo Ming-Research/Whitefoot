@@ -169,10 +169,15 @@ fn lookup_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, ta
   return unit;
 }
 
-fn relookup_one(map: &HashMap<u64, u64, ceiling>, index: u64, keys: &BenchKeys, tally: &Tally) -> result: unit reads(map), reads(keys), writes(tally) {
-  doc "The slow control's extra operation: one lookup of the key of index, whose result goes to extra. Callers pass an index unrelated to the operation just made, so the lookup costs what a lookup of a cold key costs; a repeat of the key just used is cheap and was not detected on a hosted runner.";
+fn relookup_one(decoy: &HashMap<u64, u64, ceiling>, step: u64, size: u64, keys: &BenchKeys, tally: &Tally) -> result: unit reads(decoy), reads(keys), writes(tally) contract {
+  requires size > 0_u64;
+} {
+  doc "The slow control's extra operation: one lookup in the decoy, a second map of size pairs that no timed operation touches, of the key half the permutation away from step; its result goes to extra. Lookups in the measured map were not a reliable slowdown on a hosted runner: at 10,000 pairs, 25% more of them measured no slower, or faster, for a reason not established. A lookup in another map cannot share the measured map's cache lines.";
+  let half = size / 2_u64;
+  let far = step +wrap half;
+  let index = order(step: far, size: size);
   let probe = key_of(index: index);
-  let seen = hash_map_lookup::<BenchKey, u64, Tally, u64, fn bench_reread, ceiling>(map: map, key: &probe, key_env: keys, visit_env: tally);
+  let seen = hash_map_lookup::<BenchKey, u64, Tally, u64, fn bench_reread, ceiling>(map: decoy, key: &probe, key_env: keys, visit_env: tally);
   set tally^.extra = tally^.extra +wrap 1_u64;
   return unit;
 }
@@ -200,11 +205,11 @@ fn release_map(map: HashMap<u64, u64, ceiling>) -> result: unit pure {
   return unit;
 }
 
-fn build_sample(size: u64, capacity: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(clock) contract {
+fn build_sample(decoy: &HashMap<u64, u64, ceiling>, size: u64, capacity: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(decoy), reads(keys), writes(clock) contract {
   requires size > 0_u64;
   requires capacity <= 1000000_u64;
 } {
-  doc "Builds reps maps of size pairs, each from the given capacity, timing construction and every put; releasing each map is outside the interval. The slow control adds a lookup of an earlier key at every fourth put.";
+  doc "Builds reps maps of size pairs, each from the given capacity, timing construction and every put; releasing each map is outside the interval. The slow control adds a lookup in the decoy at every fourth put.";
   let reps = reps_for(size: size);
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let total = 0_u64;
@@ -217,8 +222,7 @@ fn build_sample(size: u64, capacity: u64, mask: u64, keys: &BenchKeys, clock: &C
       set check = check +wrap refused;
       let repeat = slow_turn(mask: mask, step: index);
       if repeat {
-        let earlier = ishr.wrap(index, 1_u32);
-        relookup_one(map: &map, index: earlier, keys: keys, tally: &tally);
+        relookup_one(decoy: decoy, step: index, size: size, keys: keys, tally: &tally);
       }
     }
     let ended = now(clock: clock);
@@ -233,12 +237,11 @@ fn build_sample(size: u64, capacity: u64, mask: u64, keys: &BenchKeys, clock: &C
   return Sample(ns: total, ops: ops, check: check, extra: extra);
 }
 
-fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(map), reads(keys), writes(clock) contract {
+fn lookup_sample(map: &HashMap<u64, u64, ceiling>, decoy: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(map), reads(decoy), reads(keys), writes(clock) contract {
   requires size > 0_u64;
 } {
   doc "Looks up reps times the keys of offset + order(step) for every step below size, in one interval: offset zero finds every key of a map holding indexes 0..size, offset size finds none.";
   let reps = reps_for(size: size);
-  let half = size / 2_u64;
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let started = now(clock: clock);
   for (rep in 0_u64..reps) {
@@ -248,10 +251,7 @@ fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, mask:
       lookup_one(map: map, index: index, keys: keys, tally: &tally);
       let repeat = slow_turn(mask: mask, step: step);
       if repeat {
-        let far = step +wrap half;
-        let elsewhere = order(step: far, size: size);
-        let other = offset +wrap elsewhere;
-        relookup_one(map: map, index: other, keys: keys, tally: &tally);
+        relookup_one(decoy: decoy, step: step, size: size, keys: keys, tally: &tally);
       }
     }
   }
@@ -263,12 +263,11 @@ fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, mask:
   return Sample(ns: ns, ops: ops, check: check, extra: extra);
 }
 
-fn remove_sample(size: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(clock) contract {
+fn remove_sample(decoy: &HashMap<u64, u64, ceiling>, size: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(decoy), reads(keys), writes(clock) contract {
   requires size > 0_u64;
 } {
-  doc "Builds reps maps of size pairs outside the interval and times removing every pair of each in order(step) order; the slow control adds a lookup of another key at every fourth step.";
+  doc "Builds reps maps of size pairs outside the interval and times removing every pair of each in order(step) order; the slow control adds a lookup in the decoy at every fourth step.";
   let reps = reps_for(size: size);
-  let half = size / 2_u64;
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let total = 0_u64;
   let check = 0_u64;
@@ -281,9 +280,7 @@ fn remove_sample(size: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sampl
       set check = check +wrap found;
       let repeat = slow_turn(mask: mask, step: step);
       if repeat {
-        let far = step +wrap half;
-        let other = order(step: far, size: size);
-        relookup_one(map: &map, index: other, keys: keys, tally: &tally);
+        relookup_one(decoy: decoy, step: step, size: size, keys: keys, tally: &tally);
       }
     }
     let ended = now(clock: clock);
@@ -298,12 +295,11 @@ fn remove_sample(size: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sampl
   return Sample(ns: total, ops: ops, check: check, extra: extra);
 }
 
-fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(map), writes(clock) contract {
+fn churn_sample(map: &HashMap<u64, u64, ceiling>, decoy: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, mask: u64, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(decoy), reads(keys), writes(map), writes(clock) contract {
   requires size > 0_u64;
 } {
-  doc "With the map holding indexes oldest..oldest + size, reps times size steps each remove the oldest pair and put the next new one, so the map keeps size pairs; the slow control adds a lookup of a live key half the map away at every fourth step.";
+  doc "With the map holding indexes oldest..oldest + size, reps times size steps each remove the oldest pair and put the next new one, so the map keeps size pairs; the slow control adds a lookup in the decoy at every fourth step.";
   let reps = reps_for(size: size);
-  let half = size / 2_u64;
   let tally = Tally(found: 0_u64, sum: 0_u64, extra: 0_u64);
   let ops = reps *wrap size;
   let check = 0_u64;
@@ -317,8 +313,7 @@ fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, mask: 
     set check = check +wrap refused;
     let repeat = slow_turn(mask: mask, step: step);
     if repeat {
-      let live = leaving +wrap half;
-      relookup_one(map: map, index: live, keys: keys, tally: &tally);
+      relookup_one(decoy: decoy, step: step, size: size, keys: keys, tally: &tally);
     }
   }
   let ended = now(clock: clock);
@@ -473,7 +468,7 @@ fn run_timed(operation: u64, size: u64, samples: u64, mask: u64, clock: &Clock, 
   requires size > 0_u64;
   requires size <= 1000000_u64;
 } {
-  doc "Runs one timed cell: sample zero is the warmup and samples 1..samples are measured; the driver drops sample zero. A map that the samples only read, or keep at size pairs, is built once, outside every interval; the cells that build their own maps leave it empty.";
+  doc "Runs one timed cell: sample zero is the warmup and samples 1..samples are measured; the driver drops sample zero. A map that the samples only read, or keep at size pairs, is built once, outside every interval; the cells that build their own maps leave it empty. Every run also builds the decoy, which only the slow control's extra lookups read, so all arms allocate alike.";
   let keys = BenchKeys(unused: 0_u64);
   let map = hash_map_new::<u64, u64, ceiling>(capacity: 0_u64);
   let hit = operation == 3_u64;
@@ -486,28 +481,29 @@ fn run_timed(operation: u64, size: u64, samples: u64, mask: u64, clock: &Clock, 
   if shared {
     let refused = fill(map: &map, size: size, keys: &keys);
   }
+  let decoy = grown(size: size, keys: &keys);
   let oldest = 0_u64;
   let failed = 0_u8;
   let count = samples +wrap 1_u64;
   for (index in 0_u64..count) {
     let sample = Sample(ns: 0_u64, ops: 0_u64, check: 0_u64, extra: 0_u64);
     if operation == 1_u64 {
-      set sample = build_sample(size: size, capacity: size, mask: mask, keys: &keys, clock: clock);
+      set sample = build_sample(decoy: &decoy, size: size, capacity: size, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 2_u64 {
-      set sample = build_sample(size: size, capacity: 0_u64, mask: mask, keys: &keys, clock: clock);
+      set sample = build_sample(decoy: &decoy, size: size, capacity: 0_u64, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 3_u64 {
-      set sample = lookup_sample(map: &map, size: size, offset: 0_u64, mask: mask, keys: &keys, clock: clock);
+      set sample = lookup_sample(map: &map, decoy: &decoy, size: size, offset: 0_u64, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 4_u64 {
-      set sample = lookup_sample(map: &map, size: size, offset: size, mask: mask, keys: &keys, clock: clock);
+      set sample = lookup_sample(map: &map, decoy: &decoy, size: size, offset: size, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 5_u64 {
-      set sample = remove_sample(size: size, mask: mask, keys: &keys, clock: clock);
+      set sample = remove_sample(decoy: &decoy, size: size, mask: mask, keys: &keys, clock: clock);
     }
     if operation == 6_u64 {
-      set sample = churn_sample(map: &map, size: size, oldest: oldest, mask: mask, keys: &keys, clock: clock);
+      set sample = churn_sample(map: &map, decoy: &decoy, size: size, oldest: oldest, mask: mask, keys: &keys, clock: clock);
       set oldest = oldest +wrap sample.ops;
     }
     if operation == 7_u64 {
@@ -517,6 +513,7 @@ fn run_timed(operation: u64, size: u64, samples: u64, mask: u64, clock: &Clock, 
     set failed = ior(failed, written);
   }
   release_map(map: move map);
+  release_map(map: move decoy);
   return failed;
 }
 
