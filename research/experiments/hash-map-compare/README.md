@@ -61,10 +61,13 @@ runs must agree.
 
 `hold.wf` is built by the candidate compiler alone, since the base
 representation has no resumable scan. It times `hash_map_scan` calls with
-limit 64 one by one, with a callback that only counts: over 1,000 and
-1,000,000 uniform pairs, each call continuing the last after one untimed
+limit 64 one by one, with a callback that only counts: over 1,000,000 and
+8,000,000 uniform pairs, each call continuing the last after one untimed
 pass, and over 64, 1,024 and 65,536 pairs sharing one hash, every call
-starting at the call that holds their chain.
+starting at the call that holds their chain. The two uniform tables take
+about 42 MB and 335 MB, both more than the 14900K's 36 MB third-level cache,
+so the comparison between them is of per-call work, not of cache hits
+against misses.
 
 ## Criterion, set before measurement
 
@@ -104,10 +107,10 @@ measurement:
   second run given it; the floor is measured again when the machine, its
   settings or the toolchain change.
 - Memory: any difference in retained or peak bytes is a change.
-- Hold: H1, the p99 of a uniform call at 1,000,000 pairs is at most four
-  times its p99 at 1,000; H2, that p99 is at most 20 microseconds; H3, the
-  median call over a chain of m pairs takes at most 2m times the median
-  per-pair time of the uniform calls at 1,000,000 pairs.
+- Hold: H1, the p99 of a uniform call at 8,000,000 pairs is at most twice
+  its p99 at 1,000,000; H2, the p99 at 1,000,000 pairs is at most 20
+  microseconds; H3, the median call over a chain of m pairs takes at most 2m
+  times the median per-pair time of the uniform calls at 1,000,000 pairs.
 
 Accepting a detected regression is not this instrument's decision.
 

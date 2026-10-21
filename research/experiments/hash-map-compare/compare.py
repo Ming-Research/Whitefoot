@@ -51,9 +51,12 @@ MASK = (1 << 64) - 1
 # precisely enough, never whether a change is accepted.
 RESOLUTION = {1000: 0.03}
 DEFAULT_RESOLUTION = 0.02
-# The hold criterion, set before measurement with the same investigation.
-HOLD_SMALL, HOLD_LARGE = 1000, 1000000
-HOLD_GROWTH_FACTOR = 4.0
+# The hold criterion, set before measurement with the same investigation. Both
+# uniform sizes are larger than the 14900K's 36 MB third-level cache (the
+# tables take about 42 MB and 335 MB), so H1 compares per-call work, not cache
+# hits against misses.
+HOLD_SMALL, HOLD_LARGE = 1000000, 8000000
+HOLD_GROWTH_FACTOR = 2.0
 HOLD_LIMIT_NS = 20000
 CHAINS = [64, 1024, 65536]
 HOLD_CALLS = 20000
@@ -385,13 +388,13 @@ def reduce_hold(rows, out):
     small, large = stats[(1, HOLD_SMALL)][1], stats[(1, HOLD_LARGE)][1]
     readings = {
         "H1": large <= HOLD_GROWTH_FACTOR * small,
-        "H2": large <= HOLD_LIMIT_NS,
+        "H2": small <= HOLD_LIMIT_NS,
     }
     print(f"H1 p99 at {HOLD_LARGE} ({large} ns) <= {HOLD_GROWTH_FACTOR:g} x p99 at {HOLD_SMALL} "
           f"({small} ns): {'pass' if readings['H1'] else 'fail'}", file=out)
-    print(f"H2 p99 at {HOLD_LARGE} ({large} ns) <= {HOLD_LIMIT_NS} ns: {'pass' if readings['H2'] else 'fail'}",
+    print(f"H2 p99 at {HOLD_SMALL} ({small} ns) <= {HOLD_LIMIT_NS} ns: {'pass' if readings['H2'] else 'fail'}",
           file=out)
-    per_pair = statistics.median(r["ns"] / r["pairs"] for r in calls[(1, HOLD_LARGE)] if r["pairs"] > 0)
+    per_pair = statistics.median(r["ns"] / r["pairs"] for r in calls[(1, HOLD_SMALL)] if r["pairs"] > 0)
     for m in CHAINS:
         bound = 2 * m * per_pair
         median = stats[(2, m)][0]
@@ -664,11 +667,16 @@ def self_test():
         for m in CHAINS:
             rows += [{"mode": 2, "size": m, "call": c, "ns": chain_ns(m), "pairs": m} for c in range(10)]
         return rows
-    expect("hold pass", set(reduce_hold(hold_rows(1000, 3000, lambda m: m * 40), sink).values()), {True})
-    readings = reduce_hold(hold_rows(1000, 5000, lambda m: m * 400), sink)
+    expect("hold pass", set(reduce_hold(hold_rows(3000, 5000, lambda m: m * 40), sink).values()), {True})
+    expect("hold H1 at the factor", reduce_hold(hold_rows(3000, 6000, lambda m: m * 40), sink)["H1"], True)
+    readings = reduce_hold(hold_rows(3000, 7000, lambda m: m * 400), sink)
     expect("hold H1 fail", readings["H1"], False)
     expect("hold H3 fail", readings["H3-64"], False)
-    expect("hold H2 fail", reduce_hold(hold_rows(10000, 30000, lambda m: m), sink)["H2"], False)
+    expect("hold H2 fail", reduce_hold(hold_rows(30000, 40000, lambda m: m), sink)["H2"], False)
+    # H2 reads the smaller size only: the larger one is over the limit here.
+    readings = reduce_hold(hold_rows(10000, 25000, lambda m: m), sink)
+    expect("hold H2 on the small size", readings["H2"], True)
+    expect("hold H1 with H2 passing", readings["H1"], False)
     expect_invalid("hold short chain", lambda: reduce_hold(
         [dict(r, pairs=1) if r["mode"] == 2 else r for r in hold_rows(1, 1, lambda m: 1)], sink))
     sink.close()
