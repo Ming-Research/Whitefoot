@@ -299,19 +299,31 @@ impl Input<'_, '_> {
     ) -> bool {
         self.offset_support(support)
             .iter()
-            .any(|(read, holders)| match event {
-                KillEvent::Write { place: written, .. }
-                | KillEvent::EntryImageHolderWrite { place: written, .. } => {
-                    self.resolved_places_overlap(separations, read, written)
-                        || holders.iter().any(|holder| {
-                            written.root == PlaceRoot::Binding(*holder) && written.path.is_empty()
-                        })
-                }
-                KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
-                    read.root == PlaceRoot::Binding(*binding) || holders.contains(binding)
-                }
-                KillEvent::EntryImageHolderConsume { .. } => false,
-            })
+            .any(|(read, holders)| self.event_kills_read(separations, read, holders, event))
+    }
+
+    /// [ENT-5] whether one event replaces or consumes `read`, a place an
+    /// offset reads through the reference holders `holders`.
+    pub(super) fn event_kills_read(
+        &self,
+        separations: &dyn SeparationOracle,
+        read: &ResolvedPlace,
+        holders: &[BindingId],
+        event: &KillEvent,
+    ) -> bool {
+        match event {
+            KillEvent::Write { place: written, .. }
+            | KillEvent::EntryImageHolderWrite { place: written, .. } => {
+                self.resolved_places_overlap(separations, read, written)
+                    || holders.iter().any(|holder| {
+                        written.root == PlaceRoot::Binding(*holder) && written.path.is_empty()
+                    })
+            }
+            KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
+                read.root == PlaceRoot::Binding(*binding) || holders.contains(binding)
+            }
+            KillEvent::EntryImageHolderConsume { .. } => false,
+        }
     }
 
     /// Integer selectors read their exact field and reference-holder chain.
@@ -325,15 +337,26 @@ impl Input<'_, '_> {
             let Some(term) = term else {
                 continue;
             };
-            for read in self.context.captured_places.support(term) {
+            supports.extend(self.term_support(term));
+        }
+        supports
+    }
+
+    /// The places one offset term reads, each with the reference holder it
+    /// reads through [ENT-5].
+    pub(super) fn term_support(&self, term: CapturedTerm) -> Vec<(ResolvedPlace, Vec<BindingId>)> {
+        self.context
+            .captured_places
+            .support(term)
+            .into_iter()
+            .map(|read| {
                 let holders = match read.root {
                     PlaceRoot::Binding(root) if self.places.is_reference(root) => vec![root],
                     _ => Vec::new(),
                 };
-                supports.push((read, holders));
-            }
-        }
-        supports
+                (read, holders)
+            })
+            .collect()
     }
 
     fn scope_kills_offset_support(
@@ -1236,6 +1259,9 @@ impl Reasoning<'_, '_, '_> {
         events: &[KillEvent],
         shared_event: Option<FlowEventId>,
     ) {
+        // [TYPE-11.S3] the widening row for the offsets the batch writes or
+        // ends, offered for restoration before its kills.
+        self.seal_offset_kills(separations, states, events);
         let removed = self.apply_kills_one(separations, &mut states.facts, events);
         self.record_measure_kills(separations, states, events, &removed);
         self.apply_affine_kills(separations, &mut states.affine, events);

@@ -1,0 +1,18 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Cursor {
+  k: u64;
+}
+
+fn move_then_restore(part: &[Index], cursor: &Cursor) -> result: unit writes(part), writes(cursor) contract {
+  requires cursor^.k < part^.len;
+  requires 1_u64 < part^.len;
+} {
+  set part^[cursor^.k].value = 31_u64;
+  set cursor^.k = 1_u64;
+  set part^[cursor^.k].value = 3_u64;
+  return unit;
+}

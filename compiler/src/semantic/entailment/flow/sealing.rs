@@ -190,19 +190,30 @@ fn uncovered(members: Vec<ResolvedPlace>) -> Vec<ResolvedPlace> {
         .collect()
 }
 
-/// Whether an offset of `step` reads the current value of `binding`.
-fn step_reads(step: &PlaceStep, binding: BindingId) -> bool {
-    let reads = |value: &CapturedValue| value.term == CapturedTerm::Binding(binding);
-    match step {
-        PlaceStep::Index(value) | PlaceStep::Page(value) => reads(value),
-        PlaceStep::Range(range) => reads(&range.start) || reads(&range.end),
-        _ => false,
-    }
+/// The offsets of `step`: an index's or a page's, or a range's endpoints.
+fn step_offsets(step: &PlaceStep) -> impl Iterator<Item = &CapturedValue> {
+    let (first, second) = match step {
+        PlaceStep::Index(value) | PlaceStep::Page(value) => (Some(value), None),
+        PlaceStep::Range(range) => (Some(&range.start), Some(&range.end)),
+        _ => (None, None),
+    };
+    first.into_iter().chain(second)
 }
 
-/// Whether an offset of `place` reads the current value of `binding`.
-fn offset_reads(place: &ResolvedPlace, binding: BindingId) -> bool {
-    place.path.iter().any(|step| step_reads(step, binding))
+/// The offsets of `step`, to be widened.
+fn step_offsets_mut(step: &mut PlaceStep) -> impl Iterator<Item = &mut CapturedValue> {
+    let (first, second) = match step {
+        PlaceStep::Index(value) | PlaceStep::Page(value) => (Some(value), None),
+        PlaceStep::Range(range) => (Some(&mut range.start), Some(&mut range.end)),
+        _ => (None, None),
+    };
+    first.into_iter().chain(second)
+}
+
+/// Whether `value` reads the current value of a tracked place [ENT-2], a
+/// binding or a place below one, which a later write can change.
+const fn reads_current(value: &CapturedValue) -> bool {
+    matches!(value.term, CapturedTerm::Binding(_) | CapturedTerm::Place(_))
 }
 
 /// The position of the step through which `place` carries the current
@@ -260,14 +271,12 @@ fn handed_member(debt: &Debt, place: &ResolvedPlace) -> Option<ResolvedPlace> {
 }
 
 /// [TYPE-11.S3] `debt` after a kill batch wrote or ended `binding` while the
-/// debt was not restored: the first offset reading the binding and every
-/// later offset of the anchor that reads a binding widen to `[?]`, so one
-/// anchor widens to one more shape than it has such offsets; an anchor
-/// carrying the binding's
-/// current target identity widens to its cover; and a debt restored through
-/// the binding is restored over its anchor's own terms from then on
-/// [TYPE-11.S5].
-fn widened(mut debt: Debt, binding: BindingId) -> Debt {
+/// debt was not restored: the offsets from the first that `reads` picks are
+/// widened as [`widen_offsets_from`] widens them; an anchor carrying the
+/// binding's current target identity widens to its cover; and a debt
+/// restored through the binding is restored over its anchor's own terms
+/// from then on [TYPE-11.S5].
+fn widened(mut debt: Debt, binding: BindingId, reads: impl Fn(&PlaceStep) -> bool) -> Debt {
     if debt
         .through
         .as_ref()
@@ -275,37 +284,29 @@ fn widened(mut debt: Debt, binding: BindingId) -> Debt {
     {
         debt.through = None;
     }
-    let mut lost = false;
     if let Some(position) = carried_by(&debt.anchor, binding) {
         debt.anchor.path.truncate(position);
         debt.invariant = None;
-        lost = true;
+        debt.widened = true;
     }
-    let first = debt
-        .anchor
-        .path
-        .iter()
-        .position(|step| step_reads(step, binding));
-    if let Some(first) = first {
-        let mut forget = |value: &mut CapturedValue| {
-            if matches!(value.term, CapturedTerm::Binding(_)) {
+    if let Some(first) = debt.anchor.path.iter().position(reads) {
+        widen_offsets_from(&mut debt, first);
+    }
+    debt
+}
+
+/// [TYPE-11.S3] widens the offset at step `first` of `debt`'s anchor and
+/// every later offset that reads a tracked place to `[?]`, so one anchor
+/// widens to at most one more shape than it has such offsets.
+fn widen_offsets_from(debt: &mut Debt, first: usize) {
+    for step in &mut debt.anchor.path[first..] {
+        for value in step_offsets_mut(step) {
+            if reads_current(value) {
                 *value = CapturedValue::unknown();
-                lost = true;
-            }
-        };
-        for step in &mut debt.anchor.path[first..] {
-            match step {
-                PlaceStep::Index(value) | PlaceStep::Page(value) => forget(value),
-                PlaceStep::Range(range) => {
-                    forget(&mut range.start);
-                    forget(&mut range.end);
-                }
-                _ => {}
+                debt.widened = true;
             }
         }
     }
-    debt.widened |= lost;
-    debt
 }
 
 /// The goal `expression` with each binder datum replaced by what `datum`
@@ -688,6 +689,35 @@ impl Input<'_, '_> {
             },
             ..debt.clone()
         }
+    }
+
+    /// Whether an offset of `step` reads the current value of `binding`: the
+    /// binding itself, or a tracked place below it or read through it as a
+    /// reference [ENT-2, ENT-5].
+    fn step_reads(&self, step: &PlaceStep, binding: BindingId) -> bool {
+        step_offsets(step).any(|value| {
+            reads_current(value)
+                && self.term_support(value.term).iter().any(|(read, holders)| {
+                    read.root == PlaceRoot::Binding(binding) || holders.contains(&binding)
+                })
+        })
+    }
+
+    /// Whether `event` writes or ends a place an offset of `step` reads
+    /// [ENT-5].
+    fn step_killed(
+        &self,
+        separations: &dyn SeparationOracle,
+        step: &PlaceStep,
+        event: &KillEvent,
+    ) -> bool {
+        step_offsets(step).any(|value| {
+            reads_current(value)
+                && self
+                    .term_support(value.term)
+                    .iter()
+                    .any(|(read, holders)| self.event_kills_read(separations, read, holders, event))
+        })
     }
 
     /// Whether a value of type `ty` owns a struct value with an affine type
@@ -1318,6 +1348,57 @@ impl Reasoning<'_, '_, '_> {
         disposition == CallGoalDisposition::Discharged
     }
 
+    /// [TYPE-11.S3] the widening row for a kill batch that writes or ends
+    /// `binding`: each debt whose anchor reads it in an offset, or carries its
+    /// current target identity, or which is restored through it, is offered
+    /// for restoration first, and widened when it is not restored.
+    pub(super) fn seal_binding_change(&mut self, state: &mut ProofFlowState, binding: BindingId) {
+        if state.debts.is_empty() {
+            return;
+        }
+        let input = self.input;
+        let reads = |step: &PlaceStep| input.step_reads(step, binding);
+        let unrestored = self.unrestored_debts(state, |debt| {
+            debt.anchor.path.iter().any(reads)
+                || carried_by(&debt.anchor, binding).is_some()
+                || debt
+                    .through
+                    .as_ref()
+                    .is_some_and(|through| through.holder == binding)
+        });
+        for debt in unrestored {
+            state.debts.add(widened(debt, binding, reads));
+        }
+    }
+
+    /// [TYPE-11.S3] the widening row for the places a kill batch's `events`
+    /// write or end [ENT-5]: each debt with an offset that reads one is
+    /// offered for restoration first, in the state before the batch, and has
+    /// its offsets widened from the first such one when it is not restored.
+    pub(super) fn seal_offset_kills(
+        &mut self,
+        separations: &dyn SeparationOracle,
+        state: &mut ProofFlowState,
+        events: &[KillEvent],
+    ) {
+        if state.debts.is_empty() || events.is_empty() {
+            return;
+        }
+        let input = self.input;
+        let killed = |step: &PlaceStep| {
+            events
+                .iter()
+                .any(|event| input.step_killed(separations, step, event))
+        };
+        let unrestored = self.unrestored_debts(state, |debt| debt.anchor.path.iter().any(killed));
+        for mut debt in unrestored {
+            if let Some(first) = debt.anchor.path.iter().position(killed) {
+                widen_offsets_from(&mut debt, first);
+            }
+            state.debts.add(debt);
+        }
+    }
+
     /// Offers each debt of `state` that `select` picks for restoration in
     /// `state`, removing the restored ones, and returns the others, taken out
     /// of the set.
@@ -1747,27 +1828,6 @@ impl Analyzer<'_, '_> {
         self.reasoning().establish_affine_images(goal, None, state);
     }
 
-    /// [TYPE-11.S3] the widening row for a kill batch that writes or ends
-    /// `binding`: each debt whose anchor reads it in an offset, or carries its
-    /// current target identity, or which is restored through it, is offered
-    /// for restoration first, and widened when it is not restored.
-    pub(super) fn seal_binding_change(&mut self, state: &mut ProofFlowState, binding: BindingId) {
-        if state.debts.is_empty() {
-            return;
-        }
-        let unrestored = self.reasoning().unrestored_debts(state, |debt| {
-            offset_reads(&debt.anchor, binding)
-                || carried_by(&debt.anchor, binding).is_some()
-                || debt
-                    .through
-                    .as_ref()
-                    .is_some_and(|through| through.holder == binding)
-        });
-        for debt in unrestored {
-            state.debts.add(widened(debt, binding));
-        }
-    }
-
     /// [TYPE-11.S3] the bindings whose scope ends below `depth`: the widening
     /// row for each, then the death of each as a root.
     pub(super) fn seal_scope_exit(&mut self, state: &mut ProofFlowState, depth: usize) {
@@ -1783,7 +1843,7 @@ impl Analyzer<'_, '_> {
             .copied()
             .collect::<Vec<_>>();
         for binding in &exited {
-            self.seal_binding_change(state, *binding);
+            self.reasoning().seal_binding_change(state, *binding);
         }
         for binding in exited {
             state.debts.remove_rooted(binding);
@@ -1806,7 +1866,7 @@ impl Analyzer<'_, '_> {
         let mut left = Debts::default();
         for edge in edges {
             if let Some(binder) = binder {
-                self.seal_binding_change(&mut edge.state, binder);
+                self.reasoning().seal_binding_change(&mut edge.state, binder);
             }
             for debt in self.reasoning().unrestored_debts(&mut edge.state, |_| true) {
                 edge.state.debts.add(debt.clone());
@@ -1963,13 +2023,13 @@ impl Analyzer<'_, '_> {
             {
                 // A reference rebinding writes no storage [SET-1]; it ends the
                 // current target identity the reference carried [REF-1].
-                self.seal_binding_change(state, place.binding);
+                self.reasoning().seal_binding_change(state, place.binding);
                 SealedSet::Rebinding
             }
             CheckedSetTarget::Place(place)
                 if place.fields.is_empty() && place.mode == CheckedMode::Own =>
             {
-                self.seal_binding_change(state, place.binding);
+                self.reasoning().seal_binding_change(state, place.binding);
                 SealedSet::Local {
                     binding: place.binding,
                     taken: self.sealed_continuation(value, place.binding, state),
@@ -2131,7 +2191,7 @@ impl Analyzer<'_, '_> {
                     if written.path.is_empty()
                         && let PlaceRoot::Binding(binding) = written.root
                     {
-                        self.seal_binding_change(state, binding);
+                        self.reasoning().seal_binding_change(state, binding);
                     }
                     self.input.seal_write(
                         &mut state.debts,

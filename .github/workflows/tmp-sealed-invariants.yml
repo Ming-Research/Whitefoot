@@ -1,9 +1,9 @@
 # Temporary: the focused checks of the sealed type invariant work (the
-# compiler build, the type-invariant, fact-source and repair unit tests,
-# every conformance case's verdict with each failing case listed, and the
-# full diagnostics of the cases still open with probes that separate their
-# causes), and the trial compile of the downstream programs with the
-# branch's compiler and the base's. Removed before the branch is ready.
+# compiler build and lint, the type-invariant, fact-source and repair unit
+# tests, every conformance case's verdict with each failing case listed),
+# this round's cases checked with the compilers they fail on, and the trial
+# compile of the downstream programs with the branch's compiler and the
+# base's. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -33,6 +33,12 @@ jobs:
         run: |
           perl .github/run-check.pl sealed-build cargo build --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --bin whitefootc
+      - name: Lint the compiler as the gate does
+        if: always()
+        run: |
+          rustup component add clippy
+          perl .github/run-check.pl sealed-lint cargo clippy --manifest-path compiler/Cargo.toml \
+            --all-targets --locked --offline -- -D warnings
       - name: Run the type-invariant, fact-source and repair unit tests
         run: |
           perl .github/run-check.pl sealed-unit cargo test --manifest-path compiler/Cargo.toml \
@@ -51,338 +57,64 @@ jobs:
           grep -E '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
           grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
           exit "$status"
-      - name: Build the base compiler
-        if: always()
+  # This round's cases with the compilers they fail on: the head the first
+  # review saw, and the merge of main before field-valued offsets widened
+  # debts. A case that does not end within two minutes is stopped.
+  before:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: reviewed-head
+            commit: f997714d31528e0f8e2c98b510d1e39de8ebe861
+            cases: >-
+              type11-neg-loop-swap-into-recursive-part
+              type11-neg-swap-below-level-becomes-cover
+              type11-neg-range-spelled-element-keeps-debt
+              type11-neg-range-spelled-write-denies-read
+              type11-pos-range-spelled-element-beside-debt
+              type11-pos-range-spelled-write-beside-read
+              type11-neg-segment-element-write-keeps-debt
+              type11-neg-map-entry-read-unchecked
+              type11-neg-entries-entry-handed-unchecked
+              type11-pos-entries-entry-checked-before-hand-off
+              type11-pos-entries-entry-left-broken
+          - label: merge-before-offset-widening
+            commit: 2c643ac7f750b4fd32a62248c55d11043b46a6fa
+            cases: >-
+              type11-neg-field-offset-moved-before-restored
+              type11-pos-field-offset-restored-before-moved
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
         run: |
-          git fetch --depth=1 origin d1f2a19d2ae599512b51a19ea622cd3377e34366
-          git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
-          cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
-          perl .github/run-check.pl sealed-base-build cargo build \
-            --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" \
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the compiler of ${{ matrix.label }}
+        run: |
+          git fetch --depth=1 origin ${{ matrix.commit }}
+          git worktree add "$RUNNER_TEMP/before" FETCH_HEAD
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/before/compiler/Cargo.toml"
+          perl .github/run-check.pl before-build cargo build \
+            --manifest-path "$RUNNER_TEMP/before/compiler/Cargo.toml" \
             --profile gate --locked --offline --bin whitefootc
-      - name: Print the open cases' diagnostics and probe their causes
-        if: always()
+      - name: Check this round's cases with it
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "120"
         run: |
           set +e
-          check() {
-            echo "== $1"
-            perl .github/run-check.pl sealed-probe ./compiler/target/gate/whitefootc --check "$2"
+          for case in ${{ matrix.cases }}; do
+            echo "== $case"
+            perl .github/run-check.pl before-check "$RUNNER_TEMP/before/compiler/target/gate/whitefootc" \
+              --check "tests/conformance/cases/$case.wf"
             echo "exit $?"
-          }
-          # The same probe with the branch's compiler and the base's.
-          compare() {
-            check "$1" "$2"
-            echo "== $1 (base)"
-            perl .github/run-check.pl sealed-probe "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" \
-              --check "$2"
-            echo "exit $?"
-          }
-          for case in range2-pos-module-boxed-dispatch-backedge type11-pos-loop-reference-restored \
-            type11-neg-loop-reference-cover type11-pos-reference-two-targets-restored \
-            type11-neg-reference-rebound-before-restored type11-neg-range-parameter-element-broken \
-            type11-pos-range-parameter-element-restored type11-pos-generic-arena \
-            type11-neg-generic-arena-writer-exit type11-neg-generic-type-parameter-datum \
-            type11-pos-unknown-position-element-checked type11-neg-unknown-position-element-unchecked \
-            type11-neg-unknown-position-whole-container type11-pos-atomic-element-checked \
-            type11-neg-atomic-element-unchecked type11-pos-atomic-field-checked \
-            type11-neg-atomic-field-unchecked type11-pos-unknown-position-whole-container-replaced \
-            type11-pos-atomic-recursive-value-replaced type11-neg-atomic-recursive-value; do
-            compare "$case" "tests/conformance/cases/$case.wf"
           done
-          probe="$RUNNER_TEMP/probe"
-          mkdir -p "$probe"
-          module='struct Module {
-            code: Box<Array<u8>>;
-            brtab: Box<Array<u64>>;
-            invariant same_length(m): m.code.inner.len == m.brtab.inner.len;
-            invariant(m): forall targets(k in 0_u64..m^.brtab.inner.len): m^.brtab.inner[k] < m^.code.inner.len;
-          }'
-          main='fn main() -> status: std::process::ExitStatus pure {
-            return std::process::exit_status(code: 0_u8);
-          }'
-          # A probe is the given items, separated by one blank line as the
-          # canonical form requires.
-          write() {
-            name="$1"
-            shift
-            : > "$probe/$name.wf"
-            first=1
-            for item in "$@"; do
-              [ "$first" = 1 ] || echo >> "$probe/$name.wf"
-              first=0
-              printf '%s\n' "$item" >> "$probe/$name.wf"
-            done
-            "${checker:-check}" "$name" "$probe/$name.wf"
-          }
-          # range2's follow, alone and with a read of a binder datum of
-          # same_length before the loop, inside it, or of the other datum,
-          # and with the relation written as a requirement.
-          for variant in none before inside other written; do
-            before=""; inside=""; written=""
-            case "$variant" in
-              before) before="  let n = m^.code.inner.len;" ;;
-              inside) inside="    let n = m^.code.inner.len;" ;;
-              other) before="  let n = m^.brtab.inner.len;" ;;
-              written) written="  requires m^.code.inner.len == m^.brtab.inner.len;" ;;
-            esac
-            follow="fn follow(m: &Module, pc0: u64) -> result: u64 reads(m) contract {
-          ${written:+$written
-          }  requires pc0 < m^.brtab.inner.len;
-          } {
-            let pc = pc0;
-          ${before:+$before
-          }  loop (
-              invariant slot: pc < m^.brtab.inner.len
-            ) {
-              let target = m^.brtab.inner[pc];
-          ${inside:+$inside
-          }    if pc == target {
-                return pc;
-              }
-              set pc = target;
-              continue;
-            }
-          }"
-            write "follow-$variant" "$module" "$follow" "$main"
-          done
-          # Each instance alone, with no loop: the range invariant's at an
-          # element read, and same_length's from body entry.
-          write alone-range "$module" 'fn probe(m: &Module, pc: u64) -> result: u8 reads(m) contract {
-            requires pc < m^.brtab.inner.len;
-          } {
-            let target = m^.brtab.inner[pc];
-            let op = m^.code.inner[target];
-            return op;
-          }' "$main"
-          write alone-same "$module" 'fn probe(m: &Module, i: u64) -> result: u64 reads(m) contract {
-            requires i < m^.code.inner.len;
-          } {
-            let x = m^.brtab.inner[i];
-            return x;
-          }' "$main"
-          # The loop cursor case: a read at the header with a constant
-          # restoring write, with a guarded write, with no write, and the
-          # same body with no loop; then a write after the cursor moves.
-          link='struct Link {
-            v: u64;
-            next: Option<Box<Link>>;
-            invariant small(link): link.v < 16_u64;
-          }'
-          inspect='fn inspect(link: &Link) -> result: u64 reads(link.v) {
-            let got = link^.v;
-            return got;
-          }'
-          build='  let end = None<Box<Link>>();
-            let tail = Link(v: 15_u64, next: move end);
-            let boxed = box_new::<Link>(value: move tail);
-            let more = Some<Box<Link>>(value: move boxed);
-            let head = Link(v: 2_u64, next: move more);
-            let cursor = &head;'
-          step='    match cursor^.next {
-                Some(value: child) => {
-                  set cursor = &child^.inner;
-                }
-                None() => {
-                  break;
-                }
-              }'
-          for variant in const guard none; do
-            case "$variant" in
-              const) update='    set cursor^.v = 0_u64;' ;;
-              guard) update='    if bumped < 16_u64 {
-                set cursor^.v = bumped;
-              } else {
-                set cursor^.v = 0_u64;
-              }' ;;
-              none) update='' ;;
-            esac
-            walk="fn walk() -> result: u64 pure {
-          $build
-            for (i in 0_u64..2_u64) {
-              let bumped = cursor^.v + 1_u64;
-          ${update:+$update
-          }$step
-            }
-            let got = inspect(link: &head);
-            return got;
-          }"
-            write "walk-$variant" "$link" "$inspect" "$walk" "$main"
-          done
-          write walk-straight "$link" "$inspect" "fn walk() -> result: u64 pure {
-          $build
-            let bumped = cursor^.v + 1_u64;
-            if bumped == 16_u64 {
-              set cursor^.v = 0_u64;
-            } else {
-              set cursor^.v = bumped;
-            }
-            let got = inspect(link: &head);
-            return got;
-          }" "$main"
-          write cover-after-move "$link" "$inspect" "fn walk() -> result: u64 pure {
-          $build
-            for (i in 0_u64..1_u64) {
-          $step
-              set cursor^.v = 31_u64;
-            }
-            let got = inspect(link: &head);
-            return got;
-          }" "$main"
-          # same_length's body-entry instance under a loop with no write,
-          # and range2's follow with its slot over the other measure.
-          write loop-same "$module" 'fn probe(m: &Module, i: u64) -> result: u64 reads(m) contract {
-            requires i < m^.code.inner.len;
-          } {
-            loop {
-              let x = m^.brtab.inner[i];
-              return x;
-            }
-          }' "$main"
-          write follow-code "$module" 'fn follow(m: &Module, pc0: u64) -> result: u64 reads(m) contract {
-            requires pc0 < m^.code.inner.len;
-          } {
-            let pc = pc0;
-            loop (
-              invariant slot: pc < m^.code.inner.len
-            ) {
-              let target = m^.brtab.inner[pc];
-              if pc == target {
-                return pc;
-              }
-              set pc = target;
-              continue;
-            }
-          }' "$main"
-          # The loop cursor with its write just before the rebinding, and
-          # with an uncounted loop.
-          write walk-rebind "$link" "$inspect" "fn walk() -> result: u64 pure {
-          $build
-            for (i in 0_u64..2_u64) {
-              let bumped = cursor^.v + 1_u64;
-              match cursor^.next {
-                Some(value: child) => {
-                  set cursor^.v = 0_u64;
-                  set cursor = &child^.inner;
-                }
-                None() => {
-                  break;
-                }
-              }
-            }
-            let got = inspect(link: &head);
-            return got;
-          }" "$main"
-          write walk-loop "$link" "$inspect" "fn walk() -> result: u64 pure {
-          $build
-            loop {
-              let bumped = cursor^.v + 1_u64;
-              set cursor^.v = 0_u64;
-          $step
-            }
-            let got = inspect(link: &head);
-            return got;
-          }" "$main"
-          checker=compare
-          # A member an ancestor's invariant reads, replaced whole by a
-          # value that keeps the invariant, by one that breaks it, by a
-          # construction in place, and copied out, changed and copied back.
-          member='struct Member {
-            index: u64;
-          }'
-          holder='struct Holder {
-            member: Member;
-            size: u64;
-            invariant fits(holder): holder.member.index < holder.size;
-          }'
-          pick='fn pick(holder: &Holder) -> result: u64 reads(holder) {
-            let got = holder^.member.index;
-            return got;
-          }'
-          for variant in fits breaks built copied; do
-            case "$variant" in
-              fits) update='  let fresh = Member(index: 3_u64);
-            set holder.member = fresh;' ;;
-              breaks) update='  let fresh = Member(index: 9_u64);
-            set holder.member = fresh;' ;;
-              built) update='  set holder.member = Member(index: 3_u64);' ;;
-              copied) update='  let taken = holder.member;
-            set taken.index = 5_u64;
-            set holder.member = taken;' ;;
-            esac
-            write "replace-$variant" "$member" "$holder" "$pick" "fn replace() -> result: u64 pure {
-            let first = Member(index: 1_u64);
-            let holder = Holder(member: first, size: 8_u64);
-          $update
-            let got = pick(holder: &holder);
-            return got;
-          }" "$main"
-          done
-          # An element of a shared state, a field of it, and an element whose
-          # broken sibling's position changed, each handed off after a check
-          # of its own instance.
-          index='struct Index {
-            value: u64;
-            invariant bounded(index): index.value < 16_u64;
-          }'
-          lookup='fn lookup(index: &Index) -> result: u64 reads(index) {
-            let got = index^.value;
-            return got;
-          }'
-          state='struct State {
-            items: Array<Index, 4>;
-            single: Index;
-          }'
-          for variant in element field; do
-            case "$variant" in
-              element) handed='s^.items[at]' ;;
-              field) handed='s^.single' ;;
-            esac
-            write "atomic-$variant" "$index" "$state" "$lookup" "fn peek(state: Shared<State>, at: u64) -> result: u64 pure waits contract {
-            requires at < 4_u64;
-          } {
-            let got = 0_u64;
-            atomic s = &state {
-              if $handed.value < 16_u64 {
-                set got = lookup(index: &$handed);
-              }
-            }
-            return got;
-          }" "$main"
-          done
-          write widened-element "$index" "$lookup" 'fn widened(at: u64) -> result: u64 pure contract {
-            requires at < 4_u64;
-          } {
-            let seed = Index(value: 3_u64);
-            let items = array_filled::<Index, 4>(value: seed);
-            let j = 0_u64;
-            set items[j].value = 31_u64;
-            set j = 1_u64;
-            let got = 0_u64;
-            if items[at].value < 16_u64 {
-              set got = lookup(index: &items[at]);
-            }
-            return got;
-          }' "$main"
-          # A recursive value of a shared state, checked at its head and
-          # handed off: its nodes below form no finite proof.
-          write atomic-chain 'struct Link {
-            v: u64;
-            next: Option<Box<Link>>;
-            invariant small(link): link.v < 16_u64;
-          }' 'struct Chain {
-            head: Link;
-          }' 'fn inspect(link: &Link) -> result: u64 reads(link.v) {
-            let got = link^.v;
-            return got;
-          }' 'fn peek(chain: Shared<Chain>) -> result: u64 pure waits {
-            let got = 0_u64;
-            atomic s = &chain {
-              if s^.head.v < 16_u64 {
-                set got = inspect(link: &s^.head);
-              }
-            }
-            return got;
-          }' "$main"
   # The trial compile: each module of the downstream programs checked with
   # the branch's compiler and the base's, one module at a time so that one
   # rejection hides no other, then Firn's entry composed, which also judges
@@ -407,7 +139,7 @@ jobs:
         run: |
           perl .github/run-check.pl trial-build cargo build --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --bin whitefootc
-          git fetch --depth=1 origin d1f2a19d2ae599512b51a19ea622cd3377e34366
+          git fetch --depth=1 origin 48b990f05ba32c2763dfcc441a94a00e2ee03cbd
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
           cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
           perl .github/run-check.pl trial-base-build cargo build \
@@ -484,56 +216,3 @@ jobs:
           graph firn "$work/Firn-wf/firn"
           judge "firn composed" "$work/Firn-wf/firn" --graph modules.wfg --check-modules
           echo "accepted by both $same_accepted, rejected by both $same_rejected, verdicts that differ $differ"
-      # The gate's corpus group overran its budgets on a host whose main runs
-      # stay within them: what the branch's checker adds to each conformance
-      # case, both compilers on this host in the order base, branch, branch,
-      # base.
-      - name: Time each conformance case's check with both compilers
-        run: |
-          python3 - "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" \
-            "$PWD/compiler/target/gate/whitefootc" <<'PY'
-          import os
-          import subprocess
-          import sys
-          import time
-          from concurrent.futures import ThreadPoolExecutor
-
-          root = "tests/conformance/cases"
-          cases = sorted(name for name in os.listdir(root) if name.endswith(".wf"))
-          compilers = {"base": sys.argv[1], "branch": sys.argv[2]}
-          workers = os.cpu_count() or 4
-
-
-          def check(binary, case):
-              start = time.perf_counter()
-              subprocess.run([binary, "--check", os.path.join(root, case)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
-              return time.perf_counter() - start
-
-
-          times = {name: {case: [] for case in cases} for name in compilers}
-          for name in ("base", "branch", "branch", "base"):
-              start = time.perf_counter()
-              with ThreadPoolExecutor(workers) as pool:
-                  seconds = pool.map(lambda case: check(compilers[name], case), cases)
-                  for case, taken in zip(cases, seconds):
-                      times[name][case].append(taken)
-              print(f"{name}: {time.perf_counter() - start:.1f} s for {len(cases)} cases on {workers} workers",
-                    flush=True)
-
-
-          def mean(values):
-              return sum(values) / len(values)
-
-
-          base = sum(mean(times["base"][case]) for case in cases)
-          branch = sum(mean(times["branch"][case]) for case in cases)
-          print(f"case seconds, mean of two rounds: base {base:.1f}, branch {branch:.1f}, ratio {branch / base:.3f}")
-          slowed = sorted(cases, key=lambda case: mean(times["branch"][case]) - mean(times["base"][case]),
-                          reverse=True)
-          print("the 25 cases the branch slows most, seconds of each round:")
-          for case in slowed[:25]:
-              before = " ".join(f"{taken:.2f}" for taken in times["base"][case])
-              after = " ".join(f"{taken:.2f}" for taken in times["branch"][case])
-              print(f"  {case}: base {before}, branch {after}")
-          PY

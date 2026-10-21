@@ -24,7 +24,10 @@ provisionally starts every value it owns in debt [TYPE-11.S2], instead of
 sealed as the atomic-statement argument of result 1 assumes, pending the
 shared-object model; by the same rule one checked element of its state can
 be handed on. A hand-off of a whole container still needs every element
-restored, as result 2 states.
+restored, as result 2 states. A map and an `Entries` own none of their
+entries: a hand-off of one requires no debt below an entry, so a body owes
+every entry it reaches through a reference parameter or an atomic target
+until it proves it (T1, T5).
 
 The design study that preceded the ruling compared five candidates and named
 three points a soundness argument must settle before implementation:
@@ -163,10 +166,11 @@ at any depth, satisfies every type invariant of its struct. "Owns" is
 [PROV-6]'s ownership closure restricted to parts that exist: struct fields,
 `Box` content, the payload of the variant the enum holds (never another
 variant's), every element of an `Array` and of a `Segments`, every slot
-inside a window [WIN-1] (never a free slot), every `Some` entry of a map
-held as a shared state, and a shared or frozen object's state. A handle
-owns no state [PROV-6]; the state's validity is kept by the atomic rules
-below, not by the handle's.
+inside a window [WIN-1] (never a free slot), and a shared or frozen
+object's state. A handle owns no state [PROV-6]; the state's validity is
+kept by the atomic rules below, not by the handle's. A map and an
+`Entries` own none of their entries, whose validity no hand-off delivers
+(T1, T5).
 
 Validity is a judgment about runtime values used only in this argument.
 The checker never represents `Valid(v)` for an individual value; it
@@ -257,9 +261,16 @@ induction that every hand-off in the chain was proved.
 
 ### Transfer rules
 
-T1 **Body entry.** D is empty. Every parameter value and every reference
-parameter's referent is sealed, because each caller proved it at the call
-(T5); the build establishes the same for the entry's arguments [PROG-3].
+T1 **Body entry.** D holds one debt for each anchor that an entry of a
+reference parameter of type `&ConcurrentHashMap<V>` or `&Entries<V>` owns
+or is, the entry's position `[?]`, and nothing else. Every parameter value
+and every reference parameter's referent is sealed, because each caller
+proved it at the call (T5); the build establishes the same for the entry's
+arguments [PROG-3]. That proof covers no entry of a map or an `Entries`
+(T5), so a body that reaches one through such a parameter owes it until it
+proves it. A map is only ever a shared state [SHARE-1], reached through an
+atomic target or a reference passed from inside an atomic block, so these
+parameters and the atomic entry are the only ways a body reaches an entry.
 
 T2 **Write.** For a write event with resolved write place w — a [SET-1]
 commit, each of a `swap`'s two targets [OP-11], an [OP-12] update target,
@@ -331,7 +342,14 @@ invariant: `swap` [OP-11], whose two arguments only exchange their values
 (T10 governs it), and the value-discarding rows `release` and `map_clear`
 [PRE-1, SHARE-1], whose values are released, as a scope exit releases
 them, with no user action on release [STOR-3]. Their arguments owe nothing
-here. **Release and root death.** When a value is released (`release`,
+here. A hand-off requires no debt whose anchor passes an entry of a map or
+an `Entries` below the handed place: the handed value owns none of that
+entry. An atomic entry already owes every entry of a map target, so a
+hand-off that required them would make every call that passes a map from
+inside an atomic block unprovable; the price is T1's entry debts, since a
+callee may leave an entry broken and no body may assume one valid
+(`type11-neg-map-entry-read-unchecked`,
+`type11-pos-entries-entry-left-broken`). **Release and root death.** When a value is released (`release`,
 `map_clear`, a scope exit) or its root binding dies, only the debts
 *proved* at or below the released place or rooted at the dead binding
 (equal steps, equal captured offsets, the same root) are dropped; a debt
@@ -385,12 +403,13 @@ deterministic:
 
 T9 **Widening.** When an event of T8 point 2 removes an offset identity of
 an anchor and the debt is not restored, that position becomes `[?]`, and so
-does every later offset of the anchor that reads a binding; when the anchor
+does every later offset of the anchor that reads a tracked place, a binding
+or a field or dereference place below one (ENT-2); when the anchor
 was reached only through a reference whose path set REF-1 summarizes by a
 cover, the debt is anchored at that cover. Widening only coarsens a debt:
 the widened anchor overlaps everything the old one did. Widening the later
 offsets too keeps the shapes of one anchor to one more than its offsets
-that read a binding ([result 3](#result-3-the-added-work-is-polynomial)):
+that read a tracked place ([result 3](#result-3-the-added-work-is-polynomial)):
 `grid[r][c]` widens to `grid[r][?]` when the inner index changes and to
 `grid[?][?]` when the outer one does, never to `grid[?][c]`.
 (The finer anchor for linked-structure cursors proposed under
@@ -656,7 +675,7 @@ change in place only through writes that leave debts:
 | `take_back`, `take_front`, `remove_at`, `split_off`, `slots_into_array` | the call's reference argument is a hand-off, so the container is sealed when the call begins; the returned value or container is sealed by parametricity (below) |
 | `append`, `grow`, `grow_paged` | values move without change: no debt at or below the window; `grow` applies the relocation table (T2) |
 | `map_clear`, `release`, release at scope exit | values are released, not handed off (T5's closed list); their debts die with them |
-| atomic statement on a map entry or `Entries` | entry sealed at block entry (SI of the state); every leaving edge restores (T5) |
+| atomic statement on a map entry or `Entries` | every value the entry owns starts in debt at block entry, under the provisional atomic rule above; a map or an `Entries` owns no entry, so no hand-off of one requires an entry restored (T5) |
 
 So "every element satisfies its type's invariant" needs no record: it is
 the absence of a debt, and every element that the program could not prove
