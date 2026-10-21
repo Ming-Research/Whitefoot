@@ -539,8 +539,8 @@ fn hash_map_free<interface HashMapConsume<K, V, E>, const ceiling: u64>(map: Has
       break @cleanup;
     }
     let node = take_back(window: &storage.inner);
-    let HashMapNode(next: link, slot: held) = move node;
-    match move held {
+    let HashMapNode(next: link, slot: stored) = move node;
+    match move stored {
       HashMapFilled(key: saved_key, value: saved_value) => {
         HashMapConsume::consume(env: env, key: move saved_key, value: move saved_value);
       }
