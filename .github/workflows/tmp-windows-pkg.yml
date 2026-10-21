@@ -188,6 +188,13 @@ jobs:
           C
           sed -i 's/$/\r/' "$work/wer-off.cmd"
           "$LLVM_MINGW_ROOT/bin/clang.exe" --target=x86_64-w64-windows-gnu -O1 "$work/src/exp.c" -o "$work/out/exp.exe"
+          # The same programs on the runner itself, for comparison.
+          for mode in overflow-small-abort overflow-abort overflow-fastfail; do
+            start=$(date +%s)
+            status=0
+            timeout 300 "$work/out/exp.exe" "$mode" > /dev/null 2>&1 || status=$?
+            echo "== host-$mode: status $status after $(( $(date +%s) - start )) s"
+          done
           name=exit-timing
           docker run --detach --name "$name" --isolation process \
             --mount "type=bind,src=$(cygpath -w "$work"),dst=C:\\work" \
