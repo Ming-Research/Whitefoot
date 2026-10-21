@@ -286,7 +286,7 @@ fn handed_member(debt: &Debt, place: &ResolvedPlace) -> Option<ResolvedPlace> {
             _ => false,
         };
         if fixed {
-            *step = handed.clone();
+            *step = *handed;
         } else if *step != *handed {
             return None;
         }

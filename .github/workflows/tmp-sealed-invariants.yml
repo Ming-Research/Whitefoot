@@ -2,7 +2,8 @@
 # compiler build, the type-invariant, fact-source and repair unit tests,
 # every conformance case's verdict with each failing case listed, and the
 # full diagnostics of the cases still open with probes that separate their
-# causes). Removed before the branch is ready.
+# causes), and the trial compile of the downstream programs with the
+# branch's compiler and the base's. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -381,3 +382,93 @@ jobs:
             }
             return got;
           }' "$main"
+  # The trial compile: each module of the downstream programs checked with
+  # the branch's compiler and the base's, one module at a time so that one
+  # rejection hides no other, then Firn's entry composed, which also judges
+  # the standard library modules it selects.
+  trial:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Build the branch's compiler and the base's
+        run: |
+          perl .github/run-check.pl trial-build cargo build --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --bin whitefootc
+          git fetch --depth=1 origin d1f2a19d2ae599512b51a19ea622cd3377e34366
+          git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
+          perl .github/run-check.pl trial-base-build cargo build \
+            --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" \
+            --profile gate --locked --offline --bin whitefootc
+      - name: Check each downstream module with both compilers
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "900"
+        run: |
+          set +e
+          work="$RUNNER_TEMP/trial"
+          mkdir -p "$work/logs"
+          for repo in Firn-wf Halo-wf Snowghost-wf; do
+            git clone --quiet --depth=1 --recurse-submodules \
+              "https://github.com/Ming-Research/$repo" "$work/$repo"
+            git -C "$work/$repo" log -1 --format="$repo %H"
+          done
+          python3 research/experiments/match-dispatch/wasm/gen.py "$work/v2h.wf"
+          python3 research/experiments/match-dispatch/wasm/gen.py "$work/v2h-inline.wf" --inline
+          branch="$PWD/compiler/target/gate/whitefootc"
+          base="$RUNNER_TEMP/base/compiler/target/gate/whitefootc"
+          # One judgment with both compilers, run in the given directory; a
+          # verdict that differs prints both outputs, a shared rejection the
+          # first lines of each.
+          judge() {
+            label="$1"
+            dir="$2"
+            shift 2
+            for compiler in branch base; do
+              bin="$branch"
+              [ "$compiler" = base ] && bin="$base"
+              (cd "$dir" && perl "$GITHUB_WORKSPACE/.github/run-check.pl" "trial-$compiler" \
+                "$bin" "$@") > "$work/logs/$label.$compiler" 2>&1
+              echo $? > "$work/logs/$label.$compiler.exit"
+            done
+            mine=$(cat "$work/logs/$label.branch.exit")
+            theirs=$(cat "$work/logs/$label.base.exit")
+            seconds=$(sed -n 's/^== END [^:]*: \([0-9.]*\) s.*/\1/p' "$work/logs/$label.branch" | tr '\n' ' ')
+            printf '%-50s branch %s base %s (%s s)\n' "$label" "$mine" "$theirs" "$seconds"
+            quiet='^== (START|RUNNING|BUDGET)'
+            if [ "$mine" != "$theirs" ]; then
+              echo "---- $label differs: branch"
+              grep -v -E "$quiet" "$work/logs/$label.branch" | head -80
+              echo "---- $label differs: base"
+              grep -v -E "$quiet" "$work/logs/$label.base" | head -30
+            elif [ "$mine" != 0 ]; then
+              echo "---- $label rejected by both: branch"
+              grep -v -E "$quiet" "$work/logs/$label.branch" | head -12
+              echo "---- $label rejected by both: base"
+              grep -v -E "$quiet" "$work/logs/$label.base" | head -12
+            fi
+          }
+          graph() {
+            name="$1"
+            dir="$2"
+            for module in $(sed -n 's/^\(pkg[a-z_:]*\):.*/\1/p' "$dir/modules.wfg"); do
+              judge "$name $module" "$dir" --graph modules.wfg --check-module "$module"
+            done
+          }
+          graph snowghost "$work/Snowghost-wf/renderer"
+          for lib in msgpack json halo; do
+            graph "halo-$lib" "$work/Halo-wf/lib/$lib"
+          done
+          graph firn "$work/Firn-wf/firn"
+          judge "firn composed" "$work/Firn-wf/firn" --graph modules.wfg --check-modules
+          judge v2h "$work" --check v2h.wf
+          judge v2h-inline "$work" --check v2h-inline.wf
