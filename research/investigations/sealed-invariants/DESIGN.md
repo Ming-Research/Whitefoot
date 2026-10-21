@@ -23,8 +23,13 @@ restoration of a sibling whose position was lost. An atomic target
 provisionally starts every value it owns in debt [TYPE-11.S2], instead of
 sealed as the atomic-statement argument of result 1 assumes, pending the
 shared-object model; by the same rule one checked element of its state can
-be handed on. A hand-off of a whole container still needs every element
-restored, as result 2 states. A map and an `Entries` own none of their
+be handed on. By the same provisional rule the state the last `shared_close`
+returns keeps only its own invariants: every struct value it owns starts in
+debt at the binding the result continues into, and a hand-off of the unbound
+result fails while that state may own one [TYPE-11.S2, TYPE-11.S4]; the
+supplied results the specification table below calls sealed exclude it
+([below](#prelude-host-and-module-boundaries)). A hand-off of a whole
+container still needs every element restored, as result 2 states. A map and an `Entries` own none of their
 entries: a hand-off of one requires no debt below an entry, so a body owes
 every entry it reaches through a reference parameter or an atomic target
 until it proves it (T1, T5).
