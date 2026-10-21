@@ -59,8 +59,8 @@ jobs:
           git rev-parse HEAD
           cd compiler
           RUSTC_BOOTSTRAP=1 cargo rustc --lib --profile test --locked --offline -- \
-            -Zprint-mono-items=lazy -C codegen-units=1 -C no-prepopulate-passes -C opt-level=0 \
-            > "$RUNNER_TEMP/mono.txt" 2> "$RUNNER_TEMP/mono.err" || { tail -30 "$RUNNER_TEMP/mono.err"; exit 1; }
+            -Zprint-mono-items=yes -C codegen-units=1 -C no-prepopulate-passes -C opt-level=0 \
+            > "$RUNNER_TEMP/mono.txt" 2>&1 || { tail -30 "$RUNNER_TEMP/mono.txt"; exit 1; }
           grep -c '^MONO_ITEM' "$RUNNER_TEMP/mono.txt"
 
       - name: Count per function path
