@@ -5,6 +5,14 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-13 A failed proof's repair names the lost header relation, the rewritten value parameter or the callee whose own proof failed
+
+Nodes: compiler/diagnostic-repairs, compiler/rejection-payloads
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve all" (translated), on the card "approve the three new decisions and one qualification that Whitefoot#446 (a failed proof's repair points at the real cause) adds to the design tree?" (translated), shown at head commit 9d4277166, whose background set out each decision with its rejected program and its message before and after, and asked whether replaying the caller with a callee summary added, only after a rejection and with the result discarded, is the re-run DIAG-2 prohibits; option A answered that it is not.
+
+Summary: Three cause-specific repairs are added, each given only when a private copy of the state confirms the cause without a contradiction and none of them feeding acceptance or proof-receipt keys. A loop-header relation withheld at a join leaves an explanation-only record, so a later unproved subscript, call requirement, invariant or postcondition names the header relation and the path, including a writing call and its preserving `ensures`, that lost it, instead of a guard that leaves the loop's induction unproved. An uncovered indexed write through a rewritten value parameter names the dominating assignment and offers a fresh local, or moving the access before it under a conservative source check, instead of widening the row, which hid the cause; such a repair omits `expected_row`. A caller's failed proof names a callee whose own failed obligation withheld its summary, found by replaying the caller once with that summary as a hypothesis after the rejection is selected, because restoring a summary at a call changes every later state on its paths, which a copy at the failing point cannot represent, and DIAG-2 governs acceptance-bearing routes rather than this discarded explanation.
+
 ## 2026-10-21 The invocation supplies the process identifier, the wall clock reads the local time offset and the handle factory reads and raises the open-files limit
 
 Nodes: language/system-interface, language/system-interface/clocks, language/system-interface/handle-factory, language/waiting/shared-objects
