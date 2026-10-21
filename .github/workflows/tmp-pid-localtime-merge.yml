@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stage: [corpus, conformance]
+        stage: [static, lib, corpus, conformance]
     steps:
       - uses: actions/checkout@v4
         with:
