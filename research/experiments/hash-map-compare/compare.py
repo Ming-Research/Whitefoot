@@ -51,13 +51,15 @@ MASK = (1 << 64) - 1
 # precisely enough, never whether a change is accepted.
 RESOLUTION = {1000: 0.03}
 DEFAULT_RESOLUTION = 0.02
-# The hold criterion, set before measurement with the same investigation. Both
-# uniform sizes are meant to be larger than the 14900K's 36 MB third-level
-# cache (by their layout the tables take about 42 MB and 335 MB, computed, not
-# measured; the smaller is only about a sixth over), so that H1 compares
-# per-call work, not cache hits against misses. The 14900K run tests that
-# premise.
-HOLD_SMALL, HOLD_LARGE = 1000000, 8000000
+# The hold criterion, set before measurement with the same investigation. H1
+# compares two uniform sizes both far larger than the 14900K's 36 MB
+# third-level cache (by their layout the tables take about 168 MB and 1.34 GB,
+# computed, not measured), so that it compares per-call work, not cache hits
+# against misses; the sizes differ eightfold, so work growing with the table
+# gives a ratio near 8 against the factor 2. H2 and H3 read the reference size,
+# whose table (about 42 MB) is probably mostly cached on that machine and is
+# not used for H1.
+HOLD_REFERENCE, HOLD_SMALL, HOLD_LARGE = 1000000, 4000000, 32000000
 HOLD_GROWTH_FACTOR = 2.0
 HOLD_LIMIT_NS = 20000
 CHAINS = [64, 1024, 65536]
@@ -369,7 +371,7 @@ def reduce_hold(rows, out):
     calls = {}
     for row in rows:
         calls.setdefault((row["mode"], row["size"]), []).append(row)
-    needed = [(1, HOLD_SMALL), (1, HOLD_LARGE)] + [(2, m) for m in CHAINS]
+    needed = [(1, HOLD_REFERENCE), (1, HOLD_SMALL), (1, HOLD_LARGE)] + [(2, m) for m in CHAINS]
     for key in needed:
         if key not in calls:
             raise Invalid(f"hold mode {key[0]} size {key[1]}: no calls")
@@ -387,16 +389,17 @@ def reduce_hold(rows, out):
         stats[(mode, size)] = (quantile(ns, 0.5), quantile(ns, 0.99))
         print(f"{'uniform' if mode == 1 else 'chain':<8} {size:>8} {len(ns):>6} {quantile(ns, 0.5):>9} "
               f"{quantile(ns, 0.99):>9} {max(ns):>9} {quantile(pairs, 0.5):>9}", file=out)
+    reference = stats[(1, HOLD_REFERENCE)][1]
     small, large = stats[(1, HOLD_SMALL)][1], stats[(1, HOLD_LARGE)][1]
     readings = {
         "H1": large <= HOLD_GROWTH_FACTOR * small,
-        "H2": small <= HOLD_LIMIT_NS,
+        "H2": reference <= HOLD_LIMIT_NS,
     }
     print(f"H1 p99 at {HOLD_LARGE} ({large} ns) <= {HOLD_GROWTH_FACTOR:g} x p99 at {HOLD_SMALL} "
           f"({small} ns): {'pass' if readings['H1'] else 'fail'}", file=out)
-    print(f"H2 p99 at {HOLD_SMALL} ({small} ns) <= {HOLD_LIMIT_NS} ns: {'pass' if readings['H2'] else 'fail'}",
-          file=out)
-    per_pair = statistics.median(r["ns"] / r["pairs"] for r in calls[(1, HOLD_SMALL)] if r["pairs"] > 0)
+    print(f"H2 p99 at {HOLD_REFERENCE} ({reference} ns) <= {HOLD_LIMIT_NS} ns: "
+          f"{'pass' if readings['H2'] else 'fail'}", file=out)
+    per_pair = statistics.median(r["ns"] / r["pairs"] for r in calls[(1, HOLD_REFERENCE)] if r["pairs"] > 0)
     for m in CHAINS:
         bound = 2 * m * per_pair
         median = stats[(2, m)][0]
@@ -541,7 +544,8 @@ def measure(args):
                 append(memory, MEMORY_COLUMNS, [[arm, run_, size, row[4], row[5], row[6], lines[1][1], lines[1][2]]])
     hold = os.path.join(args.out, "hold.tsv")
     image = os.path.join(images, "hold-candidate")
-    cells = [(1, HOLD_SMALL, HOLD_CALLS), (1, HOLD_LARGE, HOLD_CALLS)] + [(2, m, CHAIN_CALLS) for m in CHAINS]
+    cells = [(1, size, HOLD_CALLS) for size in (HOLD_REFERENCE, HOLD_SMALL, HOLD_LARGE)]
+    cells += [(2, m, CHAIN_CALLS) for m in CHAINS]
     for mode, size, count in cells:
         lines = launch(image, [mode, size, count], args.cpu)
         if len(lines) != count or any(len(f) != 5 for f in lines):
@@ -662,31 +666,37 @@ def self_test():
     expect_invalid("memory runs differ", lambda: reduce_memory(memory[:-1] + [dict(memory[-1], retained=1)], sink))
     expect_invalid("memory one run", lambda: reduce_memory(memory[:-1], sink))
 
-    def hold_rows(small, large, chain_ns):
+    def hold_rows(reference, small, large, chain_ns):
+        """Hold rows whose calls take reference, small and large nanoseconds at
+        the three uniform sizes and chain_ns(m) over m pairs sharing a hash."""
         rows = []
-        for size, ns in ((HOLD_SMALL, small), (HOLD_LARGE, large)):
+        for size, ns in ((HOLD_REFERENCE, reference), (HOLD_SMALL, small), (HOLD_LARGE, large)):
             rows += [{"mode": 1, "size": size, "call": c, "ns": ns, "pairs": 64} for c in range(100)]
         for m in CHAINS:
             rows += [{"mode": 2, "size": m, "call": c, "ns": chain_ns(m), "pairs": m} for c in range(10)]
         return rows
-    expect("hold pass", set(reduce_hold(hold_rows(3000, 5000, lambda m: m * 40), sink).values()), {True})
-    expect("hold H1 at the factor", reduce_hold(hold_rows(3000, 6000, lambda m: m * 40), sink)["H1"], True)
-    readings = reduce_hold(hold_rows(3000, 7000, lambda m: m * 400), sink)
+    expect("hold pass", set(reduce_hold(hold_rows(3000, 2000, 3500, lambda m: m * 40), sink).values()), {True})
+    expect("hold H1 at the factor", reduce_hold(hold_rows(3000, 2000, 4000, lambda m: m * 40), sink)["H1"], True)
+    # H1 reads the small and large sizes: the reference size would let 4500 pass.
+    readings = reduce_hold(hold_rows(3000, 2000, 4500, lambda m: m * 400), sink)
     expect("hold H1 fail", readings["H1"], False)
     expect("hold H3 fail", readings["H3-64"], False)
-    expect("hold H2 fail", reduce_hold(hold_rows(30000, 40000, lambda m: m), sink)["H2"], False)
-    # H2 reads the smaller size only: the larger one is over the limit here.
-    readings = reduce_hold(hold_rows(10000, 25000, lambda m: m), sink)
-    expect("hold H2 on the small size", readings["H2"], True)
+    # H2 reads the reference size: the small size is under the limit here.
+    expect("hold H2 fail", reduce_hold(hold_rows(30000, 2000, 3000, lambda m: m), sink)["H2"], False)
+    # H2 reads the reference size: the large size is over the limit here.
+    readings = reduce_hold(hold_rows(10000, 2000, 25000, lambda m: m), sink)
+    expect("hold H2 on the reference size", readings["H2"], True)
     expect("hold H1 with H2 passing", readings["H1"], False)
-    # H3 takes its per-pair time from the small size's uniform calls: at 46.9 ns
-    # per pair a chain of 120 ns per pair fails, and at the large size's 93.8 it
-    # would pass.
-    readings = reduce_hold(hold_rows(3000, 6000, lambda m: m * 120), sink)
-    expect("hold H3 on the small size", {k: v for k, v in readings.items() if k.startswith("H3")},
+    # H3 takes its per-pair time from the reference size's uniform calls: at
+    # 15.6 ns per pair a chain of 40 ns per pair fails, and at the small size's
+    # 31.3 or the large size's 62.5 it would pass.
+    readings = reduce_hold(hold_rows(1000, 2000, 4000, lambda m: m * 40), sink)
+    expect("hold H3 on the reference size", {k: v for k, v in readings.items() if k.startswith("H3")},
            {"H3-64": False, "H3-1024": False, "H3-65536": False})
     expect_invalid("hold short chain", lambda: reduce_hold(
-        [dict(r, pairs=1) if r["mode"] == 2 else r for r in hold_rows(1, 1, lambda m: 1)], sink))
+        [dict(r, pairs=1) if r["mode"] == 2 else r for r in hold_rows(1, 1, 1, lambda m: 1)], sink))
+    expect_invalid("hold missing size", lambda: reduce_hold(
+        [r for r in hold_rows(1, 1, 1, lambda m: 1) if r["size"] != HOLD_SMALL], sink))
     sink.close()
     for failure in failures:
         print("FAIL " + failure)

@@ -16,7 +16,7 @@ alias hash_map_scan = std::collections::hash_map::hash_map_scan;
 alias nanoseconds_from = std::time::nanoseconds_from;
 alias now = std::time::now;
 
-const ceiling: u64 = 8388608_u64;
+const ceiling: u64 = 33554432_u64;
 
 const spread: u64 = 11400714819323198485_u64;
 
@@ -308,7 +308,7 @@ fn arg_number(args: &std::text::Args, position: u64) -> result: Option<u64> read
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "hold MODE SIZE CALLS times CALLS calls of hash_map_scan with limit 64 one by one and prints each call's nanoseconds and pairs lent. MODE 1: SIZE pairs with uniform hashes, after one untimed pass, each call continuing the last. MODE 2: SIZE pairs sharing one hash, every call starting at the cursor of the call that holds their chain. SIZE 1..8000000, CALLS 1..1000000. Status 2 for invalid arguments, 1 when output failed, 3 when the untimed pass lent fewer than SIZE pairs or no call held the shared chain.";
+  doc "hold MODE SIZE CALLS times CALLS calls of hash_map_scan with limit 64 one by one and prints each call's nanoseconds and pairs lent. MODE 1: SIZE pairs with uniform hashes, after one untimed pass, each call continuing the last. MODE 2: SIZE pairs sharing one hash, every call starting at the cursor of the call that holds their chain. SIZE 1..32000000, CALLS 1..1000000. Status 2 for invalid arguments, 1 when output failed, 3 when the untimed pass lent fewer than SIZE pairs or no call held the shared chain.";
   let Inputs(args: args, cwd: directory, stdout: output, handles: factory, clock: clock, ..) = move inputs;
   let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move write_directory);
@@ -340,7 +340,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   if size == 0_u64 {
     return exit_status(code: 2_u8);
   }
-  if size > 8000000_u64 {
+  if size > 32000000_u64 {
     return exit_status(code: 2_u8);
   }
   if calls == 0_u64 {
