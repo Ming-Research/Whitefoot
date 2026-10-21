@@ -1,7 +1,42 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
+fn comparison_code(one: i32, two: i32, minus: i32, zero: i32, unsigned_one: u32, unsigned_again: u32) -> code: u8 pure {
+  doc "Adds 1 when one == two, 2 when minus >= zero, 4 when unsigned_one > unsigned_again, 8 when one <= minus and 16 when unsigned_one < unsigned_again, so 0 says every ordered comparison kept its operands' signedness.";
+  let equal = if one == two {
+    give 1_u8;
+  } else {
+    give 0_u8;
+  }
+  let at_least = if minus >= zero {
+    give 2_u8;
+  } else {
+    give 0_u8;
+  }
+  let above = if unsigned_one > unsigned_again {
+    give 4_u8;
+  } else {
+    give 0_u8;
+  }
+  let at_most = if one <= minus {
+    give 8_u8;
+  } else {
+    give 0_u8;
+  }
+  let below = if unsigned_one < unsigned_again {
+    give 16_u8;
+  } else {
+    give 0_u8;
+  }
+  let first_pair = equal +wrap at_least;
+  let second_pair = above +wrap at_most;
+  let both_pairs = first_pair +wrap second_pair;
+  let total = both_pairs +wrap below;
+  return total;
+}
+
 fn main() -> status: ExitStatus pure {
+  doc "Each exact and wrapping row computes in its written signedness and width; the results widen to i64, sum to 65765 and less 65723 give the exit status 42. The ordered comparisons run on a helper's operands and add a nonzero code if any of them selects wrongly.";
   let aw = 127_i8 +wrap 1_i8;
   let sw = 0_u8 -wrap 1_u8;
   let mw = 65535_u16 *wrap 2_u16;
@@ -11,47 +46,25 @@ fn main() -> status: ExitStatus pure {
   let sut = 10_u32 - 3_u32;
   let mst = 6_i64 * 7_i64;
   let mut = 6_u64 * 7_u64;
-  if aw != -128_i8 {
-    return exit_status(code: 1_u8);
-  }
-  if sw != 255_u8 {
-    return exit_status(code: 2_u8);
-  }
-  if mw != 65534_u16 {
-    return exit_status(code: 3_u8);
-  }
-  if ast != -7_i16 {
-    return exit_status(code: 4_u8);
-  }
-  if aut != 13_u16 {
-    return exit_status(code: 5_u8);
-  }
-  if sst != 7_i32 {
-    return exit_status(code: 6_u8);
-  }
-  if sut != 7_u32 {
-    return exit_status(code: 7_u8);
-  }
-  if mst != 42_i64 {
-    return exit_status(code: 8_u8);
-  }
-  if mut != 42_u64 {
-    return exit_status(code: 9_u8);
-  }
-  if 1_i32 == 2_i32 {
-    return exit_status(code: 10_u8);
-  }
-  if -1_i32 >= 0_i32 {
-    return exit_status(code: 11_u8);
-  }
-  if 1_u32 > 1_u32 {
-    return exit_status(code: 12_u8);
-  }
-  if 1_i32 <= -1_i32 {
-    return exit_status(code: 13_u8);
-  }
-  if 1_u32 < 1_u32 {
-    return exit_status(code: 14_u8);
-  }
-  return exit_status(code: 0_u8);
+  let aw_wide = cvt::<i8, i64>(aw);
+  let sw_wide = cvt::<u8, i64>(sw);
+  let mw_wide = cvt::<u16, i64>(mw);
+  let ast_wide = cvt::<i16, i64>(ast);
+  let aut_wide = cvt::<u16, i64>(aut);
+  let sst_wide = cvt::<i32, i64>(sst);
+  let sut_wide = cvt::<u32, i64>(sut);
+  let mut_wide = cvt::<u64, i64>(mut);
+  let sum_one = aw_wide + sw_wide;
+  let sum_two = sum_one + mw_wide;
+  let sum_three = sum_two + ast_wide;
+  let sum_four = sum_three + aut_wide;
+  let sum_five = sum_four + sst_wide;
+  let sum_six = sum_five + sut_wide;
+  let sum_seven = sum_six + mst;
+  let sum_all = sum_seven + mut_wide;
+  let shifted = sum_all - 65723_i64;
+  let value_code = cvt::<i64, u8>(shifted);
+  let order = comparison_code(one: 1_i32, two: 2_i32, minus: -1_i32, zero: 0_i32, unsigned_one: 1_u32, unsigned_again: 1_u32);
+  let code = value_code +wrap order;
+  return exit_status(code: code);
 }
