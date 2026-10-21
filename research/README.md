@@ -71,7 +71,9 @@ the work-branch and merge boundary.
   the soundness argument for a struct's invariant travelling with its value
   into fields, payloads, containers and shared states, broken only between
   hand-offs, with the checker's debt state, its finite container evidence,
-  its polynomial cost and the specification changes it needs.
+  a bound on its added work, polynomial in the body's size and in the debts
+  an atomic block's entry and a map or `Entries` parameter's body entry
+  start with, and the specification changes it needs.
 - [Writer-lost facts](investigations/writer-lost-facts/DESIGN.md): facts
   agent writers established and the checker dropped (loop exit, conjunction,
   value `if`, `Option`, chained certificates), each classified against v0.77
