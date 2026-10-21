@@ -1,9 +1,10 @@
 # Temporary (board item enum-route-check-cost); remove before the branch is ready.
-# Re-measures Halo's pkg::vm and pkg::test checks and Firn's whole-program
-# check after origin/main was merged into the branch, to confirm the merge left
-# the work unchanged: the branch before the merge, the main revision merged,
-# and the merge itself, against the pre-regression compilers the earlier
-# measurements used. Compiler CPU (user + system), interleaved rounds, plus one
+# After a second merge of origin/main into the branch: the unit tests the
+# change owns (a build of every test target of the merged tree, then the
+# filters below), and a re-measurement of Halo's pkg::vm and pkg::test checks
+# to confirm the merge left the work unchanged. The compilers: the pre-#431
+# main, the branch before this merge, the main revision merged, and the merge
+# itself. Compiler CPU (user + system), interleaved rounds, plus one
 # work-counter run each.
 #
 # The downstream sources predate main's rule OP-5 (a conditional test whose
@@ -34,11 +35,29 @@ concurrency:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
-  PREBRANCH_REVISION: e2f2bfe2f2046327b926c2d9104d9b6a1416effa
-  MAIN_REVISION: c40acc366f2844869666869ce157bbe3ae5858eb
+  PREBRANCH_REVISION: 44f33c996c7f0aa1746d84ca40d08e3fdcaf4c72
+  MAIN_REVISION: b59f946224a2bda7ece450a0d2d737f9a916dc59
   WHITEFOOT_CHECK_TIMEOUT: 1800
 
 jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    name: unit tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and build the test targets
+        run: |
+          rustup default stable
+          perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl thc-unit-build cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib --no-run
+      - name: Routed ensures tests
+        run: perl .github/run-check.pl thc-unit-routed cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib enum_routed_ensures
+      - name: Entailment tests
+        run: perl .github/run-check.pl thc-unit-entailment cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib semantic::entailment
+      - name: Resolution tests
+        run: perl .github/run-check.pl thc-unit-resolution cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib resolution::
+
   measure:
     runs-on: ubuntu-24.04
     timeout-minutes: 300
@@ -47,15 +66,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Firn whole program, at the revision the 10-13 measurement used.
-          - label: firn
-            repo: Firn-wf
-            rev: b83b67fa0d7b463dbafe5429b013efc04e39076a
-            args: --graph firn/modules.wfg --entry firn --check
+          # pkg::vm: the baseline is the main revision just before the
+          # regression, as the first acceptance row defines it.
+          - label: halo pkg::vm
+            repo: Halo-wf
+            rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
+            args: --graph lib/halo/modules.wfg --check-module pkg::vm
             base: 7d9118eba
             rounds: 5
             main_rounds: 5
-            adapt_max: 400
+            adapt_max: 300
+          # pkg::test: the baseline is the compiler of the earlier run; main
+          # takes about ten minutes a check, so it runs once.
+          - label: halo pkg::test
+            repo: Halo-wf
+            rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
+            args: --graph tests/halo-vm/modules.wfg --check-module pkg::test
+            base: d837678c6905
+            rounds: 3
+            main_rounds: 1
+            adapt_max: 100
     steps:
       - uses: actions/checkout@v4
         with:

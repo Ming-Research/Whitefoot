@@ -463,10 +463,12 @@ mechanical fix for each rejection, one at a time, with the merged compiler
 effect rows; Firn 240, including the `held` renames in its Halo dependency),
 so all four compilers checked the same accepted source and every exit code was
 0. The adapted sources and their diffs are workflow artifacts only. The four
-compilers: base `7d9118eba` (pre-#431 main), prebranch `e2f2bfe2f` (this
+compilers: base `7d9118eba` (pre-#431 main; `d837678c6905` for `pkg::test`, the
+compiler of its earlier measurement), prebranch `e2f2bfe2f` (this
 fix before the merge), main `c40acc366` (the merged main, with the #431
-regression), and branch (this fix after the merge, `1c35e4d66`; its compiler
-tree is identical at `44f33c996`). Compiler user+sys CPU, interleaved rounds,
+regression), and branch (this fix after the merge; the compiler tree is
+identical at `1c35e4d66`, `2adcddb39`, `c7312e7b8` and `44f33c996`, the commits
+the three runs built). Compiler user+sys CPU, interleaved rounds,
 no check cache:
 
 | Workload (host) | rounds | base s | prebranch s | main s | branch s | branch/base | branch/prebranch |
