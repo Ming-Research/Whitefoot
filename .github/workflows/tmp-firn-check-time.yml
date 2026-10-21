@@ -116,3 +116,44 @@ jobs:
       - name: Remove only this run's scratch worktrees and Cargo targets
         if: always()
         run: python3 .github/firn-check-time.py cleanup
+
+  # The idle-host refusal never runs on a hosted runner in the timing job; this
+  # job gives it real process listings and the three lock states it handles.
+  idle-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Idle check against no lock, a live lock and a stale lock
+        run: |
+          set -u
+          lock="/tmp/whitefoot-check-$(id -u).lock"
+          probe() {
+            out=$(mktemp -d "$RUNNER_TEMP/idle.XXXXXX"); mkdir -p "$out/logs"
+            export FIRN_TIME_OUT="$out"
+            python3 .github/firn-check-time.py idle > "$out/stdout" 2> "$out/stderr"
+            status=$?
+            echo "--- $1: exit $status"; cat "$out/stdout" "$out/stderr"
+            probe_status=$status; probe_stderr=$(cat "$out/stderr")
+          }
+          fail() { echo "::error::$1"; exit 1; }
+          probe "no lock"
+          if [ "$probe_status" -ne 0 ]; then
+            case "$probe_stderr" in *"host is busy"*) echo "busy refusal on a hosted runner is a correct refusal";; *) fail "no lock: unexpected failure";; esac
+          fi
+          ps -eo pid,ppid,pgid,pcpu,comm,args --sort=-pcpu | head -15
+          sleep 300 & live=$!
+          mkdir "$lock"; echo "$live" > "$lock/pid"; echo "probe live lock" > "$lock/command"
+          probe "live lock"
+          [ "$probe_status" -ne 0 ] || fail "a live lock owner was accepted"
+          case "$probe_stderr" in *"live host lock owner $live"*) ;; *) fail "live lock: wrong refusal";; esac
+          [ -d "$lock" ] || fail "a live lock was removed"
+          kill "$live"; wait "$live" 2>/dev/null
+          echo "$live" > "$lock/pid"
+          probe "stale lock"
+          if [ "$probe_status" -eq 0 ]; then
+            [ ! -e "$lock" ] || fail "a stale lock was not removed"
+          else
+            case "$probe_stderr" in *"dead lock owner but live heavy"*) [ -d "$lock" ] || fail "a refused stale lock was removed";; *) fail "stale lock: unexpected failure";; esac
+          fi
+          rm -rf "$lock"

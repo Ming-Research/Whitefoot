@@ -560,6 +560,25 @@ def acquire(stage, number, order):
             raise RuntimeError(f"{stage}/{number}/{variant}: acquisition invalid; see raw process logs")
 
 
+def sample_pass(data, order, run, reason):
+    """Run each variant once with `run`. A reference pair whose compiler completes
+    without the accepted verdict is voided with `reason`'s text and its remaining
+    variants are skipped; every other failure raises, the primary pair's included."""
+    for position, variant in enumerate(order):
+        pair = variant_pair(variant)
+        if data["pairs"][pair]["status"] != "valid":
+            continue
+        row = run("sample", 0, position, variant)
+        failure = cell_failure(row)
+        if failure is None:
+            continue
+        if pair != PRIMARY and failure == "completed":
+            data["pairs"][pair].update(status="void", void_reason=reason(row))
+            print(f"Reference pair {pair} voided: {data['pairs'][pair]['void_reason']}", flush=True)
+            continue
+        raise RuntimeError(f"sample/{variant}: acquisition invalid; see raw process logs")
+
+
 def sample():
     require_wrapper()
     if read_rows():
@@ -567,20 +586,8 @@ def sample():
     snapshot("before-sample")
     data = manifest()
     order = all_variants(data)
-    for position, variant in enumerate(order):
-        pair = variant_pair(variant)
-        if data["pairs"][pair]["status"] != "valid":
-            continue
-        row = run_cell("sample", 0, position, variant)
-        failure = cell_failure(row)
-        if failure is None:
-            continue
-        if pair != PRIMARY and failure == "completed":
-            data["pairs"][pair].update(status="void", void_reason=void_reason(row))
-            save_manifest(data)
-            print(f"Reference pair {pair} voided: {data['pairs'][pair]['void_reason']}", flush=True)
-            continue
-        raise RuntimeError(f"sample/{variant}: acquisition invalid; see raw process logs")
+    sample_pass(data, order, run_cell, void_reason)
+    save_manifest(data)
     active = active_variants(data)
     rows = read_rows()
     validate_matrix(rows, {"sample"}, order, active, 0)
@@ -707,6 +714,44 @@ def selfcheck():
     bad = [dict(r) for r in rows]
     bad[0], bad[1] = dict(bad[0], variant=bad[1]["variant"]), dict(bad[1], variant=bad[0]["variant"])
     refused(bad, stages, primary, 7, "a misordered variant")
+
+    # The sample's void decision, with a fake runner in place of the timed process.
+    def fake(outcome):
+        def run(stage, number, position, variant):
+            row = dict(stage=stage, round=number, order=position, variant=variant, seconds=1.0,
+                       actual_returncode=0, launcher_returncode=0, timed_out=False, verdict="accepted")
+            if variant in outcome:
+                row.update(outcome[variant])
+            return row
+        return run
+
+    def sampled(outcome):
+        data = {"pairs": {pair: dict(spec) for pair, spec in both.items()}}
+        calls = []
+        runner = fake(outcome)
+        sample_pass(data, order, lambda *cell: calls.append(cell[3]) or runner(*cell),
+                    lambda row: f'{row["variant"]} exit {row["actual_returncode"]}')
+        return data, calls
+
+    rejected = dict(actual_returncode=1, launcher_returncode=1, verdict="INVALID VERDICT")
+    data, calls = sampled({})
+    if data["pairs"]["then"]["status"] != "valid" or calls != order:
+        raise RuntimeError("a clean sample did not run every variant")
+    for outcome in (rejected, dict(rejected, actual_returncode=101), dict(rejected, actual_returncode=-11)):
+        data, calls = sampled({"then-rule": outcome})
+        if (data["pairs"]["then"]["status"] != "void" or data["pairs"]["now"]["status"] != "valid"
+                or "then-rule exit" not in data["pairs"]["then"]["void_reason"]
+                or calls != order[:5]):
+            raise RuntimeError("a reference pair whose compiler completed without the verdict was not voided")
+    for variant, outcome in [("now-base", rejected), ("now-rule", rejected),
+                             ("then-base", dict(timed_out=True, launcher_returncode=124, actual_returncode=-15)),
+                             ("then-twin", dict(actual_returncode=None, launcher_returncode=1, seconds=None,
+                                                verdict="MISSING DIRECT PROCESS RECORD"))]:
+        try:
+            sampled({variant: outcome})
+        except RuntimeError:
+            continue
+        raise RuntimeError(f"a {variant} failure that is not a completed reference run did not stop the sample")
 
     # The criterion: claimed 2.0, required 0.5, so O = 1.5 gives margin 0.5.
     if criterion(1.5, 0.25, 2.0, 0.5) != (0.5, True):
