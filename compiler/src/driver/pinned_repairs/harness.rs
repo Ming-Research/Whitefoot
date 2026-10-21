@@ -41,6 +41,7 @@ pub(super) fn run_pairs() {
         .chain(super::cell_consumption::CELL_CONSUMPTION)
         .chain(super::content_moves::CONTENT_MOVES)
         .chain(super::prelude_opaque::PRELUDE_OPAQUE)
+        .chain(super::proof_place_spellings::PROOF_PLACE_SPELLINGS)
         .chain(super::qualified_constants::QUALIFIED_CONSTANTS)
         .chain(super::recursive_effects::RECURSIVE_EFFECTS)
         .chain(super::remaining_repairs::REMAINING_REPAIRS)
@@ -158,7 +159,7 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);
