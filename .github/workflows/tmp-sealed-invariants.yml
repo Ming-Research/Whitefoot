@@ -58,8 +58,9 @@ jobs:
           grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
           exit "$status"
   # This round's cases with the compilers they fail on: the head the first
-  # review saw, and the merge of main before field-valued offsets widened
-  # debts. A case that does not end within two minutes is stopped.
+  # review saw, and the pushed head without the widening of debts whose
+  # offsets read a written field. A case that does not end within two
+  # minutes is stopped.
   before:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -118,14 +119,23 @@ jobs:
   # The trial compile: each module of the downstream programs checked with
   # the branch's compiler and the base's, one module at a time so that one
   # rejection hides no other, then Firn's entry composed, which also judges
-  # the standard library modules it selects. Both verdicts and both lists of
-  # errors are compared, since a module the base already rejects can hide a
-  # new rejection behind the old one. The programs predate the base's
-  # reserved words `held`, `not` and `unchanged` and its prelude variant
-  # `Open`, so their copies rename each before either compiler reads them.
+  # the standard library modules it selects. Each verdict comes as the
+  # compiler's report, which lists one task per failing function, and both
+  # verdicts and both task lists are compared, since a module the base
+  # already rejects can hide a new failure behind the old one. A function
+  # reports only its first failure, and the base's redundant-test rule
+  # [OP-5] stops many functions first, so a second pass runs both compilers
+  # with that rule's check of conditions switched off. The programs predate
+  # the base's reserved words `held`, `not` and `unchanged` and its prelude
+  # variant `Open`, so their copies rename each before either compiler
+  # reads them.
   trial:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        pass: [as-written, without-redundant-test-rule]
     steps:
       - uses: actions/checkout@v4
       - name: Install the host toolchain
@@ -139,10 +149,18 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Build the branch's compiler and the base's
         run: |
-          perl .github/run-check.pl trial-build cargo build --manifest-path compiler/Cargo.toml \
-            --profile gate --locked --offline --bin whitefootc
           git fetch --depth=1 origin 48b990f05ba32c2763dfcc441a94a00e2ee03cbd
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
+          if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
+            # A decided condition counts as discharged in both compilers.
+            for tree in "$GITHUB_WORKSPACE" "$RUNNER_TEMP/base"; do
+              perl -0777 -pi -e 's/(Self::Condition\(index\) => entailment\s*\.conditions\s*\.get\(index\)\s*)\.is_some_and\(\|outcome\| outcome\.decided\.is_none\(\)\)/$1.is_some()/ or die "the condition discharge is gone\n"' \
+                "$tree/compiler/src/semantic/obligations.rs"
+              git -C "$tree" diff --stat
+            done
+          fi
+          perl .github/run-check.pl trial-build cargo build --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --bin whitefootc
           cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
           perl .github/run-check.pl trial-base-build cargo build \
             --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" \
@@ -167,12 +185,31 @@ jobs:
           same_accepted=0
           same_rejected=0
           differ=0
-          errors_differ=0
+          tasks_differ=0
           branch="$PWD/compiler/target/gate/whitefootc"
           base="$RUNNER_TEMP/base/compiler/target/gate/whitefootc"
-          # One judgment with both compilers, run in the given directory; a
-          # verdict that differs prints both outputs, a shared rejection the
-          # first lines of each.
+          # One line per failing task of a rejected verdict: its subject,
+          # kind, function, place as written, rule and the failure's name; a
+          # list the report could not finish says so on a line of its own.
+          key='def key($s): "\($s): \(.kind) \(.function // "-") at \(.file // "-"):\(.line // "-"):\(.column // "-") [\(.rule // "-")] \(.failure | split("\n")[0] | sub("^.*error\\[[^]]*\\]: "; ""))";'
+          tasks="$key"'
+            (fromjson? // {verdict: "unreadable"}) as $v
+            | if $v.verdict == "unreadable" then "an unreadable verdict line"
+              elif $v.verdict == "rejected" then ($v.module // $v.entry) as $s
+                | ($v.tasks[] | key($s)),
+                  (if $v.complete then empty else "\($s): further failures may follow the last listed task" end)
+              else empty end'
+          # The whole failure of each task the file `only` lists.
+          details="$key"'
+            ($only | split("\n")) as $wanted
+            | (fromjson? // {}) as $v
+            | select($v.verdict == "rejected") | ($v.module // $v.entry) as $s
+            | $v.tasks[] | key($s) as $k | select($wanted | any(. == $k))
+            | "== \($k)\n\(.failure | split("\n") | .[0:40] | join("\n"))"'
+          # One judgment with both compilers, run in the given directory. A
+          # verdict or task list that differs prints both task lists and the
+          # whole failure of each task only one compiler reports; a shared
+          # rejection prints the first tasks.
           judge() {
             label="$1"
             dir="$2"
@@ -181,37 +218,38 @@ jobs:
               bin="$branch"
               [ "$compiler" = base ] && bin="$base"
               (cd "$dir" && perl "$GITHUB_WORKSPACE/.github/run-check.pl" "trial-$compiler" \
-                "$bin" "$@") > "$work/logs/$label.$compiler" 2>&1
+                "$bin" "$@" --report) > "$work/logs/$label.$compiler" 2>&1
               echo $? > "$work/logs/$label.$compiler.exit"
+              # The tasks of each verdict, and any error printed outside one.
+              { grep '^{' "$work/logs/$label.$compiler" | jq -R -r "$tasks"
+                grep -v '^{' "$work/logs/$label.$compiler" | grep -E 'error\[' ; } \
+                | sort -u > "$work/logs/$label.$compiler.tasks"
             done
             mine=$(cat "$work/logs/$label.branch.exit")
             theirs=$(cat "$work/logs/$label.base.exit")
-            for compiler in branch base; do
-              grep -E '^[^ ]+:[0-9]+:[0-9]+: error\[' "$work/logs/$label.$compiler" | sort \
-                > "$work/logs/$label.$compiler.errors"
-            done
-            if ! cmp -s "$work/logs/$label.branch.errors" "$work/logs/$label.base.errors"; then
-              errors_differ=$((errors_differ + 1))
-              echo "---- $label errors only the branch reports:"
-              comm -23 "$work/logs/$label.branch.errors" "$work/logs/$label.base.errors"
-              echo "---- $label errors only the base reports:"
-              comm -13 "$work/logs/$label.branch.errors" "$work/logs/$label.base.errors"
-            fi
             seconds=$(sed -n 's/^== END [^:]*: \([0-9.]*\) s.*/\1/p' "$work/logs/$label.branch" | tr '\n' ' ')
             printf '%-50s branch %s base %s (%s s)\n' "$label" "$mine" "$theirs" "$seconds"
-            quiet='^== (START|RUNNING|BUDGET)'
             if [ "$mine" != "$theirs" ]; then
               differ=$((differ + 1))
-              echo "---- $label differs: branch"
-              grep -v -E "$quiet" "$work/logs/$label.branch" | head -80
-              echo "---- $label differs: base"
-              grep -v -E "$quiet" "$work/logs/$label.base" | head -30
+              echo "---- $label: the verdicts differ"
+            fi
+            if ! cmp -s "$work/logs/$label.branch.tasks" "$work/logs/$label.base.tasks"; then
+              tasks_differ=$((tasks_differ + 1))
+              for side in branch base; do
+                if [ "$side" = branch ]; then
+                  comm -23 "$work/logs/$label.branch.tasks" "$work/logs/$label.base.tasks" > "$work/only"
+                else
+                  comm -13 "$work/logs/$label.branch.tasks" "$work/logs/$label.base.tasks" > "$work/only"
+                fi
+                echo "---- $label: tasks only the $side reports"
+                cat "$work/only"
+                grep '^{' "$work/logs/$label.$side" | jq -R -r --rawfile only "$work/only" "$details"
+                grep -v '^{' "$work/logs/$label.$side" | grep -v -E '^== (START|RUNNING|BUDGET)' | head -20
+              done
             elif [ "$mine" != 0 ]; then
               same_rejected=$((same_rejected + 1))
-              echo "---- $label rejected by both: branch"
-              grep -v -E "$quiet" "$work/logs/$label.branch" | head -12
-              echo "---- $label rejected by both: base"
-              grep -v -E "$quiet" "$work/logs/$label.base" | head -12
+              echo "---- $label rejected by both with the same tasks:"
+              head -12 "$work/logs/$label.branch.tasks"
             else
               same_accepted=$((same_accepted + 1))
             fi
@@ -229,6 +267,8 @@ jobs:
           done
           graph firn "$work/Firn-wf/firn"
           judge "firn composed" "$work/Firn-wf/firn" --graph modules.wfg --check-modules
-          echo "accepted by both $same_accepted, rejected by both $same_rejected, verdicts that differ $differ, error lists that differ $errors_differ"
-          cat "$work"/logs/*.branch.errors | sed 's/.*error\[\([^]]*\)\].*/\1/' | sort | uniq -c | sed 's/^/branch errors by rule: /'
-          cat "$work"/logs/*.base.errors | sed 's/.*error\[\([^]]*\)\].*/\1/' | sort | uniq -c | sed 's/^/base errors by rule: /'
+          echo "pass ${{ matrix.pass }}: accepted by both $same_accepted, rejected by both with the same tasks $same_rejected, verdicts that differ $differ, task lists that differ $tasks_differ"
+          for side in branch base; do
+            cat "$work"/logs/*."$side".tasks | sed -n 's/.* \[\([^]]*\)\] .*/\1/p' | sort | uniq -c \
+              | sed "s/^/$side tasks by rule: /"
+          done
