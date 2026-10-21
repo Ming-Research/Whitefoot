@@ -2687,6 +2687,7 @@ impl Judging<'_, '_, '_> {
         affine_result: Option<&AffineForm>,
         value_reached: bool,
         forwarded: &[Vec<ResultEvidence>],
+        returned: &[&CheckedExpression],
     ) {
         if self.output.postconditions.is_empty() {
             return;
@@ -2753,7 +2754,10 @@ impl Judging<'_, '_, '_> {
                         )
                     })
                 });
-            let residual = self.reasoning().render_relation(&relation);
+            let residual = self.reasoning().render_relation(
+                &relation,
+                postcondition.relation.operands[0].ty(),
+            );
 
             let entry_images = self.input.postcondition_entry_images[index]
                 .iter()
@@ -2779,12 +2783,19 @@ impl Judging<'_, '_, '_> {
                 &states.affine,
                 unavailable,
             );
+            let clause = if complete.disposition == PostconditionDisposition::Discharged {
+                String::new()
+            } else {
+                self.input
+                    .render_postcondition_clause(postcondition, &selected, returned)
+            };
             self.output.postconditions[index]
                 .exits
                 .push(PostconditionExit {
                     statement: statement.clone(),
                     relation,
                     residual,
+                    clause,
                     entry_images,
                     disposition: complete.disposition,
                     derivation: complete.derivation,
@@ -3099,7 +3110,10 @@ impl Analyzer<'_, '_> {
         // that names it in `ensures`; the place's one state renders as the
         // place itself, which names that state there.
         let length_text = match (denotation, length) {
-            (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(length),
+            (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(
+                length,
+                CheckedType::Integer(super::super::super::model::IntegerType::U64),
+            ),
             _ => plain_length.clone(),
         };
         // [MSR-3] the one state of a parameter can differ from what the body
