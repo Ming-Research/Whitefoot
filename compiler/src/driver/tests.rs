@@ -10,6 +10,10 @@ mod recursive_postconditions;
 #[cfg(unix)]
 mod spellings;
 
+mod mechanical_repairs;
+
+mod module_syntax;
+
 /// Places each record in the module its directory names, in the
 /// interface role when it is that directory's `module.wfm` [MOD-2].
 fn module_inputs<'a>(
@@ -1579,11 +1583,10 @@ fn a_syntax_rejection_prints_the_expected_spellings_and_the_offending_line() {
     .expect_err("a nested call is not an atom");
     assert_eq!(failure.rule_id(), Some("GRAM-9"));
     let detail = failure.detail();
-    // The set as spellings, in the grammar's own order. `:` follows an atom
-    // that closes a range clause's guard list, and `is` one that a variant
-    // relation tests [GRAM-5]; `is` first occurs in a result route.
+    // The set as spellings, in the grammar's own order. Only the actual
+    // argument-list continuation and place suffixes belong here [DIAG-1].
     assert!(
-        detail.contains(r#"expected: [";", "{", ":", ")", ",", "is", "<", ">", "["#),
+        detail.contains(r#"expected: [")", ",", "[", ".", "^"]"#),
         "{detail}"
     );
     // The line the writer wrote, and where in it the parser stopped.
@@ -3096,7 +3099,7 @@ fn main() -> status: std::process::ExitStatus pure {
 // Its subject, the target-layout stop at an allocation whose proved count
 // bound the selected target's byte domain cannot hold, retired with v0.87's
 // [OP-9]: a count carries no static bound, and the emitted operation checks
-// the size it computes. pinned_repairs::an_allocation_count_bounded_only_by_its_type_builds
+// the size it computes. The allocation-count control in pinned_repairs::harness
 // keeps the build, and the backend exhaustion tests the run-time check.
 
 #[test]
@@ -3339,87 +3342,6 @@ fn rejection(name: &str, source: &[u8]) -> String {
     compile(&[SourceInput::new(name, source)], CompilerLimits::default())
         .expect_err("this fixture exists to be rejected")
         .to_string()
-}
-
-/// [GRAM-9] names the binding form its grammar position admits.
-///
-/// The rule's own repair is "bind the computed value with a preceding
-/// `let`", and inside a `contract_block` that repair is wrong: the block
-/// has no `let_stmt` and its binding form is `define IDENT = expr;`. The
-/// position is read from the open production frames, never from the text.
-#[test]
-fn a_forbidden_atom_names_the_binding_form_its_grammar_position_admits() {
-    let body = rejection(
-        "body.wf",
-        br#"fn double(value: u64) -> out: u64 pure {
-  return value +wrap value;
-}
-
-fn helper(value: u64) -> out: u64 pure {
-  let a = double(value: double(value: value));
-  return a;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-    );
-    assert!(body.contains("[GRAM-9]"), "{body}");
-    assert!(
-            body.contains(
-                "\n  mechanical_fix: a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`"
-            ),
-            "{body}"
-        );
-
-    let contract = rejection(
-        "contract.wf",
-        br#"fn count(data: &[u8], start: u64, end: u64) -> lines: u64 reads(data) contract {
-  requires imax(start, imin(start, end)) <= end;
-} {
-  return 0_u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-    );
-    assert!(contract.contains("[GRAM-9]"), "{contract}");
-    assert!(
-            contract.contains(
-                "\n  mechanical_fix: a `call` or `construct` in an atom position does not derive [GRAM-9]: a `contract_block` has no `let`, so bind the inner call with a preceding `define` in this same block and write that binder in the atom position — `define inner = f(x: 0_u64); requires g(y: inner);`"
-            ),
-            "{contract}"
-        );
-}
-
-/// The `define` route the contract-block repair names is accepted.
-///
-/// A repair the compiler refuses is worse than no repair, so the two are
-/// pinned together: the rejection above and the program below differ only
-/// by taking it.
-#[test]
-fn the_contract_block_repair_gram9_names_is_accepted() {
-    compile(
-        &[SourceInput::new(
-            "repaired.wf",
-            br#"fn count(data: &[u8], start: u64, end: u64) -> lines: u64 pure contract {
-  define spare = data^.len;
-  requires end <= spare;
-} {
-  return 0_u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        )],
-        CompilerLimits::default(),
-    )
-    .expect("the repair GRAM-9 names must be accepted");
 }
 
 /// [EFF-1] states the condition the row failed and the row that repairs it.

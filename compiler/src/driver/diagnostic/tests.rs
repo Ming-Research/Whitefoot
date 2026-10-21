@@ -838,6 +838,217 @@ fn entry_measures_keep_reference_boundaries_before_box_content() {
 }
 
 #[test]
+fn segment_rejections_render_in_source_order_in_text_and_json() {
+    let source = b"fn first(a: u64) -> r: u64 {\n  return a;\n}\n\nfn second(a: u64) -> r: u64 pure {\n  let x = [a, a];\n  return a;\n}\n";
+    let failure = stop("segments.wf", source);
+    let diagnostics = failure.diagnostics().collect::<Vec<_>>();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0].location().expect("first location").line(), 1);
+    assert_eq!(diagnostics[1].location().expect("second location").line(), 6);
+    assert_eq!(
+        failure
+            .render(DiagnosticFormat::Text)
+            .matches(": error[")
+            .count(),
+        2
+    );
+    let json = failure.render(DiagnosticFormat::Json);
+    let lines = json.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("\"line\":1,"), "{}", lines[0]);
+    assert!(lines[1].contains("\"line\":6,"), "{}", lines[1]);
+    assert!(
+        diagnostics[1]
+            .source_coordinate()
+            .expect("coordinate")
+            .start()
+            .value()
+            > 50
+    );
+}
+
+#[test]
+fn a_later_lexical_rejection_does_not_hide_an_earlier_grammar_rejection() {
+    let failure = stop("mixed.wf", b"fn first() -> r: unit {\n  return unit;\n}\n\nfn second() -> r: unit pure {\n  // forbidden\n}\n");
+    let stages = failure
+        .diagnostics()
+        .map(CompilationFailure::stage)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stages,
+        vec![
+            crate::CompilationStage::Parsing,
+            crate::CompilationStage::Lexing
+        ]
+    );
+    assert_eq!(
+        failure.diagnostics().nth(1).expect("second defect").rule_id(),
+        Some("FORM-4")
+    );
+}
+
+#[test]
+fn missing_closing_brace_stops_at_its_segment_boundary() {
+    let first = "fn first() -> r: unit pure {\n  return unit;\n";
+    let source = format!("{first}fn second() -> r: unit pure {{\n  return unit;\n}}\n");
+    let failure = stop("missing-brace.wf", source.as_bytes());
+    assert_eq!(failure.diagnostics().count(), 1);
+    let coordinate = failure.source_coordinate().expect("segment boundary");
+    assert_eq!(coordinate.start().value(), first.len() as u64);
+    assert_eq!(coordinate.end(), coordinate.start());
+}
+
+#[test]
+fn segmented_graph_reports_rows_but_keeps_whole_graph_ordering() {
+    let limits = CompilerLimits::default();
+    let failure = crate::form_module_graph(
+        SourceInput::new("modules.wfg", b"pkg [];\nentry run pkg;\n"),
+        limits,
+    )
+    .expect_err("two malformed graph rows");
+    assert_eq!(failure.diagnostics().count(), 2);
+    let failure = crate::form_module_graph(
+        SourceInput::new("modules.wfg", b"entry run = pkg;\npkg: [];\n"),
+        limits,
+    )
+    .expect_err("individually valid rows retain graph ordering");
+    assert_eq!(failure.diagnostics().count(), 1);
+    assert_eq!(failure.stage(), crate::CompilationStage::Parsing);
+}
+
+#[test]
+fn segments_preserve_source_ordinals_and_gate_canonical_form() {
+    let failure = check(
+        &[
+            SourceInput::new("first.wf", b"fn first() -> r: unit {\n  return unit;\n}\n"),
+            SourceInput::new(
+                "second.wf",
+                b"fn second() -> r: unit pure {\n  // forbidden\n}\n",
+            ),
+        ],
+        CompilerLimits::default(),
+    )
+    .expect_err("both source segments reject");
+    let coordinates = failure
+        .diagnostics()
+        .map(|diagnostic| {
+            diagnostic.source_coordinate().expect("coordinate").source().ordinal()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(coordinates, vec![0, 1]);
+    let failure = stop("canonical.wf", b"fn first() -> r: unit pure {\n   return unit;\n}\n\nfn second() -> r: unit {\n  return unit;\n}\n");
+    assert_eq!(failure.diagnostics().count(), 1);
+    assert_eq!(failure.stage(), crate::CompilationStage::Parsing);
+}
+
+#[test]
+fn graph_segments_allow_trivia_prefix_and_multiple_rows_but_not_empty_graphs() {
+    let limits = CompilerLimits::default();
+    let source = SourceInput::new("modules.wfg", b"\npkg: []; other: [];\n");
+    let bundle = crate::SourceBundle::with_limits(&[source], limits.source).expect("bundle");
+    super::super::segments::check(&bundle, limits, true).expect("graph segments derive");
+    super::super::derive_syntax(&bundle, limits, true, false).expect("whole graph derives");
+    for bytes in [b"".as_slice(), b"\n", b"package dependency = \"../dependency\";\n"] {
+        let bundle = crate::SourceBundle::with_limits(
+            &[SourceInput::new("modules.wfg", bytes)],
+            limits.source,
+        )
+        .expect("bundle");
+        super::super::segments::check(&bundle, limits, true).expect("graph segments derive");
+        assert!(super::super::derive_syntax(&bundle, limits, true, false).is_err());
+    }
+}
+
+#[test]
+fn all_segment_rejections_survive_recorded_outcome_round_trip() {
+    let source = b"fn first() -> r: unit {\n  return unit;\n}\n\nfn second() -> r: unit {\n  return unit;\n}\n";
+    let records = [SourceInput::new("recorded.wf", source)];
+    let failure = check(&records, CompilerLimits::default()).expect_err("two invalid headers");
+    let outcome = super::super::outcome_of(Err(failure), &records).expect("source verdict");
+    let crate::CheckOutcome::Rejected {
+        failure,
+        tasks,
+        diagnostics,
+        complete,
+        ..
+    } = &outcome else {
+        panic!("source rejection");
+    };
+    assert_eq!(failure.matches(": error[").count(), 2);
+    assert_eq!(tasks.len(), 2);
+    assert!(
+        tasks
+            .iter()
+            .all(|task| task.failure().matches(": error[").count() == 1)
+    );
+    assert!(!complete);
+    assert_eq!(diagnostics.len(), 2);
+    for diagnostic in diagnostics {
+        assert_eq!(diagnostic.rule(), "GRAM-3");
+        assert_eq!(
+            diagnostic.expected().expect("grammar expectation"),
+            &["pure".to_owned(), "reads".to_owned(), "writes".to_owned()]
+        );
+        let coordinate = diagnostic.source_coordinate().expect("original coordinate");
+        assert_eq!(coordinate.source().ordinal(), 0);
+        assert_eq!(source[coordinate.start().value() as usize], b'{');
+        assert_eq!(coordinate.end().value(), coordinate.start().value() + 1);
+    }
+    let reading = b"exact recorded input";
+    let bytes = super::super::encode_outcome(&outcome, reading);
+    assert_eq!(
+        super::super::decode_outcome(&bytes, reading),
+        Some(outcome.clone())
+    );
+    let mut missing = outcome;
+    if let crate::CheckOutcome::Rejected { diagnostics, .. } = &mut missing {
+        diagnostics.clear();
+    }
+    let bytes = super::super::encode_outcome(&missing, reading);
+    assert_eq!(super::super::decode_outcome(&bytes, reading), None);
+}
+
+#[test]
+fn lexical_priority_is_retained_inside_each_segment() {
+    let failure = stop("priority.wf", b"fn first() -> r: unit {\n  // forbidden\n}\n\nfn second() -> r: unit {\n  return unit;\n}\n");
+    let stages = failure
+        .diagnostics()
+        .map(CompilationFailure::stage)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stages,
+        vec![
+            crate::CompilationStage::Lexing,
+            crate::CompilationStage::Parsing
+        ]
+    );
+}
+
+#[test]
+fn syntax_impact_tasks_do_not_assign_an_unparsed_function() {
+    for (source, expected_count) in [
+        (
+            b"fn first() -> r: unit pure {\n  return unit;\nfn second() -> r: unit pure {\n  return unit;\n}\n".as_slice(),
+            1,
+        ),
+        (
+            b"fn first() -> r: unit {\n  return unit;\n}\nfn second() -> r: unit {\n  return unit;\n}\n",
+            2,
+        ),
+    ] {
+        let records = [SourceInput::new("impact.wf", source)];
+        let failure = check(&records, CompilerLimits::default()).expect_err("syntax defects");
+        assert_eq!(failure.diagnostics().count(), expected_count);
+        let outcome = super::super::outcome_of(Err(failure), &records).expect("source verdict");
+        let crate::CheckOutcome::Rejected { tasks, .. } = outcome else {
+            panic!("source rejection");
+        };
+        assert_eq!(tasks.len(), expected_count);
+        assert!(tasks.iter().all(|task| task.function().is_none()));
+    }
+}
+
+#[test]
 fn duplicate_integer_arm_diagnostic_names_the_value_earlier_arm_and_repair() {
     let failure = stop(
         "integer-arms.wf",

@@ -177,27 +177,30 @@ impl SourceIssueKind {
 }
 
 /// One source-local issue found before a canonical tree exists.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct SourceIssue {
     pub(crate) span: SourceSpan,
     pub(crate) kind: SourceIssueKind,
+    pub(crate) mechanical_fix: Option<String>,
 }
 
 impl SourceIssue {
-    pub(crate) const fn new(span: SourceSpan, kind: SourceIssueKind) -> Self {
-        Self { span, kind }
-    }
-
     /// Returns the internal issue classification.
     #[must_use]
-    pub const fn kind(self) -> SourceIssueKind {
+    pub const fn kind(&self) -> SourceIssueKind {
         self.kind
     }
 
     /// Returns the exact source-bound location discovered by the scanner.
     #[must_use]
-    pub const fn span(self) -> SourceSpan {
+    pub const fn span(&self) -> SourceSpan {
         self.span
+    }
+
+    /// Returns a source-positioned spelling repair, when one is available.
+    #[must_use]
+    pub fn mechanical_fix(&self) -> Option<&str> {
+        self.mechanical_fix.as_deref()
     }
 }
 
