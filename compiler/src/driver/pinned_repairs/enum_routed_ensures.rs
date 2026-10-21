@@ -40,7 +40,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "FN-9",
         sentences: &[
             "]: InvalidPostconditionFields\n",
-            "\n  required_fields: [first, second]\n",
+            "\n  required_fields: [\"first\", \"second\"]\n",
         ],
         repaired: &[include_bytes!(
             "../../../../tests/conformance/cases/fn9-pos-enum-separate-field-clauses.wf"

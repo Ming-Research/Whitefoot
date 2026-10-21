@@ -43,6 +43,7 @@ pub(super) fn run_pairs() {
         .chain(super::derived_measures::DERIVED_MEASURES)
         .chain(super::effect_row_categories::EFFECT_ROW_CATEGORIES)
         .chain(super::prelude_opaque::PRELUDE_OPAQUE)
+        .chain(super::proof_place_spellings::PROOF_PLACE_SPELLINGS)
         .chain(super::qualified_constants::QUALIFIED_CONSTANTS)
         .chain(super::recursive_effects::RECURSIVE_EFFECTS)
         .chain(super::remaining_repairs::REMAINING_REPAIRS)

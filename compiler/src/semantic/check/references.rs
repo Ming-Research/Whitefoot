@@ -2153,6 +2153,9 @@ impl<'unit> Checker<'_, 'unit> {
             }
             carried.effects = carried.effects.union(value.effects.clone());
             carried.accesses.extend(value.accesses.clone());
+            if let Ok(spelling) = self.types.declarations.tree.source_spelling(node) {
+                self.types.source_spellings.insert(node, spelling);
+            }
             endpoints.push(value);
         }
         let end = endpoints
@@ -2164,11 +2167,11 @@ impl<'unit> Checker<'_, 'unit> {
         // [REF-1, OWN-7] each endpoint keeps the occurrence that evaluated it,
         // whatever its form, so this formation's endpoint images are its own.
         let captured_start = self.body.note_capture(
-            Checker::captured_endpoint_of(start_node, &start.expression)?,
+            Checker::captured_endpoint_of(start_node, &start.expression)?.with_source(start_node),
             bindings,
         );
         let captured_end = self.body.note_capture(
-            Checker::captured_endpoint_of(end_node, &end.expression)?,
+            Checker::captured_endpoint_of(end_node, &end.expression)?.with_source(end_node),
             bindings,
         );
         // [OWN-7] the formed reference names the base path extended by its
