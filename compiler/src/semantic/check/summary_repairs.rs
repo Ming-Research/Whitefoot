@@ -151,7 +151,12 @@ impl TypeContext<'_> {
             .collect::<Vec<_>>();
         let const_parameter_types = self.const_generic_types().collect();
         let copy_type_parameters = self.copy_type_parameters();
+        let type_spellings = self.diagnostic_constant_type_spellings();
         let context = EntailmentContext {
+            source_spellings: &self.source_spellings,
+            postcondition_clauses: &self.postcondition_clauses,
+            postcondition_sources: &self.postcondition_sources,
+            type_spellings: &type_spellings,
             captured_places: &self.captured_places,
             judge_conditions: inputs.judge_conditions,
             declarations: self.declarations.resolved.declarations(),

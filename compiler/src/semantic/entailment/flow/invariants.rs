@@ -91,7 +91,10 @@ impl Reasoning<'_, '_, '_> {
                     .map(|kill| MeasureKillNote {
                         source: kill.source.clone(),
                         written: self.input.render_place(&kill.written),
-                        measure: self.render_term(kill.term),
+                        measure: self.render_term(
+                            kill.term,
+                            CheckedType::Integer(IntegerType::U64),
+                        ),
                         narrowable: false,
                     })
                     .collect(),
