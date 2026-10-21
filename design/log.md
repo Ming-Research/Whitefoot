@@ -10,6 +10,14 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/checker-facts
 
 Summary: A new decision has fact invalidation submit index and range separation questions only between a write and live support positions with the same containing place, through the ordinary proof families in that write's context, because the specification keeps a fact whose support is provably disjoint from the write even when no earlier call or reference check asked that question, instead of relying only on separations asked elsewhere or comparing unrelated bases. Each live item's support is collected once and identical positions are removed before path resolution; proved answers are shared across that write's supports only, keyed by the subscripts' current binding identity, instead of being published as immutable captured relations; and no support is pruned because it would be kept anyway, since its numeric separation may protect another support that cannot ask the question. Measured: Halo's check time is 1.021 times main's, under the 1.03 rejection line set beforehand. Known limit, not decided here: a support whose containing place differs from the write's only in index steps is not asked, so such a fact can still be removed although OWN-7 proves the places disjoint; this is the follow-up item wf-disjoint-write-outer-index.
+## 2026-10-13 A Slab reserves capacity up to its type limit without disturbing handles
+
+Nodes: language/data-model/slab-storage
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve: the new decision and the two rewordings take effect; write the design-tree approval record, mark ready, run the gate on both platforms, merge through the coordinator's queue and release to Firn" (translated), on the card "approve the Slab storage design node's changes (Whitefoot#448, head commit 2c2890351119)?" (translated), whose background listed the new reservation decision, its three refused alternatives and the two rewordings.
+
+Summary: A Slab may reserve capacity explicitly up to its type limit through the ordinary window growth, so existing slots, indices and generations stay and old handles remain valid while a value's address may change; the free list's end marker becomes the type limit instead of the initial capacity, which growth would turn into a valid index. A request beyond the limit returns Err without mutation and a sufficient capacity returns Ok without shrinking, as HashMap reservation does. Fixed capacity after construction, rebuilding the slot records on growth and promising stable value addresses were refused. The first decision now says the Slab uses (not reserves) one backing and keeps slot indices, and the refused dense-array alternative is refused for changing another value's slot index.
+
 ## 2026-10-21 The gate runs on Linux only for now
 
 Nodes: compiler/verification
