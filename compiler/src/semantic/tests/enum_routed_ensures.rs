@@ -193,11 +193,13 @@ fn read(value: u64, unknown: Outcome) -> result: u8 pure {
         );
     });
 
-    // A bound covering all u64 values supplies no evidence for narrowing,
-    // even when Some still comes from just one branch of the same join.
+    // A bound above u8::MAX supplies no evidence for narrowing, even when
+    // Some still comes from just one branch of the same join. The test stays
+    // informative: a bound covering every u64 would be a redundant condition
+    // [OP-5] and reject before the narrowing is judged.
     let unbounded = std::str::from_utf8(source)
         .expect("UTF-8 witness")
-        .replace("value <= 7_u64", "value <= 18446744073709551615_u64");
+        .replace("value <= 7_u64", "value <= 300_u64");
     with_semantics(unbounded.as_bytes(), |outcome| {
         let SemanticOutcome::SourceIssue { issue } = outcome else {
             panic!("the unproved narrowing must reject: {outcome:?}");
