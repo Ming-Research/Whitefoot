@@ -1,0 +1,181 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias Job = std::snapshot::Job;
+alias HandleFactory = std::io::HandleFactory;
+alias OutputStream = std::io::OutputStream;
+alias HashMap = std::collections::hash_map::HashMap;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+
+const ceiling: u64 = 8_u64;
+
+struct Keys {
+  seed: u64;
+}
+
+fn key_hash(env: &Keys, key: &u64) -> result: u64 reads(key) {
+  return key^;
+}
+
+fn key_equal(env: &Keys, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
+  return left^ == right^;
+}
+
+binding Key : HashMapKey<u64, Keys> {
+  hash = key_hash;
+  equal = key_equal;
+}
+
+fn capture(reserve: std::snapshot::Reserve, table: &Shared<ConcurrentHashMap<HashMap<u64, u64, ceiling>>>, journal: &Shared<u64>) -> result: Result<Job, std::snapshot::CreateError> reads(table), reads(journal) waits {
+  atomic map = &table^, cut = &journal^ {
+    return std::snapshot::capture_export::<HashMap<u64, u64, ceiling>>(reserve: move reserve, map: map, cut: cut);
+  }
+}
+
+fn collect(job: Job, factory: &HandleFactory, output: &OutputStream) -> result: u8 writes(factory), writes(output) waits {
+  let bytes = array_filled::<u8, 256>(value: 0_u8);
+  let used = 0_u64;
+  let cancel = std::time::cancel_never();
+  let deadline = None<std::time::Instant>();
+  loop @collect (
+    invariant bounded: used <= 256_u64
+  ) {
+    if used < 256_u64 {
+      let remaining = &bytes[used..256_u64];
+      let next = std::snapshot::read(job: &job, out: remaining, deadline: deadline, cancel: &cancel);
+      match next {
+        Ok(value: count) => {
+          if count == 0_u64 {
+            break @collect;
+          }
+          set used = used + count;
+        }
+        Err(error: problem) => {
+          let cleanup = std::snapshot::abort(job: move job);
+          return 3_u8;
+        }
+      }
+    } else {
+      let cleanup = std::snapshot::abort(job: move job);
+      return 4_u8;
+    }
+  }
+  let outcome = std::snapshot::finish(job: move job);
+  match outcome.child {
+    SnapshotExportComplete(bytes: total, records: record_count) => {
+      if total != used {
+        return 5_u8;
+      }
+      if record_count != 1_u64 {
+        return 6_u8;
+      }
+    }
+    SnapshotExportFailed(error: problem) => {
+      return 7_u8;
+    }
+    SnapshotChildExited(code: exit_code) => {
+      return 8_u8;
+    }
+    SnapshotChildSignalled(signal: signal_number) => {
+      return 9_u8;
+    }
+    SnapshotProtocolFailed(error: problem) => {
+      return 10_u8;
+    }
+  }
+  match outcome.collection {
+    SnapshotCollected(bytes: delivered) => {
+      if delivered != used {
+        return 11_u8;
+      }
+    }
+    SnapshotDiscarded(delivered: delivered_bytes, discarded: discarded_bytes) => {
+      return 12_u8;
+    }
+    SnapshotCollectionFailed(error: problem, delivered: delivered_bytes) => {
+      return 13_u8;
+    }
+  }
+  if outcome.abort_requested {
+    return 14_u8;
+  }
+  let sent = 0_u64;
+  let source = &bytes[0_u64..used];
+  loop @publish (
+    invariant sent_bound: sent <= used
+  ) {
+    if sent < used {
+      let written = std::io::write_once(factory: factory, output: output, source: source, start: sent, end: used, deadline: deadline, cancel: &cancel);
+      match written {
+        Ok(value: next) => {
+          if next == sent {
+            return 15_u8;
+          }
+          set sent = next;
+        }
+        Err(error: problem) => {
+          return 16_u8;
+        }
+      }
+    } else {
+      break @publish;
+    }
+  }
+  std::time::close_cancel_watch(watch: move cancel);
+  return 0_u8;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, stdout: output, handles: factory, ..) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  let keys = Keys(seed: 0_u64);
+  let pairs = hash_map_new::<u64, u64, ceiling>(capacity: 8_u64);
+  for (key in 1_u64..6_u64) {
+    let outcome = hash_map_put::<Key, u64, ceiling>(map: &pairs, key: key, value: key +wrap 100_u64, env: &keys);
+    match outcome {
+      HashMapInserted() => {
+      }
+      HashMapReturned(reason: why, pair: returned) => {
+        return std::process::exit_status(code: 20_u8);
+      }
+    }
+  }
+  let probe = 3_u64;
+  let removed = hash_map_remove::<Key, u64, ceiling>(map: &pairs, key: &probe, env: &keys);
+  match removed {
+    Some(value: gone) => {
+    }
+    None() => {
+      return std::process::exit_status(code: 21_u8);
+    }
+  }
+  let table = shared_map_new::<HashMap<u64, u64, ceiling>>(capacity: 1_u64);
+  let journal = shared_new::<u64>(value: 7_u64);
+  let name_bytes = array_filled::<u8, 1>(value: 109_u8);
+  let name = &name_bytes[0_u64..1_u64];
+  atomic slot = &table[name] {
+    set slot^ = Some<HashMap<u64, u64, ceiling>>(value: move pairs);
+  }
+  let prepared = std::snapshot::prepare(scratch_bytes: 65536_u64, output_bytes: 4096_u64);
+  match move prepared {
+    Ok(value: reserve) => {
+      let captured = capture(reserve: move reserve, table: &table, journal: &journal);
+      match move captured {
+        Ok(value: job) => {
+          let result = collect(job: move job, factory: &factory, output: &output);
+          return std::process::exit_status(code: result);
+        }
+        Err(error: problem) => {
+          return std::process::exit_status(code: 2_u8);
+        }
+      }
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+}

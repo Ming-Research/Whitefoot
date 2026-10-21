@@ -40,7 +40,8 @@ struct wf_snapshot_type {
     uint64_t data_offset;
     uint64_t fixed_capacity;
     uint64_t page_elements;
-    /* Hash: fields[0] cells Box<Slots>, [1] length; element is bucket enum.
+    /* Hash: fields[0] cells Box<Slots>, [1] length; element is the slot
+     * node, whose fields[1] is the slot enum; its variant 1 holds key, value.
      * Ordered: fields[0] root Slots<Box<Node>>, [1] length; element is node.
      * Node: fields[0] leading Slots<Box<Node>>, [1] entries Slots<Entry>.
      * Entry: fields[0] pair struct, [1] after Slots<Box<Node>>. */

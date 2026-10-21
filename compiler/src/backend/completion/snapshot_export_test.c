@@ -45,9 +45,10 @@ static const wf_snapshot_type float32_type = {
 };
 typedef struct byte_slots { uint64_t len, cap; unsigned char data[]; } byte_slots;
 typedef struct byte_ring { uint64_t len, head; unsigned char data[4]; } byte_ring;
-typedef struct bucket { uint32_t tag; uint64_t key, value; } bucket;
-typedef struct bucket_slots { uint64_t len, cap; bucket data[4]; } bucket_slots;
-typedef struct hash_value { bucket_slots *cells; uint64_t length, vacated; } hash_value;
+typedef struct hash_slot { uint32_t tag; uint64_t key, value; } hash_slot;
+typedef struct hash_node { uint64_t next; hash_slot slot; } hash_node;
+typedef struct hash_nodes { uint64_t len, cap; hash_node data[4]; } hash_nodes;
+typedef struct hash_value { hash_nodes *cells; uint64_t length, vacated; } hash_value;
 typedef struct tree_node tree_node;
 typedef struct child_slot { uint64_t len; tree_node *data[1]; } child_slot;
 typedef struct pair { uint64_t key, value; } pair;
@@ -83,29 +84,36 @@ static const wf_snapshot_type ring_type = {
     .element = &octet, .length_offset = 0, .capacity_offset = UINT64_MAX,
     .head_offset = 8, .data_offset = 16, .fixed_capacity = 4
 };
-static const wf_snapshot_field bucket_fields[] = {
-    {offsetof(bucket, key), &integer}, {offsetof(bucket, value), &integer}
+static const wf_snapshot_field hash_slot_fields[] = {
+    {offsetof(hash_slot, key), &integer}, {offsetof(hash_slot, value), &integer}
 };
-static const wf_snapshot_variant bucket_variants[] = {
-    {0, NULL}, {0, NULL}, {2, bucket_fields}
+static const wf_snapshot_variant hash_slot_variants[] = {
+    {0, NULL}, {2, hash_slot_fields}
 };
-static const wf_snapshot_type bucket_type = {
-    .shape = WF_SNAPSHOT_ENUM, .tag = 0x11, .width = 4, .size = sizeof(bucket),
-    .alignment = 8, .count = 3, .variants = bucket_variants
+static const wf_snapshot_type hash_slot_type = {
+    .shape = WF_SNAPSHOT_ENUM, .tag = 0x11, .width = 4, .size = sizeof(hash_slot),
+    .alignment = 8, .count = 2, .variants = hash_slot_variants
 };
-static const wf_snapshot_type buckets_type = {
+static const wf_snapshot_field hash_node_fields[] = {
+    {offsetof(hash_node, next), &integer}, {offsetof(hash_node, slot), &hash_slot_type}
+};
+static const wf_snapshot_type hash_node_type = {
+    .shape = WF_SNAPSHOT_STRUCT, .tag = 0x10, .size = sizeof(hash_node), .alignment = 8,
+    .count = 2, .fields = hash_node_fields
+};
+static const wf_snapshot_type hash_nodes_type = {
     .shape = WF_SNAPSHOT_SLOTS, .tag = 0x21, .size = 16, .alignment = 8,
-    .element = &bucket_type, .length_offset = 0, .capacity_offset = 8, .data_offset = 16
+    .element = &hash_node_type, .length_offset = 0, .capacity_offset = 8, .data_offset = 16
 };
-static const wf_snapshot_type boxed_buckets = {
-    .shape = WF_SNAPSHOT_BOX, .tag = 0x25, .size = 8, .alignment = 8, .element = &buckets_type
+static const wf_snapshot_type boxed_hash_nodes = {
+    .shape = WF_SNAPSHOT_BOX, .tag = 0x25, .size = 8, .alignment = 8, .element = &hash_nodes_type
 };
 static const wf_snapshot_field hash_fields[] = {
-    {offsetof(hash_value, cells), &boxed_buckets}, {offsetof(hash_value, length), &integer}
+    {offsetof(hash_value, cells), &boxed_hash_nodes}, {offsetof(hash_value, length), &integer}
 };
 static const wf_snapshot_type hash_type = {
     .shape = WF_SNAPSHOT_HASH, .tag = 0x30, .size = sizeof(hash_value), .alignment = 8,
-    .count = 2, .fields = hash_fields, .element = &bucket_type
+    .count = 2, .fields = hash_fields, .element = &hash_node_type
 };
 static const wf_snapshot_type node_type;
 static const wf_snapshot_type boxed_node = {
@@ -439,15 +447,16 @@ static void expected_count(expected_body *body, unsigned tag, uint64_t n) {
 }
 
 /* An independently constructed logical body covers every storage shape,
- * large binary segmentation, deleted buckets, structural recursive order,
- * parent frees, infinities, signed zero and a signed NaN payload. Collection
- * order for a hash remains unconstrained; both orders of its two pairs pass. */
+ * large binary segmentation, vacant hash slots and their link words,
+ * structural recursive order, parent frees, infinities, signed zero and a
+ * signed NaN payload. Collection order for a hash remains unconstrained;
+ * both orders of its two pairs pass. */
 static void complete_owned_closure(void) {
     byte_slots *bytes = malloc(16 + 5000);
     CHECK(bytes != NULL);
     bytes->len = bytes->cap = 5000;
     for (unsigned i = 0; i < 5000; ++i) bytes->data[i] = (unsigned char)i;
-    bucket_slots buckets = {4, 4, {{2, 7, 70}, {1, 0, 0}, {0, 0, 0}, {2, 9, 90}}};
+    hash_nodes buckets = {4, 4, {{0, {1, 7, 70}}, {3, {0, 0, 0}}, {0, {0, 0, 0}}, {1, {1, 9, 90}}}};
     tree_node *leading = calloc(1, sizeof(*leading));
     tree_node *root = calloc(1, sizeof(*root));
     tree_node *after = calloc(1, sizeof(*after));

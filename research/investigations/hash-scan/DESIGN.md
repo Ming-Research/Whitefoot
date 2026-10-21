@@ -39,10 +39,13 @@ Chinese, on 2026-10-14 and 2026-10-19:
 - COUNT is a hint (first question, option A). A call visits at most `limit`
   consecutive home buckets and lends each bucket's whole chain, so the last
   chain may exceed the limit, as Redis 7.2.16's COUNT does. A hold criterion
-  is written down before measuring; if the measurements fail it, the design
-  returns to a strict cap through the stable-identifier directory.
-- Home chains first (second question, option A). The stable-identifier
-  directory stays the fallback if any measured cell regresses.
+  is written down before measuring; the strict cap through the
+  stable-identifier directory is the fallback if the measurements fail it.
+- Home chains first (second question, option A). After the first comparison
+  failed H1 and regressed some cells, the owner ruled on 2026-10-21 to keep
+  the chains, move each link word into its slot and measure again, with the
+  stable-identifier directory still the fallback (see
+  [First comparison and the link word in the slot](#first-comparison-and-the-link-word-in-the-slot)).
 - Capacity counts slots for pairs (third question, as drafted on
   Ming-Research/Whitefoot#487). The bucket count is the least power of two
   that is at least the capacity and at least two. A pair stays in its slot
@@ -55,10 +58,11 @@ Chinese, on 2026-10-14 and 2026-10-19:
 The implementation on Ming-Research/Whitefoot#487 differs from Valkey 8 in
 two ways the third ruling accepted:
 
-- No seven-pair cache-line blocks: the pairs live in one slot array, a
-  parallel array of link words chains the pairs of one bucket and threads the
-  free slots, and a power-of-two array holds each bucket's first link. Growth
-  appends slots and links and rebuilds only the head array; no owner moves.
+- No seven-pair cache-line blocks: the pairs live in one array of slot
+  nodes, each holding a link word beside its pair that chains the pairs of
+  one bucket or threads the free slots, and a power-of-two array holds each
+  bucket's first link. Growth appends nodes and rebuilds only the head
+  array; no owner moves.
 - The home bucket is the top bits of the hash after one multiplication by an
   odd constant, and the cursor is a position in that mixed hash space,
   instead of the low bits with a reverse-binary cursor. Both split every
@@ -85,16 +89,21 @@ Measured on the 14900K, pinned to one P core, `u64` keys and values,
 uniformly distributed hashes, a callback that only counts:
 
 - H1, the hold does not grow with the map: the p99 duration of one
-  `hash_map_scan` call with limit 64 over 1,000,000 pairs is at most four
-  times its p99 over 1,000 pairs. Both calls read 64 heads and about the
-  same number of pairs; the factor allows the cache misses a million-pair
-  map takes on its slots and links, which a thousand-pair map keeps in the
-  first two cache levels. A larger factor means the work per call depends on
-  the size of the map, which this item exists to remove.
-- H2, the hold is short in absolute terms: that p99 over 1,000,000 pairs is
-  at most 20 microseconds. A call touches about 64 pairs, each costing up to
-  two dependent memory misses (slot and link) of roughly 80 nanoseconds on
-  this machine, about 10 microseconds; the bound allows twice that. The
+  `hash_map_scan` call with limit 64 over 32,000,000 pairs is at most twice
+  its p99 over 4,000,000 pairs. Both calls read 64 heads and about the same
+  number of pairs, and both maps lie far beyond the 14900K's 36 MB
+  last-level cache (about 168 MB and 1.34 GB: 2^22 and 2^25 slots of 40
+  bytes with their head words), so nearly every pair is a memory read in both; the factor allows
+  the extra translation misses of the larger map. A larger ratio means the
+  work per call depends on the size of the map, which this item exists to
+  remove. This H1 replaced, before the remeasurement, the one the first
+  comparison used (1,000,000 against 1,000 pairs, at most four times), which
+  compared a map in the cache with one beyond it and so measured the cache.
+- H2, the hold is short in absolute terms: the p99 of the same call over
+  1,000,000 pairs is at most 20 microseconds. A call touches about 64 pairs,
+  each costing up to two dependent memory misses (head word and node) of
+  roughly 80 nanoseconds on this machine, about 10 microseconds; the bound
+  allows twice that. The
   status quo it replaces is one `hash_map_each` over the whole map per hold.
 - H3, a collision overrun costs what its chain costs: a call whose first
   bucket holds m pairs of identical hash, for m of 64, 1,024 and 65,536,
@@ -102,8 +111,9 @@ uniformly distributed hashes, a callback that only counts:
   limit-64 call. The hint semantics accepts the overrun; H3 checks that it
   is linear in the chain, with no extra cost per collision.
 
-Failing H1 or H2 sends the design back to the strict cap (first question,
-option B). Failing H3 is a defect of the chain walk to fix before
+Failing H1 or H2 brings the strict cap through the stable-identifier
+directory (first question, option B) back to the owner as the ruled
+fallback. Failing H3 is a defect of the chain walk to fix before
 measuring again. Firn's own hold measurements under its workloads belong to
 Firn's board items.
 
@@ -191,15 +201,11 @@ outcome (option B, 2026-10-21), keeps every earlier ruled rule:
   linear-probing table and adds a directory, so it is larger than the old
   map at every size and adds a directory write to every insertion and
   removal. It stays a fallback.
-- H1 is replaced, set here before the remeasurement: over uniform hashes,
-  `u64` pairs and limit 64, the p99 of one call over 32,000,000 pairs is at
-  most twice its p99 over 4,000,000. Both maps lie far beyond the 14900K's
-  36 MB last-level cache (about 168 MB and 1.34 GB: 2^22 and 2^25 slots of
-  40 bytes), so nearly every pair is a memory read in both, which a
-  million-pair map of about 42 MB, only a sixth larger than the cache, would
-  not ensure; the factor allows the extra translation misses of the larger
-  map. A larger ratio means per-call work grows with the map. H2 and H3 stay
-  as written, judged at 1,000,000 pairs.
+- H1 is replaced by the 4,000,000 against 32,000,000 pairs criterion in
+  [Hold criterion, set before measurement](#hold-criterion-set-before-measurement),
+  set before the remeasurement: a million-pair map of about 42 MB is only a
+  sixth larger than the cache, so it does not ensure that nearly every pair
+  is a memory read. H2 and H3 stay as written, judged at 1,000,000 pairs.
 
 Predictions for the remeasurement, exploratory and not acceptance: lookup
 hit and removal at 1,000,000 pairs faster than in the first comparison but
