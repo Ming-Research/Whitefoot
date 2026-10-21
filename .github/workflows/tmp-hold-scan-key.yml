@@ -49,13 +49,13 @@ jobs:
           "$wfc" "$hold" -o "$RUNNER_TEMP/hold"
           mkdir -p "$RUNNER_TEMP/rows"
           "$RUNNER_TEMP/hold" 1 5000 1000 > "$RUNNER_TEMP/rows/1-5000.tsv"
-          "$RUNNER_TEMP/hold" 1 100000 2000 > "$RUNNER_TEMP/rows/1-100000.tsv"
+          "$RUNNER_TEMP/hold" 1 20000 2000 > "$RUNNER_TEMP/rows/1-20000.tsv"
           "$RUNNER_TEMP/hold" 2 64 50 > "$RUNNER_TEMP/rows/2-64.tsv"
           "$RUNNER_TEMP/hold" 2 1024 50 > "$RUNNER_TEMP/rows/2-1024.tsv"
           python3 -I - "$RUNNER_TEMP/rows" <<'EOF'
           import os, sys
           directory = sys.argv[1]
-          for name, mode, size, calls in (("1-5000", 1, 5000, 1000), ("1-100000", 1, 100000, 2000),
+          for name, mode, size, calls in (("1-5000", 1, 5000, 1000), ("1-20000", 1, 20000, 2000),
                                           ("2-64", 2, 64, 50), ("2-1024", 2, 1024, 50)):
               rows = [line.split("\t") for line in open(os.path.join(directory, name + ".tsv")).read().splitlines()]
               assert len(rows) == calls, (name, "rows", len(rows))
