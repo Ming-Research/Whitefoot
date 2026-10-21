@@ -186,6 +186,39 @@ test-unit:
 test-corpus:
 	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-corpus $(CARGO) test --profile gate --bins --test '*' --locked --offline
 
+# The corpus target again with every program it builds, its running
+# conformance cases also with the `--par` lowering, compiled and linked under
+# one sanitizer (compiler/sanitized-builds). Each report is written under
+# SANITIZER_REPORTS and fails the target whatever the case's own verdict, as
+# a case expecting a failing exit status could otherwise pass on the status
+# a report exits with. Leaks are not reported: the runtime keeps its process
+# lifetime objects until exit. SANITIZER_FILTER holds test harness arguments,
+# such as names that select cases or --skip NAME.
+SANITIZER_REPORTS := $(WHITEFOOT_SCRATCH_ROOT)/sanitizer-reports
+SANITIZER_FILTER ?=
+SANITIZER_LOG := log_path=$(SANITIZER_REPORTS)/report:exitcode=86
+define sanitized_corpus
+	rm -rf "$(SANITIZER_REPORTS)" && mkdir -p "$(SANITIZER_REPORTS)"
+	status=0; $(NO_CORE_DUMPS) \
+	WHITEFOOT_TEST_SANITIZER=$(1) \
+	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0:$(SANITIZER_LOG) \
+	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1:$(SANITIZER_LOG) \
+	TSAN_OPTIONS=halt_on_error=1:$(SANITIZER_LOG) \
+	$(CHECK_RUN) compiler/$(2) $(CARGO) test --profile gate --test corpus --locked --offline -- $(SANITIZER_FILTER) \
+		|| status=$$?; \
+	for report in "$(SANITIZER_REPORTS)"/*; do \
+		[ -e "$$report" ] || continue; \
+		echo "sanitizer report $$report:"; cat "$$report"; status=1; \
+	done; \
+	exit $$status
+endef
+
+.PHONY: test-corpus-asan test-corpus-tsan
+test-corpus-asan:
+	$(call sanitized_corpus,address,corpus-asan)
+test-corpus-tsan:
+	$(call sanitized_corpus,thread,corpus-tsan)
+
 docs:
 	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --no-deps --locked --offline
 
