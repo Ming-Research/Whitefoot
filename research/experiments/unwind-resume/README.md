@@ -268,10 +268,11 @@ whose executable load segment has a `0x1000` difference between virtual
 address and file offset, recovered neither in any sample. The failure
 therefore follows LLD's default segment layout under this perf (6.17) and its
 DWARF unwinder, not Whitefoot code generation. The run's raw-dump diagnostics
-for the three DWARF recordings (Whitefoot, the default-linker control and the
-LLD control) timed out, so it does not show which lookup fails or which
-component performs it. The address-bias mechanism above remains a hypothesis;
-the layout dependence is what was measured.
+for the three DWARF recordings (Whitefoot, the default-linker control and the LLD control)
+timed out. The other raw dumps and each recording's verbose unwind trace are
+in that run's artifact, which was not read, so which lookup fails and which
+component performs it stay unresolved. The address-bias mechanism above remains
+a hypothesis; the layout dependence is what was measured.
 
 CI run `38426537112` measured revision
 `4f03db37578935aa60f5761d96760d36594d6d0b`, which keeps `uwtable` and adds
