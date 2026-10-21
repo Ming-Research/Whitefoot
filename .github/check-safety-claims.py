@@ -9,18 +9,23 @@ and the conformance cases that check them. A green run says:
   verdict the column promises (a rejecting case declares a rejection citing the
   rule; an accepting case declares accept or run);
 - every "other evidence" key is the `covered_by` of the manifest annotation of
-  that rule;
+  that rule, and every test file named beside it exists and contains the rule ID;
 - every claim named in CLAIMS has rows, a rejecting case and an accepting case;
-- every quotation in the not-claimed table occurs verbatim in the rule it cites;
+- every table has the header the page uses;
+- every limit named in NOT_CLAIMED has a row citing its rule, and every
+  quotation in the not-claimed table occurs verbatim in the rule it cites;
 - every `make` target the reproduction section names exists;
 - the trusted-base counting method still resolves to files.
 
 It does not say that the compiler reaches each declared verdict (the gate's
-conformance run does), that the sampled cases are the best ones, or that the
-sizes quoted on the page are current: they are a dated snapshot, and
-`--tcb` prints the present figures with the method the page states.
+conformance run does), that a named test file checks what its rule requires
+(only that the file exists and names the rule), that the sampled cases are the
+best ones, or that the sizes quoted on the page are current: they are a dated
+snapshot, and `--tcb` prints the present figures with the method the page
+states.
 """
 
+from collections import namedtuple
 from pathlib import Path
 import json
 import re
@@ -43,6 +48,19 @@ CLAIMS = (
     "No silent overflow",
     "No runtime traps",
 )
+
+# The limits the page must state, each as the topic cell of a Not claimed row
+# and the rule whose text it quotes.
+NOT_CLAIMED = {
+    "Freedom from race conditions in general": "CAP-1",
+    "Termination": "EFF-3",
+    "Freedom from deadlock": "WAIT-2",
+    "Resource availability": "SCOPE-3",
+    "Freedom from undefined behavior if the trusted base is wrong": "SCOPE-3",
+}
+
+CLAIM_HEADER = ("Rule", "Contribution", "Rejecting cases", "Accepting cases", "Other evidence")
+NOT_CLAIMED_HEADER = ("Not claimed", "Specification", "Rule")
 
 RULE = r"[A-Z]+-[0-9]+[a-z]?"
 RULE_START = re.compile(rf"^\[({RULE})\]")
@@ -92,11 +110,18 @@ def is_separator(cells):
     return all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
 
 
+Page = namedtuple("Page", "claims headings not_claimed make_targets problems")
+
+
 def parse_page(text):
-    """The page's rows: claim rows by claim heading, not-claimed rows, make targets."""
-    claims, headings, not_claimed, make_targets = {}, [], [], []
+    """The page's rows: claim rows by claim heading, not-claimed rows, make targets.
+
+    The first row of each claim table and of the Not claimed table is its
+    header and must equal the header the page uses; a row may be indented.
+    """
+    claims, headings, not_claimed, make_targets, problems = {}, [], [], [], []
     section = claim = None
-    seen_header = {}
+    seen_header = set()
     for number, line in enumerate(text.splitlines(), 1):
         if line.startswith("## "):
             section, claim = line[3:].strip(), None
@@ -109,20 +134,25 @@ def parse_page(text):
             continue
         if section == "Reproducing":
             make_targets += [(number, target) for target in re.findall(r"`make ([a-z][a-z-]*)`", line)]
-        if not line.startswith("|"):
+        row = line.lstrip()
+        if not row.startswith("|"):
             continue
-        cells = table_cells(line)
+        cells = table_cells(row)
         if is_separator(cells):
             continue
-        key = (section, claim)
-        if not seen_header.get(key):
-            seen_header[key] = True
-            continue
         if section == "Claims" and claim is not None:
-            claims[claim].append((number, cells))
+            expected, rows = CLAIM_HEADER, claims[claim]
         elif section == "Not claimed":
-            not_claimed.append((number, cells))
-    return claims, headings, not_claimed, make_targets
+            expected, rows = NOT_CLAIMED_HEADER, not_claimed
+        else:
+            continue
+        if (section, claim) not in seen_header:
+            seen_header.add((section, claim))
+            if tuple(cells) != expected:
+                problems.append((number, f"the table header is {cells!r}, expected {list(expected)!r}"))
+            continue
+        rows.append((number, cells))
+    return Page(claims, headings, not_claimed, make_targets, problems)
 
 
 def claim_findings(root):
@@ -135,7 +165,10 @@ def claim_findings(root):
     rules = spec_rules((root / SPEC).read_text())
     cases, annotations = manifest_records((root / MANIFEST).read_text())
     makefile = (root / MAKEFILE).read_text()
-    claims, headings, not_claimed, make_targets = parse_page(page)
+    claims, headings, not_claimed, make_targets, problems = parse_page(page)
+
+    for number, message in problems:
+        add(number, message)
 
     for title in CLAIMS:
         if title not in headings:
@@ -189,18 +222,25 @@ def claim_findings(root):
                     add(number, f"{rule}: {case_id} no longer cites {rule} (it cites {' '.join(case['rules'])})")
                 else:
                     accepting += 1
-            for key in others:
+            if others:
+                key, *tests = others
                 annotation = annotations.get(rule)
                 if annotation is None or annotation.get("covered_by") != key:
                     found = annotation.get("covered_by") if annotation else "no annotation"
                     add(number, f"{rule}: other evidence '{key}' does not match the manifest annotation ({found})")
+                for path in tests:
+                    test = root / path
+                    if not test.is_file():
+                        add(number, f"{rule}: test file {path} does not exist")
+                    elif not re.search(rf"(?<![A-Z0-9-]){re.escape(rule)}(?![0-9a-z])",
+                                       test.read_text(errors="replace")):
+                        add(number, f"{rule}: test file {path} does not contain {rule}")
         if title in CLAIMS and rows and not rejecting:
             findings.append(f"{PAGE}: claim '{title}' names no rejecting case")
         if title in CLAIMS and rows and not accepting:
             findings.append(f"{PAGE}: claim '{title}' names no accepting case")
 
-    if not not_claimed:
-        findings.append(f"{PAGE}: the Not claimed section has no rows")
+    stated = set()
     for number, cells in not_claimed:
         if len(cells) != 3:
             add(number, f"a not-claimed row has {len(cells)} cells, expected 3 (topic, quotation, rule)")
@@ -210,10 +250,14 @@ def claim_findings(root):
             add(number, "a not-claimed row needs a “quotation” and one rule id in code font")
             continue
         rule = named[1]
+        stated.add((cells[0], rule))
         if rule not in rules:
             add(number, f"{rule} is not defined in {SPEC}")
         elif " ".join(quote[1].split()) not in rules[rule]:
             add(number, f"the quotation does not occur verbatim in {rule}")
+    for topic, rule in NOT_CLAIMED.items():
+        if (topic, rule) not in stated:
+            findings.append(f"{PAGE}: the Not claimed section has no row '{topic}' citing {rule}")
 
     if not any(target == "conformance-run" for _, target in make_targets):
         findings.append(f"{PAGE}: the Reproducing section does not name `make conformance-run`")
@@ -319,7 +363,11 @@ the bound i < len.
 
 [OWN-1] Every value has exactly one owner.
 
-[CAP-1] A race condition is not excluded.
+[CAP-1] The data-race guarantee does not exclude general race conditions.
+
+[EFF-3] The spelling pure does not promise termination.
+
+[WAIT-2] A deadlocked execution takes no further step.
 """
 
 MANIFEST_FIXTURE = "\n".join([
@@ -336,9 +384,22 @@ MANIFEST_FIXTURE = "\n".join([
 ]) + "\n"
 
 
+# Files the fixture root holds besides the four inputs: a test file that names CAP-1.
+FIXTURE_FILES = {"tests/ownership.rs": "// checks [CAP-1]\n"}
+
+# The quotation each Not claimed row of the fixture page carries, per topic.
+FIXTURE_QUOTES = {
+    "Freedom from race conditions in general": "does not exclude general race conditions",
+    "Termination": "does not promise termination",
+    "Freedom from deadlock": "takes no further step",
+    "Resource availability": "leaves resource   availability outside it",
+    "Freedom from undefined behavior if the trusted base is wrong": "no undefined behavior",
+}
+
 FIXTURE_ROWS = {
     "No memory corruption": [("OP-4", "`op4-neg`", "`op4-pos`", "")],
-    "No data races": [("OWN-1", "`own1-neg`", "`own1-run`", ""), ("CAP-1", "", "", "`ownership-tests`")],
+    "No data races": [("OWN-1", "`own1-neg`", "`own1-run`", ""),
+                      ("CAP-1", "", "", "`ownership-tests` `tests/ownership.rs`")],
     "No uninitialized reads": [("OP-4", "`op4-neg`", "`op4-pos`", "")],
     "No silent overflow": [("OP-4", "`op4-neg`", "`op4-pos`", "")],
     "No runtime traps": [("OWN-1", "`own1-neg`", "`own1-run`", "")],
@@ -350,15 +411,15 @@ def page_fixture(rows=None):
     sections = ["# Safety claims", "", "## Claims", ""]
     for title in CLAIMS:
         sections += [f"### {title}", "",
-                     "| Rule | Contribution | Rejecting cases | Accepting cases | Other evidence |",
+                     "| " + " | ".join(CLAIM_HEADER) + " |",
                      "|---|---|---|---|---|"]
         sections += [f"| `{rule}` | text | {rejects} | {accepts} | {other} |"
                      for rule, rejects, accepts, other in rows[title]]
         sections.append("")
     sections += ["## Not claimed", "",
-                 "| Topic | Specification | Rule |", "|---|---|---|",
-                 "| Resources | “leaves resource   availability outside it” | `SCOPE-3` |", "",
-                 "## Reproducing", "", "Run `make conformance-run`.", ""]
+                 "| " + " | ".join(NOT_CLAIMED_HEADER) + " |", "|---|---|---|"]
+    sections += [f"| {topic} | “{FIXTURE_QUOTES[topic]}” | `{rule}` |" for topic, rule in NOT_CLAIMED.items()]
+    sections += ["", "## Reproducing", "", "Run `make conformance-run`.", ""]
     return "\n".join(sections)
 
 
@@ -366,12 +427,13 @@ MAKEFILE_FIXTURE = "conformance-run:\n\t@true\n"
 
 
 class ClaimTests(unittest.TestCase):
-    def fixture(self, page=None, manifest=None, spec=None, makefile=None):
+    def fixture(self, page=None, manifest=None, spec=None, makefile=None, files=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         for name, text in ((PAGE, page or page_fixture()), (MANIFEST, manifest or MANIFEST_FIXTURE),
-                           (SPEC, spec or SPEC_FIXTURE), (MAKEFILE, makefile or MAKEFILE_FIXTURE)):
+                           (SPEC, spec or SPEC_FIXTURE), (MAKEFILE, makefile or MAKEFILE_FIXTURE),
+                           *(FIXTURE_FILES if files is None else files).items()):
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
@@ -462,9 +524,12 @@ class ClaimTests(unittest.TestCase):
         real = Path(__file__).resolve().parent.parent
         page, manifest, spec, makefile = (
             (real / name).read_text() for name in (PAGE, MANIFEST, SPEC, MAKEFILE))
-        self.assertEqual(claim_findings(self.fixture(page, manifest, spec, makefile)), [])
-        claims, _, _, _ = parse_page(page)
+        claims = parse_page(page).claims
         rows = [cells for entries in claims.values() for _, cells in entries]
+        tests = {path: (real / path).read_text(errors="replace")
+                 for cells in rows for path in CODE.findall(cells[4])[1:]}
+        self.assertTrue(tests)
+        self.assertEqual(claim_findings(self.fixture(page, manifest, spec, makefile, tests)), [])
         row = next(cells for cells in rows if CODE.findall(cells[3]))
         rule, case_id = CODE.fullmatch(row[0])[1], CODE.findall(row[3])[0]
         changed = []
@@ -474,8 +539,70 @@ class ClaimTests(unittest.TestCase):
                 record["rules"] = [other for other in record["rules"] if base_rule(other) != rule] or ["SCOPE-2"]
                 line = json.dumps(record)
             changed.append(line)
-        findings = claim_findings(self.fixture(page, "\n".join(changed) + "\n", spec, makefile))
+        findings = claim_findings(self.fixture(page, "\n".join(changed) + "\n", spec, makefile, tests))
         self.assertTrue(any(f"{case_id} no longer cites {rule}" in f for f in findings), findings)
+
+    def test_deleted_table_header(self):
+        page = page_fixture()
+        header = "| " + " | ".join(CLAIM_HEADER) + " |"
+        findings = self.findings(page=page.replace(header + "\n|---|---|---|---|---|\n", "|---|---|---|---|---|\n", 1))
+        self.assertTrue(any("the table header is" in f for f in findings), findings)
+
+    def test_changed_not_claimed_header(self):
+        page = page_fixture().replace("| Not claimed | Specification | Rule |", "| Topic | Specification | Rule |")
+        self.assertOne(self.findings(page=page), "the table header is")
+
+    def test_indented_row_is_still_checked(self):
+        page = page_fixture({"No data races": [("OWN-1", "`own1-neg`", "`own1-run`", ""), ("NOPE-9", "", "", "")]})
+        page = page.replace("| `NOPE-9`", "   | `NOPE-9`")
+        findings = self.findings(page=page)
+        self.assertTrue(any("NOPE-9 is not defined" in f for f in findings), findings)
+
+    def test_claim_row_with_the_wrong_cell_count(self):
+        page = page_fixture().replace("| `OP-4` | text | `op4-neg` | `op4-pos` |  |", "| `OP-4` | text | `op4-neg` | `op4-pos` |", 1)
+        findings = self.findings(page=page)
+        self.assertTrue(any("has 4 cells, expected 5" in f for f in findings), findings)
+
+    def test_first_cell_is_not_a_rule_id(self):
+        page = page_fixture().replace("| `OP-4` | text |", "| OP-4 | text |", 1)
+        findings = self.findings(page=page)
+        self.assertTrue(any("the first cell must be one rule id in code font" in f for f in findings), findings)
+
+    def test_case_named_twice(self):
+        page = page_fixture({"No runtime traps": [("OWN-1", "`own1-neg` `own1-neg`", "`own1-run`", "")]})
+        findings = self.findings(page=page)
+        self.assertTrue(any("names own1-neg twice" in f for f in findings), findings)
+
+    def test_rule_without_an_annotation(self):
+        page = page_fixture({"No data races": [("OWN-1", "`own1-neg`", "`own1-run`", ""),
+                                               ("OP-4", "", "", "`ownership-tests`")]})
+        self.assertOne(self.findings(page=page), "OP-4: other evidence 'ownership-tests' does not match the manifest annotation (no annotation)")
+
+    def test_other_evidence_file_is_missing(self):
+        self.assertOne(self.findings(files={}), "test file tests/ownership.rs does not exist")
+
+    def test_other_evidence_file_stops_naming_the_rule(self):
+        self.assertOne(self.findings(files={"tests/ownership.rs": "// checks [CAP-10] and XCAP-1\n"}),
+                       "test file tests/ownership.rs does not contain CAP-1")
+
+    def test_missing_limit(self):
+        page = page_fixture()
+        page = "\n".join(line for line in page.splitlines() if not line.startswith("| Freedom from deadlock"))
+        self.assertOne(self.findings(page=page), "no row 'Freedom from deadlock' citing WAIT-2")
+
+    def test_limit_cites_another_rule(self):
+        page = page_fixture().replace("“does not promise termination” | `EFF-3`", "“does not promise termination” | `CAP-1`")
+        findings = self.findings(page=page)
+        self.assertTrue(any("no row 'Termination' citing EFF-3" in f for f in findings), findings)
+
+    def test_malformed_limit_row(self):
+        page = page_fixture().replace("“does not promise termination” | `EFF-3` |", "does not promise termination | `EFF-3` |", 1)
+        findings = self.findings(page=page)
+        self.assertTrue(any("needs a “quotation” and one rule id in code font" in f for f in findings), findings)
+
+    def test_page_without_the_reproduction_command(self):
+        page = page_fixture().replace("`make conformance-run`", "the conformance run")
+        self.assertOne(self.findings(page=page), "does not name `make conformance-run`")
 
     def test_inline_test_modules_are_not_counted(self):
         source = "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() {\n    }\n}\nfn b() {}\n"

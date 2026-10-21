@@ -1,6 +1,6 @@
 # Safety claims
 
-What Whitefoot claims about a program the compiler accepts, what each claim rests on, what is not claimed, and what the claims trust. Every line can be checked against the [specification](../spec/kernel-spec.md) and the [conformance cases](../tests/conformance/manifest.jsonl) without taking the project's word for it.
+This page lists what Whitefoot claims about a program the compiler accepts, what each claim rests on, what is not claimed, and what the claims trust. Every line can be checked against the [specification](../spec/kernel-spec.md) and the [conformance cases](../tests/conformance/manifest.jsonl) without taking the project's word for it.
 
 All claims hold under one condition, stated by the specification's scope rule `SCOPE-3`: the trusted base ([below](#the-trusted-base)) is correct.
 
@@ -14,7 +14,7 @@ Each claim below has a table. Its rows are specification rules; the columns say 
 | Contribution | What the rule adds to the claim, in a clause. |
 | Rejecting cases | Conformance cases whose declared verdict is a rejection citing that rule. They show that an accepted program has cleared the rule. |
 | Accepting cases | Cases that cite the rule and are declared accepted, or compiled and run to a declared exit status. They show that the rule admits the safe form and that the safe form executes. |
-| Other evidence | For a rule that no source verdict can tell apart (such as a permission an implementation may or may not take), the `covered_by` key of the rule's annotation in the manifest, which says which tests check it. |
+| Other evidence | For a rule that no source verdict can tell apart (such as a permission an implementation may or may not take), the `covered_by` key of the rule's annotation in the manifest, then the test files that name the rule. The key is the manifest's name for a kind of evidence, not a file: the annotation's `reason` describes in prose what the tests do, and `policy` marks a standing disposition of the checker that no test asserts on its own. The files are compiler and program tests that `make check` runs; `make conformance-run` does not. The check requires each file to exist and to contain the rule's ID, and cannot say that the test checks what the rule requires. |
 
 The cases are a readable sample: the manifest lists every case, and each case's `rules` field names the rules it exercises. A case named here can be opened at `tests/conformance/cases/<id>.wf`, or a directory of that name for a module-form case, and its `doc` field in the manifest says what it protects.
 
@@ -22,9 +22,10 @@ The cases are a readable sample: the manifest lists every case, and each case's 
 
 - a rule named here is not defined in the specification;
 - a case named here is not in the manifest, no longer cites the rule, or no longer has the verdict its column promises;
-- an "other evidence" key differs from the rule's annotation in the manifest;
+- an "other evidence" key differs from the rule's annotation in the manifest, or a test file named beside it is missing or does not contain the rule's ID;
 - a claim has no rejecting case or no accepting case;
-- a quotation under [Not claimed](#not-claimed) no longer occurs verbatim in the rule it cites;
+- a table's header differs from the one this page uses;
+- one of the five limits under [Not claimed](#not-claimed) is missing, or its quotation no longer occurs verbatim in the rule it cites;
 - a `make` target named under [Reproducing](#reproducing) does not exist.
 
 The check reads declared verdicts. That the compiler reaches each declared verdict is what the gate's conformance run decides, and `make conformance-run` repeats it.
@@ -43,37 +44,37 @@ An accepted program does not read or write outside an object's storage, use a va
 | `REF-3` | A reference never escapes the function that formed it: it cannot be returned or stored in an aggregate. | `own4-neg-return-local-borrow` | `ref3-pos-index-result` | |
 | `LIV-1` | Every join agrees on which bindings are live, so each release at scope exit is unconditional and runs once. | `liv1-neg-branches-disagree-on-liveness` | `liv1-pos-loop-moves-and-restores-an-outer-binding` | |
 | `STOR-3` | Releases are derived by the compiler and run exactly once on every edge that leaves the owner's scope. | | `stor3-pos-box-drop-region`, `continue-pos-cleanup` | |
-| `OP-14` | A window is freed only after the checker has proved it empty, so no live element is freed. | `op14-neg-free-empty-nonempty-window` | `op14-pos-free-empty-empty-window` | |
-| `STOR-6` | The address of every element access and allocation is proved representable on the selected target after source acceptance; no runtime guard stands in for the proof. | | | `compiler-target-layout-tests` |
+| `OP-14` | `free_empty` consumes a window only with `window.len == 0_u64` proved at the call, and a window of linear elements is released only through it, so such an element is never dropped. | `op14-neg-free-empty-nonempty-window` | `op14-pos-free-empty-empty-window` | |
+| `STOR-6` | A size, alignment, offset or stride that is not representable on the selected target stops compilation before any target-dependent output containing it is emitted; it is never wrapped, truncated or underallocated. | | | `compiler-target-layout-tests` `compiler/src/backend/tests/windows.rs` `compiler/src/backend/tests/exhaustion.rs` |
 
 The cases show that the checker rejects each unsafe shape it is declared to reject. They do not enumerate unsafe programs: a program the checker accepts by mistake is a soundness defect, not a failing case. Memory safety of the generated code and of the runtime rests on the trusted base.
 
 ### No data races
 
-In an accepted program, no two contexts, overlapped statements or overlapped loop iterations access the same storage with at least one of them writing, except through an atomic statement on a shared object. This is a guarantee about data races; [Not claimed](#not-claimed) says what it leaves out.
+The specification mentions its data-race guarantee only in `CAP-1`, which makes it subject to the trusted base and says it does not exclude general race conditions. This page reads the guarantee through the rules below, and the reading is the page's, not a rule of its own: a spawned context is given only the storage its arguments moved or copied into it; the state of a shared object is reached only through the targets of an atomic statement; the shared effects take effect in one total order; and an implementation may overlap statements or loop iterations only where their footprints are disjoint. [Not claimed](#not-claimed) says what the guarantee leaves out.
 
 | Rule | Contribution | Rejecting cases | Accepting cases | Other evidence |
 |---|---|---|---|---|
-| `CAP-1` | There is no capability category beyond ownership, loans, path overlap and effect rows, and the only concurrency construct is the spawn. | | | `compiler-ownership-model` |
-| `WAIT-3` | A spawned context's footprint is the arguments moved or copied into it; a callee with a reference parameter cannot be spawned. | `wait3-neg-reference-parameter` | `wait3-pos-spawn-let` | |
-| `SHARE-2` | The state of a shared object is reached only inside an atomic statement, and one handle cannot be a whole target twice. | `share-neg-target-whole-handle-twice` | `share-pos-handle-moved-in-block` | |
-| `SHARE-3` | An atomic statement takes effect at one point, with exclusive access to the states of its targets. | | `share-pos-map-two-handles-one-entry` | |
+| `CAP-1` | The kernel defines no capability category and no concurrency permission beyond `own`, `&`, path overlap and the effect row, and no thread construct: its one concurrency construct is the spawn. | | | `compiler-ownership-model` `compiler/src/semantic/tests/permission.rs` `compiler/src/semantic/tests/loop_permission.rs` |
+| `WAIT-3` | A spawn's callee has only value parameters, and the started context's footprint is the storage its arguments moved or copied into it, so no statement of the starting context overlaps it. | `wait3-neg-reference-parameter` | `wait3-pos-spawn-let` | |
+| `SHARE-2` | The targets of an atomic statement are the only forms that reach a shared object's state (`SHARE-1`); a whole target may name its handle place only once, and beside no entry or key-set target on it. | `share-neg-target-whole-handle-twice` | `share-pos-handle-moved-in-block` | |
+| `SHARE-3` | The shared effects (atomic statements, cancellation-state updates, and the `decision_cell_read`, `claim_written` and `claim_killed` calls) take effect in one total order, and an atomic statement has exclusive access to the states its targets name. | | `share-pos-map-two-handles-one-entry` | |
 | `EFF-5` | A call's declared effect row is applied to the actual paths; two paths of one call that are not proved disjoint, one of them written, are rejected. | `own12-neg-alias-uniq-args` | `own12-pos-distinct-uniq-args` | |
 | `OWN-7` | Two paths overlap when one is a prefix of the other, and two indexed positions overlap unless proved distinct. | | `own7-pos-distinct-noverlap` | |
-| `PAR-1` | Adjacent statements may overlap only when each one's writes are disjoint from the other's reads and writes. | | `par1-pos-a-view-argument-is-a-footprint-on-its-origin` | `compiler-permission-judgment` |
-| `PAR-2` | Loop iterations may overlap only under the stated conditions on the loop body's footprint. | | | `compiler-permission-judgment` |
+| `PAR-1` | An implementation may overlap two adjacent statements exactly when each one's write paths are disjoint from the other's read and write paths; a statement that contains a waiting call has no overlap permission. | | `par1-pos-a-view-argument-is-a-footprint-on-its-origin` | `compiler-permission-judgment` `compiler/src/semantic/tests/permission.rs` `compiler/tests/programs/parallel.rs` |
+| `PAR-2` | An implementation may overlap two iterations of a `for` loop only when the conditions this rule states on the body's footprint hold. | | | `compiler-permission-judgment` `compiler/src/semantic/tests/loop_permission.rs` `compiler/tests/programs/parallel.rs` |
 
-Whether a permitted overlap is taken is not observable (`PAR-1`), so a source verdict cannot tell it from sequential execution. The two permission rules are checked by compiler tests that run the same emitted program at several worker counts and compare the results, which the manifest annotation of each rule describes.
+The two permission rules grant an implementation room over an already accepted sequential program, and the lack of a permission never rejects the source (`ERR-4`). Under a permitted overlap, bindings and every Whitefoot state place equal the source-order result (`PAR-1`), so no source verdict can tell an overlapped execution from a sequential one. The permission judgment and that equality are therefore checked by compiler and program tests, which the files in the last column name and the manifest annotation of each rule describes.
 
 ### No uninitialized reads
 
-An accepted program does not read storage that holds no value. A window's slots outside its length cannot be named, a moved-from binding cannot be read until it is assigned again, and no operation leaves a hole in a window or an array.
+An accepted program does not read storage that holds no value. A slot outside a window's length cannot be read, because a subscript is bounded by `len`; a moved-from binding cannot be read until it is assigned again; and no operation leaves a hole in a window or an array.
 
 | Rule | Contribution | Rejecting cases | Accepting cases | Other evidence |
 |---|---|---|---|---|
-| `WIN-1` | Only the first `len` slots of a window are initialized, and a subscript is bounded by `len`, never by capacity. | | `win1-pos-window-is-len-slots` | |
+| `WIN-1` | The initialized slots of a window are exactly the `len` slots beginning at `head` modulo `cap` (at slot zero on `Slots` and `Paged`), every other slot holds nothing, and a subscript is bounded by `len`, never by capacity. | | `win1-pos-window-is-len-slots` | |
 | `OP-4` | The subscript obligation is `i < len`, so a read of a slot below capacity but not below `len` is rejected, as is a read of a window formed empty. | `win1-neg-subscript-above-len`, `op4-neg-a-run-element-read-carries-its-obligation` | `op4-pos-index-discharged` | |
-| `OP-13` | A window built by a construction function starts empty; its slots become readable only as they are written. | | `op13-pos-segments-empty-run`, `type9-pos-segments-fill-and-join` | |
+| `OP-13` | `slots_new`, `ring_new`, `box_slots_new`, `box_ring_new` and `box_paged_new` build an empty window, `slots_from_array` consumes a full array into a full window, and `array_filled` and `box_array_filled` fill every slot with the supplied value, so no construction leaves an uninitialized slot inside a window or an array. | | `op13-pos-segments-empty-run`, `type9-pos-segments-fill-and-join` | |
 | `WIN-3` | There is no take operation and no hole: a move out of a window slot or an array element is rejected. | `win3-neg-move-out-of-window-slot` | `win3-pos-overwrite-releases-affine` | |
 | `OWN-1` | A dead binding cannot be read. | `own1-neg-index-atom-after-move` | `own1-pos-consume-once` | |
 | `LIV-1` | At every join all predecessors agree on which bindings are live, so no path reads a binding another path moved. | `liv1-neg-branches-disagree-on-liveness` | `liv1-pos-loop-moves-and-restores-an-outer-binding` | |
@@ -100,12 +101,14 @@ An accepted program contains no abort, exception, unwinding edge, runtime check 
 |---|---|---|---|---|
 | `SCOPE-2` | A program is accepted only if every proof-required partial operation is statically discharged; failure rejects compilation and no statement can request a runtime fallback. | | `scope2-pos-accepted` | |
 | `EFF-4` | Accepted source has no writer-reachable abort effect, exception, unwinding edge or hidden runtime proof fallback. | | | `compiler-source-proof-erasure` |
-| `ERR-4` | Expected failures are `Result` values; an unproved function, operation-domain, bounds, layout or address obligation is a source rejection. | | `err4-pos-recoverable-value`, `err4-checked-domain-violation` | |
+| `ERR-4` | Expected environment and input failures are `Result` values; an unproved function, operation-domain or bounds obligation attached to source execution is a source rejection. | | `err4-pos-recoverable-value`, `err4-checked-domain-violation` | |
 | `OWN-8` | The checker rejects any program it cannot prove conformant. | | | `policy` |
 | `ENT-1` | The derivation system that discharges obligations is closed, deterministic and terminating, so acceptance depends on no timeout, machine speed or search budget. | | `ent1-pos-instantiation-judged-at-value` | |
 | `OP-4` | Index: the bounds obligation is discharged or the program is rejected. | `op4-neg-index-undischarged` | `op4-pos-index-discharged` | |
 | `OP-2` | Integer arithmetic, division and shifts: the domain obligation is discharged or the program is rejected. | `op2-neg-exact-absolute-minimum` | `op2-pos-early-return-divisor-guard` | |
 | `OP-6` | Conversion: the domain obligation is discharged or the program is rejected. | `op6-neg-unproved-domain` | `op6-pos-cvt-checked` | |
+
+The specification classifies a failed layout, address or target-domain obligation in two places. `ERR-4` lists these obligations among the source rejections; `STOR-6` says that such a stop is a target-layout failure and not a source-language rejection. This page claims only what both readings give: the stop emits no target-dependent output containing the failing object.
 
 ## Not claimed
 
@@ -128,10 +131,11 @@ An accepted program is safe if the following are correct. They are not verified 
 | Part | Trusted for | Size |
 |---|---|---|
 | The Whitefoot compiler, in safe Rust | Parsing and checking, so that it accepts only what the specification accepts; lowering and emitting LLVM IR that means what the checked program means. | 221,514 lines in 261 files |
-| The runtime, in C and LLVM IR, linked into every program | The scheduler, the completion runtime (file, socket and timer operations), the allocator, the shared-object and concurrent-map implementations, and the stack and heap limits. | 28,549 lines of C and headers in 39 files; 1,036 lines of LLVM IR in 1 file |
+| The runtime, in C and LLVM IR, linked into every program | The scheduler (`sched/`); the completion runtime, which carries file, network and timer operations, snapshot export and stop signals (`completion/`); the heap allocator (`heap.c`); the concurrent map and the keyed table behind shared maps (`concurrent_map.c`, `keyed_table.c`); the prelude implementations (`ordinary_values.*`); and the resource-exhaustion floor (`wf_floor.c`). | 28,549 lines of C and headers in 39 files; 1,036 lines of LLVM IR in 1 file |
+| Linked function definitions | Each definition supplied outside Whitefoot source, such as a C function bound by the build, implements its declaration with the same value, ownership, effect, contract and call-lifetime meaning as a Whitefoot body (`SCOPE-3`). The prelude implementations above are the runtime's own and are counted with it. | Not counted: a definition a program binds in is that program's own |
 | The Rust crates the compiler depends on | `sha2` and what it pulls in, as listed in `compiler/Cargo.lock`. | Not counted |
 | LLVM 22.1.8: clang, lld and the optimizer | Compiling the runtime's C, optimizing and generating code for the emitted IR, and linking. | 5,938,981 lines (LLVM 3,954,214; clang 1,873,115; lld 111,652) |
-| The C library | The functions the runtime calls. | Not counted |
+| The C library | The functions the runtime calls, including `malloc` and `free` under the heap allocator. | Not counted |
 | The operating system | The kernel interfaces the runtime uses, such as threads, memory mapping, signals, `io_uring` on Linux and I/O completion ports on Windows. | Not counted |
 
 How the counted figures are made, so that anyone can repeat them:
@@ -142,7 +146,7 @@ How the counted figures are made, so that anyone can repeat them:
 - `python3 .github/check-safety-claims.py --tcb` prints these counts for the checkout, and the list of system headers the runtime includes (49 distinct headers at the time of writing, covering POSIX, Linux, macOS and Windows).
 - The figures above were taken from `main` at commit `d1f2a19d2`. They are a snapshot and the check does not hold them to the checkout; run the command for the present figures.
 
-Parts marked "Not counted" are other projects, or the machine's own, and their size is not a property of this repository: the version of the C library and the kernel is whatever the host provides, and the crates are resolved by `compiler/Cargo.lock`. The LLVM release is pinned in `.github/toolchain/llvm-assets.json`.
+Parts marked "Not counted" are other projects, the machine's own, or a program's own definitions, and their size is not a property of this repository: the version of the C library and the kernel is whatever the host provides, and the crates are resolved by `compiler/Cargo.lock`. The LLVM release is pinned in `.github/toolchain/llvm-assets.json`.
 
 ## Reproducing
 

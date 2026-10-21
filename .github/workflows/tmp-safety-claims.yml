@@ -49,8 +49,20 @@ jobs:
           expect_red "a quoted rule changes" "does not occur verbatim in CAP-1"
           sed -i 's/^conformance-run:/conformance-runs:/' Makefile
           expect_red "a make target the page names disappears" "is not a Makefile target"
-          sed -i 's/`OP-14` | A window/`OP-99` | A window/' docs/safety-claims.md
+          sed -i 's/`OP-14` | `free_empty` consumes/`OP-99` | `free_empty` consumes/' docs/safety-claims.md
           expect_red "the page cites an undefined rule" "OP-99 is not defined"
+          sed -i 's/^| `OP-4` | Every subscript/   | `OP-99` | Every subscript/' docs/safety-claims.md
+          expect_red "an indented row is still read" "OP-99 is not defined"
+          sed -i 's#compiler/src/semantic/tests/permission.rs#compiler/src/semantic/tests/gone.rs#' docs/safety-claims.md
+          expect_red "a named test file is gone" "test file compiler/src/semantic/tests/gone.rs does not exist"
+          sed -i 's/STOR-6/STOR-X/g' compiler/src/backend/tests/windows.rs
+          expect_red "a named test file stops naming its rule" "test file compiler/src/backend/tests/windows.rs does not contain STOR-6"
+          sed -i '/^| Freedom from deadlock/d' docs/safety-claims.md
+          expect_red "a limit is dropped from Not claimed" "no row 'Freedom from deadlock' citing WAIT-2"
+          sed -i '0,/^| Rule | Contribution/{/^| Rule | Contribution/d}' docs/safety-claims.md
+          expect_red "a table header is deleted" "the table header is"
+          sed -i 's/^| Rule | Contribution | Rejecting cases/| Rule | Contribution | Rejecting/' docs/safety-claims.md
+          expect_red "a table header changes" "the table header is"
           python3 -B .github/check-safety-claims.py > /dev/null
 
   reproduce:
