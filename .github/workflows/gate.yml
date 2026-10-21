@@ -14,21 +14,25 @@
 # Only host setup and job scheduling belong here; adding a correctness group
 # or changing its commands requires no second workflow inventory update.
 #
-# A run checks a revision that may merge: a push to main, a push to a branch
-# with an open pull request, draft or ready, the opening or reopening of a
-# pull request, the event of marking one ready, and a manual run. Any other
-# push, to a branch with no open pull request or to a tag, ends after the
-# first job with every check skipped: nothing merges from it, and a pull
-# request opened for it later starts a run on its head when it opens. The
-# first job decides with .github/gate-scope.sh, which io-hosts.yml shares.
-# Branch names decide nothing: research and code work share `claude/` names,
-# and a research branch with a pull request needs its gate to merge.
+# A run checks a revision that is about to merge: a push to main, a push to a
+# branch with an open ready pull request, the opening or reopening of a ready
+# pull request, the event of marking one ready, and a manual run. A draft pull
+# request is still being written, so a push to its branch, like a push to a
+# branch with no open pull request or to a tag, ends after the first job with
+# every check skipped; while writing, a temporary workflow (`tmp-` file, see
+# AGENTS.md, "Checks") gives the author the result for what the change
+# touches, and the author starts this workflow by hand once, after the review
+# has passed. Marking the pull request ready then skips this workflow when
+# its head already has that successful manual run, and runs it when nobody
+# has. The first job decides with .github/gate-scope.sh, which io-hosts.yml
+# shares. Branch names decide nothing: research and code work share `claude/`
+# names, and a research branch with a pull request needs its gate to merge.
 #
-# A checked revision runs the groups on Linux. macOS joins where its answer
-# decides a merge: a push to a branch with an open pull request marked ready,
-# the opening of a ready pull request, the event of marking one ready, main,
-# and a manual run (compiler/verification). The last job then requires every
-# group green on both platforms for the revision.
+# A checked revision runs every group on Linux and macOS, and the last job
+# requires every group green on both platforms for the revision. A job fails
+# the run while a `tmp-` workflow file exists in the checked head: a temporary
+# workflow never merges, and the last run before a merge, started by hand, is
+# the one that stops a forgotten one; main's own run stops one that got in.
 name: gate
 
 on:
@@ -52,13 +56,10 @@ permissions:
 # opening's run instead decides to skip once the pull request's head has moved
 # (.github/gate-scope.sh), because that push run checks the new head. A pull
 # request reopened right after a push may be checked twice, once by each run.
-# The ready run checks both platforms on the head it was raised for, and
-# cancelling the push run of that same head, or being cancelled by it, would
-# only leave a cancelled run beside the successful one; a manual run was asked
-# for, and a push that skips must not cancel it. If a push run asks GitHub
-# before the ready state is visible, it runs Linux only and Gate on both
-# platforms is skipped, not passed, for that run; the ready run, a later push
-# or a manual run qualifies the head.
+# The ready run checks the head it was raised for, and cancelling the push run
+# of that same head, or being cancelled by it, would only leave a cancelled
+# run beside the successful one; a manual run was asked for, and a push that
+# skips must not cancel it.
 # Each main commit gets its own group: a release needs the gate of that exact
 # commit, and a group keeps only one pending run, so a shared main group would
 # cancel the run of every merge but the last of a quick succession.
@@ -78,9 +79,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       groups: ${{ steps.select.outputs.groups }}
-      run: ${{ steps.platforms.outputs.run }}
-      platforms: ${{ steps.platforms.outputs.platforms }}
-      both: ${{ steps.platforms.outputs.both }}
+      run: ${{ steps.scope.outputs.run }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -91,11 +90,10 @@ jobs:
           groups=$(make --no-print-directory --silent check-groups)
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
           echo "Correctness groups: $groups" >> "$GITHUB_STEP_SUMMARY"
-      # Whether this revision is checked, and on which platforms. A failed
-      # query fails the run rather than quietly skipping the gate or dropping
-      # macOS.
-      - name: Choose whether to check and the platforms
-        id: platforms
+      # Whether this revision is checked. A failed query fails the run rather
+      # than quietly skipping the gate.
+      - name: Choose whether to check
+        id: scope
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -107,22 +105,40 @@ jobs:
           echo "$scope"
           echo "$scope" >> "$GITHUB_OUTPUT"
           run=$(echo "$scope" | sed -n 's/^run=//p')
-          both=$(echo "$scope" | sed -n 's/^both=//p')
           reason=$(echo "$scope" | sed -n 's/^reason=//p')
-          if [ "$both" = true ]; then
-            platforms='["ubuntu-24.04","macos-15"]'
-          else
-            platforms='["ubuntu-24.04"]'
-          fi
-          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
           if [ "$run" = true ]; then
-            echo "Platforms: $platforms ($reason)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Gate runs: $reason" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Gate skipped: $reason" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  gate:
+  # A temporary workflow (`tmp-` file) is the author's quick check while
+  # writing; it never merges, so the run that decides a merge fails while one
+  # exists in the head it checks. The matrix and the final job wait for this
+  # cheap check: a head that has one spends no matrix run, and shows no green
+  # `Gate on both platforms`, which AGENTS.md reads as the merge precondition.
+  no-tmp-workflow:
+    name: No temporary workflow
     needs: groups
+    if: needs.groups.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          sparse-checkout: .github/workflows
+      - name: Fail while a temporary workflow exists
+        run: |
+          leftover=$(find .github/workflows -maxdepth 1 -name 'tmp-*' | sort)
+          if [ -n "$leftover" ]; then
+            echo "::error::A temporary workflow is still in the head; delete it before the full check: $leftover"
+            exit 1
+          fi
+          echo "No tmp- workflow in .github/workflows"
+
+  gate:
+    needs: [groups, no-tmp-workflow]
     if: needs.groups.outputs.run == 'true'
     name: ${{ matrix.stage }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -132,7 +148,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.groups.outputs.platforms) }}
+        os: [ubuntu-24.04, macos-15]
         stage: ${{ fromJSON(needs.groups.outputs.groups) }}
     steps:
       - uses: actions/checkout@v4
@@ -322,15 +338,15 @@ jobs:
           perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
 
   # The merge precondition, read from the revision's own check runs rather
-  # than from this run's matrix: every group green on both platforms. Draft
-  # pushes and unchecked revisions skip it, so its success marks a revision
-  # that may be merged. A cancelled run skips it too: a later push in its
-  # concurrency group supersedes it, and a verdict read from cancelled jobs
-  # would only stand red beside that run's answer.
+  # than from this run's matrix: every group green on both platforms.
+  # Unchecked revisions skip it, so its success marks a revision that may be
+  # merged. A cancelled run skips it too: a later push in its concurrency
+  # group supersedes it, and a verdict read from cancelled jobs would only
+  # stand red beside that run's answer.
   platforms:
     name: Gate on both platforms
-    needs: [groups, gate]
-    if: ${{ !cancelled() && needs.groups.outputs.run == 'true' && needs.groups.outputs.both == 'true' }}
+    needs: [groups, no-tmp-workflow, gate]
+    if: ${{ !cancelled() && needs.groups.outputs.run == 'true' && needs.no-tmp-workflow.result == 'success' }}
     runs-on: ubuntu-24.04
     # A listing makes one call for the runs and one per run of the revision
     # (usually one or two). With three calls, each failing four times before

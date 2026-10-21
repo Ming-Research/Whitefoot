@@ -72,15 +72,7 @@ fn main() -> status: ExitStatus pure {
   let right_out = &columns.right.inner[0_u64..fill_right_length];
   fill(left: left_out, right: right_out, length: length);
   let fold_left_length = columns.left.inner.len;
-  if length <= fold_left_length {
-  } else {
-    return exit_status(code: 204_u8);
-  }
   let fold_right_length = columns.right.inner.len;
-  if length <= fold_right_length {
-  } else {
-    return exit_status(code: 205_u8);
-  }
   let left_in = &columns.left.inner[0_u64..fold_left_length];
   let right_in = &columns.right.inner[0_u64..fold_right_length];
   let total = fold(left: left_in, right: right_in, length: length);

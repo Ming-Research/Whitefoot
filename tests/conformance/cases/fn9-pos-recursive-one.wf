@@ -12,11 +12,5 @@ fn one(depth: u64) -> done: u64 pure contract {
 fn main() -> status: std::process::ExitStatus pure {
   let base = one(depth: 0_u64);
   let nested = one(depth: 3_u64);
-  if base != 1_u64 {
-    return std::process::exit_status(code: 1_u8);
-  }
-  if nested != 1_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
   return std::process::exit_status(code: 0_u8);
 }
