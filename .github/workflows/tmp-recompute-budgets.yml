@@ -14,6 +14,8 @@ on:
       - '.github/time-budgets.txt'
       - 'Makefile'
       - 'design/**'
+      - 'AGENTS.md'
+      - 'docs/review-checklist.md'
 
 jobs:
   recompute:
@@ -62,6 +64,9 @@ jobs:
           fault period 'boundary = days[(days.index(r["day"]) // every) * every]' 'boundary = days[days.index(r["day"])]'
           fault first-day 'if r["day"] < since:' 'if False:'
           fault logged-budget 'if r["budget"] is not None:' 'if r["budget"] is None:'
+
+      - name: Guidance references
+        run: perl .github/run-check.pl guidance make guidance
 
       - name: Design tree lint and readiness
         run: |
