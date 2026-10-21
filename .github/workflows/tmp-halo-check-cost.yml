@@ -1,18 +1,21 @@
 # Temporary (board item enum-route-check-cost); remove before the branch is ready.
-# Re-times Firn's whole-program check on the merged head of the branch (the
-# second merge of origin/main), the one measurement not repeated after it: the
-# branch against current main with the regression (main), and a twin of main
-# for the noise. The pre-regression compiler cannot check the adapted source,
-# because main gave `Inputs` a `host_paths` field after it. Compiler CPU (user + system), five interleaved rounds, plus one work-counter
-# run per compiler. The sides and what each result shows are written in the
-# study record before the run.
+# Re-times, on the merged head of the branch (the third merge of origin/main),
+# the three workloads of the acceptance rows in one run: Halo's pkg::vm and
+# pkg::test checks and Firn's whole-program check. Compiler CPU (user + system),
+# interleaved rounds, plus one work-counter run per compiler. Compilers: the
+# pre-regression compiler of the acceptance row (base) and a twin of it for the
+# noise, the merged main without the fix (main), and the merged head (branch).
+# Firn has no base: the pre-regression compiler cannot check its adapted source,
+# because main gave `Inputs` a `host_paths` field after it, so its twin is a
+# second run of main and its ratios are to main.
 #
 # The downstream sources predate main's rule OP-5 (a conditional test whose
-# outcome the checker already knows is rejected) and a grammar change that makes
-# `held` unusable as a parameter name, and a full destructuring of `Inputs` must
-# now list `host_paths`, so the merged compiler rejects them. The adapt step
-# applies the compiler's own mechanical fix for each rejection, one at a time,
-# with the merged compiler, so both compilers time the same accepted source.
+# outcome the checker already knows is rejected), a grammar change that makes
+# `held` unusable as a parameter name and a full destructuring of `Inputs` that
+# must now list `host_paths`, so the merged compiler rejects them. The adapt
+# step first applies the diff of an earlier run's adaptation, then applies the
+# compiler's own mechanical fix for each remaining rejection, one at a time,
+# with the merged compiler, so every compiler times the same accepted source.
 name: tmp-halo-check-cost
 
 on:
@@ -23,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 defaults:
   run:
@@ -35,7 +39,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
-  MAIN_REVISION: 0c40731d330b33e6436e6dbf4c1debd7c9340b41
+  MAIN_REVISION: 7b11c52fbaaeef66db780e422b7c2e0e3702258e
   WHITEFOOT_CHECK_TIMEOUT: 1800
 
 jobs:
@@ -47,14 +51,41 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # pkg::vm: the baseline is the main revision just before the
+          # regression, as the first acceptance row defines it.
+          - label: halo pkg::vm
+            repo: Halo-wf
+            rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
+            args: --graph lib/halo/modules.wfg --check-module pkg::vm
+            base: 7d9118eba
+            rounds: 5
+            main_rounds: 5
+            adapt_max: 300
+            adapt_run: '39649159705'
+            adapt_artifact: tmp-halo-check-cost-0
+          # pkg::test: the baseline is the compiler of the earlier run; main
+          # takes about ten minutes a check, so it runs once.
+          - label: halo pkg::test
+            repo: Halo-wf
+            rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
+            args: --graph tests/halo-vm/modules.wfg --check-module pkg::test
+            base: d837678c6905
+            rounds: 3
+            main_rounds: 1
+            adapt_max: 100
+            adapt_run: '39649159705'
+            adapt_artifact: tmp-halo-check-cost-1
           # Firn whole program, at the revision the 10-13 measurement used.
           - label: firn
             repo: Firn-wf
             rev: b83b67fa0d7b463dbafe5429b013efc04e39076a
             args: --graph firn/modules.wfg --entry firn --check
+            base: ''
             rounds: 5
             main_rounds: 5
             adapt_max: 400
+            adapt_run: '39682072749'
+            adapt_artifact: tmp-halo-check-cost-0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,15 +94,29 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           rustup default stable
+          if [ -n "${{ matrix.base }}" ]; then git worktree add --detach "$RUNNER_TEMP/base" "${{ matrix.base }}"; fi
           git worktree add --detach "$RUNNER_TEMP/main" "$MAIN_REVISION"
           git clone --quiet "https://github.com/Ming-Research/${{ matrix.repo }}.git" "$RUNNER_TEMP/halo"
           git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "${{ matrix.rev }}"
           git -C "$RUNNER_TEMP/halo" submodule update --init --quiet
-          { printf 'main=%s\nbranch=%s\nsource=%s\n' "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
+          { printf 'base=%s\nmain=%s\nbranch=%s\nsource=%s\n' "$([ -d "$RUNNER_TEMP/base" ] && git -C "$RUNNER_TEMP/base" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
       - name: Build the merged compiler
         run: |
           perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
           perl .github/run-check.pl compiler/build cargo build --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
+      - name: Apply the earlier run's adaptation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ADAPT_RUN: ${{ matrix.adapt_run }}
+          ADAPT_ARTIFACT: ${{ matrix.adapt_artifact }}
+        run: |
+          dir=$(mktemp -d "$RUNNER_TEMP/earlier.XXXXXX")
+          if gh run download "$ADAPT_RUN" --repo "$GITHUB_REPOSITORY" -n "$ADAPT_ARTIFACT" -D "$dir"; then
+            git -C "$RUNNER_TEMP/halo" apply --exclude='deps/*' --whitespace=nowarn "$dir/adapt.diff" && echo "applied the earlier diff" || echo "the earlier diff did not apply; adapting from the original source"
+          else
+            echo "no earlier artifact; adapting from the original source"
+          fi
+          git -C "$RUNNER_TEMP/halo" status --short | wc -l
       - name: Adapt the source to the merged compiler's OP-5 rule
         id: adapt
         env:
@@ -206,7 +251,8 @@ jobs:
       - name: Build the other compilers
         if: steps.adapt.outputs.accepted == 'true'
         run: |
-          for tree in "$RUNNER_TEMP/main"; do
+          for tree in "$RUNNER_TEMP/main" "$RUNNER_TEMP/base"; do
+            [ -d "$tree" ] || continue
             perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
           done
@@ -223,8 +269,12 @@ jobs:
           temp = pathlib.Path(os.environ['RUNNER_TEMP']); out = temp / 'out'
           ws = pathlib.Path(os.environ['GITHUB_WORKSPACE'])
           module = os.environ['LABEL']; rounds = int(os.environ['ROUNDS']); main_rounds = int(os.environ['MAIN_ROUNDS'])
-          bins = {'main': temp / 'main/compiler/target/gate/whitefootc', 'twin': temp / 'main/compiler/target/gate/whitefootc',
-                  'branch': ws / 'compiler/target/gate/whitefootc'}
+          has_base = (temp / 'base').is_dir(); ref = 'base' if has_base else 'main'
+          bins = {}
+          if has_base: bins['base'] = temp / 'base/compiler/target/gate/whitefootc'
+          bins['twin'] = temp / (ref + '/compiler/target/gate/whitefootc')
+          bins['main'] = temp / 'main/compiler/target/gate/whitefootc'
+          bins['branch'] = ws / 'compiler/target/gate/whitefootc'
           cmd = os.environ['ARGS'].split()
           env = {k: v for k, v in os.environ.items() if k not in ('WHITEFOOT_CHECK_WORK', 'WHITEFOOT_TIME_BUDGET_RECORD')}
           tag = module.replace('::', '-').replace(' ', '-')
@@ -245,15 +295,15 @@ jobs:
                   print(rnd, w, f'rc={rc}', f'{cpu:.2f}', flush=True)
           lines = [f'## {module}: compiler CPU (user+sys), {rounds} interleaved rounds', '',
                    'Exit codes by round: ' + '; '.join(f'r{r}: ' + ' '.join(f'{w}={status[r][w]}' for w in status[r]) for r in sorted(status)), '',
-                   '| Compiler | Median CPU s | Ratio to main (median, min-max) |', '|---|---:|---:|']
+                   '| Compiler | Median CPU s | Ratio to ' + ref + ' (median, min-max) |', '|---|---:|---:|']
           for w in order:
               rows = [p for p in paired.values() if w in p]
               if not rows: continue
-              rb = [p[w] / p['main'] for p in rows]
+              rb = [p[w] / p[ref] for p in rows]
               lines.append(f"| {w} | {statistics.median(p[w] for p in rows):.2f} | {statistics.median(rb):.3f} ({min(rb):.3f}-{max(rb):.3f}) |")
           totals = {}
           for w in order:
-              if w == 'twin': continue
+              if w == 'twin' or (w == 'main' and module.endswith('pkg::test')): continue
               rc, _ = run(w, 'counters-' + w, counters=True); t = collections.Counter(); print('counters', w, f'rc={rc}', flush=True)
               work = out / (tag + '-' + w + '-work.tsv')
               if work.exists():
@@ -261,7 +311,8 @@ jobs:
                       for row in csv.reader(f, delimiter='\t'):
                           if len(row) == 7 and row[6].isdigit(): t[row[3] + ':' + row[5]] += int(row[6])
               totals[w] = t
-          keys = sorted(set().union(*totals.values()), key=lambda k: -max(t[k] for t in totals.values()))[:20]
+          fixed = ['join:join', 'join:pairs_evaluated', 'closure:cells_sum']
+          keys = fixed + [k for k in sorted(set().union(*totals.values()), key=lambda k: -max(t[k] for t in totals.values())) if k not in fixed][:20]
           ws_ = list(totals)
           lines += ['', '| Counter | ' + ' | '.join(ws_) + ' |', '|---|' + '---:|' * len(ws_)] + [f"| {k} | " + ' | '.join(str(totals[w][k]) for w in ws_) + ' |' for k in keys]
           summary = '\n'.join(lines) + '\n'; print(summary)

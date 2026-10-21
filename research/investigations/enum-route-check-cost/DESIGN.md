@@ -604,6 +604,39 @@ head: that compiler cannot check the adapted source, so the figures 0.978
 (before the first merge) and 0.678 (on the first merge) remain the evidence
 for that ratio and belong to those heads.
 
+### Re-measurement on the final head, after the third merge of main (`643931102`)
+
+Main advanced again (`7b11c52fb`) with changes under `semantic/check/`
+(references, linearity, frozen, nominal instances, atomic) and `prelude`, none
+under `semantic/entailment/flow`, `semantic/places` or `resolution/engine`. A
+measurement counts only for the head that merges, so all three workloads are
+timed once more in one run on this head; later advances of main that leave this
+branch's head unchanged are not timed again. Method as before: five interleaved
+rounds (three for `pkg::test`, main once), compiler user+sys CPU, no check
+cache, one work-counter run per compiler, sources adapted by applying the
+earlier runs' adaptation diffs and then the compiler's own mechanical fixes.
+Sides and what each result shows:
+
+- `base` (Halo only; `7d9118eba` for `pkg::vm`, `d837678c6905` for
+  `pkg::test`): the denominator of the acceptance rows. Branch/base at most
+  1.03 for `pkg::vm`, and at most 1.5 for `pkg::test`, meets them; a larger
+  median rejects them.
+- `twin`: the `base` binary run again (for Firn, which has no base, the `main`
+  binary run again); the median and min–max of its ratio are this run's noise.
+  A twin median outside the min–max of its own rounds around 1 is not noise,
+  and the run is repeated.
+- `main` (`7b11c52fb`, with the #431 regression): branch/main isolates the fix.
+  For Firn the acceptance row asks that the branch's five-round range lies
+  wholly below 1 while the twin's straddles 1; a branch range reaching 1 or
+  above rejects it.
+- `branch` (the merged head): for Firn also the work counters `join:join`,
+  `join:pairs_evaluated` and `closure:cells_sum`, compared with the branch
+  column of the first merge's run (39610827470), the one measured at 0.678 of
+  the pre-#431 compiler. Equal counts carry that ratio to this head; the
+  counts of a source with one more binding can differ by what that binding
+  adds, which the main column then shows equally; a branch column that moves
+  differently from the main column rejects the carry-over.
+
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
 record, ENT-5, the checker-facts decisions, and the directly affected fact-state
