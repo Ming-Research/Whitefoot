@@ -23,7 +23,7 @@ pub(super) struct ResultEvidence {
 }
 
 /// [ENT-5] one route of an own enum type: a variant field whose type supplies
-/// data under [CALL-4] or is a struct with type invariants [TYPE-11].
+/// data under [CALL-4].
 #[derive(Clone, Copy)]
 pub(super) struct SuccessRoute {
     pub(super) payload: CheckedType,
@@ -47,8 +47,9 @@ impl Input<'_, '_> {
     /// [ENT-5] the routes of a local own enum value, in variant and then
     /// field order: each field whose type supplies data under [CALL-4] (a
     /// fragment integer, measured type, or aggregate reaching one through
-    /// struct fields and `Box` content), and each field whose type is a
-    /// struct with type invariants [TYPE-11].
+    /// struct fields and `Box` content). A struct with an affine type
+    /// invariant always does, since each invariant reads such a datum
+    /// [TYPE-11].
     pub(super) fn payload_routes(&self, ty: CheckedType) -> Vec<SuccessRoute> {
         let CheckedType::Nominal(id) = ty else {
             return Vec::new();
@@ -77,16 +78,7 @@ impl Input<'_, '_> {
                     return Vec::new();
                 };
                 let success = success && variant.fields.len() == 1;
-                let invariant = matches!(
-                    field.ty,
-                    CheckedType::Nominal(payload)
-                        if self
-                            .context
-                            .nominals
-                            .get(payload.0 as usize)
-                            .is_some_and(|record| record.type_invariant)
-                );
-                if !invariant && !self.payload_supplies_data(field.ty) {
+                if !self.payload_supplies_data(field.ty) {
                     continue;
                 }
                 routes.push(SuccessRoute {
