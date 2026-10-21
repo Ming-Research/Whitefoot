@@ -1,4 +1,4 @@
-# Kernel Specification v0.156
+# Kernel Specification v0.157
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -1268,7 +1268,7 @@ A ring position is a logical index and the wrap is the storage's business [WIN-1
 [OP-11] `swap`.
 `swap(first: p, second: q)` exchanges the values at two owned places of one type; its signature and row are the [PRE-1] record, and it is built in because no source body can write it without a hole [WIN-3].
 It is the one operation whose two reference arguments may name the same place, in which case nothing happens, so `swap(first: &r[i], second: &r[j])` needs no `i != j` branch [EFF-5].
-Every possible pair of exchange targets must be equal or disjoint, with neither possibly a proper ancestor of the other. Equal captured targets and equal-depth slots under one identical array or window satisfy the equality allowance. Equal descendant covers alone do not. An unproved proper-ancestry exclusion is a hard error citing OP-11 at the call, with a repair [DIAG-1].
+Every possible pair of exchange targets must be equal or disjoint, with neither possibly a proper ancestor of the other. Equal captured targets and equal-depth slots under containing paths that are identical step for step or differ only in index steps, as [OWN-7] reads them, satisfy the equality allowance. Equal descendant covers alone do not. An unproved proper-ancestry exclusion is a hard error citing OP-11 at the call, with a repair [DIAG-1].
 That admission concerns its own two arguments and nothing else: against any other statement a `swap` is judged by the ordinary pairwise rule on its two write paths [PAR-1, EFF-5], so an adjacent statement touching either path denies overlap permission.
 At every program point each place holds exactly one valid owner; no temporary uninitialized hole, vacancy state, or second owner exists.
 Neither root is consumed: both bindings remain live.
