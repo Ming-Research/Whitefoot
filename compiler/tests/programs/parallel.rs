@@ -437,6 +437,18 @@ fn shared_objects_outlive_statements_while_other_contexts_release_handles() {
     run_on_one_driver_and_on_four("shared_handle_release.wf", 3);
 }
 
+/// [SHARE-1, PROV-6] objects whose states are linear, on one driver and on
+/// four: two running contexts take `nodrop` tickets out of one queue, three
+/// take turns with one `nodrop` pen outside their atomic statements, and the
+/// handle whose `shared_close` is last receives each state and consumes it.
+/// Statements that did not hold the object alone would lose a stroke or
+/// redeem a ticket twice, and a close that took the state early would lose a
+/// count; the program's status names the first wrong count.
+#[test]
+fn linear_states_pass_between_running_contexts() {
+    run_on_one_driver_and_on_four("linear_shared_states.wf", 3);
+}
+
 /// Runs one program on one driver and on four, `rounds` times each, and
 /// requires status 0, which each program gives only when every count it
 /// checks is the one every order of its atomic statements gives.

@@ -41,6 +41,8 @@ pub(super) fn run_pairs() {
         .chain(super::captured_indices::CAPTURED_INDICES)
         .chain(super::cell_consumption::CELL_CONSUMPTION)
         .chain(super::content_moves::CONTENT_MOVES)
+        .chain(super::derived_measures::DERIVED_MEASURES)
+        .chain(super::effect_row_categories::EFFECT_ROW_CATEGORIES)
         .chain(super::prelude_opaque::PRELUDE_OPAQUE)
         .chain(super::proof_place_spellings::PROOF_PLACE_SPELLINGS)
         .chain(super::qualified_constants::QUALIFIED_CONSTANTS)
