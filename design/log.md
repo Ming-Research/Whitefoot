@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/safety-claims
 
 Summary: The safety claims were spread over the README, the constitution, the specification and articles, with no place that connected each claim to the rules and cases behind it. A new node puts them on one page whose rows cite specification rules and conformance cases, with the limits quoted from the specification and the trusted base sized, and `make static` holds every citation to the specification and the manifest and the presence of each limit, because a page nothing reads drifts, which the refused rule-to-ground ledger already showed. Tagging cases in the manifest, generating the page from the manifest, leaving the page unchecked and holding the size figures to the checkout are rejected.
+## 2026-10-21 The gate runs on Linux only for now
+
+Nodes: compiler/verification
+
+Summary: The hosted gate stops adding macOS for ready pull requests, the main line and manual runs, and its final job requires every group green on Linux alone. The hosted macOS runners take five jobs at a time; with several ready pull requests at once, a run's macOS jobs waited about 43 minutes for a runner while five ran and ten more queued, and merges waited behind them. The change is provisional: macOS returns, in a form still to be chosen, before the first release, whose release workflow still requires a gate run with macOS jobs on the released commit. The decision on a failed scope query no longer mentions dropping macOS.
 
 ## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
 
