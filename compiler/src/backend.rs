@@ -5,6 +5,7 @@ pub(crate) mod emission;
 pub(crate) mod emitter;
 mod fragments;
 mod runtime;
+mod sanitizer;
 mod stack_ledger;
 mod storage;
 
@@ -31,6 +32,7 @@ pub use emitter::{
     module_requires_heap_runtime, module_requires_parallel_runtime,
 };
 pub use fragments::{FragmentGranularity, SplitFailure, split_module};
+pub use sanitizer::Sanitizer;
 pub use stack_ledger::{Architecture, stack_ledger};
 
 /// Byte offset of a shared object's state from its runtime header; equals

@@ -887,6 +887,7 @@ impl Analyzer<'_, '_> {
                     None,
                     judgment.reached,
                     std::slice::from_ref(&result),
+                    &[scrutinee],
                 );
                 self.declare(*binding);
                 self.finish_continuation(*binding, taken, state);
@@ -1295,6 +1296,7 @@ impl Analyzer<'_, '_> {
                     affine_result.as_ref(),
                     judgment.reached,
                     &results,
+                    &returned,
                 );
                 self.apply_kills(state, &events);
                 false

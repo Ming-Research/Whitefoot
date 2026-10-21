@@ -14,6 +14,7 @@ pub(crate) mod model;
 mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
+mod place_render;
 mod places;
 #[cfg(test)]
 pub(crate) use places::UnprovedSeparations;
@@ -641,6 +642,8 @@ pub struct UndischargedPostconditionDetail {
     pub selector: SemanticLocation,
     /// The instantiated normalized relation at the selected exit.
     pub relation: String,
+    /// The expanded written clause with the selected return substituted.
+    pub clause: String,
     /// The exact non-discharged disposition.
     pub disposition: PostconditionProofDisposition,
     /// The repair [DIAG-1], selected by the disposition.

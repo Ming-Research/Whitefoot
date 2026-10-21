@@ -28,6 +28,8 @@ Whitefoot 是一门研究性质的系统编程语言，围绕三个特性设计�
 - 陷入死循环，或者算出错误的结果。契约（contract）描述的是写下来的东西，而不是本来想要的东西；
 - 被错误地编译。可信基包括 Whitefoot 编译器及其检查器、LLVM 和 clang、运行时和分配器、作为可信定义链接进来的 C 函数、libc 以及操作系统（[SCOPE-3](spec/kernel-spec.md#1-scope-and-conformance)）。
 
+[安全说法](docs/safety-claims.md)把上面的每一条说法，连同它依据的规范规则和检验它的一致性用例逐条列出，引用规范原文说明哪些不在保证之内，并给出可信基的规模。
+
 其他系统用别的方式证明同样的无运行时错误。SPARK 是 Ada 的一个子集，面向高完整性软件，它在一个独立于编译的分析中使用 SMT 求解器：无论程序是否已被证明，Ada 编译器都会把它构建出来。Wuffs 不用求解器也能检查类似的证明，但它是一门用来编写解析、解码和编码文件格式的库的语言，它的代码不能进行系统调用，也不能分配内存。
 
 ### 从内存到资源
@@ -224,6 +226,7 @@ tests/conformance/cases/op4-neg-index-undischarged.wf:6:12: error[OP-4]: Undisch
 - `--par` 构建并行版本，`--par-ledger` 打印每一个并行决定及其理由。运行时由 `WF_WORKERS` 设置使用多少个工作线程，由 `WF_DRIVERS` 设置用多少个驱动线程运行 `spawn` 所启动的上下文，默认每个 CPU 一个；
 - `--stack-ledger` 报告每个函数的栈帧，以及每个递归环能容纳多少层；
 - `--emit-llvm` 输出 LLVM IR；
+- `--sanitize address` 在 AddressSanitizer 加 UndefinedBehaviorSanitizer 下构建程序和它的运行时，`--sanitize thread` 则在 ThreadSanitizer 下构建，只用于 Linux 和 macOS。它们需要 clang 的 sanitizer 运行时：Apple 的 clang 自带；Linux 上要另装，比如 Debian 和 Ubuntu 上 clang 22 对应的 `libclang-rt-22-dev`。被接受的程序不应让它们报告任何问题，所以一条报告就是编译器或运行时的缺陷；
 - `--diagnostic-format json` 把每次拒绝输出为一行一个的 JSON 对象；
 - `whitefootc --help` 列出其余选项。
 
