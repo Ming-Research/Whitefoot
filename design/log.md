@@ -10,6 +10,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/rejection-payloads, compiler/diagnostic-rendering
 
 Summary: Proof-goal places share the one canonical place renderer; a computed call argument or range endpoint is spelled by the source text retained at that occurrence, kept out of proof identities, and a binding rewritten since then still prints `?`, replacing the earlier refusal to invent an expression for a computed index with refusals of invented text and of a rewritten binding's current name; a callee keeps the alias or `pkg::` prefix written at the call with its generic arguments. A normalized relation keeps its mathematical form and writes each constant as a legal literal or exact literal expression, because normalization can produce a negative bound from unsigned operands. A failed postcondition keeps `relation` and adds `clause`, the written comparison with each result datum replaced by the returned value, because normalization can reverse and fold what the writer wrote. Text-format list items that are strings are double-quoted, because a string can contain the list separator.
+
 ## 2026-10-21 Safety claims are stated on one checked page
 
 Nodes: language/safety-claims
