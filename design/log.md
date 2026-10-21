@@ -12,6 +12,11 @@ Nodes: compiler/checker-facts
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: pointing a reference variable elsewhere becomes its own kind of event that invalidates proof facts? (Ming-Research/Whitefoot#439, head b1ee96910)" (translated).
 
 Summary: A new decision makes a reference rebinding a distinct invalidation event that removes only the facts spelled through or reached through that reference variable, and loop summaries carry the event unchanged, because the specification says a rebinding writes no storage, instead of synthesizing a whole write of the variable and removing facts by its function-wide provenance list, which removed facts established through other names on the old or new target.
+## 2026-10-21 The gate runs on Linux only for now
+
+Nodes: compiler/verification
+
+Summary: The hosted gate stops adding macOS for ready pull requests, the main line and manual runs, and its final job requires every group green on Linux alone. The hosted macOS runners take five jobs at a time; with several ready pull requests at once, a run's macOS jobs waited about 43 minutes for a runner while five ran and ten more queued, and merges waited behind them. The change is provisional: macOS returns, in a form still to be chosen, before the first release, whose release workflow still requires a gate run with macOS jobs on the released commit. The decision on a failed scope query no longer mentions dropping macOS.
 
 ## 2026-10-21 A draft pull request's pushes start no gate, and the full check is started by hand once
 
