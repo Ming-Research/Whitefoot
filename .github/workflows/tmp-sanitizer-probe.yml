@@ -157,3 +157,59 @@ jobs:
         run: |
           [ -n "$WHITEFOOT_CONFORMANCE_SHARD" ] || unset WHITEFOOT_CONFORMANCE_SHARD
           make -C compiler ${{ matrix.target }} SANITIZER_FILTER="${{ matrix.filter }}"
+
+  # `whitefootc --sanitize` as a reader runs it, on each host the README
+  # names: a sanitized build of a sequential and a `--par` program must exit
+  # as the ordinary build does and write no report.
+  cli:
+    name: whitefootc --sanitize on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+            version=$(tr -d '[:space:]' < .github/llvm-major)
+            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+            sudo apt-get install -y --no-install-recommends "libclang-rt-$version-dev"
+            sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+            sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          fi
+          /usr/bin/clang --version
+          rustup default stable
+      - name: Sanitized builds run as ordinary builds do
+        run: |
+          set -u
+          perl .github/run-check.pl tmp-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --bin whitefootc
+          wfc=compiler/target/gate/whitefootc
+          work="$RUNNER_TEMP/cli"
+          reports="$work/reports"
+          mkdir -p "$reports"
+          export ASAN_OPTIONS="detect_leaks=0:log_path=$reports/report"
+          export UBSAN_OPTIONS="halt_on_error=1:log_path=$reports/report"
+          export TSAN_OPTIONS="halt_on_error=1:log_path=$reports/report"
+          failed=0
+          for program in "tests/programs/heap_run.wf" "--par tests/programs/parallel/tree.wf"; do
+            name=$(basename "${program##* }" .wf)
+            "$wfc" $program -o "$work/$name-plain" || { echo "::error::ordinary build of $name failed"; failed=1; continue; }
+            expected=0; "$work/$name-plain" > /dev/null 2>&1 || expected=$?
+            for sanitizer in address thread; do
+              if ! "$wfc" --sanitize "$sanitizer" $program -o "$work/$name-$sanitizer"; then
+                echo "::error::$sanitizer build of $name failed"; failed=1; continue
+              fi
+              status=0; "$work/$name-$sanitizer" > /dev/null 2>&1 || status=$?
+              echo "$name under $sanitizer: exit $status, ordinary exit $expected"
+              [ "$status" -eq "$expected" ] || { echo "::error::$name under $sanitizer exited $status"; failed=1; }
+            done
+          done
+          for report in "$reports"/*; do
+            [ -e "$report" ] || continue
+            echo "report $report:"; cat "$report"; failed=1
+          done
+          exit $failed

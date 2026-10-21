@@ -21,9 +21,10 @@
 # opening's run decides run=false once the pull request's head has moved; this
 # assumes every move of the branch is a push that starts a run, which a push
 # made with a workflow's own token would not. The run has a concurrency group
-# apart from the pushes' (gate.yml, io-hosts.yml), so it never cancels a push
-# run. A reopening always runs: a push while the pull request was closed was
-# skipped as having no open pull request, so no other run may check its head.
+# apart from the pushes' (gate.yml, io-hosts.yml, sanitizers.yml), so it never
+# cancels a push run. A reopening always runs: a push while the pull request
+# was closed was skipped as having no open pull request, so no other run may
+# check its head.
 # A pull request from a fork is not asked: no push to the fork starts a run
 # here, so its opening always runs.
 #

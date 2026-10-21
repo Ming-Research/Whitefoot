@@ -451,9 +451,11 @@ Other options:
 - `--emit-llvm` prints the LLVM IR;
 - `--sanitize address` builds the program and its runtime under
   AddressSanitizer with UndefinedBehaviorSanitizer, and `--sanitize thread`
-  under ThreadSanitizer, on Linux and macOS. An accepted program should
-  never make them report, so a report is a bug in the compiler or its
-  runtime;
+  under ThreadSanitizer, on Linux and macOS. They need clang's sanitizer
+  runtimes: Apple's clang has them, and on Linux they come in their own
+  package, such as `libclang-rt-22-dev` for clang 22 on Debian and Ubuntu.
+  An accepted program should never make them report, so a report is a bug
+  in the compiler or its runtime;
 - `--diagnostic-format json` prints each rejection as one JSON object per
   line;
 - `whitefootc --help` lists the rest.
