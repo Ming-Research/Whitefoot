@@ -20,13 +20,19 @@ rather than reporting an empty success.
 Because it tests the LANGUAGE (source -> verdict), not a compiler's internals, this
 suite outlives compiler implementations.
 
-Verdict = ("accept",) | ("reject", rule) | ("run", exit) | ("unsupported", why)
+Verdict = ("accept",) | ("reject", rule, span?) | ("run", exit) | ("unsupported", why)
 
 Manifest line (JSON):
   {"id": str, "rules": [rule_id...], "expect": EXPECT, "arrange": ARRANGE?,
    "status": "runnable", "doc": str}
-  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R} | {"kind":"run","exit":N}
+  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R,"span":SPAN?} | {"kind":"run","exit":N}
          | {"kind":"unsupported","why":str}
+
+  SPAN = {"start":N,"end":N}: zero-based, half-open byte offsets in the
+         case's single `.wf` source, as DIAG-1 defines them. Only a reject
+         case may assert a span; module-form cases cannot yet assert one.
+         The rule and span must belong to the same rejection. An adapter
+         supplies no span when that rejection belongs to another source.
 
   status: runnable = must match expect. It is the only status. There is no
           skipped and no expected-failure status: a case whose declared verdict
@@ -90,7 +96,8 @@ ADAPTER = None
 def matches(v, expect):
     k = expect["kind"]
     return ((k == "accept" and v[0] == "accept")
-            or (k == "reject" and v[0] == "reject" and v[1] == expect["rule"])
+            or (k == "reject" and v[0] == "reject" and v[1] == expect["rule"]
+                and ("span" not in expect or (len(v) > 2 and v[2] == expect["span"])))
             or (k == "run" and v[0] == "run" and v[1] == expect["exit"])
             # `why` is the adapter's prose; the corpus asserts the verdict kind,
             # never a diagnostic's wording.
@@ -323,8 +330,12 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
         kind = expect.get("kind") if isinstance(expect, dict) else None
         if kind not in expectation_fields:
             errors.append(f"{case_id}: invalid expectation {kind!r}")
-        elif set(expect) != expectation_fields[kind]:
+        elif set(expect) != expectation_fields[kind] and not (
+            kind == "reject" and set(expect) == expectation_fields[kind] | {"span"}
+        ):
             fields = " ".join(sorted(expectation_fields[kind]))
+            if kind == "reject":
+                fields += " (with optional span)"
             errors.append(
                 f"{case_id}: {kind} expectation fields must be exactly: {fields}"
             )
@@ -332,6 +343,17 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
             reject_rule = expect.get("rule")
             if reject_rule not in case_rules:
                 errors.append(f"{case_id}: reject rule must appear in case rules")
+            if "span" in expect:
+                span = expect["span"]
+                if not isinstance(span, dict) or set(span) != {"start", "end"} or not all(
+                    type(span[key]) is int and span[key] >= 0 for key in ("start", "end")
+                ) or span["start"] > span["end"]:
+                    errors.append(f"{case_id}: span needs nonnegative integer start <= end")
+                elif f"{case_id}/" in actual_sources:
+                    errors.append(f"{case_id}: span requires a single .wf source")
+                elif f"{case_id}.wf" in actual_sources:
+                    if span["end"] > len((cases_dir / f"{case_id}.wf").read_bytes()):
+                        errors.append(f"{case_id}: span exceeds source byte length")
         elif kind == "run" and type(expect.get("exit")) is not int:
             errors.append(f"{case_id}: run expectation requires an integer exit")
         elif kind == "unsupported" and not expect.get("why"):

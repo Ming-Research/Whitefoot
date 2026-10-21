@@ -38,18 +38,13 @@ fn descend(left: &Words, right: &Words, scale: &[u64], window: &[u64], depth: u6
   let start = 1_u64;
   let ordered = start <= count;
   if ordered {
-    let inside = count <= window^.len;
-    if inside {
-      let first = 0_u64;
-      let zero = 0_u64;
-      if zero < window^.len {
-        set first = window^[zero];
-      }
-      let rest = &window^[start..count];
-      let shifted = total +wrap first;
-      let narrowed = weigh(left: left, right: right, scale: scale, window: rest, depth: depth, at: at, bias: bias, total: shifted);
-      return narrowed;
-    }
+    let first = 0_u64;
+    let zero = 0_u64;
+    set first = window^[zero];
+    let rest = &window^[start..count];
+    let shifted = total +wrap first;
+    let narrowed = weigh(left: left, right: right, scale: scale, window: rest, depth: depth, at: at, bias: bias, total: shifted);
+    return narrowed;
   }
   let plain = total +wrap bias;
   let passed_on = weigh(left: left, right: right, scale: scale, window: window, depth: depth, at: at, bias: bias, total: plain);
@@ -63,12 +58,8 @@ fn main() -> status: ExitStatus pure {
   for (position in 0_u64..64_u64) {
     let doubled = position +wrap position;
     let tripled = doubled +wrap position;
-    if position < left_list.inner.len {
-      set left_list.inner[position] = doubled;
-    }
-    if position < right_list.inner.len {
-      set right_list.inner[position] = tripled;
-    }
+    set left_list.inner[position] = doubled;
+    set right_list.inner[position] = tripled;
   }
   let left = Words(list: move left_list);
   let right = Words(list: move right_list);
@@ -76,9 +67,7 @@ fn main() -> status: ExitStatus pure {
   let window_values = array_filled::<u64, 5>(value: 0_u64);
   for (position in 0_u64..5_u64) {
     let word = position +wrap 7_u64;
-    if position < 5_u64 {
-      set window_values[position] = word;
-    }
+    set window_values[position] = word;
   }
   let depth = 12_u64;
   let at = 3_u64;

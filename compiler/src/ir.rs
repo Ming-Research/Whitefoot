@@ -292,94 +292,58 @@ pub(crate) fn type_derives_release(
     elements: &[IrType],
     ty: IrType,
 ) -> Option<bool> {
-    let nominal_kind = |id: IrNominalId| nominals.get(id.index()).map(IrNominal::kind);
-    let mut pending = vec![ty];
-    let mut visited = std::collections::HashSet::new();
-    while let Some(current) = pending.pop() {
-        if !visited.insert(current) {
-            continue;
-        }
-        match current {
-            // A runtime-capacity block is one heap object the owner frees
-            // [TYPE-9, STOR-3], so it always derives a release.
-            IrType::Buffer { .. }
-            | IrType::Segments { .. }
-            | IrType::Window {
-                capacity: None, ..
-            } => return Some(true),
-            // A key set's store is the runtime's, which its release frees
-            // [SHARE-1].
-            IrType::KeySet => return Some(true),
-            // A constant-capacity window reclaims nothing of its own; it
-            // still needs a walk when its slots hold values that derive one,
-            // and [PROV-6] visits those before the block is released.
-            IrType::Array { element, .. }
-            | IrType::Window {
-                element,
-                capacity: Some(_),
-                ..
-            } => {
-                pending.push(*elements.get(element.index())?);
-            }
-            // [PROV-6] an owned cell or frozen handle has a non-empty
-            // release action even when its content has none.
-            IrType::Nominal(id)
-                if matches!(
-                    nominal_kind(id),
-                    Some(IrNominalKind::Box {
-                        release: IrReleaseClass::General | IrReleaseClass::Frozen,
-                        ..
-                    })
-                ) =>
-            {
-                return Some(true);
-            }
-            IrType::Nominal(id)
-                if matches!(nominal_kind(id), Some(IrNominalKind::Box { .. })) =>
-            {
-                let Some(IrNominalKind::Box { referent, .. }) = nominal_kind(id) else {
-                    return None;
-                };
-                pending.push(*referent);
-            }
-            IrType::Nominal(id) => match nominal_kind(id)? {
+    crate::release::has_release(ty, crate::release::ReleaseQuery::Scope, |current| {
+        use crate::release::ReleaseShape;
+        Ok::<_, ()>(match current {
+            IrType::KeySet => ReleaseShape::KeySet,
+            IrType::Nominal(id) => match nominals.get(id.index()).ok_or(())?.kind() {
+                IrNominalKind::Box { .. } => ReleaseShape::Box,
+                IrNominalKind::Shared { .. } => ReleaseShape::Shared,
                 IrNominalKind::Struct { fields } => {
-                    pending.extend(fields.iter().map(IrField::ty));
+                    ReleaseShape::Owned(fields.iter().map(IrField::ty).collect())
                 }
-                IrNominalKind::Enum { variants } => {
-                    pending.extend(
-                        variants
-                            .iter()
-                            .flat_map(IrVariant::fields)
-                            .map(IrField::ty),
-                    );
-                }
-                // A handle's release releases a share of its object, and the
-                // last one its state [SHARE-1].
-                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
-                    return Some(true);
-                }
-                // Ordinary opaque values have empty release [PRE-1].
-                IrNominalKind::Opaque => {}
+                IrNominalKind::Enum { variants } => ReleaseShape::Owned(
+                    variants
+                        .iter()
+                        .flat_map(IrVariant::fields)
+                        .map(IrField::ty)
+                        .collect(),
+                ),
+                IrNominalKind::Opaque => ReleaseShape::Empty,
             },
-            IrType::Unit
+            IrType::Window {
+                shape: IrWindowShape::Paged,
+                ..
+            } => ReleaseShape::Paged,
+            IrType::Array { element, length } => ReleaseShape::Repeated {
+                element: *elements.get(element.index()).ok_or(())?,
+                statically_empty: length == 0,
+                runtime_backing: false,
+            },
+            IrType::Window {
+                element, capacity, ..
+            } => ReleaseShape::Repeated {
+                element: *elements.get(element.index()).ok_or(())?,
+                statically_empty: capacity == Some(0),
+                runtime_backing: capacity.is_none(),
+            },
+            IrType::Buffer { element } | IrType::Segments { element } => ReleaseShape::Repeated {
+                element: *elements.get(element.index()).ok_or(())?,
+                statically_empty: false,
+                runtime_backing: true,
+            },
+            IrType::Entries { element } | IrType::Run { element } | IrType::Range { element } => {
+                ReleaseShape::Borrowed(*elements.get(element.index()).ok_or(())?)
+            }
+            IrType::Address(_)
+            | IrType::RuntimeBoxPayload { .. }
+            | IrType::Unit
             | IrType::Bool
             | IrType::Integer { .. }
-            | IrType::Float { .. }
-            // [REF-4, TYPE-8] a range reference is a name for elements it
-            // does not own, so nothing of it is ever released.
-            | IrType::Run { .. }
-            | IrType::Range { .. }
-            // A synthesized payload capture borrows the source Box allocation
-            // and never carries ownership or cleanup authority.
-            | IrType::RuntimeBoxPayload { .. }
-            // The entries an entry binding names are its statement's record,
-            // which owns nothing [SHARE-2].
-            | IrType::Entries { .. }
-            | IrType::Address(_) => {}
-        }
-    }
-    Some(false)
+            | IrType::Float { .. } => ReleaseShape::Empty,
+        })
+    })
+    .ok()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1842,6 +1806,23 @@ impl IrMatchTarget {
     }
 }
 
+/// One exact integer constant selection, retaining the scrutinee's integer
+/// representation rather than projecting an enum tag.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IrIntegerMatchTarget {
+    pub(crate) value: i128,
+    pub(crate) block: IrBlockId,
+}
+
+impl IrIntegerMatchTarget {
+    pub const fn value(self) -> i128 {
+        self.value
+    }
+    pub const fn block(self) -> IrBlockId {
+        self.block
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrTerminator {
     /// A checker-proved uninhabited function body. The function keeps its
@@ -1856,6 +1837,12 @@ pub enum IrTerminator {
         scrutinee: IrValueId,
         enum_type: IrEnumType,
         targets: Vec<IrMatchTarget>,
+    },
+    IntegerMatch {
+        scrutinee: IrValueId,
+        targets: Vec<IrIntegerMatchTarget>,
+        /// The checked else arm; None means complete type-domain coverage.
+        default: Option<IrBlockId>,
     },
     Return {
         value: IrValueId,
@@ -2037,6 +2024,8 @@ pub enum IrSourceArgument {
 /// reevaluated to produce this metadata, and it adds no executable read.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IrSourceCall {
+    /// Exact checked source occurrence, retained only for diagnostic location.
+    pub(crate) origin: crate::NodePath,
     pub(crate) result: IrValueId,
     pub(crate) arguments: Vec<IrSourceArgument>,
     /// A direct borrow result's checked candidate. Absence says nothing about

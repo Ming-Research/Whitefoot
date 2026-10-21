@@ -101,7 +101,8 @@ impl<'unit> DeclarationInventory<'unit> {
                 .get(index)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?
                 .rejection_node_path(),
-            RecordAnswer::Obligation(_)
+            RecordAnswer::Condition(_)
+            | RecordAnswer::Obligation(_)
             | RecordAnswer::CallGoal(_)
             | RecordAnswer::Postcondition(_)
             | RecordAnswer::Uninhabited => &record.site,
@@ -140,6 +141,43 @@ impl<'unit> DeclarationInventory<'unit> {
             path.clone(),
             self.tree.coordinate(node)?,
         ))
+    }
+    /// [OP-5, DIAG-1] a decided condition is a redundant source form: the
+    /// repair deletes the test and its dead branch and keeps the selected
+    /// branch, citing the facts that decided it.
+    fn redundant_condition(
+        &self,
+        entailment: &FunctionEntailment,
+        index: usize,
+    ) -> Result<SemanticIssue, CheckStop> {
+        let outcome = entailment
+            .conditions
+            .get(index)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let decided = outcome
+            .decided
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let repair = if decided {
+            "the condition always holds here: delete the test and its else branch, keep the then branch's statements and delivery in place, and delete any statement that leaves unreachable"
+        } else {
+            "the condition never holds here: delete the test and its then branch and keep the else branch's statements and delivery in place, or delete the whole statement when it has no else"
+        };
+        let facts = if outcome.facts.is_empty() {
+            String::new()
+        } else {
+            format!("; it is decided by {}", outcome.facts.join("; "))
+        };
+        Ok(SemanticIssue {
+            rule: SemanticRule::Op5,
+            location: self.source_location(&outcome.node_path)?,
+            kind: SemanticIssueKind::RedundantCondition {
+                residual: outcome.residual.clone(),
+                decided: if decided { "True" } else { "False" }.to_owned(),
+                facts: outcome.facts.clone(),
+                mechanical_fix: format!("{repair}{facts}"),
+            },
+            request: None,
+        })
     }
     fn undischarged_loop_invariant(
         &self,
@@ -458,6 +496,9 @@ impl<'unit> TypeContext<'unit> {
         answer: RecordAnswer,
     ) -> Result<SemanticIssue, CheckStop> {
         match (record.rule, answer) {
+            (SemanticRule::Op5, RecordAnswer::Condition(index)) => self
+                .declarations
+                .redundant_condition(&function.entailment, index),
             (SemanticRule::Inv1, RecordAnswer::LoopInvariant(index)) => self
                 .declarations
                 .undischarged_loop_invariant(&function.entailment, index),
@@ -610,7 +651,16 @@ impl<'unit> TypeContext<'unit> {
                 // postconditions reaching it [ENT-2].
                 let mechanical_fix =
                     if super::obligations::requirement_forms_site(function, &outcome.node_path) {
-                        repairs::clause_bounds(&case, constant_offset)
+                        let existing = self.with_contract_context(function, |context| {
+                            super::super::entailment::matching_requirement(
+                                function, context, outcome,
+                            )
+                        });
+                        let existing = existing
+                            .and_then(|path| self.declarations.tree.node_with_path(&path))
+                            .map(|node| self.declarations.tree.source_spelling(node))
+                            .transpose()?;
+                        repairs::clause_bounds(&case, constant_offset, existing.as_deref())
                     } else if let Some(exit) = &outcome.selected_return {
                         let (_, line) = self.declarations.tree.source_line(&exit.statement)?;
                         // [FORM-2] a requirement is spelled canonically, so
@@ -906,6 +956,25 @@ impl<'unit> TypeContext<'unit> {
         else {
             if !proof.exits.is_empty() {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
+            }
+            if let Some(postcondition) = function.postconditions.get(index)
+                && !postcondition.selected_returns.is_empty()
+                && postcondition.relation.operands.iter().any(|operand| {
+                    std::iter::once(&operand.datum)
+                        .chain(operand.parameter.iter())
+                        .any(|datum| {
+                            matches!(datum,
+                                super::super::postcondition::RelationDatum::Measure(_, place)
+                                if matches!(place.projections.last(),
+                                    Some(super::super::goal::GoalProjection::Page(_)
+                                        | super::super::goal::GoalProjection::FormalPage { .. })))
+                        })
+                })
+            {
+                return Err(CheckStop::Unsupported(crate::SemanticUnsupported {
+                    feature: crate::UnsupportedSemanticFeature::PageLengthPostcondition,
+                    node: self.declarations.source_location(&proof.block)?,
+                }));
             }
             return Ok(SemanticIssue {
                 rule: SemanticRule::Fn9,

@@ -43,7 +43,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
-use super::emission::{DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature};
+use super::emission::{
+    DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature,
+};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, IncomingSnapshots, is_stored_aggregate};
 use crate::target::{
@@ -85,6 +87,8 @@ pub enum BackendFailure {
     SnapshotTargetUnsupported,
     CounterOverflow,
     TextEmission,
+    /// The selected native toolchain or its required probe environment failed.
+    Toolchain,
 }
 
 impl From<std::fmt::Error> for BackendFailure {
@@ -122,6 +126,11 @@ impl LlvmModule {
         }
         self.text = self.model.render();
         Ok(())
+    }
+
+    /// Renders the text again after a change to the model.
+    pub(crate) fn rerender(&mut self) {
+        self.text = self.model.render();
     }
 
     pub(crate) fn encode(&self) -> Vec<u8> {
@@ -282,6 +291,7 @@ fn emit_module(
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
 ) -> Result<LlvmModule, BackendFailure> {
+    crate::toolchain::prepare_toolchain().map_err(|_| BackendFailure::Toolchain)?;
     if snapshot::required(program) && target.triple() != "x86_64-unknown-linux-gnu" {
         return Err(BackendFailure::SnapshotTargetUnsupported);
     }
@@ -691,7 +701,13 @@ fn emit_module(
     {
         text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
     }
-    text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    text.attribute_group(
+        0,
+        format!(
+            "{} uwtable",
+            target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
+        ),
+    );
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     // Emit source acquisition decisions once, independently of backend clones
@@ -2041,12 +2057,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn emit(mut self) -> Result<Module, BackendFailure> {
-        if let Some(module) = snapshot::definition(
-            self.program,
-            self.target,
-            self.function,
-            self.intrinsics,
-        )? {
+        if let Some(module) =
+            snapshot::definition(self.program, self.target, self.function, self.intrinsics)?
+        {
             return Ok(module);
         }
         let declaration = self.function.blocks().is_empty();
@@ -3188,6 +3201,52 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
                 .map_err(|_| BackendFailure::TextEmission)
             }
+            IrTerminator::IntegerMatch {
+                scrutinee,
+                targets,
+                default,
+            } => {
+                self.materialize_operands([*scrutinee])?;
+                let Some(IrType::Integer { width, signed }) = self.value_type(*scrutinee) else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                if !matches!(width, 8 | 16 | 32 | 64) {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                let default_label = default.map_or_else(|| invalid_tag_label(block), block_label);
+                writeln!(
+                    self.output,
+                    "  switch i{width} {}, label %{default_label} [",
+                    self.value_name(*scrutinee)
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                let mut seen = BTreeSet::new();
+                let (min, max) = if signed {
+                    (-(1_i128 << (width - 1)), (1_i128 << (width - 1)) - 1)
+                } else {
+                    (0, (1_i128 << width) - 1)
+                };
+                for target in targets {
+                    if target.value() < min || target.value() > max || !seen.insert(target.value())
+                    {
+                        return Err(BackendFailure::InvalidIr);
+                    }
+                    writeln!(
+                        self.output,
+                        "    i{width} {}, label %{}",
+                        target.value(),
+                        block_label(target.block())
+                    )
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                }
+                writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
+                if default.is_none() {
+                    // ERR-2 establishes complete type-domain coverage.
+                    self.output.open_block(default_label);
+                    writeln!(self.output, "  unreachable")?;
+                }
+                Ok(())
+            }
             IrTerminator::Match {
                 scrutinee,
                 enum_type,
@@ -3338,23 +3397,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if actual != Some(drop.ty()) {
             return Err(BackendFailure::InvalidIr);
         }
+        if !type_requires_cleanup(self.program, drop.ty())? {
+            return Ok(None);
+        }
         let reads_content = match drop.ty() {
-            IrType::Range { .. } | IrType::Run { .. } => false,
-            IrType::Array { .. } | IrType::Window { .. } => {
-                type_requires_cleanup(self.program, drop.ty())?
-            }
-            // [SHARE-1] a key set's release reads its store's pointer.
-            IrType::Buffer { .. } | IrType::KeySet => true,
+            // The shared classification above already established release
+            // work; the remaining distinction is how checked drops are split.
+            IrType::Array { .. }
+            | IrType::Window { .. }
+            | IrType::Buffer { .. }
+            | IrType::KeySet => true,
             IrType::Nominal(nominal) if !self.nominal(nominal)?.is_tag_only_enum() => {
                 match self.nominal(nominal)?.kind() {
                     // The checker supplied separate component records. The
                     // struct node must not recursively release them again.
                     IrNominalKind::Struct { .. } => false,
-                    IrNominalKind::Opaque => false,
-                    IrNominalKind::Shared { .. } => true,
-                    IrNominalKind::Enum { .. } | IrNominalKind::Box { .. } => {
-                        type_requires_cleanup(self.program, drop.ty())?
-                    }
+                    IrNominalKind::Enum { .. }
+                    | IrNominalKind::Box { .. }
+                    | IrNominalKind::Shared { .. } => true,
+                    IrNominalKind::Opaque => return Err(BackendFailure::InvalidIr),
                 }
             }
             _ => return Err(BackendFailure::InvalidIr),

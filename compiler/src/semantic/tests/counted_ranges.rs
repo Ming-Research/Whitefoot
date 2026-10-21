@@ -115,7 +115,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -136,7 +136,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -154,7 +154,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -236,26 +236,14 @@ fn check_records_client(main: &[u8]) -> Result<(), crate::CompilationFailure> {
     )
 }
 
-fn assert_unsupported_composite(result: Result<(), crate::CompilationFailure>) {
-    let failure = result.expect_err("an unrepresented offset stops the check");
-    assert_eq!(
-        failure.kind(),
-        crate::CompilationFailureKind::Unsupported,
-        "{failure}"
-    );
-    assert!(failure.to_string().contains("CompositeValues"), "{failure}");
-}
-
 /// [ENT-2] clause (b): a readonly field below a subscript is an endpoint term
 /// exactly when every offset in its place is itself a clause (a) or clause
 /// (c) term.
 ///
 /// A bare binding offset is represented and admitted. An array-element offset
 /// is no term, so the place is no term and the endpoint is ENT-2's rejection.
-/// A tracked field place is an admitted offset that this compiler captures no
-/// value for, so the place is the compiler capability it is and never a
-/// source verdict [DIAG-1]; the conformance corpus cannot pin that, because a
-/// case declares the specification's verdict, which is acceptance.
+/// A tracked field place is an admitted offset with its own identity and
+/// support, so it also supplies a readonly-field endpoint.
 #[test]
 fn a_readonly_field_endpoint_follows_its_offset_forms() {
     let program = |offset: &str| {
@@ -291,15 +279,14 @@ fn main() -> status: std::process::ExitStatus pure {{
         failure.to_string().contains("InvalidCountedEndpoint"),
         "{failure}"
     );
-    assert_unsupported_composite(check_records_client(program("cursor.at").as_bytes()));
+    check_records_client(program("cursor.at").as_bytes())
+        .expect("a tracked field offset is admitted");
 }
 
-/// [ENT-2, DIAG-1] an admitted offset the compiler cannot capture stops the
-/// read itself, in a body and in a contract clause alike, so no missing fact
-/// can later surface as a source rejection. A measure over such a place is
-/// the same capability.
+/// [ENT-2] projected offsets share their tracked-place identity in body
+/// reads, contract clauses and measures.
 #[test]
-fn an_unrepresented_offset_is_unsupported_wherever_the_place_is_read() {
+fn projected_offsets_are_represented_in_bodies_clauses_and_measures() {
     let body = br#"alias Entry = pkg::records::Entry;
 
 struct Cursor {
@@ -317,14 +304,15 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_unsupported_composite(check_records_client(body));
+    check_records_client(body).expect("a projected body offset is represented");
+    // [EFF-2] these erased contract reads contribute no body effect.
     let clause = br#"alias Node = pkg::records::Node;
 
 struct Cursor {
   at: u64;
 }
 
-fn probe(nodes: &[Node], cursor: Cursor) -> result: u64 reads(nodes) contract {
+fn probe(nodes: &[Node], cursor: Cursor) -> result: u64 pure contract {
   requires cursor.at < nodes^.len;
   requires nodes^[cursor.at].count <= 8_u64;
 } {
@@ -335,7 +323,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_unsupported_composite(check_records_client(clause));
+    check_records_client(clause).expect("a projected contract offset is represented");
     let measure = br#"struct Cursor {
   at: u64;
 }
@@ -351,7 +339,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    super::assert_unsupported(measure, crate::UnsupportedSemanticFeature::CompositeValues);
+    assert_checks(measure);
 }
 
 /// [OWN-11] a counted binder may be copied and may have a reference formed to

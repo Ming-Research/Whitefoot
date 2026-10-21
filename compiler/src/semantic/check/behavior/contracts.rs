@@ -759,7 +759,7 @@ impl<'unit> TypeContext<'unit> {
     }
     /// Runs `query` in the declaration-only proof context of one contract
     /// hypothesis: no callee, contract query or verified summary is visible.
-    fn with_contract_context<ResultValue>(
+    pub(in crate::semantic::check) fn with_contract_context<ResultValue>(
         &self,
         function: &CheckedFunction,
         query: impl FnOnce(&EntailmentContext<'_>) -> ResultValue,
@@ -773,6 +773,9 @@ impl<'unit> TypeContext<'unit> {
         let const_parameter_types = self.const_generic_types().collect();
         let copy_type_parameters = self.copy_type_parameters();
         let context = EntailmentContext {
+            captured_places: &self.captured_places,
+            // A contract hypothesis has no body and so no source condition.
+            judge_conditions: false,
             declarations: self.declarations.resolved.declarations(),
             callees: &[],
             constants: &self.checked_constants,

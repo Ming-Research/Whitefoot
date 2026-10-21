@@ -96,6 +96,113 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// A reference-holder replacement ends the current spelling of captured
+/// projected offsets in both existing references and its pre-evaluated RHS.
+/// Unrelated offsets keep their spelling, and all captured references remain
+/// valid because rebinding the holder writes no referent storage.
+#[test]
+fn reference_rebinding_supersedes_projected_offsets_in_existing_and_rhs_paths() {
+    let source = br#"struct Cursor {
+  next: u64;
+}
+
+fn recapture(rows: &[Cursor], selector: &Cursor, stable_index: u64) -> result: u64 reads(rows), reads(selector.next) contract {
+  requires selector^.next < rows^.len;
+  requires stable_index < rows^.len;
+} {
+  let selected = &rows^[selector^.next];
+  let stable = &rows^[stable_index];
+  set selector = &rows^[selector^.next];
+  let copied = selected;
+  let captured_total = copied^.next +wrap selector^.next;
+  return captured_total +wrap stable^.next;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        use crate::semantic::model::CheckedStatement;
+        use crate::semantic::places::{CapturedTerm, PlaceMap, PlaceRoot, PlaceStep};
+
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("holder replacement preserves captured references: {outcome:?}");
+        };
+        let function = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "recapture")
+            .unwrap();
+        let body = function.body.as_ref().unwrap();
+        let CheckedStatement::Let { binding: copied, .. } = &body[3] else {
+            panic!("expected the post-rebind reference copy");
+        };
+        let CheckedStatement::Let { binding: stable, .. } = &body[1] else {
+            panic!("expected the unrelated captured reference");
+        };
+        let map = PlaceMap::for_function(function);
+        for binding in [*copied, function.parameters[1].binding] {
+            let paths = map.resolve(PlaceRoot::Binding(binding), &[]);
+            let captured = paths
+                .iter()
+                .filter_map(|path| match path.path.as_slice() {
+                    [PlaceStep::Index(value)] => Some(value.term),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(captured.len(), 1, "one captured row: {paths:?}");
+            assert!(
+                matches!(captured[0], CapturedTerm::SupersededPlace(_)),
+                "the old selector no longer names the captured value: {paths:?}"
+            );
+        }
+        let paths = map.resolve(PlaceRoot::Binding(*stable), &[]);
+        assert_eq!(paths.len(), 1);
+        let [PlaceStep::Index(value)] = paths[0].path.as_slice() else {
+            panic!("expected the unrelated row capture: {paths:?}");
+        };
+        assert_eq!(
+            value.term,
+            CapturedTerm::Binding(function.parameters[2].binding),
+            "replacing selector does not replace stable_index"
+        );
+    });
+}
+
+/// [ENT-2, DIAG-1] an enum-payload place is a clause (a) tracked place, so
+/// `table^[c^.Some.value].len` is a clause (b) term the specification admits.
+/// This compiler gives a payload offset no captured identity; reading that
+/// measure is the capability stop, never a later source rejection of the
+/// guarded element read for want of the fact.
+#[test]
+fn a_payload_offset_measure_reports_the_unrepresented_capability() {
+    super::assert_unsupported(
+        br#"fn select(table: &[Slots<u8, 8>], c: &Option<u64>, i: u64) -> result: u8 reads(table), reads(c) {
+  match &c^ {
+    None() => {
+      return 0_u8;
+    }
+    Some(value: inner) => {
+      if c^.Some.value < table^.len {
+        if i < table^[c^.Some.value].len {
+          return table^[c^.Some.value][i];
+        }
+      }
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        crate::UnsupportedSemanticFeature::CompositeValues,
+    );
+}
+
 /// Source-backed coverage replaces the retired synthetic payload-origin
 /// reconstruction tests: both roots, complete field/Box/payload suffixes,
 /// nested matches, distinct payload fields and variant overlap are retained.
@@ -177,7 +284,10 @@ fn main() -> status: std::process::ExitStatus pure {
             PlaceStep::Deref,
             PlaceStep::Field(0),
             PlaceStep::Payload {
-                variant: outer[0].tag,
+                variant: match outer[0].selection {
+                    super::super::model::CheckedMatchSelection::Variant(tag) => tag,
+                    _ => panic!("enum arm must have variant selection"),
+                },
                 field: 0,
             },
         ];
@@ -202,7 +312,10 @@ fn main() -> status: std::process::ExitStatus pure {
                 expected.extend([
                     PlaceStep::Deref,
                     PlaceStep::Payload {
-                        variant: arm.tag,
+                        variant: match arm.selection {
+                            super::super::model::CheckedMatchSelection::Variant(tag) => tag,
+                            _ => panic!("enum arm must have variant selection"),
+                        },
                         field: binder.field,
                     },
                 ]);
@@ -996,14 +1109,19 @@ fn indexed_call_separation_accepts_strict_orderings_and_disequality() {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(upper: u64) -> result: unit pure {
   let window = slots_new::<u8, 2>();
   place_back(window: &window, value: 7_u8);
   let i = 0_u64;
-  let j = 1_u64;
+  let j = upper;
   if i < j {
     write_two(window: &window, first: i, second: j);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(upper: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1019,16 +1137,21 @@ fn indexed_call_separation_does_not_retarget_captured_bindings() {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(upper: u64) -> result: unit pure {
   let values = array_filled::<u8, 2>(value: 0_u8);
   let i = 0_u64;
   let j = 0_u64;
   let first = &values[i];
   let second = &values[j];
-  set j = 1_u64;
+  set j = upper;
   if i < j {
     write_refs(first: first, second: second);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(upper: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1047,9 +1170,9 @@ fn indexed_call_separation_keeps_formation_proof_after_source_writes() {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(lower: u64) -> result: unit pure {
   let values = array_filled::<u8, 2>(value: 0_u8);
-  let i = 0_u64;
+  let i = lower;
   let j = 1_u64;
   if i < j {
     let first = &values[i];
@@ -1057,6 +1180,11 @@ fn main() -> status: std::process::ExitStatus pure {
     set j = 0_u64;
     write_refs(first: first, second: second);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(lower: 0_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1076,16 +1204,21 @@ fn indexed_call_separation_is_unique_per_call_actual() {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(upper: u64) -> result: unit pure {
   let window = slots_new::<u8, 2>();
   place_back(window: &window, value: 7_u8);
   let i = 0_u64;
-  let j = 1_u64;
+  let j = upper;
   if i < j {
     write_two(window: &window, first: i, second: j);
   }
   set j = 0_u64;
   write_two(window: &window, first: i, second: j);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(upper: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1438,9 +1571,9 @@ fn a_reborrow_of_a_joined_reference_kills_facts_for_every_possible_target() {
   return unit;
 }
 
-fn examine(flag: Bool) -> result: u64 pure {
+fn examine(flag: Bool, initial: u64) -> result: u64 pure {
   let a = 1_u64;
-  let b = 1_u64;
+  let b = initial;
   let p = if flag {
     give &a;
   } else {
@@ -1456,7 +1589,7 @@ fn examine(flag: Bool) -> result: u64 pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let flag = False();
-  let value = examine(flag: flag);
+  let value = examine(flag: flag, initial: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1507,8 +1640,8 @@ fn a_delivered_reference_with_a_returning_alternative_kills_stale_facts() {
   return unit;
 }
 
-fn examine(flag: u64) -> result: u64 pure {
-  let value = 1_u64;
+fn examine(flag: u64, initial: u64) -> result: u64 pure {
+  let value = initial;
   let p = if flag == 1_u64 {
     give &value;
   } else {
@@ -1522,7 +1655,7 @@ fn examine(flag: u64) -> result: u64 pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let value = examine(flag: 1_u64);
+  let value = examine(flag: 1_u64, initial: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1875,16 +2008,13 @@ fn reforming_before_use_and_noncontinuing_invalidation_are_valid() {
   let selected = &owner^.inner[0_u64];
   let result = 0_u64;
   for (i in 0_u64..2_u64) {
-    let nonempty = 0_u64 < owner^.inner.len;
-    if nonempty {
-      set selected = &owner^.inner[0_u64];
-      let current = selected^;
-      set result = result +wrap current;
-      let capacity = owner^.inner.cap;
-      let allocation_fits = capacity <= 4_u64;
-      if allocation_fits {
-        grow(cell: owner, capacity: capacity);
-      }
+    set selected = &owner^.inner[0_u64];
+    let current = selected^;
+    set result = result +wrap current;
+    let capacity = owner^.inner.cap;
+    let allocation_fits = capacity <= 4_u64;
+    if allocation_fits {
+      grow(cell: owner, capacity: capacity);
     }
   }
   return result;
@@ -2008,18 +2138,15 @@ fn examine() -> result: u64 pure {
   set packets[1_u64] = Packet::Data(value: 9_u64);
   let index = 1_u64;
   let part = &packets[0_u64..2_u64];
-  if index < part^.len {
-    match part^[index] {
-      Data(value: payload) => {
-        set index = 0_u64;
-        return payload^;
-      }
-      Idle() => {
-        return 0_u64;
-      }
+  match part^[index] {
+    Data(value: payload) => {
+      set index = 0_u64;
+      return payload^;
+    }
+    Idle() => {
+      return 0_u64;
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2045,18 +2172,15 @@ fn examine() -> result: u64 pure {
   set packets[1_u64] = Packet::Data(value: 9_u64);
   let index = 1_u64;
   let part = &packets[0_u64..2_u64];
-  if index < part^.len {
-    match part^[index] {
-      Data(value: payload) => {
-        set packets[1_u64] = Packet::Idle();
-        return payload^;
-      }
-      Idle() => {
-        return 0_u64;
-      }
+  match part^[index] {
+    Data(value: payload) => {
+      set packets[1_u64] = Packet::Idle();
+      return payload^;
+    }
+    Idle() => {
+      return 0_u64;
     }
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

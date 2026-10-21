@@ -226,10 +226,7 @@ impl Input<'_, '_> {
                         )
                 })
         };
-        std::iter::once(stem.to_owned())
-            .chain((1_u32..).map(|suffix| format!("{stem}{suffix}")))
-            .find(|name| !taken(name))
-            .expect("an unbounded candidate sequence has a free name")
+        crate::semantic::check::repairs::fresh_repair_name(stem, taken)
     }
 
     /// The source spelling of one declaration, such as a generic parameter.
@@ -254,9 +251,14 @@ impl Input<'_, '_> {
             CapturedTerm::Literal(value) => value.to_string(),
             CapturedTerm::Binding(binding) => self.render_header_binding(binding, counted),
             CapturedTerm::Const(declaration) => self.declaration_name(declaration),
+            CapturedTerm::Place(id) => {
+                self.render_header_place(&self.context.captured_places.get(id), counted)
+            }
             // [REF-1] the binding's spelling names a later value than the one
             // this index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => "?".to_owned(),
+            CapturedTerm::Superseded(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => "?".to_owned(),
         }
     }
 
@@ -560,7 +562,12 @@ impl Input<'_, '_> {
             }
             // [REF-1] a later write made the binding's spelling name another
             // value, so neither it nor the occurrence spells this one.
-            CapturedTerm::Superseded(_) => RangeEndpointReading::Unspelled(None),
+            CapturedTerm::Place(id) => RangeEndpointReading::Spelled(
+                self.render_place(&self.context.captured_places.get(id)),
+            ),
+            CapturedTerm::Superseded(_) | CapturedTerm::SupersededPlace(_) => {
+                RangeEndpointReading::Unspelled(None)
+            }
             CapturedTerm::Opaque => RangeEndpointReading::Unspelled(match endpoint.capture {
                 CaptureId::Source(occurrence) => Some(occurrence),
                 _ => None,
@@ -778,11 +785,13 @@ impl Input<'_, '_> {
                     ));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
-                GoalProjection::FormalSubscript { ordinal } => {
+                GoalProjection::FormalSubscript { ordinal }
+                | GoalProjection::FormalPlaceSubscript { ordinal, .. } => {
                     rendered.push_str(&format!("[parameter #{ordinal}]"));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
-                GoalProjection::FormalPage { ordinal } => {
+                GoalProjection::FormalPage { ordinal }
+                | GoalProjection::FormalPlacePage { ordinal, .. } => {
                     rendered.push_str(&format!(".pages[parameter #{ordinal}]"));
                     ty = ty.and_then(|ty| element_type(ty, self.context.elements));
                 }
@@ -820,6 +829,37 @@ impl Input<'_, '_> {
                     } else {
                         rendered.push_str(".?");
                         ty = None;
+                    }
+                }
+                CheckedPlaceStep::Payload {
+                    nominal,
+                    variant,
+                    field,
+                } => {
+                    let selected =
+                        self.context
+                            .nominals
+                            .get(nominal.0 as usize)
+                            .and_then(|nominal| match &nominal.kind {
+                                CheckedNominalKind::Enum { variants } => {
+                                    variants.get(*variant as usize).and_then(|variant| {
+                                        variant
+                                            .fields
+                                            .get(*field as usize)
+                                            .map(|field| (&variant.name, &field.name, field.ty))
+                                    })
+                                }
+                                _ => None,
+                            });
+                    match selected {
+                        Some((variant, field, field_type)) => {
+                            rendered.push_str(&format!(".{variant}.{field}"));
+                            ty = Some(field_type);
+                        }
+                        None => {
+                            rendered.push_str(".?.?");
+                            ty = None;
+                        }
                     }
                 }
                 CheckedPlaceStep::BoxReferent(nominal) => {

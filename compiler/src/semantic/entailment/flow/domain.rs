@@ -332,7 +332,9 @@ impl Input<'_, '_> {
         for step in steps {
             ty = match step {
                 CheckedPlaceStep::Subscript(index) => index.element_type,
-                CheckedPlaceStep::BoxReferent(_) | CheckedPlaceStep::Field(_) => {
+                CheckedPlaceStep::BoxReferent(_)
+                | CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. } => {
                     self.owned_path_type(ty, &[step.place_step()])?
                 }
                 CheckedPlaceStep::Measure(_) => return None,
@@ -349,7 +351,10 @@ impl Input<'_, '_> {
         let represented = |offset: &CapturedValue| {
             matches!(
                 offset.term,
-                CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Binding(_)
+                CapturedTerm::Literal(_)
+                    | CapturedTerm::Const(_)
+                    | CapturedTerm::Binding(_)
+                    | CapturedTerm::Place(_)
             )
         };
         for step in projections {
@@ -455,7 +460,8 @@ impl Vocabulary {
         // A seeded closure costs about what the proof-free probe does over a
         // closed core and answers the same question directly; the probe stays
         // the cheaper test for a state with no closed part.
-        if !closure_is_seeded(state)
+        if state.exclusions.is_empty()
+            && !closure_is_seeded(state)
             && !contradiction_without_proofs(state, &self.terms, &self.goals)
         {
             return;
@@ -658,6 +664,8 @@ impl Vocabulary {
             return;
         }
         self.affine_atoms.truncate(start);
+        // A reused atom index may have another range; discard model views too.
+        self.affine_models.clear();
         let kept = |term: AffineTermId| (term.index() as usize) < start;
         let kept_all = |terms: &[AffineCoefficient]| terms.iter().all(|each| kept(each.term()));
         self.product_atoms

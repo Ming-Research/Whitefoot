@@ -26,7 +26,9 @@
 //! [PRF-1] [`certificates`], the [`walk`], the [`loop_summary`], and
 //! canonical [`render`]ing.
 
+mod affine_models;
 mod certificates;
+mod conditions;
 mod conversions;
 mod domain;
 mod events;
@@ -38,6 +40,7 @@ mod loop_summary;
 pub(crate) mod operation_facts;
 mod origin_transport;
 mod postconditions;
+mod preservation;
 mod prover;
 mod relations;
 mod render;
@@ -76,10 +79,10 @@ use super::super::model::{
     CheckedArrayRoot, CheckedBooleanOperation, CheckedConst, CheckedConstructor,
     CheckedContainerRoot, CheckedConversionMode, CheckedExpression, CheckedFloatOperation,
     CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedLoopInvariant, CheckedMatchArm,
-    CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType, CheckedPlaceStep,
-    CheckedProofMultiplicity, CheckedProofUseSource, CheckedRangeSource, CheckedSetTarget,
-    CheckedStatement, CheckedType, CheckedValue, FloatType, IntegerType, MeasureCell, MeasuredKind,
-    SubscriptedTerm,
+    CheckedMatchSelection, CheckedMatchType, CheckedMeasure, CheckedMode, CheckedNominalKind,
+    CheckedNumericType, CheckedPlaceStep, CheckedProofMultiplicity, CheckedProofUseSource,
+    CheckedRangeSource, CheckedSetTarget, CheckedStatement, CheckedType, CheckedValue, FloatType,
+    IntegerType, MeasureCell, MeasuredKind, SubscriptedTerm,
 };
 use super::super::permission::{PermissionSeparationProof, PermissionSeparationQuery};
 use super::super::places::{
@@ -100,13 +103,13 @@ use super::affine::{
 use super::polynomial::{CertificatePolynomial, PolynomialError};
 use super::state::{
     AffinePremiseUse, ClosedState, CountedRootAtom, DerivationId, DerivationInventory,
-    DerivationLedger, DerivationNode, DerivationRootKind, FactState, FlowEventId, FlowEventKind,
-    GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
-    IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
-    RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
-    contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
-    materialize_counted_preheader_at,
+    DerivationLedger, DerivationNode, DerivationRootKind, Exclusion, ExclusionConclusion,
+    ExclusionProof, FactState, FlowEventId, FlowEventKind, GoalId, GoalNormalization, GoalSign,
+    GoalSupport, GoalTable, IndexCaptureSubstitution, IndexSeparationDetail, JoinParent,
+    KilledCell, PostconditionCallSubstitution, RangeSeparationDetail, RangeSeparationOrdering,
+    Relation, SourceAffineFactRef, SourceLoopInvariantRef, WordHashMap, close,
+    close_excluding_term, closure_is_seeded, contradiction_without_proofs, join_at,
+    materialize_closure_at, materialize_closure_before_kill, materialize_counted_preheader_at,
 };
 use super::term::{
     CountedCaptureSide, MeasureBound, MeasurePlacement, PlaceRoot, TermId, TermKind, TermTable,
@@ -126,6 +129,11 @@ use super::{
 /// One [ENT-5] kill event gathered from a statement or expression.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum KillEvent {
+    /// [REF-1, ENT-5] replaces a reference holder without writing storage.
+    Rebind {
+        binding: BindingId,
+        source: crate::NodePath,
+    },
     /// (a) a `set` commit or (b) a boundary-projected callee write. An
     /// element write targets indexed element storage, which never kills a
     /// length fact [ENT-5].
@@ -175,13 +183,15 @@ impl KillEvent {
     fn source(&self) -> &crate::NodePath {
         match self {
             Self::Write { source, .. }
+            | Self::Rebind { source, .. }
             | Self::Consume { source, .. }
             | Self::EntryImageHolderConsume { source, .. }
             | Self::EntryImageHolderWrite { source, .. } => source,
         }
     }
 
-    /// The binding the event's place is rooted at; a constant root has none.
+    /// The replaced holder or the binding the event's place is rooted at;
+    /// a constant root has none.
     fn root_binding(&self) -> Option<BindingId> {
         match self {
             Self::Write { place, .. } | Self::EntryImageHolderWrite { place, .. } => {
@@ -190,7 +200,9 @@ impl KillEvent {
                     PlaceRoot::Constant(_) => None,
                 }
             }
-            Self::Consume { binding, .. } | Self::EntryImageHolderConsume { binding, .. } => {
+            Self::Rebind { binding, .. }
+            | Self::Consume { binding, .. }
+            | Self::EntryImageHolderConsume { binding, .. } => {
                 Some(*binding)
             }
         }
@@ -245,6 +257,7 @@ struct FlowEdge {
 /// context [ENT-5].
 #[derive(Default)]
 struct ArmFacts {
+    integer: Option<(GoalExpression, std::sync::Arc<[i128]>)>,
     node_path: Option<crate::NodePath>,
     comparison: Option<Relation>,
     goals: Vec<GoalId>,
@@ -785,13 +798,66 @@ struct AffineL0Postings {
     by_support: WordHashMap<Box<[AffineTermId]>, Vec<usize>>,
 }
 
+/// The retained L0 inputs of one function-local affine query.
+///
+/// Equal retained stores, exclusions and term revision give exactly the same
+/// numeric closure: signed-goal reconstruction adds no L0 relation [ENT-4],
+/// while an exclusion tightens closed bounds past an excluded endpoint
+/// without touching the stores, so it is part of the key. Keeping the stores
+/// alive forces an L0 or source-proof edit to copy them, so a view that adds
+/// only signed facts may reuse the index. The index keeps pair
+/// identities and bounds, never proof IDs; every selected parent is read from
+/// the current closure, preserving its witness even if signed reconstruction
+/// changed the closure's term inventory or implicit-proof materialization.
+#[derive(Clone)]
+struct AffineL0Content {
+    bounds: Rc<super::state::BoundStore>,
+    distinct: Rc<super::state::WordHashSet<super::state::DistinctKey>>,
+    distinct_proofs: Rc<WordHashMap<super::state::DistinctKey, DerivationId>>,
+    exclusions: Vec<Exclusion>,
+    terms: usize,
+    term_revision: usize,
+    ledger: usize,
+    contradictory: bool,
+    contradiction: Option<DerivationId>,
+}
+
+impl AffineL0Content {
+    fn new(
+        facts: &FactState,
+        terms: &TermTable,
+        ledger: &DerivationLedger,
+        closed: &ClosedState,
+    ) -> Self {
+        Self {
+            bounds: Rc::clone(&facts.bounds),
+            distinct: Rc::clone(&facts.distinct),
+            distinct_proofs: Rc::clone(&facts.distinct_proofs),
+            exclusions: facts.exclusions.clone(),
+            terms: std::ptr::from_ref(terms) as usize,
+            term_revision: terms.revision(),
+            ledger: std::ptr::from_ref(ledger) as usize,
+            contradictory: closed.contradictory(),
+            contradiction: closed.contradiction_proof(),
+        }
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.bounds, &other.bounds)
+            && Rc::ptr_eq(&self.distinct, &other.distinct)
+            && Rc::ptr_eq(&self.distinct_proofs, &other.distinct_proofs)
+            && self.exclusions == other.exclusions
+            && self.terms == other.terms
+            && self.term_revision == other.term_revision
+            && self.ledger == other.ledger
+            && self.contradictory == other.contradictory
+            && self.contradiction == other.contradiction
+    }
+}
+
 /// One function-local query memo, including the full ordered value images.
-/// Keeping the closed Rc alive makes its allocation identity unambiguous;
-/// FactState::close changes that identity after facts or inventories change.
-/// The index stores no derivation IDs: selected parents still come from this
-/// view and the vocabulary's one ledger at the point of the query.
 struct AffineL0Cache {
-    closed: Rc<ClosedState>,
+    l0: AffineL0Content,
     index: Rc<LazyAffineL0Index>,
 }
 
@@ -1201,6 +1267,68 @@ pub(super) fn analyze(
     entailment
 }
 
+/// Diagnostic-only comparison with the already expanded requirements. No
+/// facts are established and no acceptance judgment reads this vocabulary.
+pub(crate) fn matching_requirement(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    outcome: &ObligationOutcome,
+) -> Option<crate::NodePath> {
+    fn normalized(
+        left: &TermKind,
+        right: &TermKind,
+        bound: i128,
+    ) -> Option<(TermKind, TermKind, i128)> {
+        let split = |term: &TermKind| match term {
+            TermKind::Constant(value) => Some((TermKind::Zero, *value)),
+            // Dense term IDs belong to their own vocabulary. These compound
+            // terms cannot be compared across the diagnostic copy by ID.
+            TermKind::Sum(..) | TermKind::TargetMeasure { .. } => None,
+            term => Some((term.clone(), 0)),
+        };
+        let (left, left_constant) = split(left)?;
+        let (right, right_constant) = split(right)?;
+        Some((
+            left,
+            right,
+            bound.checked_sub(left_constant)?.checked_add(right_constant)?,
+        ))
+    }
+
+    let [request] = outcome.components.as_slice() else {
+        return None;
+    };
+    if request.distinct {
+        return None;
+    }
+    let terms = &function.entailment.inventory.terms;
+    let wanted = normalized(
+        terms.get(request.left?.0 as usize)?,
+        terms.get(request.right.0 as usize)?,
+        request.bound,
+    )?;
+    let mut analyzer = Analyzer::new(context, function);
+    analyzer.input.collect_bindings();
+    function.requirements.iter().find_map(|requirement| {
+        // An implicit type invariant is not a clause the writer can move.
+        if requirement.subject.is_some() {
+            return None;
+        }
+        let goal = analyzer.input.body_requirement_goal(requirement)?;
+        let Relation::Bound { left, right, bound } =
+            analyzer.reasoning().goal_projection(&goal)?
+        else {
+            return None;
+        };
+        let candidate = normalized(
+            analyzer.vocabulary.terms.kind(left),
+            analyzer.vocabulary.terms.kind(right),
+            bound,
+        )?;
+        (candidate == wanted).then(|| requirement.clause.clone())
+    })
+}
+
 /// Builds one optimistic per-function FN-9 proof batch without pruning or
 /// remapping its derivation ledger. The checker calls [`finish`] after the
 /// component publication decision.
@@ -1277,6 +1405,7 @@ fn analyze_candidate_inner(
 ) -> FunctionEntailment {
     let run = run(function, context);
     let mut entailment = FunctionEntailment {
+        conditions: run.conditions,
         body_disposition: run.body_disposition,
         operation_intervals: run.operation_intervals,
         obligations: run.obligations,
@@ -1299,6 +1428,7 @@ fn analyze_candidate_inner(
 }
 
 struct AnalysisRun {
+    conditions: Vec<super::ConditionOutcome>,
     operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     body_disposition: super::super::model::CheckedBodyDisposition,
     obligations: Vec<ObligationOutcome>,
@@ -1398,6 +1528,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         goals: analyzer.vocabulary.goals.into_inventory(),
     };
     AnalysisRun {
+        conditions: analyzer.output.conditions,
         operation_intervals: analyzer.output.operation_intervals,
         body_disposition,
         obligations: analyzer.output.obligations,
@@ -1434,7 +1565,9 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 terms: TermTable::new(),
                 goals: GoalTable::default(),
                 derivations: DerivationLedger::default(),
+                origin_queries: origin_transport::OriginQueryCache::default(),
                 affine_l0_cache: None,
+                affine_models: Vec::new(),
                 affine_atoms: Vec::new(),
                 measure_terms_seen: Vec::new(),
                 measure_terms_scanned: 0,
@@ -1451,8 +1584,10 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 delivery_join_roots: 0,
                 header_relation_roots: 0,
                 loop_induction_roots: 0,
+                fact_preservation_roots: 0,
             },
             output: Output {
+                conditions: Vec::new(),
                 operation_intervals: BTreeMap::new(),
                 obligations: Vec::new(),
                 call_goals: Vec::new(),
@@ -1768,7 +1903,7 @@ struct LiveBounds {
 /// `place_back` distinct from `r[i]` rather than possibly `r[i]` itself; a
 /// fact below `r[lo..hi]` likewise needs `hi <= r.len` derived there.
 struct EventSeparations<'event> {
-    ledger: &'event SeparationLedger,
+    ledger: &'event dyn SeparationOracle,
     live: &'event LiveBounds,
 }
 
@@ -1833,9 +1968,13 @@ struct Vocabulary {
     terms: TermTable,
     goals: GoalTable,
     derivations: DerivationLedger,
+    origin_queries: origin_transport::OriginQueryCache,
     /// Only the most recent view is held, rather than one quadratic index
     /// per program point. Ordinary queries and certificates share this memo.
     affine_l0_cache: Option<AffineL0Cache>,
+    /// The integer points of the most recent query views, which let a
+    /// failing affine search end without exhausting its families.
+    affine_models: Vec<affine_models::AffineModelCache>,
     /// Function-local mathematical atoms allocated in structural execution
     /// order. They are ordinary checker state and are discarded with the
     /// analysis.
@@ -1883,11 +2022,14 @@ struct Vocabulary {
     delivery_join_roots: u32,
     header_relation_roots: u32,
     loop_induction_roots: u32,
+    fact_preservation_roots: u32,
 }
 
 /// What the analysis publishes: every judgment's outcome, the retained
 /// derivation sets, and which separation questions have been asked.
 struct Output {
+    /// [OP-5] each source condition's redundancy judgment, in walk order.
+    conditions: Vec<super::ConditionOutcome>,
     operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     obligations: Vec<ObligationOutcome>,
     call_goals: Vec<CallGoalOutcome>,
@@ -2106,7 +2248,10 @@ mod indexed_goal_kill_tests {
     fn signed_indexed_facts_follow_offset_events_and_scope_exits() {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
+        let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            captured_places: &captured_places,
+            judge_conditions: true,
             declarations: &[],
             callees: &[],
             constants: &[],
@@ -2350,7 +2495,10 @@ mod range_argument_kill_tests {
     ) -> R {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
+        let captured_places = crate::semantic::places::CapturedPlaceTable::default();
         let context = EntailmentContext {
+            captured_places: &captured_places,
+            judge_conditions: true,
             declarations: &[],
             callees: &[],
             constants: &[],

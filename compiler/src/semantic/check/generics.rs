@@ -1854,12 +1854,19 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                     if let GenericBound::Class(required) = bound {
                         let spelling = self.types.declarations.declaration_spelling(declaration)?;
+                        let bound_site = if self.types.declarations.tree.production(node)?
+                            == Production::Call
+                        {
+                            node
+                        } else {
+                            source
+                        };
                         self.types.check_linearity_bound(
                             check_context,
                             &spelling,
                             required,
                             ty,
-                            source,
+                            bound_site,
                         )?;
                     }
                 }
@@ -1931,6 +1938,19 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
+    /// [FN-2] whether `function` is a concrete instance of a declaration
+    /// with type, const or function parameters, whose source judgments were
+    /// made once at its symbolic instance [OP-5].
+    pub(super) fn is_generic_instance(
+        &self,
+        function: &super::super::model::CheckedFunction,
+    ) -> bool {
+        self.templates_by_declaration
+            .get(&function.declaration)
+            .and_then(|index| self.function_templates.get(*index))
+            .is_some_and(|template| !template.generic_parameters.is_empty())
+    }
+
     /// The written integer type of one const `gparam` [MSR-6].
     ///
     /// A const generic is declared by exactly one function or nominal

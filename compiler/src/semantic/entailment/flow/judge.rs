@@ -84,7 +84,10 @@ impl Reasoning<'_, '_, '_> {
         state: &mut ProofFlowState,
     ) {
         if !matches!(captured.capture, CaptureId::Source(_))
-            || !matches!(captured.term, CapturedTerm::Binding(_))
+            || !matches!(
+                captured.term,
+                CapturedTerm::Binding(_) | CapturedTerm::Place(_)
+            )
         {
             return;
         }
@@ -1376,6 +1379,12 @@ impl Analyzer<'_, '_> {
                 CheckedPlaceStep::Field(field) => {
                     base.path.push(PlaceStep::Field(*field));
                 }
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    base.path.push(PlaceStep::Payload {
+                        variant: *variant,
+                        field: *field,
+                    });
+                }
                 CheckedPlaceStep::BoxReferent(_) => {
                     base.path.push(PlaceStep::Deref);
                 }
@@ -1466,6 +1475,12 @@ impl Analyzer<'_, '_> {
         for step in &place.path {
             match step {
                 CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    base.path.push(PlaceStep::Payload {
+                        variant: *variant,
+                        field: *field,
+                    });
+                }
                 CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
                 CheckedPlaceStep::Measure(measure) => base.path.push(PlaceStep::Measure(*measure)),
                 CheckedPlaceStep::Subscript(subscript) => {
