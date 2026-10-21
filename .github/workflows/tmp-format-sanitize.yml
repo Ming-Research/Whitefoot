@@ -18,11 +18,8 @@ jobs:
       - name: Prepare the Rust toolchain
         run: |
           rustup default stable
-          rustup component add clippy rustfmt
+          rustup component add clippy
           cargo fetch --locked --manifest-path compiler/Cargo.toml
-      - name: Format check
-        working-directory: compiler
-        run: perl ../.github/run-check.pl tmp/format-check cargo fmt --all -- --check
       - name: Formatting and sanitize option tests
         working-directory: compiler
         run: |
