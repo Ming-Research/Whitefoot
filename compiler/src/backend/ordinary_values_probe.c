@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -38,6 +39,7 @@
 #else
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <locale.h>
@@ -1268,6 +1270,176 @@ static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write 
     assert(wf_rmdir("ordinary-subdir") == 0);
 }
 
+/* [PRE-2] each local offset equals the host C library's own answer for the
+ * same second: `tm_gmtoff` from `localtime_r` on POSIX, and on Windows the
+ * `_localtime64_s` date and time read back as UTC by `_mkgmtime64`. The
+ * seconds are 2026-01-15T12:00Z, 2026-07-01T12:00Z and the second before
+ * 1969-10-26T06:00Z, when New York left daylight saving time; the last is
+ * reached from one nanosecond before that boundary, so truncating instead
+ * of flooring converts the boundary second and disagrees in New York. */
+static void local_offset_probe(wf_inputs *inputs) {
+#if defined(_WIN32)
+    static const char *const zones[] = {"UTC0", "CST-8", "EST5EDT"};
+#else
+    /* The last is a POSIX rule a full day and 3599 seconds east of UTC,
+     * which glibc and macOS accept; its offset is out of the reported
+     * range, so the reading must be None. */
+    static const char *const zones[] = {"UTC", "Asia/Shanghai", "America/New_York", "XXX-24:59:59"};
+#endif
+    static const int64_t seconds[] = {INT64_C(1768478400), INT64_C(1782907200), INT64_C(-5767201)};
+    static const int64_t instants[] = {
+        INT64_C(1768478400000000000), INT64_C(1782907200000000000), INT64_C(-5767200000000001)};
+    char previous[256];
+    int had_previous = 0;
+#if defined(_WIN32)
+    char *saved = NULL;
+    size_t saved_size = 0;
+    assert(_dupenv_s(&saved, &saved_size, "TZ") == 0);
+#else
+    const char *saved = getenv("TZ");
+#endif
+    if (saved != NULL) {
+        size_t length = strlen(saved);
+        assert(length < sizeof(previous));
+        memcpy(previous, saved, length + 1);
+        had_previous = 1;
+    }
+#if defined(_WIN32)
+    free(saved);
+#endif
+    for (size_t zone = 0; zone < sizeof(zones) / sizeof(zones[0]); zone++) {
+#if defined(_WIN32)
+        assert(_putenv_s("TZ", zones[zone]) == 0);
+        _tzset();
+#else
+        assert(setenv("TZ", zones[zone], 1) == 0);
+        tzset();
+#endif
+        for (size_t index = 0; index < sizeof(seconds) / sizeof(seconds[0]); index++) {
+            struct tm local;
+            wf_optional_i64 offset;
+            int converted;
+            int64_t expected = 0;
+#if defined(_WIN32)
+            __time64_t moment = (__time64_t)seconds[index];
+            converted = _localtime64_s(&local, &moment) == 0;
+            if (converted) expected = (int64_t)_mkgmtime64(&local) - seconds[index];
+#else
+            time_t moment = (time_t)seconds[index];
+            converted = localtime_r(&moment, &local) != NULL;
+            if (converted) expected = (int64_t)local.tm_gmtoff;
+#endif
+            wf__body_local_offset_seconds(&offset, &inputs->wall_clock, instants[index]);
+#if !defined(_WIN32)
+            if (zone == 3) assert(converted && expected == INT64_C(89999));
+#endif
+            if (converted && expected > -INT64_C(86400) && expected < INT64_C(86400)) {
+                assert(offset.tag == WF_OPTION_SOME);
+                assert(offset.value == expected);
+            } else {
+                assert(offset.tag != WF_OPTION_SOME);
+            }
+        }
+    }
+#if defined(_WIN32)
+    assert(_putenv_s("TZ", had_previous ? previous : "") == 0);
+    _tzset();
+#else
+    if (had_previous) assert(setenv("TZ", previous, 1) == 0);
+    else assert(unsetenv("TZ") == 0);
+    tzset();
+#endif
+}
+
+#if !defined(_WIN32)
+/* c(n) of [PRE-2], restated for the probe. */
+static uint64_t probe_limit_credits(uint64_t soft) {
+    uint64_t bounded = soft > (UINT64_C(1) << 20) ? (UINT64_C(1) << 20) : soft;
+    return bounded > 64 ? bounded - 64 : 0;
+}
+
+/* The limits getrlimit reports now, unlimited read as 2^64 - 1. */
+static void probe_limits_now(uint64_t *soft, uint64_t *hard) {
+    struct rlimit now;
+    assert(getrlimit(RLIMIT_NOFILE, &now) == 0);
+    *soft = now.rlim_cur == RLIM_INFINITY ? UINT64_MAX : (uint64_t)now.rlim_cur;
+    *hard = now.rlim_max == RLIM_INFINITY ? UINT64_MAX : (uint64_t)now.rlim_max;
+}
+#endif
+
+/* [PRE-2] the open-files limit. On POSIX a reading equals getrlimit's; a
+ * raise above the hard limit is the host's refusal, which Linux and macOS
+ * give as InvalidInput carrying EINVAL, with origin 11, leaving the limits
+ * and the budget alone; a raise to at most the soft limit changes nothing;
+ * and a successful raise reports the limits getrlimit reads after it and
+ * adds the credits of the soft limit the host then holds, so a raise from
+ * 128 to 256 adds c(256) - c(128) = 128 credits to the invocation's budget.
+ * Under an unlimited hard limit a finite request of 2^63, which a host
+ * whose RLIM_INFINITY is 2^63 - 1 sets as unlimited, is either refused with
+ * nothing changed or reports what the host then holds. Every other host
+ * answers Unsupported. */
+static void open_files_probe(wf_inputs *inputs) {
+    wf_limit_result outcome;
+#if defined(_WIN32)
+    wf__body_open_files_limit(&outcome, &inputs->handles);
+    assert(outcome.tag == 1 && outcome.err.error.tag == WF_IO_UNSUPPORTED);
+    assert(outcome.err.error.code == 0 && outcome.err.error.origin == 0);
+    wf__body_raise_open_files_limit(&outcome, &inputs->handles, 100u);
+    assert(outcome.tag == 1 && outcome.err.error.tag == WF_IO_UNSUPPORTED);
+    assert(outcome.err.error.code == 0 && outcome.err.error.origin == 0);
+#else
+    struct rlimit saved;
+    uint64_t before, soft, hard;
+    assert(getrlimit(RLIMIT_NOFILE, &saved) == 0);
+    wf__body_open_files_limit(&outcome, &inputs->handles);
+    assert(outcome.tag == 0);
+    assert(outcome.ok.value.soft == (saved.rlim_cur == RLIM_INFINITY ? UINT64_MAX : (uint64_t)saved.rlim_cur));
+    assert(outcome.ok.value.hard == (saved.rlim_max == RLIM_INFINITY ? UINT64_MAX : (uint64_t)saved.rlim_max));
+    if (saved.rlim_max != RLIM_INFINITY) {
+        before = WF_PROBE_INPUT_BUDGET;
+        wf__body_raise_open_files_limit(&outcome, &inputs->handles, (uint64_t)saved.rlim_max + 1u);
+        assert(outcome.tag == 1 && outcome.err.error.tag == WF_IO_INVALID_INPUT);
+        assert(outcome.err.error.code == (uint32_t)EINVAL && outcome.err.error.origin == 11);
+        assert(WF_PROBE_INPUT_BUDGET == before);
+        probe_limits_now(&soft, &hard);
+        assert(soft == (saved.rlim_cur == RLIM_INFINITY ? UINT64_MAX : (uint64_t)saved.rlim_cur));
+        assert(hard == (uint64_t)saved.rlim_max);
+    } else if (saved.rlim_cur != RLIM_INFINITY && (uint64_t)saved.rlim_cur < (UINT64_C(1) << 63)) {
+        uint64_t old_soft = (uint64_t)saved.rlim_cur;
+        before = WF_PROBE_INPUT_BUDGET;
+        wf__body_raise_open_files_limit(&outcome, &inputs->handles, UINT64_C(1) << 63);
+        probe_limits_now(&soft, &hard);
+        if (outcome.tag == 0) {
+            assert(outcome.ok.value.soft == soft && outcome.ok.value.hard == hard);
+            assert(WF_PROBE_INPUT_BUDGET - before ==
+                   probe_limit_credits(soft) - probe_limit_credits(old_soft));
+            WF_PROBE_INPUT_BUDGET = before;
+            assert(setrlimit(RLIMIT_NOFILE, &saved) == 0);
+        } else {
+            assert(outcome.err.error.origin == 11 && outcome.err.error.code != 0);
+            assert(soft == old_soft && hard == UINT64_MAX);
+            assert(WF_PROBE_INPUT_BUDGET == before);
+        }
+    }
+    if (saved.rlim_cur != RLIM_INFINITY && saved.rlim_cur >= 256) {
+        struct rlimit lowered = saved;
+        lowered.rlim_cur = 128;
+        assert(setrlimit(RLIMIT_NOFILE, &lowered) == 0);
+        before = WF_PROBE_INPUT_BUDGET;
+        wf__body_raise_open_files_limit(&outcome, &inputs->handles, 100u);
+        assert(outcome.tag == 0 && outcome.ok.value.soft == 128u);
+        assert(WF_PROBE_INPUT_BUDGET == before);
+        wf__body_raise_open_files_limit(&outcome, &inputs->handles, 256u);
+        probe_limits_now(&soft, &hard);
+        assert(outcome.tag == 0 && outcome.ok.value.soft == 256u && soft == 256u);
+        assert(outcome.ok.value.hard == hard);
+        assert(WF_PROBE_INPUT_BUDGET == before + 128u);
+        WF_PROBE_INPUT_BUDGET -= 128u;
+        assert(setrlimit(RLIMIT_NOFILE, &saved) == 0);
+    }
+#endif
+}
+
 /* [PRE-2] two reads through one clock do not go back, a sleep outside every
  * context lasts until its deadline, and every instant operation is total. */
 static void time_probe(wf_inputs *inputs) {
@@ -1290,6 +1462,11 @@ static void time_probe(wf_inputs *inputs) {
     assert(!wf__body_instant_reached(&latest, &later));
     /* 2020-01-01T00:00:00Z. */
     assert(wf__body_unix_nanoseconds(&inputs->wall_clock) > INT64_C(1577836800000000000));
+    /* [PRE-2] the invocation's process identifier is the host's. */
+    assert(inputs->process_id.tag == WF_OPTION_SOME);
+    assert(inputs->process_id.value == (uint64_t)wf_pid());
+    local_offset_probe(inputs);
+    open_files_probe(inputs);
 }
 
 typedef void (*wf_probe_stop_open)(wf_open_result *, wf_value *, const wf_value *);
