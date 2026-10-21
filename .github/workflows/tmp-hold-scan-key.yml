@@ -1,0 +1,100 @@
+# Temporary quick workflow for wf-hash-map-bench-scan-key; deleted before the
+# full check. Builds the compiler of the parent branch's head, compiles
+# hold.wf with it and runs both modes on small cases.
+name: tmp-hold-scan-key
+
+on:
+  push:
+    branches: [wf-hash-map-bench-scan-key]
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  CANDIDATE: 407d61f2344d7809189dc0a14693055161aad5f8
+
+jobs:
+  hold:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+
+      - name: Build the compiler of the candidate commit
+        run: |
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git rev-parse --verify "$CANDIDATE^{commit}"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/candidate/compiler/Cargo.toml"
+          perl .github/run-check.pl build-candidate make -C "$RUNNER_TEMP/candidate/compiler" build
+
+      - name: Compile hold.wf and run both modes
+        run: |
+          wfc="$RUNNER_TEMP/candidate/compiler/target/gate/whitefootc"
+          hold=research/experiments/hash-map-compare/hold.wf
+          "$wfc" "$hold" -o "$RUNNER_TEMP/hold"
+          mkdir -p "$RUNNER_TEMP/rows"
+          "$RUNNER_TEMP/hold" 1 5000 1000 > "$RUNNER_TEMP/rows/1-5000.tsv"
+          "$RUNNER_TEMP/hold" 1 100000 2000 > "$RUNNER_TEMP/rows/1-100000.tsv"
+          "$RUNNER_TEMP/hold" 2 64 50 > "$RUNNER_TEMP/rows/2-64.tsv"
+          "$RUNNER_TEMP/hold" 2 1024 50 > "$RUNNER_TEMP/rows/2-1024.tsv"
+          python3 -I - "$RUNNER_TEMP/rows" <<'EOF'
+          import os, sys
+          directory = sys.argv[1]
+          for name, mode, size, calls in (("1-5000", 1, 5000, 1000), ("1-100000", 1, 100000, 2000),
+                                          ("2-64", 2, 64, 50), ("2-1024", 2, 1024, 50)):
+              rows = [line.split("\t") for line in open(os.path.join(directory, name + ".tsv")).read().splitlines()]
+              assert len(rows) == calls, (name, "rows", len(rows))
+              total = 0
+              for index, row in enumerate(rows):
+                  assert len(row) == 5, (name, row)
+                  got = [int(field) for field in row]
+                  assert got[0] == mode and got[1] == size and got[2] == index, (name, row)
+                  assert got[3] > 0, (name, "no time", row)
+                  total += got[4]
+                  if mode == 2:
+                      assert got[4] >= size, (name, "short chain", row)
+              if mode == 1:
+                  assert total >= size, (name, "lent", total)
+              print(name, "ok", len(rows), "rows, pairs lent", total)
+          EOF
+
+      # Watch the check fail: a scan that names the other mode's binding
+      # hashes the pairs at the range ends differently from the build, so
+      # the program reports that the pass or the chain was not found.
+      - name: A wrong binding is refused
+        run: |
+          wfc="$RUNNER_TEMP/candidate/compiler/target/gate/whitefootc"
+          hold=research/experiments/hash-map-compare/hold.wf
+          mkdir -p "$RUNNER_TEMP/wrong-chain" "$RUNNER_TEMP/wrong-pass"
+          sed 's/hash_map_scan::<HoldSameKey/hash_map_scan::<HoldKey/' "$hold" > "$RUNNER_TEMP/wrong-chain/hold.wf"
+          sed 's/hash_map_scan::<HoldKey/hash_map_scan::<HoldSameKey/' "$hold" > "$RUNNER_TEMP/wrong-pass/hold.wf"
+          for broken in wrong-chain wrong-pass; do
+            if cmp -s "$hold" "$RUNNER_TEMP/$broken/hold.wf"; then
+              echo "$broken: the copy equals hold.wf"
+              exit 1
+            fi
+            "$wfc" "$RUNNER_TEMP/$broken/hold.wf" -o "$RUNNER_TEMP/$broken/hold"
+          done
+          status=0
+          "$RUNNER_TEMP/wrong-chain/hold" 2 64 50 > /dev/null || status=$?
+          echo "wrong chain binding: status $status"
+          test "$status" -eq 3
+          status=0
+          "$RUNNER_TEMP/wrong-pass/hold" 1 5000 1000 > /dev/null || status=$?
+          echo "wrong pass binding: status $status"
+          test "$status" -eq 3
