@@ -35,15 +35,19 @@ struct Count {
 
 fn hold_mix(key: u64) -> mixed: u64 pure {
   doc "The splitmix64 finalizer, the same uniform hash the operation cells use.";
-  let a = ixor(key, ishr.wrap(key, 30_u32));
+  let a_shift = ishr.wrap(key, 30_u32);
+  let a = ixor(key, a_shift);
   let b = a *wrap 13787848793156543929_u64;
-  let c = ixor(b, ishr.wrap(b, 27_u32));
+  let c_shift = ishr.wrap(b, 27_u32);
+  let c = ixor(b, c_shift);
   let d = c *wrap 10723151780598845931_u64;
-  return ixor(d, ishr.wrap(d, 31_u32));
+  let e_shift = ishr.wrap(d, 31_u32);
+  return ixor(d, e_shift);
 }
 
 fn hold_hash(env: &HoldKeys, key: &u64) -> result: u64 reads(key) {
-  return hold_mix(key^);
+  let value = key^;
+  return hold_mix(value);
 }
 
 fn hold_same_hash(env: &HoldKeys, key: &u64) -> result: u64 reads(key) {
@@ -244,7 +248,8 @@ fn emit(factory: &HandleFactory, output: &OutputStream, fields: &Array<u64, 5>) 
   doc "Prints one row of five tab-separated decimal fields.";
   let line = slots_new::<u8, 256>();
   for (at in 0_u64..5_u64) {
-    put_decimal(line: &line, value: fields^[at]);
+    let field = fields^[at];
+    put_decimal(line: &line, value: field);
   }
   return write_line(factory: factory, output: output, line: &line);
 }
@@ -356,7 +361,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     if pairs < size {
       set status = 3_u8;
     } else {
-      let sum = time_calls(map: &map, calls: calls, from: 0_u64, restart: False(), clock: &clock, durations: &durations, lent: &lent);
+      let continuing = False();
+      let sum = time_calls(map: &map, calls: calls, from: 0_u64, restart: continuing, clock: &clock, durations: &durations, lent: &lent);
       set status = report(mode: mode, size: size, durations: &durations, lent: &lent, factory: &factory, output: &output);
     }
     release_map(map: move map);
@@ -365,7 +371,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     let map = same_map(size: size, keys: &keys);
     match find_chain(map: &map, size: size) {
       Some(value: start) => {
-        let sum = time_calls(map: &map, calls: calls, from: start, restart: True(), clock: &clock, durations: &durations, lent: &lent);
+        let restarting = True();
+        let sum = time_calls(map: &map, calls: calls, from: start, restart: restarting, clock: &clock, durations: &durations, lent: &lent);
         set status = report(mode: mode, size: size, durations: &durations, lent: &lent, factory: &factory, output: &output);
       }
       None() => {

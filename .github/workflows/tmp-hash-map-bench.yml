@@ -40,6 +40,16 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           bash research/experiments/hash-map-compare/arms.sh claude/hash-scan-resume "" "$RUNNER_TEMP/out"
+      - name: Check every program with every compiler that builds it
+        run: |
+          arms="$RUNNER_TEMP/out/arms"
+          dir=research/experiments/hash-map-compare
+          status=0
+          for arm in base candidate; do
+            "$arms/$arm/compiler/target/gate/whitefootc" --check "$dir/bench.wf" || status=1
+          done
+          "$arms/candidate/compiler/target/gate/whitefootc" --check "$dir/hold.wf" || status=1
+          exit "$status"
       - name: Build the images
         run: |
           arms="$RUNNER_TEMP/out/arms"

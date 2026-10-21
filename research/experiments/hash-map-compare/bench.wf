@@ -50,15 +50,19 @@ struct Sample {
 
 fn bench_mix(key: u64) -> mixed: u64 pure {
   doc "The splitmix64 finalizer, a bijection whose output bits are uniformly distributed for any distinct inputs.";
-  let a = ixor(key, ishr.wrap(key, 30_u32));
+  let a_shift = ishr.wrap(key, 30_u32);
+  let a = ixor(key, a_shift);
   let b = a *wrap 13787848793156543929_u64;
-  let c = ixor(b, ishr.wrap(b, 27_u32));
+  let c_shift = ishr.wrap(b, 27_u32);
+  let c = ixor(b, c_shift);
   let d = c *wrap 10723151780598845931_u64;
-  return ixor(d, ishr.wrap(d, 31_u32));
+  let e_shift = ishr.wrap(d, 31_u32);
+  return ixor(d, e_shift);
 }
 
 fn bench_hash(env: &BenchKeys, key: &u64) -> result: u64 reads(key) {
-  return bench_mix(key^);
+  let value = key^;
+  return bench_mix(value);
 }
 
 fn bench_equal(env: &BenchKeys, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
@@ -241,7 +245,8 @@ fn build_sample(size: u64, capacity: u64, slow: Bool, keys: &BenchKeys, clock: &
     release(map: move map);
   }
   let ops = reps *wrap size;
-  return Sample(ns: total, ops: ops, check: check, extra: tally.extra);
+  let extra = tally.extra;
+  return Sample(ns: total, ops: ops, check: check, extra: extra);
 }
 
 fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(map), reads(keys), writes(clock) contract {
@@ -266,7 +271,8 @@ fn lookup_sample(map: &HashMap<u64, u64, ceiling>, size: u64, offset: u64, slow:
   let ns = nanoseconds_from(earlier: started, later: ended);
   let ops = reps *wrap size;
   let check = tally.found +wrap tally.sum;
-  return Sample(ns: ns, ops: ops, check: check, extra: tally.extra);
+  let extra = tally.extra;
+  return Sample(ns: ns, ops: ops, check: check, extra: extra);
 }
 
 fn remove_sample(size: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(clock) contract {
@@ -299,7 +305,8 @@ fn remove_sample(size: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> samp
     release(map: move map);
   }
   let ops = reps *wrap size;
-  return Sample(ns: total, ops: ops, check: check, extra: tally.extra);
+  let extra = tally.extra;
+  return Sample(ns: total, ops: ops, check: check, extra: extra);
 }
 
 fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, slow: Bool, keys: &BenchKeys, clock: &Clock) -> sample: Sample reads(keys), writes(map), writes(clock) contract {
@@ -327,7 +334,8 @@ fn churn_sample(map: &HashMap<u64, u64, ceiling>, size: u64, oldest: u64, slow: 
   let ns = nanoseconds_from(earlier: started, later: ended);
   let length = hash_map_len::<u64, u64, ceiling>(map: map);
   set check = check +wrap length;
-  return Sample(ns: ns, ops: ops, check: check, extra: tally.extra);
+  let extra = tally.extra;
+  return Sample(ns: ns, ops: ops, check: check, extra: extra);
 }
 
 fn each_sample(map: &HashMap<u64, u64, ceiling>, size: u64, slow: Bool, clock: &Clock) -> sample: Sample reads(map), writes(clock) contract {
@@ -351,7 +359,8 @@ fn each_sample(map: &HashMap<u64, u64, ceiling>, size: u64, slow: Bool, clock: &
   let ns = nanoseconds_from(earlier: started, later: ended);
   let ops = reps *wrap size;
   let check = tally.found +wrap tally.sum;
-  return Sample(ns: ns, ops: ops, check: check, extra: tally.extra);
+  let extra = tally.extra;
+  return Sample(ns: ns, ops: ops, check: check, extra: extra);
 }
 
 fn arg_number(args: &std::text::Args, position: u64) -> result: Option<u64> reads(args) {
@@ -460,10 +469,14 @@ fn emit(factory: &HandleFactory, output: &OutputStream, operation: u64, size: u6
   put_decimal(line: &line, value: operation);
   put_decimal(line: &line, value: size);
   put_decimal(line: &line, value: index);
-  put_decimal(line: &line, value: sample^.ops);
-  put_decimal(line: &line, value: sample^.ns);
-  put_decimal(line: &line, value: sample^.check);
-  put_decimal(line: &line, value: sample^.extra);
+  let ops = sample^.ops;
+  let ns = sample^.ns;
+  let check = sample^.check;
+  let extra = sample^.extra;
+  put_decimal(line: &line, value: ops);
+  put_decimal(line: &line, value: ns);
+  put_decimal(line: &line, value: check);
+  put_decimal(line: &line, value: extra);
   return write_line(factory: factory, output: output, line: &line);
 }
 
@@ -474,10 +487,13 @@ fn run_timed(operation: u64, size: u64, samples: u64, slow: Bool, clock: &Clock,
   doc "Runs one timed cell: sample zero is the warmup and samples 1..samples are measured; the driver drops sample zero. A map that the samples only read, or keep at size pairs, is built once, outside every interval; the cells that build their own maps leave it empty.";
   let keys = BenchKeys(unused: 0_u64);
   let map = hash_map_new::<u64, u64, ceiling>(capacity: 0_u64);
-  let shared = operation == 3_u64;
-  set shared = bor(shared, operation == 4_u64);
-  set shared = bor(shared, operation == 6_u64);
-  set shared = bor(shared, operation == 7_u64);
+  let hit = operation == 3_u64;
+  let miss = operation == 4_u64;
+  let churn = operation == 6_u64;
+  let each = operation == 7_u64;
+  let looked = bor(hit, miss);
+  let kept = bor(churn, each);
+  let shared = bor(looked, kept);
   if shared {
     let refused = fill(map: &map, size: size, keys: &keys);
   }
