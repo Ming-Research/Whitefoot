@@ -1,7 +1,8 @@
 #!/bin/sh
-# Decide whether a run of gate.yml or io-hosts.yml checks its revision, and
-# whether the gate adds macOS. Prints `run=`, `both=` and `reason=` lines for
-# $GITHUB_OUTPUT; both workflows call it, so they make one decision.
+# Decide whether a run of gate.yml, io-hosts.yml or sanitizers.yml checks its
+# revision, and whether the gate adds macOS. Prints `run=`, `both=` and
+# `reason=` lines for $GITHUB_OUTPUT; every one of them calls it, so they make
+# one decision.
 #
 # A run checks what someone may merge: a push to main, a push to a branch
 # with an open pull request, the opening or reopening of a pull request, the

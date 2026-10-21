@@ -60,6 +60,13 @@ linux-default-tsan              10         10         10         -      -
 linux-deque-tsan                10         10         10         -      -
 linux-runtime-tsan              10         10         10         -      -
 
+# sanitizers.yml: the corpus target under one sanitizer, building its test
+# binary, as one conformance shard of three or the rest of the target
+compiler/corpus-asan-conformance 600        600        600        -      -
+compiler/corpus-asan-programs   900        900        900        -      -
+compiler/corpus-tsan-conformance 600        600        600        -      -
+compiler/corpus-tsan-programs   900        900        900        -      -
+
 # map-sanitizers.yml, on changes to the concurrent map's runtime or test
 map-asan                        30         30         30         20     -
 map-tsan                        45         45         45         45     -

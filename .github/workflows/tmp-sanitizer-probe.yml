@@ -1,6 +1,6 @@
-# Temporary (wf-fr-sanitizer-check): confirms the emitted module is
-# instrumented and times a small batch of cases under each sanitizer before
-# the permanent workflow is sized. Removed before the branch is ready.
+# Temporary (wf-fr-sanitizer-check): watches the sanitized corpus target
+# fail once for each sanitizer on a fault injected into the runtime.
+# Removed before the branch is ready.
 name: tmp-sanitizer-probe
 
 on:
@@ -24,26 +24,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: emitted code is instrumented
-            kind: ir
-          - name: asan conformance 1/40
-            kind: corpus
+          - name: red on an injected out-of-bounds read
+            kind: red
             target: test-corpus-asan
-            filter: the_corpus_reaches_its_declared_verdict
-            shard: 1/40
-          - name: tsan conformance 1/40
-            kind: corpus
-            target: test-corpus-tsan
-            filter: the_corpus_reaches_its_declared_verdict
-            shard: 1/40
-          - name: asan programs runs+parallel
-            kind: corpus
+            fault: oob
+            expect: heap-buffer-overflow
+          - name: red on injected undefined behavior
+            kind: red
             target: test-corpus-asan
-            filter: programs::runs programs::parallel
-          - name: tsan programs runs+parallel
-            kind: corpus
+            fault: ub
+            expect: signed integer overflow
+          - name: red on an injected data race
+            kind: red
             target: test-corpus-tsan
-            filter: programs::runs programs::parallel
+            fault: race
+            expect: "ThreadSanitizer: data race"
     steps:
       - uses: actions/checkout@v4
       - name: Set the scratch root
@@ -65,6 +60,64 @@ jobs:
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Decline core dumps
         run: sudo sysctl -w kernel.core_pattern=core
+      # Appends one deliberate fault to the floor runtime, which every
+      # program links, run by a constructor before main; the target must
+      # fail and print the sanitizer's report from its report file.
+      - name: The target turns red on an injected fault
+        if: matrix.kind == 'red'
+        env:
+          FAULT: ${{ matrix.fault }}
+          EXPECT: ${{ matrix.expect }}
+        run: |
+          floor=compiler/src/backend/wf_floor.c
+          case "$FAULT" in
+            oob) cat >> "$floor" <<'C'
+          #include <stdlib.h>
+          __attribute__((constructor)) static void wf_injected_fault(void) {
+              volatile unsigned char *bytes = malloc(4);
+              volatile unsigned char past = bytes[4];
+              (void)past;
+              free((void *)bytes);
+          }
+          C
+              ;;
+            ub) cat >> "$floor" <<'C'
+          #include <limits.h>
+          __attribute__((constructor)) static void wf_injected_fault(void) {
+              volatile int largest = INT_MAX;
+              volatile int beyond = largest + 1;
+              (void)beyond;
+          }
+          C
+              ;;
+            race) cat >> "$floor" <<'C'
+          #include <pthread.h>
+          static int wf_injected_counter;
+          static void *wf_injected_increment(void *unused) {
+              (void)unused;
+              wf_injected_counter++;
+              return 0;
+          }
+          __attribute__((constructor)) static void wf_injected_fault(void) {
+              pthread_t first, second;
+              pthread_create(&first, 0, wf_injected_increment, 0);
+              pthread_create(&second, 0, wf_injected_increment, 0);
+              pthread_join(first, 0);
+              pthread_join(second, 0);
+          }
+          C
+              ;;
+          esac
+          tail -20 "$floor"
+          log="$RUNNER_TEMP/red.log"
+          status=0
+          make -C compiler ${{ matrix.target }} SANITIZER_FILTER="programs::runs::" > "$log" 2>&1 || status=$?
+          grep -E "sanitizer report|test result|SUMMARY" "$log" | head -20
+          echo "target exit status: $status"
+          [ "$status" -ne 0 ] || { echo "::error::the target passed with an injected fault"; exit 1; }
+          grep -q "sanitizer report" "$log" || { echo "::error::no report file was printed"; exit 1; }
+          grep -q "$EXPECT" "$log" || { echo "::error::no report of $EXPECT"; exit 1; }
+          echo "red as required: $EXPECT"
       - name: Emitted code is instrumented
         if: matrix.kind == 'ir'
         run: |

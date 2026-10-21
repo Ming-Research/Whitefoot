@@ -83,7 +83,7 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         if mode == OverlapLowering::Off {
             assert!(!module_requires_parallel_runtime(&module));
         }
-        let program = build_program(&module);
+        let program = build_program(&crate::support::sanitized(module));
         for &width in workers {
             let output = program.run_with_workers(width);
             assert!(output.status.success(), "{mode:?}/{width:?}: {output:?}");
