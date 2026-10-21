@@ -21,10 +21,12 @@ CI runs; it changes neither the rule nor who approves a raise.
 
 Cells and columns:
   * A class column with at least 20 recorded runs of a stage is recomputed.
-  * A class with fewer runs (the owner-directed Xeon column) takes the larger
-    of the row's recomputed class values and, if it has any run, its own
-    time by the rule: one run shows a class needs more, not that it needs
-    less. The row is left alone when no class has enough runs.
+  * A cell with fewer runs keeps its value, except in a column the owner
+    added for a model with too few runs (OWNER_COLUMNS: the Xeon): that
+    takes the larger of the row's recomputed class values and, if it has
+    any run, its own time by the rule: one run shows a class needs more,
+    not that it needs less. The row is left alone when no class has enough
+    runs.
   * Rows named by --keep, the macos and windows columns, and rows with no
     recorded run are not touched.
 """
@@ -40,6 +42,9 @@ import sys
 import time
 
 MINIMUM_RUNS = 20
+# The columns the owner added for a model with fewer than MINIMUM_RUNS runs
+# (design/compiler/verification.md); an addition is the owner's decision.
+OWNER_COLUMNS = ("xeon-8573c",)
 DEFAULT_WINDOW = 50
 MARGIN_PERCENT = 10
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -137,7 +142,7 @@ def window_of(rows, label, model, size):
     return ok[-size:]
 
 
-def recompute(table, rows, size, keep=()):
+def recompute(table, rows, size, keep=(), owner_columns=OWNER_COLUMNS):
     """Set the new cells in `table`; return one record per changed-or-checked cell."""
     report = []
     for label in table.rows:
@@ -166,12 +171,15 @@ def recompute(table, rows, size, keep=()):
             if column in new or cells.get(column, "-") == "-":
                 continue
             own = thin.get(column)
-            value = max(largest, own[1]) if own else largest
             used = own[2] if own else []
-            report.append((label, column, len(used),
-                           statistics.median(r["cs"] for r in used) / 100 if used else None,
-                           max(r["cs"] for r in used) / 100 if used else None, cells[column], value))
-            table.set(label, column, value)
+            value = cells[column]
+            if column in owner_columns:
+                value = max(largest, own[1]) if own else largest
+                table.set(label, column, value)
+            if used or column in owner_columns:
+                report.append((label, column, len(used),
+                               statistics.median(r["cs"] for r in used) / 100 if used else None,
+                               max(r["cs"] for r in used) / 100 if used else None, cells[column], value))
     return report
 
 
@@ -327,6 +335,7 @@ def self_test():
         "stage/five   -      15       -       25     -",
         "stage/six    40     40       40      50     -",
         "stage/seven  60     60       60      70     -",
+        "stage/eight  45     45       45      50     -",
         ""])
     def sample(rows, budget=None):
         jobs = {}
@@ -345,7 +354,8 @@ def self_test():
         + [("stage/four", "Small CPU", 100, 8, 0)] * 25                                     # floor: 10 s
         + [("stage/six", "Big CPU", 4000 + 100 * i, 9 + i // 3, 0) for i in range(15)]    # 15 runs, logged twice
         + [("stage/seven", "Big CPU", 5000, 14, 0)] * 25                                    # 55 s
-        + [("stage/seven", "Small CPU", 3000, 14, 0)] * 25)                                 # 35 s
+        + [("stage/seven", "Small CPU", 3000, 14, 0)] * 25                                  # 35 s
+        + [("stage/eight", "Big CPU", 7000, 15, 0)] * 25)                                   # 77 s -> 80; the others no run
     # A rerun attempt lists the earlier attempts' jobs again under new job ids,
     # with the same run, stage and time; they count once. A job whose CPU model
     # was not logged is not sampled.
@@ -357,14 +367,16 @@ def self_test():
     assert all(r["cpu"] for r in rows)
     assert sum(r["label"] == "stage/six" for r in rows) == 15
     table = Table(table_text)
-    report = recompute(table, rows, 50, keep=("stage/two",))
+    report = recompute(table, rows, 50, keep=("stage/two",), owner_columns=("thin-3",))
     cells = table.cells("stage/one")
-    # 114.00 s * 1.1 = 125.4 -> 130. The 10-run class takes the row's largest
-    # recomputed class (130), the one-run class its own 120 s -> 135 if higher.
-    assert (cells["big-1"], cells["small-2"], cells["thin-3"]) == ("130", "130", "135"), cells
+    # 114.00 s * 1.1 = 125.4 -> 130. The 10-run class keeps its 50 s: ten runs
+    # set no value. The owner's column, with one run of 120 s, takes the row's
+    # recomputed class (130) or its own 120 s -> 135 if higher.
+    assert (cells["big-1"], cells["small-2"], cells["thin-3"]) == ("130", "50", "135"), cells
     assert table.cells("stage/two") == {"big-1": "30", "small-2": "30", "thin-3": "30", "macos": "40", "windows": "-"}
     assert table.cells("stage/three") == {"big-1": "20", "small-2": "20", "thin-3": "20", "macos": "25", "windows": "-"}
-    assert table.cells("stage/four")["small-2"] == "10" and table.cells("stage/four")["big-1"] == "10"
+    # A one-second stage rounds to the 10 s floor; the class without a run keeps 20.
+    assert table.cells("stage/four")["small-2"] == "10" and table.cells("stage/four")["big-1"] == "20"
     assert table.cells("stage/five") == {"big-1": "-", "small-2": "15", "thin-3": "-", "macos": "25", "windows": "-"}
     assert table.cells("stage/one")["macos"] == "60" and table.cells("stage/one")["windows"] == "-"
     # Counted once, 15 runs are too few; counted twice they would be 30.
@@ -372,12 +384,14 @@ def self_test():
     # Two classes have enough runs, 55 s and 35 s by the rule: the class
     # without runs takes the larger of them, not the smaller.
     assert table.cells("stage/seven") == {"big-1": "55", "small-2": "35", "thin-3": "55", "macos": "70", "windows": "-"}
+    # A class without a run keeps its value, the owner's column takes the row's largest.
+    assert table.cells("stage/eight") == {"big-1": "80", "small-2": "45", "thin-3": "80", "macos": "50", "windows": "-"}
     out = table.text().split("\n")
     old = table_text.split("\n")
-    assert out[:6] == old[:6] and out[7:9] == old[7:9] and out[10:12] == old[10:12] and out[13:] == old[13:]
+    assert out[:6] == old[:6] and out[7:9] == old[7:9] and out[10:12] == old[10:12] and out[14:] == old[14:]
     assert all(len(line.split()) == len(before.split()) for line, before in zip(out, old))
     again = Table(table.text())
-    assert recompute(again, rows, 50, keep=("stage/two",)) and again.text() == table.text()
+    assert recompute(again, rows, 50, keep=("stage/two",), owner_columns=("thin-3",)) and again.text() == table.text()
     assert any(entry[0] == "stage/one" and entry[1] == "big-1" and entry[2] == 25 and entry[6] == 130 for entry in report)
 
     # A recorded series that is stable: no job is over its recomputed budget
@@ -438,7 +452,7 @@ def main():
     with open(args.budgets) as handle:
         table = Table(handle.read())
     if args.command == "table":
-        print_report(recompute(table, rows, args.window, tuple(args.keep)))
+        print_report(recompute(table, rows, args.window, tuple(args.keep), OWNER_COLUMNS))
         if args.write:
             with open(args.budgets, "w") as handle:
                 handle.write(table.text())

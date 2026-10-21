@@ -1,0 +1,96 @@
+# Temporary (wf-gate-budget-noise): removed before the branch is ready.
+# Round 5: a cell with too few runs keeps its value outside the owner's column.
+# The quick workflow for .github/recompute-time-budgets.py: the repository
+# invariants that now include its self-test, and one run per deliberate fault
+# in a copy of the script, each of which the self-test must reject; and the
+# design tree's lint and readiness for the node this branch changes.
+name: tmp-recompute-budgets
+
+on:
+  push:
+    branches: [wf-gate-budget-recompute]
+    paths:
+      - '.github/workflows/tmp-recompute-budgets.yml'
+      - '.github/recompute-time-budgets.py'
+      - '.github/time-budgets.txt'
+      - 'Makefile'
+      - 'design/**'
+      - 'AGENTS.md'
+      - 'research/**'
+      - 'docs/review-checklist.md'
+
+jobs:
+  recompute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Repository invariants
+        run: perl .github/run-check.pl repository-invariants make repository-invariants
+
+      - name: Self-test rejects each deliberate fault
+        run: |
+          set -u
+          script=.github/recompute-time-budgets.py
+          perl .github/run-check.pl self-test python3 -B "$script" --self-test
+          fault() {
+            name=$1; from=$2; to=$3
+            copy="$RUNNER_TEMP/fault-$name.py"
+            python3 -B - "$script" "$copy" "$from" "$to" <<'EOF'
+          import sys
+          source = open(sys.argv[1]).read()
+          if source.count(sys.argv[3]) != 1:
+              sys.exit("fault text is not found exactly once: " + sys.argv[3])
+          open(sys.argv[2], "w").write(source.replace(sys.argv[3], sys.argv[4]))
+          EOF
+            status=0
+            python3 -B "$copy" --self-test > "$RUNNER_TEMP/fault-$name.log" 2>&1 || status=$?
+            echo "fault $name: self-test exit $status"
+            test "$status" -ne 0 || { echo "fault $name was not detected"; exit 1; }
+          }
+          fault margin 'MARGIN_PERCENT = 10' 'MARGIN_PERCENT = 15'
+          fault minimum 'MINIMUM_RUNS = 20' 'MINIMUM_RUNS = 1'
+          fault floor 'max(10, -(-scaled' 'max(5, -(-scaled'
+          fault rounding '-(-scaled // (100 * 100 * 5)) * 5' '(scaled // (100 * 100 * 5)) * 5'
+          fault failed-runs 'r["cpu"] == model and r["exit"] == 0]' 'r["cpu"] == model]'
+          fault thin-class 'value = max(largest, own[1]) if own else largest' 'value = own[1] if own else largest'
+          fault slowdown 'cs * (1 + slowdown) > limit' 'cs > limit'
+          fault ordinary-thin-cell $'if column in owner_columns:\n                value = max' $'if True:\n                value = max'
+          fault window 'ok[-size:]' 'ok[-3:]'
+          fault repeated-attempts 'if key in seen or job["cpu"] is None:' 'if job["cpu"] is None:'
+          fault no-cpu 'if key in seen or job["cpu"] is None:' 'if key in seen:'
+          fault largest-class 'largest = max(new.values())' 'largest = min(new.values())'
+          fault period 'boundary = days[(days.index(r["day"]) // every) * every]' 'boundary = days[days.index(r["day"])]'
+          fault first-day 'if r["day"] < since:' 'if False:'
+          fault logged-budget 'if r["budget"] is not None:' 'if r["budget"] is None:'
+
+      - name: The three EPYC columns equal main's, the Xeon column differs
+        run: |
+          git fetch --no-tags origin main
+          cells() {
+            git show "$1":.github/time-budgets.txt \
+              | awk 'NF == 7 && $1 != "label" { print $1, $2, $3, $4, $5, $6, $7 }'
+          }
+          cells origin/main > "$RUNNER_TEMP/main.cells"
+          cells HEAD > "$RUNNER_TEMP/head.cells"
+          # Columns: label, epyc-7763, epyc-9v74, epyc-9v45, xeon-8573c, macos, windows.
+          epyc() { cut -d' ' -f1-4,6-7 "$1"; }
+          epyc "$RUNNER_TEMP/main.cells" > "$RUNNER_TEMP/main.epyc"
+          epyc "$RUNNER_TEMP/head.cells" > "$RUNNER_TEMP/head.epyc"
+          diff "$RUNNER_TEMP/main.epyc" "$RUNNER_TEMP/head.epyc"
+          echo "cells that differ from main (label, then main and head):"
+          diff "$RUNNER_TEMP/main.cells" "$RUNNER_TEMP/head.cells" || true
+
+      - name: Guidance references
+        run: perl .github/run-check.pl guidance make guidance
+
+      - name: Design tree lint and readiness
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          git log --oneline -1 "$base"
+          perl .github/run-check.pl design-lint make design-lint DESIGN_REVIEW_BASE="$base"
+          perl .github/run-check.pl design-ready make design-ready DESIGN_REVIEW_BASE="$base"
