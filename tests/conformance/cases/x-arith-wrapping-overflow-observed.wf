@@ -2,13 +2,11 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "Wrapping overflow is total and produces the specified negative value. Ordinary control observes that expected result.";
+  doc "Wrapping overflow is total and produces the specified negative value, i32::MIN; that value raised by i32::MAX and then by 43 is the exit status 42.";
   let hi = 2147483647_i32;
   let w = hi +wrap 1_i32;
-  let wrapped_negative = w < 0_i32;
-  if wrapped_negative {
-    return exit_status(code: 0_u8);
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  let lifted = w + 2147483647_i32;
+  let code = lifted + 43_i32;
+  let status_code = cvt::<i32, u8>(code);
+  return exit_status(code: status_code);
 }
