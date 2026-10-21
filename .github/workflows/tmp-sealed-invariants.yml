@@ -1,9 +1,10 @@
 # Temporary: the focused checks of the sealed type invariant work (the
 # compiler build and lint, the type-invariant, fact-source and repair unit
 # tests, every conformance case's verdict with each failing case listed),
-# this round's cases checked with the compilers they fail on, and the trial
+# this round's cases checked with the compilers they fail on, the trial
 # compile of the downstream programs with the branch's compiler and the
-# base's. Removed before the branch is ready.
+# base's, and the repository-level static checks and the change-log check
+# against the branch's fork point. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -57,6 +58,30 @@ jobs:
           grep -E '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
           grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
           exit "$status"
+  # The repository-level static checks the gate's static group runs, which
+  # a draft skips: the specification's archive, prose and references, and
+  # the design tree's form against the branch's fork point, which prints the
+  # node, depth and decision counts; then the readiness check that the
+  # change logs name every changed node and rule. `make static` runs each
+  # stage under the check runner itself.
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Run the static checks and the change-log check
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+          base=$(git merge-base HEAD origin/main)
+          git log --oneline -1 "$base"
+          make --no-print-directory static DESIGN_REVIEW_BASE="$base"
+          perl .github/run-check.pl tmp-design-ready make --no-print-directory design-ready \
+            DESIGN_REVIEW_BASE="$base"
+
   # This round's cases with the compilers they fail on: the head the first
   # review saw, and the pushed head without the widening of debts whose
   # offsets read a written field. A case that does not end within two

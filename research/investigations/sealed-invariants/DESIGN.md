@@ -33,7 +33,10 @@ The design study that preceded the ruling compared five candidates and named
 three points a soundness argument must settle before implementation:
 restoration obligations across reference joins, a finite representation of
 container evidence, and a polynomial bound on the added checking work. This
-note settles them, states the rule precisely enough to implement and review,
+note settles them, the third apart from the debts an atomic block's entry
+and a map or `Entries` parameter's body entry start with ([result
+3](#result-3-the-bound-on-the-added-work)), states the rule precisely
+enough to implement and review,
 and lists the specification rules and conformance cases the change needs.
 
 ## Question
@@ -263,7 +266,10 @@ induction that every hand-off in the chain was proved.
 
 T1 **Body entry.** D holds one debt for each anchor that an entry of a
 reference parameter of type `&ConcurrentHashMap<V>` or `&Entries<V>` owns
-or is, the entry's position `[?]`, and nothing else. Every parameter value
+or is, and nothing else. Each entry and element position in it is `[?]`,
+and a value whose type is that of a value above it on its path from the
+parameter's referent contributes the cover of its place instead of the
+anchors at or below it, so the set is finite. Every parameter value
 and every reference parameter's referent is sealed, because each caller
 proved it at the call (T5); the build establishes the same for the entry's
 arguments [PROG-3]. That proof covers no entry of a map or an `Entries`
@@ -409,7 +415,7 @@ was reached only through a reference whose path set REF-1 summarizes by a
 cover, the debt is anchored at that cover. Widening only coarsens a debt:
 the widened anchor overlaps everything the old one did. Widening the later
 offsets too keeps the shapes of one anchor to one more than its offsets
-that read a tracked place ([result 3](#result-3-the-added-work-is-polynomial)):
+that read a tracked place ([result 3](#result-3-the-bound-on-the-added-work)):
 `grid[r][c]` widens to `grid[r][?]` when the inner index changes and to
 `grid[?][?]` when the outer one does, never to `grid[?][c]`.
 (The finer anchor for linked-structure cursors proposed under
@@ -483,7 +489,7 @@ edge contradictory and let the merge discard it
 
 T12 **Loop header.** D at a header is the least set containing the
 entering edge's debts and every backedge's and `continue`'s debts. It is
-computed by monotone iteration (see [result 3](#result-3-the-added-work-is-polynomial)).
+computed by monotone iteration (see [result 3](#result-3-the-bound-on-the-added-work)).
 
 T13 **Instance at a sealed place** (the delivering hand-off's fact,
 retrieved; see [SI as a chain of hand-offs](#the-sealing-invariant)). A new
@@ -520,8 +526,12 @@ establishes is true. Hence no program path reads a broken value as valid.
 **Proof sketch.** Induction over the steps of any execution of a checked
 program, every activation's abstract state paired with its runtime state.
 
-- *Base.* At body entry D is empty and every parameter value and referent is
-  valid, by (b) applied to the caller's hand-off (or [PROG-3] for the entry).
+- *Base.* At body entry D is T1's set and every parameter value and referent
+  is valid, by (b) applied to the caller's hand-off (or [PROG-3] for the
+  entry), apart from the entries of a map or an `Entries`, which that
+  hand-off did not deliver valid (T5). T1's debts denote every key at or
+  below such an entry, and SI asserts nothing of a key a debt may denote,
+  so SI holds.
   Recursion needs no separate argument: the induction is over execution
   steps, not over call depth, so a recursive call relies on (b) at an earlier
   step.
@@ -705,7 +715,7 @@ type parameter other than by moving one it was given — the parametricity
 obligation below makes that a stated TCB condition, and the implementation
 must audit each row against it.
 
-## Result 3: the added work is polynomial
+## Result 3: the bound on the added work
 
 **Statement.** Per concrete function instance (and per generic schema),
 with n the number of statements and places written in the body, d the
@@ -715,12 +725,13 @@ r the largest read set:
 - the number of debt keys is at most A = (R + 1)·B·(d + 1)²·K + C, with R
   the number of roots in the body (bindings, parameters and atomic targets'
   states), B = n·d + U + S the base anchors, d here also bounding the paths
-  of the anchors atomic entries add, U their number, S the number of `swap`
+  of the anchors atomic entries and the body entries of map and `Entries`
+  parameters add (T1), U their number, S the number of `swap`
   targets and C the number of covers. An anchor is a base anchor (a proper
-  prefix of a written place, at most n·d, one an atomic entry adds, or a
-  `swap` target) or a root followed by the steps a base anchor has below a
-  value, at most d + 1 per base anchor: T4 rebasing onto a root keeps such
-  steps and a T10 exchange appends none below its target. T9 widens each
+  prefix of a written place, at most n·d, one an atomic entry or a body
+  entry adds, or a `swap` target) or a root followed by the steps a base
+  anchor has below a value, at most d + 1 per base anchor: T4 rebasing onto
+  a root keeps such steps and a T10 exchange appends none below its target. T9 widens each
   anchor to at most d + 1 shapes, because a widened offset widens every
   later one;
 - the debt state at a point is a subset of those keys; the breaking-event
@@ -803,8 +814,12 @@ down to its first recursion, which is exponential in the number of distinct
 struct types nested along shared paths (S1 holding two S2, S2 two S3, and
 so on). The shared-object model, whose ruling the provisional rule waits
 for, decides which of those values a block may trust; a block that trusts
-them adds no entry debts and U is zero, as the model above assumes. Until
-then the cost stands, recorded with that decision.
+them adds no entry debts. A map or an `Entries` reference parameter adds
+the same unfolding of its entry type at body entry (T1), in every body
+with such a parameter whether or not it reaches an entry. T5 names it as
+the price of a map owning none of its entries, which the provisional
+atomic rule requires, so the same ruling reopens it; U is zero for a body
+with neither. Both costs stand, recorded with the provisional decision.
 
 **What remains to measure.** The bound is polynomial in the body's size
 and U; whether it is cheap
