@@ -2,13 +2,18 @@
 # No native tool qualifies a Windows package on a machine that holds no other
 # compiler. A hosted Windows runner has Rust, LLVM and Visual Studio, and the
 # Visual C++ redistributable that would hide a missing runtime DLL. This runner
-# extracts the exact release archive on the host and runs the package's
-# compiler in a Windows Server Core container, which has none of them; the host
-# only orchestrates and inspects the images that come out.
-# Caller supplies the archive, the directory of maintained witnesses
-# (tests/package-fixtures), a disposable work directory and the container image
-# whose Windows build matches the runner's (process isolation needs that).
-# Runs on a Windows host with Git's bash, 7z, Python and Docker in Windows
+# installs the exact release archive in a Windows Server Core container, which
+# has none of them, with the commands of the Windows section of the getting
+# started guide (docs/guide/getting-started.md) and runs the package's compiler
+# there; the host only orchestrates and inspects the images that come out.
+# The guide's download is replaced by a copy of the candidate archive and of the
+# SHA256SUMS file beside it. Every other PowerShell block of the guide runs as
+# written, and so do its programs.
+# Caller supplies the archive (whose directory holds the release's SHA256SUMS),
+# the directory of maintained witnesses (tests/package-fixtures), a disposable
+# work directory and the container image whose Windows build matches the
+# runner's (process isolation needs that).
+# Runs on a Windows host with Git's bash, Python and Docker in Windows
 # container mode.
 set -euo pipefail
 if [ "$#" -ne 4 ]; then
@@ -25,7 +30,7 @@ logs="$work/logs"
 # Git's bash rewrites arguments that look like POSIX paths; Windows paths for
 # the container must pass through untouched.
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
-mkdir -p "$work/relocated package" "$work/unrelated cwd" "$work/out" "$work/tools"
+mkdir -p "$work/installed here" "$work/unrelated cwd" "$work/out" "$work/tools"
 exec > >(tee "$logs/acceptance.log") 2>&1
 printf 'Archive: %s\nImage: %s\n' "$archive" "$image"
 python -I - "$archive" <<'PYHASH'
@@ -36,10 +41,16 @@ with pathlib.Path(sys.argv[1]).open('rb') as stream:
         sha.update(block)
 print('Archive SHA-256:', sha.hexdigest())
 PYHASH
-# The installation: extract the archive into a directory whose name holds a
+# The installation happens in the container, in a directory whose name holds a
 # space, away from the repository and the container's own tools.
-7z x -y -bd -o"$(cygpath -w "$work/relocated package")" "$(cygpath -w "$archive")" > /dev/null
-package="$work/relocated package"
+test "$(basename "$archive")" = whitefootc-windows-x86_64-bundled.zip
+sums="$(dirname "$archive")/SHA256SUMS"
+test -f "$sums"
+guide="$fixtures/../../docs/guide/getting-started.md"
+test -f "$guide"
+mkdir -p "$work/download"
+cp "$archive" "$sums" "$work/download/"
+package="$work/installed here/whitefoot"
 cp "$fixtures/waiting.wf" "$work/waiting.wf"
 cp "$fixtures/stack-exhaustion.wf" "$work/stack-exhaustion.wf"
 # A program from the corpus that runs on Windows with the host capabilities it
@@ -63,6 +74,129 @@ C
 # this wrapper, which writes the code to a file.
 # The redirection comes first: `echo 1> file` would redirect handle 1.
 printf '@echo off\r\n"%%~2"\r\n>"%%~1" echo %%errorlevel%%\r\n' > "$work/tools/run-code.cmd"
+
+# What the guide says, read before anything runs: the PowerShell blocks become
+# one script that the container runs from the directory the user works in, and
+# the programs, their exit codes and the rejection text come from the same
+# document. The download is the one thing the guide does that a candidate that
+# is not published yet cannot do; the check requires the block to name the
+# release's assets and copies the candidate's files in its place.
+python -I - "$guide" "$work" <<'PYGUIDE'
+import pathlib, re, sys
+guide, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+blocks, lines, open_info = [], guide.read_text().splitlines(), None
+for line in lines:
+    if open_info is None:
+        match = re.fullmatch(r'```(\S.*)', line)
+        if match:
+            open_info, body = match.group(1), []
+    elif line == '```':
+        blocks.append((open_info, '\n'.join(body) + '\n'))
+        open_info = None
+    else:
+        body.append(line)
+assert open_info is None, 'unclosed fence in the guide'
+asset = 'whitefootc-windows-x86_64-bundled.zip'
+script = ["$ErrorActionPreference = 'Stop'"]
+powershell = [body for info, body in blocks if info == 'powershell']
+for needle in ('Invoke-WebRequest', 'Get-FileHash', 'Expand-Archive', '$env:PATH',
+               'whitefootc first.wf -o first.exe', 'whitefootc checked.wf -o checked.exe'):
+    assert any(needle in body for body in powershell), ('the guide has no PowerShell block with', needle)
+for number, body in enumerate(powershell, 1):
+    if 'Invoke-WebRequest' in body:
+        for name in (asset, 'SHA256SUMS', 'releases/download/$release_tag'):
+            assert name in body, ('the guide download does not name', name)
+        script += [r"Copy-Item 'C:\work\download\%s' ." % asset, r"Copy-Item 'C:\work\download\SHA256SUMS' ."]
+    else:
+        script.append(body.rstrip('\n'))
+    script.append("Write-Output '=== guide PowerShell block %d done ==='" % number)
+(work / 'tools' / 'install-from-guide.ps1').write_text('\n'.join(script) + '\n')
+codes = []
+for info, body in blocks:
+    run = re.fullmatch(r'whitefoot run exit=(\d+) file=(\S+)', info)
+    reject = re.fullmatch(r'whitefoot reject (\S+) file=(\S+)', info)
+    if run or reject:
+        # Bytes, not text: a program's line ends are not the platform's.
+        (work / 'installed here' / (run or reject).group(2)).write_bytes(body.encode())
+        if run:
+            codes.append(run.group(1))
+(work / 'tools' / 'guide-exit-codes.txt').write_text('\n'.join(codes) + '\n')
+outputs = [body for info, body in blocks if info == 'whitefoot-output']
+assert len(outputs) == 1, 'the guide shows one rejection text'
+(work / 'tools' / 'rejected.expected').write_bytes(outputs[0].encode())
+assert codes == ['4', '1'], codes
+print('Guide:', guide, '- PowerShell blocks:', len(powershell), '- exit codes:', ' '.join(codes))
+PYGUIDE
+
+# The clean machine: a container started from the stock Server Core image. The
+# host's own clang is the control that shows the detector can see one.
+name=wf-clean-windows
+# The hosted image starts its container engine in the background, so the first
+# call can come before it listens: give it a bounded time, then fail with the
+# engine's own message. One run found no engine after two minutes, so after
+# one minute the engine's service state goes to the log and a stopped service
+# is started; the bound is five minutes.
+for attempt in $(seq 1 60); do
+  docker info > /dev/null 2>&1 && break
+  if [ "$attempt" -eq 12 ]; then
+    powershell.exe -NoProfile -Command \
+      'Get-Service docker | Format-List Name,Status,StartType; Start-Service docker' \
+      > "$logs/docker-service.txt" 2>&1 || true
+    cat "$logs/docker-service.txt"
+  fi
+  sleep 5
+done
+docker info > "$logs/docker-info.txt"
+docker rm -f "$name" > /dev/null 2>&1 || true
+trap 'docker rm -f "$name" > /dev/null 2>&1 || true; restore' EXIT
+docker run --detach --name "$name" --isolation process \
+  --mount "type=bind,src=$(cygpath -w "$work"),dst=C:\\work" "$image" ping -t localhost > /dev/null
+echo 'Host control (the runner has a compiler on PATH, the container must not):'
+command -v clang || echo 'no clang on the runner PATH'
+cexec_at() { # directory label command... : run in the container from a directory
+  local directory="$1" label="$2" status=0
+  shift 2
+  printf 'Command (%s):' "$label"
+  printf ' %q' "$@"
+  printf '\n'
+  docker exec --workdir "$directory" "$name" "$@" > "$logs/$label.txt" 2>&1 || status=$?
+  cat "$logs/$label.txt"
+  printf 'Exit (%s): %s\n' "$label" "$status"
+  return "$status"
+}
+cexec() { # label command... : run in the container from an unrelated directory
+  cexec_at 'C:\work\unrelated cwd' "$@"
+}
+cexec container-version cmd /c ver
+cexec container-program-files cmd /c dir /b 'C:\Program Files' || true
+cexec container-program-files-x86 cmd /c dir /b 'C:\Program Files (x86)' || true
+for absent in clang cargo rustc link gcc git python bash; do
+  if cexec "container-where-$absent" where "$absent"; then
+    echo "$absent is installed in the container" >&2
+    exit 1
+  fi
+done
+# The Visual C++ runtime is what a package built with Visual C++ would need.
+for runtime in vcruntime140.dll msvcp140.dll; do
+  if cexec "container-no-$runtime" cmd /c dir /b "C:\\Windows\\System32\\$runtime"; then
+    echo "$runtime is present in the container" >&2
+    exit 1
+  fi
+done
+
+# The installation, by the guide's own commands from the directory the user
+# works in; it leaves first.exe and checked.exe there and prints their exit
+# codes.
+cexec_at 'C:\work\installed here' install-from-guide powershell -NoProfile -ExecutionPolicy Bypass \
+  -File 'C:\work\tools\install-from-guide.ps1'
+grep -F 'whitefootc-windows-x86_64-bundled.zip: OK' "$logs/install-from-guide.txt"
+printed=$(tr -d '\r' < "$logs/install-from-guide.txt" | grep -x -E '[0-9]+' | tr '\n' ' ')
+test "$printed" = "$(tr '\n' ' ' < "$work/tools/guide-exit-codes.txt")"
+test -f "$work/installed here/first.exe"
+test -f "$work/installed here/checked.exe"
+cp "$work/installed here/first.exe" "$work/out/guide-first.exe"
+cp "$work/installed here/checked.exe" "$work/out/guide-checked.exe"
+test -f "$package/bin/whitefootc.exe"
 
 # The same inventory check as the Linux package: every trimmed byte against the
 # manifest, every regular file against the release's inner checksums.
@@ -103,53 +237,7 @@ print('Source LLVM:', manifest['source_asset'], manifest['source_sha256'])
 print('System dependencies:', json.dumps(manifest['host_dependencies'], indent=2))
 PY
 
-# The clean machine: a container started from the stock Server Core image. The
-# host's own clang is the control that shows the detector can see one.
-name=wf-clean-windows
-# The hosted image starts its container engine in the background, so the first
-# call can come before it listens: give it a bounded time, then fail with the
-# engine's own message. One run found no engine after two minutes, so after
-# one minute the engine's service state goes to the log and a stopped service
-# is started; the bound is five minutes.
-for attempt in $(seq 1 60); do
-  docker info > /dev/null 2>&1 && break
-  if [ "$attempt" -eq 12 ]; then
-    powershell.exe -NoProfile -Command \
-      'Get-Service docker | Format-List Name,Status,StartType; Start-Service docker' \
-      > "$logs/docker-service.txt" 2>&1 || true
-    cat "$logs/docker-service.txt"
-  fi
-  sleep 5
-done
-docker info > "$logs/docker-info.txt"
-docker rm -f "$name" > /dev/null 2>&1 || true
-trap 'docker rm -f "$name" > /dev/null 2>&1 || true; restore' EXIT
-docker run --detach --name "$name" --isolation process \
-  --mount "type=bind,src=$(cygpath -w "$work"),dst=C:\\work" "$image" ping -t localhost > /dev/null
-echo 'Host control (the runner has a compiler on PATH, the container must not):'
-command -v clang || echo 'no clang on the runner PATH'
-cexec() { # label command... : run in the container from an unrelated directory
-  local label="$1" status=0
-  shift
-  printf 'Command (%s):' "$label"
-  printf ' %q' "$@"
-  printf '\n'
-  docker exec --workdir 'C:\work\unrelated cwd' "$name" "$@" > "$logs/$label.txt" 2>&1 || status=$?
-  cat "$logs/$label.txt"
-  printf 'Exit (%s): %s\n' "$label" "$status"
-  return "$status"
-}
-cexec container-version cmd /c ver
-cexec container-program-files cmd /c dir /b 'C:\Program Files' || true
-cexec container-program-files-x86 cmd /c dir /b 'C:\Program Files (x86)' || true
-for absent in clang cargo rustc link gcc git python bash; do
-  if cexec "container-where-$absent" where "$absent"; then
-    echo "$absent is installed in the container" >&2
-    exit 1
-  fi
-done
-
-package_c='C:\work\relocated package'
+package_c='C:\work\installed here\whitefoot'
 compiler="$package_c\\bin\\whitefootc.exe"
 run_image() { # label executable : exit code in $logs/label.code, output in label.out/err
   local label="$1" exe="$2"
@@ -190,6 +278,12 @@ test "$code" = 0
 cexec example-build "$compiler" -o 'C:\work\out\example.exe' 'C:\work\example.wf'
 run_image example-run 'C:\work\out\example.exe'
 test "$code" = 0
+# The guide's rejection: refused, with the text the guide shows.
+if cexec_at 'C:\work\installed here' guide-rejected "$compiler" --check rejected.wf; then
+  echo 'the guide rejected.wf was accepted' >&2
+  exit 1
+fi
+tr -d '\r' < "$logs/guide-rejected.txt" | diff - "$work/tools/rejected.expected"
 # Stack exhaustion ends in the floor's abort and its one record only if every
 # large frame is probed into the guard, so this observes the probing method the
 # packaged clang selected: an unprobed frame would end in a host fault with no
@@ -230,7 +324,7 @@ done
 # lacks. The host's llvm-readobj only reads the images.
 readobj=$(command -v llvm-readobj || echo '/c/Program Files/LLVM/bin/llvm-readobj.exe')
 test -x "$readobj"
-for image in ordinary example stack full-lto objects-cold objects-warm fragments-cold fragments-warm; do
+for image in guide-first guide-checked ordinary example stack full-lto objects-cold objects-warm fragments-cold fragments-warm; do
   "$readobj" --coff-imports "$work/out/$image.exe" | sed -n 's/^ *Name: //p' | tr -d '\r' | sort -u > "$logs/$image.imports"
   echo "--- $image imports ---"
   cat "$logs/$image.imports"

@@ -296,6 +296,7 @@ jobs:
           test -f .github/toolchain/check-package-windows.sh
           test -f tests/package-fixtures/waiting.wf
           test -f tests/package-fixtures/stack-exhaustion.wf
+          test -f docs/guide/getting-started.md
           bash .github/toolchain/check-package-windows.sh \
             "$PWD/candidate/whitefootc-windows-x86_64-bundled.zip" \
             "$PWD/tests/package-fixtures" "$RUNNER_TEMP/package-windows" \
@@ -306,7 +307,7 @@ jobs:
         env:
           COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
-          echo "Windows x86-64 candidate $COMMIT: inventory, coroutine IR, ordinary/full-LTO/cached builds, stack exhaustion, import and component-removal checks passed in a Server Core container that holds no other compiler." >> "$GITHUB_STEP_SUMMARY"
+          echo "Windows x86-64 candidate $COMMIT: installation by the getting started guide's Windows commands, the guide's programs, inventory, coroutine IR, ordinary/full-LTO/cached builds, stack exhaustion, import and component-removal checks passed in a Server Core container that holds no other compiler." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Windows command, inventory and import logs
         if: always()

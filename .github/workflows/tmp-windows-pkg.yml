@@ -1,0 +1,64 @@
+# TEMPORARY: removed before wf-fr-pkg-windows is marked ready.
+#
+# Quick checks for the Windows package item: the documentation example check
+# over the getting started guide (its Windows section is new), the target and
+# toolchain unit tests, and the repository's static checks. The Windows
+# container run of the guide's commands is the compiler-release trial.
+name: tmp-windows-pkg
+
+on:
+  push:
+    branches: [wf-fr-pkg-windows]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-windows-pkg-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  unit:
+    name: Documentation examples and target tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo --version
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Documentation examples
+        run: |
+          perl .github/run-check.pl quick/doc-examples cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus doc_examples
+      - name: Target, toolchain and deterministic-target tests
+        run: |
+          perl .github/run-check.pl quick/unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- target:: toolchain:: deterministic_target
+
+  static:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+      - name: make static
+        run: make static
