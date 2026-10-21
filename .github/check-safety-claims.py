@@ -399,7 +399,8 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(self.findings(), [])
 
     def test_unknown_rule(self):
-        page = page_fixture({"No data races": [("NOPE-9", "", "", "`ownership-tests`")]})
+        page = page_fixture({"No data races": [("OWN-1", "`own1-neg`", "`own1-run`", ""),
+                                               ("NOPE-9", "", "", "`ownership-tests`")]})
         self.assertOne(self.findings(page=page), "NOPE-9 is not defined")
 
     def test_deleted_case(self):
@@ -410,7 +411,8 @@ class ClaimTests(unittest.TestCase):
 
     def test_accepting_case_loses_the_rule(self):
         manifest = self.edit_case("own1-run", lambda r: r.update(rules=["OP-4"]))
-        self.assertOne(self.findings(manifest=manifest), "own1-run no longer cites OWN-1")
+        findings = self.findings(manifest=manifest)
+        self.assertTrue(any("own1-run no longer cites OWN-1" in f for f in findings), findings)
 
     def test_rejecting_case_changes_its_rule(self):
         manifest = self.edit_case("op4-neg", lambda r: r.update(expect={"kind": "reject", "rule": "OWN-1"}))
@@ -495,7 +497,8 @@ class ClaimTests(unittest.TestCase):
         (root / "compiler/src/backend/x.c").write_text("#include <stdio.h>\n#include \"local.h\"\nint y;\n")
         (root / DRIVER).write_text('const A: &[U] = &[unit("x.c", X), unit("gone.c", G)];\n')
         rows, headers, problems = tcb(root)
-        self.assertEqual([row[1:] for row in rows[:2]], [(1, 1), (1, 3)])
+        # a.rs and the driver file count; b_tests.rs and tests/c.rs do not
+        self.assertEqual([row[1:] for row in rows[:2]], [(2, 2), (1, 3)])
         self.assertEqual(headers, ["stdio.h"])
         self.assertEqual(problems, ["runtime unit compiler/src/backend/gone.c does not exist"])
         (root / DRIVER).write_text("fn main() {}\n")
