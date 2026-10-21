@@ -10,13 +10,19 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
-## 2026-10-13 v0.153: an explicit formatting request outside acceptance
+## 2026-10-13 v0.154: an explicit formatting request outside acceptance
 
 Rules: changed FORM-1, FORM-2
 
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the spec/log.md and design/log.md approval records, mark the pull request ready and run the gate on both platforms, renumber when its turn comes and report to the coordinator for merging" (translated), on the card "approve the specification and design-tree changes of Whitefoot#438 (head commit 6320188fc)? It gives the compiler a command that rewrites source files into the canonical layout" (translated), whose background quoted FORM-1 and FORM-2 before and after, stated that no rule was added or retired and no conformance verdict changed, and listed the three decisions of the new node. The revision merged here differs from 6320188fc only by the merge of main and the renumbering of the specification from v0.149 to v0.153, because main reached v0.152 first.
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve; I write the spec/log.md and design/log.md approval records, mark the pull request ready and run the gate on both platforms, renumber when its turn comes and report to the coordinator for merging" (translated), on the card "approve the specification and design-tree changes of Whitefoot#438 (head commit 6320188fc)? It gives the compiler a command that rewrites source files into the canonical layout" (translated), whose background quoted FORM-1 and FORM-2 before and after, stated that no rule was added or retired and no conformance verdict changed, and listed the three decisions of the new node. The revision merged here differs from 6320188fc only by the merge of main and the renumbering of the specification from v0.149 to v0.154, because main reached v0.153 first.
 
 Summary: FORM-1 said the toolchain never auto-formats and FORM-2 that it never normalizes or rewrites input, which forbade any tool that writes the canonical rendering, so a writer could only repair one FORM-2 difference per compile. FORM-1 now says acceptance never formats input on the writer's behalf, and FORM-2 that a formatting request replacing a source with its rendering is a writer tool outside acceptance and changes no verdict. Non-canonical input is still rejected exactly as before; no conformance verdict changes. Selection ground: the canonical bytes are uniquely determined by derivation, so writing them is a convenience that cannot change what is accepted.
+
+## 2026-10-20 v0.153: two index steps read through one tracked field or dereference term are the same while its support is unwritten
+
+Rules: changed ENT-2
+
+Summary: ENT-2's list of when two index steps are the same gains one case: two steps that read one tracked field or dereference term are the same while no write of its support places has intervened since either was formed. The case follows the existing binding case, so that a guard on `table^[s^.k].len` proves the later read `table^[s^.k][i]` in range; a write to the support ends the equality, as ENT-5 already requires. Selection ground: ENT-2 listed its cases exhaustively, and without this case the checker must treat the two reads as distinct places, so a guard on a field-subscript length never supports the element read.
 
 ## 2026-10-20 v0.152: a condition the checker decides is redundant source
 

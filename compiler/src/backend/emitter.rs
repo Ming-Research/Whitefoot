@@ -698,9 +698,10 @@ fn emit_module(
     }
     text.attribute_group(
         0,
-        target
-            .stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
-            .to_owned(),
+        format!(
+            "{} uwtable",
+            target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
+        ),
     );
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
