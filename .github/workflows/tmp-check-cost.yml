@@ -37,6 +37,7 @@ jobs:
             cargo build --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" --profile gate --locked --offline --bin whitefootc
           cp compiler/target/gate/whitefootc "$RUNNER_TEMP/whitefootc-candidate"
           cp "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" "$RUNNER_TEMP/whitefootc-base"
+          cp "$RUNNER_TEMP/whitefootc-base" "$RUNNER_TEMP/whitefootc-twin"
 
       - name: Interleaved check-time panel
         env:
@@ -61,19 +62,25 @@ jobs:
             echo "$tag $t" >> "$out/cpu.txt"
           }
           rm -f "$out/cpu.txt"
+          # Three rounds, each a rotation of base, candidate and a byte-identical
+          # base twin, so every compiler runs once in every position.
           for r in 1 2 3; do
-            if [ $((r % 2)) -eq 1 ]; then
-              rm -f "$out/base.verdicts"; pass "$RUNNER_TEMP/whitefootc-base" base
-              rm -f "$out/candidate.verdicts"; pass "$RUNNER_TEMP/whitefootc-candidate" candidate
-            else
-              rm -f "$out/candidate.verdicts"; pass "$RUNNER_TEMP/whitefootc-candidate" candidate
-              rm -f "$out/base.verdicts"; pass "$RUNNER_TEMP/whitefootc-base" base
-            fi
+            case $r in
+              1) order="base candidate twin" ;;
+              2) order="candidate twin base" ;;
+              3) order="twin base candidate" ;;
+            esac
+            for tag in $order; do
+              rm -f "$out/$tag.verdicts"
+              pass "$RUNNER_TEMP/whitefootc-$tag" "$tag"
+            done
             echo "round $r done" >> "$out/cpu.txt"
           done
           echo "== CPU (user sys) per pass =="
           cat "$out/cpu.txt"
           echo "== verdict differences (base vs candidate, last round) =="
           diff "$out/base.verdicts" "$out/candidate.verdicts" || true
+          echo "== verdict differences (base vs twin, last round) =="
+          diff "$out/base.verdicts" "$out/twin.verdicts" || true
           echo "== verdict counts =="
           awk '{ print ($2 == 0 ? "accept" : "reject") }' "$out/candidate.verdicts" | sort | uniq -c
