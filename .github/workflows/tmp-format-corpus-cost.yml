@@ -1,0 +1,121 @@
+name: tmp-format-corpus-cost
+
+# Temporary (coord-wfbl-10-05): measures what the per-file canonical_format
+# call in the canonical corpus test adds to the corpus group. Removed before
+# the full check.
+
+on:
+  push:
+    branches: [claude/format-budget-fix]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  CARGO_MANIFEST_DIR: ${{ github.workspace }}/compiler
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Decline core dumps
+        run: sudo sysctl -w kernel.core_pattern=core
+
+      - name: Record the host
+        run: |
+          nproc
+          grep -m 1 'model name' /proc/cpuinfo
+
+      - name: Build the test binaries with and without the formatter call
+        working-directory: compiler
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/bins"
+          build() {
+            tag=$1
+            perl ../.github/run-check.pl "tmp-build-$tag" bash -c \
+              "cargo test --profile gate --test corpus --bin whitefootc --no-run --locked --offline --message-format=json > $RUNNER_TEMP/build-$tag.json"
+            for target in corpus whitefootc; do
+              exe=$(jq -r --arg t "$target" 'select(.executable != null and .profile.test == true and .target.name == $t) | .executable' "$RUNNER_TEMP/build-$tag.json" | tail -1)
+              test -x "$exe"
+              cp "$exe" "$RUNNER_TEMP/bins/$target-$tag"
+            done
+          }
+          build with
+          python3 -I - <<'EOF'
+          import re
+          p = "tests/canonical_corpus/mod.rs"
+          s = open(p).read()
+          s, n = re.subn(
+              r'            let formatted = canonical_format\(.*?must preserve canonical bytes"\n            \);\n',
+              "", s, flags=re.S)
+          assert n == 1, n
+          open(p, "w").write(s)
+          EOF
+          git diff --stat
+          build without
+          git checkout -- tests/canonical_corpus/mod.rs
+          ls -l "$RUNNER_TEMP/bins"
+
+      - name: Time the canonical corpus test alone, interleaved
+        working-directory: compiler
+        run: |
+          set -e
+          test_name=canonical_corpus::every_canonical_corpus_file_re_renders_to_itself
+          for round in 1 2 3 4 5 6; do
+            if [ $((round % 2)) = 1 ]; then order="with without"; else order="without with"; fi
+            for tag in $order; do
+              perl ../.github/run-check.pl "tmp-single-$tag-$round" bash -c \
+                "$RUNNER_TEMP/bins/corpus-$tag --exact $test_name > $RUNNER_TEMP/single-$tag-$round.txt 2>&1"
+              printf 'single %s round %s: %s\n' "$tag" "$round" "$(grep -o 'finished in [0-9.]*s' "$RUNNER_TEMP/single-$tag-$round.txt")"
+            done
+          done
+
+      - name: Time the formatting tests of the whitefootc binary
+        working-directory: compiler
+        run: |
+          set -e
+          for round in 1 2 3; do
+            perl ../.github/run-check.pl "tmp-bin-formatting-$round" bash -c \
+              "$RUNNER_TEMP/bins/whitefootc-with formatting > $RUNNER_TEMP/binfmt-$round.txt 2>&1"
+            printf 'bin formatting round %s: %s %s\n' "$round" "$(grep -o 'test result: [a-z]*\. [0-9]* passed' "$RUNNER_TEMP/binfmt-$round.txt")" "$(grep -o 'finished in [0-9.]*s' "$RUNNER_TEMP/binfmt-$round.txt")"
+          done
+          for round in 1; do
+            perl ../.github/run-check.pl "tmp-bin-all-$round" bash -c \
+              "$RUNNER_TEMP/bins/whitefootc-with > $RUNNER_TEMP/binall-$round.txt 2>&1"
+            printf 'bin all round %s: %s %s\n' "$round" "$(grep -o 'test result: [a-z]*\. [0-9]* passed' "$RUNNER_TEMP/binall-$round.txt")" "$(grep -o 'finished in [0-9.]*s' "$RUNNER_TEMP/binall-$round.txt")"
+          done
+
+      - name: Time the whole corpus test binary, interleaved
+        working-directory: compiler
+        run: |
+          set -e
+          export NO_COLOR=1
+          for round in 1 2 3; do
+            if [ $((round % 2)) = 1 ]; then order="with without"; else order="without with"; fi
+            for tag in $order; do
+              perl ../.github/run-check.pl "tmp-whole-$tag-$round" bash -c \
+                "$RUNNER_TEMP/bins/corpus-$tag > $RUNNER_TEMP/whole-$tag-$round.txt 2>&1"
+              printf 'whole %s round %s: %s %s\n' "$tag" "$round" "$(grep -o 'test result: [a-z]*\. [0-9]* passed; [0-9]* failed' "$RUNNER_TEMP/whole-$tag-$round.txt")" "$(grep -o 'finished in [0-9.]*s' "$RUNNER_TEMP/whole-$tag-$round.txt")"
+            done
+          done
