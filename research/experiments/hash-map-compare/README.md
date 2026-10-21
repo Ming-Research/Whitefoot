@@ -86,6 +86,19 @@ measurement:
   cell still not judged at the round limit is reported unresolved. The
   resolution is the smallest difference the cell must resolve, not an
   acceptance threshold.
+- The floor: a cell's spread is the median over rounds of |twin/base - 1|,
+  the twin's per-round noise, which unlike the twin interval does not shrink
+  as rounds are added. A run given no floor only measures it, and its
+  summary prints, per cell, the upper end of the spread's 95% interval as a
+  `floor` line. A later run on the same machine is given that line
+  (`reduce --floor`, the workflow's `floor` input); a cell whose spread is
+  above its floor is not counted, whatever its verdict, and is rerun. The
+  floor is kept per cell, since the cells' noise differs several times over
+  (on one hosted run, twin noise ranged from 0.33% to 2.98% across the 21
+  cells). On a machine, the first run measures the floor, which is
+  recorded on the board with its run, and the comparison that decides is a
+  second run given it; the floor is measured again when the machine, its
+  settings or the toolchain change.
 - Memory: any difference in retained or peak bytes is a change.
 - Hold: H1, the p99 of a uniform call at 1,000,000 pairs is at most four
   times its p99 at 1,000; H2, that p99 is at most 20 microseconds; H3, the
@@ -122,7 +135,7 @@ python3 -B compare.py self-test
 python3 -B compare.py build --base-wfc BASE_WFC --candidate-wfc CANDIDATE_WFC \
   --runtime-root CANDIDATE_TREE --out OUT
 python3 -B compare.py measure --out OUT --cpu 2
-python3 -B compare.py reduce --out OUT
+python3 -B compare.py reduce --out OUT [--floor "lookup-hit:1000=0.0123,..."]
 ```
 
 `OUT/manifest.txt` records the revisions, compiler and image digests, CPU,

@@ -26,3 +26,33 @@ jobs:
       min_rounds: "6"
       max_rounds: "150"
       control: slow
+
+  # Re-reduces the plain run's rows: with the floor that run printed, no cell
+  # is above its floor; with every floor at 0.0001, every timed cell is.
+  floor:
+    needs: plain
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: hash-map-bench-github-none-floorless
+          path: ${{ runner.temp }}/out
+      - name: Reduce with the printed floor and with a low floor
+        run: |
+          set -euo pipefail
+          reducer=research/experiments/hash-map-compare/compare.py
+          out="$RUNNER_TEMP/out"
+          printed=$(sed -n 's/^floor //p' "$out/summary.txt")
+          test -n "$printed"
+          python3 -B "$reducer" reduce --out "$out" --floor "$printed" > "$RUNNER_TEMP/own.txt"
+          cat "$RUNNER_TEMP/own.txt"
+          if grep -q 'not counted$' "$RUNNER_TEMP/own.txt"; then
+            echo "a cell is above the floor its own run printed"; exit 1
+          fi
+          low=$(printf '%s' "$printed" | sed -E 's/=[0-9.]+/=0.0001/g')
+          python3 -B "$reducer" reduce --out "$out" --floor "$low" > "$RUNNER_TEMP/low.txt"
+          cat "$RUNNER_TEMP/low.txt"
+          counted=$(grep -c 'not counted$' "$RUNNER_TEMP/low.txt")
+          echo "not counted under the low floor: $counted of 21"
+          test "$counted" = 21

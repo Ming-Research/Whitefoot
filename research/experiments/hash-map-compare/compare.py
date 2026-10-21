@@ -4,17 +4,19 @@
     compare.py build --base-wfc WFC --candidate-wfc WFC --runtime-root TREE --out DIR
     compare.py measure --out DIR --cpu N [--sizes 1000,10000,1000000]
                        [--min-rounds 10] [--max-rounds 40] [--samples 5] [--slow]
-    compare.py reduce --out DIR [--expect-regression]
+    compare.py reduce --out DIR [--expect-regression] [--floor FLOOR]
     compare.py self-test
 
 `build` writes DIR/images: the base, twin and candidate images of bench.wf,
 the candidate image of hold.wf and the memory cell's observed images. The
 twin is a byte copy of the base image. `measure` runs the interleaved rounds
 and appends DIR/raw.tsv, DIR/memory.tsv and DIR/hold.tsv. `reduce` writes
-DIR/summary.txt and prints it. Exit status: 0 when the data are complete and
+DIR/summary.txt and prints it; FLOOR is the recorded noise floor of each
+cell, as "operation:size=spread" items separated by commas, and a cell whose
+twin spread is above its floor is not counted. Exit status: 0 when the data are complete and
 consistent, whatever the verdicts; 1 for missing, malformed or inconsistent
-data, or, with --expect-regression, when a timed cell is not judged a
-regression; 2 for usage.
+data or floor, or, with --expect-regression, when a timed cell is not judged
+a regression; 2 for usage.
 """
 import argparse
 import hashlib
@@ -144,6 +146,41 @@ def judge(candidate, twin, size):
     return out
 
 
+def twin_spread(twin):
+    """The twin's per-round noise: the median over rounds of |twin/base - 1|
+    and the distribution-free 95% interval of that median. Unlike the twin
+    interval's half-width it does not shrink as rounds are added, so a run
+    can be compared with the floor another run on the same machine recorded.
+    The floor to record is the interval's upper end, the noisiest the
+    machine's usual spread could be; a later run whose spread lies above it
+    is noisier than usual."""
+    deviations = [abs(r - 1) for r in twin]
+    return statistics.median(deviations), median_interval(deviations)
+
+
+def parse_floor(text):
+    """FLOOR as {(operation, size): spread}; Invalid when malformed or naming
+    an unknown operation."""
+    names = {name: number for number, name in OPERATIONS.items()}
+    floor = {}
+    for item in text.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            cell, value = item.split("=")
+            name, size = cell.split(":")
+            key, spread = (names[name], int(size)), float(value)
+        except (ValueError, KeyError):
+            raise Invalid(f"floor item {item!r} is not operation:size=spread")
+        if not spread >= 0 or key in floor:
+            raise Invalid(f"floor item {item!r} is negative or repeated")
+        floor[key] = spread
+    if not floor:
+        raise Invalid("the floor names no cell")
+    return floor
+
+
 def quantile(values, q):
     """Nearest-rank quantile."""
     ordered = sorted(values)
@@ -234,24 +271,52 @@ def fmt_interval(interval):
     return "-" if interval is None else f"[{interval[0]:.4f}, {interval[1]:.4f}]"
 
 
-def reduce_timed(rows, slow, out):
+def reduce_timed(rows, slow, out, floor=None):
+    """Prints and returns every timed cell's verdict. With floor, a cell
+    whose twin spread is above its floor is not counted, whatever its
+    verdict would be; without it, the run only measures the floor."""
     ratios = timed_cells(rows, slow)
+    if floor is not None:
+        missing = [c for c in sorted(ratios) if c not in floor]
+        if missing:
+            raise Invalid("the floor gives no spread for " + ", ".join(f"{OPERATIONS[o]}:{s}" for o, s in missing))
     verdicts = {}
+    bounds = {}
     print("Timed cells: ratio = median over rounds of candidate/base nanoseconds per operation;", file=out)
     print("twin = the same for the twin; intervals are distribution-free 95% intervals of the median;", file=out)
     print("noise = the twin interval's half-width; a cell is judged once the twin interval holds 1", file=out)
-    print("and noise is below the resolution.", file=out)
+    print("and noise is below the resolution. spread = median over rounds of |twin/base - 1|, with", file=out)
+    print("the upper end of its interval; a cell whose spread is above its floor is not counted.", file=out)
     print(f"{'operation':<16} {'size':>8} {'rounds':>6} {'base ns/op':>10} {'ratio':>7} {'interval':>18} "
-          f"{'twin':>7} {'twin interval':>18} {'noise':>7} {'res':>5}  verdict", file=out)
+          f"{'twin':>7} {'twin interval':>18} {'noise':>7} {'res':>5} {'spread':>7} {'upper':>7} {'floor':>7}"
+          "  verdict", file=out)
     for (operation, size) in sorted(ratios):
         candidate, twin, base = ratios[(operation, size)]
         reading = judge(candidate, twin, size)
-        verdicts[(operation, size)] = reading["verdict"]
+        spread, interval = twin_spread(twin)
+        upper = None if interval is None else interval[1]
+        bounds[(operation, size)] = upper
+        limit = None if floor is None else floor[(operation, size)]
+        verdict = reading["verdict"]
+        if limit is not None and spread > limit:
+            verdict = "not counted"
+        verdicts[(operation, size)] = verdict
         noise = "-" if reading["noise"] is None else f"{reading['noise']:.4f}"
+        shown_upper = "-" if upper is None else f"{upper:.4f}"
+        shown_limit = "-" if limit is None else f"{limit:.4f}"
         print(f"{OPERATIONS[operation]:<16} {size:>8} {reading['rounds']:>6} {statistics.median(base):>10.2f} "
               f"{reading['ratio']:>7.4f} {fmt_interval(reading['ci']):>18} {reading['twin']:>7.4f} "
-              f"{fmt_interval(reading['wi']):>18} {noise:>7} {reading['resolution']:>5.2f}  {reading['verdict']}",
-              file=out)
+              f"{fmt_interval(reading['wi']):>18} {noise:>7} {reading['resolution']:>5.2f} {spread:>7.4f} "
+              f"{shown_upper:>7} {shown_limit:>7}  {verdict}", file=out)
+    if floor is None:
+        print(file=out)
+        print("No floor given: no cell was compared with a floor, so these timed verdicts decide no", file=out)
+        print("change; the run measures the floor. Each cell's spread upper end, as a later run's floor:", file=out)
+        if any(b is None for b in bounds.values()):
+            print("  none: a cell has fewer than six rounds", file=out)
+        else:
+            print("floor " + ",".join(f"{OPERATIONS[o]}:{s}={math.ceil(b * 10000) / 10000:.4f}"
+                                      for (o, s), b in sorted(bounds.items())), file=out)
     return verdicts
 
 
@@ -332,7 +397,7 @@ def reduce_hold(rows, out):
     return readings
 
 
-def reduce_all(directory, expect_regression, out):
+def reduce_all(directory, expect_regression, out, floor=None):
     manifest = os.path.join(directory, "manifest.txt")
     slow = False
     if os.path.exists(manifest):
@@ -340,7 +405,7 @@ def reduce_all(directory, expect_regression, out):
             print(f.read().rstrip(), file=out)
         print(file=out)
         slow = "control slow" in open(manifest).read().splitlines()
-    timed = reduce_timed(read_tsv(os.path.join(directory, "raw.tsv"), RAW_COLUMNS), slow, out)
+    timed = reduce_timed(read_tsv(os.path.join(directory, "raw.tsv"), RAW_COLUMNS), slow, out, floor)
     print(file=out)
     reduce_memory(read_tsv(os.path.join(directory, "memory.tsv"), MEMORY_COLUMNS), out)
     print(file=out)
@@ -539,6 +604,22 @@ def self_test():
     expect("small regression", reduce_timed(synthetic([(3, 1000)], 12, 1.015, noise=0.005), False, sink),
            {(3, 1000): "regression"})
 
+    # The floor: the spread of a twin within 0.5% of the base is at most
+    # 0.005, so a floor of 0.0001 leaves every cell not counted, one of 0.01
+    # none, and a floor missing a measured cell or malformed is refused.
+    noisy = synthetic(cells, 12, 1.05, noise=0.005)
+    expect("below the floor", set(reduce_timed(noisy, False, sink, {c: 0.01 for c in cells}).values()),
+           {"regression"})
+    expect("above the floor", set(reduce_timed(noisy, False, sink, {c: 0.0001 for c in cells}).values()),
+           {"not counted"})
+    expect_invalid("floor missing a cell", lambda: reduce_timed(noisy, False, sink, {cells[0]: 0.01}))
+    expect("floor parsed", parse_floor("lookup-hit:1000=0.012, iterate:1000000=0.003"),
+           {(3, 1000): 0.012, (7, 1000000): 0.003})
+    for text in ("lookup-hit:1000", "lookup:1000=0.01", "lookup-hit:x=0.01", "lookup-hit:1000=-1",
+                 "lookup-hit:1000=0.01,lookup-hit:1000=0.02", " , "):
+        expect_invalid(f"floor {text!r}", lambda text=text: parse_floor(text))
+    expect("spread of equal arms", twin_spread([1.0] * 6), (0.0, (0.0, 0.0)))
+
     good = synthetic(cells, 6, 1.0)
     expect_invalid("missing arm", lambda: timed_cells([r for r in good if not (r["round"] == 2 and r["arm"] == "twin")],
                                                       False))
@@ -603,6 +684,7 @@ def main(argv):
     p = sub.add_parser("reduce")
     p.add_argument("--out", required=True)
     p.add_argument("--expect-regression", action="store_true")
+    p.add_argument("--floor", default="")
     sub.add_parser("self-test")
     args = parser.parse_args(argv)
     try:
@@ -613,8 +695,9 @@ def main(argv):
                 parser.error("rounds need 6 <= min-rounds <= max-rounds, and samples at least 1")
             return measure(args)
         if args.command == "reduce":
+            floor = parse_floor(args.floor) if args.floor.strip() else None
             with open(os.path.join(args.out, "summary.txt"), "w") as out:
-                status = reduce_all(args.out, args.expect_regression, out)
+                status = reduce_all(args.out, args.expect_regression, out, floor)
             with open(os.path.join(args.out, "summary.txt")) as f:
                 print(f.read(), end="")
             return status

@@ -11,8 +11,9 @@
 # FAILURE POLICY. The job fails when a compiler or image does not build, when
 # the reducer's self-test fails, when a process fails or its rows are missing,
 # malformed or differ from the workload's expected checks, and, with
-# `control: slow`, when a timed cell is not judged a regression. No verdict
-# of an ordinary run fails it. `timeout-minutes` bounds a stuck runner.
+# `control: slow`, when a timed cell is not judged a regression, and when the
+# floor is malformed or misses a measured cell. No verdict of an ordinary
+# run fails it. `timeout-minutes` bounds a stuck runner.
 #
 # The summary a decision relies on is copied by hand into the consuming
 # item's research record with its run id, because artifacts expire.
@@ -55,6 +56,10 @@ on:
         type: choice
         options: [none, slow]
         default: none
+      floor:
+        description: The recorded noise floor, operation:size=spread items separated by commas, as an earlier run's summary printed it; empty means this run only measures the floor
+        type: string
+        default: ""
   # Temporary for board item wf-hash-map-bench: lets tmp-hash-map-bench.yml
   # run this workflow's own steps on a hosted runner. Removed with it before
   # the branch is ready.
@@ -84,6 +89,9 @@ on:
       control:
         type: string
         default: none
+      floor:
+        type: string
+        default: ""
 
 defaults:
   run:
@@ -180,14 +188,15 @@ jobs:
       - name: Reduce and publish
         env:
           CONTROL: ${{ inputs.control }}
+          FLOOR: ${{ inputs.floor }}
         run: |
           expect=()
           if [ "$CONTROL" = slow ]; then expect=(--expect-regression); fi
           status=0
           python3 -B research/experiments/hash-map-compare/compare.py reduce --out "$RUNNER_TEMP/out" \
-            "${expect[@]}" || status=$?
+            --floor "$FLOOR" "${expect[@]}" || status=$?
           {
-            echo "## hash-map-bench (${{ inputs.runner }}, control ${{ inputs.control }})"
+            echo "## hash-map-bench (${{ inputs.runner }}, control ${{ inputs.control }}, ${{ inputs.floor == '' && 'no floor' || 'floor given' }})"
             echo
             echo '```text'
             cat "$RUNNER_TEMP/out/summary.txt" 2>/dev/null || echo "the summary was not written"
@@ -198,7 +207,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: hash-map-bench-${{ inputs.runner }}-${{ inputs.control }}
+          name: hash-map-bench-${{ inputs.runner }}-${{ inputs.control }}${{ inputs.floor == '' && '-floorless' || '' }}
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/out/manifest.txt
