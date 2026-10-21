@@ -388,15 +388,42 @@ impl Input<'_, '_> {
     }
 
     /// The type at each prefix of `place`, from its root to the whole place.
+    /// A range or run parameter is a run of elements of its declared type
+    /// and owns no value itself [REF-4]: each index or page step below it
+    /// reaches one element.
     fn sealed_prefix_types(&self, place: &ResolvedPlace) -> Vec<Option<CheckedType>> {
+        let mut run = None;
         let mut ty = match place.root {
-            PlaceRoot::Binding(binding) => self.summary(binding).and_then(|summary| summary.ty),
+            PlaceRoot::Binding(binding) => {
+                let ty = self.summary(binding).and_then(|summary| summary.ty);
+                let elements = self.function.parameters.iter().any(|parameter| {
+                    parameter.binding == binding
+                        && matches!(parameter.mode, CheckedMode::Range | CheckedMode::Run)
+                });
+                if elements {
+                    run = ty;
+                    None
+                } else {
+                    ty
+                }
+            }
             PlaceRoot::Constant(_) => None,
         };
         let mut types = Vec::with_capacity(place.path.len() + 1);
         types.push(ty);
         for step in &place.path {
-            ty = ty.and_then(|ty| self.sealed_step_type(ty, step));
+            ty = match (run, step) {
+                (Some(element), PlaceStep::Index(_) | PlaceStep::Page(_)) => {
+                    run = None;
+                    Some(element)
+                }
+                (Some(_), PlaceStep::Range(_) | PlaceStep::Part(_)) => None,
+                (Some(_), _) => {
+                    run = None;
+                    None
+                }
+                (None, _) => ty.and_then(|ty| self.sealed_step_type(ty, step)),
+            };
             types.push(ty);
         }
         types
@@ -1185,13 +1212,17 @@ impl Analyzer<'_, '_> {
 
     /// [TYPE-11.S7] at body entry, the instance of each affine invariant at
     /// each parameter of its struct and at the referent of each reference
-    /// parameter to it, which the call handed off.
+    /// parameter to it, which the call handed off. A range parameter's type
+    /// is its element's, so it takes none here.
     pub(super) fn seal_body_entry(&mut self, state: &mut ProofFlowState) {
         if !self.input.sealing {
             return;
         }
         let function = self.input.function;
         for parameter in &function.parameters {
+            if !matches!(parameter.mode, CheckedMode::Own | CheckedMode::Reference) {
+                continue;
+            }
             let Some(ty) = self
                 .input
                 .summary(parameter.binding)

@@ -302,9 +302,13 @@ impl<'program> Walker<'program> {
         }
         // So does the instance of each affine type invariant at each
         // parameter of its struct and at each reference parameter's
-        // referent, which the caller handed off sealed [TYPE-11.S7].
+        // referent, which the caller handed off sealed [TYPE-11.S7]. A
+        // range parameter's type is its element's, so it takes none.
         let nominals = self.nominals;
         for (ordinal, parameter) in (0_u32..).zip(&function.parameters) {
+            if !matches!(parameter.mode, CheckedMode::Own | CheckedMode::Reference) {
+                continue;
+            }
             let CheckedType::Nominal(nominal) = parameter.ty else {
                 continue;
             };
