@@ -514,12 +514,15 @@ choose one, the prior criterion's count:
 
 Six places, below the prior criterion's ten.
 
-Two simplifications are known and recorded here rather than counted: a state
-is contradictory in the checker when L0 derives `t - t <= -1` or both signs of
-one goal are established, so a goal whose negative sign is derivable only
-through its operation-domain normalization is not found contradictory; and
+Three simplifications are known and recorded here rather than counted: a
+state is contradictory in the checker when L0 derives `t - t <= -1` or both
+signs of one goal are established, so a goal whose negative sign is derivable
+only through its operation-domain normalization is not found contradictory;
 the `i128` formation limit and the structural ceilings of [INV-1] are not
-checked, since no fragment case comes near them.
+checked, since no fragment case comes near them; and a continuing kill event
+[ENT-5] that writes an index of a binding kills every fact reading that
+binding, without proving two offsets distinct or apart, so the checker can
+reject a loop the rule accepts, never accept one it rejects.
 
 ## Cost
 

@@ -766,6 +766,7 @@ mutual
 -- spec ENT-5 17d4b709182681e1
 -- spec ENT-5 94099bed2f3c8187
 -- spec ENT-5 61bfba3a5bed8cf5
+-- spec ENT-5 1b033ea8b0b18148
 /-- The bindings a continuing kill event of the target loop writes [ENT-5]: a
 `set` whose edge can reach a later iteration head without leaving the loop. -/
 def killList (k : Reach) (ss : List Stmt) : List String :=
