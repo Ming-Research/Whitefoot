@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "SET-1, REF-2: the target v[1_u64] is evaluated and its bound checked before the right-hand side. remove_at shifts the filled part down by one, moving the box in slot 1 to slot 0 and leaving a stale copy in slot 1 beyond the new length, so the commit would release that copy while slot 0 still owns the box. The right-hand side ended the bound the target's subscript was checked under, so the commit is refused.";
+  let v = slots_new::<Box<u64>, 4>();
+  let first = box_new::<u64>(value: 1_u64);
+  place_back(window: &v, value: move first);
+  let second = box_new::<u64>(value: 2_u64);
+  place_back(window: &v, value: move second);
+  set v[1_u64] = remove_at(window: &v, index: 0_u64);
+  return exit_status(code: 0_u8);
+}

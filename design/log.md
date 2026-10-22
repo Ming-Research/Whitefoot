@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-22 An assignment's target stays valid across its right-hand side
+
+Nodes: language/ownership/reference-validity
+
+Summary: A decision is added: an assignment holds the storage its target selected before the right-hand side, the target path less trailing struct field selections, under the reference-validity rule, and the commit is refused when the right-hand side invalidated it. Two accepted programs showed the gap, a double free after `remove_at` shifted the target's slot and a store into the block `grow` released ([incidental finding 6](../research/investigations/spec-proof/DESIGN.md#incidental-findings)). Refused: the atomic update's condition applied to every assignment, which would refuse a right-hand side that writes the owner of an inline field target, and evaluating the target after the right-hand side, which changes which slot accepted programs write.
+
 ## 2026-10-13 A failed proof's repair names the lost header relation, the rewritten value parameter or the callee whose own proof failed
 
 Nodes: compiler/diagnostic-repairs, compiler/rejection-payloads

@@ -293,4 +293,34 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // [SET-1, REF-2] a right-hand side that invalidates the storage its own
+    // target selected: binding the value first evaluates the target after it.
+    RepairPair {
+        name: "set-target-shifted-by-its-right-hand-side.wf",
+        rejected: br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let v = slots_new::<Box<u64>, 4>();
+  let first = box_new::<u64>(value: 1_u64);
+  place_back(window: &v, value: move first);
+  let second = box_new::<u64>(value: 2_u64);
+  place_back(window: &v, value: move second);
+  let third = box_new::<u64>(value: 3_u64);
+  place_back(window: &v, value: move third);
+  set v[1_u64] = remove_at(window: &v, index: 0_u64);
+  return exit_status(code: 0_u8);
+}
+"#,
+        rule: "REF-2",
+        sentences: &[
+            "]: InvalidatedSetTarget\n",
+            "\n  target: v[1_u64]\n",
+            "\n  event: a window operation moved the boundary or origin the target's subscript was checked under\n",
+            "\n  mechanical_fix: bind the right-hand side's value with `let` before this `set`, then assign the bound value\n",
+        ],
+        repaired: &[include_bytes!(
+            "../../../../tests/conformance/cases/set1-pos-rhs-value-bound-before-the-shifted-target.wf"
+        )],
+    },
 ];

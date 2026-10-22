@@ -1,4 +1,4 @@
-# Kernel Specification v0.160
+# Kernel Specification v0.161
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -650,6 +650,7 @@ The right-hand side is then checked under [TYPE-5] and evaluated under its ordin
 The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable under the same writable-root and live-or-complete-binding conditions.
 If the right-hand side moved a strict prefix of the target place, the commit is a later write of a dead root under OWN-1.
 If it invalidated a reference the target path is reached through, [REF-2] rejects the commit.
+Target evaluation also forms the target's selected place: the resolved target path less its trailing struct field selections, which share the storage of the place they select from, so that a target of struct fields alone selects its root, whose liveness this rule rechecks itself. The commit writes that storage, so the selected place is held under [REF-2] across `e`, exactly as a reference to it formed at target evaluation, and an [OP-12] update's read-out of the target is not one of its invalidating events; if `e` invalidated it, the commit is a hard error citing REF-2 at the complete target `place`, carrying the invalidating event, with a repair binding the value of `e` with a `let` before the `set` and assigning the bound value [DIAG-1].
 This is a static acceptance check: at runtime every target component is evaluated exactly once before `e`, and lowering carries the resulting target address and offset values across `e` rather than evaluating source again.
 No root-liveness or writability fact from before the right-hand side bypasses the post-state check.
 

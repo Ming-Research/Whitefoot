@@ -10,6 +10,12 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
+## 2026-10-22 v0.161: a `set` commit requires the storage its target selected to stay valid across its right-hand side
+
+Rules: changed SET-1
+
+Summary: SET-1 evaluates the target before the right-hand side and carries its address across it, but after the right-hand side rechecked only the root's liveness, moved prefixes and the references the target path is reached through, so an accepted `set` could write storage its own right-hand side had moved or released: `set v[1_u64] = remove_at(window: &v, index: 0_u64);` on a two-element window of boxes released the stale copy of the box `remove_at` had moved to slot 0, a double free, and `set b.inner[0_u64] = refill(cell: &b);`, whose callee grows the window, stored into the block `grow` had released (both measured on the compiler at c40acc366, research/investigations/spec-proof/DESIGN.md, incidental finding 6). SET-1 now forms the target's selected place at target evaluation, the resolved target path less its trailing struct field selections, and holds it under REF-2 across the right-hand side exactly as a reference formed there; a right-hand side that writes a proper prefix of it, moves out of or releases it or a prefix, or ends the window bound its subscript was checked under is refused, citing REF-2 at the complete target, with a repair binding the value with `let` first. An OP-12 update's read-out of its target is not such an event. A right-hand side that writes the contents of the struct holding a field target, or the binding an index was read from, keeps its target and its verdict, and the checker's existing check of a payload target becomes this general one. Selection ground: the design card on item wf-sound-set-rhs-target recommends this option, which makes the direct spelling agree with the spelling through an explicit reference that REF-2 already refused, instead of applying OP-12's condition to every `set`, which would also refuse a right-hand side that writes the owner of a field target, or evaluating the right-hand side first, which would change which slot existing accepted programs write.
+
 ## 2026-10-21 v0.160: the invocation supplies the process identifier, the wall clock reads the local time offset and the handle factory reads and raises the open-files limit
 
 Rules: changed PRE-2, WAIT-2

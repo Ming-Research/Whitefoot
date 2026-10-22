@@ -1,0 +1,23 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn refill(cell: &Box<Slots<u64>>) -> result: u64 writes(cell) contract {
+  requires cell^.inner.cap <= 64_u64;
+  ensures cell^.inner.len == entry(cell)^.inner.len;
+} {
+  doc "Grows the window, which moves its elements to a new block and releases the old one, and keeps the length.";
+  grow(cell: cell, capacity: 64_u64);
+  return 7_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "SET-1, REF-2: the target b.inner[0_u64] is evaluated before the right-hand side, inside the block the window then uses. refill writes b, a proper prefix of the target, and its grow releases that block, so the commit would store into released storage. The commit is refused although the length, and so the subscript's bound, is unchanged.";
+  let b = box_slots_new::<u64>(capacity: 1_u64);
+  place_back(window: &b.inner, value: 1_u64);
+  set b.inner[0_u64] = refill(cell: &b);
+  let stored = b.inner[0_u64];
+  if stored == 7_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 3_u8);
+}

@@ -1,0 +1,108 @@
+# Temporary quick check for wf-sound-set-rhs-target; removed before the full check.
+name: tmp-set-rhs-target
+
+on:
+  push:
+    branches: [wf-sound-set-rhs-target]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  quick:
+    name: ${{ matrix.stage }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [static, unit, conformance, base]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Set the scratch root
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+      - name: Select the design review base
+        if: matrix.stage == 'static'
+        run: |
+          design_review_base=$(sh design/skill/review-base.sh pull_request "$GITHUB_REF" "")
+          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
+          git log --oneline -1 "$design_review_base"
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo --version
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Decline core dumps
+        run: sudo sysctl -w kernel.core_pattern=core
+      - name: Static group
+        if: matrix.stage == 'static'
+        run: make check-group GROUP=static
+      - name: Unit group
+        if: matrix.stage == 'unit'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 2400
+        run: make check-group GROUP=unit
+      - name: Conformance structure and native adapter
+        if: matrix.stage == 'conformance'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 2400
+        run: |
+          make conformance
+          make conformance-run
+      # The new rejected cases must be accepted by the compiler at the merge
+      # base, so that each one witnesses the defect the change removes.
+      - name: New rejected cases are accepted before the fix
+        if: matrix.stage == 'base'
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          git worktree add "$RUNNER_TEMP/base" "$base"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
+          perl .github/run-check.pl tmp-base-build cargo build --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" --profile gate --locked --offline --bin whitefootc
+          compiler="$RUNNER_TEMP/base/compiler/target/gate/whitefootc"
+          status=0
+          for case in \
+            set1-neg-rhs-shifts-the-target-slot \
+            set1-neg-rhs-grows-the-target-block \
+            set1-neg-rhs-replaces-the-target-box \
+            set1-neg-rhs-takes-back-the-target-slot \
+            set1-neg-rhs-shifts-the-target-slot-through-a-parameter; do
+            if "$compiler" --check "tests/conformance/cases/$case.wf"; then
+              echo "accepted at the base: $case"
+            else
+              echo "rejected at the base: $case"
+              status=1
+            fi
+          done
+          # The explicit-reference spelling was already refused under REF-2.
+          if "$compiler" --check tests/conformance/cases/set1-neg-rhs-shifts-the-referenced-target-slot.wf; then
+            echo "accepted at the base: the explicit-reference spelling"
+            status=1
+          fi
+          for case in set1-neg-rhs-shifts-the-target-slot set1-neg-rhs-grows-the-target-block set1-neg-rhs-replaces-the-target-box; do
+            "$compiler" -o "$RUNNER_TEMP/$case" "tests/conformance/cases/$case.wf" || true
+            if [ -x "$RUNNER_TEMP/$case" ]; then
+              code=0; "$RUNNER_TEMP/$case" || code=$?
+              echo "$case at the base exits $code"
+            fi
+          done
+          exit "$status"

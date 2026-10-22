@@ -1000,6 +1000,17 @@ pub enum SemanticIssueKind {
         /// Exact restructuring required by REF-2.
         mechanical_fix: String,
     },
+    /// [SET-1, REF-2] a `set` whose right-hand side invalidated the storage
+    /// its target selected when the target was evaluated, before that
+    /// right-hand side.
+    InvalidatedSetTarget {
+        /// The complete target `place`, exactly as the source spells it.
+        target: String,
+        /// The invalidating event [REF-2] names, worded for the target.
+        event: &'static str,
+        /// Exact restructuring required by SET-1.
+        mechanical_fix: &'static str,
+    },
     /// [REF-1] a new payload selection lacks its current variant fact.
     UnestablishedPayloadVariant {
         /// The enum place whose variant must be established.
