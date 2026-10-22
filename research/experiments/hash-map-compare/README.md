@@ -3,7 +3,7 @@
 This manual experiment answers one question for a change to the ordinary
 `HashMap` (`lib/std/collections/hash_map/`): does any operation get slower,
 or does the map hold more memory, after the change than before it? It serves
-the home-bucket chain representation's performance acceptance (status board
+the high-bit-home representation's performance acceptance (status board
 item coord-wfbl-02-01) and any later change to the same library, such as
 shrinking (wf-need-firn-hash-shrink). `.github/workflows/hash-map-bench.yml`
 runs it on request, on a hosted runner or on the owner's i9-14900K; it is
@@ -68,13 +68,13 @@ call starting at the call that holds their chain. A call hashes the pairs at
 both ends of its range again, so each mode passes the key binding its map was
 built with (a uniform hash, or one hash for every key) and the key
 environment, which neither hash reads. By their layout (24 bytes a
-slot, 8 for its chain link, 8 for a chain head; capacity 2^20, 2^22 and 2^25)
-the three uniform tables take about 42 MB, 168 MB and 1.34 GB, computed, not
-measured. The 4,000,000- and 32,000,000-pair tables are far larger than the
+slot; 2^21, 2^23 and 2^26 slots, the least power of two whose three quarters
+holds the pairs) the three uniform tables take about 50 MB, 201 MB and
+1.61 GB, computed, not measured. The 4,000,000- and 32,000,000-pair tables are far larger than the
 14900K's 36 MB third-level cache, so the comparison between them is meant to
 be of per-call work, not of cache hits against misses, and the 14900K run
-tests that premise; the 1,000,000-pair table is only about a sixth over the
-cache, so probably mostly cached there, and is read for H2 and H3 only.
+tests that premise; the 1,000,000-pair table is only about 40% over the
+cache, so partly cached there, and is read for H2 and H3 only.
 
 ## Criterion, set before measurement
 
