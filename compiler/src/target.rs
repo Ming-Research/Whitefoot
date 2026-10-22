@@ -105,7 +105,7 @@ impl TargetLayout {
                 data_layout: "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
             "x86_64-apple-darwin" => Ok(Self {
                 triple: "x86_64-apple-darwin",
@@ -113,7 +113,7 @@ impl TargetLayout {
                 data_layout: "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
             "aarch64-unknown-linux-gnu" => Ok(Self {
                 triple: "aarch64-unknown-linux-gnu",
@@ -121,7 +121,7 @@ impl TargetLayout {
                 data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
             "x86_64-unknown-linux-gnu" => Ok(Self {
                 triple: "x86_64-unknown-linux-gnu",
@@ -129,7 +129,7 @@ impl TargetLayout {
                 data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
             WINDOWS_X86_64_TRIPLE => Ok(Self {
                 triple: WINDOWS_X86_64_TRIPLE,
@@ -143,7 +143,7 @@ impl TargetLayout {
                 data_layout: "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
             _ => Err(TargetLayoutFailure::UnsupportedHost),
         }
@@ -242,7 +242,12 @@ impl TargetLayout {
         }
     }
 
-    /// Minimum alignment guaranteed by the selected target's heap allocator.
+    /// Minimum alignment guaranteed by the selected target's heap allocator:
+    /// 16 bytes on every record, which is the largest alignment any language
+    /// type has ([OP-9]) and which the supported hosts' allocators return. The
+    /// runtime's `heap.c` asserts it through `max_align_t` where C's
+    /// fundamental alignment is 16; on Apple, whose `max_align_t` is smaller,
+    /// the heap alignment tests observe the pointers the allocator returns.
     /// Keeping this explicit checks wider element representations against the
     /// allocator promise rather than assuming the address ABI guarantees it.
     pub(super) const fn runtime_allocation_alignment(self) -> u64 {
