@@ -1,0 +1,57 @@
+# Temporary workflow for firn-req-slots-clear-keep-capacity: the gate's four
+# correctness groups on Linux for this draft branch. clear adds a PRE-1 record,
+# so every program's prelude preorder and every window consumer is in scope.
+# Removed before the full check.
+name: tmp-slots-clear
+
+on:
+  push:
+    branches: [claude/slots-clear]
+
+permissions:
+  contents: read
+
+jobs:
+  group:
+    name: ${{ matrix.stage }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [static, unit, corpus, runtime]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Set the scratch root
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+          echo "DESIGN_REVIEW_BASE=$(git merge-base origin/main HEAD)" >> "$GITHUB_ENV"
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          rustup component add clippy rustfmt
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Decline core dumps
+        run: sudo sysctl -w kernel.core_pattern=core
+      - name: ${{ matrix.stage }}
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: make check-group GROUP="${{ matrix.stage }}"
+      - name: Time budget reports
+        if: always()
+        run: |
+          test -s "$WHITEFOOT_TIME_BUDGET_RECORD" && cat "$WHITEFOOT_TIME_BUDGET_RECORD" || true
