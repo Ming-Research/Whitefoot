@@ -192,9 +192,9 @@ checker accepts runs without getting stuck.
 ## Keeping the proof in step
 
 Three checks, all in one workflow, `proof.yml`, on every push to a pull
-request that changes the specification, the model or the workflow, drafts
-included, and on such a push to `main`; the third adds the conformance cases
-to those paths when it arrives. A pass on the revision being merged is a merge
+request that changes the specification, the model, the conformance cases or
+the workflow, drafts included, and on such a push to `main`; the conformance
+cases joined those paths with the third check. A pass on the revision being merged is a merge
 precondition (AGENTS.md):
 
 1. Sentence coverage. The specification is written one sentence per line, so
@@ -328,9 +328,9 @@ the model accepts every accepted and run conformance case in the fragment,
 runs every run case to its expected status and rejects every rejected case
 whose expected rule is covered, each disagreement settled as a defect of the
 model or of the specification; and `proof.yml` stays under 10 minutes on a
-GitHub-hosted runner. A text search finds about 150 accepted or run cases and
-250 rejected cases that use only the fragment's constructs; the parser counts
-them exactly.
+GitHub-hosted runner. A text search had estimated about 150 accepted or run
+cases and 250 rejected cases in the fragment's constructs; the parser's exact
+count is in [the second slice](#the-second-slice-syntax-tree-parser-and-interpreter).
 
 It is built in slices, each a pull request through the same check: the
 check itself with the value part of [OP-2] (the first, with this record); the
@@ -347,6 +347,83 @@ or the median such update takes more than one engineer day; or if writing
 the checker requires choosing between readings of the text at more than ten
 places, which would mean the rules are not yet precise enough for a faithful
 model.
+
+### The second slice: syntax tree, parser and interpreter
+
+The second slice adds the fragment's syntax tree (`proof/WhitefootProof/Syntax.lean`),
+a lexer after [GRAM-1], a parser over the fragment's productions of [GRAM-2]
+to [GRAM-5], an interpreter, and `lake exe conformance`, which `proof.yml`
+runs after the proofs.
+
+Where the fragment ends is decided by the parser, not by a text search. It
+follows the grammar's decisions and stops with `outside` at every alternative
+the fragment leaves out (references, `match`, nominal declarations, `for`,
+`move`, floats, character literals, effect rows, result lists and the rest), and
+with `reject` where no production derives the source or a literal is ill formed
+[FORM-7]. A parsed program is then resolved: a callee must name a function of
+the program, `std::process::exit_status` or the prelude's `array_filled`, a
+written type must be an integer type, `unit`, `Bool`, `Array<T, N>` of an
+integer T or `std::process::ExitStatus`, and a program whose calls reach a
+function from itself is outside, since the fragment's calls are non-recursive.
+Exact division and remainder joined the fragment in this slice: their value
+semantics is two lines of [OP-2] and nine run cases use them.
+
+Four choices shape the tree and the machine for the proofs that follow.
+
+| Choice | Selected | Alternatives | Why |
+|---|---|---|---|
+| Tree | one plain inductive per syntactic class, statements nested as `List Stmt`, names as strings, no positions | a tree carrying source spans; a control-flow graph; de Bruijn indices | the theorems reason by structural induction over statements, as the rules state them; [TYPE-6] forbids shadowing, so a name denotes one binding in scope and indices would add renaming lemmas without removing a case; positions serve diagnostics, which no theorem mentions |
+| Semantics | a small-step machine: call frames, each a continuation of statement lists, block scopes and loop markers | a big-step evaluator with fuel; a step relation with no executable function | `facts_hold` quantifies over reachable points, which is the reflexive-transitive closure of `step`; a big-step evaluator would need a second, separate reachability relation; an executable `step` is what the conformance cases run |
+| Outcomes | `done`, `stuck` in the five meaningless states, `illFormed`, `outOfSteps` | folding type and name failures into `stuck` | a type mismatch or an unresolved name is excluded by typing and resolution, judgments the checker decides without facts; keeping it apart lets `accepted_never_stuck` say exactly that no proof obligation is left undischarged |
+| Contracts | read over the mathematical integers [FN-8] at the call and at the return | erased, as the specification erases them | a false requirement or postcondition is a state the rules give no meaning; the machine must reach it as `stuck` for the theorem to exclude it |
+
+The interpreter takes one step per statement and one per administrative move
+(leaving a block, repeating a loop body, returning); an expression is flat
+[GRAM-9], so evaluating it is part of its statement's step. A run case is given
+ten million steps.
+
+The parser covers the grammar rules it implements, so a change to a production
+the fragment uses changes the model in the same work: [GRAM-1] to [GRAM-6],
+[FORM-5] and [FORM-7] join the covered rules, with [TYPE-4], [SET-1], [OP-4],
+[OP-5], [FN-1], [FN-8], [FN-9] and [PROG-3] for the interpreter. Of the 40 newest
+entries of `spec/log.md` (v0.121 to v0.160), 11 name one of [GRAM-1] to
+[GRAM-6], [FORM-5] or [FORM-7]; this counts mentions in the entries' text, not
+changed lines, so it bounds how many versions would have touched those rules.
+A change to a production outside the fragment costs one `outside` line; only a
+change to one the parser implements is model work, which the prior criterion
+counts.
+
+Results, measured by `proof.yml` on GitHub's Linux runner at the commit
+before the slice's review:
+
+| Cases | In the fragment | Outside it | Rejected by the parser |
+|---|---|---|---|
+| accept, 660 | 39 | 621 | 0 |
+| run, 836 | 46, each to its expected exit status | 790 | 0 |
+| reject, 1,564 | 84 parse | 1,446 | 34 |
+
+So 85 accepted or run cases and 118 rejected cases are in the fragment, against
+the text search's 150 and 250: the search counted recursive programs, programs
+with named consts and `Array` uses that come with references. The constructs
+that put the most cases outside are nominal type declarations (916),
+reference parameters (750), named consts (154), generic nominal types (136)
+and generic functions (123), each counted at the first construct the parser
+meets. Every case the parser rejects is a reject case. Eight of the 34 cite the
+rule the parser cites; the other 26 cite a more specific rule for a source no
+production derives, such as [FORM-4] for a comment, [FORM-3] for a keyword in
+an IDENT position or [GRAM-9] for a nested operand, where the parser names the
+production that stops it, or a rule its order of judgment reaches later, such
+as [OP-1] for a retired operation name the parser first rejects as positional
+arguments of a call [GRAM-11]. Comparing rejections by rule is the checker
+slice's work, and only for cases whose rule is covered.
+
+The slice's model is 186 lines of syntax tree, 208 of lexer, 812 of parser and
+513 of interpreter, with 98 lines of conformance harness and 29 added to the
+integer semantics: 1,846 lines, 1,353 of them neither blank nor comment. It
+took three engineer turns and four `proof.yml` runs to the first green
+comparison: two failed to compile, and one green run showed a parser defect,
+the closing `>` of `Array<u64, 4>` read as a comparison, which put 112 cases
+outside the fragment wrongly.
 
 ## Cost
 
@@ -379,8 +456,10 @@ checker of about 250 lines and an axiom check of about 40.
 Each run of `proof.yml` downloads the pinned Lean (about 20 s on GitHub's
 machines), builds the model and proofs and, once the model parses programs,
 runs the fragment's conformance cases. The first slice's coverage check takes
-about 2.5 s and its proofs about 4 s; the stages' budgets follow the
-measurements as they grow.
+about 2.5 s and its proofs about 4 s; with the second slice the build of the
+model, the coverage checker and the conformance executable takes 8.8 s and the
+conformance run 0.7 s. The stages' budgets follow the measurements as they
+grow.
 
 Each later change of the specification costs, by the measurement in
 [Keeping the proof in step](#keeping-the-proof-in-step), made for a larger
