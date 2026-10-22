@@ -681,7 +681,8 @@ partial def fnDecl : P FnDecl := do
   | some (.lower "reads") | some (.lower "writes") => outside "effect rows"
   | t => reject "EFF-1" s!"expected an effect row, found {show? t}"
   if (← isTok (kw "waits")) then outside "waiting functions"
-  let (rs, es) ← if (← isTok (kw "contract")) then contract else pure ([], [])
+  let written ← isTok (kw "contract")
+  let (rs, es) ← if written then contract else pure ([], [])
   match ← peek with
   | some (.punct ";") | some (.lower "doc") => outside "functions without a source body"
   | _ => pure ()
@@ -691,7 +692,8 @@ partial def fnDecl : P FnDecl := do
     if (← isTok (punct "}")) then do advance; return []
     else return (← stmt) :: (← items)
   let body ← items
-  return { name, params := ps, result, resultTy, requires := rs, ensures := es, body }
+  return { name, params := ps, result, resultTy, contract := written, requires := rs,
+    ensures := es, body }
 
 -- spec GRAM-2 565f16f1b7627f60
 /-- An `alias_decl` [GRAM-2]. -/
