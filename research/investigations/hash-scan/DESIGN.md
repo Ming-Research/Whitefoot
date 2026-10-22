@@ -61,8 +61,10 @@ Chinese, on 2026-10-14 and 2026-10-19:
   chains needed: pairs move again when the map rebuilds, and the
   three-quarter mark and the vacated count return.
 
-The rest of this section and the two comparisons below describe the chains as
-built and measured on Ming-Research/Whitefoot#487 before that ruling.
+The rest of this section and the first two comparisons below describe the
+chains as built and measured on Ming-Research/Whitefoot#487 before that
+ruling; the [third comparison](#third-comparison-linear-probing-with-high-bit-homes)
+measures the ruled representation.
 
 The implementation on Ming-Research/Whitefoot#487 differs from Valkey 8 in
 two ways the third ruling accepted:
@@ -359,6 +361,52 @@ Alternatives for this round:
   next pair of its chain into the head.
 - Accepting the chains with the numbers above, or the stable-identifier
   directory, the ruled fallback, whose memory is main's plus a directory.
+
+### Third comparison: linear probing with high-bit homes
+
+Measured on the 14900K on 2026-10-22 with `hash-map-bench.yml`, base main
+Ming-Research/Whitefoot@76d72befed43, clang 22.1.8, timed processes pinned
+to CPU 2, the same cells, resolutions and hold criteria as the comparisons
+above. The compiler source had taken more than 100 compiler commits of main
+since the second floor, so the floor was measured again first (run
+39714945168, candidate Ming-Research/Whitefoot@3bedf39030c8). The judged run
+39715545781, on that candidate, left two cells not counted, their twin
+spread above the floor, so the comparison was run again as the instrument
+asks (run 39716174131, candidate Ming-Research/Whitefoot@47b87c8dc212, which
+changes only the instrument's README and built the same candidate compiler,
+hash `3ac4a1e4`). Candidate-to-base time ratios of the rerun with their 95%
+intervals:
+
+| cell | 1,000 | 10,000 | 1,000,000 |
+| --- | --- | --- | --- |
+| insert, presized | 0.61 [0.60, 0.62] | 0.54 [0.53, 0.55] | 0.70 [0.69, 0.70] |
+| insert, growing | unresolved (0.89 [0.86, 0.91]) | 0.90 [0.88, 0.91] | 0.96 [0.95, 0.97] |
+| lookup hit | 0.81 [0.81, 0.81] | 0.86 [0.85, 0.88] | 0.994 [0.983, 0.9995] |
+| lookup miss | 0.83 [0.83, 0.83] | 0.90 [0.90, 0.90] | 0.95 [0.92, 0.96] |
+| remove | 0.85 [0.84, 0.86] | 0.83 [0.825, 0.84] | 0.97 [0.96, 0.97] |
+| remove then insert | 0.93 [0.93, 0.94] | 0.94 [0.94, 0.94] | 0.80 [0.80, 0.81] |
+| iterate | 0.98 [0.96, 0.99] | 0.98 [0.97, 0.99] | no change, 1.00 [1.00, 1.02] |
+
+Nineteen cells are faster, one shows no change and none is slower. Growing
+insertion at 1,000 pairs stayed unresolved in all three runs: after 40
+rounds its twin's half-width was 0.034 to 0.045, above the 3% resolution,
+while its ratio interval lay wholly below one each time ([0.87, 0.91],
+[0.87, 0.91], [0.86, 0.91]). In the first judged run the two cells not
+counted, removal and alternating removal and insertion at 10,000 pairs, had
+intervals wholly below one, and the rerun judged both faster. Retained and
+peak bytes equal main's at every size (49,168, 393,232 and 50,331,664
+retained; 73,760, 589,856 and 75,497,504 peak) in all three runs. Hold, from
+the rerun: H1 passed (p99 466 ns at 32,000,000 pairs against 478 ns at
+4,000,000), H2 passed (453 ns at 1,000,000) and the three H3 chains passed
+(medians 70, 722 and 56,375 ns against bounds of 1,119, 17,901 and
+1,145,666 ns); the judged run gave the same verdicts.
+
+Against the predictions: lookups, removals and insertions are no slower than
+main, as predicted, and most are faster, beyond the prediction; the likely
+cause, inferred and not measured apart, is the multiplication and shift that
+replace main's division in every home computation. Memory equals main's, as
+predicted. Iteration is no slower than main. The performance acceptance
+passes: no cell regresses, and the one unresolved cell is reported as such.
 
 ## What the two maps already provide
 
