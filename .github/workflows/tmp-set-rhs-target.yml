@@ -100,4 +100,17 @@ jobs:
               echo "$case at the base exits $code"
             fi
           done
+          # The old order writes the slot the index named before the call.
+          case=set1-pos-index-is-read-after-the-rhs-writes-it
+          "$compiler" -o "$RUNNER_TEMP/$case" "tests/conformance/cases/$case.wf"
+          code=0; "$RUNNER_TEMP/$case" || code=$?
+          echo "$case at the base exits $code"
+          [ "$code" -ne 0 ] || status=1
+          # The old read-out match never recognized an indexed target.
+          if "$compiler" --check tests/conformance/cases/op12-pos-atomic-update-of-an-indexed-slot.wf; then
+            echo "accepted at the base: op12-pos-atomic-update-of-an-indexed-slot"
+            status=1
+          else
+            echo "rejected at the base: op12-pos-atomic-update-of-an-indexed-slot"
+          fi
           exit "$status"
