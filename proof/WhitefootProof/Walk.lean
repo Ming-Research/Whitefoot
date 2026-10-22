@@ -242,11 +242,14 @@ def setVar (env : Env) (st : State) (x : Var) (r : Rhs) : M State := do
 -- spec FN-9 51a8f7fdc09ba5c6
 -- spec ENT-2 261757f83e159d4f
 -- spec ENT-2 e7b64879f58fcb34
+-- spec FN-9 cda2ca4d680967a7
 /-- A return proves each postcondition [FN-9]: the result is the returned
 value and each parameter its entry value, which needs its entry image to be
 stable. -/
 def checkReturn (env : Env) (st : State) (ret : Val) : M Unit := do
   let gen ← get
+  if !env.fn.ensures.isEmpty && ret.term.isNone then
+    fail "FN-9" "a return whose value is no term or constant, which a postcondition cannot read"
   for r in env.fn.ensures do
     let names := Affine.names r.lhs ++ Affine.names r.rhs
     for n in names do
