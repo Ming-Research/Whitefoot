@@ -1,4 +1,5 @@
 use crate::Production;
+use crate::diagnostic_repairs::reserved_name_fix;
 use crate::syntax::{FinalizedExtent, FinalizedTopology, NodeId};
 
 use super::super::catalog::{PRELUDE_DECLARATIONS, reserved_name};
@@ -165,6 +166,9 @@ fn check_inventory(
         if let Some((reserved_role, checked_spelling)) = reserved_role(topology, role)
             && let Some((class, inventory_ordinal)) = reserved_name(checked_spelling)
         {
+            let mechanical_fix = reserved_name_fix(checked_spelling, |candidate| {
+                !index.with_spelling(candidate).is_empty()
+            });
             return Ok(Some(ResolutionIssue {
                 rule: ResolutionRule::Form3,
                 origin: role.origin.clone(),
@@ -173,6 +177,7 @@ fn check_inventory(
                     declaration_role: reserved_role,
                     class,
                     inventory_ordinal,
+                    mechanical_fix,
                 },
             }));
         }

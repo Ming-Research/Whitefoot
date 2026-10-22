@@ -1,0 +1,35 @@
+struct Row {
+  values: Box<Segments<u64>>;
+  marker: u64;
+}
+
+fn fill(part: &[u64]) -> result: unit writes(part) {
+  for (k in 0_u64..part^.len) {
+    set part^[k] = 9_u64;
+  }
+  return unit;
+}
+
+fn need_markers(rows: &[Row]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..rows^.len): rows^[k].marker <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &[Row]) -> result: unit writes(rows) contract {
+  requires forall held_markers(k in 0_u64..rows^.len): rows^[k].marker <= 7_u64;
+  requires 1_u64 <= rows^.len;
+  requires 1_u64 <= rows^[0_u64].values.inner.len;
+} {
+  doc "A guard on the borrowed segment's captured length admits the partial slice under REF-4. RANGE-2 retains the outer marker across the conditional write because OWN-7 separates the fields before the segment and range steps.";
+  let segment = &rows^[0_u64].values.inner[0_u64];
+  if 2_u64 <= segment^.len {
+    fill(part: &segment^[1_u64..2_u64]);
+  }
+  need_markers(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

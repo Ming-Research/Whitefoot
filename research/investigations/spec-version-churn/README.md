@@ -106,7 +106,7 @@ branch's checks.
   needs the previous version, known only at merge.
 - Name an amendment by the date and title of its entry, with no number: also
   removes the collisions; refused because the name is long, carries no order
-  and does not continue the 160 existing names.
+  and does not continue the existing version names.
 - One amendment in flight at a time: no collisions, but at the median 12 hours
   open that is two merges a day against the 4.4 observed.
 - Derive the version from the log (chosen): a branch writes only its entry at
