@@ -6,6 +6,9 @@
 #   lib      every lib test (heap alignment, completion, window and driver tests)
 #   runtime  the runtime group (the frozen and shared-object C units and the
 #            concurrent map's C probe)
+#   corpus   the whole corpus target (program tests whose metered bytes and
+#            shared-object and frozen-value headers this change moves)
+#   conformance  the whole conformance adapter
 #   windows  the native Windows aligned-heap probe
 # Removed before the full check; the gate fails while a tmp- workflow exists.
 name: tmp-heap-overaligned
@@ -28,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stage: [static, lib, runtime]
+        stage: [static, lib, runtime, corpus, conformance]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,6 +97,24 @@ jobs:
           ulimit -c 0
           cd compiler
           perl ../.github/run-check.pl tmp/lib cargo test --profile gate --lib --locked --offline
+
+      - name: corpus
+        if: matrix.stage == 'corpus'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: |
+          ulimit -c 0
+          cd compiler
+          perl ../.github/run-check.pl tmp/corpus cargo test --profile gate --test corpus --locked --offline
+
+      - name: conformance
+        if: matrix.stage == 'conformance'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: |
+          ulimit -c 0
+          cd compiler
+          perl ../.github/run-check.pl tmp/conformance cargo test --profile gate --test corpus --locked --offline -- conformance::adapter:: --nocapture
 
       - name: runtime
         if: matrix.stage == 'runtime'
