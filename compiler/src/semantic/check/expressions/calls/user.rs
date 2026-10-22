@@ -946,7 +946,9 @@ impl<'unit> Checker<'_, 'unit> {
         let Some([first]) = actual_paths.first().map(Vec::as_slice) else {
             return Ok(None);
         };
-        if *first != target {
+        // Both are resolved before any effect of the call, so equal offset
+        // terms denote one value.
+        if first.clone().term_identity() != target.clone().term_identity() {
             return Ok(None);
         }
         for entry in entries {

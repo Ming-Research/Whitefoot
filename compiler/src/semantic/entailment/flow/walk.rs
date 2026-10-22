@@ -324,10 +324,6 @@ impl Analyzer<'_, '_> {
         } else {
             Vec::new()
         };
-        // [SET-1]: the target's base and offset are evaluated before the
-        // right-hand side; both are judged at this point, then the commit
-        // kill applies.
-        let target_reached = self.judge_set_target(target, state);
         let destination = set_target_place(target);
         let mut result = self.capture_result(node_path, value, state);
         let affine_value = self
@@ -343,6 +339,10 @@ impl Analyzer<'_, '_> {
             prepared_call: prepared,
             reached: value_reached,
         } = judgment;
+        // [SET-1]: the target's base and offsets are evaluated after the
+        // right-hand side, so they are judged here, in the state it left,
+        // and only when it completes; then the commit kill applies.
+        let target_reached = value_reached && self.judge_set_target(target, state);
         let ranges_reached = self.judging().judge_call_separations(node_path, state);
         let commit_reached = target_reached && value_reached && ranges_reached;
         let receiver_route = commit_reached
@@ -460,11 +460,12 @@ impl Analyzer<'_, '_> {
             && let Some(prepared) = prepared.as_ref()
             && let Some(mut place) = destination
         {
-            // [SET-1, ENT-2] this place captured its offsets before the RHS.
-            // A write of an offset binding ends that spelling as a name for
-            // the captured value, just as it does for a pre-existing reference.
-            // Keep the evaluation capture so publication cannot reach a later
-            // access through the binding's new value.
+            // [SET-1, ENT-2] this place captures its offsets after the RHS,
+            // so only the commit's own kills can end an offset spelling as a
+            // name for the captured value, just as they do for a
+            // pre-existing reference. Keep the evaluation capture so
+            // publication cannot reach a later access through the binding's
+            // new value.
             let bindings = place.spelled_indices().collect::<Vec<_>>();
             let mut identity_preserved = true;
             for (capture, source) in bindings {
@@ -473,13 +474,7 @@ impl Analyzer<'_, '_> {
                 support
                     .path
                     .push(PlaceStep::Index(CapturedValue::new(capture, source)));
-                if prepared.kills.iter().any(|event| {
-                    self.input.event_kills_offset_support(
-                        &prepared.entry_separations(&state.separations),
-                        &support,
-                        event,
-                    )
-                }) || target_kills.iter().any(|event| {
+                if target_kills.iter().any(|event| {
                     self.input
                         .event_kills_offset_support(&state.separations, &support, event)
                 }) {

@@ -289,10 +289,6 @@ struct LocalBinding {
     /// was the loan apparatus's way of stating what [REF-2] now states
     /// directly as a validity fact.
     reference: Option<ReferenceInfo>,
-    /// A set target's newly selected payload storage and later storage
-    /// selections while its RHS is checked, excluding trailing inline fields.
-    /// It uses the same REF-2 validity and preservation rules as a reference.
-    commit_target: Option<ReferenceInfo>,
     /// [REF-2, ENT-3.S15] the match refinement occurrences rooted at this
     /// binding. The occurrence identity is immutable even when a
     /// reference binding is rebound; only its flow-sensitive validity meets
@@ -2438,7 +2434,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     ResolvedPlace::binding(binding),
                 )
             }),
-            commit_target: None,
             refinement_witnesses: Vec::new(),
             handle_watch: None,
             call_value: true,
