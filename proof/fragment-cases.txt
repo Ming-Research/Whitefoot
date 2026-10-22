@@ -32,6 +32,7 @@ ent4-pos-offset-boundaries
 ent4-pos-offset-join
 ent4-pos-offset-late-bound
 ent4-pos-offset-loop
+ent5-neg-loop-head-literal-index-write
 ent5-neg-offset-derived-only
 ent5-neg-replacement-overflow-bound
 ent5-neg-wrapped-index-replacement

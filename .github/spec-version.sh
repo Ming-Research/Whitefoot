@@ -10,10 +10,11 @@
 # `spec/kernel-spec.md` carries no version, so a branch never claims one: the
 # version is the position of an entry in the log, which only ever grows at the
 # top. An entry heading is `## YYYY-MM-DD <title>`. An entry whose title begins
-# `vA.B` names that version (every entry through v0.161 does, and the entry
-# that starts a major revision does); any other entry is the next minor version
-# after the entry below it, so the entry above v0.161 is v0.162. The version of
-# an entry therefore changes only if an entry below it moves, which
+# `vA.B` names that version (every entry written under the earlier procedure
+# does, and the entry that starts a major revision does); any other entry is the
+# next minor version after the entry below it, so an entry directly above v0.9
+# is v0.10. The version of an entry therefore changes only if an entry below it
+# moves, which
 # `check-spec-archives.sh` forbids.
 set -eu
 LC_ALL=C
