@@ -9,14 +9,16 @@ fn main() -> status: ExitStatus pure {
   return exit_status(code: 0_u8);
 }
 
-fn replace_bystander_index(index: &u64, replacement: u64) -> result: BystanderRecord writes(index) {
+fn replace_bystander_index(index: &u64, replacement: u64) -> result: BystanderRecord writes(index) contract {
+  ensures index^ == replacement;
+} {
   set index^ = replacement;
   return BystanderRecord(value: 9_u8);
 }
 
 fn inspect_rhs_capture(values: &Array<BystanderRecord, 4>) -> result: u8 writes(values) {
   let selected = &values^[0_u64].value;
-  let index = 0_u64;
-  set values^[index] = replace_bystander_index(index: &index, replacement: 1_u64);
+  let index = 1_u64;
+  set values^[index] = replace_bystander_index(index: &index, replacement: 0_u64);
   return selected^;
 }

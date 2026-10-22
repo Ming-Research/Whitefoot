@@ -11,6 +11,12 @@ Nodes: compiler/build-inputs
 
 Summary: Open amendments of the specification kept merging main to renumber the title line, re-archive the outgoing version and retitle their change log entry each time another amendment merged first: 112 of 307 merges of main over 62 amendments in two weeks, measured in the [version-churn investigation](../research/investigations/spec-version-churn/README.md#measurement). The version was a counter every branch took at the same three places while its order was fixed only at the merge, and nothing read it, since the compiler's identity of the specification is the SHA-256 of its bytes. The first line of the specification is now `# Kernel Specification`, an amendment adds one entry at the top of the change log and no archive, and an entry's version is derived from its place in the log, so an entry directly above v0.9 is v0.10. The build-inputs node now records that decision. Refused: renumbering by script, assigning the number by a commit to main after the merge, a date or time in the title line or in archive names, naming an amendment by the date and title of its entry, and one amendment in flight at a time.
 
+## 2026-10-22 An assignment evaluates its right-hand side before its target
+
+Nodes: language/ownership/reference-validity, compiler/checker-facts
+
+Summary: A decision is added: `set p = e;` evaluates `e` first and then evaluates the target in the state `e` left, so, other than an atomic in-place update, it means exactly binding `e` and assigning the binding; the atomic update keeps the place it reads out because its first argument reads the target's offsets, which the call's pairwise effect comparison keeps its function from writing. Two accepted programs showed that a target evaluated first can go stale across its right-hand side, a double free after `remove_at` shifted the target's slot and a store into the block `grow` released ([incidental finding 6](../research/investigations/spec-proof/DESIGN.md#incidental-findings)). The checker's fact node now says an assignment target's captures read the state the right-hand side left. Refused: holding the target's storage under reference validity across the right-hand side, the atomic update's prefix condition for every assignment, and reading subscripts first while locating the place afterwards.
+
 ## 2026-10-22 Heap storage holds elements aligned up to 16 bytes with the ordinary allocator
 
 Nodes: compiler/storage-representation

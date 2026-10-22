@@ -236,7 +236,8 @@ impl Judging<'_, '_, '_> {
     /// pair is discharged here by the fixed [ENT-6] families under [MSR-4]'s
     /// disposition, and a discharged pair is recorded on the current edge so
     /// that later dominated [OWN-7] questions can read it. A set reaches this
-    /// judgment after RHS effects, using target captures evaluated before it.
+    /// judgment after RHS effects, with its target evaluated in the state
+    /// they left [SET-1].
     pub(super) fn judge_call_separations(
         &mut self,
         site: &crate::NodePath,
