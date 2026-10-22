@@ -2,9 +2,9 @@
 
 use super::{compile, compile_link_and_run};
 
-const PREFIX: &str = r#"alias MemoryMeter = std::process::MemoryMeter;
+const ALIAS: &str = "alias MemoryMeter = std::process::MemoryMeter;\n\n";
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+const PREFIX: &str = r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
@@ -23,7 +23,7 @@ const SUFFIX: &str = r#"  let after = std::process::heap_in_use(meter: &meter);
 /// Observe the production allocator's returned pointers, including after
 /// growth, rather than infer alignment from a successful unaligned host load.
 fn run(body: &str, declarations: &str, minimum_allocations: usize, minimum_retakes: usize) {
-    let source = format!("{declarations}{PREFIX}{body}{SUFFIX}");
+    let source = format!("{ALIAS}{declarations}{PREFIX}{body}{SUFFIX}");
     let llvm = compile(source.as_bytes());
     let observed = llvm
         .replace("@wf__heap_take_aligned(", "@wf_observe_aligned_take(")
@@ -75,7 +75,8 @@ fn a_box_holds_an_overaligned_meter_and_releases_its_exact_bytes() {
         r#"  let value = std::process::meter_share(meter: &meter);
   let cell = box_new::<MemoryMeter>(value: move value);
   let allocated = std::process::heap_in_use(meter: &cell.inner);
-  if allocated != before +wrap 32_u64 {
+  let expected_allocated = before +wrap 32_u64;
+  if allocated != expected_allocated {
     return std::process::exit_status(code: 1_u8);
   }
   release::<Box<MemoryMeter>>(value: move cell);
@@ -104,7 +105,8 @@ fn empty_overaligned_slots_use_the_shared_header_without_accounting_bytes() {
   free_empty(window: move cells);
   let reserved = box_slots_new::<MemoryMeter>(capacity: 1_u64);
   let reserved_bytes = std::process::heap_in_use(meter: &meter);
-  if reserved_bytes != before +wrap 48_u64 {
+  let expected_reserved_bytes = before +wrap 48_u64;
+  if reserved_bytes != expected_reserved_bytes {
     return std::process::exit_status(code: 2_u8);
   }
   free_empty(window: move reserved);
@@ -124,12 +126,14 @@ fn occupied_overaligned_slots_keep_values_and_accounting_across_both_growth_path
   place_back(window: &cells.inner, value: move first);
   grow(cell: &cells, capacity: 33_u64);
   let large = std::process::heap_in_use(meter: &cells.inner[0_u64]);
-  if large != before +wrap 1072_u64 {
+  let expected_large = before +wrap 1072_u64;
+  if large != expected_large {
     return std::process::exit_status(code: 1_u8);
   }
   grow(cell: &cells, capacity: 65_u64);
   let larger = std::process::heap_in_use(meter: &cells.inner[0_u64]);
-  if larger != before +wrap 2096_u64 {
+  let expected_larger = before +wrap 2096_u64;
+  if larger != expected_larger {
     return std::process::exit_status(code: 2_u8);
   }
   let taken = take_back(window: &cells.inner);
@@ -154,7 +158,8 @@ fn an_overaligned_ring_pads_its_header_and_keeps_wrapped_elements() {
   let second = std::process::meter_share(meter: &meter);
   place_back(window: &ring.inner, value: move second);
   let allocated = std::process::heap_in_use(meter: &ring.inner[0_u64]);
-  if allocated != before +wrap 96_u64 {
+  let expected_allocated = before +wrap 96_u64;
+  if allocated != expected_allocated {
     return std::process::exit_status(code: 1_u8);
   }
   let front = take_front(window: &ring.inner);
@@ -183,19 +188,22 @@ fn overaligned_paged_elements_survive_page_zero_growth_and_a_new_page() {
   let first = std::process::meter_share(meter: &meter);
   place_back(window: &pages.inner, value: move first);
   let one = std::process::heap_in_use(meter: &pages.inner[0_u64]);
-  if one != before +wrap 64_u64 {
+  let expected_one = before +wrap 64_u64;
+  if one != expected_one {
     return std::process::exit_status(code: 1_u8);
   }
   grow_paged(cell: &pages, capacity: 2_u64);
   let second = std::process::meter_share(meter: &meter);
   place_back(window: &pages.inner, value: move second);
   let two = std::process::heap_in_use(meter: &pages.inner[1_u64]);
-  if two != before +wrap 96_u64 {
+  let expected_two = before +wrap 96_u64;
+  if two != expected_two {
     return std::process::exit_status(code: 2_u8);
   }
   grow_paged(cell: &pages, capacity: 129_u64);
   let crossed = std::process::heap_in_use(meter: &pages.inner[0_u64]);
-  if crossed != before +wrap 8232_u64 {
+  let expected_crossed = before +wrap 8232_u64;
+  if crossed != expected_crossed {
     return std::process::exit_status(code: 3_u8);
   }
   let last = take_back(window: &pages.inner);
@@ -274,9 +282,9 @@ fn shared_objects_and_maps_accept_overaligned_meter_state_and_entries() {
   let maps = shared_map_new::<MemoryMeter>(capacity: 1_u64);
   let key_bytes = array_filled::<u8, 1>(value: 97_u8);
   let key = &key_bytes[0_u64..1_u64];
-  let entry = std::process::meter_share(meter: &meter);
+  let payload = std::process::meter_share(meter: &meter);
   atomic map = &maps {
-    set map^[key] = Some<MemoryMeter>(value: move entry);
+    set map^[key] = Some<MemoryMeter>(value: move payload);
     set map^[key] = None<MemoryMeter>();
   }
   release::<Shared<MemoryMeter>>(value: move object);

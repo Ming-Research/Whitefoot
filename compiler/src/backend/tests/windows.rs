@@ -292,7 +292,7 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
             "fn main() -> status: std::process::ExitStatus pure {{\n  doc \"Zero-capacity construction and empty transfers must never write the shared header.\";\n  let source = box_{shape}_new::<u64>(capacity: 0_u64);\n  let destination = box_{shape}_new::<u64>(capacity: 0_u64);\n  let array = box_array_filled::<u64>(count: 0_u64, value: 7_u64);\n  append(destination: &destination.inner, source: &source.inner);\n  split_off(source: &source.inner, index: 0_u64, destination: &destination.inner);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         let module = compile(source.as_bytes());
-        assert!(module.contains("@wf__empty_window = external constant [64 x i8], align 64"));
+        assert!(module.contains("@wf__empty_window = external constant [4096 x i8], align 4096"));
         assert_shared_empty_construction(
             emitted_prelude_row(&module, &format!("box_{shape}_new")),
             if shape == "slots" { 2 } else { 3 },
