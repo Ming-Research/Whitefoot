@@ -19,8 +19,11 @@ use crate::NodePath;
 mod aggregate;
 mod atomic;
 mod calls;
+mod effects;
 mod operations;
 mod ordinary;
+mod provenance;
+mod reads;
 #[cfg(test)]
 mod tests;
 mod type_invariants;
@@ -47,10 +50,18 @@ use super::facts::{self, Fact, Frame, PlaceView, Query};
 use super::solver::{Capacity, Linear, Literal, Relation, Verdict};
 use super::world::stored_projections;
 use super::world::{
-    Cond, ContainerId, FactId, Guarded, Location, Modified, Origin, ReadSource, Slot, State, Step,
-    Value, VersionDef, View, World, join, join_states, join_values, negated,
+    Cond, ContainerId, FactId, Guarded, Location, Modified, Origin, RangeBarrier, RangeFrame,
+    ReadSource, Slot, State, Step, Value, VersionDef, View, World, join, join_states, join_values,
+    negated,
 };
 use super::{ApartFailure, CertifiedLoop, JudgmentScope, RangeIssue};
+
+type RangeElement = (
+    ContainerId,
+    Vec<Linear>,
+    Option<Vec<CheckedRangeProjection>>,
+    Option<RangeBarrier>,
+);
 
 /// One element access recorded while a certificate's iteration runs.
 #[derive(Clone, Debug)]
@@ -123,6 +134,10 @@ pub(super) struct Walker<'program> {
     entry_places: BTreeMap<CheckedRangePlace, PlaceView>,
     entry_aggregates: BTreeMap<CheckedRangeRoot, super::world::VersionId>,
     binding_types: BTreeMap<BindingId, IntegerType>,
+    /// Read origins only while one deferred call goal is being formed.
+    goal_reads: Option<Vec<facts::ReadProvenance>>,
+    goal_argument_reads: Option<Vec<Vec<facts::ReadProvenance>>>,
+    last_reads: Vec<facts::ReadProvenance>,
     /// The node the walk cites for an access it records.
     cite: NodePath,
     /// Whether an exit selected each of the function's postconditions.
@@ -228,6 +243,9 @@ impl<'program> Walker<'program> {
             entry_places: BTreeMap::new(),
             entry_aggregates: BTreeMap::new(),
             binding_types: BTreeMap::new(),
+            goal_reads: None,
+            goal_argument_reads: None,
+            last_reads: Vec::new(),
             cite: empty_path(),
             selected: vec![false; function.range_facts.postconditions.len()],
             active_loops: Vec::new(),
@@ -257,6 +275,8 @@ impl<'program> Walker<'program> {
                                 prefix: Vec::new(),
                                 offset: Linear::constant(0),
                                 length,
+                                barrier: None,
+                                projection: Vec::new(),
                             })
                         }
                         None => Value::Ref(View::Unknown),
@@ -325,10 +345,15 @@ impl<'program> Walker<'program> {
         }
         for clause in &function.range_facts.requirements {
             let roots = state.values.clone();
-            let frame = self.frame(&mut state, clause, &|root| match root {
-                CheckedRangeRoot::Binding(binding) => roots.get(&binding).cloned(),
-                _ => None,
-            });
+            let frame = self.frame(
+                &mut state,
+                clause,
+                &|root| match root {
+                    CheckedRangeRoot::Binding(binding) => roots.get(&binding).cloned(),
+                    _ => None,
+                },
+                &|_| Vec::new(),
+            );
             let id = self.add_fact(clause.clone(), frame);
             state.facts.push(id);
         }
@@ -380,62 +405,6 @@ impl<'program> Walker<'program> {
 
     // ----- frames -----
 
-    /// What each place and value of `clause` denotes in `state`, with each
-    /// root's value given by `roots`.
-    pub(super) fn frame(
-        &mut self,
-        state: &mut State,
-        clause: &CheckedRangeClause,
-        roots: &dyn Fn(CheckedRangeRoot) -> Option<Value>,
-    ) -> Frame {
-        let mut frame = Frame::default();
-        let mut segments: BTreeSet<CheckedRangePlace> = BTreeSet::new();
-        let mut terms: Vec<&CheckedRangeTerm> = Vec::new();
-        for binder in &clause.binders {
-            terms.push(&binder.start);
-            terms.push(&binder.end);
-        }
-        for relation in clause.relations() {
-            terms.push(&relation.left);
-            terms.push(&relation.right);
-        }
-        for term in &terms {
-            segment_places(term, &mut segments);
-        }
-        for place in clause.places() {
-            let view = self.place_view(state, &place, segments.contains(&place), roots);
-            frame.places.insert(place, view);
-        }
-        let mut values = Vec::new();
-        for term in &terms {
-            term.collect_values(&mut values);
-        }
-        values.sort();
-        values.dedup();
-        for root in values {
-            match roots(root) {
-                Some(Value::Int(value)) => {
-                    frame.values.insert(root, value);
-                }
-                Some(
-                    value @ (Value::Owned(_)
-                    | Value::Struct(_)
-                    | Value::Variant { .. }
-                    | Value::Bool(..)),
-                ) => {
-                    // Symbolic type-parameter values still form integer terms.
-                    frame.values.insert(root, self.world.opaque(None));
-                    let version = self.snapshot_aggregate(state, &value);
-                    frame.aggregates.insert(root, version);
-                }
-                _ => {
-                    frame.values.insert(root, self.world.opaque(None));
-                }
-            }
-        }
-        frame
-    }
-
     fn place_view(
         &mut self,
         state: &mut State,
@@ -445,72 +414,88 @@ impl<'program> Walker<'program> {
     ) -> PlaceView {
         enum Reached {
             Location(Location),
-            Run(View),
+            Run(Box<View>),
         }
         let mut reached = match roots(place.root) {
             Some(Value::Owned(location)) => Reached::Location(location),
-            Some(Value::Ref(view)) => Reached::Run(view),
+            Some(Value::Ref(view)) => Reached::Run(Box::new(view)),
             _ => return PlaceView::Unknown,
         };
         for step in &place.path {
-            reached = match (reached, step) {
-                (Reached::Run(View::Place(location)), CheckedRangeStep::Referent) => {
-                    Reached::Location(location)
-                }
-                (
-                    Reached::Run(view @ (View::Run { .. } | View::Element { .. })),
-                    CheckedRangeStep::Referent,
-                ) => Reached::Run(view),
-                (Reached::Location(location), CheckedRangeStep::Field(field)) => {
-                    Reached::Location(location.child(Step::Field(*field)))
-                }
-                (Reached::Location(location), CheckedRangeStep::BoxContent) => {
-                    Reached::Location(location.child(Step::BoxContent))
-                }
-                (
-                    Reached::Run(View::Element {
-                        container,
-                        indices,
-                        projection: Some(mut path),
-                    }),
-                    step,
-                ) => {
-                    path.push(match step {
-                        CheckedRangeStep::Field(field) => CheckedRangeProjection::Field(*field),
-                        CheckedRangeStep::BoxContent => CheckedRangeProjection::BoxContent,
-                        CheckedRangeStep::Referent => return PlaceView::Unknown,
-                    });
-                    Reached::Run(View::Element {
-                        container,
-                        indices,
-                        projection: Some(path),
-                    })
-                }
-                _ => return PlaceView::Unknown,
+            reached = match reached {
+                Reached::Location(location) => match step {
+                    CheckedRangeStep::Field(field) => {
+                        Reached::Location(location.child(Step::Field(*field)))
+                    }
+                    CheckedRangeStep::BoxContent => {
+                        Reached::Location(location.child(Step::BoxContent))
+                    }
+                    _ => return PlaceView::Unknown,
+                },
+                Reached::Run(view) => match (*view, step) {
+                    (View::Place(location), CheckedRangeStep::Referent) => {
+                        Reached::Location(location)
+                    }
+                    (
+                        view @ (View::Run { .. } | View::Element { .. }),
+                        CheckedRangeStep::Referent,
+                    ) => Reached::Run(Box::new(view)),
+                    (
+                        View::Element {
+                            container,
+                            indices,
+                            projection: Some(mut path),
+                            barrier,
+                        },
+                        step,
+                    ) => {
+                        path.push(match step {
+                            CheckedRangeStep::Field(field) => CheckedRangeProjection::Field(*field),
+                            CheckedRangeStep::BoxContent => CheckedRangeProjection::BoxContent,
+                            CheckedRangeStep::Referent => return PlaceView::Unknown,
+                        });
+                        Reached::Run(Box::new(View::Element {
+                            container,
+                            indices,
+                            projection: Some(path),
+                            barrier,
+                        }))
+                    }
+                    _ => return PlaceView::Unknown,
+                },
             };
         }
         match reached {
-            Reached::Run(View::Element {
-                container,
-                indices,
-                projection: Some(projection),
-            }) => PlaceView::Element {
-                version: state.version(&mut self.world, container),
-                indices,
-                projection,
-            },
-            Reached::Run(View::Run {
-                container,
-                prefix,
-                offset,
-                length,
-            }) => PlaceView::Run {
-                container,
-                version: state.version(&mut self.world, container),
-                generation: state.generation(container),
-                prefix,
-                offset,
-                length,
+            Reached::Run(view) => match *view {
+                View::Element {
+                    container,
+                    indices,
+                    projection: Some(projection),
+                    barrier,
+                } => PlaceView::Element {
+                    version: state.version(&mut self.world, container),
+                    indices,
+                    projection,
+                    barrier,
+                },
+                View::Run {
+                    container,
+                    prefix,
+                    offset,
+                    length,
+                    projection,
+                    barrier,
+                } => PlaceView::Run {
+                    container,
+                    version: state.version(&mut self.world, container),
+                    generation: state.generation(container),
+                    prefix,
+                    offset,
+                    length,
+                    projection,
+                    barrier,
+                },
+                _ => PlaceView::Unknown,
             },
             Reached::Location(location) => {
                 let location = state.resolve(&location);
@@ -539,10 +524,11 @@ impl<'program> Walker<'program> {
                         prefix: Vec::new(),
                         offset: Linear::constant(0),
                         length,
+                        projection: Vec::new(),
+                        barrier: None,
                     }
                 }
             }
-            Reached::Run(_) => PlaceView::Unknown,
         }
     }
 
@@ -594,6 +580,7 @@ impl<'program> Walker<'program> {
                     .choices
                     .push(negation.into_iter().map(|literal| vec![literal]).collect()),
             }
+            let counterfactual = (!formed.reads[position].is_empty()).then(|| query.clone());
             let verdict = facts::judge(
                 &mut self.world,
                 &self.facts,
@@ -603,6 +590,45 @@ impl<'program> Walker<'program> {
                 query,
             )?;
             if verdict != Verdict::Refuted {
+                // Bounds, clause guards and this conclusion's read domains
+                // all decide whether this one conclusion is owed. Other
+                // conclusions and state premises supply no read provenance.
+                let dependencies: Vec<_> = formed
+                    .premises
+                    .iter()
+                    .chain(formed.conditions.iter().flat_map(|condition| {
+                        condition.guards.iter().chain(&condition.conclusions)
+                    }))
+                    .chain(&conclusion.guards)
+                    .chain(&conclusion.conclusions)
+                    .cloned()
+                    .collect();
+                if let Some(mut counterfactual) = counterfactual
+                    && counterfactual.restore_call_footprints(
+                        &mut self.world,
+                        &formed.reads[position],
+                        &dependencies,
+                    )
+                    && !matches!(
+                        facts::judge(
+                            &mut self.world,
+                            &self.facts,
+                            &state.facts,
+                            &state.guarded,
+                            &[],
+                            counterfactual,
+                        ),
+                        Ok(Verdict::Open)
+                    )
+                {
+                    // Restoring the forgotten definitions either proves the
+                    // original query or exceeds the diagnostic's capability.
+                    // Neither is a language rejection or an accepting proof.
+                    self.issues.push(RangeIssue::Unsupported {
+                        node: self.cite.clone(),
+                        feature: UnsupportedSemanticFeature::RangeCallFootprint,
+                    });
+                }
                 let relation = clause.conclusions[position].node.clone();
                 return Ok(Some(
                     (!relation.components().is_empty()).then_some(relation),
@@ -625,8 +651,13 @@ impl<'program> Walker<'program> {
         if self.dry > 0 || self.scope == JudgmentScope::Symbolic {
             return;
         }
+        let prior_issues = self.issues.len();
         match self.holds(state, clause, frame) {
             Ok(None) => {}
+            Ok(Some(_))
+                if self.issues[prior_issues..]
+                    .iter()
+                    .any(|issue| matches!(issue, RangeIssue::Unsupported { .. })) => {}
             Ok(Some(relation)) => self.issues.push(RangeIssue::Undischarged {
                 node: node.clone(),
                 fact: clause.name.clone(),
@@ -720,7 +751,9 @@ impl<'program> Walker<'program> {
             } => {
                 self.cite = node_path.clone();
                 let evaluated = self.stored_value(&mut state, value);
+                let reads = self.last_reads.clone();
                 self.bind(&mut state, *binding, value.ty(), evaluated);
+                Self::bind_provenance(&mut state, *binding, reads);
                 Some(state)
             }
             CheckedStatement::DestructuringLet {
@@ -778,7 +811,13 @@ impl<'program> Walker<'program> {
             } => {
                 self.cite = node_path.clone();
                 let evaluated = self.stored_value(&mut state, value);
+                let reads = self.last_reads.clone();
                 self.set(&mut state, target, evaluated, node_path);
+                if let CheckedSetTarget::Place(place) = target
+                    && place.fields.is_empty()
+                {
+                    Self::bind_provenance(&mut state, place.binding, reads);
+                }
                 Some(state)
             }
             CheckedStatement::Evaluate { node_path, value }
@@ -790,7 +829,7 @@ impl<'program> Walker<'program> {
                 Some(state)
             }
             CheckedStatement::Proof(proof) => {
-                let literals = self.affine_relation(&mut state, &proof.target);
+                let (literals, reads) = self.affine_with_provenance(&mut state, &proof.target);
                 // Written premises also form measure places with their own
                 // OP-4 records, independently of the certificate's target.
                 for written_use in &proof.uses {
@@ -801,12 +840,13 @@ impl<'program> Walker<'program> {
                     }
                 }
                 let written = self.written_instances(&state, &proof.uses);
-                self.ordinary_goal(
+                self.ordinary_goal_with_reads(
                     &state,
                     &proof.node_path,
                     &ObligationSubject::SourceProof,
                     literals.as_deref().map_err(|failure| *failure),
                     written.as_deref(),
+                    ordinary::GoalReads::Shared(&reads),
                 );
                 if let Ok(literals) = literals {
                     state.conds.extend(literals);
@@ -818,8 +858,15 @@ impl<'program> Walker<'program> {
             } => {
                 self.cite = node_path.clone();
                 let returned = self.eval(&mut state, value);
+                let returned_reads = self.last_reads.clone();
                 self.owe_atomic(&state, node_path, true);
-                self.owe_postconditions(&mut state, Some(&returned), node_path, "a return");
+                self.owe_postconditions(
+                    &mut state,
+                    Some(&returned),
+                    &returned_reads,
+                    node_path,
+                    "a return",
+                );
                 None
             }
             CheckedStatement::Match {
@@ -964,6 +1011,7 @@ impl<'program> Walker<'program> {
                         container,
                         indices,
                         mut projection,
+                        barrier,
                     } => {
                         if let Some(path) = &mut projection {
                             path.push(projected);
@@ -972,6 +1020,7 @@ impl<'program> Walker<'program> {
                             container,
                             indices,
                             projection,
+                            barrier,
                         }
                     }
                     View::Place(location) => View::Place(location.child(step)),
@@ -985,14 +1034,7 @@ impl<'program> Walker<'program> {
             // A borrowed scrutinee `&p` matches the storage p names [OWN-13].
             CheckedExpression::RangeIndex { place, .. }
             | CheckedExpression::BorrowRangeIndex { place, .. } => {
-                match self.range_element(state, place) {
-                    Some((container, indices, projection)) => View::Element {
-                        container,
-                        indices,
-                        projection,
-                    },
-                    None => View::Unknown,
-                }
+                self.range_element_view(state, place)
             }
             CheckedExpression::ReadStorage { root, .. }
             | CheckedExpression::BorrowAddressed { root, .. } => {
@@ -1154,6 +1196,7 @@ impl<'program> Walker<'program> {
                         container,
                         indices,
                         projection: Some(projection),
+                        ..
                     }) = &value
                     {
                         let mut projection = projection.clone();
@@ -1193,6 +1236,7 @@ impl<'program> Walker<'program> {
                                 container,
                                 indices,
                                 projection,
+                                barrier,
                             }) => {
                                 let mut projection = projection.clone();
                                 if let Some(path) = &mut projection {
@@ -1206,9 +1250,12 @@ impl<'program> Walker<'program> {
                                     container: *container,
                                     indices: indices.clone(),
                                     projection,
+                                    barrier: barrier.clone(),
                                 })
                             }
-                            Value::Ref(View::Unknown | View::Run { .. }) => Some(View::Unknown),
+                            Value::Ref(
+                                View::Unknown | View::Run { .. } | View::Unindexed { .. },
+                            ) => Some(View::Unknown),
                             _ => None,
                         };
                         let bound = if let Some(view) = element {
@@ -1218,6 +1265,7 @@ impl<'program> Walker<'program> {
                                 container,
                                 indices,
                                 projection,
+                                barrier,
                             } = view
                             {
                                 let cite = self.cite.clone();
@@ -1228,6 +1276,7 @@ impl<'program> Walker<'program> {
                                     projection,
                                     binder.ty,
                                     &cite,
+                                    barrier.as_ref(),
                                 )
                             } else {
                                 self.opaque_of(binder.ty)
@@ -1338,7 +1387,9 @@ impl<'program> Walker<'program> {
                     let source = state.resolve(source);
                     state.set_slot(&mut self.world, at, Slot::Alias(source));
                 }
-                Value::Ref(view) => state.set_slot(&mut self.world, at, Slot::Ref(view.clone())),
+                Value::Ref(view) => {
+                    state.set_slot(&mut self.world, at, Slot::Ref(Box::new(view.clone())))
+                }
                 Value::Struct(inner) => {
                     let inner = inner.clone();
                     self.place_fields(state, &at, &inner, None);
@@ -1367,7 +1418,7 @@ impl<'program> Walker<'program> {
         let location = state.resolve(location);
         match state.slots.get(&location) {
             Some(Slot::Int(value)) => return Value::Int(value.clone()),
-            Some(Slot::Ref(view)) => return Value::Ref(view.clone()),
+            Some(Slot::Ref(view)) => return Value::Ref(view.as_ref().clone()),
             _ => {}
         }
         if let Some(source) = state.read_source(&location)
@@ -1437,7 +1488,7 @@ impl<'program> Walker<'program> {
                 self.store(state, &location, place.ty, value, node);
             }
             CheckedSetTarget::RangeIndex(place) => match self.range_element(state, place) {
-                Some((container, indices, projection)) => {
+                Some((container, indices, projection, _)) => {
                     self.write_element(state, container, indices, projection, &value, node);
                 }
                 None => self.forget_all(state, node),
@@ -1501,7 +1552,9 @@ impl<'program> Walker<'program> {
         self.unplaced_location(state, &location, node);
         match value {
             Value::Int(value) => state.set_slot(&mut self.world, location, Slot::Int(value)),
-            Value::Ref(view) => state.set_slot(&mut self.world, location, Slot::Ref(view)),
+            Value::Ref(view) => {
+                state.set_slot(&mut self.world, location, Slot::Ref(Box::new(view)))
+            }
             Value::Owned(source) => {
                 let source = state.resolve(&source);
                 state.set_slot(&mut self.world, location, Slot::Alias(source));
@@ -1553,16 +1606,20 @@ impl<'program> Walker<'program> {
                 prefix,
                 offset,
                 length,
+                projection,
+                ..
             })) => Target::Run {
                 container,
                 prefix,
                 offset,
                 length,
+                projection,
             },
             Some(Value::Ref(View::Element {
                 container,
                 indices,
                 projection,
+                ..
             })) => Target::Element {
                 container,
                 indices,
@@ -1640,6 +1697,7 @@ impl<'program> Walker<'program> {
                         container,
                         prefix,
                         offset,
+                        projection,
                         ..
                     },
                     CheckedPlaceStep::Subscript(_),
@@ -1652,7 +1710,7 @@ impl<'program> Walker<'program> {
                             Target::Element {
                                 container,
                                 indices,
-                                projection: Some(Vec::new()),
+                                projection: Some(projection),
                             }
                         }
                         None => Target::Unknown,
@@ -1737,26 +1795,64 @@ impl<'program> Walker<'program> {
     }
 
     /// The element one range element place selects: its container, its
-    /// index tuple, and its owned projection (None for unsupported suffixes).
+    /// index tuple, owned projection (None for unsupported suffixes), and
+    /// the first range selection retained for call-write overlap.
     fn range_element(
         &mut self,
         state: &mut State,
         place: &CheckedRangeElementPlace,
-    ) -> Option<(
-        ContainerId,
-        Vec<Linear>,
-        Option<Vec<CheckedRangeProjection>>,
-    )> {
+    ) -> Option<RangeElement> {
         let root = match place.root.formation.as_deref() {
             Some(formation) => Some(self.eval(state, formation)),
             None => state.values.get(&place.root.binding).cloned(),
         };
         let index = self.int(state, &place.offset);
+        self.range_element_at(state, place, root, index)
+    }
+
+    /// Keep page-origin writes without assigning page-local indices a
+    /// logical-container coordinate that OWN-7 does not define.
+    fn range_element_view(&mut self, state: &mut State, place: &CheckedRangeElementPlace) -> View {
+        let root = match place.root.formation.as_deref() {
+            Some(formation) => Some(self.eval(state, formation)),
+            None => state.values.get(&place.root.binding).cloned(),
+        };
+        let index = self.int(state, &place.offset);
+        if let Some(Value::Ref(view @ View::Unindexed { .. })) = root {
+            self.ordinary_bound(state, &place.obligation, &index, None);
+            for step in &place.path {
+                if let CheckedPlaceStep::Subscript(subscript) = step {
+                    let index = self.int(state, &subscript.offset);
+                    self.ordinary_bound(state, &subscript.obligation, &index, None);
+                }
+            }
+            return view;
+        }
+        match self.range_element_at(state, place, root, index) {
+            Some((container, indices, projection, barrier)) => View::Element {
+                container,
+                indices,
+                projection,
+                barrier,
+            },
+            None => View::Unknown,
+        }
+    }
+
+    fn range_element_at(
+        &mut self,
+        state: &mut State,
+        place: &CheckedRangeElementPlace,
+        root: Option<Value>,
+        index: Linear,
+    ) -> Option<RangeElement> {
         let Some(Value::Ref(View::Run {
             container,
             prefix,
             offset,
             length,
+            barrier,
+            projection,
         })) = root
         else {
             return None;
@@ -1764,7 +1860,7 @@ impl<'program> Walker<'program> {
         self.ordinary_bound(state, &place.obligation, &index, Some(length));
         let mut indices = prefix;
         indices.push(offset.plus(&index)?);
-        let mut projection = Some(Vec::new());
+        let mut projection = Some(projection);
         for step in &place.path {
             if let CheckedPlaceStep::Subscript(subscript) = step {
                 let target = Target::Element {
@@ -1783,10 +1879,25 @@ impl<'program> Walker<'program> {
                 self.project_element(state, &mut projection, step);
             }
         }
-        Some((container, indices, projection))
+        Some((container, indices, projection, barrier))
+    }
+
+    fn root_barrier(state: &State, root: PlaceRoot) -> Option<RangeBarrier> {
+        match root {
+            PlaceRoot::Binding(binding) => match state.values.get(&binding) {
+                Some(Value::Ref(
+                    View::Run { barrier, .. }
+                    | View::Element { barrier, .. }
+                    | View::Unindexed { barrier, .. },
+                )) => barrier.clone(),
+                _ => None,
+            },
+            PlaceRoot::Constant(_) => None,
+        }
     }
 
     fn view_of(&mut self, state: &mut State, root: PlaceRoot, path: &[CheckedPlaceStep]) -> View {
+        let barrier = Self::root_barrier(state, root);
         match self.path_target(state, root, path) {
             Target::Location(location) => View::Place(state.resolve(&location)),
             Target::Element {
@@ -1797,6 +1908,7 @@ impl<'program> Walker<'program> {
                 container,
                 indices,
                 projection,
+                barrier,
             },
             Target::Row { container, row } => {
                 let generation = state.generation(container);
@@ -1808,16 +1920,89 @@ impl<'program> Walker<'program> {
                     prefix: vec![row],
                     offset: Linear::constant(0),
                     length,
+                    barrier,
+                    projection: Vec::new(),
                 }
             }
             Target::Run {
                 container,
                 prefix,
                 offset,
-                ..
+                length,
+                projection,
+            } => View::Run {
+                container,
+                prefix,
+                offset,
+                length,
+                projection,
+                barrier,
+            },
+            _ => View::Unknown,
+        }
+    }
+
+    /// A nested container's run keeps the projection preceding its indices.
+    fn range_view(&mut self, state: &mut State, view: View, ty: CheckedType) -> View {
+        match view {
+            View::Place(location) => self.run_of(state, location),
+            View::Run { .. } | View::Unindexed { .. } => view,
+            View::Element {
+                container,
+                indices,
+                projection: Some(mut projection),
+                barrier,
             } => {
-                let _ = (container, prefix, offset);
-                View::Unknown
+                let target = Target::Element {
+                    container,
+                    indices: indices.clone(),
+                    projection: Some(projection.clone()),
+                };
+                let Some(length) = self.target_length(state, &target, ty) else {
+                    return View::Unknown;
+                };
+                projection.push(CheckedRangeProjection::Index(indices.len() as u32));
+                View::Run {
+                    container,
+                    prefix: indices,
+                    offset: Linear::constant(0),
+                    length,
+                    projection,
+                    barrier,
+                }
+            }
+            _ => View::Unknown,
+        }
+    }
+
+    fn unindexed_view(
+        &mut self,
+        state: &mut State,
+        target: Target,
+        barrier: Option<RangeBarrier>,
+    ) -> View {
+        match target {
+            Target::Location(location) => match state.container(&mut self.world, location, 1) {
+                Some(container) => View::Unindexed {
+                    container,
+                    indices: Vec::new(),
+                    projection: Vec::new(),
+                    barrier,
+                },
+                None => View::Unknown,
+            },
+            Target::Element {
+                container,
+                indices,
+                projection: Some(mut projection),
+            } => {
+                projection.push(CheckedRangeProjection::Index(indices.len() as u32));
+                View::Unindexed {
+                    container,
+                    indices,
+                    projection,
+                    barrier,
+                }
             }
             _ => View::Unknown,
         }
@@ -1837,6 +2022,8 @@ impl<'program> Walker<'program> {
                     prefix: Vec::new(),
                     offset: Linear::constant(0),
                     length,
+                    barrier: None,
+                    projection: Vec::new(),
                 }
             }
             None => View::Unknown,
@@ -1905,6 +2092,7 @@ impl<'program> Walker<'program> {
                     self.unplaced(Some(container), write, write);
                 }
             }
+            View::Unindexed { container, .. } => self.unplaced(Some(*container), write, false),
             View::Scalar(_) | View::Unknown => self.unplaced(None, write, write),
         }
     }
@@ -2034,15 +2222,18 @@ impl<'program> Walker<'program> {
         Value::Owned(destination)
     }
 
-    pub(super) fn eval(&mut self, state: &mut State, expression: &CheckedExpression) -> Value {
+    fn eval_inner(&mut self, state: &mut State, expression: &CheckedExpression) -> Value {
         match expression {
             CheckedExpression::Constant(value) | CheckedExpression::NamedConstant { value, .. } => {
                 super::constants::value(&mut self.world, state, value)
             }
-            CheckedExpression::Binding { binding, ty, .. } => match state.values.get(binding) {
-                Some(value) => value.clone(),
-                None => self.opaque_of(*ty),
-            },
+            CheckedExpression::Binding { binding, ty, .. } => {
+                self.read_binding_provenance(state, *binding);
+                match state.values.get(binding) {
+                    Some(value) => value.clone(),
+                    None => self.opaque_of(*ty),
+                }
+            }
             CheckedExpression::UserCall {
                 function,
                 call,
@@ -2280,18 +2471,27 @@ impl<'program> Walker<'program> {
                 }
             }
             CheckedExpression::ReadStorage { carrier, root } => {
+                let barrier = Self::root_barrier(state, root.root);
                 match self.path_target(state, root.root, &root.path) {
                     Target::Element {
                         container,
                         indices,
                         projection,
-                    } => self
-                        .read_projection(state, container, indices, projection, root.ty, carrier),
+                    } => self.read_projection(
+                        state,
+                        container,
+                        indices,
+                        projection,
+                        root.ty,
+                        carrier,
+                        barrier.as_ref(),
+                    ),
                     Target::Location(location) => self.read_location(state, &location, root.ty),
                     _ => self.opaque_of(root.ty),
                 }
             }
             CheckedExpression::ContainerMeasure { measure, root } => {
+                let barrier = Self::root_barrier(state, root.root);
                 match self.path_target(state, root.root, &root.path) {
                     Target::Location(location) => {
                         let location = state.resolve(&location);
@@ -2324,6 +2524,7 @@ impl<'program> Walker<'program> {
                             projection,
                             expression.ty(),
                             &cite,
+                            barrier.as_ref(),
                         )
                     }
                     Target::Row { container, row } if *measure == CheckedMeasure::Length => {
@@ -2347,8 +2548,15 @@ impl<'program> Walker<'program> {
             }
             CheckedExpression::RangeIndex { carrier, place } => {
                 match self.range_element(state, place) {
-                    Some((container, indices, projection)) => self
-                        .read_projection(state, container, indices, projection, place.ty, carrier),
+                    Some((container, indices, projection, barrier)) => self.read_projection(
+                        state,
+                        container,
+                        indices,
+                        projection,
+                        place.ty,
+                        carrier,
+                        barrier.as_ref(),
+                    ),
                     None => self.opaque_of(place.ty),
                 }
             }
@@ -2357,7 +2565,7 @@ impl<'program> Walker<'program> {
                 place,
                 measure,
             } => match self.range_element(state, place) {
-                Some((container, indices, mut projection)) => {
+                Some((container, indices, mut projection, barrier)) => {
                     if let Some(path) = &mut projection {
                         path.push(CheckedRangeProjection::Measure(*measure));
                     }
@@ -2368,19 +2576,13 @@ impl<'program> Walker<'program> {
                         projection,
                         expression.ty(),
                         carrier,
+                        barrier.as_ref(),
                     )
                 }
                 None => self.opaque_of(expression.ty()),
             },
             CheckedExpression::BorrowRangeIndex { place, .. } => {
-                match self.range_element(state, place) {
-                    Some((container, indices, projection)) => Value::Ref(View::Element {
-                        container,
-                        indices,
-                        projection,
-                    }),
-                    _ => Value::Ref(View::Unknown),
-                }
+                Value::Ref(self.range_element_view(state, place))
             }
             CheckedExpression::BorrowAddressed { root, .. } => {
                 if let PlaceRoot::Binding(binding) = root.root
@@ -2400,18 +2602,22 @@ impl<'program> Walker<'program> {
                 Value::Ref(self.view_of(state, root.root, &root.path))
             }
             CheckedExpression::BorrowSegment { root, segment, .. } => {
-                let target = match root {
+                let (target, barrier) = match root {
                     crate::semantic::CheckedSegmentSource::Storage(root) => {
-                        self.path_target(state, root.root, &root.path)
+                        let barrier = Self::root_barrier(state, root.root);
+                        (self.path_target(state, root.root, &root.path), barrier)
                     }
                     crate::semantic::CheckedSegmentSource::Element(place) => {
                         match self.range_element(state, place) {
-                            Some((container, indices, projection)) => Target::Element {
-                                container,
-                                indices,
-                                projection,
-                            },
-                            None => Target::Unknown,
+                            Some((container, indices, projection, barrier)) => (
+                                Target::Element {
+                                    container,
+                                    indices,
+                                    projection,
+                                },
+                                barrier,
+                            ),
+                            None => (Target::Unknown, None),
                         }
                     }
                 };
@@ -2434,8 +2640,10 @@ impl<'program> Walker<'program> {
                 );
                 self.ordinary_bound(state, &index.obligation, &row, length);
                 if page {
-                    // The page offset is not a logical element offset [MSR-1].
-                    return Value::Ref(View::Unknown);
+                    // OWN-7 deliberately supplies no page/logical-index
+                    // arithmetic. Retain the page's logical write footprint
+                    // without pretending that page-local reads have an index.
+                    return Value::Ref(self.unindexed_view(state, target, barrier));
                 }
                 match target {
                     Target::Location(location) => {
@@ -2451,29 +2659,70 @@ impl<'program> Walker<'program> {
                                     prefix: vec![row],
                                     offset: Linear::constant(0),
                                     length,
+                                    barrier: None,
+                                    projection: Vec::new(),
                                 })
                             }
                             None => Value::Ref(View::Unknown),
                         }
                     }
+                    Target::Element {
+                        container,
+                        mut indices,
+                        projection: Some(mut projection),
+                    } => {
+                        projection.push(CheckedRangeProjection::Index(indices.len() as u32));
+                        indices.push(row);
+                        let mut length_path = projection.clone();
+                        length_path.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
+                        let version = state.version(&mut self.world, container);
+                        let length = self.world.read(
+                            version,
+                            indices.clone(),
+                            length_path,
+                            Some(IntegerType::U64),
+                        );
+                        projection.push(CheckedRangeProjection::Index(indices.len() as u32));
+                        Value::Ref(View::Run {
+                            container,
+                            prefix: indices,
+                            offset: Linear::constant(0),
+                            length,
+                            barrier,
+                            projection,
+                        })
+                    }
                     _ => Value::Ref(View::Unknown),
                 }
             }
             CheckedExpression::RangeOf {
-                source, start, end, ..
+                source,
+                start,
+                end,
+                captured,
+                ..
             } => {
                 let base = match source {
                     CheckedRangeSource::Storage(root) => {
-                        match self.path_target(state, root.root, &root.path) {
-                            Target::Location(location) => self.run_of(state, location),
+                        let view = self.view_of(state, root.root, &root.path);
+                        self.range_view(state, view, root.ty)
+                    }
+                    CheckedRangeSource::Range(root) => {
+                        let value = match root.formation.as_deref() {
+                            Some(formation) => Some(self.eval(state, formation)),
+                            None => state.values.get(&root.binding).cloned(),
+                        };
+                        match value {
+                            Some(Value::Ref(
+                                view @ (View::Run { .. } | View::Unindexed { .. }),
+                            )) => view,
                             _ => View::Unknown,
                         }
                     }
-                    CheckedRangeSource::Range(root) => match state.values.get(&root.binding) {
-                        Some(Value::Ref(view @ View::Run { .. })) => view.clone(),
-                        _ => View::Unknown,
-                    },
-                    CheckedRangeSource::Element(_) => View::Unknown,
+                    CheckedRangeSource::Element(place) => {
+                        let view = self.range_element_view(state, place);
+                        self.range_view(state, view, place.ty)
+                    }
                 };
                 let start = self.int(state, start);
                 let end = self.int(state, end);
@@ -2482,16 +2731,39 @@ impl<'program> Walker<'program> {
                         container,
                         prefix,
                         offset,
+                        barrier,
+                        projection,
                         ..
-                    } => match (offset.plus(&start), end.minus(&start)) {
-                        (Some(offset), Some(length)) => Value::Ref(View::Run {
-                            container,
-                            prefix,
-                            offset,
-                            length,
-                        }),
+                    } => match (offset.plus(&start), offset.plus(&end), end.minus(&start)) {
+                        (Some(next_offset), Some(next_end), Some(length)) => {
+                            let frame = RangeFrame {
+                                captured: *captured,
+                                prefix: prefix.clone(),
+                                projection: projection.clone(),
+                                offset,
+                                start,
+                                end,
+                            };
+                            let mut barrier = barrier.unwrap_or(RangeBarrier {
+                                prefix: prefix.clone(),
+                                start: next_offset.clone(),
+                                end: next_end,
+                                projection: projection.clone(),
+                                frames: Vec::new(),
+                            });
+                            barrier.frames.push(frame);
+                            Value::Ref(View::Run {
+                                container,
+                                prefix,
+                                offset: next_offset,
+                                length,
+                                barrier: Some(barrier),
+                                projection,
+                            })
+                        }
                         _ => Value::Ref(View::Unknown),
                     },
+                    view @ View::Unindexed { .. } => Value::Ref(view),
                     _ => Value::Ref(View::Unknown),
                 }
             }
@@ -2508,7 +2780,16 @@ impl<'program> Walker<'program> {
                     container,
                     indices,
                     projection,
-                })) => self.read_projection(state, container, indices, projection, *ty, carrier),
+                    barrier,
+                })) => self.read_projection(
+                    state,
+                    container,
+                    indices,
+                    projection,
+                    *ty,
+                    carrier,
+                    barrier.as_ref(),
+                ),
                 _ => self.opaque_of(*ty),
             },
             CheckedExpression::Project {
@@ -2549,9 +2830,12 @@ impl<'program> Walker<'program> {
                 self.place_fields(state, &location, &values, None);
                 if let Some(clauses) = self.function.range_facts.constructions.get(carrier) {
                     for clause in clauses {
-                        let frame = self.frame(state, clause, &|_| {
-                            Some(Value::Ref(View::Place(location.clone())))
-                        });
+                        let frame = self.frame(
+                            state,
+                            clause,
+                            &|_| Some(Value::Ref(View::Place(location.clone()))),
+                            &|_| Vec::new(),
+                        );
                         self.require(state, clause, &frame, carrier, "a construction");
                     }
                 }
@@ -2599,64 +2883,6 @@ impl<'program> Walker<'program> {
                 let _ = self.path_target(state, PlaceRoot::Binding(*binding), path);
                 self.opaque_of(expression.ty())
             }
-        }
-    }
-
-    fn read_element(
-        &mut self,
-        state: &mut State,
-        container: ContainerId,
-        indices: Vec<Linear>,
-        ty: CheckedType,
-        carrier: &NodePath,
-    ) -> Value {
-        self.read_projection(state, container, indices, Some(Vec::new()), ty, carrier)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn read_projection(
-        &mut self,
-        state: &mut State,
-        container: ContainerId,
-        indices: Vec<Linear>,
-        projection: Option<Vec<CheckedRangeProjection>>,
-        ty: CheckedType,
-        carrier: &NodePath,
-    ) -> Value {
-        self.access(container, &indices, false, carrier, state);
-        match (ty, projection) {
-            (CheckedType::Integer(integer), Some(projection)) => {
-                let version = state.version(&mut self.world, container);
-                Value::Int(self.world.read(version, indices, projection, Some(integer)))
-            }
-            (CheckedType::Bool, Some(mut projection)) => {
-                let version = state.version(&mut self.world, container);
-                projection.push(CheckedRangeProjection::Tag(2));
-                let tag = self
-                    .world
-                    .read(version, indices, projection, Some(IntegerType::U64));
-                Value::Bool(Cond::Unknown, tag)
-            }
-            (other, Some(projection))
-                if !matches!(
-                    other,
-                    CheckedType::Bool | CheckedType::Unit | CheckedType::Float(_)
-                ) =>
-            {
-                let version = state.version(&mut self.world, container);
-                let location = Location::root(Origin::Constructed(self.world.new_origin()));
-                state.set_slot(
-                    &mut self.world,
-                    location.clone(),
-                    Slot::Read(ReadSource {
-                        version,
-                        indices,
-                        projection,
-                    }),
-                );
-                Value::Owned(location)
-            }
-            (other, _) => self.opaque_of(other),
         }
     }
 
@@ -2724,6 +2950,13 @@ impl<'program> Walker<'program> {
             outer.containers.extend(total.containers.iter().copied());
             outer.descriptors.extend(total.descriptors.iter().copied());
             outer.capacities.extend(total.capacities.iter().copied());
+            for (container, measures) in &total.measures {
+                outer
+                    .measures
+                    .entry(*container)
+                    .or_default()
+                    .extend(measures.iter().copied());
+            }
             for (container, paths) in &total.projections {
                 outer
                     .projections
@@ -2765,6 +2998,14 @@ impl<'program> Walker<'program> {
         for container in log.descriptors {
             if existed(&self.world.containers[container as usize].location) {
                 deciding |= total.descriptors.insert(container);
+            }
+        }
+        for (container, measures) in log.measures {
+            if existed(&self.world.containers[container as usize].location) {
+                let recorded = total.measures.entry(container).or_default();
+                for measure in measures {
+                    deciding |= recorded.insert(measure);
+                }
             }
         }
         for container in log.capacities {
@@ -2827,6 +3068,13 @@ impl<'program> Walker<'program> {
                 header.relocate_container(&mut self.world, *container);
             }
         }
+        for (container, measures) in &modified.measures {
+            if !modified.descriptors.contains(container) {
+                for measure in measures {
+                    header.havoc_measure(&mut self.world, *container, *measure);
+                }
+            }
+        }
         for (container, projections) in &modified.projections {
             if modified.containers.contains(container) {
                 continue;
@@ -2883,14 +3131,14 @@ impl<'program> Walker<'program> {
         let node = self.cite.clone();
         for clause in &invariants {
             let mut scratch = entry.clone();
-            let frame = self.frame(&mut scratch, clause, &|root| binding_value(&entry, root));
+            let frame = self.binding_frame(&mut scratch, clause, &entry);
             self.require(&entry, clause, &frame, &node, "a loop entry");
         }
         let mut header = self.header(&entry, &modified);
         self.assume_affine(&mut header, affine);
         for clause in &invariants {
             let mut scratch = header.clone();
-            let frame = self.frame(&mut scratch, clause, &|root| binding_value(&header, root));
+            let frame = self.binding_frame(&mut scratch, clause, &header);
             let fact = self.add_fact(clause.clone(), frame);
             header.facts.push(fact);
         }
@@ -2903,7 +3151,7 @@ impl<'program> Walker<'program> {
             self.ordinary_invariants(&mut end, affine);
             for clause in &invariants {
                 let mut scratch = end.clone();
-                let frame = self.frame(&mut scratch, clause, &|root| binding_value(&end, root));
+                let frame = self.binding_frame(&mut scratch, clause, &end);
                 self.require(&end, clause, &frame, &node, "a loop back edge");
             }
         }
@@ -2939,7 +3187,7 @@ impl<'program> Walker<'program> {
             let mut at_entry = entry.clone();
             at_entry.values.insert(binder, Value::Int(low.clone()));
             let mut scratch = at_entry.clone();
-            let frame = self.frame(&mut scratch, clause, &|root| binding_value(&at_entry, root));
+            let frame = self.binding_frame(&mut scratch, clause, &at_entry);
             self.require(&at_entry, clause, &frame, node, "a loop entry");
         }
         // [RANGE-5] the certificate, over the entry state.
@@ -2968,7 +3216,7 @@ impl<'program> Walker<'program> {
         let mut facts_added = Vec::new();
         for clause in &invariants {
             let mut scratch = header.clone();
-            let frame = self.frame(&mut scratch, clause, &|root| binding_value(&header, root));
+            let frame = self.binding_frame(&mut scratch, clause, &header);
             let fact = self.add_fact(clause.clone(), frame);
             facts_added.push(fact);
         }
@@ -2989,7 +3237,7 @@ impl<'program> Walker<'program> {
             self.ordinary_invariants(&mut end, affine);
             for clause in &invariants {
                 let mut scratch = end.clone();
-                let frame = self.frame(&mut scratch, clause, &|root| binding_value(&end, root));
+                let frame = self.binding_frame(&mut scratch, clause, &end);
                 self.require(&end, clause, &frame, node, "a loop back edge");
             }
         }
@@ -3299,7 +3547,7 @@ impl<'program> Walker<'program> {
         };
         let _ = frame;
         let mut scratch = entry.clone();
-        let own = self.frame(&mut scratch, &clause, &|root| binding_value(entry, root));
+        let own = self.binding_frame(&mut scratch, &clause, entry);
         let formed = facts::form(&mut self.world, &clause, &own, &[], iterations)?;
         formed
             .conclusions
@@ -3316,10 +3564,13 @@ impl<'program> Walker<'program> {
     ) -> Result<Linear, GoalFailure> {
         match &expression.kind {
             CheckedAffineExpressionKind::Constant { value, .. } => Ok(Linear::constant(*value)),
-            CheckedAffineExpressionKind::Local { binding, .. } => match state.values.get(binding) {
-                Some(Value::Int(value)) => Ok(value.clone()),
-                _ => Err(GoalFailure::Unrepresentable),
-            },
+            CheckedAffineExpressionKind::Local { binding, .. } => {
+                self.read_binding_provenance(state, *binding);
+                match state.values.get(binding) {
+                    Some(Value::Int(value)) => Ok(value.clone()),
+                    _ => Err(GoalFailure::Unrepresentable),
+                }
+            }
             CheckedAffineExpressionKind::Add(left, right) => {
                 let left = self.affine(state, left);
                 let right = self.affine(state, right);
@@ -3522,22 +3773,32 @@ impl<'program> Walker<'program> {
                                     *ty,
                                 )
                                 .ok_or(GoalFailure::Unrepresentable)?;
+                            let barrier = match &value {
+                                Value::Ref(
+                                    View::Run { barrier, .. } | View::Element { barrier, .. },
+                                ) => barrier.clone(),
+                                _ => None,
+                            };
                             let target = match value {
                                 Value::Ref(View::Run {
                                     container,
                                     prefix,
                                     offset,
                                     length,
+                                    projection,
+                                    ..
                                 }) => Target::Run {
                                     container,
                                     prefix,
                                     offset,
                                     length,
+                                    projection,
                                 },
                                 Value::Ref(View::Element {
                                     container,
                                     indices,
                                     projection,
+                                    ..
                                 }) => Target::Element {
                                     container,
                                     indices,
@@ -3548,9 +3809,11 @@ impl<'program> Walker<'program> {
                                 }
                                 _ => return Err(GoalFailure::Unrepresentable),
                             };
-                            walker
+                            let value = walker
                                 .target_measure(state, &target, *ty, *measure)
-                                .ok_or(GoalFailure::Unrepresentable)
+                                .ok_or(GoalFailure::Unrepresentable)?;
+                            walker.record_read_provenance(&value, barrier.as_ref());
+                            Ok(value)
                         }
                         (
                             GoalOperation::ArrayIndex { .. }
@@ -3580,6 +3843,7 @@ impl<'program> Walker<'program> {
                                 container,
                                 indices,
                                 projection: Some(projection),
+                                barrier,
                             }) = walker
                                 .goal_subscript(state, value, *ty, index)
                                 .ok_or(GoalFailure::Unrepresentable)?
@@ -3587,12 +3851,14 @@ impl<'program> Walker<'program> {
                                 return Err(GoalFailure::Unrepresentable);
                             };
                             let version = state.version(&mut walker.world, container);
-                            Ok(walker.world.read(
+                            let value = walker.world.read(
                                 version,
                                 indices,
                                 projection,
                                 integer_type(expression.ty()),
-                            ))
+                            );
+                            walker.record_read_provenance(&value, barrier.as_ref());
+                            Ok(value)
                         }
                         _ => Err(GoalFailure::Unrepresentable),
                     }
@@ -3633,6 +3899,7 @@ enum Target {
         prefix: Vec<Linear>,
         offset: Linear,
         length: Linear,
+        projection: Vec<CheckedRangeProjection>,
     },
     /// The outermost element and the owned selection below it.
     Element {
