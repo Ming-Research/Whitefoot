@@ -2,7 +2,7 @@
 
 use super::{compile, compile_link_and_run};
 
-const ALIAS: &str = "alias MemoryMeter = std::process::MemoryMeter;\n\n";
+const ALIAS: &str = "alias MemoryMeter = std::process::MemoryMeter;\n";
 
 const PREFIX: &str = r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
@@ -23,7 +23,10 @@ const SUFFIX: &str = r#"  let after = std::process::heap_in_use(meter: &meter);
 /// Observe the production allocator's returned pointers, including after
 /// growth, rather than infer alignment from a successful unaligned host load.
 fn run(body: &str, declarations: &str, minimum_allocations: usize, minimum_retakes: usize) {
-    let source = format!("{ALIAS}{declarations}{PREFIX}{body}{SUFFIX}");
+    // The canonical form keeps aliases contiguous, then one blank line before
+    // the first function; `declarations` begin with their own aliases.
+    let separator = if declarations.is_empty() { "\n" } else { "" };
+    let source = format!("{ALIAS}{separator}{declarations}{PREFIX}{body}{SUFFIX}");
     let llvm = compile(source.as_bytes());
     let observed = llvm
         .replace("@wf__heap_take_aligned(", "@wf_observe_aligned_take(")
