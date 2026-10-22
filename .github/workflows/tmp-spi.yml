@@ -1,7 +1,7 @@
 # Temporary quick checks for spec-proof-interpreter; removed before the full
 # check. Each `broken-*` job breaks one thing `lake exe conformance` protects
 # and requires the check to fail with the matching report; `prose` runs the
-# repository checks the branch's prose touches.
+# repository checks the branch's prose touches and the design tree's lint.
 name: tmp-spi
 
 on:
@@ -87,6 +87,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: true
       - name: Name main as a local ref
         run: git branch -f main origin/main
       - name: Checks
@@ -95,3 +96,4 @@ jobs:
           perl .github/run-check.pl spec-prose-integrity make --no-print-directory spec-prose-integrity
           perl .github/run-check.pl guidance make --no-print-directory guidance
           perl .github/run-check.pl repository-invariants make --no-print-directory repository-invariants
+          perl .github/run-check.pl design-lint make --no-print-directory design-lint

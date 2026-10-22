@@ -374,13 +374,16 @@ Four choices shape the tree and the machine for the proofs that follow.
 |---|---|---|---|
 | Tree | one plain inductive per syntactic class, statements nested as `List Stmt`, names as strings, no positions | a tree carrying source spans; a control-flow graph; de Bruijn indices | the theorems reason by structural induction over statements, as the rules state them; [TYPE-6] forbids shadowing, so a name denotes one binding in scope and indices would add renaming lemmas without removing a case; positions serve diagnostics, which no theorem mentions |
 | Semantics | a small-step machine: call frames, each a continuation of statement lists, block scopes and loop markers | a big-step evaluator with fuel; a step relation with no executable function | `facts_hold` quantifies over reachable points, which is the reflexive-transitive closure of `step`; a big-step evaluator would need a second, separate reachability relation; an executable `step` is what the conformance cases run |
-| Outcomes | `done`, `stuck` in the five meaningless states, `illFormed`, `outOfSteps` | folding type and name failures into `stuck` | a type mismatch or an unresolved name is excluded by typing and resolution, judgments the checker decides without facts; keeping it apart lets `accepted_never_stuck` say exactly that no proof obligation is left undischarged |
+| Outcomes | `done`, `stuck` in the five meaningless states, `illFormed`, `outOfSteps` | folding type and name failures into `stuck` | a type mismatch or an unresolved name is excluded by typing and resolution, judgments the checker decides without facts; keeping it apart lets `accepted_never_stuck` say exactly that no proof obligation is left undischarged; the fragment reaches no binding without a value, since every `let` has its value and `move` is outside it, so that state waits for a later fragment |
 | Contracts | read over the mathematical integers [FN-8] at the call and at the return | erased, as the specification erases them | a false requirement or postcondition is a state the rules give no meaning; the machine must reach it as `stuck` for the theorem to exclude it |
 
 The interpreter takes one step per statement and one per administrative move
 (leaving a block, repeating a loop body, returning); an expression is flat
-[GRAM-9], so evaluating it is part of its statement's step. A run case is given
-ten million steps.
+[GRAM-9], so evaluating it is part of its statement's step. A call of a
+function of the program stands where [GRAM-5] puts an `expr`: a `let` or `set`
+right-hand side, an expression statement, a `return` operand or an `if`
+condition; it pushes a frame whose result goes back to that position. A run
+case is given ten million steps.
 
 The parser covers the grammar rules it implements, so a change to a production
 the fragment uses changes the model in the same work: [GRAM-1] to [GRAM-6],
@@ -417,9 +420,17 @@ as [OP-1] for a retired operation name the parser first rejects as positional
 arguments of a call [GRAM-11]. Comparing rejections by rule is the checker
 slice's work, and only for cases whose rule is covered.
 
+The boundary is pinned: `proof/fragment-cases.txt` lists the 203 cases the
+parser reads to a program or to a rejection, and the check fails when a listed
+case falls outside or an unlisted one comes in. Without it a parser defect
+that put 112 cases outside the fragment passed a green run. The harness also
+runs two programs no run case exercises: a call of a function of the program
+in an `if` condition, and a read of a name no binding declares, which is
+`illFormed`.
+
 The slice's model is 186 lines of syntax tree, 208 of lexer, 812 of parser and
-513 of interpreter, with 98 lines of conformance harness and 29 added to the
-integer semantics: 1,846 lines, 1,353 of them neither blank nor comment. It
+528 of interpreter, with 147 lines of conformance harness and 29 added to the
+integer semantics: 1,910 lines, 1,298 of them neither blank nor comment. It
 took three engineer turns and four `proof.yml` runs to a comparison with no
 known defect: two failed to compile, and one green run showed a parser defect,
 the closing `>` of `Array<u64, 4>` read as a comparison, which put 112 cases

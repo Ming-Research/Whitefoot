@@ -69,7 +69,8 @@ def main (args : List String) : IO UInt32 := do
   let verbose := args.contains "--verbose"
   let manifest ← IO.FS.readFile "../tests/conformance/manifest.jsonl"
   let listed := (← IO.FS.readFile "fragment-cases.txt").splitOn "\n"
-    |>.map String.trim |>.filter fun l => !l.isEmpty && !l.startsWith "#"
+    |>.map (fun l => Lexer.ofChars (l.toList.filter (!·.isWhitespace)))
+    |>.filter fun l => !l.isEmpty && !l.startsWith "#"
   let mut seen : List String := []
   let mut ids : List String := []
   let mut counts : List (String × Counts) := [("accept", {}), ("run", {}), ("reject", {})]
