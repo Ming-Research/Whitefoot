@@ -34,11 +34,28 @@ one of its facts is derivable. -/
 def refutedAlt (s : L0) (alt : List Bound × List Diseq) : Bool :=
   alt.1.any (fun b => s.bound b.b b.a (-b.c - 1)) || alt.2.any (fun d => s.eq d.a d.b d.c)
 
+-- spec ENT-4 6aa92afa17b84194
+-- spec ENT-4 0dfae6acbee66db5
+-- spec ENT-4 80ca3ec3ee789a59
+-- spec ENT-4 60ccf77d200c3d96
+-- spec ENT-4 621cc554dfc7ac5c
+-- spec ENT-4 94ce336fd1861236
+-- spec ENT-4 0ac135032a310cf9
+-- spec ENT-4 de2c478666562e29
+-- spec ENT-4 f87deb5c1c735e66
+-- spec ENT-6 bd2cd10961e1501e
+-- spec ENT-6 833026065ac46409
+-- spec ENT-6 9edf1f00452ed09a
+-- spec ENT-6 b1c67f928185c2d6
+-- spec ENT-6 5e52be4760172d16
+-- spec ENT-6 d1018e7aa7f6041f
+-- spec ENT-6 764d2c6b07f9005e
 /-- The Signed Goal query [ENT-4, ENT-6]: whether a goal of sign `s` is
 derivable, by contradiction, an established fact in the origin-transport
 view, a literal's implicit proof, the Boolean introduction table over its
-children, a live definition, a comparison's L0 projection or its affine
-normalization, or an operation-domain predicate's normalization. -/
+children, a live definition, a comparison's L0 projection or, for an
+ordering, its affine normalization, or an operation-domain predicate's
+normalization. -/
 def signed (env : Env) (g : Gen) (st : State) : Nat → Bool → GExpr → Bool
   | 0, _, _ => false
   | fuel + 1, s, e =>
@@ -63,11 +80,10 @@ def signed (env : Env) (g : Gen) (st : State) : Nat → Bool → GExpr → Bool
       (match projection env e with
         | some (_, x, y) => derivable st.l0 (relFacts op' x y)
         | none => false) ||
-      (match va.image, vb.image with
-        | some fa, some fb =>
-          let ts := ineqs op' fa fb
-          !ts.isEmpty && ts.all (auto (view env g st))
-        | _, _ => false)
+      (match va.image, vb.image, op' with
+        | _, _, .eq | _, _, .ne => false
+        | some fa, some fb, _ => (ineqs op' fa fb).all (auto (view env g st))
+        | _, _, _ => false)
     | .infix (.arith o .defined) a b => domain (.arith o .exact) a b s
     | .infix (.divide o .defined) a b => domain (.divide o .exact) a b s
     | _ => false
@@ -89,6 +105,17 @@ def GExpr.size : GExpr → Nat
   | .op1 _ a => a.size + 1
   | _ => 1
 
+-- spec OP-2 072c584ded9ba987
+-- spec ENT-3 bb2754f5f1675e6e
+-- spec ENT-3 a7cd776116ebf982
+-- spec ENT-3 f83d840f83f9d6e3
+-- spec ENT-3 b42c8a44d89b1f8c
+-- spec ENT-3 2084f3e69dce62fb
+-- spec ENT-3 327189f55b5c250e
+-- spec ENT-3 2b0404366028f3e5
+-- spec ENT-3 cebaa68057b35aef
+-- spec ENT-3 bd21e45a863688b8
+-- spec ENT-3 54e7ade7ff07a77c
 /-- A condition's goal-origin set and comparison origin [ENT-3]: a comparison
 of terms or constants has both; an operation-domain predicate, a Boolean row
 or a literal has a goal origin; a bare `Bool` binding has its live
@@ -113,6 +140,9 @@ def origins (env : Env) (st : State) (c : Expr) (gexpr : Option GExpr) : Origins
     | none => {})
   | _, _ => {}
 
+-- spec OP-2 b749e9bd9126a614
+-- spec ENT-3.S1 010319bcc7e32f4f
+-- spec ENT-3.S1 471a1362d45db883
 /-- Establish a condition's then-entry or else-entry facts [ENT-3.S1]. -/
 def branchState (env : Env) (st : State) (o : Origins) (s : Bool) : State :=
   let st := o.goals.foldl (fun st g => establishGoal env st s g (g.size + 1)) st
@@ -122,6 +152,10 @@ def branchState (env : Env) (st : State) (o : Origins) (s : Bool) : State :=
     st.add env bs ds
   | none => st
 
+-- spec ENT-3 a03af111b84dab86
+-- spec ENT-3.S5 72b4d00bbf489a99
+-- spec ENT-3.S7 7d57baede0c7cae7
+-- spec ENT-6 55c0b60bde3ccdce
 /-- Bind a `let`'s value [ENT-3.S5, ENT-3.S7, ENT-6]: the copy or literal
 equality, the operation row's facts, the image, the captured division, a
 matched product's bound and the origin link. -/
@@ -165,6 +199,15 @@ where
     | some fa => { st with premises := st.premises ++ [Ineq.le img fa] }
     | none => st
 
+-- spec FN-9 dc8c78b15eb05053
+-- spec FN-9 c41a9690f56f2e8f
+-- spec ENT-2 0f07cfa9989a6ee8
+-- spec ENT-3.S5 96db5232821f2958
+-- spec ENT-3.S5 031da783167c8ba8
+-- spec ENT-3.S5 34b6becc68fcb93b
+-- spec ENT-3.S5 f55912d947d2e812
+-- spec ENT-3.S7 c886ce025709bb26
+-- spec ENT-6 aaae558a8a1cf6f6
 /-- A whole-binding `set` [SET-1, ENT-3.S5, ENT-5, ENT-6]: a fragment-typed
 right-hand side is evaluated to a commit value that receives the same image
 a `let` would, the target's facts die, and the target equals the commit value
@@ -191,6 +234,14 @@ def setVar (env : Env) (st : State) (x : Var) (r : Rhs) : M State := do
   | _, some (f, args) => publish env st f args none none (·.write x.id)
   | _, none => return st.write x.id
 
+-- spec FN-1 e9ced632e8466aa3
+-- spec FN-9 474d75677adbf145
+-- spec FN-9 d0581c5c92c83713
+-- spec FN-9 3b3f5941cd3f3ac1
+-- spec FN-9 72dc65383b2bc3ea
+-- spec FN-9 51a8f7fdc09ba5c6
+-- spec ENT-2 261757f83e159d4f
+-- spec ENT-2 e7b64879f58fcb34
 /-- A return proves each postcondition [FN-9]: the result is the returned
 value and each parameter its entry value, which needs its entry image to be
 stable. -/
@@ -214,25 +265,96 @@ def checkReturn (env : Env) (st : State) (ret : Val) : M Unit := do
 def Out.seq (o o' : Out) : Out :=
   { normal := o'.normal, breaks := o.breaks ++ o'.breaks, conts := o.conts ++ o'.conts }
 
-/-- The continuation state of the edges reaching one point: one edge passes
-its state on; two or more are joined [ENT-5]. -/
+/-- The state at a cut point that the edges of its canonical frontier reach:
+one edge passes its state on; two or more are joined [ENT-5]. -/
 def merge (env : Env) : List State → M (Option State)
   | [] => return none
   | [s] => return some s
   | ss => some <$> joinStates env ss
 
 mutual
-/-- Walk a statement list from its entering state. -/
+-- spec ENT-2 e1dbb8e4dc9adc24
+-- spec ENT-5 a8904d6cd3a8ddaa
+-- spec ENT-5 0213f0e9357bf884
+-- spec ENT-5 b149846a589e272e
+-- spec ENT-5 64537e36dca5782f
+-- spec ENT-5 16db13ea9e279f91
+-- spec ENT-5 1533734f99b5fdd1
+-- spec ENT-5 43c2b72cd3c9443e
+-- spec ENT-5 c8724b281fd43439
+-- spec ENT-5 81d1f6aefe007fd1
+-- spec ENT-5 5149b193b27e6bc9
+-- spec ENT-5 f4545a01b74455a1
+-- spec ENT-6 dbea7ca9eab89029
+/-- Walk a statement list from its entering state. The normal edges leaving a
+statement reach the next statement's entry, a cut point where they are joined;
+at the end of the list they pass on unjoined, so a merge-only continuation is
+replaced by its incoming edges [ENT-5]. -/
 def walkList (env : Env) (st : State) (ss : List Stmt) : M Out :=
   match ss with
-  | [] => return { normal := some st }
+  | [] => return { normal := [st] }
   | s :: rest => do
     let (env', o) ← walkStmt env st s
-    match o.normal with
-    | none => return o
-    | some st' => return o.seq (← walkList env' st' rest)
+    match rest with
+    | [] => return o
+    | _ :: _ =>
+      match ← merge env' o.normal with
+      | none => return o
+      | some st' => return o.seq (← walkList env' st' rest)
 termination_by structural ss
 
+-- spec OP-5 a181a70ccdbfe485
+-- spec OP-5 7931a4ac9fcc2e9d
+-- spec OP-5 2244a8ebe6e35c43
+-- spec OP-5 0c0467fe3e3df709
+-- spec OP-5 015a94cd24a9fbb2
+-- spec OP-5 04a032d76aa808a8
+-- spec OP-5 90bffb29a4559d1e
+-- spec OP-5 be93b45a14a33e13
+-- spec OP-5 676962aa88f7046c
+-- spec FN-9 2b19704cf9266e0b
+-- spec INV-1 8f2505939b5b65c6
+-- spec INV-1 2e7be49246ee77bc
+-- spec INV-1 239600b554c973c6
+-- spec INV-1 5c88e6741a3a75e0
+-- spec INV-1 112243f049e8edca
+-- spec INV-1 e1fbc7739e56b48b
+-- spec INV-1 5e2bed457d30db00
+-- spec INV-1 ca59951146ed5c65
+-- spec INV-1 ffc9dede894a2384
+-- spec INV-1 91dec2dea8743224
+-- spec INV-1 75cdc1ebaebea14c
+-- spec INV-1 c9e44b61a78909ab
+-- spec INV-1 8f87af25aae3dcd7
+-- spec INV-1 6e71e6ec893922ee
+-- spec INV-1 f7ecc12e31eff171
+-- spec INV-1 c0986f4943a5aba6
+-- spec INV-1 1324494307fcd353
+-- spec INV-1 53242470c05acf5a
+-- spec INV-1 5c08bf4b34bbc827
+-- spec INV-1 363b474ebfd3b00f
+-- spec INV-1 6904e63e58391d5e
+-- spec INV-1 c0e04663ae4184d6
+-- spec INV-1 88bc417515d7176f
+-- spec INV-1 cff164cd3ac022fc
+-- spec ENT-3 51beaca4e6f7738a
+-- spec ENT-3 599970b0de9dee7a
+-- spec ENT-5 3de9430bb0118835
+-- spec ENT-5 cfc1c375dfcd207f
+-- spec ENT-5 875741ec34db74d3
+-- spec ENT-5 4ed063b01d91ac45
+-- spec ENT-5 a6d59142f82a5e7a
+-- spec ENT-5 e94c93727748d972
+-- spec ENT-5 905ad2747e7e27aa
+-- spec ENT-5 6d262e4f998ae284
+-- spec ENT-5 60ca7bf827088fd7
+-- spec ENT-5 796454dd702c5619
+-- spec ENT-5 d423c42032982b2e
+-- spec ENT-5 c18974d7503b2750
+-- spec ENT-5 1ae84c8576a083b0
+-- spec ENT-5 80c570880c3c70a2
+-- spec ENT-5 012b5b11b1b67a36
+-- spec ENT-6 bb27ebd455ffc998
 /-- Walk one statement: returns the environment after it and its flow. -/
 def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
   match s with
@@ -241,13 +363,13 @@ def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
     let id ← freshId
     let v : Var := { name := x, id, ty := r.val.ty }
     let st ← bindLet env st v r
-    return ({ env with vars := v :: env.vars }, { normal := some st })
+    return ({ env with vars := v :: env.vars }, { normal := [st] })
   | .set t e => do
     match t with
     | .var x => do
       let some v := env.var? x | fail "TYPE-6" s!"the name `{x}` is not in scope"
       let r ← evalRhs env st e
-      return (env, { normal := some (← setVar env st v r) })
+      return (env, { normal := [← setVar env st v r] })
     | .index b off => do
       let some v := env.var? b | fail "TYPE-6" s!"the name `{b}` is not in scope"
       let _ ← evalAtom env st (.index b off)
@@ -255,13 +377,13 @@ def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
       let st ← match r.call with
         | some (f, args) => publish env st f args none none (·.write v.id)
         | none => pure (st.write v.id)
-      return (env, { normal := some st })
+      return (env, { normal := [st] })
   | .call e => do
     let r ← evalRhs env st e
     let st ← match r.call with
       | some (f, args) => publish env st f args none none id
       | none => pure st
-    return (env, { normal := some st })
+    return (env, { normal := [st] })
   | .ret e => do
     let r ← evalRhs env st e
     let st ← match r.call with
@@ -284,8 +406,7 @@ def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
       if holds false then fail "OP-5" "the condition is always false"
     let ot ← walkList env (branchState env st o true) thn
     let oe ← walkList env (branchState env st o false) els
-    let exits := (ot.normal.toList ++ oe.normal.toList).map (·.exit env.vars)
-    let normal ← merge env exits
+    let normal := (ot.normal ++ oe.normal).map (·.exit env.vars)
     return (env, { normal, breaks := ot.breaks ++ oe.breaks, conts := ot.conts ++ oe.conts })
   | .loop label invs body => do
     let gen ← get
@@ -302,14 +423,14 @@ def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
     head := invs.foldl (fun s (_, r) => establishRel env s r) head
     let lc : LoopCtx := { id, label, headers := invs.map (·.2), outside := env.vars }
     let o ← walkList { env with loops := lc :: env.loops } head body
-    let inputs := (o.normal.toList ++ (o.conts.filter (·.1 == id)).map (·.2)).map (·.exit env.vars)
+    let inputs := (o.normal ++ (o.conts.filter (·.1 == id)).map (·.2)).map (·.exit env.vars)
     let gen ← get
     for s in inputs do
       if !s.contra then
         for (n, r) in invs do
           if !relHolds env gen s r then fail "INV-1" s!"the invariant `{n}` is not preserved"
     let exits := (o.breaks.filter (·.1 == id)).map (·.2.exit env.vars)
-    let normal ← merge env exits
+    let normal := (← merge env exits).toList
     return (env, { normal, breaks := o.breaks.filter (·.1 != id), conts := o.conts.filter (·.1 != id) })
   | .brk label => do
     let some l := target env.loops label | fail "TYPE-6" "a break outside its loop"
@@ -320,7 +441,7 @@ def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
   | .invariant n r => do
     let gen ← get
     if !relHolds env gen st r then fail "INV-1" s!"the invariant `{n}` is not proved"
-    return (env, { normal := some (establishRel env st r) })
+    return (env, { normal := [establishRel env st r] })
 termination_by structural s
 end
 
@@ -331,6 +452,13 @@ def strictSide : Option Lin → Bool
   | some (0, [(_, 1)]) => true
   | _ => false
 
+-- spec FN-8 15c207cb24ae7045
+-- spec FN-8 2569a9dddaf72dba
+-- spec ENT-3.S4 5c0ff9900b220551
+-- spec ENT-3.S4 ad2672a8a82e59f9
+-- spec ENT-3.S4 0a9b8a6032b2c48a
+-- spec ENT-3.S4 7d0b38d368aaacb3
+-- spec ENT-3.S4 b1ca56491321758f
 /-- Establish a requirement at body entry [ENT-3.S4, FN-8]: its goal; its
 comparison when each side is one name or literal; otherwise, for an ordering,
 its normalized affine inequality over the entry images. -/
@@ -349,10 +477,16 @@ def establishRequire (env : Env) (st : State) (r : Relation) : State :=
       else { st with premises := st.premises ++ ineqs r.op fa fb }
     | _, _ => st
 
+-- spec FN-9 950a5f281ac705d5
+-- spec FN-9 06637cddd1138eb4
+-- spec FN-9 13f9ec57ad442ca0
+-- spec FN-9 f224d0caa9568643
 /-- A postcondition's admitted shape [FN-9]: each side is a constant
 displacement of zero or one datum with coefficient one, and at most one side
 also carries one more parameter with coefficient one. -/
-def ensuresShape (r : Relation) : Judge Unit := do
+def ensuresShape (f : FnDecl) (r : Relation) : Judge Unit := do
+  if !(Affine.names r.lhs ++ Affine.names r.rhs).contains f.result then
+    rejectBy "FN-9" "a postcondition that names no result"
   let side (a : Affine) : Judge Nat :=
     match lin a with
     | some l => (match l.clean.2 with
@@ -365,6 +499,12 @@ def ensuresShape (r : Relation) : Judge Unit := do
   let b ← side r.rhs
   if a == 2 && b == 2 then rejectBy "FN-9" "both sides of a postcondition carry an additional parameter"
 
+-- spec CALL-6 998f79c1ceb05a80
+-- spec CALL-6 e6d89936daa3de1e
+-- spec CALL-6 237835453fecc464
+-- spec CALL-6 b64954de34a4f84c
+-- spec CALL-6 d7cc58d215f42b2c
+-- spec CALL-6 9a0b8784a5b721bd
 /-- The consistency of a function's published relations [CALL-6]: the
 postconditions over their symbolic datums, each one term, must not be
 contradictory under ENT-4. -/
@@ -382,10 +522,37 @@ def consistent (p : Program) (f : FnDecl) : Judge Unit := do
   let s := close [] (facts.flatMap (·.1)) (facts.flatMap (·.2.1))
   if s.contra then rejectBy "CALL-6" s!"the postconditions of `{f.name}` are contradictory"
 
+mutual
+/-- Whether a statement list holds a `return`: a postcondition's selected
+returns [FN-9]. -/
+def returns (ss : List Stmt) : Bool :=
+  match ss with
+  | [] => false
+  | s :: rest => returnsStmt s || returns rest
+termination_by structural ss
+
+def returnsStmt (s : Stmt) : Bool :=
+  match s with
+  | .ret _ => true
+  | .if_ _ thn els _ => returns thn || returns els
+  | .loop _ _ body => returns body
+  | _ => false
+termination_by structural s
+end
+
+-- spec FN-8 bb2990933c08779c
+-- spec FN-8 1430be0afedd31ac
+-- spec FN-8 a79bf222767a72f3
+-- spec FN-9 b0a9b84c308b546c
+-- spec FN-9 dce09a5a2521286a
+-- spec FN-9 c0af4afad7d89490
+-- spec ENT-2 14d61dc0f4018056
+-- spec ENT-5 47886ab359e36575
+-- spec ENT-6 53fe88cf10b86926
 /-- A function's fact judgments: its postconditions' shapes and consistency,
 then the walk of its body from the entry state of its requirements. -/
 def checkFn (p : Program) (f : FnDecl) : M Unit := do
-  for r in f.ensures do StateT.lift (ensuresShape r)
+  for r in f.ensures do StateT.lift (ensuresShape f r)
   StateT.lift (consistent p f)
   let mut vars : List Var := []
   let mut st : State := {}
@@ -399,6 +566,8 @@ def checkFn (p : Program) (f : FnDecl) : M Unit := do
   st := { st with stable := vars.map (·.id), l0 := close env.live [] [] }
   for r in f.requires do
     st := establishRequire env st r
+  if !f.ensures.isEmpty && !returns f.body && !st.contra then
+    fail "FN-9" s!"`{f.name}` has postconditions and no return to prove them at"
   discard <| walkList env st f.body
 
 end Checker

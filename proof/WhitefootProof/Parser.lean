@@ -592,7 +592,11 @@ partial def stmt : P Stmt := do
     expect (punct ";") "GRAM-4"
     return .call e
 
-/-- An `if_stmt` [GRAM-4]. -/
+-- spec GRAM-6 6b14457670d26135
+-- spec GRAM-6 f6e328e72aa170ee
+/-- An `if_stmt` [GRAM-4]. An `else` block that is empty, or that holds one
+`if_stmt` and nothing else, is rejected: the first has no `else`, the second
+is written `else if` [GRAM-6]. -/
 partial def ifStmt : P Stmt := do
   expect (kw "if") "GRAM-4"
   let c ← expr
@@ -600,7 +604,12 @@ partial def ifStmt : P Stmt := do
   if (← isTok (kw "else")) then do
     advance
     if (← isTok (kw "if")) then return .if_ c thn [← ifStmt] true
-    else return .if_ c thn (← block) true
+    else
+      let els ← block
+      match els with
+      | [] => reject "GRAM-6" "an empty `else` block"
+      | [.if_ _ _ _ _] => reject "GRAM-6" "an `else` block holding only an `if` is written `else if`"
+      | _ => return .if_ c thn els true
   else return .if_ c thn [] false
 
 /-- `"{" stmt* "}"` [GRAM-4]. -/

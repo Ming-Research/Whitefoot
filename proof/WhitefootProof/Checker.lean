@@ -38,6 +38,13 @@ namespace Checker
 
 open Fact Aff
 
+-- spec ENT-2 681558d7f9d994a7
+-- spec ENT-2 560b3d7b162e374d
+-- spec ENT-2 15b420b12c98352c
+-- spec ENT-2 371899d903ded3cd
+-- spec ENT-2 d8df6bd91906a100
+-- spec ENT-2 c86db4d7a994f251
+-- spec ENT-4 458aa238577dec23
 /-- A Goal expression [ENT-2]: a typed tree over binding datums and literals.
 A contract clause's `+`, `-` and `*` are the mathematical operations
 `aff` [FN-8, MSR-5]. -/
@@ -56,6 +63,10 @@ inductive GExpr where
 
 namespace GExpr
 
+-- spec ENT-5 bf3f1adbf3105706
+-- spec ENT-5 efdb4cad1cefdb4e
+-- spec ENT-5 22498d0b113835a1
+-- spec ENT-5 98c7ee81e032588d
 /-- Whether the expression reads binding `x`: its support [ENT-5]. -/
 def reads (x : Nat) : GExpr → Bool
   | .var id => id == x
@@ -85,6 +96,8 @@ structure Division where
   divisor : Form
   deriving Repr
 
+-- spec ENT-2 e83001c6850a4dc8
+-- spec ENT-6 a9a312a40fa3d1f0
 /-- The fact state at one point. -/
 structure State where
   l0 : L0 := {}
@@ -170,6 +183,7 @@ end Env
 
 namespace State
 
+-- spec ENT-4 d50cbc221b08758e
 /-- Contradictory: L0 derives `t - t <= -1`, or both signs of one goal are
 established [ENT-4]. -/
 def contra (st : State) : Bool :=
@@ -183,6 +197,24 @@ def image? (st : State) (id : Nat) : Option Form := (st.images.find? (·.1 == id
 def setImage (st : State) (id : Nat) (f : Form) : State :=
   { st with images := (id, f) :: st.images.filter (·.1 != id) }
 
+-- spec FN-9 7a27544fad9dca4c
+-- spec ENT-2 611c1cdf7f5e9ff9
+-- spec ENT-2 de27ad51bd861e60
+-- spec ENT-3 79657b144a471c5a
+-- spec ENT-3 3cb67ba881406c15
+-- spec ENT-3 45e287e9c24a44fb
+-- spec ENT-5 810be1814eded15c
+-- spec ENT-5 0c12964c9ded9890
+-- spec ENT-5 44cec998a31ad4dd
+-- spec ENT-5 1ef68a9ec73fc429
+-- spec ENT-5 7697df2daff5c97f
+-- spec ENT-5 0ea065051e96de52
+-- spec ENT-5 a189bf1ce0931a4d
+-- spec ENT-5 91a5f1ea77c66f9f
+-- spec ENT-5 0b764b6d358c6cd4
+-- spec ENT-5 435e0b9120d713b1
+-- spec ENT-5 56709d4dd8dd2c07
+-- spec ENT-5 e770d37510f0529b
 /-- A write of binding `x` [ENT-5]: every fact, goal and origin link whose
 support holds x dies, and a parameter's entry image stops being stable. -/
 def write (st : State) (x : Nat) : State :=
@@ -191,6 +223,9 @@ def write (st : State) (x : Nat) : State :=
             links := st.links.filter (fun (b, e) => b != x && !e.reads x),
             stable := st.stable.filter (· != x) }
 
+-- spec ENT-5 b0f31702d9ec93f5
+-- spec ENT-5 fe46a61da7dcc74b
+-- spec ENT-6 477eaeff76413854
 /-- Leave the scope of every binding outside `keep` [ENT-5]: their facts,
 goals, links and images go. -/
 def exit (st : State) (keep : List Var) : State :=
@@ -208,12 +243,18 @@ where
     | .op1 _ a => dead_any a dead
     | _ => false
 
+-- spec ENT-3 bc556d1670c2caa8
+-- spec ENT-3 3a202e5079de2e90
 /-- An origin expansion [ENT-3]: every datum with a live link replaced by its
 right-hand side, to a fixed point. -/
 def expand (st : State) (g : GExpr) : GExpr :=
   (List.range (st.links.length + 1)).foldl (fun g _ =>
     g.subst fun id => (st.links.find? (·.1 == id)).map (·.2)) g
 
+-- spec FN-8 610f60b915826085
+-- spec FN-8 77c6244ac0a2cbfc
+-- spec ENT-2 8ef94b0cd9a6e4b3
+-- spec ENT-2 061f0a498c47d9e0
 /-- Whether a signed goal is present in the origin-transport view [ENT-4.OT]:
 an established goal of that sign whose complete expansion is the goal's own. -/
 def present (st : State) (s : Bool) (g : GExpr) : Bool :=
@@ -222,6 +263,8 @@ def present (st : State) (s : Bool) (g : GExpr) : Bool :=
 
 end State
 
+-- spec ENT-2 63b81ac39c74d403
+-- spec ENT-2 cccb6f0d7050a5db
 /-- A relation between two term operands, each a term plus a constant
 offset: `(a + ka) op (b + kb)`, as L0 facts [ENT-2]. -/
 def relFacts (op : CmpOp) (a : Term × Int) (b : Term × Int) : List Bound × List Diseq :=
@@ -235,6 +278,8 @@ def relFacts (op : CmpOp) (a : Term × Int) (b : Term × Int) : List Bound × Li
   | .eq => ([⟨ta, tb, kb - ka⟩, ⟨tb, ta, ka - kb⟩], [])
   | .ne => ([], [⟨ta, tb, kb - ka⟩])
 
+-- spec ENT-3.S1 f54c8149b251c732
+-- spec ENT-4 3795e8759b6d51ab
 /-- The exact negation of a comparison [ENT-3.S1]. -/
 def _root_.Whitefoot.CmpOp.negate : CmpOp → CmpOp
   | .le => .gt | .lt => .ge | .ge => .lt | .gt => .le | .eq => .ne | .ne => .eq
@@ -260,9 +305,13 @@ structure Query where
   /-- Components, each proved by any one of its alternatives. -/
   l0 : Option (List (List (List Bound × List Diseq))) := none
   affine : Option (List (Ineq × Option (Form × Term))) := none
+  /-- Alternatives of affine targets, each proved when all its targets are. -/
+  affineAny : List (List Ineq) := []
   /-- A multiplication of two nonconstant operands, for the interval product. -/
   product : Option (Val × Val × IntTy) := none
 
+-- spec ENT-6 b0c893b1333c8c67
+-- spec ENT-6 4cf43ddaabc5ce74
 /-- The candidates of the closed L0-to-affine index [ENT-6]: Z, each call
 datum with its captured image, each sum term with its operands' images, and
 each live integer binding with its current image. -/
@@ -281,6 +330,8 @@ def candidates (env : Env) (st : State) : List (Term × Form) :=
     return (t, ← st.image? v.id)
   (Term.z, Form.const 0) :: st.data ++ sumImages ++ bindings
 
+-- spec ENT-6 c2ba89791925ab37
+-- spec ENT-6 23bc3148dd9d4eff
 /-- The view an affine query reads. -/
 def view (env : Env) (g : Gen) (st : State) : View :=
   { contra := st.contra,
@@ -288,6 +339,7 @@ def view (env : Env) (g : Gen) (st : State) : View :=
     premises := st.premises,
     images := l0Images st.l0 (candidates env st) }
 
+-- spec ENT-3.S7 c14d583f951e9794
 /-- An operand's interval for an operation row [ENT-3.S7]: a literal's value,
 an admitted term's closed bounds through Z, otherwise its type's interval. -/
 def operandInterval (st : State) (t : IntTy) (v : Val) : Int × Int :=
@@ -299,20 +351,64 @@ def operandInterval (st : State) (t : IntTy) (v : Val) : Int × Int :=
     | none => (t.minVal, t.maxVal))
   | none => (t.minVal, t.maxVal)
 
+-- spec ENT-3.S7 8e07c8ef7f4a2572
 /-- The least and greatest of a list of values. -/
 def hull (vs : List Int) : Option (Int × Int) :=
   match vs with
   | [] => none
   | v :: rest => some (rest.foldl min v, rest.foldl max v)
 
-/-- The interval product [MSR-4]: a multiplication of two nonconstant
-operands is in its type when the four products of the operands' closed L0 or
-type intervals all are. -/
-def intervalProduct (st : State) (a b : Val) (t : IntTy) : Bool :=
-  let (a0, a1) := operandInterval st t a
-  let (b0, b1) := operandInterval st t b
-  [a0 * b0, a0 * b1, a1 * b0, a1 * b1].all fun v => decide (t.minVal ≤ v ∧ v ≤ t.maxVal)
+/-- An operand's interval for the interval product [MSR-4]: its closed L0 or
+type interval, with each endpoint replaced by a strictly tighter one that
+subtracting one premise and then interval substitution proves. -/
+def productInterval (v : View) (st : State) (t : IntTy) (a : Val) : Int × Int :=
+  let base := operandInterval st t a
+  match a.image with
+  | none => base
+  | some f => v.premises.foldl (fun (acc : Int × Int) (p : Ineq) =>
+      let (lo, hi) := acc
+      let up := v.substMax (addCoeffs f.xs (scaleCoeffs (-1) p.xs)) + p.c + f.c
+      let down := f.c - p.c - v.substMax (addCoeffs (scaleCoeffs (-1) f.xs) (scaleCoeffs (-1) p.xs))
+      (if fits down then max lo down else lo, if fits up then min hi up else hi)) base
 
+-- spec MSR-4 fdeed3f5ad797bc6
+-- spec MSR-4 02f7461d0ded3660
+-- spec MSR-4 2b8139b8ea257927
+-- spec MSR-4 5261281b9504d5c0
+/-- The interval product [MSR-4]: a multiplication of two nonconstant
+operands is in its type when the four products of the operands' selected
+intervals all are. Returns those intervals when it holds. -/
+def intervalProduct (v : View) (st : State) (a b : Val) (t : IntTy) :
+    Option ((Int × Int) × (Int × Int)) :=
+  let (a0, a1) := productInterval v st t a
+  let (b0, b1) := productInterval v st t b
+  if [a0 * b0, a0 * b1, a1 * b0, a1 * b1].all fun x => fits x && decide (t.minVal ≤ x ∧ x ≤ t.maxVal)
+  then some ((a0, a1), (b0, b1)) else none
+
+-- spec OP-4 20f6dfd8f41d31cc
+-- spec OP-2 c7df40e527f97de6
+-- spec ENT-4 111419a9c3cbeb7a
+-- spec ENT-4 1bd5e5b7254c8822
+-- spec ENT-4 c6bc4039791d2bec
+-- spec ENT-6 f7a87f97f915e518
+-- spec ENT-6 691b37e6de96590d
+-- spec MSR-4 8ff6a1d6e07e0cd0
+-- spec MSR-4 03d65b4314402d86
+-- spec MSR-4 38f2a27d484ef667
+-- spec MSR-4 199b1486a9d82b22
+-- spec MSR-4 4625ae46002d3076
+-- spec MSR-4 bb5d2540ed6fedf9
+-- spec MSR-4 097b80a03af80c99
+-- spec MSR-4 4d1243ae70f7d4fd
+-- spec MSR-4 f2fe32a2f77fdbdc
+-- spec MSR-4 2a689db56f0c0444
+-- spec MSR-4 9ddcb3d7fa9c8d98
+-- spec MSR-4 736aa0df985a5abb
+-- spec MSR-4 875faada076862dc
+-- spec MSR-4 bbcd23ae3fbd31fa
+-- spec MSR-4 5b7bfbe3db024801
+-- spec MSR-4 441ff103c663c465
+-- spec MSR-4 19161e64c6ba61b6
 /-- The one numeric disposition [MSR-4], true when the goal is discharged:
 contradiction; the exact signed fact; the closed L0 state; `AUTO` over the
 affine targets, each also by the affine-left / L0-right bridge or, for an
@@ -324,11 +420,13 @@ def discharged (env : Env) (g : Gen) (st : State) (q : Query) : Bool :=
   (q.affine.any fun ts => ts.all fun (t, br) =>
     let v := view env g st
     auto v t || bridge v br || quotient v t) ||
-  (q.product.any fun (a, b, t) => intervalProduct st a b t)
+  q.affineAny.any (fun ts => ts.all (auto (view env g st))) ||
+  (q.product.any fun (a, b, t) => (intervalProduct (view env g st) st a b t).isSome)
 where
   bridge (v : View) : Option (Form × Term) → Bool
     | none => false
-    | some (lhs, r) => (candidates env st).any fun (m, fm) =>
+    | some (lhs, r) => (env.vars.reverse.filterMap fun x => do
+        return (← Env.term? x, ← st.image? x.id)).any fun (m, fm) =>
       m != r && match st.l0.tightest m r with
         | some c => auto v (Ineq.le (lhs.sub fm) (Form.const (-c)))
         | none => false
@@ -356,6 +454,9 @@ def linAdd (a b : Lin) : Lin :=
 
 def linScale (k : Int) (a : Lin) : Lin := (k * a.1, a.2.map fun (x, j) => (x, k * j))
 
+-- spec INV-1 2643185fe6c31ad8
+-- spec INV-1 24a699139655c65f
+-- spec INV-1 ccf2537fc058b1ac
 /-- An affine expression's linear form; `none` for a product with no constant
 side. -/
 def lin : Affine → Option Lin
@@ -413,6 +514,7 @@ def bridges (op : CmpOp) (a b : Form) (ta tb : Option (Term × Int)) :
   | .eq => [(Ineq.le a b, up a tb), (Ineq.le b a, up b ta)]
   | .ne => []
 
+-- spec ENT-3.S16 7a32ea60acd3b2d3
 /-- A relation's L0 facts when its normalized source-term form `lhs - rhs`
 names at most two terms, one with coefficient one and the other with minus
 one, so that it is a difference bound `a - b op c` [ENT-3.S16, MSR-4]. -/
@@ -451,6 +553,8 @@ def relQuery (goal : Option GExpr) (r : Relation) (looks : String → Option (Te
     { goal, l0, affine }
   | _, _ => { goal }
 
+-- spec INV-1 004c22ef69930e2b
+-- spec ENT-2 8b59b94eb144ab6b
 /-- Each member of a relation as its own query: one per normalized bound, as
 an invariant batch and a postcondition submit them [INV-1, FN-9]. -/
 def memberQueries (r : Relation) (looks : String → Option (Term × Int))
@@ -477,9 +581,21 @@ def affG (look : String → Option GExpr) : Affine → Option GExpr
   | .sub a b => do return .aff .sub (← affG look a) (← affG look b)
   | .mul a b => do return .aff .mul (← affG look a) (← affG look b)
 
+-- spec FN-8 b3d4bc6e0efb7dcc
+-- spec ENT-2 0e16fa5f14d0ab35
+-- spec ENT-2 424efe390cc40447
 def relG (look : String → Option GExpr) (r : Relation) : Option GExpr := do
   return .cmp r.op (← affG look r.lhs) (← affG look r.rhs)
 
+-- spec INV-1 722d9cdf5fb85e39
+-- spec INV-1 ed51567f4145179e
+-- spec INV-1 97cca4b5c3815569
+-- spec INV-1 014d3eded7856bdf
+-- spec ENT-3.S16 b77fe0c355e57af9
+-- spec ENT-3.S16 d54d97e5556533b7
+-- spec ENT-3.S16 3a064eed32181ef4
+-- spec ENT-6 e5e5b996027b8c4d
+-- spec ENT-6 f9dd03936ba48330
 /-- The facts a proved relation establishes [ENT-3.S16, ENT-6]: each bound
 whose normalized source form is a difference bound of two terms is an L0 fact,
 and each normalized component is an automatic affine premise over the
@@ -493,6 +609,12 @@ def establishRel (env : Env) (st : State) (r : Relation) : State :=
   | some ts => { st with premises := st.premises ++ (ts.map (·.1)).filter fun i => !st.premises.contains i }
   | none => st
 
+-- spec ENT-6 f7e579c107ca7d24
+-- spec ENT-6 35f43ec2c7bc5781
+-- spec ENT-6 3b6b26225e981346
+-- spec ENT-6 ea5ba3cab284b7c3
+-- spec ENT-6 b085c8c25a1de229
+-- spec ENT-6 45f1dc2139a0a429
 /-- The join of affine images [ENT-6]: an image identical on every input is
 kept; otherwise, when every input has one identical nonconstant form beside
 its delta atoms, that form plus one fresh delta atom over the inputs'
@@ -531,6 +653,38 @@ def commonTo {α : Type} [BEq α] (rest : List State) (f : State → List α) (x
 def relHolds (env : Env) (g : Gen) (st : State) (r : Relation) : Bool :=
   (memberQueries r (lookT env) (lookI env st)).all (discharged env g st)
 
+-- spec INV-1 aa7d41e4d2e37c8e
+-- spec INV-1 72c67cc10f76433b
+-- spec ENT-3 0441cef53d4f0f04
+-- spec ENT-5 e2dd1e2dcbf81788
+-- spec ENT-5 ed17a60afea4ba27
+-- spec ENT-5 5f6f502fcbeaebdf
+-- spec ENT-5 4c68f85dcfe9dc8f
+-- spec ENT-5 112df41dc53aa418
+-- spec ENT-5 ea41ee212dd68f82
+-- spec ENT-5 9f3f40dba6ea02c0
+-- spec ENT-5 ec164746b4e5248d
+-- spec ENT-5 974d55d5213d90ac
+-- spec ENT-5 f687040fa9974958
+-- spec ENT-5 fe8fefa3513cb999
+-- spec ENT-5 65c971314478d541
+-- spec ENT-5 5eb6337a7beadc8c
+-- spec ENT-5 32c9ed4b75384dde
+-- spec ENT-5 c5f63076c5c17313
+-- spec ENT-5 4ba9aa13507caccb
+-- spec ENT-5 d328cb824fdcc3e4
+-- spec ENT-5 16e4fd16b09c00d9
+-- spec ENT-5 bfe3ffd6cb99b593
+-- spec ENT-5 580f276356b54f36
+-- spec ENT-5 6f6053dc6ba008b0
+-- spec ENT-5 c8bd4ae356dc8686
+-- spec ENT-5 9c532c4117d70fbc
+-- spec ENT-5 9d8739b8ed2471c1
+-- spec ENT-6 aa8a7750cc38f652
+-- spec ENT-6 59c817f715319024
+-- spec ENT-6 8c8d8e16da81c311
+-- spec ENT-6 84ec16d3c1d28660
+-- spec ENT-6 9d96d6d2ebb7dc6d
 /-- The join of the states reaching one merge [ENT-5, ENT-6]: the L0 join, the
 signed goals, links and premises identical on every non-contradictory input,
 stability where every input keeps it, each binding's joined image; then the
@@ -561,10 +715,10 @@ def joinStates (env : Env) (inputs : List State) : M State := do
     let proved := headers.filter fun r => all.all fun s => relHolds env g s r
     return proved.foldl (establishRel env) joined
 
-/-- How a statement list ends: the state at its normal exit, if reachable,
-and the states on its `break` and `continue` edges by loop identity. -/
+/-- How a statement list ends: the states on the normal edges leaving it, and
+the states on its `break` and `continue` edges by loop identity. -/
 structure Out where
-  normal : Option State := none
+  normal : List State := []
   breaks : List (Nat × State) := []
   conts : List (Nat × State) := []
 
@@ -608,6 +762,10 @@ termination_by structural s
 end
 
 mutual
+-- spec ENT-5 06d337cb1e004ed1
+-- spec ENT-5 17d4b709182681e1
+-- spec ENT-5 94099bed2f3c8187
+-- spec ENT-5 61bfba3a5bed8cf5
 /-- The bindings a continuing kill event of the target loop writes [ENT-5]: a
 `set` whose edge can reach a later iteration head without leaving the loop. -/
 def killList (k : Reach) (ss : List Stmt) : List String :=
@@ -634,6 +792,7 @@ structure Origins where
   goals : List GExpr := []
   cmp : Option (CmpOp × (Term × Int) × (Term × Int)) := none
 
+-- spec ENT-2 de9fcf1ad06d4987
 /-- A goal's comparison projection: a comparison of two integer operands that
 are terms or constants. -/
 def projection (env : Env) : GExpr → Option (CmpOp × (Term × Int) × (Term × Int))
@@ -645,6 +804,13 @@ where
     | .var id => do return (← Env.term? (← env.varById? id), 0)
     | _ => none
 
+-- spec FN-8 599b590964cac5ff
+-- spec ENT-2 a5a1c09554c122b6
+-- spec ENT-2 049c4d33c20d0938
+-- spec ENT-3 edce2a0c0c7311e9
+-- spec ENT-3 8fe6fcc553cfcf58
+-- spec ENT-3 3a217fdf65047ff8
+-- spec ENT-3 65c4f93b343cfe06
 /-- The signed decomposition of an established goal [ENT-3]: `+band` gives
 both children, `-bor` both children negated, `bnot` its child with the other
 sign; each member also establishes its comparison projection. -/
@@ -661,6 +827,22 @@ def establishGoal (env : Env) (st : State) (s : Bool) (g : GExpr) : Nat → Stat
     | .op1 .bnot a, _ => establishGoal env st (!s) a fuel
     | _, _ => st
 
+-- spec ENT-2 0f286a4b0eca71ff
+-- spec ENT-2 e802cd4f2aaddcce
+-- spec ENT-6 cc12cea229544b82
+-- spec MSR-4 f54b9d4235bb053b
+-- spec MSR-4 2fd60a5dbd336b6a
+-- spec MSR-4 133706b962c99390
+-- spec MSR-4 c972bdff3e45ca69
+-- spec MSR-4 ecaf798fb378c340
+-- spec MSR-4 0032fdca8c879b4b
+-- spec MSR-4 5927ebadd6cff535
+-- spec MSR-4 b76de9e9956d32da
+-- spec MSR-4 b39922c11190afd7
+-- spec MSR-4 41210b21bd9ec05c
+-- spec MSR-4 b9cef299cbcce992
+-- spec MSR-4 c2f7e438909a927d
+-- spec MSR-4 4a60c2b35fe8d5bd
 /-- The finite L0 normalization and affine targets of an integer domain
 [MSR-4], for an exact operation on two operands: for add, subtract and
 multiply with a constant operand, two bounds on the other operand; for
@@ -719,24 +901,49 @@ def domainQuery (goal : GExpr) (op : InfixOp) (t : IntTy) (a b : Val) : Query :=
     | .divide _ _, some _, some fb =>
       if !t.signed then some [(Ineq.le (Form.const 1) fb, none)] else none
     | _, _, _ => none
+  let affineAny : List (List Ineq) :=
+    match op, a.image, b.image with
+    | .divide _ _, some fa, some fd =>
+      if !t.signed then [] else
+      let nonzero := [Ineq.le fd (Form.const (-1)), Ineq.le (Form.const 1) fd]
+      let safe := [Ineq.le (Form.const (m + 1)) fa, Ineq.le fd (Form.const (-2)),
+        Ineq.le (Form.const 0) fd]
+      nonzero.flatMap fun z => safe.map fun o => [z, o]
+    | _, _, _ => []
   let product : Option (Val × Val × IntTy) := match op, a.image, b.image with
     | .arith .mul _, some fa, some fb => if fa.isConst || fb.isConst then none else some (a, b, t)
     | _, _, _ => none
-  { goal := some goal, l0, affine, product }
+  { goal := some goal, l0, affine, affineAny, product }
 
 /-- A divisor interval's nonzero parts [ENT-3.S7]: its negative part and its
 nonnegative part from one. -/
 def divisorParts (b : Int × Int) : List (Int × Int) :=
   (if b.1 ≤ -1 then [(b.1, min b.2 (-1))] else []) ++ (if 1 ≤ b.2 then [(max b.1 1, b.2)] else [])
 
+-- spec ENT-3.S7 57b25e6bceafb809
+-- spec ENT-3.S7 1cfec3faba4f7c08
+-- spec ENT-3.S7 92d27d56111242dc
+-- spec ENT-3.S7 91791f8352e939e1
+-- spec ENT-3.S7 adb4df8e6ee8b02a
+-- spec ENT-3.S7 65f1033b8dc90856
+-- spec ENT-3.S7 79db08aaf0c82539
+-- spec ENT-3.S7 d43ae8921edd0f32
+-- spec ENT-3.S7 dbd46ffdbeaa9c9e
+-- spec ENT-3.S7 c3389655caf0349b
+-- spec ENT-3.S7 567689ce2e76503b
+-- spec ENT-3.S7 ebc8837339d1a2d1
+-- spec ENT-3.S7 fabf49720ca98fc1
+-- spec ENT-3.S7 6411f38e3b138d26
+-- spec ENT-3.S7 4bbdbfc8b8e20cad
+-- spec ENT-3.S7 01fb072a16455216
 /-- An integer operation row's result bounds and relations [ENT-3.S7], as
 facts about the result term r: the row's result interval, limited to the type,
 through Z, and its offset or order relations to each operand that is a term
 other than a literal. -/
-def opFacts (st : State) (op : InfixOp) (t : IntTy) (a b : Val) (r : Term) : List Bound :=
+def opFacts (st : State) (op : InfixOp) (t : IntTy) (a b : Val)
+    (ivs : Option ((Int × Int) × (Int × Int))) (r : Term) : List Bound :=
   if st.contra then [] else
-  let (a0, a1) := operandInterval st t a
-  let (b0, b1) := operandInterval st t b
+  let ((a0, a1), (b0, b1)) := ivs.getD (operandInterval st t a, operandInterval st t b)
   let limit (lo hi : Int) : List Bound :=
     if fits lo && fits hi then [⟨r, .z, min hi t.maxVal⟩, ⟨.z, r, -(max lo t.minVal)⟩] else []
   let rel (v : Val) (lo hi : Int) : List Bound :=
@@ -780,6 +987,10 @@ def opFacts (st : State) (op : InfixOp) (t : IntTy) (a b : Val) (r : Term) : Lis
     limit lo hi ++ rels
   | _ => []
 
+-- spec ENT-3.S7 abd286adabbfc106
+-- spec ENT-3.S7 a66592ac8a2f0bcb
+-- spec ENT-3.S7 510374ff4f82a67f
+-- spec ENT-3.S7 a404a33b19c282b4
 /-- A negation's or absolute value's result bounds and relation [ENT-3.S7]. -/
 def unaryFacts (st : State) (u : UnaryOp) (m : Mode) (t : IntTy) (a : Val) (r : Term) : List Bound :=
   if st.contra then [] else
@@ -804,6 +1015,17 @@ structure Rhs where
   product : Option Form := none
   call : Option (FnDecl × List (String × Val)) := none
 
+-- spec OP-4 fa19a463e6c858f7
+-- spec OP-4 0d38d77e458de31a
+-- spec ENT-2 6ec83dd657d35ea3
+-- spec ENT-6 62fc71fc0b2e553d
+-- spec MSR-4 c4cc7da4378e488d
+-- spec MSR-4 fbf78b679bc4368e
+-- spec MSR-4 a37be1b324753855
+-- spec MSR-4 309d2af5a72c0e6b
+-- spec MSR-4 2a44c6760e6eca36
+-- spec MSR-4 1bc8bf7f569732c7
+-- spec MSR-4 1ec51bb3230cff56
 /-- Evaluate an atom: its subscripts' bounds are proved [OP-4]. -/
 def evalAtom (env : Env) (st : State) : Atom → M Val
   | .int t v => return { term := some (.z, v), image := some (Form.const v), gexpr := some (.int t v), ty := .int t }
@@ -825,6 +1047,40 @@ def evalAtom (env : Env) (st : State) : Atom → M Val
     let img ← typeAtom t
     return { image := some img, gexpr := o.gexpr.map (GExpr.index v.id ·), ty := .int t }
 
+-- spec FN-1 8269e67f51a1198b
+-- spec FN-1 409d0a75e9656965
+-- spec OP-2 81b37a42b8d3ad53
+-- spec OP-2 dceb896cf0d98ac0
+-- spec FN-8 e816b7e118c1e84e
+-- spec FN-8 dde8bbe5b219e590
+-- spec FN-8 13642feefa813593
+-- spec FN-8 16c9f3ac56f2b96a
+-- spec FN-8 bc3aae7af1fe4c44
+-- spec FN-8 88e77e35118f8a22
+-- spec FN-8 5c71fea0e46b7fcd
+-- spec FN-8 64847f8cb78aa027
+-- spec FN-8 0e96626c17773308
+-- spec FN-8 2c67e71836547438
+-- spec FN-8 a5bce55941a12e8c
+-- spec FN-8 1f9830587c64a8ef
+-- spec FN-8 766a3b31ec8818b2
+-- spec FN-9 37b84ea8165c3de5
+-- spec FN-9 ba2376c1a00820df
+-- spec ENT-2 0e27fe800260cf2b
+-- spec ENT-2 e11cbbcd85c47967
+-- spec ENT-2 d5556f18a6f48ee5
+-- spec ENT-3.S7 f67ebb7f05318e7a
+-- spec ENT-3.S7 40e26c2878b16470
+-- spec ENT-6 d1378741f39efa4a
+-- spec ENT-6 cd9fd0a5557996ea
+-- spec ENT-6 9066c48d1ef880f9
+-- spec MSR-4 1ef5a314a498584e
+-- spec MSR-4 88e1a6a4cd5390e4
+-- spec MSR-4 2f070fa7b6e9d1e2
+-- spec MSR-4 f98383caacf91e09
+-- spec MSR-4 dd867a1edc3244df
+-- spec MSR-4 78b0a1c386928ae4
+-- spec MSR-4 088b2bafe04e7ef4
 /-- Evaluate a right-hand side whose operands are atoms. Each exact integer
 operation's domain is proved [OP-2]; a call of a function of the program has
 each requirement proved in the caller's state [FN-8]. -/
@@ -842,14 +1098,22 @@ def evalRhs (env : Env) (st : State) (e : Expr) : M Rhs := do
     | _, .int t => do
       let gen ← get
       let exact := match op with | .arith _ .exact | .divide _ .exact => true | _ => false
-      if exact then
-        let goalOp := match op with
-          | .arith o _ => InfixOp.arith o .defined
-          | .divide o _ => .divide o .defined
-          | o => o
-        let goal := (mk2 (GExpr.infix goalOp) va.gexpr vb.gexpr).getD .unit
-        if !discharged env gen st (domainQuery goal op t va vb) then
-          fail "OP-2" s!"the domain of an exact `{repr op}` is not proved"
+      let goalOp := match op with
+        | .arith o _ => InfixOp.arith o .defined
+        | .divide o _ => .divide o .defined
+        | o => o
+      let goal := (mk2 (GExpr.infix goalOp) va.gexpr vb.gexpr).getD .unit
+      let q := domainQuery goal op t va vb
+      if exact && !discharged env gen st q then
+        fail "OP-2" s!"the domain of an exact `{repr op}` is not proved"
+      -- The `*` row's bounds use the interval product's intervals when that
+      -- rule, and no earlier step, discharged the domain [ENT-3.S7].
+      let ivs : Option ((Int × Int) × (Int × Int)) :=
+        match op, q.product with
+        | .arith .mul .exact, some _ =>
+          if discharged env gen st { q with product := none } then none
+          else intervalProduct (view env gen st) st va vb t
+        | _, _ => none
       let image ← match op, va.image, vb.image with
         | .arith .add .exact, some fa, some fb => pure (fa.add fb)
         | .arith .sub .exact, some fa, some fb => pure (fa.sub fb)
@@ -868,7 +1132,7 @@ def evalRhs (env : Env) (st : State) (e : Expr) : M Rhs := do
             (Form.atom d.q == fb && d.divisor == fa)).map (·.dividend)
         | _, _, _ => none
       return { val := { image := some image, gexpr := g, ty := .int t },
-               facts := opFacts st op t va vb, quot, product }
+               facts := opFacts st op t va vb ivs, quot, product }
     | _, _ => return { val := { gexpr := g, ty := .bool } }
   | .op o as => do
     let vs ← as.mapM (evalAtom env st)
@@ -924,6 +1188,48 @@ def evalRhs (env : Env) (st : State) (e : Expr) : M Rhs := do
       return { val := { ty := .array t n } }
     | _, _ => fail "TYPE-6" s!"the callee `{"::".intercalate path}` does not resolve"
 
+-- spec FN-9 b1cec781ecdd0e25
+-- spec FN-9 8067c5289fe28c77
+-- spec FN-9 f21a4ca6915fc73b
+-- spec FN-9 ca2d53698490c087
+-- spec FN-9 0cfc120b86e1ff76
+-- spec FN-9 4afd26942b5dfde0
+-- spec FN-9 1d72d400af32521f
+-- spec FN-9 654bc2a9bb02c588
+-- spec FN-9 47f28705bea29389
+-- spec ENT-2 4aba4083655811a6
+-- spec CALL-6 8796fb45e59beaa2
+-- spec CALL-6 c787df1e5a590a00
+-- spec CALL-6 d95e288e1d32bd75
+-- spec CALL-6 53b434c80b1f3e19
+-- spec CALL-6 ca989aa387de699f
+-- spec CALL-6 435160bc767d7db2
+-- spec ENT-3.S12 a45db589ad521e0f
+-- spec ENT-3.S12 f577837aa99d5401
+-- spec ENT-3.S12 7c155d5c25f9c3b2
+-- spec ENT-3.S12 83506894dff51e8d
+-- spec ENT-3.S12 0112612f3d5d312b
+-- spec ENT-3.S12 955a394bc902da2c
+-- spec ENT-3.S12 f5b1c313daf9d95f
+-- spec ENT-3.S12 8a88b1dd381ee3b7
+-- spec ENT-3.S12 ba94a868ee83e2d6
+-- spec ENT-3.S13 9a2f6b9c4c26a844
+-- spec ENT-3.S13 132ca5bf809f0613
+-- spec ENT-3.S13 dc0a3ab41a044948
+-- spec ENT-3.S13 397db695f7d1ff2c
+-- spec ENT-3.S13 3620d85bfa5f8e22
+-- spec ENT-5 fdaff6bdc01d9f53
+-- spec ENT-5 5df6c71606fe4588
+-- spec ENT-5 99ac6d4bea31b587
+-- spec ENT-5 93ff276816bf87bc
+-- spec ENT-5 0fba144754411ca8
+-- spec ENT-5 f6d2307364d50bfe
+-- spec ENT-5 d4ece0f02e9b3320
+-- spec ENT-5 5ab8cd1a02773ea9
+-- spec ENT-5 468baa43a5620b45
+-- spec ENT-5 c777cd2f4a0a591f
+-- spec ENT-5 636067a682f2f1a7
+-- spec ENT-6 d9b9e106598ed715
 /-- Publish a call's verified postconditions [ENT-3.S12, ENT-3.S13, CALL-6]:
 each operand mints a call datum equal to its pre-transfer term, then, after
 `kill` applies the statement's own kills, each relation is established with

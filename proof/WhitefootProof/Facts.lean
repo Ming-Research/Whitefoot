@@ -15,6 +15,14 @@ namespace Whitefoot
 
 namespace Fact
 
+-- spec ENT-2 6d7c00a90d650dc8
+-- spec ENT-2 7e200513270293b8
+-- spec ENT-2 b9d2de7c65d7a579
+-- spec ENT-2 19149e7a56339ac4
+-- spec ENT-2 49ee19c7462f77c7
+-- spec ENT-2 16ba176d2f3cf6d5
+-- spec ENT-2 a7c70533c83dddd0
+-- spec ENT-2 9a47aa6d2ff78baa
 /-- A term [ENT-2] of the fragment. Each carries the fragment type that gives it
 its implicit bounds, except Z and a sum, which have none. -/
 inductive Term where
@@ -34,6 +42,9 @@ inductive Term where
 
 namespace Term
 
+-- spec ENT-5 a201ec3868283ac7
+-- spec ENT-5 4a80a2e784e658c3
+-- spec ENT-5 8f3fa6bdbfdae21e
 /-- The bindings whose places a term reads: its support [ENT-5]. Z, commit
 values and call datums have empty support and never die. -/
 def support : Term → List Nat
@@ -48,6 +59,7 @@ def ty? : Term → Option IntTy
 
 end Term
 
+-- spec ENT-2 f6c1b49aff61ec2e
 /-- A difference bound `a - b <= c` [ENT-2]. -/
 structure Bound where
   a : Term
@@ -55,6 +67,7 @@ structure Bound where
   c : Int
   deriving DecidableEq, Repr, Inhabited
 
+-- spec ENT-2 44ece0d9a7d5d882
 /-- An offset disequality `a - b != c`; it is the same fact as `b - a != -c`. -/
 structure Diseq where
   a : Term
@@ -114,6 +127,7 @@ def strengthen (idx : Term → Nat) (ds : List Diseq) (m : Matrix) : Matrix × B
     let (m, c2) := if m.get j i == some (-d.c) then (m.lower j i (-d.c - 1), true) else (m, false)
     (m, changed || c1 || c2)) (m, false)
 
+-- spec ENT-4 46be01ee1de97c7a
 /-- Alternate rules (1) and (2) until nothing changes. Each disequality
 tightens each orientation at most once, since a tightened bound no longer
 equals its offset and bounds only decrease, so `2 * |ds| + 1` rounds reach
@@ -125,6 +139,7 @@ def saturate (n : Nat) (idx : Term → Nat) (ds : List Diseq) : Nat → Matrix �
     let (m', changed) := strengthen idx ds m
     if changed then saturate n idx ds fuel m' else m
 
+-- spec ENT-2 7e4144507c761eef
 /-- The implicit facts of a term [ENT-2]: a term of fragment type T lies in
 `min(T)..=max(T)`, as two bounds through Z. -/
 def implicitBounds (t : Term) : List Bound :=
@@ -132,6 +147,7 @@ def implicitBounds (t : Term) : List Bound :=
   | some ty => [⟨t, .z, ty.maxVal⟩, ⟨.z, t, -ty.minVal⟩]
   | none => []
 
+-- spec ENT-4 794d5e0c6c92b373
 /-- The least closure of a set of established facts together with the implicit
 facts of `live` and of every term they name [ENT-4]. A negative cycle, `t - t
 <= -1` for some t, makes the state contradictory. -/
@@ -168,6 +184,7 @@ def bound (s : L0) (a b : Term) (c : Int) : Bool :=
     | some c' => decide (c' ≤ c)
     | none => false
 
+-- spec ENT-4 013ed975964ad10e
 /-- Whether `a - b != c` is derivable [ENT-4]: present under either
 orientation, or implied by a strict bound on either side. -/
 def diseq (s : L0) (a b : Term) (c : Int) : Bool :=
@@ -185,6 +202,7 @@ def interval (s : L0) (t : Term) : Option (Int × Int) :=
   | some hi, some lo => some (-lo, hi)
   | _, _ => none
 
+-- spec ENT-5 097623f069055649
 /-- Remove every fact one of whose terms has a support member `dead` holds
 [ENT-5]. The state is closed before the kill, so every consequence that names
 only surviving terms survives. -/
@@ -200,6 +218,10 @@ def terms (s : L0) : List Term :=
 
 end L0
 
+-- spec ENT-5 4ccc008042be463f
+-- spec ENT-5 9b007c6d4b989dc4
+-- spec ENT-5 7c3cb36f9eb0dcbd
+-- spec ENT-5 4a4b3beb5eb21882
 /-- The L0 join of the states reaching one merge [ENT-5]: contradictory inputs
 impose no constraint; over the others, each ordered pair keeps the weakest bound
 all of them hold, and a disequality whose offset is zero or that some input

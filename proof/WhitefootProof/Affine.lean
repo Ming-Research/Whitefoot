@@ -32,6 +32,7 @@ def addCoeffs (xs ys : Coeffs) : Coeffs := ys.foldl (fun acc (x, a) => addTerm a
 def scaleCoeffs (k : Int) (xs : Coeffs) : Coeffs :=
   if k == 0 then [] else xs.map fun (x, a) => (x, k * a)
 
+-- spec ENT-6 adba2e86b0db150c
 /-- An image `c + Σ a_i * x_i` [ENT-6]. -/
 structure Form where
   c : Int := 0
@@ -100,14 +101,28 @@ interval substitution gives every remaining atom, its upper endpoint for a
 positive coefficient and its lower endpoint for a negative one. An atom's
 endpoints are the strongest of its interval and the L0 images over that atom
 alone. -/
-def direct (v : View) (a : Ineq) : Bool :=
-  let hi (x : Nat) : Int := v.images.foldl (fun acc r =>
-    if r.xs == [(x, 1)] then min acc r.c else acc) (v.interval x).2
-  let lo (x : Nat) : Int := v.images.foldl (fun acc r =>
-    if r.xs == [(x, -1)] then max acc (-r.c) else acc) (v.interval x).1
-  let total := a.xs.foldl (fun acc (x, k) => acc + (if k > 0 then k * hi x else k * lo x)) 0
-  v.contra || v.images.any (fun r => r.xs == a.xs && decide (r.c ≤ a.c)) || decide (total ≤ a.c)
+/-- An atom's endpoints for interval substitution [ENT-6]: the strongest of
+its interval and the L0 images over that atom alone. -/
+def View.hi (v : View) (x : Nat) : Int :=
+  v.images.foldl (fun acc r => if r.xs == [(x, 1)] then min acc r.c else acc) (v.interval x).2
 
+def View.lo (v : View) (x : Nat) : Int :=
+  v.images.foldl (fun acc r => if r.xs == [(x, -1)] then max acc (-r.c) else acc) (v.interval x).1
+
+/-- The greatest value interval substitution gives `Σ a_i * x_i`: each atom at
+its upper endpoint for a positive coefficient and its lower one for a negative
+coefficient. -/
+def View.substMax (v : View) (xs : Coeffs) : Int :=
+  xs.foldl (fun acc (x, k) => acc + (if k > 0 then k * v.hi x else k * v.lo x)) 0
+
+-- spec ENT-6 3ec3128a964e0e54
+-- spec ENT-6 f26a113dfd860040
+def direct (v : View) (a : Ineq) : Bool :=
+  v.contra || v.images.any (fun r => r.xs == a.xs && decide (r.c ≤ a.c)) ||
+    decide (v.substMax a.xs ≤ a.c)
+
+-- spec ENT-6 18858a03439c809f
+-- spec ENT-6 031b53f565043d06
 /-- The two integer tightenings of an accumulated sum [ENT-6]: by the factor
 that makes S's coefficients exactly k times T's, then by the greatest common
 divisor of S's coefficients. -/
@@ -128,6 +143,14 @@ def tryResidual (v : View) (t s : Ineq) : Bool :=
     let r := t.sub s'
     s'.ok && r.ok && direct v r
 
+-- spec ENT-6 b26dbcb5643237e4
+-- spec ENT-6 89f49c9f4b52c902
+-- spec ENT-6 7ec766f67f6d20a6
+-- spec ENT-6 0a8d774c98036f74
+-- spec ENT-6 cf7079bdd5db4ecb
+-- spec ENT-6 17cbbdf64db77ff9
+-- spec ENT-6 1d4ee31336b451f4
+-- spec MSR-4 f529e0bc60a1d404
 /-- `AUTO(T)` [ENT-6]: `DIRECT(T)`, then T less every published premise, every
 unordered pair of them (a premise with itself included), and every strongest
 canonical L0 image, each with its two tightenings. -/
@@ -138,6 +161,9 @@ def auto (v : View) (t : Ineq) : Bool :=
     (v.premises.drop i).any fun q => tryResidual v t (p.add q)) ||
   v.images.any (fun r => tryResidual v t r)
 
+-- spec ENT-6 8148f1589e1fcec1
+-- spec ENT-6 69a4b53a7d66bed9
+-- spec ENT-6 e5c3e20fbba67cc6
 /-- The strongest canonical L0 images [ENT-6]: for each ordered pair of
 candidate terms with a closed bound `l - r <= c`, the inequality
 `image(l) - image(r) <= c`, keeping the smallest bound per coefficient vector.
