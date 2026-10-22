@@ -1,0 +1,28 @@
+fn append_nine(row: &Slots<u64, 8>) -> result: unit writes(row.len), writes(row.next) contract {
+  requires row^.len < row^.cap;
+} {
+  doc "Both writes name one parameter, so EFF-1 permits this order; the helper supplies no range postcondition.";
+  place_back(window: row, value: 9_u64);
+  return unit;
+}
+
+fn need_prefix(row: &Slots<u64, 8>, count: u64) -> result: unit pure contract {
+  requires forall small_prefix(k in 0_u64..count): row^[k] <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(row: &Slots<u64, 8>) -> result: unit writes(row.len), writes(row.next) contract {
+  requires forall held_prefix(k in 0_u64..row^.len): row^[k] <= 7_u64;
+  requires row^.len < row^.cap;
+} {
+  doc "RANGE-2 captures row.next at the call-entry length before forgetting row.len; only the appended tuple is forgotten, so the saved prefix still proves need_prefix's RANGE-3 requirement.";
+  let old_len = row^.len;
+  append_nine(row: row);
+  need_prefix(row: row, count: old_len);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
