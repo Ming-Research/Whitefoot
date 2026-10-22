@@ -429,12 +429,21 @@ in an `if` condition, and a read of a name no binding declares, which is
 `illFormed`.
 
 The slice's model is 186 lines of syntax tree, 208 of lexer, 812 of parser and
-528 of interpreter, with 147 lines of conformance harness and 29 added to the
-integer semantics: 1,910 lines, 1,298 of them neither blank nor comment. It
-took three engineer turns and four `proof.yml` runs to a comparison with no
-known defect: two failed to compile, and one green run showed a parser defect,
-the closing `>` of `Array<u64, 4>` read as a comparison, which put 112 cases
-outside the fragment wrongly.
+528 of interpreter, with 148 lines of conformance harness and 29 added to the
+integer semantics: 1,911 lines. Of them 1,299 are code, counting the lines
+that are not blank, not a `--` comment and not inside a `/- … -/` comment or
+doc comment; by the same count the slice had 1,252 when its review began.
+
+The slice took five engineer turns, and one more that a network error ended,
+and six `proof.yml` runs to its review: two failed to compile, and one green
+run showed a parser defect, the closing `>` of `Array<u64, 4>` read as a
+comparison, which put 112 cases outside the fragment wrongly. Two rounds of
+review found four defects: the machine could not run a call in an `if`
+condition, an unresolved name was `stuck` rather than `illFormed`, nothing
+checked the fragment's boundary, and these counts. Fixing them took four more
+engineer turns and four more `proof.yml` runs, one of which failed to compile
+and one ran with the fragment list empty on purpose, to print the cases to
+list.
 
 ## Cost
 
