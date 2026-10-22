@@ -1,0 +1,137 @@
+# Temporary workflow for wf-spec-rule-gaps: compiler probes of the suspected
+# rule gaps, built from this branch. Removed before the full check.
+name: tmp-spec-rule-gaps
+
+on:
+  push:
+    branches: [wf-spec-rule-gaps]
+
+permissions:
+  contents: read
+
+jobs:
+  probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the compiler
+        run: perl .github/run-check.pl tmp-probe-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --bin whitefootc
+      - name: Probes
+        run: |
+          mkdir -p "$RUNNER_TEMP/probes"
+          cd "$RUNNER_TEMP/probes"
+          # ENT-5: the loop writes a[i] with an index the body changes; the
+          # state before the loop proves i != 2, which holds only on the first
+          # iteration. A head that keeps a[2] == 0 accepts small[a[2]].
+          cat > loop-moving-index.wf <<'WF'
+          fn main() -> status: std::process::ExitStatus pure {
+            let a = array_filled::<u64, 4>(value: 0_u64);
+            let small = array_filled::<u8, 2>(value: 1_u8);
+            set a[2_u64] = 0_u64;
+            let i = 0_u64;
+            loop @l {
+              let seen = small[a[2_u64]];
+              if i < 4_u64 {
+                set a[i] = 100_u64;
+              }
+              set i = i +wrap 1_u64;
+              if i < 4_u64 {
+              } else {
+                break @l;
+              }
+            }
+            return std::process::exit_status(code: 0_u8);
+          }
+          WF
+          # ENT-5: the same loop with an index the body never writes, so
+          # j != 2 holds at every iteration.
+          cat > loop-fixed-index.wf <<'WF'
+          fn main() -> status: std::process::ExitStatus pure {
+            let a = array_filled::<u64, 4>(value: 0_u64);
+            let small = array_filled::<u8, 2>(value: 1_u8);
+            set a[2_u64] = 0_u64;
+            let i = 0_u64;
+            let j = 1_u64;
+            loop @l {
+              let seen = small[a[2_u64]];
+              set a[j] = 100_u64;
+              set i = i +wrap 1_u64;
+              if i < 4_u64 {
+              } else {
+                break @l;
+              }
+            }
+            return std::process::exit_status(code: 0_u8);
+          }
+          WF
+          # CALL-1: a reference argument the row leaves unnamed shares its
+          # storage with a written one; the fact x == 5 must die.
+          cat > call-unnamed-alias.wf <<'WF'
+          fn touch(a: &u64, b: &u64) -> result: unit writes(b) {
+            set b^ = 7_u64;
+            return unit;
+          }
+
+          fn need(v: u64) -> result: unit pure contract {
+            requires v == 5_u64;
+          } {
+            return unit;
+          }
+
+          fn main() -> status: std::process::ExitStatus pure {
+            let x = 5_u64;
+            touch(a: &x, b: &x);
+            need(v: x);
+            return std::process::exit_status(code: 0_u8);
+          }
+          WF
+          # The same call without the requirement after it.
+          cat > call-unnamed-alias-plain.wf <<'WF'
+          fn touch(a: &u64, b: &u64) -> result: unit writes(b) {
+            set b^ = 7_u64;
+            return unit;
+          }
+
+          fn main() -> status: std::process::ExitStatus pure {
+            let x = 5_u64;
+            touch(a: &x, b: &x);
+            return std::process::exit_status(code: 0_u8);
+          }
+          WF
+          # CONST-2: a const of a nodrop struct.
+          cat > nodrop-const.wf <<'WF'
+          nodrop struct Token {
+            id: u64;
+          }
+
+          const token: Token = Token(id: 3_u64);
+
+          fn main() -> status: std::process::ExitStatus pure {
+            let id = token.id;
+            if id == 3_u64 {
+              return std::process::exit_status(code: 0_u8);
+            }
+            return std::process::exit_status(code: 4_u8);
+          }
+          WF
+          for probe in loop-moving-index loop-fixed-index call-unnamed-alias call-unnamed-alias-plain nodrop-const; do
+            set +e
+            "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" -o "$probe" "$probe.wf"
+            compiled=$?
+            ran=none
+            if [ "$compiled" -eq 0 ]; then
+              "./$probe"
+              ran=$?
+            fi
+            set -e
+            echo "PROBE $probe: compile status $compiled, run status $ran"
+          done
