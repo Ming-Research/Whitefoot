@@ -622,16 +622,126 @@ fn subscript_offset_does_not_inherit_its_enclosing_infix_operand_role() {
 
 #[test]
 fn call_type_argument_does_not_suggest_an_expression_repair() {
-    for source in [
-        b"fn f() -> r: u32 pure { return value::<[u8]>(); }".as_slice(),
-        b"fn f() -> r: u32 pure { return value::<u32 +wrap u32>(); }".as_slice(),
+    // A bracket where a type stands is a Rust array type: it has the type
+    // repair, never the expression list's.
+    let source = b"fn f() -> r: u32 pure { return value::<[u8]>(); }";
+    let result = outcome(source, false);
+    let ParseOutcome::SourceIssue(issue) = result else {
+        panic!("unsupported type form must reject: {result:?}");
+    };
+    assert_eq!(
+        issue.mechanical_fix,
+        Some(SyntaxRepair::Fixed(
+            crate::diagnostic_repairs::ARRAY_TYPE_FIX
+        ))
+    );
+    let source = b"fn f() -> r: u32 pure { return value::<u32 +wrap u32>(); }";
+    let result = outcome(source, false);
+    let ParseOutcome::SourceIssue(issue) = result else {
+        panic!("unsupported type form must reject: {result:?}");
+    };
+    assert_eq!(issue.mechanical_fix, None);
+}
+
+/// A Rust array type written where a type stands is repaired to `Array<T, N>`
+/// at its bracket, and inside `&[T; N]`, where the bracket is admitted, at the
+/// `;` that ends the element type.
+#[test]
+fn rust_array_types_offer_the_array_nominal() {
+    for (source, at) in [
+        ("struct Holder { data: Box<[u8; 256]>; }", "["),
+        (
+            "fn f(data: [u8; 256]) -> r: u32 pure { return 0_u32; }",
+            "[",
+        ),
+        ("fn f() -> r: [u8; 4] pure { return 0_u32; }", "["),
+        ("const table: [u8; 4] = [1_u8, 2_u8, 3_u8, 4_u8];", "["),
+        (
+            "fn f(data: &[u8; 256]) -> r: u32 pure { return 0_u32; }",
+            ";",
+        ),
+        (
+            "fn f(data: &[Holder; 4]) -> r: u32 pure { return 0_u32; }",
+            ";",
+        ),
+    ] {
+        let result = outcome(source.as_bytes(), false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("a Rust array type must reject: {source}: {result:?}");
+        };
+        assert_eq!(
+            issue_bytes(source.as_bytes(), issue),
+            at.as_bytes(),
+            "{source}"
+        );
+        assert_eq!(
+            issue.mechanical_fix,
+            Some(SyntaxRepair::Fixed(
+                crate::diagnostic_repairs::ARRAY_TYPE_FIX
+            )),
+            "{source}"
+        );
+    }
+    // The reference-to-run parameter is the admitted form, and a subscript
+    // that never closes is not a type.
+    assert!(matches!(
+        outcome(b"fn f(data: &[u8]) -> r: u32 pure { return 0_u32; }", false),
+        ParseOutcome::Complete(_)
+    ));
+    let source = b"fn f(values: &[u8]) -> r: u8 pure { return values[0_u64; }";
+    let result = outcome(source, false);
+    let ParseOutcome::SourceIssue(issue) = result else {
+        panic!("an unclosed subscript must reject: {result:?}");
+    };
+    assert_ne!(
+        issue.mechanical_fix,
+        Some(SyntaxRepair::Fixed(
+            crate::diagnostic_repairs::ARRAY_TYPE_FIX
+        ))
+    );
+}
+
+/// `give if` and `give match` are refused as an `if` or `match` word in an
+/// expression slot, which reads as a lexical fault, so the repair says what
+/// the writer needs: a conditional value is a statement or a `let`
+/// initializer. Another word in the same slot keeps the FORM-3 view.
+#[test]
+fn a_conditional_after_give_offers_the_statement_and_let_forms() {
+    for (source, word) in [
+        (
+            b"fn f(c: Bool) -> r: u32 pure { let x = if c { give if c { 1_u32 } else { 2_u32 }; } else { give 0_u32; } return x; }".as_slice(),
+            "if",
+        ),
+        (
+            b"fn f(c: Bool) -> r: u32 pure { let x = if c { give match c { 1_u32 => { give 1_u32; } else => { give 2_u32; } }; } else { give 0_u32; } return x; }".as_slice(),
+            "match",
+        ),
     ] {
         let result = outcome(source, false);
         let ParseOutcome::SourceIssue(issue) = result else {
-            panic!("unsupported type form must reject: {result:?}");
+            panic!("a conditional after give must reject: {result:?}");
         };
-        assert_eq!(issue.mechanical_fix, None);
+        assert_eq!(issue.rule(), SyntaxRule::Form3);
+        assert_eq!(issue_bytes(source, issue), word.as_bytes());
+        assert_eq!(
+            issue.mechanical_fix,
+            Some(SyntaxRepair::Fixed(
+                crate::diagnostic_repairs::GIVE_CONDITIONAL_FIX
+            ))
+        );
     }
+    // A conditional after `return` has no `give` to repair.
+    let source = b"fn f(c: Bool) -> r: u32 pure { return if c { 1_u32 } else { 2_u32 }; }";
+    let result = outcome(source, false);
+    let ParseOutcome::SourceIssue(issue) = result else {
+        panic!("a conditional after return must reject: {result:?}");
+    };
+    assert_ne!(
+        issue.mechanical_fix,
+        Some(SyntaxRepair::Fixed(
+            crate::diagnostic_repairs::GIVE_CONDITIONAL_FIX
+        ))
+    );
 }
 
 #[test]

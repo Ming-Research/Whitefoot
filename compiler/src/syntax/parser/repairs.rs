@@ -3,9 +3,9 @@
 use super::{DiagnosticResult, DiagnosticSite, ProbeContext, SyntaxRepair, fixed, has};
 use crate::ClassifiedToken;
 use crate::diagnostic_repairs::{
-    ALIAS_FIX, ARRAY_FIX, BOOLEAN_OPERATION_FIX, BORROW_MUT_FIX, EFFECT_ROW_FIX, ENTRY_FIX,
-    FLAT_OPERATION_FIX, GRAPH_FIX, INVARIANT_FIX, LET_MUT_FIX, LET_TYPE_FIX, LOOP_FIX,
-    MATCH_BINDER_FIX, RANGE1_BOOLEAN_AND_FIX, VALUE_MATCH_FIX,
+    ALIAS_FIX, ARRAY_FIX, ARRAY_TYPE_FIX, BOOLEAN_OPERATION_FIX, BORROW_MUT_FIX, EFFECT_ROW_FIX,
+    ENTRY_FIX, FLAT_OPERATION_FIX, GIVE_CONDITIONAL_FIX, GRAPH_FIX, INVARIANT_FIX, LET_MUT_FIX,
+    LET_TYPE_FIX, LOOP_FIX, MATCH_BINDER_FIX, RANGE1_BOOLEAN_AND_FIX, VALUE_MATCH_FIX,
 };
 use crate::syntax::grammar::{LookaheadPredicate, Production};
 use crate::syntax::terminal::{FixedTerminal as F, TerminalPredicate as T};
@@ -42,6 +42,40 @@ pub(super) fn is_infix_operator(token: &ClassifiedToken) -> bool {
     ]
     .into_iter()
     .any(|terminal| fixed(token, terminal))
+}
+
+/// How many terminals back from a `;` the `[` of a `&[T; N]` type is looked
+/// for: far enough for a qualified or generic element type.
+const REFERENCE_BRACKET_REACH: usize = 12;
+
+/// Whether the `;` at `boundary` follows the element type of a `&[` written
+/// just before it, as in `&[u8; 256]`. The bracket is the nearest unclosed
+/// one, the terminal before it is `&`, and no `;` or brace lies between, so a
+/// subscript such as `&buf[i;` is not taken for a type.
+fn semicolon_after_reference_bracket(tokens: &[ClassifiedToken], boundary: usize) -> bool {
+    let mut depth = 0_usize;
+    for index in (boundary.saturating_sub(REFERENCE_BRACKET_REACH)..boundary).rev() {
+        let Some(token) = tokens.get(index) else {
+            return false;
+        };
+        if fixed(token, F::RightBracket) {
+            depth += 1;
+        } else if fixed(token, F::LeftBracket) {
+            if depth == 0 {
+                return index
+                    .checked_sub(1)
+                    .and_then(|before| tokens.get(before))
+                    .is_some_and(|before| fixed(before, F::Ampersand));
+            }
+            depth -= 1;
+        } else if fixed(token, F::Semicolon)
+            || fixed(token, F::LeftBrace)
+            || fixed(token, F::RightBrace)
+        {
+            return false;
+        }
+    }
+    false
 }
 
 pub(super) fn attach(
@@ -124,6 +158,8 @@ pub(super) fn attach(
                 && expects(T::Fixed(F::Comma)));
         let hint = if graph {
             Some(GRAPH_FIX)
+        } else if previous(1, F::Give) && (at(boundary, F::If) || at(boundary, F::Match)) {
+            Some(GIVE_CONDITIONAL_FIX)
         } else if expects(T::Fixed(F::Pure))
             && (at(boundary, F::LeftBrace) || at(boundary, F::Waits))
         {
@@ -189,6 +225,14 @@ pub(super) fn attach(
             } else {
                 None
             }
+        } else if (at(boundary, F::LeftBracket)
+            && expects(T::TypeIdentifier)
+            && expects(T::Fixed(F::U8)))
+            || (at(boundary, F::Semicolon)
+                && expects(T::Fixed(F::RightBracket))
+                && semicolon_after_reference_bracket(site.tokens, boundary))
+        {
+            Some(ARRAY_TYPE_FIX)
         } else if !context.in_contract
             && at(boundary, F::LeftBracket)
             && (in_expression

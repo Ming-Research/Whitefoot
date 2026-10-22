@@ -226,8 +226,10 @@ fn inside_item_blank_line_fix_preserves_canonical_gap_and_coordinate() {
         assert_eq!(issue.expected, "\n  ");
         assert_eq!(issue.found, "\n\n  ");
         assert_eq!(
-            issue.mechanical_fix(),
-            Some(crate::diagnostic_repairs::BLANK_LINE_FIX)
+            issue.mechanical_fix().as_deref(),
+            Some(
+                "make the change below to reach the canonical layout; it gives the bytes FORM-2 requires between two terminals [FORM-2]: line 1 between `{` and `return`: write \"\\n  \" instead of \"\\n\\n  \""
+            )
         );
         let CanonicalLocation::SourceNode(_, coordinate) = issue.location() else {
             panic!("the first mismatch is inside one item");
@@ -252,7 +254,12 @@ fn inside_item_blank_line_fix_preserves_canonical_gap_and_coordinate() {
                 panic!("extra blank line between items must reject: {outcome:?}");
             };
             assert!(matches!(issue.location(), CanonicalLocation::SourceBytes(_)));
-            assert_eq!(issue.mechanical_fix(), None);
+            assert_eq!(
+                issue.mechanical_fix().as_deref(),
+                Some(
+                    "make the change below to reach the canonical layout; it gives the bytes FORM-2 requires between two terminals [FORM-2]: line 3 between `}` and `fn`: write \"\\n\\n\" instead of \"\\n\\n\\n\""
+                )
+            );
         },
     );
 }
@@ -693,4 +700,137 @@ fn caret_attaches_to_places_without_absorbing_the_following_operator() {
         rendered_bytes(spaced).as_deref(),
         Some(canonical.as_slice())
     );
+}
+
+/// The trivia before, between and after a source's tokens, each with the
+/// offset it begins at. The sources compared here hold only spaces and line
+/// feeds outside their tokens.
+fn trivia_gaps(bytes: &[u8], tokens: &[Vec<u8>]) -> Vec<(usize, Vec<u8>)> {
+    let mut gaps = Vec::new();
+    let mut cursor = 0;
+    for token in tokens {
+        let blanks = bytes[cursor..]
+            .iter()
+            .take_while(|byte| **byte == b' ' || **byte == b'\n')
+            .count();
+        gaps.push((cursor, bytes[cursor..cursor + blanks].to_vec()));
+        cursor += blanks;
+        assert!(
+            bytes[cursor..].starts_with(token),
+            "each token follows the trivia before it"
+        );
+        cursor += token.len();
+    }
+    gaps.push((cursor, bytes[cursor..].to_vec()));
+    gaps
+}
+
+const FOUR_LAYOUT_FAULTS: &[u8] = b"fn helper() -> result: u64 pure {\n  return 1_u64;\n}\n\n\nfn main() -> status: std::process::ExitStatus pure {\n  let a =  1_u64;\n  let b = a +wrap\n    2_u64;\n\n  return std::process::exit_status(code: 0_u8);\n}\n";
+
+/// A function whose twenty-five `let` statements each carry a double space.
+fn twenty_five_layout_faults() -> String {
+    let mut source = String::from("fn many() -> result: unit pure {\n");
+    for index in 0..25 {
+        source.push_str(&format!("  let v{index} =  1_u64;\n"));
+    }
+    source.push_str("  return unit;\n}\n");
+    source
+}
+
+/// [FORM-2, DIAG-1] the audit reports the first difference only, and its
+/// repair lists the other three beside it.
+#[test]
+fn the_first_rejection_names_one_gap_and_its_repair_lists_every_one() {
+    audit_source(FOUR_LAYOUT_FAULTS, |outcome| {
+        let CanonicalOutcome::SourceIssue(issue) = outcome else {
+            panic!("four layout faults must reject: {outcome:?}");
+        };
+        // The rejection itself is the first fault alone.
+        assert_eq!(issue.expected, "\n\n");
+        assert_eq!(issue.found, "\n\n\n");
+        assert_eq!(issue.difference_count, 4);
+        assert_eq!(issue.differences.len(), 4);
+        assert_eq!(
+            issue.mechanical_fix().as_deref(),
+            Some(
+                "make all 4 changes below to reach the canonical layout, then compile again; each gives the bytes FORM-2 requires between two terminals [FORM-2]: line 3 between `}` and `fn`: write \"\\n\\n\" instead of \"\\n\\n\\n\"; line 7 between `=` and `1_u64`: write \" \" instead of \"  \"; line 8 between `+wrap` and `2_u64`: write \" \" instead of \"\\n    \"; line 9 between `;` and `return`: write \"\\n  \" instead of \"\\n\\n  \""
+            )
+        );
+    });
+    // Making all four changes is what rendering does.
+    assert_eq!(
+        rendered_bytes(FOUR_LAYOUT_FAULTS).as_deref(),
+        Some(
+            b"fn helper() -> result: u64 pure {\n  return 1_u64;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let a = 1_u64;\n  let b = a +wrap 2_u64;\n  return std::process::exit_status(code: 0_u8);\n}\n"
+                .as_slice()
+        )
+    );
+}
+
+/// [FORM-2] the listed gaps are exactly the ones rendering changes: an
+/// oracle that compares the source and its rendering gap by gap, with the
+/// leading, trailing, same-line and multi-line cases, and more faults than a
+/// repair names.
+#[test]
+fn the_listed_differences_are_exactly_the_gaps_rendering_changes() {
+    let many = twenty_five_layout_faults();
+    let sources: [&[u8]; 6] = [
+        FOUR_LAYOUT_FAULTS,
+        b"\n\nfn main() -> status: std::process::ExitStatus pure {\n}\n",
+        b"fn main() -> status: std::process::ExitStatus pure {\n}",
+        b"fn main() -> status: std::process::ExitStatus pure {\n}\n\n\n",
+        b"fn main() -> status: std::process::ExitStatus pure { }\n",
+        many.as_bytes(),
+    ];
+    for source in sources {
+        let canonical = rendered_bytes(source).expect("the fixture derives");
+        let tokens = token_spellings(source).expect("the fixture lexes");
+        let found = trivia_gaps(source, &tokens);
+        let wanted = trivia_gaps(&canonical, &tokens);
+        let mut differing = Vec::new();
+        for (found_gap, wanted_gap) in found.iter().zip(&wanted) {
+            if found_gap.1 != wanted_gap.1 {
+                differing.push((found_gap, wanted_gap));
+            }
+        }
+        assert!(!differing.is_empty(), "the fixture is not canonical");
+        audit_source(source, |outcome| {
+            let CanonicalOutcome::SourceIssue(issue) = outcome else {
+                panic!("a non-canonical fixture must reject: {outcome:?}");
+            };
+            assert_eq!(
+                issue.difference_count,
+                u64::try_from(differing.len()).expect("small count")
+            );
+            assert_eq!(issue.differences.len(), differing.len().min(20));
+            for (listed, (found_gap, wanted_gap)) in issue.differences.iter().zip(&differing) {
+                assert_eq!(listed.found.as_bytes(), found_gap.1.as_slice());
+                assert_eq!(listed.expected.as_bytes(), wanted_gap.1.as_slice());
+                let line = source[..found_gap.0]
+                    .iter()
+                    .filter(|byte| **byte == b'\n')
+                    .count()
+                    + 1;
+                assert_eq!(listed.line, u64::try_from(line).expect("small line"));
+            }
+            // The rejection names the first of them.
+            assert_eq!(issue.differences[0].found, issue.found);
+            assert_eq!(issue.differences[0].expected, issue.expected);
+        });
+    }
+}
+
+/// [FORM-2] a repair names a bounded number of gaps and counts the rest.
+#[test]
+fn a_repair_past_the_listing_bound_counts_the_rest() {
+    audit_source(twenty_five_layout_faults().as_bytes(), |outcome| {
+        let CanonicalOutcome::SourceIssue(issue) = outcome else {
+            panic!("twenty-five layout faults must reject: {outcome:?}");
+        };
+        assert_eq!(issue.difference_count, 25);
+        assert_eq!(issue.differences.len(), 20);
+        let fix = issue.mechanical_fix().expect("a rejection lists its gaps");
+        assert!(fix.starts_with("make all 25 changes below"), "{fix}");
+        assert!(fix.ends_with("; and 5 more after these"), "{fix}");
+    });
 }
