@@ -34,9 +34,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/probes"
           cd "$RUNNER_TEMP/probes"
-          tail='fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}'
+          tail=$'fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}'
           printf 'struct Holder {\n  data: Box<[u8; 256]>;\n}\n\n%s\n' "$tail" > a1-field-box-rust-array.wf
           printf 'fn f(data: &[u8; 256]) -> r: u64 pure {\n  return 0_u64;\n}\n\n%s\n' "$tail" > a2-param-ref-rust-array.wf
           printf 'fn f(data: [u8; 256]) -> r: u64 pure {\n  return 0_u64;\n}\n\n%s\n' "$tail" > a3-param-rust-array.wf
