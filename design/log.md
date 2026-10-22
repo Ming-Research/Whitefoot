@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-22 A name written with a reserved spelling is refused with what reserves it and a fresh spelling
+
+Nodes: compiler/diagnostic-repairs
+
+Summary: A name written with a reserved lowercase spelling (a fixed grammar word such as `copy` or `is`, a mode word such as `checked`, or a dotless operation name) is refused with one sentence at both refusals, the grammar's and declaration inventory's: that the spelling is reserved, what takes it, and a fresh spelling to write at the declaration and every use, the spelling with `_value` or, when the program already writes that, the least ordinal after it. What takes it is derived from the reserving sets' own data, the productions whose right-hand side writes the fixed grammar word with one written phrase per such production, or the operation spellings a mode word suffixes, so an amendment that moves a word changes the sentence and a test fails when a production has no phrase, where a written list of spellings would drift silently. The grammar offers the rename only where an IDENT written in the word's place lets the failing frontier match the token after it, because at `outer(musttail 0_u32)` no name derives in place of the call marker and the rename would fail when carried out [DIAG-1]. Before, the grammar's refusal listed the expected tokens and inventory's gave a class and an ordinal in the reserved set, and neither said why `copy` or `checked` is not a name. Refused: a written description for each reserved spelling, and the rename at every FORM-3 refusal of a fixed grammar word. Evidence is seven pinned pairs over let, parameter, field and match-binder names with grammar words and mode words, each a rejected program and the program with the rename carried out, which must be accepted.
+
 ## 2026-10-22 Taking turns with a resource that must be closed explicitly needs no lease construct
 
 Nodes: language/waiting/shared-objects
