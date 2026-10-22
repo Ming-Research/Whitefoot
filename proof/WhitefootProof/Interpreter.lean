@@ -175,7 +175,7 @@ def evalInfix (op : InfixOp) : Value → Value → Eval Value
   | _, _ => ill "an infix operation on operands it does not take"
 
 -- spec OP-2 b5dc1d3d54f9afb7
--- spec OP-2 b2f9211f8c7d02cf
+-- spec OP-2 299be1f06a798026
 -- spec OP-2 1276e30b81cfa6c8
 /-- A table operation called by name. Negation and absolute value take one
 operand of a signed type; `band`, `bor`, `bxor` and `bnot` take `Bool`s. -/
@@ -187,10 +187,7 @@ def evalOp : TableOp → List Value → Eval Value
       match u.exactForm t x with
       | some r => .ok (.int t r)
       | none => stuck .domain
-    | .wrap =>
-      match u.wrapForm t x with
-      | some r => .ok (.int t r)
-      | none => ill "a wrap form the rules give no result"
+    | .wrap => .ok (.int t (u.wrapForm t x))
     | .defined => .ok (.bool (u.defined t x))
   | .band, [.bool a, .bool b] => .ok (.bool (a && b))
   | .bor, [.bool a, .bool b] => .ok (.bool (a || b))
