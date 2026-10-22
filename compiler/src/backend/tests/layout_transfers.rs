@@ -984,7 +984,7 @@ fn union_pointer_and_one_bit_intervals_use_byte_capture() {
             "aarch64-unknown-linux-gnu",
             "x86_64-apple-darwin",
             "aarch64-apple-darwin",
-            "x86_64-pc-windows-msvc",
+            crate::target::WINDOWS_X86_64_TRIPLE,
         ] {
             let target = TargetLayout::for_triple(triple).expect("supported target");
             let nominal = program

@@ -3381,6 +3381,7 @@ impl Analyzer<'_, '_> {
             affine: AffineFlowState::default(),
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
+            lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
             debts: Debts::default(),
         };
@@ -3483,6 +3484,7 @@ impl Analyzer<'_, '_> {
             affine: AffineFlowState::default(),
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
+            lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
             debts: Debts::default(),
         };

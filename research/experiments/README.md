@@ -283,6 +283,14 @@ completion criterion were refused.
   argument registers of each calling convention; and the Whitefoot port of
   the interpreter under the compiler's per-arm lowering (stage 2).
 
+- `windows-container-crash-exit/` — why the stack-exhaustion witness of the
+  Windows package check takes about twenty minutes in a process-isolated Server
+  Core container: ending a process that holds the floor's 1 GiB of committed
+  stack by a crash is slow there (over 90 s, stopped) and takes a second on the
+  hosted runner, while `ExitProcess` and `TerminateProcess` end at once in both.
+  Measured 2026-10-21 on `windows-2022` runners; the cause inside the container
+  is not identified.
+
 ## Frozen v0.17 floor studies
 
 Two single-buffer floor measurements of the v0.17 language, complete and

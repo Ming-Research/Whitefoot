@@ -90,7 +90,7 @@ fn accepted_snapshot_source_has_an_explicit_target_capability_boundary() {
         "aarch64-unknown-linux-gnu",
         "aarch64-apple-darwin",
         "x86_64-apple-darwin",
-        "x86_64-pc-windows-msvc",
+        crate::target::WINDOWS_X86_64_TRIPLE,
     ] {
         let target = TargetLayout::for_triple(triple).expect("ordinary supported target");
         // This helper performs the ordinary source judgment before lowering;

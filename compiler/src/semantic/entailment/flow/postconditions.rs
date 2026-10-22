@@ -170,11 +170,25 @@ impl Input<'_, '_> {
     /// implication needs only its retained query.
     pub(super) fn available_call_postconditions(
         &self,
+        call: &crate::NodePath,
         function: super::super::super::model::FunctionId,
         formal: Option<&super::super::super::model::CheckedCallContract>,
     ) -> Vec<AvailablePostcondition> {
         let Some(formal) = formal else {
-            return self.available_postconditions(function);
+            let mut available = self.available_postconditions(function);
+            if let Some(restored) = &self.restored_summary
+                && restored.call.node_path == *call
+                && restored.call.callee == function
+            {
+                available.extend(restored.postconditions.iter().map(|(clause, identity)| {
+                    AvailablePostcondition {
+                        relation: clause.relation.clone(),
+                        route: clause.selector.route,
+                        authority: super::super::RelationProvenance::Verified(identity.clone()),
+                    }
+                }));
+            }
+            return available;
         };
         formal
             .postconditions
@@ -2868,6 +2882,21 @@ impl Judging<'_, '_, '_> {
                 &states.affine,
                 unavailable,
             );
+            let lost_header = if complete.disposition == PostconditionDisposition::Unproved
+                && !unavailable
+            {
+                let mut state = states.clone();
+                state.facts = conditional_facts;
+                self.reasoning().explain_lost_header(
+                    &state,
+                    &[ProofGoal::Ordering {
+                        relation: &relation,
+                        affine: affine_target.as_deref(),
+                    }],
+                )
+            } else {
+                None
+            };
             let clause = if complete.disposition == PostconditionDisposition::Discharged {
                 String::new()
             } else {
@@ -2884,6 +2913,7 @@ impl Judging<'_, '_, '_> {
                     entry_images,
                     disposition: complete.disposition,
                     derivation: complete.derivation,
+                    lost_header,
                 });
         }
     }

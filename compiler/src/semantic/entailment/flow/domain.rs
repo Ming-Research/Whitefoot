@@ -1378,6 +1378,9 @@ impl Judging<'_, '_, '_> {
     }
 
     pub(super) fn join_flows(&mut self, states: &[ProofFlowState]) -> ProofFlowState {
+        for state in states {
+            self.reasoning().observe_summary_context(state);
+        }
         // Close L0 contradiction before any structural intersection. An
         // unreachable predecessor is neutral: it cannot erase a live affine
         // value, published invariant name, or canonical fact. Keeping all
@@ -1431,6 +1434,24 @@ impl Judging<'_, '_, '_> {
                 .flat_map(|state| state.written.iter().copied())
                 .collect(),
             measure_kills: join_measure_kills(&contributing),
+            lost_headers: {
+                let mut losses = Vec::new();
+                for loss in contributing.iter().flat_map(|state| &state.lost_headers) {
+                    // A source relation replayed after loop exit must still
+                    // name the same live support on every incoming path.
+                    if matches!(loss.components, LostHeaderComponents::Exit(_))
+                        && !contributing
+                            .iter()
+                            .all(|state| state.lost_headers.contains(loss))
+                    {
+                        continue;
+                    }
+                    if !losses.contains(loss) {
+                        losses.push(loss.clone());
+                    }
+                }
+                losses
+            },
             continuing,
             debts: Debts::default(),
         }

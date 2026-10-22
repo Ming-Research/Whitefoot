@@ -241,6 +241,8 @@ struct LoopFrame {
     /// the private endpoint-capture scope as well as source binding scopes.
     capture_path: Option<Vec<u32>>,
     breaks: Vec<ProofFlowState>,
+    /// Diagnostic origins of break predecessors; never used by transport.
+    break_sites: Vec<crate::NodePath>,
     continues: Vec<FlowEdge>,
 }
 
@@ -375,6 +377,9 @@ struct ProofFlowState {
     /// cells on a copy of its state, and when they alone discharge it, the
     /// repair names these writes [ENT-5].
     measure_kills: Vec<MeasureKill>,
+    /// Failed optional header transport, used only after a proof rejection
+    /// to explain a missing premise. No proof judgment reads these records.
+    lost_headers: Vec<LostHeaderRelation>,
     /// The kill events applied on this path since the innermost enclosing
     /// loop head, kept only where debug assertions are on: at the loop's back
     /// edge every one must be an event of the summary its head subtracted
@@ -398,6 +403,27 @@ struct MeasureKill {
     /// would leave `term` alone [EFF-2, DIAG-1]; false for every write that
     /// is not a callee's declared write.
     narrowable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LostHeaderRelation {
+    template: SourceLoopInvariantRef,
+    name: String,
+    relation: String,
+    conjunct: String,
+    incoming: crate::NodePath,
+    components: LostHeaderComponents,
+    kills: Vec<MeasureKill>,
+    bindings: Vec<BindingId>,
+    support: Vec<TermKind>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LostHeaderComponents {
+    Frozen(Vec<AffineInequality>),
+    /// Exit joins have no active template to transport. Their diagnostic
+    /// query owns its atoms, so retain source instead of those private IDs.
+    Exit(Box<CheckedAffineRelation>),
 }
 
 impl ProofFlowState {
@@ -1417,6 +1443,10 @@ fn analyze_candidate_inner(
     context: &EntailmentContext<'_>,
 ) -> FunctionEntailment {
     let run = run(function, context);
+    entailment_from_run(function, run)
+}
+
+fn entailment_from_run(function: &CheckedFunction, run: AnalysisRun) -> FunctionEntailment {
     let mut entailment = FunctionEntailment {
         conditions: run.conditions,
         body_disposition: run.body_disposition,
@@ -1442,6 +1472,7 @@ fn analyze_candidate_inner(
 }
 
 struct AnalysisRun {
+    diagnostic_contradiction: bool,
     conditions: Vec<super::ConditionOutcome>,
     operation_intervals: BTreeMap<crate::NodePath, Option<Vec<operation_facts::Interval>>>,
     body_disposition: super::super::model::CheckedBodyDisposition,
@@ -1459,16 +1490,28 @@ struct AnalysisRun {
     sealing_failures: Vec<SealingFailure>,
 }
 
+fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisRun {
+    run_settled(function, context, |_| {})
+}
+
 /// [TYPE-11.S6] walks the body from empty loop-header debts, and again from
 /// the debts the last walk found on each loop's backedges, until no backedge
 /// carries a debt its header did not start with, or one its header's would
 /// restore over other terms [TYPE-11.S5]: the least set, reached by monotone
-/// iteration, since a walk from more debts leaves no fewer.
-fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisRun {
+/// iteration, since a walk from more debts leaves no fewer. `prepare` sets up
+/// every walk's analyzer alike.
+fn run_settled(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    prepare: impl Fn(&mut Analyzer<'_, '_>),
+) -> AnalysisRun {
     let _work = super::work::function(&function.name);
     let mut seeds = HashMap::new();
     loop {
-        let (run, backedges) = run_seeded(function, context, &seeds);
+        let mut analyzer = Analyzer::new(context, function);
+        analyzer.input.debt_seeds = seeds.clone();
+        prepare(&mut analyzer);
+        let (run, backedges) = run_analyzer(analyzer);
         let settled = backedges.iter().all(|(id, debts)| {
             seeds
                 .get(id)
@@ -1483,13 +1526,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
     }
 }
 
-fn run_seeded(
-    function: &CheckedFunction,
-    context: &EntailmentContext<'_>,
-    seeds: &HashMap<CheckedLoopId, Debts>,
-) -> (AnalysisRun, HashMap<CheckedLoopId, Debts>) {
-    let mut analyzer = Analyzer::new(context, function);
-    analyzer.input.debt_seeds = seeds.clone();
+fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> (AnalysisRun, HashMap<CheckedLoopId, Debts>) {
     analyzer.input.collect_bindings();
     analyzer.input.collect_postcondition_entry_images();
     let mut state = ProofFlowState {
@@ -1571,6 +1608,11 @@ fn run_seeded(
         goals: analyzer.vocabulary.goals.into_inventory(),
     };
     let run = AnalysisRun {
+        diagnostic_contradiction: analyzer
+            .input
+            .restored_summary
+            .as_ref()
+            .is_some_and(|restored| restored.contradiction.get()),
         conditions: analyzer.output.conditions,
         operation_intervals: analyzer.output.operation_intervals,
         body_disposition,
@@ -1609,6 +1651,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                     .iter()
                     .any(|nominal| !nominal.affine_invariants.is_empty()),
                 debt_seeds: HashMap::new(),
+                restored_summary: None,
             },
             vocabulary: Vocabulary {
                 terms: TermTable::new(),
@@ -2014,6 +2057,174 @@ struct Input<'check, 'unit> {
     /// [TYPE-11.S6] the debts an earlier walk of this body found on each
     /// loop's backedges, which its header starts with.
     debt_seeds: HashMap<CheckedLoopId, Debts>,
+    /// Populated only by the rejection-only counterfactual query. Neither
+    /// this premise nor any result of that private walk is retained.
+    restored_summary: Option<RestoredSummary>,
+}
+
+struct RestoredSummary {
+    call: super::ConcreteCallOccurrence,
+    /// The schedule's prospective identity for this private hypothesis,
+    /// never an independently verified summary or a retained proof.
+    postconditions: Vec<(
+        super::super::postcondition::CheckedPostcondition,
+        super::VerifiedPostconditionSummary,
+    )>,
+    contradiction: std::cell::Cell<bool>,
+}
+
+/// Reuse ordinary publication and transfer on a private walk, changing one
+/// unavailable summary set at one call only. No private proof identity leaves.
+pub(super) fn unavailable_summary_discharges_record(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    call: &super::ConcreteCallOccurrence,
+    postconditions: &[(
+        super::super::postcondition::CheckedPostcondition,
+        super::VerifiedPostconditionSummary,
+    )],
+    target: usize,
+) -> bool {
+    let discharged = |entailment: &FunctionEntailment| {
+        entailment
+            .answers
+            .get(target)
+            .copied()
+            .flatten()
+            .map(|answer| answer.discharged(entailment))
+    };
+    let baseline = entailment_from_run(function, run(function, context));
+    if discharged(&baseline) != Some(false) {
+        return false;
+    }
+    // [TYPE-11.S6] the private walk settles its loop-header debts as the
+    // ordinary one does, each walk with its own contradiction observer.
+    let restored = run_settled(function, context, |analyzer| {
+        analyzer.input.restored_summary = Some(RestoredSummary {
+            call: call.clone(),
+            postconditions: postconditions.to_vec(),
+            contradiction: std::cell::Cell::new(false),
+        });
+    });
+    if restored.diagnostic_contradiction {
+        return false;
+    }
+    let restored = entailment_from_run(function, restored);
+    discharged(&restored) == Some(true) && !record_uses_contradiction(&restored, target)
+}
+
+fn record_uses_contradiction(entailment: &FunctionEntailment, target: usize) -> bool {
+    use super::super::obligations::RecordAnswer;
+
+    let Some(answer) = entailment.answers.get(target).copied().flatten() else {
+        return true;
+    };
+    let mut parents = match answer {
+        RecordAnswer::Obligation(index) => {
+            let outcome = &entailment.obligations[index];
+            if outcome.contradictory {
+                return true;
+            }
+            outcome.derivation.into_iter().collect::<Vec<_>>()
+        }
+        RecordAnswer::CallGoal(index) => {
+            let outcome = &entailment.call_goals[index];
+            if outcome.evidence.contains(&CallGoalEvidence::AllDerivable) {
+                return true;
+            }
+            outcome.derivation.into_iter().collect()
+        }
+        RecordAnswer::LoopInvariant(index) => {
+            let outcome = &entailment.loop_invariants[index];
+            let mut parents = Vec::new();
+            for evidence in std::iter::once(&outcome.base_evidence)
+                .chain(outcome.inputs.iter().map(|input| &input.evidence))
+            {
+                if evidence.contradiction.is_some() {
+                    return true;
+                }
+                parents.extend(&evidence.components);
+            }
+            parents
+        }
+        RecordAnswer::Postcondition(index) => entailment.postconditions[index]
+            .exits
+            .iter()
+            .filter_map(|exit| exit.derivation)
+            .collect(),
+        // Targets, use premises and certificate residuals all read the same
+        // ordinary state; the observer checks it after term formation too.
+        RecordAnswer::SourceProof(_) => Vec::new(),
+        RecordAnswer::Uninhabited => return true,
+        // [OP-5] a contradictory entering state leaves a condition undecided,
+        // and the outcome keeps no derivation to tell that from a genuinely
+        // undecided one, so a restored summary never explains a condition.
+        RecordAnswer::Condition(_) => return true,
+    };
+    let mut seen = HashSet::new();
+    while let Some(parent) = parents.pop() {
+        if !seen.insert(parent) {
+            continue;
+        }
+        let Some(node) = entailment.derivations.nodes.get(parent.0 as usize) else {
+            return true;
+        };
+        if matches!(
+            node,
+            DerivationNode::L0Contradiction { .. }
+                | DerivationNode::GoalContradiction { .. }
+                | DerivationNode::JoinContradiction { .. }
+                | DerivationNode::MaterializedContradiction { .. }
+        ) {
+            return true;
+        }
+        node.for_each_parent(|parent| parents.push(parent));
+    }
+    false
+}
+
+impl Reasoning<'_, '_, '_> {
+    /// Observe actual flow states, never a proof's temporary negated goal.
+    /// A contradictory predecessor must not disappear at a join and make
+    /// the restored summary appear to prove an unrelated target.
+    fn observe_summary_context(&mut self, state: &ProofFlowState) {
+        let Some(restored) = &self.input.restored_summary else {
+            return;
+        };
+        if restored.contradiction.get() {
+            return;
+        }
+        let Ok(contradiction) = AffineInequality::from_forms(
+            &AffineForm::constant(1),
+            &AffineForm::constant(0),
+            &mut AffineCheckState::new(),
+        ) else {
+            restored.contradiction.set(true);
+            return;
+        };
+        let mut vocabulary = self.vocabulary.explanation_copy();
+        // Queries lazily mint affine measure images through interior
+        // mutability. Their atoms belong to the cloned vocabulary too:
+        // retaining them in the walked state would reuse private identities.
+        let state = state.clone();
+        let mut query = Reasoning {
+            input: self.input,
+            vocabulary: &mut vocabulary,
+        };
+        if query
+            .prove(
+                ProofContext::new(&state.facts, &state.affine),
+                ProofGoal::Affine {
+                    inequality: &contradiction,
+                    right: None,
+                },
+            )
+            .disposition
+            == ProofDisposition::Proved
+        {
+            restored.contradiction.set(true);
+        }
+    }
 }
 
 /// The terms, goals, affine atoms and derivation ledger every judgment is
@@ -2078,6 +2289,40 @@ struct Vocabulary {
     header_relation_roots: u32,
     loop_induction_roots: u32,
     fact_preservation_roots: u32,
+}
+
+impl Vocabulary {
+    /// A private copy that explains an already failed judgment. It owns its
+    /// tables, atoms and ledger, so what its queries mint never reaches this
+    /// vocabulary; the memo caches start empty, because a query memo is
+    /// only ever a shortcut and a cache the copy built could not be kept.
+    fn explanation_copy(&self) -> Self {
+        Self {
+            terms: self.terms.clone(),
+            goals: self.goals.clone(),
+            derivations: self.derivations.clone(),
+            origin_queries: origin_transport::OriginQueryCache::default(),
+            affine_l0_cache: None,
+            affine_models: Vec::new(),
+            affine_atoms: self.affine_atoms.clone(),
+            measure_terms_seen: self.measure_terms_seen.clone(),
+            measure_terms_scanned: self.measure_terms_scanned,
+            product_atoms: self.product_atoms.clone(),
+            handle_images: self.handle_images.clone(),
+            invariant_targets: self.invariant_targets.clone(),
+            unsigned_divisions: self.unsigned_divisions.clone(),
+            power_atoms: self.power_atoms.clone(),
+            encountered_counted: self.encountered_counted,
+            completed_counted_roots: self.completed_counted_roots,
+            s12_roots: self.s12_roots,
+            contract_call_roots: self.contract_call_roots,
+            delivery_give_roots: self.delivery_give_roots.clone(),
+            delivery_join_roots: self.delivery_join_roots,
+            header_relation_roots: self.header_relation_roots,
+            loop_induction_roots: self.loop_induction_roots,
+            fact_preservation_roots: self.fact_preservation_roots,
+        }
+    }
 }
 
 /// What the analysis publishes: every judgment's outcome, the retained
