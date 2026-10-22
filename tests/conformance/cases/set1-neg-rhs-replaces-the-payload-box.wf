@@ -1,5 +1,5 @@
 fn replace_box(cell: &Option<Box<u64>>) -> result: u64 reads(cell), writes(cell.Some.value) {
-  doc "The right-hand-side call replaces the Box and frees the cell containing the captured target.";
+  doc "The right-hand-side call replaces the Box payload and frees its old cell.";
   match &cell^ {
     None() => {
       return 0_u64;
@@ -13,7 +13,7 @@ fn replace_box(cell: &Option<Box<u64>>) -> result: u64 reads(cell), writes(cell.
 }
 
 fn write_after_box_replacement(cell: &Option<Box<u64>>) -> result: unit writes(cell) {
-  doc "A target below Box.inner must retain the dynamic storage boundary across its right-hand side.";
+  doc "SET-1 evaluates the target below Box.inner after the right-hand side, whose payload write ends the arm's variant fact, so the payload selection is refused.";
   match &cell^ {
     None() => {
       return unit;

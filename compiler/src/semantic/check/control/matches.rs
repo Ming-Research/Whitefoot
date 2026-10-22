@@ -1096,7 +1096,6 @@ impl<'unit> Checker<'_, 'unit> {
                         compiler_updated: false,
                         read_only_state: false,
                         reference,
-                        commit_target: None,
                         refinement_witnesses: Vec::new(),
                         handle_watch: None,
                         call_value: false,

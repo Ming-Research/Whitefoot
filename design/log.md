@@ -5,6 +5,18 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-22 An assignment evaluates its right-hand side before its target
+
+Nodes: language/ownership/reference-validity, compiler/checker-facts
+
+Summary: A decision is added: `set p = e;` evaluates `e` first and then evaluates the target in the state `e` left, so, other than an atomic in-place update, it means exactly binding `e` and assigning the binding; the atomic update keeps the place it reads out because its first argument reads the target's offsets, which the call's pairwise effect comparison keeps its function from writing. Two accepted programs showed that a target evaluated first can go stale across its right-hand side, a double free after `remove_at` shifted the target's slot and a store into the block `grow` released ([incidental finding 6](../research/investigations/spec-proof/DESIGN.md#incidental-findings)). The checker's fact node now says an assignment target's captures read the state the right-hand side left. Refused: holding the target's storage under reference validity across the right-hand side, the atomic update's prefix condition for every assignment, and reading subscripts first while locating the place afterwards.
+
+## 2026-10-22 Heap storage holds elements aligned up to 16 bytes with the ordinary allocator
+
+Nodes: compiler/storage-representation
+
+Summary: The target records state 16 bytes, not 8, as the alignment of the heap blocks the runtime hands out, so `std::process::MemoryMeter` and the other 16-aligned opaque host handles can be stored in a Box cell, Slots, Ring, Paged and the HashMap built on Slots instead of failing in target qualification. Nothing else in the runtime changes: the allocator of each supported host returns 16-byte-aligned blocks, which `heap.c` asserts through `_Alignof(max_align_t)` wherever C's fundamental alignment is 16 and, on Apple, where `max_align_t` is 8 bytes on arm64 although libmalloc returns 16, through the 64-bit pointer alone, the alignment tests observing the returned pointers. Shared objects and shared-map entries already qualified through their pool blocks (state at offset 64, 16-byte entry grain), and a `Frozen` payload cannot hold a host handle [SHARE-1]. [OP-9] admits no stored type above 16, so an aligned system allocation up to 4096 bytes, with an original pointer stored beside each pool object, a 32-byte frozen header and a 4096-byte shared empty header, and the variant that derives the original address from the element type's static alignment, were refused as ranges nothing reaches that every `Frozen` and `Shared` object would pay for. A stored type aligned above 16 bytes reopens the decision.
+
 ## 2026-10-22 A continuing kill event's overlap at the loop head is judged without facts
 
 Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention

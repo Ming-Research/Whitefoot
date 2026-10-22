@@ -484,7 +484,11 @@ frontier, under which a merge-only continuation passes its incoming edges on
 unjoined, so that a loop's induction inputs are the edges and not their join;
 the Signed Goal query's affine route, which takes orderings only [ENT-6]; and
 [MSR-4]'s signed division targets, the interval product's premise tightening
-and step 6's candidates, the live bindings.
+and step 6's candidates, the live bindings. Two amendments of the main line landed during the
+slice: the two lines of [ENT-5] on continuing kill events, one marked and one
+read more strictly (below), and [SET-1]'s order, under which a target's
+subscript is judged after the right-hand side, so the checker discharges it in
+the state the right-hand side and a call's publication leave.
 
 Places where the text admits more than one reading and the checker had to
 choose one, the prior criterion's count:

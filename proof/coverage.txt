@@ -201,13 +201,10 @@ outside SET-1 8858bb8689793518 named consts and readonly fields: outside the fir
 outside SET-1 90a3bb40be364db6 counted loops: outside the first phase
 outside SET-1 9e7b031d31973ba2 writable roots: every binding in scope in the fragment is a live own-mode value; references and shared objects are a later phase
 outside SET-1 7582c01f12f8706a writable roots: every binding in scope in the fragment is a live own-mode value; references and shared objects are a later phase
-outside SET-1 2604016fe88e4e1c writable roots: every binding in scope in the fragment is a live own-mode value; references and shared objects are a later phase
-outside SET-1 fad1d12c9ccae89f moves: a later phase
-outside SET-1 fa003cdb368c71d6 references: a later phase
-outside SET-1 8af7417ef1e9d373 writable roots: every binding in scope in the fragment is a live own-mode value; references and shared objects are a later phase
 outside SET-1 b6063d961df1f1fe old-value disposition: integer values have none; a later phase
 outside SET-1 230959a1123ad547 old-value disposition: integer values have none; a later phase
-outside SET-1 66d977d6f378b944 lowering, which the model does not describe
+outside SET-1 63ce5d8e73bf0e13 the atomic in-place update: outside the first phase
+outside SET-1 7b0b517b489c158a lowering, which the model does not describe
 
 rule FN-1
 outside FN-1 8fa1bfe5d4a4ecee result modes: the fragment's grammar writes only value results

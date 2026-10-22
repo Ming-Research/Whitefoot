@@ -358,6 +358,7 @@ termination_by structural ss
 -- spec ENT-5 80c570880c3c70a2
 -- spec ENT-5 012b5b11b1b67a36
 -- spec ENT-6 bb27ebd455ffc998
+-- spec SET-1 fb700bb42c90f36a
 /-- Walk one statement: returns the environment after it and its flow. -/
 def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
   match s with
@@ -375,12 +376,14 @@ def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
       return (env, { normal := [← setVar env st v r] })
     | .index b off => do
       let some v := env.var? b | fail "TYPE-6" s!"the name `{b}` is not in scope"
-      let _ ← evalAtom env st (.index b off)
+      -- The right-hand side first; the target's subscript is then judged on
+      -- its normal continuation, before the commit writes the binding [SET-1].
       let r ← evalRhs env st e
       let st ← match r.call with
-        | some (f, args) => publish env st f args none none (·.write v.id)
-        | none => pure (st.write v.id)
-      return (env, { normal := [st] })
+        | some (f, args) => publish env st f args none none id
+        | none => pure st
+      let _ ← evalAtom env st (.index b off)
+      return (env, { normal := [st.write v.id] })
   | .call e => do
     let r ← evalRhs env st e
     let st ← match r.call with
