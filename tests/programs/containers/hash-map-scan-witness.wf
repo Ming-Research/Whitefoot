@@ -1,0 +1,185 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HashMap = std::collections::hash_map::HashMap;
+alias HashMapConsume = std::collections::hash_map::HashMapConsume;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias HashMapPut = std::collections::hash_map::HashMapPut;
+alias exit_status = std::process::exit_status;
+alias hash_map_capacity = std::collections::hash_map::hash_map_capacity;
+alias hash_map_free = std::collections::hash_map::hash_map_free;
+alias hash_map_len = std::collections::hash_map::hash_map_len;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias hash_map_scan = std::collections::hash_map::hash_map_scan;
+
+const members: u64 = 1000000_u64;
+
+const ceiling: u64 = 4194304_u64;
+
+struct WitnessKeys {
+  seed: u64;
+}
+
+struct WitnessCount {
+  consumed: u64;
+}
+
+fn witness_hash(env: &WitnessKeys, key: &u64) -> result: u64 reads(key) {
+  return key^;
+}
+
+fn witness_equal(env: &WitnessKeys, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
+  return left^ == right^;
+}
+
+binding WitnessKey : HashMapKey<u64, WitnessKeys> {
+  hash = witness_hash;
+  equal = witness_equal;
+}
+
+fn witness_consume(env: &WitnessCount, key: u64, value: u64) -> result: unit writes(env) {
+  set env^.consumed = env^.consumed +wrap 1_u64;
+  return unit;
+}
+
+binding WitnessConsume : HashMapConsume<u64, u64, WitnessCount> {
+  consume = witness_consume;
+}
+
+fn witness_pad(cells: &Box<Slots<u8>>, target: u64) -> result: unit writes(cells) contract {
+  requires cells^.inner.len <= target;
+  ensures cells^.inner.len == target;
+} {
+  doc "Appends zero bytes until the window holds target of them, first growing its allocation when that is smaller.";
+  if cells^.inner.cap < target {
+    grow(cell: cells, capacity: target);
+  }
+  let start = cells^.inner.len;
+  for @fill (
+    index in start..target,
+    invariant filled: cells^.inner.len >= index,
+    invariant bounded: cells^.inner.len <= index,
+    invariant spare: cells^.inner.cap - cells^.inner.len + index >= target
+  ) {
+    place_back(window: &cells^.inner, value: 0_u8);
+  }
+  invariant complete_min: cells^.inner.len >= target;
+  invariant complete_max: cells^.inner.len <= target;
+  return unit;
+}
+
+fn witness_release(cells: Box<Slots<u8>>) -> result: unit pure {
+  loop @drain {
+    if cells.inner.len == 0_u64 {
+      break @drain;
+    }
+    let dropped = take_back(window: &cells.inner);
+  }
+  free_empty(window: move cells);
+  return unit;
+}
+
+fn witness_mark(env: &Box<Slots<u8>>, key: &u64, value: &u64) -> result: unit reads(key), writes(env) {
+  doc "Marks a reported member; keys at or above the member count are churn keys and are not tracked.";
+  let position = key^;
+  if position < env^.inner.len {
+    set env^.inner[position] = 1_u8;
+  }
+  return unit;
+}
+
+fn witness_put(map: &HashMap<u64, u64, ceiling>, key: u64, keys: &WitnessKeys) -> failed: u64 reads(keys), writes(map) {
+  let outcome = hash_map_put::<WitnessKey, u64, ceiling>(map: map, key: key, value: key, env: keys);
+  match outcome {
+    HashMapInserted() => {
+      return 0_u64;
+    }
+    HashMapReturned(reason: why, pair: returned) => {
+      return 1_u64;
+    }
+  }
+}
+
+fn witness_remove(map: &HashMap<u64, u64, ceiling>, key: u64, keys: &WitnessKeys) -> failed: u64 reads(keys), writes(map) {
+  let probe = key;
+  let removed = hash_map_remove::<WitnessKey, u64, ceiling>(map: map, key: &probe, env: keys);
+  match removed {
+    Some(value: gone) => {
+      return 0_u64;
+    }
+    None() => {
+      return 1_u64;
+    }
+  }
+}
+
+fn witness_pass() -> failures: u64 pure {
+  doc "Firn's witness for the resumable scan: one million members are scanned over many separate calls of at most 64 home buckets each, and between calls thirty-two churn keys are inserted and the four oldest churn keys removed, which grows the map from 2^21 to 2^22 buckets, capacity 1572864 to 3145728, partway through the pass. Every member is present throughout, so every member must be reported at least once, the pass must finish, and the map must have grown during it.";
+  let keys = WitnessKeys(seed: 0_u64);
+  let failures = 0_u64;
+  let map = hash_map_new::<u64, u64, ceiling>(capacity: 8_u64);
+  for (key in 0_u64..members) {
+    let refused = witness_put(map: &map, key: key, keys: &keys);
+    set failures = failures +wrap refused;
+  }
+  let filled_capacity = hash_map_capacity::<u64, u64, ceiling>(map: &map);
+  if filled_capacity != 1572864_u64 {
+    set failures = failures +wrap 1_u64;
+  }
+  let hits = box_slots_new::<u8>(capacity: members);
+  witness_pad(cells: &hits, target: members);
+  let fresh = members;
+  let oldest = members;
+  let cursor = hash_map_scan::<WitnessKey, u64, Box<Slots<u8>>, fn witness_mark, ceiling>(map: &map, cursor: 0_u64, limit: 64_u64, key_env: &keys, visit_env: &hits);
+  for @pass (call in 0_u64..1048576_u64) {
+    if cursor == 0_u64 {
+      break @pass;
+    }
+    for (step in 0_u64..32_u64) {
+      let refused = witness_put(map: &map, key: fresh, keys: &keys);
+      set failures = failures +wrap refused;
+      set fresh = fresh +wrap 1_u64;
+    }
+    for (step in 0_u64..4_u64) {
+      let missing = witness_remove(map: &map, key: oldest, keys: &keys);
+      set failures = failures +wrap missing;
+      set oldest = oldest +wrap 1_u64;
+    }
+    set cursor = hash_map_scan::<WitnessKey, u64, Box<Slots<u8>>, fn witness_mark, ceiling>(map: &map, cursor: cursor, limit: 64_u64, key_env: &keys, visit_env: &hits);
+  }
+  if cursor != 0_u64 {
+    set failures = failures +wrap 1_u64;
+  }
+  for (key in 0_u64..members) {
+    if key < hits.inner.len {
+      if hits.inner[key] == 0_u8 {
+        set failures = failures +wrap 1_u64;
+      }
+    }
+  }
+  let grown_capacity = hash_map_capacity::<u64, u64, ceiling>(map: &map);
+  if grown_capacity != 3145728_u64 {
+    set failures = failures +wrap 1_u64;
+  }
+  let churn = fresh -wrap oldest;
+  let expected_length = members +wrap churn;
+  let length = hash_map_len::<u64, u64, ceiling>(map: &map);
+  if length != expected_length {
+    set failures = failures +wrap 1_u64;
+  }
+  let count = WitnessCount(consumed: 0_u64);
+  hash_map_free::<WitnessConsume, ceiling>(map: move map, env: &count);
+  if count.consumed != expected_length {
+    set failures = failures +wrap 1_u64;
+  }
+  witness_release(cells: move hits);
+  return failures;
+}
+
+fn main() -> status: ExitStatus pure {
+  let failures = witness_pass();
+  if failures != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

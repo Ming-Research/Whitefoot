@@ -83,6 +83,30 @@ fn element(program: &IrProgram, ty: IrType) -> Result<IrType, BackendFailure> {
     program.element(element).ok_or(BackendFailure::InvalidIr)
 }
 
+/// The HashMap export reads a bucket's third variant as its filled pair, key
+/// and value, and every other variant as empty; any other layout is refused
+/// here rather than exported as an empty map.
+fn hash_bucket(program: &IrProgram, bucket: IrType) -> Result<(), BackendFailure> {
+    let IrType::Nominal(slot) = bucket else {
+        return Err(BackendFailure::InvalidIr);
+    };
+    let IrNominalKind::Enum { variants } =
+        program.nominal(slot).ok_or(BackendFailure::InvalidIr)?.kind()
+    else {
+        return Err(BackendFailure::InvalidIr);
+    };
+    match &variants[..] {
+        [vacant, deleted, filled]
+            if vacant.fields().is_empty()
+                && deleted.fields().is_empty()
+                && filled.fields().len() == 2 =>
+        {
+            Ok(())
+        }
+        _ => Err(BackendFailure::InvalidIr),
+    }
+}
+
 struct Descriptors<'a> {
     program: &'a IrProgram,
     target: TargetLayout,
@@ -180,6 +204,7 @@ impl Descriptors<'_> {
                             shape = 9;
                             tag = 0x30;
                             let bucket = element(self.program, unbox(self.program, types[0])?)?;
+                            hash_bucket(self.program, bucket)?;
                             element_ptr = format!("@{}", self.descriptor(bucket)?);
                         } else if stable.starts_with("std.collections.ordered_map.OrderedMap<") {
                             shape = 10;
