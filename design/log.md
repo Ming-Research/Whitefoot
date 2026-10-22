@@ -11,6 +11,12 @@ Nodes: compiler/diagnostic-repairs, compiler/formatting-command
 
 Summary: A FORM-2 rejection reported one differing gap per compile, so a writer fixing a file with several layout faults spent a round on each; in a writer trial three of fifteen programs spent four to five rounds that way. The rejection still reports only the first gap, as the specification fixes for the canonical stage, and its repair now lists every differing gap of the rejected source, the first twenty with the line, the terminals around the gap and the bytes to write instead of the bytes found, and the count of the rest. The list comes from a walk over the rejected source's terminals that compares each gap with the one canonical-gap function the renderer emits from, so it cannot disagree with rendering. The formatting request's reason is restated: a writer without it applies the listed changes by hand.
 
+## 2026-10-22 A continuing kill event's overlap at the loop head is judged without facts
+
+Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention
+
+Summary: ENT-5 did not say in which state the loop head judges whether a continuing kill event may kill a pre-loop fact, and judging index separation needs facts that on a later iteration come from the head being formed. The new decision states the judgment the checker already makes: index, range and page steps at one position always overlap there, field and payload steps and window parts separate as usual, and liveness proved before the loop holds at the event; a lost fact is kept by a header invariant. Compiler probes on main's compiler (this item's temporary workflow) show a body write of `a[1]` or of `a[j]` with `j` unchanged removing `a[2] == 0` from the head and a loop with no element write keeping it. Refused: separation by pre-loop facts, which is unsound when the body changes the offset; separation by facts no continuing event writes, a second implicit pass the invariant already covers; separation by literal offsets only.
+
 ## 2026-10-21 A call's range write footprint is bounded by its first captured range, and capability limits are judged per obligation
 
 Nodes: compiler/range-judgment
