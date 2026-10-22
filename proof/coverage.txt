@@ -229,13 +229,11 @@ outside SET-1 8858bb8689793518 named consts and readonly fields: outside the fir
 outside SET-1 90a3bb40be364db6 counted loops: outside the first phase
 outside SET-1 9e7b031d31973ba2 target resolution and writability: the fragment's checker
 outside SET-1 7582c01f12f8706a target resolution and writability: the fragment's checker
-outside SET-1 2604016fe88e4e1c target resolution and writability: the fragment's checker
-outside SET-1 fad1d12c9ccae89f moves: a later phase
-outside SET-1 fa003cdb368c71d6 references: a later phase
-outside SET-1 8af7417ef1e9d373 target resolution and writability: the fragment's checker
+outside SET-1 fb700bb42c90f36a target resolution and writability: the fragment's checker
+outside SET-1 63ce5d8e73bf0e13 the atomic in-place update: outside the first phase
 outside SET-1 b6063d961df1f1fe old-value disposition: integer values have none; a later phase
 outside SET-1 230959a1123ad547 old-value disposition: integer values have none; a later phase
-outside SET-1 66d977d6f378b944 target resolution and writability: the fragment's checker
+outside SET-1 7b0b517b489c158a target resolution and writability: the fragment's checker
 
 rule FN-1
 outside FN-1 8269e67f51a1198b callable boundaries and their judgments: the fragment's checker

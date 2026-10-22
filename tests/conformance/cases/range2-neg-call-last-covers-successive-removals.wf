@@ -1,0 +1,31 @@
+fn refill(row: &Slots<u64, 2>) -> result: unit writes(row.last), writes(row.next), writes(row.len) contract {
+  requires row^.len == 2_u64;
+  ensures row^.len == 2_u64;
+} {
+  doc "WIN-2 makes one writes(row.last) cover both successive take_back calls, including the original first element.";
+  let removed_last = take_back(window: row);
+  let removed_first = take_back(window: row);
+  place_back(window: row, value: 9_u64);
+  place_back(window: row, value: 9_u64);
+  return unit;
+}
+
+fn need_first(row: &Slots<u64, 2>) -> result: unit pure contract {
+  requires forall small_first(k in 0_u64..1_u64): row^[k] <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(row: &Slots<u64, 2>) -> result: unit writes(row) contract {
+  requires forall held_elements(k in 0_u64..row^.len): row^[k] <= 7_u64;
+  requires row^.len == 2_u64;
+} {
+  doc "The restored length defines the first element again, but RANGE-2 forgets its old value under the helper's row.last effect, so RANGE-3 rejects need_first.";
+  refill(row: row);
+  need_first(row: row);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
