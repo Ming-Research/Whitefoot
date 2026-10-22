@@ -40,7 +40,7 @@ An accepted program does not read or write outside an object's storage, use a va
 |---|---|---|---|---|
 | `OP-4` | Every subscript carries the obligation `i < len`. The checker proves it or rejects the program; no bounds check is emitted. | `op4-neg-index-undischarged`, `op4-neg-counted-past-array-end`, `op4-neg-segments-index-past-count` | `op4-pos-index-discharged` | |
 | `OWN-1` | Every value has one owner. A binding whose value was moved is dead, and a later use is rejected. | `own1-neg-index-atom-after-move` | `own1-pos-consume-once` | |
-| `REF-2` | A reference is valid only until a write, move, release or window change reaches its path; using an invalid one is rejected. | `ref2-neg-paged-element-after-grow` | `ref2-pos-reference-used-before-sibling-move` | |
+| `REF-2` | A reference is valid only until a write, move, release or window change reaches its path; using an invalid one is rejected, and so is a `set` whose right-hand side invalidated the storage its target selected. | `ref2-neg-paged-element-after-grow`, `set1-neg-rhs-shifts-the-target-slot` | `ref2-pos-reference-used-before-sibling-move`, `set1-pos-rhs-appends-beside-the-target-slot` | |
 | `REF-3` | A reference never escapes the function that formed it: it cannot be returned or stored in an aggregate. | `own4-neg-return-local-borrow` | `ref3-pos-index-result` | |
 | `LIV-1` | Every join agrees on which bindings are live, so each release at scope exit is unconditional and runs once. | `liv1-neg-branches-disagree-on-liveness` | `liv1-pos-loop-moves-and-restores-an-outer-binding` | |
 | `STOR-3` | Releases are derived by the compiler and run exactly once on every edge that leaves the owner's scope. | | `stor3-pos-box-drop-region`, `continue-pos-cleanup` | |
