@@ -280,7 +280,10 @@ fn a_hash_map_stores_meters_and_preserves_them_when_rebuilt() {
   let inserted = hash_map_put::<MeterKey, MemoryMeter, 8>(map: &map, key: 7_u64, value: move first, env: &env);
   release::<HashMapPut<u64, MemoryMeter>>(value: move inserted);
   let second = std::process::meter_share(meter: &meter);
-  let grew = hash_map_put::<MeterKey, MemoryMeter, 8>(map: &map, key: 8_u64, value: move second, env: &env);
+  let filled = hash_map_put::<MeterKey, MemoryMeter, 8>(map: &map, key: 8_u64, value: move second, env: &env);
+  release::<HashMapPut<u64, MemoryMeter>>(value: move filled);
+  let third = std::process::meter_share(meter: &meter);
+  let grew = hash_map_put::<MeterKey, MemoryMeter, 8>(map: &map, key: 9_u64, value: move third, env: &env);
   release::<HashMapPut<u64, MemoryMeter>>(value: move grew);
   let key = 7_u64;
   let removed = hash_map_remove::<MeterKey, MemoryMeter, 8>(map: &map, key: &key, env: &env);
