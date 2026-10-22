@@ -555,7 +555,7 @@ branch/base ratio on one source is not measurable. The adapt step now also
 appends the missing field with an unused binding, and this run's sides are the
 two compilers that accept the adapted source. The ratio to pre-#431 main needs
 a base column on a source without the bindings of the `Inputs` fields the
-baseline lacks; the baseline run recorded after the final-head re-measurement
+baseline lacks; the baseline run recorded after the third-merge re-measurement
 below adds it.
 
 Same method as the first merge's Firn run otherwise: five interleaved rounds,
@@ -600,21 +600,24 @@ closure cells. The ranges are the min and max of five paired rounds, not
 confidence intervals. The first merge's run recorded the same join pairs in
 both columns (main 7,448,963; branch 6,304,847) and closure cells 1,110 lower
 in both (80,598,778 and 61,389,173); intern calls differ by 1,290 and closure
-rows by 210 in both columns as well. That equal shift in both columns is the
-one more binding of the adapted source, not a change in what the fix does. This
+rows by 210 in both columns as well. The shift is the same in both columns, so
+it does not come from the fix; it is bounded above by what the one more binding
+of the adapted source and the difference between the two `main`s add. This
 run has no base column, so it does not give the ratio to pre-#431 main; the
 figures 0.978 (before the first merge) and 0.678 (on the first merge) belong to
 those heads.
 
-### Re-measurement on the final head, after the third merge of main (`643931102`)
+### Re-measurement after the third merge of main (`643931102`)
 
 Main advanced again (`7b11c52fb`) with changes under `semantic/check/`
 (references, linearity, frozen, nominal instances, atomic) and `prelude`, none
 under `semantic/entailment/flow`, `semantic/places` or `resolution/engine`. A
 measurement counts only for the head that merges, so all three workloads are
-timed once more in one run on this head; later advances of main that leave this
-branch's head unchanged are not timed again. Firn's direct ratio to pre-#431
-main is measured in the baseline run that follows this one. Method as before: five interleaved
+timed once more in one run on this head. Firn's direct ratio to pre-#431
+main is measured in the baseline run that follows this one. The pull request
+head later took two more merges of main (`b50dc6e41`, `35fcd251a`), which
+brought checker changes; the section "Re-timing on the compiler tree of the pull
+request head" below times that tree. Method as before: five interleaved
 rounds (three for `pkg::test`, main once), compiler user+sys CPU, no check
 cache, one work-counter run per compiler, sources adapted by applying the
 earlier runs' adaptation diffs and then the compiler's own mechanical fixes.
@@ -636,8 +639,8 @@ Sides and what each result shows:
   the work differs from main.
 
 Result ([run 39693987787](https://github.com/Ming-Research/Whitefoot/actions/runs/39693987787),
-workflow head `0f904ca1a`, whose compiler tree equals the head that `131338b85`
-and the later heads carry; every exit code was 0; the three workloads ran on
+workflow head `0f904ca1a`, whose compiler tree equals that of `c4d0dcbeb` and
+`131338b85`, the heads before the last two merges of main; every exit code was 0; the three workloads ran on
 different hosted CPUs, so only ratios within one workload are comparable):
 
 | Workload (host CPU) | Side | rounds | median CPU s | ratio to `base` (median, min–max) |
@@ -670,11 +673,11 @@ and `branch` 73.28 s, branch/main 0.869 (0.866–0.876) against a `main` twin at
 range lies wholly below 1 and the twin's straddles it, so on every workload the
 fix still removes the #431 work from current main.
 
-### Firn baseline column on the final head
+### Firn baseline column after the third merge of main
 
 The acceptance row for Firn asks for the median ratio of the merged head to
-pre-#431 main (`7d9118eba`) of at most 1.03, measured in a run on the final
-head. The final-head run above timed Firn without that column, because the
+pre-#431 main (`7d9118eba`) of at most 1.03, measured in a run on the head
+that merges. The third-merge run above timed Firn without that column, because the
 baseline compiler cannot check the adapted source (its `Inputs` lacks fields
 the adapted source binds) and the column was judged unmeasurable until the
 acceptance returned to the direct criterion; the missing column could not be
@@ -695,7 +698,7 @@ only the first missing field. The step now removes, from the line the baseline
 compiler reports, every `unused_<field>` binding of a field its own diagnostic
 does not declare, repeating for at most five rejections, fails unless the
 baseline then accepts the source, and lists the bindings it removed. It also
-applies the final-head run's complete adaptation diff
+applies the third-merge run's complete adaptation diff
 ([run 39693987787](https://github.com/Ming-Research/Whitefoot/actions/runs/39693987787),
 186 fixes) instead of redoing those fixes, which gives the same adapted
 source. Columns and what each result shows:
@@ -705,13 +708,12 @@ source. Columns and what each result shows:
   it.
 - `twin`: the `base` binary on the same source again; the median and min–max of
   its ratio to `base` are this run's noise, read as before.
-- `main` (`7b11c52fb`, with the #431 regression) and `branch` (the final head),
+- `main` (`7b11c52fb`, with the #431 regression) and `branch` (the head of the third merge of main),
   both on the adapted source with the bindings: the join, join-pair and
   closure-cell counters of the two columns show the work the fix removes. The
   bindings' own contribution is bounded by the shift of these counters, in both
   columns, from the first merge's run (source without any of the bindings) to
-  this run, set against this run's branch column; the figures are written after
-  the run. The bound is on those work counters, not on CPU time; a branch/base
+  this run, set against this run's branch column (figures below). The bound is on those work counters, not on CPU time; a branch/base
   median above 1.03 by less than what the counters leave room for would still
   be reported as above 1.03.
 
@@ -726,7 +728,7 @@ every exit code was 0):
 | `base` (`7d9118eba`, source without the two bindings) | 5 | 53.47 | 1.000 |
 | `twin` (same binary as `base`) | 5 | 53.38 | 0.976 (0.963–1.034) |
 | `main` (`7b11c52fb`) | 5 | 63.10 | 1.171 (1.139–1.245) |
-| `branch` (final head) | 5 | 54.89 | 1.027 (0.979–1.072) |
+| `branch` (third-merge head) | 5 | 54.89 | 1.027 (0.979–1.072) |
 
 The branch/base median is 1.027, which meets the acceptance row's at most 1.03,
 by a margin smaller than this run's noise: the twin's own median ratio is 0.976
@@ -770,6 +772,42 @@ branch's cells, 0.004% of its intern calls and 0.012% of its rows. The shift
 also contains whatever the `main` of the first merge and `7b11c52fb` differ by,
 so it is an upper bound for the two bindings, and it is a bound on work
 counters, not on CPU time.
+
+### Re-timing on the compiler tree of the pull request head (`ef01fc5ca`)
+
+The two runs above timed the compiler tree of `0f904ca1a` (equal to `c4d0dcbeb`
+and `131338b85`). The pull request head then took two more merges of main
+(`b50dc6e41`, `35fcd251a`). Between the timed tree and `ef01fc5ca`, `compiler/src`
+differs in 46 files (+3,238 −133 lines), 14 of them under `semantic/entailment`
+(among them `flow.rs`, `flow/frontier.rs`, `flow/walk.rs`, `flow/judge.rs` and
+`flow/invariants.rs`, the code this change edits). An acceptance row counts a
+result only from the head that merges, and the earlier timings are of another
+compiler tree, so the three workloads are timed once more in one run on the compiler tree of the pull request head, from a temporary
+workflow whose commit leaves `compiler/` as `ef01fc5ca` has it. The sides are
+those of the two sections above, with the `main` column moved to the merge base
+of the head and main (`1fbd6623d`), so that the pull request's change is the
+only difference between `main` and `branch`:
+
+- `base` (`7d9118eba` for `pkg::vm` and Firn, `d837678c6905` for `pkg::test`):
+  the denominator of the acceptance rows. Branch/base at most 1.03 (`pkg::vm`,
+  Firn) and at most 1.5 (`pkg::test`) meets them; a larger median rejects them.
+  Firn's `base` checks the adapted source without the `Inputs` bindings it lacks,
+  as above.
+- `twin`: the `base` binary run again; the median and min–max of its ratio to
+  `base` are this run's noise. A row whose margin is smaller than the twin's
+  range is reported with that range, as the Firn row was, and read by its median.
+- `main` (`1fbd6623d`, with the #431 regression): branch/main isolates the fix.
+  A branch range reaching 1 or above rejects the claim that the fix still pays
+  on this tree.
+- `branch` (the compiler tree of `ef01fc5ca`): the counters `join:join`,
+  `join:pairs_evaluated` and `closure:cells_sum` of the compilers say where the
+  work differs from `main`.
+
+Five interleaved rounds (three for `pkg::test`, `main` once there), compiler
+user+sys CPU, no check cache, one work-counter run per compiler, sources adapted
+by applying the earlier runs' adaptation diffs and then the compiler's own
+mechanical fixes. This run's result is the one reported; it is repeated only if
+a twin median lies outside its own min–max range or an exit code is not 0.
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
