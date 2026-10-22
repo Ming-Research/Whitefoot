@@ -32,6 +32,21 @@ jobs:
             from: 'digits\.length > 1 && digits\.head\? == some'
             to: 'digits.length > 0 && digits.head? == some'
             expect: '(run): the parser rejects it citing FORM-7'
+          - case: a call in an if condition that never branches
+            file: WhitefootProof/Interpreter.lean
+            from: 'Step\.ofEval \(branch g v thn els\)'
+            to: 'Step.ofEval (ill "broken" : Eval Frame)'
+            expect: 'example a call in an if condition: ill formed: broken'
+          - case: an unresolved name read as a binding without a value
+            file: WhitefootProof/Interpreter.lean
+            from: '\| none => ill s!"the name \{x\} is not in scope"'
+            to: '| none => stuck .noValue'
+            expect: 'example an unresolved name: stuck: Whitefoot.Stuck.noValue'
+          - case: fragment cases put outside
+            file: WhitefootProof/Parser.lean
+            from: 'if let some \(\.oper _\) :='
+            to: 'if let some _ :='
+            expect: 'listed in fragment-cases.txt but outside the fragment: computed const arguments'
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned Lean toolchain

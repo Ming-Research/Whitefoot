@@ -1,0 +1,3 @@
+# The conformance cases in the proof model's fragment: each case the parser
+# reads to a program or to a rejection, one id per line. `lake exe conformance`
+# fails while this list and the parser disagree.

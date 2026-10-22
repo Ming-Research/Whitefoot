@@ -17,9 +17,12 @@ The machine stops in one of four ways:
   exact operation whose domain query is false, a subscript outside its base, a
   read of a binding with no value, a call whose requirement is false, and a
   return whose postcondition is false. Each is the state the rules' static
-  obligations exclude, so an accepted program never reaches one;
+  obligations exclude, so an accepted program never reaches one. The fragment
+  reaches no binding without a value: every `let` has its value, and `move`,
+  the only way to take one away, is outside it;
 - `illFormed`, where a step would need a typing or naming judgment the static
-  rules decide and the program fails it, such as adding a `u8` to a `u64`;
+  rules decide and the program fails it, such as adding a `u8` to a `u64` or
+  reading a name no binding in scope declares;
 - `outOfSteps`, when the budget runs out.
 
 Each definition is marked with the specification lines that give its step its
@@ -48,7 +51,8 @@ inductive Stuck where
   | domain
   /-- A subscript whose offset is not below its base's length [OP-4]. -/
   | bounds
-  /-- A read or write of a binding that has no value. -/
+  /-- A read or write of a binding that has no value; no state of the
+  fragment reaches it. -/
   | noValue
   /-- A call whose requirement is false [FN-8]. -/
   | requires
@@ -73,15 +77,17 @@ abbrev Env := List (String × Value)
 
 namespace Env
 
+/-- The value of the newest binding named `x`; a name no binding in scope
+declares fails resolution. -/
 def get (env : Env) (x : String) : Eval Value :=
   match env.find? (·.1 == x) with
   | some (_, v) => .ok v
-  | none => stuck .noValue
+  | none => ill s!"the name {x} is not in scope"
 
 /-- Replace the value of the newest binding named `x`. -/
 def put (env : Env) (x : String) (v : Value) : Eval Env :=
   match env with
-  | [] => stuck .noValue
+  | [] => ill s!"the name {x} is not in scope"
   | (y, w) :: rest =>
     if y == x then .ok ((x, v) :: rest) else do return (y, w) :: (← put rest x v)
 
@@ -258,11 +264,13 @@ inductive Dest where
   | assignAt (x : String) (offset : Nat)
   /-- An expression statement discards it. -/
   | discard
+  /-- An `if` tests it and enters the block it selects. -/
+  | test (thn els : List Stmt)
   /-- A `return` returns it from the caller. -/
   | ret
   /-- It is the entry's result, which ends the run. -/
   | exit
-  deriving DecidableEq, Repr
+  deriving Repr
 
 /-- One call's state. -/
 structure Frame where
@@ -313,9 +321,9 @@ def enter (p : Program) (g : FnDecl) (args : List (String × Value)) (dest : Des
     if !ok then .halt (.stuck .requires) else
     .next { frames := { fn := g, env, entry := env, kont := [.stmts g.body], dest } :: callers }
 
-/-- Evaluate a statement's right-hand side. A call of a function of the
-program enters it, sending its result to `dest`; any other expression's value
-goes to `fin`. -/
+/-- Evaluate a statement's right-hand side or an `if` condition. A call of a
+function of the program enters it, sending its result to `dest`; any other
+expression's value goes to `fin`. -/
 def evalRhs (p : Program) (f : Frame) (callers : List Frame) (e : Expr) (dest : Dest)
     (k : List Kont) (fin : Value → Step) : Step :=
   match e with
@@ -339,6 +347,22 @@ def write (f : Frame) (x : String) (offset : Option Nat) (v : Value) : Eval Fram
       if t == t' then pure (.array t (es.set i w)) else ill "an element set of another type"
     | some _, _, _ => ill "an element set of a value that is not an array element"
   return { f with env := (← f.env.put x new) }
+
+-- spec FN-1 1b8bfc7d20670172
+-- spec OP-5 af38c43524906cf8
+-- spec OP-5 d6475f1046091841
+-- spec OP-5 f72d932bf4fcbb17
+-- spec GRAM-6 fa3c95e89a631bdd
+-- spec GRAM-6 b50dca70cef91d5c
+/-- An `if` whose `Bool` condition has the value `v` enters the block it
+selects; an absent `else` block is empty, so a false condition goes on to the
+next statement. -/
+def branch (f : Frame) (v : Value) (thn els : List Stmt) : Eval Frame :=
+  match v with
+  | .bool b =>
+    let kont : List Kont := .stmts (if b then thn else els) :: .scope f.env.length :: f.kont
+    .ok { f with kont }
+  | _ => ill "an if condition that is not a Bool"
 
 -- spec FN-9 1a8c5bd424397cf5
 -- spec FN-9 18262fff0ab222b1
@@ -367,6 +391,8 @@ def doReturn (p : Program) (v : Value) : List Frame → Step
       | .assignAt x i, g :: rest =>
         Step.ofEval (write g x (some i) v) fun g => .next { frames := g :: rest }
       | .discard, g :: rest => .next { frames := g :: rest }
+      | .test thn els, g :: rest =>
+        Step.ofEval (branch g v thn els) fun g => .next { frames := g :: rest }
       | _, [] => .halt (.illFormed "a return with no caller")
 
 /-- The continuation after the loop a `break` or `continue` resolves to: the
@@ -409,23 +435,12 @@ def stepSet (p : Program) (f : Frame) (callers : List Frame) (t : Target) (e : E
         | .int _ i => evalRhs p f callers e (.assignAt x i.toNat) k (commit x (some i.toNat))
         | _ => .halt (.illFormed "a subscript offset is not a u64")
 
--- spec FN-1 1b8bfc7d20670172
--- spec OP-5 af38c43524906cf8
--- spec OP-5 d6475f1046091841
--- spec OP-5 f72d932bf4fcbb17
--- spec GRAM-6 fa3c95e89a631bdd
--- spec GRAM-6 b50dca70cef91d5c
-/-- `if c { … } else { … }` enters the block its `Bool` condition selects; an
-absent `else` block is empty, so a false condition goes on to the next
-statement. -/
+/-- `if c { … } else { … }` evaluates its condition, which may call a
+function of the program [GRAM-5], and enters the block the value selects. -/
 def stepIf (p : Program) (f : Frame) (callers : List Frame) (c : Expr) (thn els : List Stmt)
     (k : List Kont) : Step :=
-  Step.ofEval (evalExpr p f.env c) fun v =>
-    match v with
-    | .bool b =>
-      let kont : List Kont := .stmts (if b then thn else els) :: .scope f.env.length :: k
-      .next { frames := { f with kont } :: callers }
-    | _ => .halt (.illFormed "an if condition that is not a Bool")
+  evalRhs p f callers c (.test thn els) k fun v =>
+    Step.ofEval (branch { f with kont := k } v thn els) fun g => .next { frames := g :: callers }
 
 /-- One statement of the running frame, followed by `k`. -/
 def stepStmt (p : Program) (f : Frame) (callers : List Frame) (s : Stmt) (k : List Kont) :
