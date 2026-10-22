@@ -231,6 +231,7 @@ const fn phrase(production: Production) -> Option<&'static str> {
         Production::AtomicStmt => "an atomic statement",
         Production::MatchStmt => "a match statement",
         Production::ValueMatch => "a value-match initializer",
+        Production::Arm => "a match arm",
         Production::ApartClause => "an apart certificate",
         Production::Atom => "an expression atom",
         Production::Call => "a call",
