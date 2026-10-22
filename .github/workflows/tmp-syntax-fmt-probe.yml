@@ -70,21 +70,67 @@ jobs:
             echo "=================== diff $f"
             diff -u "$f" "$f.formatted" || true
           done
-      - name: Library tests of the syntax and driver modules
-        continue-on-error: true
-        env:
-          WHITEFOOT_CHECK_TIMEOUT: 3000
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the host toolchain
         run: |
-          perl .github/run-check.pl probe/lib cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --locked --offline -- syntax:: driver::
-      - name: Binary tests
-        continue-on-error: true
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Static group
         env:
-          WHITEFOOT_CHECK_TIMEOUT: 3000
+          DESIGN_REVIEW_BASE: origin/main
+        run: make static
+      - name: Compiler lint
+        run: make -C compiler lint
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the host toolchain
         run: |
-          perl .github/run-check.pl probe/bin cargo test --manifest-path compiler/Cargo.toml --profile gate --bins --locked --offline
-      - name: Canonical corpus and guide examples
-        continue-on-error: true
-        env:
-          WHITEFOOT_CHECK_TIMEOUT: 3000
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Every library test
+        run: make -C compiler test-build-unit test-unit
+  corpus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the host toolchain
         run: |
-          perl .github/run-check.pl probe/corpus cargo test --manifest-path compiler/Cargo.toml --profile gate --test corpus --locked --offline -- canonical_corpus:: doc_examples::
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Every integration and binary test
+        run: make -C compiler test-build-corpus test-corpus
