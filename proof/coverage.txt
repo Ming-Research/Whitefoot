@@ -199,8 +199,6 @@ outside FORM-5 702b02b4909e745c float literals: outside the first phase
 outside FORM-5 a7ca80c6fe589b23 float literals: outside the first phase
 outside FORM-5 7709523ba9ff8617 float literals: outside the first phase
 outside FORM-5 c9bc2b23dceb3041 float literals: outside the first phase
-outside FORM-5 accaac9f8d2df955 character literals: outside the first phase
-outside FORM-5 5633a10294e6fdfc character literals: outside the first phase
 outside FORM-5 20b8846ae1f4716a character literals: outside the first phase
 outside FORM-5 23b4157ec39b2e5a STRING appears only in doc entries, which carry no meaning
 outside FORM-5 1af90ea7202494fa Bool is the prelude enum; its constructors are calls
@@ -210,7 +208,6 @@ outside FORM-5 45e4898f8b66e80c floats: outside the first phase
 rule FORM-7
 outside FORM-7 983e1f4bea7b257b heading of the rule; its sentences are marked or listed
 outside FORM-7 37f0214b8c7ad209 float literals: outside the first phase
-outside FORM-7 527c3ba47ff21fc6 character literals: outside the first phase
 outside FORM-7 67f2efc8512cc158 character literals: outside the first phase
 
 rule TYPE-4

@@ -413,15 +413,37 @@ def bridges (op : CmpOp) (a b : Form) (ta tb : Option (Term × Int)) :
   | .eq => [(Ineq.le a b, up a tb), (Ineq.le b a, up b ta)]
   | .ne => []
 
-/-- A relation over named operands, as one query: its L0 facts when each side
-is one term, its affine components over the operands' images. -/
+/-- A relation's L0 facts when its normalized source-term form `lhs - rhs`
+names at most two terms, one with coefficient one and the other with minus
+one, so that it is a difference bound `a - b op c` [ENT-3.S16, MSR-4]. -/
+def diffFacts (op : CmpOp) (la lb : Lin) (looks : String → Option (Term × Int)) :
+    Option (List Bound × List Diseq) :=
+  let d := (linAdd la (linScale (-1) lb)).clean
+  match d.2 with
+  | [] => some (relFacts op (.z, d.1) (.z, 0))
+  | [(x, a)] => do
+    let (t, k) ← looks x
+    if a == 1 then return relFacts op (t, k + d.1) (.z, 0)
+    else if a == -1 then return relFacts op (.z, d.1) (t, k)
+    else none
+  | [(x, a), (y, b)] => do
+    let (t, k) ← looks x
+    let (u, j) ← looks y
+    if a == 1 && b == -1 then return relFacts op (t, k + d.1) (u, j)
+    else if a == -1 && b == 1 then return relFacts op (u, j + d.1) (t, k)
+    else none
+  | _ => none
+
+/-- A relation over named operands, as one query: its L0 facts when it is a
+difference bound, its affine components over the operands' images. -/
 def relQuery (goal : Option GExpr) (r : Relation) (looks : String → Option (Term × Int))
     (looki : String → Option Form) : Query :=
   match lin r.lhs, lin r.rhs with
   | some la, some lb =>
     let ta := linTerm looks la
     let tb := linTerm looks lb
-    let l0 : Option (List (List (List Bound × List Diseq))) := do return [[relFacts r.op (← ta) (← tb)]]
+    let l0 : Option (List (List (List Bound × List Diseq))) :=
+      (diffFacts r.op la lb looks).map fun fs => [[fs]]
     let affine : Option (List (Ineq × Option (Form × Term))) := do
       let fa ← linImage looki la
       let fb ← linImage looki lb
@@ -853,7 +875,7 @@ def evalRhs (env : Env) (st : State) (e : Expr) : M Rhs := do
     match o, vs with
     | .unary u m, [va] =>
       match va.ty, m with
-      | .int t, .defined => return { val := { gexpr := mk1 (GExpr.op1 o) va.gexpr, ty := .bool } }
+      | .int _, .defined => return { val := { gexpr := mk1 (GExpr.op1 o) va.gexpr, ty := .bool } }
       | .int t, _ => do
         if m == .exact then
           let gen ← get

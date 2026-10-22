@@ -352,7 +352,7 @@ def establishRequire (env : Env) (st : State) (r : Relation) : State :=
 /-- A postcondition's admitted shape [FN-9]: each side is a constant
 displacement of zero or one datum with coefficient one, and at most one side
 also carries one more parameter with coefficient one. -/
-def ensuresShape (f : FnDecl) (r : Relation) : Judge Unit := do
+def ensuresShape (r : Relation) : Judge Unit := do
   let side (a : Affine) : Judge Nat :=
     match lin a with
     | some l => (match l.clean.2 with
@@ -385,7 +385,7 @@ def consistent (p : Program) (f : FnDecl) : Judge Unit := do
 /-- A function's fact judgments: its postconditions' shapes and consistency,
 then the walk of its body from the entry state of its requirements. -/
 def checkFn (p : Program) (f : FnDecl) : M Unit := do
-  for r in f.ensures do StateT.lift (ensuresShape f r)
+  for r in f.ensures do StateT.lift (ensuresShape r)
   StateT.lift (consistent p f)
   let mut vars : List Var := []
   let mut st : State := {}

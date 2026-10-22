@@ -613,12 +613,47 @@ partial def block : P (List Stmt) := do
 
 end
 
-/-- `doc STRING ;` [GRAM-2], which carries no semantics. -/
+/-- A lowercase hexadecimal digit's value. -/
+def hexVal (c : Char) : Nat :=
+  if c.isDigit then c.toNat - '0'.toNat else c.toNat - 'a'.toNat + 10
+
+-- spec FORM-5 accaac9f8d2df955
+-- spec FORM-5 5633a10294e6fdfc
+-- spec FORM-7 527c3ba47ff21fc6
+/-- The first text item of a STRING's interior that is not legal, with the rule
+it fails: `\u{H}` takes one or more lowercase hexadecimal digits [FORM-5], and
+its value is a Unicode scalar value with no leading zero in H and no other
+spelling: a raw printable byte or one of the two-byte escapes [FORM-7]. Raw
+bytes and the two-byte escapes are already the lexer's [GRAM-1]. -/
+partial def textError (body : List Char) : Option (String × String) :=
+  match body with
+  | [] => none
+  | '\\' :: 'u' :: rest =>
+    let h := rest.drop 1 |>.takeWhile fun c => c.isDigit || decide ('a' ≤ c ∧ c ≤ 'f')
+    match rest.head?, rest.drop (h.length + 1) with
+    | some '{', '}' :: tl =>
+      let v := h.foldl (fun acc c => acc * 16 + hexVal c) 0
+      if h.isEmpty then some ("FORM-5", "a `\\u` escape with no digits")
+      else if h.length > 1 && h.head? == some '0' then
+        some ("FORM-7", "a `\\u` escape with a leading zero")
+      else if v > 0x10FFFF || (0xD800 ≤ v && v ≤ 0xDFFF) then
+        some ("FORM-7", "a `\\u` escape that denotes no Unicode scalar value")
+      else if v == 0x09 || v == 0x0A || v == 0x0D || (0x20 ≤ v && v ≤ 0x7E) then
+        some ("FORM-7", "a `\\u` escape of a value with another spelling")
+      else textError tl
+    | _, _ => some ("FORM-5", "a `\\u` escape that is not `\\u` and lowercase hexadecimal digits in braces")
+  | '\\' :: _ :: tl => textError tl
+  | _ :: tl => textError tl
+
+/-- `doc STRING ;` [GRAM-2], which carries no semantics; its text items must be
+legal [FORM-5, FORM-7]. -/
 def doc : P Unit := do
   if (← isTok (kw "doc")) then
     advance
     match ← peek with
-    | some (.str _) => advance
+    | some (.str s) =>
+      if let some (rule, msg) := textError s.toList then reject rule msg
+      advance
     | t => reject "GRAM-2" s!"expected a STRING, found {show? t}"
     expect (punct ";") "GRAM-2"
 

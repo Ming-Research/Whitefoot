@@ -91,7 +91,7 @@ of two integers of one type, or `==` and `!=` of two `Bool`s, has type `Bool`.
 -/
 def infixTy (op : InfixOp) (ta tb : Ty) : Judge Ty :=
   match op, ta, tb with
-  | .compare c, .int s, .int t =>
+  | .compare _, .int s, .int t =>
     if s == t then .ok .bool else rejectBy "TYPE-5" "a comparison of two integer types"
   | .compare .eq, .bool, .bool | .compare .ne, .bool, .bool => .ok .bool
   | .compare _, _, _ => rejectBy "TYPE-5" "a comparison of operands it does not take"
