@@ -2951,65 +2951,33 @@ fn assert_located_allocation_failure(
 }
 
 #[test]
-fn unsupported_heap_payloads_keep_their_layout_and_writer_allocation_in_text_and_json() {
-    for (path, source, line, column, size) in [
+fn overaligned_meters_compile_in_every_heap_container_on_the_default_target() {
+    for (path, source) in [
         (
             "meter-box.wf",
             "fn allocate(value: std::process::MemoryMeter) -> result: unit pure {\n  let cell = box_new::<std::process::MemoryMeter>(value: move value);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
-            2,
-            14,
-            32,
         ),
         (
             "meter-zero-slots.wf",
             "fn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 0_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n",
-            2,
-            15,
-            32,
         ),
         (
             "meter-empty-slots.wf",
             "fn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 1_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n",
-            2,
-            15,
-            32,
         ),
         (
             "meter-filled-slots.wf",
             "fn allocate(value: std::process::MemoryMeter) -> result: unit pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 1_u64);\n  place_back(window: &cells.inner, value: move value);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
-            2,
-            15,
-            32,
         ),
         (
             "meter-hash-map.wf",
             "fn main() -> status: std::process::ExitStatus pure {\n  let map = std::collections::hash_map::hash_map_new::<u64, std::process::MemoryMeter, 1>(capacity: 1_u64);\n  return std::process::exit_status(code: 0_u8);\n}\n",
-            2,
-            13,
-            48,
         ),
     ] {
         let input = SourceInput::new(path, source.as_bytes());
-        check(&[input], CompilerLimits::default())
-            .expect("heap target qualification must not change source acceptance");
-        let failure = compile(&[input], CompilerLimits::default())
-            .expect_err("the ordinary heap guarantee is still eight bytes");
-        if path == "meter-hash-map.wf" {
-            assert!(failure.detail().contains("HashMapSlot"), "{failure}");
-        }
-        let size = format!("payload size {size} bytes");
-        assert_located_allocation_failure(
-            &failure,
-            path,
-            line,
-            column,
-            &[
-                "MemoryMeter",
-                &size,
-                "alignment 16 bytes",
-                "allocation alignment limit 8 bytes",
-            ],
-        );
+        check(&[input], CompilerLimits::default()).expect("the program is source-valid");
+        compile(&[input], CompilerLimits::default())
+            .expect("heap storage honors the 16-byte alignment of a MemoryMeter payload");
     }
 }
 
