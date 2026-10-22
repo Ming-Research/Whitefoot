@@ -10,6 +10,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention
 
 Summary: ENT-5 did not say in which state the loop head judges whether a continuing kill event may kill a pre-loop fact, and judging index separation needs facts that on a later iteration come from the head being formed. The new decision states the judgment the checker already makes: index, range and page steps at one position always overlap there, field and payload steps and window parts separate as usual, and liveness proved before the loop holds at the event; a lost fact is kept by a header invariant. Compiler probes on main's compiler (this item's temporary workflow) show a body write of `a[1]` or of `a[j]` with `j` unchanged removing `a[2] == 0` from the head and a loop with no element write keeping it. Refused: separation by pre-loop facts, which is unsound when the body changes the offset; separation by facts no continuing event writes, a second implicit pass the invariant already covers; separation by literal offsets only.
+
 ## 2026-10-21 Windows programs target MinGW, and a bundled release gains a Windows x86-64 package
 
 Nodes: compiler/toolchain-resolution, compiler/downstream-releases, compiler/waiting-contexts
