@@ -10,11 +10,14 @@ fn make(index: &u64) -> result: Slots<u64, 4> writes(index) contract {
 
 fn probe(rows: &Paged<Slots<u64, 4>>) -> result: unit writes(rows) contract {
   requires rows^.pages.len >= 2_u64;
-  requires rows^.pages[1_u64].len > 0_u64;
 } {
   let index = 0_u64;
-  set rows^.pages[index][0_u64] = make(index: &index);
-  let value = rows^.pages[index][0_u64][0_u64];
+  if rows^.pages[index].len > 0_u64 {
+    set rows^.pages[index][0_u64] = make(index: &index);
+    if rows^.pages[index].len > 0_u64 {
+      let value = rows^.pages[index][0_u64][0_u64];
+    }
+  }
   return unit;
 }
 

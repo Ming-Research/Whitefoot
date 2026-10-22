@@ -69,6 +69,12 @@ jobs:
         run: |
           make conformance
           make conformance-run
+          # The page case must be refused at its target (line 16), not at
+          # the later read (line 18).
+          perl .github/run-check.pl tmp-whitefootc cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
+          out=$(compiler/target/gate/whitefootc --check tests/conformance/cases/call4-neg-set-result-rhs-writes-page-index.wf 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q 'call4-neg-set-result-rhs-writes-page-index.wf:16:'
       # The new rejected cases must be accepted by the compiler at the merge
       # base, so that each one witnesses the defect the change removes; the
       # accepted cases that write the new storage are run there to show the
