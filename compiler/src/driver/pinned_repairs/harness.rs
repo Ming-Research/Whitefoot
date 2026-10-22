@@ -69,6 +69,7 @@ pub(super) fn run_pairs() {
         .chain(super::postcondition_places::POSTCONDITION_PLACES)
         .chain(super::common_syntax::COMMON_SYNTAX)
         .chain(super::type_invariants::TYPE_INVARIANTS)
+        .chain(super::reserved_names::RESERVED_NAMES)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
