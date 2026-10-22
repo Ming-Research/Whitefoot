@@ -3356,6 +3356,7 @@ impl Analyzer<'_, '_> {
             affine: AffineFlowState::default(),
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
+            lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
         };
         // The forward substitution happens above before the ordinary edge
@@ -3457,6 +3458,7 @@ impl Analyzer<'_, '_> {
             affine: AffineFlowState::default(),
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
+            lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
         };
         self.kill_scopes_to(&mut image, context.scope_depth);

@@ -86,12 +86,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     // [SHARE-1]'s handle: the state lives in the shared object, not in the
-    // handle, so the record declares no field; `T: drop` because the last
-    // handle's release drops the state.
+    // handle, so the record declares no field. A handle to a linear state is
+    // linear [PROV-6], and its last `shared_close` receives the state.
     (
         "prelude/Shared.wf",
         PreludeSource::Opaque,
-        r#"opaque nocopy struct Shared<T: drop> {
+        r#"opaque nocopy struct Shared<T> {
 }
 "#,
     ),
@@ -374,7 +374,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     (
         "prelude/shared_new.wf",
         PreludeSource::Function,
-        r#"fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
+        r#"fn shared_new<T>(value: T) -> result: Shared<T> pure;
 "#,
     ),
     (
@@ -386,7 +386,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     (
         "prelude/shared_share.wf",
         PreludeSource::Function,
-        r#"fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
+        r#"fn shared_share<T>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 "#,
     ),
     (
@@ -519,6 +519,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/claim_killed.wf",
         PreludeSource::Function,
         r#"fn claim_killed(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/shared_close.wf",
+        PreludeSource::Function,
+        r#"fn shared_close<T>(shared: Shared<T>) -> result: Option<T> pure waits;
 "#,
     ),
 ];

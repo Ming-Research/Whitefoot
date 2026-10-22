@@ -1,13 +1,16 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
+fn consume(value: u64) -> result: unit pure contract {
+  requires value == 5_u64;
+} {
+  return unit;
+}
+
 fn main() -> status: ExitStatus pure {
   doc "WIN-1: an Array has no window; every slot always holds a value, and its one measure len is the type constant.";
   let a = array_filled::<u64, 5>(value: 2_u64);
   let n = a.len;
-  if n == 5_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  let done = consume(value: n);
   return exit_status(code: 0_u8);
 }

@@ -26,8 +26,8 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 2_u8);
   }
   let boxed_ring = box_ring_new::<Box<u8>>(capacity: 2_u64);
-  let held = box_new::<u8>(value: 7_u8);
-  place_back(window: &boxed_ring.inner, value: move held);
+  let item = box_new::<u8>(value: 7_u8);
+  place_back(window: &boxed_ring.inner, value: move item);
   clear(window: &boxed_ring.inner);
   invariant boxed_ring_empty: boxed_ring.inner.len == 0_u64;
   let tallies = slots_new::<Tally, 2>();

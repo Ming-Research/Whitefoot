@@ -137,6 +137,8 @@ macro_rules! operation_operands {
             | IrOperation::ContextAwait { start: value }
             | IrOperation::SharedState { object: value, .. }
             | IrOperation::SharedRetain { object: value, .. }
+            | IrOperation::SharedCountOut { object: value }
+            | IrOperation::SharedFree { object: value }
             | IrOperation::DecisionCell { object: value, .. }
             | IrOperation::SharedAcquire { object: value }
             | IrOperation::SharedTake { object: value }

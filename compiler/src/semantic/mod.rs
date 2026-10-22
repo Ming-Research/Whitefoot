@@ -14,6 +14,7 @@ pub(crate) mod model;
 mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
+mod place_render;
 mod places;
 #[cfg(test)]
 pub(crate) use places::UnprovedSeparations;
@@ -226,6 +227,8 @@ pub enum SemanticRule {
     Err3,
     /// Counted endpoint admission to the closed term-or-constant vocabulary.
     Ent2,
+    /// Borrowing a measure without a field declaration.
+    Msr1,
     /// One denotation per operand position, keyed on the parameter's mode.
     Msr3,
     /// Publication: where a declared relation is instantiated, where it is
@@ -314,6 +317,7 @@ impl SemanticRule {
             Self::Err2 => "ERR-2",
             Self::Err3 => "ERR-3",
             Self::Ent2 => "ENT-2",
+            Self::Msr1 => "MSR-1",
             Self::Msr3 => "MSR-3",
             Self::Call6 => "CALL-6",
             Self::Inv1 => "INV-1",
@@ -404,7 +408,8 @@ impl SemanticRule {
             Self::Share1 => Self::Share2,
             Self::Share2 => Self::Snap1,
             Self::Snap1 => Self::Ent2,
-            Self::Ent2 => Self::Msr3,
+            Self::Ent2 => Self::Msr1,
+            Self::Msr1 => Self::Msr3,
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
             Self::Inv1 => Self::Prf1,
@@ -489,14 +494,15 @@ impl SemanticRule {
             Self::Share2 => 59,
             Self::Snap1 => 60,
             Self::Ent2 => 61,
-            Self::Msr3 => 62,
-            Self::Call6 => 63,
-            Self::Inv1 => 64,
-            Self::Prf1 => 65,
-            Self::Range1 => 66,
-            Self::Range3 => 67,
-            Self::Range4 => 68,
-            Self::Range5 => 69,
+            Self::Msr1 => 62,
+            Self::Msr3 => 63,
+            Self::Call6 => 64,
+            Self::Inv1 => 65,
+            Self::Prf1 => 66,
+            Self::Range1 => 67,
+            Self::Range3 => 68,
+            Self::Range4 => 69,
+            Self::Range5 => 70,
         }
     }
 }
@@ -530,6 +536,17 @@ impl SemanticLocation {
         let Self::SourceNode(_, coordinate) = self;
         *coordinate
     }
+}
+
+/// One source match that omits declared enum variants [ERR-2].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonExhaustiveMatchSite {
+    /// The canonical match node and its complete source extent.
+    pub location: SemanticLocation,
+    /// The enum's source name, rather than a backend instance identity.
+    pub enum_name: String,
+    /// Declared variants with no written arm, in declaration order.
+    pub missing_variants: Vec<String>,
 }
 
 /// One non-discharged static source obligation disposition [ENT-6].
@@ -630,10 +647,12 @@ pub struct UndischargedPostconditionDetail {
     pub selector: SemanticLocation,
     /// The instantiated normalized relation at the selected exit.
     pub relation: String,
+    /// The expanded written clause with the selected return substituted.
+    pub clause: String,
     /// The exact non-discharged disposition.
     pub disposition: PostconditionProofDisposition,
     /// The repair [DIAG-1], selected by the disposition.
-    pub mechanical_fix: &'static str,
+    pub mechanical_fix: String,
 }
 
 /// Structured reason for one semantic rejection.
@@ -733,6 +752,11 @@ pub enum SemanticIssueKind {
         /// A construct-specific repair when the mismatch identifies one.
         mechanical_fix: Option<String>,
     },
+    /// [MSR-1] a derived measure has no declared storage field to borrow.
+    BorrowOfDerivedMeasure {
+        /// The by-value observation in the source's own path spelling.
+        mechanical_fix: String,
+    },
     /// [OP-10, OP-14] an operand whose shape is outside the operation's
     /// admitted set.
     UnadmittedOperandShape {
@@ -765,6 +789,8 @@ pub enum SemanticIssueKind {
         root_class: String,
         /// Closed set of classes required by SET-1.
         required_classes: &'static str,
+        /// A cause-specific repair when the rejected path has one.
+        mechanical_fix: Option<String>,
     },
     /// A written reference argument reaches immutable source storage.
     ImmutableWrittenArgument {
@@ -895,6 +921,15 @@ pub enum SemanticIssueKind {
         /// Repair naming that part.
         mechanical_fix: String,
     },
+    /// [SHARE-1] a linear state type has its own handle type as a part.
+    SharedStateHoldsOwnHandle {
+        /// First such part, in declaration order through handle states.
+        part: String,
+        /// The handle type the state would hold.
+        handle: String,
+        /// Repair naming that part.
+        mechanical_fix: String,
+    },
     /// [SHARE-1] frozen content cannot be moved or consumed.
     FrozenContentConsume {
         /// Read or retain the content instead of consuming it.
@@ -963,7 +998,7 @@ pub enum SemanticIssueKind {
         /// The invalidating event [REF-2] names.
         event: &'static str,
         /// Exact restructuring required by REF-2.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [REF-1] a new payload selection lacks its current variant fact.
     UnestablishedPayloadVariant {
@@ -1038,6 +1073,19 @@ pub enum SemanticIssueKind {
     },
     /// A contract predicate is not exactly `own Bool`.
     InvalidPredicateCondition,
+    /// [OP-5] the fixed automatic derivation decides an `if` or `value_if`
+    /// condition: every fact the selected branch would establish is already
+    /// derivable, so the test and its dead branch are a redundant source form.
+    RedundantCondition {
+        /// The rendered condition.
+        residual: String,
+        /// The truth the condition is decided to have.
+        decided: String,
+        /// The source facts of the proofs that decided it.
+        facts: Vec<String>,
+        /// The repair [DIAG-1]: delete the test and its dead branch.
+        mechanical_fix: String,
+    },
     /// A conditional was written in a form GRAM-6 does not admit for its
     /// class: a Bool-scrutinee `match`, an empty `else`, or an `else` block
     /// holding exactly one `if`.
@@ -1098,7 +1146,7 @@ pub enum SemanticIssueKind {
     /// statement [SHARE-2]. The residual names the exact position family.
     UndischargedCallSeparation {
         residual: String,
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// Two effects of one call's substituted row lie on overlapping paths
     /// and at least one is a write, with no admitted family able to separate
@@ -1234,7 +1282,7 @@ pub enum SemanticIssueKind {
     UndischargedSourceProof {
         name: String,
         obligation: SourceProofObligation,
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// A return expression disagrees with the written function result.
     ReturnMismatch,
@@ -1344,7 +1392,7 @@ pub enum SemanticIssueKind {
     /// A requirement entry uses a construct outside the admitted FN-8 goal subset.
     InvalidRequires,
     /// Structural callable requirement failed with ordinary repair guidance.
-    InvalidHeldContract { reason: String, mechanical_fix: &'static str },
+    InvalidHeldContract { reason: String, mechanical_fix: String },
     /// A selected snapshot input closure contains a resource vertex.
     SnapshotResource { owned_path: String, mechanical_fix: &'static str },
     /// An ensures selector does not match the concrete result class FN-9 admits.
@@ -1442,6 +1490,9 @@ pub enum SemanticIssueKind {
     NonExhaustiveMatch {
         /// Declared variants with no arm, in declaration order.
         missing_variants: Vec<String>,
+        /// Every recorded site in traversal order, including the primary
+        /// site, with each canonical source node listed once across instances.
+        other_sites: Vec<NonExhaustiveMatchSite>,
     },
     /// An enum selection repeats a declared variant.
     DuplicateMatchVariant {

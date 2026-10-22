@@ -471,12 +471,10 @@ fn main() -> status: std::process::ExitStatus pure {{
   place_back(window: &rows, value: move third);
   let cells = array_filled::<u64, 3>(value: 7_u64);
   let total = 0_u64;
-  if rows.len == 3_u64 {{
-    if rows[1_u64].len <= cells.len {{
-{call}      for (c in 0_u64..rows[1_u64].len) {{
-        let cell = cells[c];
-        set total = total +wrap cell;
-      }}
+  if rows[1_u64].len <= cells.len {{
+{call}    for (c in 0_u64..rows[1_u64].len) {{
+      let cell = cells[c];
+      set total = total +wrap cell;
     }}
   }}
   return std::process::exit_status(code: 0_u8);
@@ -484,13 +482,13 @@ fn main() -> status: std::process::ExitStatus pure {{
 "
         )
     };
-    assert_accepts(body("      refill(part: &rows[2_u64..3_u64], at: 0_u64);\n").as_bytes());
+    assert_accepts(body("    refill(part: &rows[2_u64..3_u64], at: 0_u64);\n").as_bytes());
     assert_accepts(
-        body("      let tail = &rows[2_u64..3_u64];\n      refill(part: tail, at: 0_u64);\n")
+        body("    let tail = &rows[2_u64..3_u64];\n    refill(part: tail, at: 0_u64);\n")
             .as_bytes(),
     );
     assert_cells_read_unproved(
-        body("      refill(part: &rows[1_u64..3_u64], at: 0_u64);\n").as_bytes(),
+        body("    refill(part: &rows[1_u64..3_u64], at: 0_u64);\n").as_bytes(),
     );
     // Control: with no write the guard discharges the read.
     assert_accepts(body("").as_bytes());
@@ -780,7 +778,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_call_goal(
         body("3_u64").as_bytes(),
         CallRequirementDisposition::Refuted,
-        "3_u64 < a[2..4].len",
+        "3_u64 < a[2_u64..4_u64].len",
     );
 }
 
@@ -886,13 +884,17 @@ fn dynamic_inline_range_length_discharge_uses_its_endpoint_ordering() {
   return part^.len;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(lo: u64) -> result: unit pure {
   let a = array_filled::<u8, 4>(value: 0_u8);
-  let lo = 1_u64;
   let hi = 3_u64;
   if lo < hi {
     let n = nonempty(part: &a[lo..hi]);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(lo: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1311,7 +1313,7 @@ fn direct_page_length_fact_dies_after_place_back() {
             "../../../../tests/conformance/cases/msr2-neg-direct-page-length-after-append.wf"
         ),
         CallRequirementDisposition::Unproved,
-        "p^.pages[0].len == 1_u64",
+        "p^.pages[0_u64].len == 1_u64",
     );
 }
 
@@ -1333,7 +1335,7 @@ fn borrowed_page_length_does_not_identify_a_direct_read_after_append() {
             "../../../../tests/conformance/cases/ent2-neg-borrowed-page-length-as-current.wf"
         ),
         CallRequirementDisposition::Unproved,
-        "p^.pages[0].len == 1_u64",
+        "p^.pages[0_u64].len == 1_u64",
     );
 }
 
@@ -1364,7 +1366,7 @@ fn direct_page_element_bound_dies_after_take_back() {
             else {
                 panic!("expected the element's bounds obligation: {issue:?}");
             };
-            assert_eq!(residual, "1_u64 < values^.pages[0].len");
+            assert_eq!(residual, "1_u64 < values^.pages[0_u64].len");
         },
     );
 }

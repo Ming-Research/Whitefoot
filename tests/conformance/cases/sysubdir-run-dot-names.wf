@@ -362,7 +362,7 @@ fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryW
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, drivers: unused_driver_count, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: reader, write: writer) = move directory;
   let dot = array_filled::<u8, 64>(value: 0_u8);
   let dot_end = copy_name(args: &args, position: 1_u64, destination: &dot[0_u64..64_u64]);
@@ -378,24 +378,12 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let double_end = copy_name(args: &args, position: 6_u64, destination: &double_dot[0_u64..64_u64]);
   let outcome = 99_u8;
   if dot_end > 0_u64 {
-    if dot_end <= 64_u64 {
-      if dots_end > 0_u64 {
-        if dots_end <= 64_u64 {
-          if plain_end > 0_u64 {
-            if plain_end <= 64_u64 {
-              if folder_end > 0_u64 {
-                if folder_end <= 64_u64 {
-                  if leading_end > 0_u64 {
-                    if leading_end <= 64_u64 {
-                      if double_end > 0_u64 {
-                        if double_end <= 64_u64 {
-                          set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, dot: &dot[0_u64..dot_end], dots: &dots[0_u64..dots_end], plain: &plain[0_u64..plain_end], folder: &folder[0_u64..folder_end], leading_dot: &leading_dot[0_u64..leading_end], double_dot: &double_dot[0_u64..double_end]);
-                        }
-                      }
-                    }
-                  }
-                }
-              }
+    if dots_end > 0_u64 {
+      if plain_end > 0_u64 {
+        if folder_end > 0_u64 {
+          if leading_end > 0_u64 {
+            if double_end > 0_u64 {
+              set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, dot: &dot[0_u64..dot_end], dots: &dots[0_u64..dots_end], plain: &plain[0_u64..plain_end], folder: &folder[0_u64..folder_end], leading_dot: &leading_dot[0_u64..leading_end], double_dot: &double_dot[0_u64..double_end]);
             }
           }
         }

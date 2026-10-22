@@ -1,0 +1,159 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias WriteFile = std::fs::WriteFile;
+alias close_directory = std::fs::close_directory;
+alias close_directory_write = std::fs::close_directory_write;
+alias exit_status = std::process::exit_status;
+alias factory_share = std::io::factory_share;
+
+const log_name: Array<u8, 3> =[97_u8, 111_u8, 102_u8];
+
+fn append_all(factory: &HandleFactory, file: &WriteFile, source: &[u8]) -> result: Bool reads(source), writes(factory), writes(file) waits {
+  doc "Appends every byte of source with as many host writes as the host needs; False when a write fails or accepts no byte.";
+  let end = source^.len;
+  let sent = 0_u64;
+  loop @append {
+    if sent < end {
+    } else {
+      break @append;
+    }
+    match std::fs::append_once(factory: factory, file: file, source: source, start: sent, end: end) {
+      Ok(value: next) => {
+        if next == sent {
+          return False();
+        }
+        set sent = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return True();
+}
+
+fn turn(desk: &Shared<Slots<WriteFile, 1>>, factory: &HandleFactory, head: &[u8], tail: &[u8]) -> result: Bool reads(desk), reads(head), reads(tail), writes(factory) waits {
+  doc "One turn: takes the one file off the desk in an atomic statement, appends a record in two host writes outside every statement, and puts the file back whether the writes were accepted or not.";
+  let hand = slots_new::<WriteFile, 1>();
+  atomic home = &desk^ when home^.len > 0_u64 {
+    let taken = take_back(window: home);
+    place_back(window: &hand, value: move taken);
+  }
+  let file = take_back(window: &hand);
+  free_empty(window: move hand);
+  let wrote = append_all(factory: factory, file: &file, source: head);
+  if wrote {
+    set wrote = append_all(factory: factory, file: &file, source: tail);
+  }
+  atomic home = &desk^ when home^.len < home^.cap {
+    place_back(window: home, value: move file);
+  }
+  return wrote;
+}
+
+fn close_desk(desk: Shared<Slots<WriteFile, 1>>, factory: &HandleFactory) -> result: u8 writes(factory) waits {
+  doc "Ends one handle of the desk. The handle that ends last receives the window, syncs and closes the file it holds, and answers 1; every other handle answers 0. A window that is empty at the last end answers 2, a failed sync 3 and a failed close 4.";
+  match shared_close::<Slots<WriteFile, 1>>(shared: move desk) {
+    Some(value: slot) => {
+      let outcome = 1_u8;
+      if slot.len > 0_u64 {
+        let file = take_back(window: &slot);
+        match std::fs::sync_file(factory: factory, file: &file) {
+          Ok(value: synced) => {
+          }
+          Err(error: problem) => {
+            set outcome = 3_u8;
+          }
+        }
+        match std::fs::close_write(factory: factory, file: move file) {
+          Ok(value: closed) => {
+          }
+          Err(error: problem) => {
+            set outcome = 4_u8;
+          }
+        }
+      } else {
+        set outcome = 2_u8;
+      }
+      free_empty(window: move slot);
+      return outcome;
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn write_turns(desk: Shared<Slots<WriteFile, 1>>, factory: HandleFactory, letter: u8, turns: u64) -> result: u64 pure waits {
+  doc "Takes turns with the other contexts for the one file, writes one record of five bytes in each of its turns, then ends its handle. Answers the number of turns whose two writes were accepted, or 1000000 more when its end of the handle received the file, which the handle the starter keeps must not allow.";
+  let head = array_filled::<u8, 2>(value: letter);
+  set head[1_u64] = 40_u8;
+  let tail = array_filled::<u8, 3>(value: letter);
+  set tail[1_u64] = 41_u8;
+  set tail[2_u64] = 10_u8;
+  let records = 0_u64;
+  for @write (index in 0_u64..turns) {
+    let wrote = turn(desk: &desk, factory: &factory, head: &head[0_u64..2_u64], tail: &tail[0_u64..3_u64]);
+    if wrote {
+      set records = records +wrap 1_u64;
+    }
+  }
+  let closed = close_desk(desk: move desk, factory: &factory);
+  if closed != 0_u8 {
+    return records +wrap 1000000_u64;
+  }
+  return records;
+}
+
+fn run_desk(handles: &HandleFactory, root: &std::fs::DirectoryWrite) -> result: u8 reads(root), writes(handles) waits {
+  doc "Opens the log, parks the file in a one-slot window that is the state of a shared object, lets three running contexts take turns writing 100, 200 and 300 records, and ends the last handle itself, which receives the file and closes it. Answers 0 when every record was accepted and the file came back exactly once, and names the first thing that did not.";
+  match std::fs::open_append(factory: handles, root: root, name: &log_name[0_u64..3_u64], start: 0_u64, end: 3_u64) {
+    Ok(value: file) => {
+      let start = slots_new::<WriteFile, 1>();
+      place_back(window: &start, value: move file);
+      let desk = shared_new::<Slots<WriteFile, 1>>(value: move start);
+      let first_desk = shared_share::<Slots<WriteFile, 1>>(shared: &desk);
+      let first_factory = factory_share(factory: handles);
+      let first = spawn write_turns(desk: move first_desk, factory: move first_factory, letter: 97_u8, turns: 100_u64);
+      let second_desk = shared_share::<Slots<WriteFile, 1>>(shared: &desk);
+      let second_factory = factory_share(factory: handles);
+      let second = spawn write_turns(desk: move second_desk, factory: move second_factory, letter: 98_u8, turns: 200_u64);
+      let third_desk = shared_share::<Slots<WriteFile, 1>>(shared: &desk);
+      let third_factory = factory_share(factory: handles);
+      let third = spawn write_turns(desk: move third_desk, factory: move third_factory, letter: 99_u8, turns: 300_u64);
+      let pair = first +wrap second;
+      let workers = pair +wrap third;
+      let received = close_desk(desk: move desk, factory: handles);
+      if workers != 600_u64 {
+        return 11_u8;
+      }
+      if received == 0_u8 {
+        return 13_u8;
+      }
+      if received == 2_u8 {
+        return 14_u8;
+      }
+      if received == 3_u8 {
+        return 15_u8;
+      }
+      if received == 4_u8 {
+        return 16_u8;
+      }
+      return 0_u8;
+    }
+    Err(error: problem) => {
+      return 10_u8;
+    }
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Three running contexts take turns with one WriteFile, which no shared object could hold before its state could be linear: the file sits in a one-slot window, each turn takes it out in an atomic statement, writes outside every statement across two host waits, and puts it back, and the handle that ends last receives it and closes it. The status is 0 when every turn wrote its record and the file was closed once; the harness reads the log for records that two writers interleaved.";
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_out, stderr: unused_err, handles: handles, stdin: unused_input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  let outcome = run_desk(handles: &handles, root: &cwd_write);
+  close_directory_write(factory: &handles, directory: move cwd_write);
+  close_directory(factory: &handles, directory: move cwd);
+  return exit_status(code: outcome);
+}

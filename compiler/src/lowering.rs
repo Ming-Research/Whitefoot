@@ -357,7 +357,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// The [PRE-1] records whose bodies the compiler itself emits: the
 /// construction functions [OP-13], the eleven window operations [OP-10],
 /// `swap` [OP-11], `free_empty` [OP-14], the mutable/read-only shared-handle rows
-/// `shared_new`, `shared_share`, `shared_read`, `shared_read_share`,
+/// `shared_new`, `shared_share`, `shared_close`, `shared_read`, `shared_read_share`,
 /// `frozen_new` and `frozen_share`,
 /// the map's five functions `shared_map_new`, `map_count`, `map_scan`, `map_scan_within`
 /// and `map_clear`, and the key set's four [SHARE-1].
@@ -401,6 +401,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 45] = [
     // and the key set's four.
     "shared_new",
     "shared_share",
+    "shared_close",
     "shared_read",
     "shared_read_share",
     "frozen_new",

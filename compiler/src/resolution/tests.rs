@@ -75,6 +75,13 @@ fn with_resolution_sources<ResultValue>(
         SourceBundle::with_limits(inputs, SOURCE_LIMITS)
     }
     .expect("resolver test bundle must be valid");
+    with_resolution_bundle(bundle, run)
+}
+
+fn with_resolution_bundle<ResultValue>(
+    bundle: SourceBundle,
+    run: impl FnOnce(ResolutionOutcome) -> ResultValue,
+) -> ResultValue {
     let LexOutcome::Complete(lexed) = lex(&bundle, LEX_LIMITS) else {
         panic!("resolver test source must lex");
     };
@@ -105,6 +112,188 @@ fn with_one_resolution<ResultValue>(
     run: impl FnOnce(ResolutionOutcome) -> ResultValue,
 ) -> ResultValue {
     with_resolution(&[SourceInput::new("test.wf", source)], run)
+}
+
+fn qualified_hint(source: &[u8], role: LexicalUseRole, expected: &str) {
+    with_one_resolution(source, |outcome| {
+        let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("missing qualified inventory name must reject: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), ResolutionRule::Mod5);
+        let ResolutionIssueKind::QualifiedNameNotFound {
+            role: found_role,
+            mechanical_fix,
+            ..
+        } = issue.kind()
+        else {
+            panic!("expected a qualified inventory lookup failure: {issue:?}");
+        };
+        assert_eq!(*found_role, role);
+        assert_eq!(mechanical_fix, expected);
+    });
+}
+
+#[test]
+fn qualified_call_hint_lists_only_module_callables_in_spelling_order() {
+    let source = "const limit: u8 = 1_u8;\n\nstruct Record {\n  value: u8;\n}\n\nenum Choice {\n  Pick();\n}\n\nfn zeta() -> result: unit pure {\n  pkg::missing();\n  return unit;\n}\n\nfn alpha() -> result: unit pure {\n  return unit;\n}\n";
+    qualified_hint(
+        source.as_bytes(),
+        LexicalUseRole::IdentifierCallee,
+        "replace `missing` with an accessible name declared in `pkg` for this grammar position: `alpha`, `zeta` [MOD-5]",
+    );
+    for name in ["alpha", "zeta"] {
+        let repaired = source.replace("pkg::missing", &format!("pkg::{name}"));
+        with_one_resolution(repaired.as_bytes(), |outcome| {
+            assert!(
+                matches!(outcome, ResolutionOutcome::Complete(_)),
+                "each suggested callable must resolve: {outcome:?}"
+            );
+        });
+    }
+}
+
+#[test]
+fn qualified_name_hint_caps_sorted_inventory_at_eight_names() {
+    let mut source = String::new();
+    for name in [
+        "zulu", "zeta", "theta", "sigma", "rho", "omega", "lambda", "gamma", "beta", "alpha",
+    ] {
+        if !source.is_empty() {
+            source.push('\n');
+        }
+        source.push_str(&format!("fn {name}() -> result: unit pure {{\n"));
+        if name == "zulu" {
+            source.push_str("  pkg::missing();\n");
+        }
+        source.push_str("  return unit;\n}\n");
+    }
+    qualified_hint(
+        source.as_bytes(),
+        LexicalUseRole::IdentifierCallee,
+        "replace `missing` with an accessible name declared in `pkg` for this grammar position: `alpha`, `beta`, `gamma`, `lambda`, `omega`, `rho`, `sigma`, `theta` [MOD-5]",
+    );
+}
+
+#[test]
+fn qualified_name_hint_uses_type_and_constructor_domains() {
+    for (wrong, role, choices) in [
+        (
+            "fn probe(value: pkg::Missing) -> result: unit pure {\n  return unit;\n}\n",
+            LexicalUseRole::Type,
+            "`Alpha`, `Choice`, `Zeta`",
+        ),
+        (
+            "fn probe() -> result: unit pure {\n  let value = pkg::Missing();\n  return unit;\n}\n",
+            LexicalUseRole::Construct,
+            "`Alpha`, `Zeta`",
+        ),
+    ] {
+        let source = format!(
+            "struct Zeta {{\n}}\n\nenum Choice {{\n  Pick();\n}}\n\nstruct Alpha {{\n}}\n\n{wrong}"
+        );
+        qualified_hint(
+            source.as_bytes(),
+            role,
+            &format!(
+                "replace `Missing` with an accessible name declared in `pkg` for this grammar position: {choices} [MOD-5]"
+            ),
+        );
+        let repaired = source.replace("pkg::Missing", "pkg::Alpha");
+        with_one_resolution(repaired.as_bytes(), |outcome| {
+            assert!(
+                matches!(outcome, ResolutionOutcome::Complete(_)),
+                "suggested type or struct constructor must resolve: {outcome:?}"
+            );
+        });
+    }
+}
+
+#[test]
+fn qualified_name_hint_with_empty_domain_requests_an_accessible_declaration() {
+    let source = "fn probe(value: pkg::Missing) -> result: unit pure {\n  return unit;\n}\n";
+    qualified_hint(
+        source.as_bytes(),
+        LexicalUseRole::Type,
+        "declare an accessible name in `pkg` for this grammar position [MOD-5]",
+    );
+    let repaired = format!("struct Missing {{\n}}\n\n{source}");
+    with_one_resolution(repaired.as_bytes(), |outcome| {
+        assert!(
+            matches!(outcome, ResolutionOutcome::Complete(_)),
+            "declaring the missing type must resolve: {outcome:?}"
+        );
+    });
+}
+
+#[test]
+fn qualified_name_hint_excludes_private_declarations_locals_and_other_modules() {
+    let graph = crate::form_module_graph(
+        SourceInput::new(
+            "modules.wfg",
+            b"pkg::leaf: [];\npkg: [pkg::leaf];\n\nentry app = pkg::probe;\n",
+        ),
+        crate::CompilerLimits::default(),
+    )
+    .expect("hint fixture graph forms");
+    let module = |path: &[&str]| {
+        graph
+            .modules()
+            .iter()
+            .position(|module| module.path() == path)
+            .and_then(crate::ModuleId::from_index)
+            .expect("fixture module is registered")
+    };
+    let interface = b"public fn visible() -> result: unit pure doc \"Returns unit.\";\n\nfn hidden() -> result: unit pure doc \"Returns unit privately.\";\n";
+    let implementation = b"fn visible() -> result: unit pure {\n  let local = 1_u8;\n  return unit;\n}\n\nfn hidden() -> result: unit pure {\n  return unit;\n}\n\nfn implementation_only() -> result: unit pure {\n  return unit;\n}\n";
+    let wrong = "fn probe() -> result: unit pure {\n  pkg::leaf::missing();\n  return unit;\n}\n";
+    for repaired in [false, true] {
+        let root = if repaired {
+            wrong.replace("missing", "visible")
+        } else {
+            wrong.to_owned()
+        };
+        let inputs = [
+            SourceInput::new("leaf/module.wfm", interface)
+                .in_module(module(&["leaf"]), crate::SourceRole::Interface),
+            SourceInput::new("leaf/body.wf", implementation)
+                .in_module(module(&["leaf"]), crate::SourceRole::Implementation),
+            SourceInput::new(
+                "module.wfm",
+                b"public fn probe() -> result: unit pure doc \"Calls a leaf function.\";\n",
+            )
+            .in_module(module(&[]), crate::SourceRole::Interface),
+            SourceInput::new("probe.wf", root.as_bytes())
+                .in_module(module(&[]), crate::SourceRole::Implementation),
+        ];
+        let bundle = SourceBundle::with_prelude_and_modules(
+            &inputs,
+            graph.modules().to_vec(),
+            SOURCE_LIMITS,
+        )
+        .expect("module hint fixture bundle forms");
+        with_resolution_bundle(bundle, |outcome| {
+            if repaired {
+                assert!(
+                    matches!(outcome, ResolutionOutcome::Complete(_)),
+                    "accessible suggestion must resolve across the module boundary: {outcome:?}"
+                );
+            } else {
+                let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
+                    panic!("missing external qualified name must reject: {outcome:?}");
+                };
+                assert_eq!(issue.rule(), ResolutionRule::Mod5);
+                let ResolutionIssueKind::QualifiedNameNotFound { mechanical_fix, .. } =
+                    issue.kind()
+                else {
+                    panic!("expected a missing qualified name: {issue:?}");
+                };
+                assert_eq!(
+                    mechanical_fix,
+                    "replace `missing` with an accessible name declared in `pkg::leaf` for this grammar position: `visible` [MOD-5]"
+                );
+            }
+        });
+    }
 }
 
 /// Dense role fixture for the effect checker's lookup regression. Only the
@@ -2992,7 +3181,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[136].1, "place_back");
     assert_eq!(first[171].1, "grow_paged");
     assert_eq!(first[175].1, "paged_page_len");
-    // v0.152 inserts `clear` with W, T and window after `take_front`: four
+    // v0.161 inserts `clear` with W, T and window after `take_front`: four
     // records. Every later ordinal shifts by four.
     assert_eq!(first[186].1, "clear");
     assert_eq!(first[187].1, "W");
@@ -3033,18 +3222,21 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[254].1, "decision_cell_read");
     assert_eq!(first[256].1, "claim_written");
     assert_eq!(first[258].1, "claim_killed");
+    assert_eq!(first[260].1, "shared_close");
+    assert_eq!(first[261].1, "T");
+    assert_eq!(first[262].1, "shared");
     // PRE-1: 54 opaque records + 31 enum records + four built-in records +
-    // 171 function/parameter/range records = 260. Frozen adds four opaque
+    // 174 function/parameter/range records = 263. Frozen adds four opaque
     // records and frozen_new/frozen_share add three each; ScanStep adds five
     // enum records and map_scan_within seven call records; release adds its
     // function, T and value, three records; key_set_bytes adds its function
     // and value parameter, two records; DecisionCell adds two opaque records,
     // DecisionState four enum records and the five decision-cell functions
-    // nine records; clear adds its function, W, T and window, four records.
-    // Count every declaration in the preorder, including
-    // owner-local ones.
-    assert_eq!(first.len(), 260);
-    assert_eq!(first.last().map(|record| record.1.as_str()), Some("cell"));
+    // nine records; clear adds its function, W, T and window, four records;
+    // shared_close adds its function, T and shared, three records. Count every
+    // declaration in the preorder, including owner-local ones.
+    assert_eq!(first.len(), 263);
+    assert_eq!(first.last().map(|record| record.1.as_str()), Some("shared"));
     assert!(
         first
             .iter()
