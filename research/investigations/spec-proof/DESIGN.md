@@ -539,6 +539,11 @@ same day; on the slower run every module took 1.5 to 1.8 times as long, the
 unchanged lexer included. The build's provisional budget rises from 15 s to
 25 s, 1.5 times that first 16.5 s run rounded up to 5 s.
 
+The five modules hold 1,575 lines of code by the second slice's count. The
+slice took seven engineer turns and eight `proof.yml` runs to its review: two
+failed to compile, one showed the two disagreements above, two exceeded the
+build budget on the slower host, and a re-run of one of those passed.
+
 ## Cost
 
 Precedents with measured sizes:
