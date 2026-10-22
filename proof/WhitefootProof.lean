@@ -1,1 +1,5 @@
 import WhitefootProof.Integers
+import WhitefootProof.Syntax
+import WhitefootProof.Lexer
+import WhitefootProof.Parser
+import WhitefootProof.Interpreter
