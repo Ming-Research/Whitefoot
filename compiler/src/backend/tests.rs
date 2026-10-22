@@ -638,9 +638,6 @@ fn build_linked_executable_inner(
             source.contains("wf__heap_take(")
                 || source.contains("wf__heap_give(")
                 || source.contains("wf__heap_retake(")
-                || source.contains("wf__heap_take_aligned(")
-                || source.contains("wf__heap_give_aligned(")
-                || source.contains("wf__heap_retake_aligned(")
                 || source.contains("wf__empty_window")
         });
     if defines.is_empty() && library_defines.is_empty() && library_fixture.is_empty() {

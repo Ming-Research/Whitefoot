@@ -156,18 +156,12 @@ impl FunctionEmitter<'_, '_> {
     }
 
     /// Allocation failure shares the ordinary resource-exhaustion exit.
-    fn paged_allocate(
-        &mut self,
-        bytes: &str,
-        alignment: u64,
-        oom: &str,
-    ) -> Result<String, BackendFailure> {
+    fn paged_allocate(&mut self, bytes: &str, oom: &str) -> Result<String, BackendFailure> {
         let pointer = self.next_temporary()?;
         let valid = self.next_temporary()?;
         let ready = format!("paged.alloc.{pointer}");
-        let (allocator, alignment_argument) = heap_call(self.target, "wf__heap_take", alignment);
-        self.output.symbol(allocator);
-        writeln!(self.output, "  %{pointer} = call ptr @{allocator}(i64 {bytes}{alignment_argument})\n  %{valid} = icmp ne ptr %{pointer}, null\n  br i1 %{valid}, label %{ready}, label %{oom}").map_err(|_| BackendFailure::TextEmission)?;
+        self.output.symbol("wf__heap_take");
+        writeln!(self.output, "  %{pointer} = call ptr @wf__heap_take(i64 {bytes})\n  %{valid} = icmp ne ptr %{pointer}, null\n  br i1 %{valid}, label %{ready}, label %{oom}").map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(ready);
         Ok(format!("%{pointer}"))
     }
@@ -198,7 +192,7 @@ impl FunctionEmitter<'_, '_> {
             &oom,
             &format!("{tag}.cell.allocate"),
         )?;
-        let cell = self.paged_allocate(&bytes, 8, &oom)?;
+        let cell = self.paged_allocate(&bytes, &oom)?;
         // Positive capacity has at least one directory entry. The shared
         // empty header also contains its empty run's interior pointer.
         let header = self.next_temporary()?;
@@ -252,7 +246,7 @@ impl FunctionEmitter<'_, '_> {
             &oom,
             &format!("{tag}.cell.allocate"),
         )?;
-        let fresh = self.paged_allocate(&bytes, 8, &oom)?;
+        let fresh = self.paged_allocate(&bytes, &oom)?;
         let updated = self.next_temporary()?;
         writeln!(self.output, "  %{updated} = insertvalue {HEADER} %{header}, i64 {dircap}, 2\n  store {HEADER} %{updated}, ptr {fresh}").map_err(|_| BackendFailure::TextEmission)?;
         let olddir = self.paged_directory(&format!("%{old}"))?;
@@ -321,14 +315,12 @@ impl FunctionEmitter<'_, '_> {
         let nonzero = self.next_temporary()?;
         writeln!(self.output, "  %{nonzero}.empty = icmp eq i64 {bytes}, 0\n  %{nonzero} = select i1 %{nonzero}.empty, i64 1, i64 {bytes}")
             .map_err(|_| BackendFailure::TextEmission)?;
-        let alignment = heap_allocation_alignment(self.target, self.program, element)?;
-        let fresh = self.paged_allocate(&format!("%{nonzero}"), alignment, oom)?;
+        let fresh = self.paged_allocate(&format!("%{nonzero}"), oom)?;
         let directory = self.paged_directory(cell)?;
         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
         self.output.symbol("llvm.memmove.p0.p0.i64");
-        let (release, alignment_argument) = heap_call(self.target, "wf__heap_give", alignment);
-        self.output.symbol(release);
-        writeln!(self.output, "  %{tag}.first.pointer = load ptr, ptr {directory}\n  %{tag}.first.len = load i64, ptr {cell}\n  %{tag}.first.copied = mul nuw i64 %{tag}.first.len, {stride}\n  %{tag}.first.old.bytes = mul nuw i64 {old_extent}, {stride}\n  %{tag}.first.old.zero = icmp eq i64 %{tag}.first.old.bytes, 0\n  %{tag}.first.old.nonzero = select i1 %{tag}.first.old.zero, i64 1, i64 %{tag}.first.old.bytes\n  call void @llvm.memmove.p0.p0.i64(ptr {fresh}, ptr %{tag}.first.pointer, i64 %{tag}.first.copied, i1 false)\n  call void @{release}(ptr %{tag}.first.pointer, i64 %{tag}.first.old.nonzero{alignment_argument})\n  store ptr {fresh}, ptr {directory}\n  br label %{tag}.first.done")
+        self.output.symbol("wf__heap_give");
+        writeln!(self.output, "  %{tag}.first.pointer = load ptr, ptr {directory}\n  %{tag}.first.len = load i64, ptr {cell}\n  %{tag}.first.copied = mul nuw i64 %{tag}.first.len, {stride}\n  %{tag}.first.old.bytes = mul nuw i64 {old_extent}, {stride}\n  %{tag}.first.old.zero = icmp eq i64 %{tag}.first.old.bytes, 0\n  %{tag}.first.old.nonzero = select i1 %{tag}.first.old.zero, i64 1, i64 %{tag}.first.old.bytes\n  call void @llvm.memmove.p0.p0.i64(ptr {fresh}, ptr %{tag}.first.pointer, i64 %{tag}.first.copied, i1 false)\n  call void @wf__heap_give(ptr %{tag}.first.pointer, i64 %{tag}.first.old.nonzero)\n  store ptr {fresh}, ptr {directory}\n  br label %{tag}.first.done")
             .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.first.done"));
         Ok(())
@@ -401,8 +393,7 @@ impl FunctionEmitter<'_, '_> {
         )?;
         let nonzero = self.next_temporary()?;
         writeln!(self.output, "  %{nonzero}.empty = icmp eq i64 {page_bytes}, 0\n  %{nonzero} = select i1 %{nonzero}.empty, i64 1, i64 {page_bytes}").map_err(|_| BackendFailure::TextEmission)?;
-        let alignment = heap_allocation_alignment(self.target, self.program, element)?;
-        let page = self.paged_allocate(&format!("%{nonzero}"), alignment, oom)?;
+        let page = self.paged_allocate(&format!("%{nonzero}"), oom)?;
         writeln!(self.output, "  %{tag}.slot = getelementptr inbounds ptr, ptr {directory}, i64 %{tag}.page\n  store ptr {page}, ptr %{tag}.slot{directory_alias}\n  br label %{tag}.stored", directory_alias=storage_alias::Role::PagedDirectory.attachment()).map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.stored"));
         writeln!(

@@ -958,12 +958,10 @@ impl FunctionEmitter<'_, '_> {
         }
         let state = self.shared_state(nominal)?;
         let state_type = self.output.type_name(self.program, state)?;
-        let alignment = heap_allocation_alignment(self.target, self.program, state)?;
-        let (allocator, alignment_argument) = heap_call(self.target, "wf__shared_new", alignment);
-        self.names(&[allocator]);
+        self.names(&["wf__shared_new"]);
         writeln!(
             self.output,
-            "  {} = call ptr @{allocator}(i64 ptrtoint (ptr getelementptr ({state_type}, ptr null, i64 1) to i64){alignment_argument})",
+            "  {} = call ptr @wf__shared_new(i64 ptrtoint (ptr getelementptr ({state_type}, ptr null, i64 1) to i64))",
             self.value_name(result)
         )
         .map_err(|_| BackendFailure::TextEmission)

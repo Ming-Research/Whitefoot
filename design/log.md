@@ -5,11 +5,11 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-10-22 Heap storage honors payload alignment up to 4096 bytes
+## 2026-10-21 Heap storage holds elements aligned up to 16 bytes with the ordinary allocator
 
-Nodes: compiler/storage-representation, compiler/frozen-representation, compiler/waiting-contexts, compiler/waiting-contexts/concurrent-map
+Nodes: compiler/storage-representation
 
-Summary: Boxes, runtime-capacity windows, frozen values, shared objects and concurrent-map entries now carry payload alignments through 4096 bytes instead of the ordinary allocator's 8 (or a table slab's 16), so the 16-byte `MemoryMeter` fits every heap container. Three choices are recorded: the 4096-byte bound is a fixed runtime contract rather than a query of the host page size, because the empty-window header and the pool padding must have a target-independent extent; a pool grant that must be aligned keeps the raw allocation pointer beside the aligned object, because release and share then recover their metadata from the object alone; a frozen value keeps a fixed 32-byte header, aligned to 16, immediately before its payload, because the handle points at the payload and every supported alignment can place it inside one grant. Qualification refuses a larger alignment before materialization, and the growth of an ordinarily aligned `Slots` cell keeps its in-place reallocation. The located allocation diagnostic keeps its form and reports this bound as its alignment limit.
+Summary: The target records state 16 bytes, not 8, as the alignment of the heap blocks the runtime hands out, so `std::process::MemoryMeter` and the other 16-aligned opaque host handles can be stored in a Box cell, Slots, Ring, Paged, Frozen, Shared, HashMap and shared-map entries instead of failing in target qualification. Nothing else in the runtime changes: C requires `malloc` and `realloc` to return storage suitable for `max_align_t`, 16 bytes on every supported target and pinned by a static assertion in `heap.c`, and the runtime pool, the shared-object state offset, the frozen header and the concurrent-map grain already give 16. [OP-9] admits no stored type above 16, so an aligned system allocation up to 4096 bytes, with an original pointer stored beside each pool object, a 32-byte frozen header and a 4096-byte shared empty header, and the variant that derives the original address from the element type's static alignment, were refused as ranges nothing reaches that every `Frozen` and `Shared` object would pay for. A stored type aligned above 16 bytes reopens the decision.
 
 ## 2026-10-21 Windows programs target MinGW, and a bundled release gains a Windows x86-64 package
 

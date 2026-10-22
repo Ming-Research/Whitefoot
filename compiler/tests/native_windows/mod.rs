@@ -83,13 +83,14 @@ fn native_link(
     executable
 }
 
-/// Execute the Windows aligned allocator and its matching release path with
-/// the same upper-bound and metering observations used by the other hosts.
+/// Execute the Windows allocator, runtime pool and frozen header and check the
+/// 16-byte alignment `target.rs` records for them, with the metering the other
+/// hosts observe.
 #[test]
-fn aligned_heap_and_pool_storage_preserve_alignment_and_accounting() {
+fn heap_and_pool_storage_meet_the_recorded_alignment() {
     let temporary = fixture_directory();
     let module = temporary.path().join("heap-alignment.ll");
-    let llvm = r#"declare ptr @wf__heap_take_aligned(i64, i64)
+    let llvm = r#"declare ptr @wf__heap_take(i64)
 declare i32 @alignment_probe()
 declare i32 @wf__floor_run(i32, ptr)
 define i32 @main(i32 %argc, ptr %argv) {
@@ -101,7 +102,7 @@ define i32 @wf__main_body(i32 %argc, ptr %argv) {
   ret i32 %status
 }
 "#;
-    std::fs::write(&module, llvm).expect("aligned heap module");
+    std::fs::write(&module, llvm).expect("heap alignment module");
     let host = include_str!("../../src/backend/tests/heap_alignment_probe.c");
     let executable = native_link(temporary.path(), &module, host, false, false);
     let output = run_command(&mut Command::new(executable));

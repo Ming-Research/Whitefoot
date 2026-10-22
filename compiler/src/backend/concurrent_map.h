@@ -38,7 +38,7 @@ int wf_cmap_remove(wf_cmap_user *user, uint64_t key);
 int wf_cmap_update(wf_cmap_user *user, uint64_t key, void (*edit)(uint64_t *value, void *env), void *env);
 
 /* A map of entries sized for capacity keys: byte-string keys of any length,
- * each with a slot of slot_size bytes aligned to slot_align, a power of two at most 4096, that
+ * each with a slot of slot_size bytes aligned to slot_align, at most 16, that
  * the caller fills. A keyed statement locks one entry, or reads it beside
  * other readers; a statement over the map holds every entry, or a hold of
  * the entries whose keys it was given. */

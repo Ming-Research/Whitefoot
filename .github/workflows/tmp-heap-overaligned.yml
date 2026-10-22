@@ -1,15 +1,15 @@
-# TEMPORARY quick check for the over-aligned heap storage PR (item
+# TEMPORARY quick check for the 16-byte heap alignment PR (item
 # wf-bl-heap-overaligned) after it merged main. It runs what the change
 # touches, as the gate's own commands do, with no time budget record so no
 # budget verdict is produced:
 #   static   make static (spec archives, English text, design lint, clippy, ...)
 #   lib      every lib test (heap alignment, completion, window and driver tests)
-#   runtime  the runtime group (the frozen and shared-object C units and the
+#   runtime  the runtime group (the C units around the heap and the
 #            concurrent map's C probe)
-#   corpus   the whole corpus target (program tests whose metered bytes and
-#            shared-object and frozen-value headers this change moves)
+#   corpus   the whole corpus target (program tests whose metered bytes the
+#            wider element alignment could move)
 #   conformance  the whole conformance adapter
-#   windows  the native Windows aligned-heap probe
+#   windows  the native Windows heap alignment probe
 # Removed before the full check; the gate fails while a tmp- workflow exists.
 name: tmp-heap-overaligned
 
@@ -141,7 +141,7 @@ jobs:
           echo "LLVM_MINGW_ROOT=$root" >> "$GITHUB_ENV"
           cygpath -w "$root/bin" >> "$GITHUB_PATH"
 
-      - name: Run the native Windows aligned-heap probe
+      - name: Run the native Windows heap alignment probe
         timeout-minutes: 15
         env:
           CARGO_BUILD_JOBS: 2
@@ -150,4 +150,4 @@ jobs:
         run: |
           clang --version
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
-            --test corpus -- native_windows::aligned_heap_and_pool_storage_preserve_alignment_and_accounting
+            --test corpus -- native_windows::heap_and_pool_storage_meet_the_recorded_alignment

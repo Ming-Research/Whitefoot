@@ -1,4 +1,6 @@
-//! Native heap alignment, growth, header padding and release regressions.
+//! Heap storage for an element type of the largest language alignment, 16
+//! bytes (`std::process::MemoryMeter`): placement, growth and release, with the
+//! production allocator's returned pointers checked.
 
 use super::{compile, compile_link_and_run};
 
@@ -22,6 +24,7 @@ const SUFFIX: &str = r#"  let after = std::process::heap_in_use(meter: &meter);
 
 /// Observe the production allocator's returned pointers, including after
 /// growth, rather than infer alignment from a successful unaligned host load.
+/// The 16 bytes are the alignment `target.rs` records for every heap block.
 fn run(body: &str, declarations: &str, minimum_allocations: usize, minimum_retakes: usize) {
     // The canonical form keeps aliases contiguous, then one blank line before
     // the first function; `declarations` begin with their own aliases.
@@ -29,9 +32,8 @@ fn run(body: &str, declarations: &str, minimum_allocations: usize, minimum_retak
     let source = format!("{ALIAS}{separator}{declarations}{PREFIX}{body}{SUFFIX}");
     let llvm = compile(source.as_bytes());
     let observed = llvm
-        .replace("@wf__heap_take_aligned(", "@wf_observe_aligned_take(")
-        .replace("@wf__heap_retake_aligned(", "@wf_observe_aligned_retake(")
-        .replace("@wf__heap_give_aligned(", "@wf_observe_aligned_give(")
+        .replace("@wf__heap_take(", "@wf_observe_take(")
+        .replace("@wf__heap_retake(", "@wf_observe_retake(")
         .replace("@main(", "@wf_fixture_main(");
     let host = format!(
         r#"#include "completion/bridge.h"
@@ -39,25 +41,21 @@ fn run(body: &str, declarations: &str, minimum_allocations: usize, minimum_retak
 #include <stdlib.h>
 extern int wf_fixture_main(int, char **);
 static unsigned allocations, retakes;
-static void require_aligned(void *block, uint64_t alignment) {{
-    if (block == NULL || alignment != 16 || (uintptr_t)block % alignment != 0) exit(98);
+static void require_aligned(void *block) {{
+    if (block == NULL || (uintptr_t)block % 16 != 0) exit(98);
 }}
-void *wf_observe_aligned_take(uint64_t bytes, uint64_t alignment) {{
-    void *block = wf__heap_take_aligned(bytes, alignment);
-    require_aligned(block, alignment);
+void *wf_observe_take(uint64_t bytes) {{
+    void *block = wf__heap_take(bytes);
+    require_aligned(block);
     ++allocations;
     return block;
 }}
-void *wf_observe_aligned_retake(void *block, uint64_t old_bytes, uint64_t new_bytes, uint64_t alignment) {{
-    require_aligned(block, alignment);
-    void *fresh = wf__heap_retake_aligned(block, old_bytes, new_bytes, alignment);
-    require_aligned(fresh, alignment);
+void *wf_observe_retake(void *block, uint64_t old_bytes, uint64_t new_bytes) {{
+    require_aligned(block);
+    void *fresh = wf__heap_retake(block, old_bytes, new_bytes);
+    require_aligned(fresh);
     ++retakes;
     return fresh;
-}}
-void wf_observe_aligned_give(void *block, uint64_t bytes, uint64_t alignment) {{
-    require_aligned(block, alignment);
-    wf__heap_give_aligned(block, bytes, alignment);
 }}
 int main(int argc, char **argv) {{
     int status = wf_fixture_main(argc, argv);
@@ -73,7 +71,7 @@ int main(int argc, char **argv) {{
 }
 
 #[test]
-fn a_box_holds_an_overaligned_meter_and_releases_its_exact_bytes() {
+fn a_box_holds_a_meter_and_releases_its_exact_bytes() {
     run(
         r#"  let value = std::process::meter_share(meter: &meter);
   let cell = box_new::<MemoryMeter>(value: move value);
@@ -98,7 +96,7 @@ fn a_box_holds_an_overaligned_meter_and_releases_its_exact_bytes() {
 }
 
 #[test]
-fn empty_overaligned_slots_use_the_shared_header_without_accounting_bytes() {
+fn empty_meter_slots_use_the_shared_header_without_accounting_bytes() {
     run(
         r#"  let cells = box_slots_new::<MemoryMeter>(capacity: 0_u64);
   let allocated = std::process::heap_in_use(meter: &meter);
@@ -121,7 +119,7 @@ fn empty_overaligned_slots_use_the_shared_header_without_accounting_bytes() {
 }
 
 #[test]
-fn occupied_overaligned_slots_keep_values_and_accounting_across_both_growth_paths() {
+fn occupied_meter_slots_keep_values_and_accounting_across_both_growth_paths() {
     run(
         r#"  let cells = box_slots_new::<MemoryMeter>(capacity: 0_u64);
   grow(cell: &cells, capacity: 1_u64);
@@ -153,7 +151,7 @@ fn occupied_overaligned_slots_keep_values_and_accounting_across_both_growth_path
 }
 
 #[test]
-fn an_overaligned_ring_pads_its_header_and_keeps_wrapped_elements() {
+fn a_meter_ring_pads_its_header_and_keeps_wrapped_elements() {
     run(
         r#"  let ring = box_ring_new::<MemoryMeter>(capacity: 2_u64);
   let first = std::process::meter_share(meter: &meter);
@@ -184,7 +182,7 @@ fn an_overaligned_ring_pads_its_header_and_keeps_wrapped_elements() {
 }
 
 #[test]
-fn overaligned_paged_elements_survive_page_zero_growth_and_a_new_page() {
+fn meter_paged_elements_survive_page_zero_growth_and_a_new_page() {
     run(
         r#"  let pages = box_paged_new::<MemoryMeter>(capacity: 0_u64);
   grow_paged(cell: &pages, capacity: 1_u64);
@@ -245,7 +243,7 @@ binding MeterKey : HashMapKey<u64, unit> {
 "#;
 
 #[test]
-fn a_hash_map_stores_overaligned_meters_and_preserves_them_when_rebuilt() {
+fn a_hash_map_stores_meters_and_preserves_them_when_rebuilt() {
     run(
         r#"  let map = hash_map_new::<u64, MemoryMeter, 8>(capacity: 0_u64);
   let env = unit;
@@ -278,7 +276,7 @@ fn a_hash_map_stores_overaligned_meters_and_preserves_them_when_rebuilt() {
 }
 
 #[test]
-fn shared_objects_and_maps_accept_overaligned_meter_state_and_entries() {
+fn shared_objects_and_maps_accept_meter_state_and_entries() {
     run(
         r#"  let value = std::process::meter_share(meter: &meter);
   let object = shared_new::<MemoryMeter>(value: move value);

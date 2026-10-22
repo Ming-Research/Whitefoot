@@ -292,7 +292,7 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
             "fn main() -> status: std::process::ExitStatus pure {{\n  doc \"Zero-capacity construction and empty transfers must never write the shared header.\";\n  let source = box_{shape}_new::<u64>(capacity: 0_u64);\n  let destination = box_{shape}_new::<u64>(capacity: 0_u64);\n  let array = box_array_filled::<u64>(count: 0_u64, value: 7_u64);\n  append(destination: &destination.inner, source: &source.inner);\n  split_off(source: &source.inner, index: 0_u64, destination: &destination.inner);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         let module = compile(source.as_bytes());
-        assert!(module.contains("@wf__empty_window = external constant [4096 x i8], align 4096"));
+        assert!(module.contains("@wf__empty_window = external constant [64 x i8], align 64"));
         assert_shared_empty_construction(
             emitted_prelude_row(&module, &format!("box_{shape}_new")),
             if shape == "slots" { 2 } else { 3 },
@@ -893,11 +893,18 @@ fn an_above_u64_zero_count_reaches_target_qualification() {
     }
 }
 
-/// The supported requested heap-alignment boundary, independently of the
-/// target's ordinary allocator guarantee. An eight-byte maximum admits these
-/// payloads and a four-byte maximum refuses their allocations [STOR-6].
+/// The heap's own alignment boundary, for the window and for the cell.
+///
+/// The one heap [STOR-8] hands out storage its host allocator supplies, so the
+/// element's *actual* target alignment must be one that allocator promises -
+/// the obligation `box_slots_new` and `box_new` each carry [OP-13, STOR-6].
+/// Both directions are pinned at the exact boundary: eight-byte alignment
+/// admits an eight-byte slot and a four-byte guarantee refuses it, and refuses
+/// it as a runtime-sized allocation rather than as a representation failure,
+/// because what is short is the allocator's promise and not the language
+/// ceiling.
 #[test]
-fn a_runtime_window_and_a_cell_must_fit_the_supported_heap_alignment() {
+fn a_runtime_window_and_a_cell_must_fit_the_selected_allocator_alignment() {
     for fixture in [U64_RUNTIME_WINDOW, U64_CELL] {
         with_ir(fixture, |program| {
             let host =
@@ -906,7 +913,7 @@ fn a_runtime_window_and_a_cell_must_fit_the_supported_heap_alignment() {
             // The byte domain stays the host's own: cutting the
             // address-index domain to the allocation's own size would refuse
             // the window's own block layout before the alignment is reached.
-            // Only the supported requested alignment moves here.
+            // Only the alignment guarantee moves here.
             let byte_domain = i64::MAX as u64;
             let exact = host.with_runtime_allocation_limits_for_test(byte_domain, 8);
             assert_eq!(validate_program(exact, program), Ok(()));
@@ -931,21 +938,21 @@ fn a_runtime_window_and_a_cell_must_fit_the_supported_heap_alignment() {
 }
 
 #[test]
-fn a_frozen_payload_reserves_its_complete_runtime_header_and_alignment_padding() {
+fn a_frozen_payload_reserves_its_complete_runtime_header() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let value = frozen_new::<u64>(value: 7_u64);\n  return std::process::exit_status(code: 0_u8);\n}\n";
     with_ir(source, |program| {
         let host = TargetLayout::host().expect("supported target");
-        // The runtime's complete request is 8 payload bytes, its 32-byte
-        // header and up to 15 bytes before the aligned value.
-        let exact = host.with_runtime_allocation_limits_for_test(55, 4096);
+        // wf_frozen's two header words and its existing alignment padding
+        // occupy 16 bytes; its eight-byte payload makes a 24-byte request.
+        let exact = host.with_runtime_allocation_limits_for_test(24, 8);
         assert_eq!(validate_program(exact, program), Ok(()));
-        let short = host.with_runtime_allocation_limits_for_test(54, 4096);
+        let short = host.with_runtime_allocation_limits_for_test(23, 8);
         assert!(matches!(
             validate_program(short, program),
             Err(TargetLayoutFailure::Allocation {
                 size: Some(8),
                 alignment: Some(8),
-                limit: crate::target::AllocationLimit::AllocationSize { maximum: 54 },
+                limit: crate::target::AllocationLimit::AllocationSize { maximum: 23 },
                 ..
             })
         ));

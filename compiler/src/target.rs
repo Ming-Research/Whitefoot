@@ -85,7 +85,6 @@ pub(crate) struct TargetLayout {
     address_index_max: u64,
     allocator_parameter_max: u64,
     allocator_alignment: u64,
-    allocation_alignment_max: u64,
     stack_probe: &'static str,
 }
 
@@ -106,8 +105,7 @@ impl TargetLayout {
                 data_layout: "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
-                allocation_alignment_max: 4096,
+                allocator_alignment: 16,
             }),
             "x86_64-apple-darwin" => Ok(Self {
                 triple: "x86_64-apple-darwin",
@@ -115,8 +113,7 @@ impl TargetLayout {
                 data_layout: "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
-                allocation_alignment_max: 4096,
+                allocator_alignment: 16,
             }),
             "aarch64-unknown-linux-gnu" => Ok(Self {
                 triple: "aarch64-unknown-linux-gnu",
@@ -124,8 +121,7 @@ impl TargetLayout {
                 data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
-                allocation_alignment_max: 4096,
+                allocator_alignment: 16,
             }),
             "x86_64-unknown-linux-gnu" => Ok(Self {
                 triple: "x86_64-unknown-linux-gnu",
@@ -133,8 +129,7 @@ impl TargetLayout {
                 data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
-                allocation_alignment_max: 4096,
+                allocator_alignment: 16,
             }),
             WINDOWS_X86_64_TRIPLE => Ok(Self {
                 triple: WINDOWS_X86_64_TRIPLE,
@@ -148,8 +143,7 @@ impl TargetLayout {
                 data_layout: "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
-                allocation_alignment_max: 4096,
+                allocator_alignment: 16,
             }),
             _ => Err(TargetLayoutFailure::UnsupportedHost),
         }
@@ -248,16 +242,15 @@ impl TargetLayout {
         }
     }
 
-    /// Minimum alignment guaranteed by the selected target's heap allocator.
-    /// Wider requests use the runtime's explicitly aligned allocation path.
+    /// Minimum alignment guaranteed by the selected target's heap allocator:
+    /// 16 bytes on every record, the fundamental alignment C requires of
+    /// `malloc` (`_Alignof(max_align_t)`, pinned by a static assertion in the
+    /// runtime's `heap.c`), and the largest alignment any language type has
+    /// ([OP-9]). Keeping this explicit checks wider element representations
+    /// against the allocator promise rather than assuming the address ABI
+    /// guarantees it.
     pub(super) const fn runtime_allocation_alignment(self) -> u64 {
         self.allocator_alignment
-    }
-
-    /// Largest requested alignment implemented by the runtime allocation ABI.
-    /// This fixed compiler policy does not depend on the host's page size.
-    pub(super) const fn runtime_allocation_alignment_max(self) -> u64 {
-        self.allocation_alignment_max
     }
 
     /// Retains the selected target ABI while replacing only the heap-domain
@@ -269,7 +262,7 @@ impl TargetLayout {
         alignment: u64,
     ) -> Self {
         self.allocator_parameter_max = byte_maximum;
-        self.allocation_alignment_max = alignment;
+        self.allocator_alignment = alignment;
         self
     }
 
@@ -1336,7 +1329,13 @@ fn validate_located_allocation(
         let actual = LayoutComputer::new(layouts.target, program.nominals(), program.elements())
             .layout(payload)
             .ok();
-        let maximum_alignment = layouts.target.runtime_allocation_alignment_max();
+        let maximum_alignment = match operation {
+            IrOperation::SharedNew { .. } | IrOperation::DecisionCellNew { .. } => {
+                crate::backend::SHARED_STATE_OFFSET
+            }
+            IrOperation::ConcurrentHashMapNew { .. } => 16,
+            _ => layouts.target.runtime_allocation_alignment(),
+        };
         let ceiling = match operation {
             IrOperation::SegmentsFill { layout_ceiling, .. }
             | IrOperation::BufferFill { layout_ceiling, .. } => Some(*layout_ceiling),
@@ -1504,7 +1503,7 @@ fn runtime_capacity_layout(
         actual.align,
         TargetObject::Representation,
     )?;
-    if actual.align.max(8) > layouts.target.runtime_allocation_alignment_max() {
+    if actual.align.max(8) > layouts.target.runtime_allocation_alignment() {
         return Err(TargetLayoutFailure::Unrepresentable(
             TargetObject::RuntimeSizedAllocation,
         ));
@@ -1571,12 +1570,11 @@ fn validate_target_obligation(
                 allocation
                     .size
                     .checked_add(crate::backend::FROZEN_HEADER_BYTES)
-                    .and_then(|size| size.checked_add(allocation.align.max(16) - 1))
             } else {
                 Some(allocation.size)
             };
             if complete_size.is_none_or(|size| size > layouts.target.runtime_allocation_max())
-                || allocation.align > layouts.target.runtime_allocation_alignment_max()
+                || allocation.align > layouts.target.runtime_allocation_alignment()
             {
                 return Err(TargetLayoutFailure::Unrepresentable(
                     TargetObject::RuntimeSizedAllocation,
@@ -1605,10 +1603,8 @@ fn validate_target_obligation(
             if allocation
                 .size
                 .checked_add(crate::backend::SHARED_STATE_OFFSET)
-                .and_then(|size| size.checked_add(8))
-                .and_then(|size| size.checked_add(allocation.align.max(8) - 1))
                 .is_none_or(|size| size > layouts.target.runtime_allocation_max())
-                || allocation.align > layouts.target.runtime_allocation_alignment_max()
+                || allocation.align > crate::backend::SHARED_STATE_OFFSET
             {
                 return Err(TargetLayoutFailure::Unrepresentable(
                     TargetObject::RuntimeSizedAllocation,
@@ -1616,7 +1612,7 @@ fn validate_target_obligation(
             }
         }
         // [SHARE-1] a table keeps each entry's `Option<V>` in a slot of a
-        // node the runtime carves at the requested entry alignment.
+        // node the runtime carves, aligned to at most 16 bytes.
         IrOperation::ConcurrentHashMapNew { nominal, .. } => {
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
@@ -1644,9 +1640,7 @@ fn validate_target_obligation(
             let slot = layouts
                 .layout(*entry)
                 .map_err(|failure| as_object(failure, TargetObject::RuntimeSizedAllocation))?;
-            if slot.size > layouts.target.runtime_allocation_max()
-                || slot.align > layouts.target.runtime_allocation_alignment_max()
-            {
+            if slot.size > layouts.target.runtime_allocation_max() || slot.align > 16 {
                 return Err(TargetLayoutFailure::Unrepresentable(
                     TargetObject::RuntimeSizedAllocation,
                 ));

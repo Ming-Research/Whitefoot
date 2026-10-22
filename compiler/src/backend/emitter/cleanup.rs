@@ -6,9 +6,7 @@ use crate::target::TargetLayout;
 use crate::{IrReleaseClass, IrShared, IrVariant, IrWindowShape};
 
 use super::union_enums::{is_memory_only, variant_field_gep};
-use super::{
-    BackendFailure, IrNominalId, IrNominalKind, IrProgram, IrType, heap_allocation_alignment, heap_call,
-};
+use super::{BackendFailure, IrNominalId, IrNominalKind, IrProgram, IrType};
 
 /// One release action per node type of the release graph [PROV-6].
 ///
@@ -55,15 +53,7 @@ pub(super) fn emit_resource_drop_helpers(
         );
         signature.linkage = Linkage::Private;
         signature.references = output.references.clone();
-        emit_enum_cleanup_body(
-            program,
-            target,
-            &mut output,
-            id,
-            variants,
-            by_address,
-            &parameter,
-        )?;
+        emit_enum_cleanup_body(program, &mut output, id, variants, by_address, &parameter)?;
         module.define(signature.define(output, "")?);
         module.text("\n");
     }
@@ -76,15 +66,15 @@ pub(super) fn emit_resource_drop_helpers(
             IrNominalKind::Shared {
                 state,
                 shape: IrShared::Object,
-            } => emit_shared_drop_helper(program, target, &mut module, nominal, *state, false)?,
+            } => emit_shared_drop_helper(program, &mut module, nominal, *state, false)?,
             IrNominalKind::Box {
                 referent,
                 release: IrReleaseClass::Frozen,
-            } => emit_shared_drop_helper(program, target, &mut module, nominal, *referent, true)?,
+            } => emit_shared_drop_helper(program, &mut module, nominal, *referent, true)?,
             IrNominalKind::Shared {
                 shape: IrShared::Map { entry },
                 ..
-            } => emit_keyed_table_drop_helper(program, target, &mut module, nominal, *entry)?,
+            } => emit_keyed_table_drop_helper(program, &mut module, nominal, *entry)?,
             _ => {}
         }
     }
@@ -99,7 +89,6 @@ pub(super) fn emit_resource_drop_helpers(
 /// and then frees the table.
 fn emit_keyed_table_drop_helper(
     program: &IrProgram,
-    target: TargetLayout,
     module: &mut Module,
     nominal: &crate::IrNominal,
     entry: IrType,
@@ -120,7 +109,6 @@ fn emit_keyed_table_drop_helper(
         let mut temporary = 0_u32;
         emit_cleanup_jobs(
             program,
-            target,
             &mut output,
             &mut temporary,
             vec![CleanupJob::Place {
@@ -146,7 +134,6 @@ fn emit_keyed_table_drop_helper(
 /// returns the object to the runtime.
 fn emit_shared_drop_helper(
     program: &IrProgram,
-    target: TargetLayout,
     module: &mut Module,
     nominal: &crate::IrNominal,
     state: IrType,
@@ -188,7 +175,6 @@ fn emit_shared_drop_helper(
         let mut temporary = 0_u32;
         emit_cleanup_jobs(
             program,
-            target,
             &mut output,
             &mut temporary,
             vec![CleanupJob::Place {
@@ -230,14 +216,12 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 53] = [
+    let declarations: [(&str, &str, &[&str]); 51] = [
         ("wf__frozen_new", "ptr", &["i64"]),
-        ("wf__frozen_new_aligned", "ptr", &["i64", "i64"]),
         ("wf__frozen_share", "void", &["ptr"]),
         ("wf__frozen_release", "i32", &["ptr"]),
         ("wf__frozen_free", "void", &["ptr"]),
         ("wf__shared_new", "ptr", &["i64"]),
-        ("wf__shared_new_aligned", "ptr", &["i64", "i64"]),
         ("wf__decision_cell_new", "ptr", &[]),
         ("wf__decision_cell_read", "i32", &["ptr"]),
         ("wf__claim_written", "i32", &["ptr"]),
@@ -510,14 +494,7 @@ fn emit_run_drop_helper(
         .map_err(|_| BackendFailure::TextEmission)?;
         CleanupOperand::Value("%element".to_owned())
     };
-    emit_cleanup(
-        program,
-        target,
-        &mut output,
-        &mut temporary,
-        element_ty,
-        element,
-    )?;
+    emit_cleanup(program, &mut output, &mut temporary, element_ty, element)?;
     output.push_str("  %next = add i64 %index, 1\n  br label %walk\n");
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
@@ -761,7 +738,6 @@ enum CleanupJob {
 
 pub(super) fn emit_cleanup(
     program: &IrProgram,
-    target: TargetLayout,
     output: &mut FunctionBody,
     temporary: &mut u32,
     ty: IrType,
@@ -771,12 +747,11 @@ pub(super) fn emit_cleanup(
         CleanupOperand::Value(operand) => CleanupJob::Value { ty, operand },
         CleanupOperand::Address(address) => CleanupJob::Place { ty, address },
     };
-    emit_cleanup_jobs(program, target, output, temporary, vec![job])
+    emit_cleanup_jobs(program, output, temporary, vec![job])
 }
 
 fn emit_cleanup_jobs(
     program: &IrProgram,
-    target: TargetLayout,
     output: &mut FunctionBody,
     temporary: &mut u32,
     mut jobs: Vec<CleanupJob>,
@@ -794,13 +769,10 @@ fn emit_cleanup_jobs(
             CleanupJob::FreePointer { pointer, referent } => {
                 let bytes = allocation_bytes(program, output, temporary, referent, &pointer)?;
                 {
-                    let alignment = heap_allocation_alignment(target, program, referent)?;
-                    let (release, alignment_argument) =
-                        heap_call(target, "wf__heap_give", alignment);
-                    output.symbol(release);
+                    output.symbol("wf__heap_give");
                     writeln!(
                         output,
-                        "  call void @{release}(ptr {pointer}, i64 {bytes}{alignment_argument})"
+                        "  call void @wf__heap_give(ptr {pointer}, i64 {bytes})"
                     )
                 }
                 .map_err(|_| BackendFailure::TextEmission)?;
@@ -1152,7 +1124,6 @@ fn next_temporary(counter: &mut u32) -> Result<String, BackendFailure> {
 /// cleanup, from the entry label through the closing `ret`.
 fn emit_enum_cleanup_body(
     program: &IrProgram,
-    target: TargetLayout,
     output: &mut FunctionBody,
     nominal: IrNominalId,
     variants: &[IrVariant],
@@ -1212,7 +1183,7 @@ fn emit_enum_cleanup_body(
                 }
             });
         }
-        emit_cleanup_jobs(program, target, output, &mut temporary, jobs)?;
+        emit_cleanup_jobs(program, output, &mut temporary, jobs)?;
         output.push_str("  br label %done\n");
     }
 
@@ -1258,7 +1229,6 @@ fn emit_paged_drop_helper(
         let mut temporary = 0;
         emit_cleanup_jobs(
             program,
-            target,
             &mut output,
             &mut temporary,
             vec![CleanupJob::Place {
@@ -1292,10 +1262,8 @@ fn emit_paged_drop_helper(
         .checked_mul(stride)
         .ok_or(BackendFailure::InvalidIr)?
         .max(1);
-    let alignment = heap_allocation_alignment(target, program, element)?;
-    let (release, alignment_argument) = heap_call(target, "wf__heap_give", alignment);
-    output.symbol(release);
-    writeln!(output, "  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  %is.first = icmp eq i64 %p, 0\n  %page.bytes = select i1 %is.first, i64 {first_bytes}, i64 {page_bytes}\n  call void @{release}(ptr %allocation, i64 %page.bytes{alignment_argument})\n  %p.next = add nuw i64 %p, 1\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
+    output.symbol("wf__heap_give");
+    writeln!(output, "  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  %is.first = icmp eq i64 %p, 0\n  %page.bytes = select i1 %is.first, i64 {first_bytes}, i64 {page_bytes}\n  call void @wf__heap_give(ptr %allocation, i64 %page.bytes)\n  %p.next = add nuw i64 %p, 1\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
     signature.references = output.references.clone();

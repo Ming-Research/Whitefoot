@@ -21,7 +21,6 @@ pub(super) struct PrivateRoot {
     pub(super) original: String,
     pub(super) spec: usize,
     pub(super) block_bytes: Option<String>,
-    pub(super) alignment: u64,
 }
 
 impl FunctionEmitter<'_, '_> {
@@ -149,14 +148,10 @@ impl FunctionEmitter<'_, '_> {
             let stride = format!("ptrtoint (ptr getelementptr ({ty}, ptr null, i64 1) to i64)");
             let bytes = self.emit_allocation_size(&total, &stride, "0", &failed, &malloc)?;
             let pointer = format!("%{prefix}.allocation");
-            let alignment =
-                heap_allocation_alignment(self.target, self.program, root.private_type())?;
-            let (allocator, alignment_argument) =
-                heap_call(self.target, "wf__heap_take", alignment);
-            self.output.symbol(allocator);
+            self.output.symbol("wf__heap_take");
             writeln!(
                 self.output,
-                "  %{prefix}.empty = icmp eq i64 {bytes}, 0\n  %{prefix}.bytes = select i1 %{prefix}.empty, i64 1, i64 {bytes}\n  {pointer} = call ptr @{allocator}(i64 %{prefix}.bytes{alignment_argument})\n  %{prefix}.ok = icmp ne ptr {pointer}, null\n  br i1 %{prefix}.ok, label %{init}, label %{failed}"
+                "  %{prefix}.empty = icmp eq i64 {bytes}, 0\n  %{prefix}.bytes = select i1 %{prefix}.empty, i64 1, i64 {bytes}\n  {pointer} = call ptr @wf__heap_take(i64 %{prefix}.bytes)\n  %{prefix}.ok = icmp ne ptr {pointer}, null\n  br i1 %{prefix}.ok, label %{init}, label %{failed}"
             )?;
             self.output.open_block(failed);
             self.emit_indexed_release(&roots, &format!("{prefix}.cleanup"))?;
@@ -191,7 +186,6 @@ impl FunctionEmitter<'_, '_> {
                 original: self.value_name(range),
                 spec: ordinal,
                 block_bytes: None,
-                alignment,
             });
         }
         writeln!(self.output, "  br label %{ready}")?;
@@ -328,12 +322,10 @@ impl FunctionEmitter<'_, '_> {
                 "  store {ty} %{prefix}.value, ptr {destination}\n  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{head}"
             )?;
             self.output.open_block(done);
-            let (release, alignment_argument) =
-                heap_call(self.target, "wf__heap_give", root.alignment);
-            self.output.symbol(release);
+            self.output.symbol("wf__heap_give");
             writeln!(
                 self.output,
-                "  call void @{release}(ptr {}, i64 {}{alignment_argument})",
+                "  call void @wf__heap_give(ptr {}, i64 {})",
                 root.pointer, root.bytes
             )?;
         }
@@ -552,11 +544,10 @@ impl FunctionEmitter<'_, '_> {
             "  %{prefix}.nextcell = add i64 %{prefix}.cell, 1\n  br label %{head}"
         )?;
         self.output.open_block(done);
-        let (release, alignment_argument) = heap_call(self.target, "wf__heap_give", root.alignment);
-        self.output.symbol(release);
+        self.output.symbol("wf__heap_give");
         writeln!(
             self.output,
-            "  call void @{release}(ptr {}, i64 {}{alignment_argument})",
+            "  call void @wf__heap_give(ptr {}, i64 {})",
             root.pointer, root.bytes
         )?;
         Ok(())
