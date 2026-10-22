@@ -44,8 +44,8 @@ last sections became the `op10-`, `prov6-` and `ref2-` clear cases in
 `tests/programs/window_clear_heap.wf` (heap meter) and
 `tests/programs/containers/clear-program.wf` (allocation count). The rest of
 this record is the proposal as written before selection: its statements that
-nothing was compiled or run describe that time. One measured difference from
-it: the checker does not derive `p.pages.len == 0` from a cleared `Paged`'s
+nothing was compiled or run describe that time. One difference from
+it, observed in CI: the checker does not derive `p.pages.len == 0` from a cleared `Paged`'s
 length, so the case checks the page count at run time instead of stating it
 as an invariant.
 
