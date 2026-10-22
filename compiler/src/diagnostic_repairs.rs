@@ -1,5 +1,9 @@
 //! Wording of diagnostic repairs; owning stages select the repair and its instance.
 
+mod reserved_names;
+
+pub(crate) use reserved_names::{reserved_name_fix, source_word};
+
 pub(crate) const BOOLEAN_OPERATION_FIX: &str = "write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body, or with preceding `define` bindings in a contract definition initializer when [FN-8] admits those operations [OP-1, GRAM-5, GRAM-9]";
 
 /// RANGE-1's repair for `&&`, selected by the grammar position of a
