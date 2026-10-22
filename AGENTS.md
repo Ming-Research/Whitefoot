@@ -102,24 +102,29 @@ read.
 
 - The active specification `spec/kernel-spec.md` is editable on a work branch;
   released `spec/kernel-spec-vN.md` archives are immutable, and
-  `compiler/build.rs` derives the active identity from its bytes. A branch's
-  amendment lands as one change:
-  1. Archive once per branch: with the local `main` current, copy the base's
-     active bytes to the archive named by their title token, for a base
-     titled `# Kernel Specification v0.69`
-     `git show "$(git merge-base main HEAD)":spec/kernel-spec.md > spec/kernel-spec-v0.69.md`.
-  2. Retitle the active file to the next version, `v0.70`, or `v1.0` for a
-     major revision.
-  3. Edit the rules under the bullets below.
-  4. If `main` advanced the version meanwhile, merging it conflicts on the
-     title: keep main's text, reapply this branch's rule changes, archive
-     main's active bytes under main's version and retitle to the next one.
-  5. In the same change, add the `spec/log.md` entry naming every rule
-     added, changed or retired.
+  `compiler/build.rs` derives the active identity from its bytes. The file
+  carries no version and an amendment adds no archive, so two branches never
+  write the same line to claim a version. A branch's amendment lands as one
+  change:
+  1. Edit the rules under the bullets below.
+  2. In the same change, add the `spec/log.md` entry at the top, headed
+     `## <date> <title>` with no version, naming every rule added, changed or
+     retired. Existing entries stay as written, and merging `main` keeps both
+     branches' entries (`spec/log.md` merges with git's union driver), the
+     branch's first.
 
-  `make static` verifies the archive and title, and `make design-ready`
-  requires that entry. A spec/compiler discrepancy is a technical
-  defect; implementation convenience never selects language behavior.
+  An entry's version is derived from its place in the log:
+  `sh .github/spec-version.sh` prints the active version and `--list` every
+  entry's, counting up from the nearest entry below that names one (an entry
+  names a version only to start a major version such as `v1.0`). Cite a new
+  amendment by its date and title until it merges and by its version after.
+  A milestone is archived by a separate change that edits no rule and adds
+  `spec/kernel-spec-<version>.md`, a copy of the active file.
+
+  `make static` verifies the title, the log's entries and the archives, and
+  `make design-ready` requires the new entry. A spec/compiler discrepancy is
+  a technical defect; implementation convenience never selects language
+  behavior.
 - State each normative fact once; use rule-ID cross-references elsewhere.
   Rule IDs have one definition and bracketed references resolve. Express
   conditions as total positive rules or table data, without exception clauses.

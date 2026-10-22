@@ -148,12 +148,14 @@ repository-invariants:
 		exit 1; \
 	fi
 
-# Released version archives are never edited, and an amendment archives the
-# outgoing bytes under their version and advances the title. The script
-# compares with the merge base of main, which is what a merge would change in
-# main; a branch behind main is not charged with main's newer archives.
+# The specification names no version: its version is derived from the change
+# log, an amendment adds an entry there and no archive, and released archives
+# are never edited. The scripts compare with the merge base of main, which is
+# what a merge would change in main; a branch behind main is not charged with
+# main's newer archives or entries.
 spec-archives:
 	@git rev-parse --verify --quiet refs/heads/main >/dev/null || { echo "spec archives: local main ref is required" >&2; exit 1; }
+	@sh .github/spec-version.sh --self-test
 	@sh .github/check-spec-archives.sh --self-test
 	@sh .github/check-spec-archives.sh main
 

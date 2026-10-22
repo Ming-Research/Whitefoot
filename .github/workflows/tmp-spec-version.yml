@@ -1,0 +1,63 @@
+# Temporary quick check for spec-version-merge-churn; deleted before the full check.
+name: tmp-spec-version
+
+on:
+  push:
+    branches: [spec-version-merge-churn]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  quick:
+    name: Specification version checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+          git log --oneline -1 main
+
+      - name: Select the design review base
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
+          git log --oneline -1 "$design_review_base"
+
+      # The version script's and the archive check's own cases, and the check
+      # of this branch against main.
+      - name: Specification version scripts
+        run: |
+          perl .github/run-check.pl tmp-spec-version sh .github/spec-version.sh --self-test
+          perl .github/run-check.pl tmp-spec-archives-self-test sh .github/check-spec-archives.sh --self-test
+          perl .github/run-check.pl tmp-spec-archives sh .github/check-spec-archives.sh main
+          sh .github/spec-version.sh
+          sh .github/spec-version.sh --list | head -n 3
+
+      - name: Static group
+        run: make --no-print-directory static
+
+      - name: Design readiness
+        run: make --no-print-directory design-ready
+
+      # The build script no longer emits a version and the crate no longer
+      # exports one; a build and the tests of the spec module show nothing
+      # still reads it.
+      - name: Compiler builds without a specification version
+        run: |
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl tmp-spec-lib cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib spec
