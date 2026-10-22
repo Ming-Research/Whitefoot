@@ -83,6 +83,33 @@ fn native_link(
     executable
 }
 
+/// Execute the Windows allocator, runtime pool and frozen header and check the
+/// 16-byte alignment `target.rs` records for them, with the metering the other
+/// hosts observe.
+#[test]
+fn heap_and_pool_storage_meet_the_recorded_alignment() {
+    let temporary = fixture_directory();
+    let module = temporary.path().join("heap-alignment.ll");
+    let llvm = r#"declare ptr @wf__heap_take(i64)
+declare i32 @alignment_probe()
+declare i32 @wf__floor_run(i32, ptr)
+define i32 @main(i32 %argc, ptr %argv) {
+  %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+  ret i32 %status
+}
+define i32 @wf__main_body(i32 %argc, ptr %argv) {
+  %status = call i32 @alignment_probe()
+  ret i32 %status
+}
+"#;
+    std::fs::write(&module, llvm).expect("heap alignment module");
+    let host = include_str!("../../src/backend/tests/heap_alignment_probe.c");
+    let executable = native_link(temporary.path(), &module, host, false, false);
+    let output = run_command(&mut Command::new(executable));
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
 #[test]
 fn each_layout_fold_executes_a_real_non_owner_worker() {
     let llvm = compile_program_with_overlap("par_layout.wf");
