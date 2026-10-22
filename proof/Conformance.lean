@@ -17,7 +17,8 @@ cites when the two differ.
 rejection, so a case the parser wrongly puts outside the fragment, or a
 listed case missing from the manifest, is a disagreement too; a case newly in
 the fragment is added to the list. A few programs the cases do not run are
-run here with their outcomes. Each disagreement is printed, and the check
+run here with their outcomes, and a few programs no case exercises are
+checked here with their expected judgments. Each disagreement is printed, and the check
 fails while one remains: either the model is not faithful or the case shows a
 defect of the rules.
 -/
@@ -64,6 +65,29 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: missing);
 }
 ", fun | .illFormed _ => true | _ => false)
+]
+
+/-- Programs no conformance case exercises, each with the rule the checker
+must reject it citing, or `none` when it must accept it. -/
+def checkerExamples : List (String × String × Option String) := [
+  -- The direct goal `band(a, a)` reaches its comparison through two links;
+  -- the expanded goal proves it too, so the condition is always true [OP-5].
+  ("a condition true through two definition links", "fn f(x: u8) -> result: u8 pure {
+  if x < 3_u8 {
+    let p = x < 5_u8;
+    let a = band(p, p);
+    if band(a, a) {
+      return 1_u8;
+    }
+    return 0_u8;
+  }
+  return 2_u8;
+}
+fn main() -> status: std::process::ExitStatus pure {
+  let r = f(x: 1_u8);
+  return std::process::exit_status(code: r);
+}
+", some "OP-5")
 ]
 
 def describe : Outcome → String
@@ -161,6 +185,19 @@ def main (args : List String) : IO UInt32 := do
       let o := p.run budget
       if !ok o then problems := problems.push s!"example {name}: {describe o}"
     | .error e => problems := problems.push s!"example {name}: the parser stops: {repr e}"
+  for (name, src, rule) in checkerExamples do
+    match parseProgram src with
+    | .error e => problems := problems.push s!"example {name}: the parser stops: {repr e}"
+    | .ok p =>
+      let got : Option String := match p.check with
+        | .ok _ => none
+        | .error rj => some rj.rule
+      if got != rule then
+        let label (r : Option String) : String :=
+          match r with
+          | some rule => s!"a rejection citing {rule}"
+          | none => "acceptance"
+        problems := problems.push s!"example {name}: the checker gives {label got}, expected {label rule}"
   for (kind, c) in counts do
     IO.println (c.line kind)
   IO.println "outside the fragment, by the first construct met:"
