@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/waiting-contexts, compiler/incremental-compilation
 
 Summary: A deadlock report enumerates an intrusive roster under one lock, registering the root once and each child at its first actual guard or join park and removing it before reclamation, because at all-stuck every live context is such a waiter while registering every child at spawn cost 8.4% on one driver's concurrent spawns; a guard registers under its watch lock with the roster lock nested inside. The pre-registered one-percent comparison rejected no spawn panel, five of eight being inconclusive against the twin's spread, so the global roster stays provisional. Diagnostic fields occupy a cold tail initialized at first registration, and every all-stuck decision calls one inactive predicate. Cache keys still exclude host display paths, and emitted wait-site positions are templates whose display path is bound from the current invocation on reuse, so a different spelling of the same graph reuses its build while its reports name the paths this invocation wrote.
+## 2026-10-22 Taking turns with a resource that must be closed explicitly needs no lease construct
+
+Nodes: language/waiting/shared-objects
+
+Summary: Several running contexts that take turns with one resource that must be closed explicitly, such as the write file of a log, were thought to need a construct that lends the resource and makes sure it is put back. With a shared object whose state may be linear, the resource sits in a one-slot window that is the state: a guarded atomic statement moves it out, the context uses it as an ordinary linear local across waiting calls and a second statement puts it back, so the checker already requires it to be consumed on every path, it cannot be copied, a context that wants it waits in its guard, and the handle that ends last receives it and closes it exactly once. The shared-objects node now records that decision. Refused: a lexical lease block and an explicit lease value, each with a reclaim protocol and a contract against swapping the file away, because they add only the automatic put back and a same-window contract that refuses the file swap of a log rewrite.
 
 ## 2026-10-21 HashMap probes from high-bit homes and scans from a hash-space cursor
 
