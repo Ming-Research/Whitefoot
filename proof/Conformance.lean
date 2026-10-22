@@ -8,7 +8,8 @@ parsed. A case the parser stops at with `outside` uses a construct outside the
 fragment and is only counted. Every `accept` and `run` case written in the
 fragment must parse and resolve, and every `run` case must run to `done` with
 its expected exit status, `exit_status`'s code. A `reject` case is only counted
-here: comparing rejections needs the fragment's checker. Each disagreement is
+here, and each the parser already rejects is printed beside the rule the case
+cites: comparing rejections needs the fragment's checker. Each disagreement is
 printed, and the check fails while one remains: either the model is not
 faithful or the case shows a defect of the rules.
 -/
@@ -67,8 +68,9 @@ def main (args : List String) : IO UInt32 := do
       c := { c with rejected := c.rejected + 1 }
       if kind != "reject" then
         problems := problems.push s!"{id} ({kind}): the parser rejects it citing {rule}: {msg}"
-      else if verbose then
-        IO.println s!"{id}: rejected citing {rule}: {msg}"
+      else
+        let cited := (expect.getObjValAs? String "rule").toOption.getD "?"
+        IO.println s!"{id}: the parser rejects it citing {rule} ({msg}); the case cites {cited}"
     | .ok p =>
       c := { c with parsed := c.parsed + 1 }
       if verbose then IO.println s!"{id} ({kind}): in the fragment"

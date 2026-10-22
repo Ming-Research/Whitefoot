@@ -287,7 +287,7 @@ partial def targ : P TArg := do
   match ← peek with
   | some (.num s) =>
     if s.toList.all Char.isDigit then
-      if (← infixOp? <$> peekAt 1).isSome then outside "computed const arguments"
+      if let some (.oper _) := ← peekAt 1 then outside "computed const arguments"
       else do advance; return .nat (digitsValue s.toList)
     else reject "GRAM-3" s!"`{s}` is not a const argument"
   | some (.lower "fn") => outside "function arguments"
