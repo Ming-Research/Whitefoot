@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-21 A call's range write footprint is bounded by its first captured range, and capability limits are judged per obligation
+
+Nodes: compiler/range-judgment
+
+Summary: Two decisions are added. Provisionally, when a call's argument is a formed range, its write footprint is bounded by the first captured range and the full path frame is kept only as diagnostic provenance, because that separates range overlap from read identity without adding equalities to the accepting query, instead of versioning storage by full path, whose correspondence to the fixed derivation rules is unsettled; some same-range sibling-field proofs report an implementation limit until a program needs that precision, and a requirement whose reads lost their provenance at a join, a `give`, an aggregate copy or an aggregate or routed result, or whose formal selector identities are not remapped, keeps the ordinary verdict even where RANGE-2 and OWN-7 admit the program, a known exception to the rule that a limit of the checker is never reported as the program's error and not a rule of the language. A capability limit is judged per failed obligation from its conclusion, quantifier bounds, guards and read domains, instead of replacing every conclusion of a function with an unresolved write, and the counterfactual queries that explain a precision loss serve diagnostics only and never acceptance.
+
 ## 2026-10-22 A name written with a reserved spelling is refused with what reserves it and a fresh spelling
 
 Nodes: compiler/diagnostic-repairs
