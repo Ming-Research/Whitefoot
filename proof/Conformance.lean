@@ -77,8 +77,8 @@ def main (args : List String) : IO UInt32 := do
         match p.run budget with
         | .done (.status code) =>
           if code == expected then c := { c with ran := c.ran + 1 }
-          else problems := problems.push
-            s!"{id} (run): exit status {code}, expected {expected}"
+          else
+            problems := problems.push s!"{id} (run): exit status {code}, expected {expected}"
         | o => problems := problems.push s!"{id} (run): {describe o}, expected exit {expected}"
     counts := counts.map fun (k, old) => if k == kind then (k, c) else (k, old)
   for (kind, c) in counts do
