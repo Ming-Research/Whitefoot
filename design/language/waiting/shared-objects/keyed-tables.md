@@ -18,6 +18,8 @@ Decision: `map_clear` makes every entry of a map `None` through any `&Concurrent
 
 Decision: `key_set_read_key` copies as many first bytes of a set's key at an index as a range holds and returns the key's length, because a function cannot return a reference [REF-3] and a server copies a key into its reply anyway ([reading a key](../../../../research/investigations/map-enumeration/DESIGN.md#reading-a-key-sets-key)), instead of appending to a `Box<Slots<u8>>`, which would fix a growth policy in the prelude.
 
+Decision: A KeySet returns its runtime-held storage on release, and a ConcurrentHashMap releases its held values and then returns its runtime-held storage; both have nonempty release independently of their declared fields, because those opaque declarations expose no ownership of the runtime allocations and field-only release would contradict the key set's retained-byte measure and leave the map's storage unreclaimed, instead of treating their scalar or absent fields as their complete release behavior.
+
 Rejected:
 - The implicit whole hold, a statement holding a table whole when its block forms any path to it other than an entry target: rejected because the header then said less than the block held, the slowest hold a statement can take was the one it did not show, a callee's row could imply it where no reader of the statement saw it, and the mixed header was accepted with a meaning no rule stated; it was the first design's convenience for `keyed_table_count`.
 - A hold per field that is no map, `m = &s^.meta`: rejected because fields share one object lock, while fields that change apart can live in separate objects named by separate targets.

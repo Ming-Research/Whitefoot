@@ -381,7 +381,7 @@ impl SelectRow {
             1 => self.second,
             _ => return None,
         };
-        generated::SELECT_ATOMS.get(atom as usize).copied()
+        select_atom(atom)
     }
 }
 
@@ -425,14 +425,21 @@ pub fn grammar_node(node: GrammarNodeId) -> Option<GrammarNode> {
 pub(crate) fn grammar_prefixes(
     node: GrammarNodeId,
     repeat_tail: bool,
-) -> &'static [[Option<SelectAtom>; 2]] {
+) -> impl Iterator<Item = [Option<SelectAtom>; 2]> {
     let ranges = if repeat_tail {
         &generated::TAIL_PREFIX_RANGES
     } else {
         &generated::NODE_PREFIX_RANGES
     };
     let [start, len] = ranges[node.index()];
-    &generated::GRAMMAR_PREFIXES[start..start + len]
+    generated::GRAMMAR_PREFIXES[start..start + len]
+        .iter()
+        .map(|[first, second]| [select_atom(*first), select_atom(*second)])
+}
+
+/// The atom at a table position, or none past the table's end.
+fn select_atom(index: u16) -> Option<SelectAtom> {
+    generated::SELECT_ATOMS.get(usize::from(index)).copied()
 }
 
 /// Returns all terminal predicates in first source-grammar occurrence order.

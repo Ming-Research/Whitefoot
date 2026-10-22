@@ -4,7 +4,7 @@ alias exit_status = std::process::exit_status;
 const row: Array<u8, 5> = "a\tb\r\n";
 
 fn main() -> status: ExitStatus pure {
-  doc "In a STRING, \\t and \\r each denote one byte, U+0009 and U+000D, as in the doc text\there.";
+  doc "In a STRING, \\t and \\r each denote one byte, U+0009 and U+000D, as in the doc text\there. The constant's length is the exit status.";
   let tab = row[1_u64];
   if tab == 9_u8 {
   } else {
@@ -21,9 +21,6 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 3_u8);
   }
   let length = row.len;
-  if length == 5_u64 {
-  } else {
-    return exit_status(code: 4_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(length);
+  return exit_status(code: code);
 }

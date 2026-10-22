@@ -96,7 +96,7 @@ fn exercise(factory: &HandleFactory, writer: &DirectoryWrite, first: &[u8], seco
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, drivers: unused_driver_count, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: reader, write: writer) = move directory;
   let first = array_filled::<u8, 64>(value: 0_u8);
   let second = array_filled::<u8, 64>(value: 0_u8);
@@ -106,11 +106,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let first_present = first_end > 0_u64;
   let second_present = second_end > 0_u64;
   if band(first_present, second_present) {
-    if first_end <= 64_u64 {
-      if second_end <= 64_u64 {
-        set outcome = exercise(factory: &factory, writer: &writer, first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
-      }
-    }
+    set outcome = exercise(factory: &factory, writer: &writer, first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
   }
   std::fs::close_directory(factory: &factory, directory: move reader);
   std::fs::close_directory_write(factory: &factory, directory: move writer);

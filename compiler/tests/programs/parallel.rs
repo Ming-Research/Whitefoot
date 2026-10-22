@@ -83,7 +83,7 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         if mode == OverlapLowering::Off {
             assert!(!module_requires_parallel_runtime(&module));
         }
-        let program = build_program(&module);
+        let program = build_program(&crate::support::sanitized(module));
         for &width in workers {
             let output = program.run_with_workers(width);
             assert!(output.status.success(), "{mode:?}/{width:?}: {output:?}");
@@ -170,7 +170,7 @@ fn tree_window_and_deep_spine_preserve_their_independent_results() {
                 },
             )
             .expect("pinned-budget tree must compile");
-            let pinned = build_program(&module);
+            let pinned = build_program(&crate::support::sanitized(module));
             for workers in ["1", "4"] {
                 let output = pinned.run_with_workers(Some(workers));
                 assert_eq!(
@@ -233,9 +233,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let n = 200000_u64;
   let last = n - 1_u64;
   let values = box_array_filled::<u64>(count: n, value: 0_u64);
-  if n <= values.inner.len {
-    shifted_inline(values: &values, n: n);
-  }
+  shifted_inline(values: &values, n: n);
   if last < values.inner.len {
     let once = values.inner[last];
     if once == n {
@@ -439,6 +437,18 @@ fn shared_objects_outlive_statements_while_other_contexts_release_handles() {
     run_on_one_driver_and_on_four("shared_handle_release.wf", 3);
 }
 
+/// [SHARE-1, PROV-6] objects whose states are linear, on one driver and on
+/// four: two running contexts take `nodrop` tickets out of one queue, three
+/// take turns with one `nodrop` pen outside their atomic statements, and the
+/// handle whose `shared_close` is last receives each state and consumes it.
+/// Statements that did not hold the object alone would lose a stroke or
+/// redeem a ticket twice, and a close that took the state early would lose a
+/// count; the program's status names the first wrong count.
+#[test]
+fn linear_states_pass_between_running_contexts() {
+    run_on_one_driver_and_on_four("linear_shared_states.wf", 3);
+}
+
 /// Runs one program on one driver and on four, `rounds` times each, and
 /// requires status 0, which each program gives only when every count it
 /// checks is the one every order of its atomic statements gives.
@@ -525,6 +535,18 @@ fn guards_on_map_entries_wake_on_every_write_on_one_driver_and_on_four() {
 #[test]
 fn a_map_swapped_whole_keeps_its_identity_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_resets.wf", 2);
+}
+
+/// [SHARE-1, SHARE-2] a shared map whose values are unit serves as a set of
+/// byte-string keys: four contexts mark, unmark and test their own rows, then
+/// a count, a scan and a clear see exactly the marked keys, on one driver and
+/// on four. The entry's presence tag of `Option<unit>` is the only state the
+/// runtime keeps, so a tag read at the wrong offset, width or empty value
+/// would report a wrong membership (status 1 or 5), count (2), scan length
+/// (3), scanned keys (4) or clear (6, 7).
+#[test]
+fn a_map_of_unit_values_holds_a_set_of_keys_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("unit_set.wf", 2);
 }
 
 /// [SHARE-3] statements whose blocks meet several objects in opposite

@@ -111,6 +111,13 @@ completion criterion were refused.
   not establish competitiveness against optimized native implementations; the
   bounded 2026-09-22 control that permits native vectorization on two fixtures
   is retained beside the bundle.
+- [`hash-map-compare/`](hash-map-compare/README.md) — the ordinary `HashMap`
+  before and after a library change: two compilers that differ only in
+  `lib/std/collections/hash_map/`, paired base/candidate/twin rounds over
+  seven operations at three sizes, judged from distribution-free 95% intervals
+  once the twin resolves each cell, plus deterministic memory cells and the
+  candidate's scan hold times. Run on request by `hash-map-bench.yml`, on a
+  hosted runner or the i9-14900K; never a gate. No result is recorded yet.
 
 ## Completed current-compiler bounded research
 
@@ -275,6 +282,14 @@ completion criterion were refused.
   interpreter with Silverfir-nano's accumulator and pinned locals (E1); the
   argument registers of each calling convention; and the Whitefoot port of
   the interpreter under the compiler's per-arm lowering (stage 2).
+
+- `windows-container-crash-exit/` — why the stack-exhaustion witness of the
+  Windows package check takes about twenty minutes in a process-isolated Server
+  Core container: ending a process that holds the floor's 1 GiB of committed
+  stack by a crash is slow there (over 90 s, stopped) and takes a second on the
+  hosted runner, while `ExitProcess` and `TerminateProcess` end at once in both.
+  Measured 2026-10-21 on `windows-2022` runners; the cause inside the container
+  is not identified.
 
 ## Frozen v0.17 floor studies
 

@@ -138,6 +138,47 @@ struct FormalCallBoundary {
 pub(in crate::semantic::check) const WAIT1_DECLARE_THE_CALLER_WAITING: &str = "write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits";
 
 impl<'unit> Checker<'_, 'unit> {
+    /// [TYPE-5, REF-4] an array reference and a range reference are distinct
+    /// kinds. Suggest re-slicing only when the array's element type is the
+    /// requested range element type; another mismatch keeps its own payload.
+    fn array_range_argument_repair(
+        &self,
+        atom: NodeId,
+        parameter: &ParameterSignature,
+        argument: &TypedExpression,
+    ) -> Result<Option<String>, CheckStop> {
+        if parameter.mode != CheckedMode::Range || argument.mode.is_range() {
+            return Ok(None);
+        }
+        let element = match argument.expression.ty() {
+            CheckedType::Array { element, .. } | CheckedType::Buffer { element } => element,
+            _ => return Ok(None),
+        };
+        if self.types.element_type(element)? != parameter.ty {
+            return Ok(None);
+        }
+        let tree = &self.types.declarations.tree;
+        if tree.has_fixed(atom, crate::syntax::terminal::FixedTerminal::Move)? {
+            return Ok(None);
+        }
+        let (place, borrowed) = match tree.first_child_with(atom, Production::BorrowExpr)? {
+            Some(borrow) => (tree.first_child_with(borrow, Production::Place)?, true),
+            None => (tree.first_child_with(atom, Production::Place)?, false),
+        };
+        let Some(place) = place else {
+            return Ok(None);
+        };
+        let written = tree.source_spelling(place)?;
+        let place = if !borrowed && argument.mode == CheckedMode::Reference {
+            format!("{written}^")
+        } else {
+            written
+        };
+        Ok(Some(
+            super::super::super::repairs::writer_references::array_range_argument(&place),
+        ))
+    }
+
     pub(super) fn check_user_call(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -245,7 +286,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Wait1,
                 node,
                 SemanticIssueKind::WaitingCallOutsideWaitingFunction {
-                    callee: signature.name.clone(),
+                    callee: self.types.render_called_function(signature, node)?,
                     context: "a function that does not wait",
                     mechanical_fix: WAIT1_DECLARE_THE_CALLER_WAITING,
                 },
@@ -295,7 +336,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Gram11,
                 node,
-                Checker::invalid_named_arguments(signature),
+                self.invalid_named_arguments(signature, node)?,
             );
         }
         let mut arguments = Vec::with_capacity(fields.len());
@@ -319,7 +360,7 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Gram11,
                     field,
-                    Checker::invalid_named_arguments(signature),
+                    self.invalid_named_arguments(signature, node)?,
                 );
             }
             let atom = self
@@ -364,12 +405,17 @@ impl<'unit> Checker<'_, 'unit> {
                     return self.types.declarations.issue_node(
                         SemanticRule::Type5,
                         atom,
-                        SemanticIssueKind::type_mismatch(
-                            self.types
+                        SemanticIssueKind::TypeMismatch {
+                            expected: self
+                                .types
                                 .checked_value_name(parameter.mode, parameter.ty)?,
-                            self.types
+                            found: self
+                                .types
                                 .checked_value_name(argument.mode, argument.expression.ty())?,
-                        ),
+                            mechanical_fix: self.array_range_argument_repair(
+                                atom, parameter, &argument,
+                            )?,
+                        },
                     );
                 }
             }
@@ -384,9 +430,9 @@ impl<'unit> Checker<'_, 'unit> {
                 );
             }
             if argument.mode != parameter.mode {
-                // [TYPE-7] "A reference binding used where a value of its
-                // referent type is expected is a hard error citing TYPE-7,
-                // with the mechanical fix `p^`." The operand mode is
+                // [TYPE-7] a reference binding used where a value of its
+                // referent type is expected is a hard error with a repair.
+                // The operand mode is
                 // what says which of the two refusals this is: a reference
                 // standing in an `own` position is the implicit read the rule
                 // refuses, and every other disagreement is [TYPE-5]'s.
@@ -397,7 +443,19 @@ impl<'unit> Checker<'_, 'unit> {
                         SemanticRule::Type7,
                         atom,
                         SemanticIssueKind::MissingDereference {
-                            mechanical_fix: "write `p^`",
+                            mechanical_fix: match &argument.expression {
+                                CheckedExpression::Binding { binding, .. } => {
+                                    match bindings.values().find(|local| local.binding == *binding) {
+                                        Some(local) => self.reference_payload_repair(
+                                            check_context,
+                                            local,
+                                            &self.types.declarations.tree.source_spelling(atom)?,
+                                        )?,
+                                        None => "write `p^`".to_owned(),
+                                    }
+                                }
+                                _ => "write `p^`".to_owned(),
+                            },
                         },
                     );
                 }
@@ -427,7 +485,7 @@ impl<'unit> Checker<'_, 'unit> {
                             }
                             super::super::super::references::ReferenceValidity::Valid => "",
                         },
-                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN,
+                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN.to_owned(),
                     },
                 );
             }
@@ -464,10 +522,14 @@ impl<'unit> Checker<'_, 'unit> {
             argument_atoms.push(atom);
 
             actual_paths.push(paths);
+            if let Ok(spelling) = self.types.declarations.tree.source_spelling(atom) {
+                self.types.source_spellings.insert(atom, spelling);
+            }
             actual_captures.push(
                 self.body.note_capture(
-                    Checker::captured_of(atom, &argument.expression)
-                        .unwrap_or_else(CapturedValue::unknown),
+                    self.captured_of(atom, &argument.expression)
+                        .unwrap_or_else(CapturedValue::unknown)
+                        .with_source(atom),
                     bindings,
                 ),
             );
@@ -491,7 +553,6 @@ impl<'unit> Checker<'_, 'unit> {
         // [STOR-8] a unit carrying the no-heap declaration cannot call an
         // allocating prelude row; [OP-11] refuses a `swap` over a copy place.
         self.types
-            .declarations
             .reject_allocating_call_under_no_heap(node, signature)?;
         self.types
             .reject_swap_over_copy(check_context, node, signature)?;
@@ -560,6 +621,56 @@ impl<'unit> Checker<'_, 'unit> {
                         )?);
                     }
                     ContractReadStep::Captured(step) => suffix.push(*step),
+                    ContractReadStep::FormalPath(place) => {
+                        suffix.extend(self.types.captured_places.formal(*place));
+                    }
+                    ContractReadStep::Projected(projection) => {
+                        let (ordinal, place, ty, page) = match projection {
+                            GoalProjection::FormalPlaceSubscript { ordinal, place, ty } => {
+                                (*ordinal, *place, *ty, false)
+                            }
+                            GoalProjection::FormalPlacePage { ordinal, place, ty } => {
+                                (*ordinal, *place, *ty, true)
+                            }
+                            _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+                        };
+                        let mut projections = crate::semantic::goal::formal_offset_projections(
+                            place,
+                            &self.types.captured_places,
+                        )
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        if signature.parameters[ordinal as usize].mode.is_reference() {
+                            projections.insert(0, GoalProjection::Deref);
+                        }
+                        let template = GoalExpression::Datum(GoalDatum::Parameter {
+                            ordinal,
+                            projections,
+                            ty,
+                        });
+                        let goal = self.instantiate_goal_expression(
+                            check_context,
+                            &template,
+                            signature,
+                            &signature.region_parameters,
+                            &goal_arguments,
+                        )?;
+                        let captured = CapturedValue::new(
+                            CaptureId::ContractRead {
+                                call: node,
+                                position: contract_position,
+                            },
+                            CapturedTerm::Opaque,
+                        );
+                        contract_position = contract_position
+                            .checked_add(1)
+                            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+                        suffix.push(if page {
+                            PlaceStep::Page(captured)
+                        } else {
+                            PlaceStep::Index(captured)
+                        });
+                        contract_indices.push((captured, goal));
+                    }
                     ContractReadStep::Computed(term, definitions) => {
                         let mut pending = Vec::new();
                         let goal = range_term_goal(
@@ -639,12 +750,15 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(
+            FunctionContext {
+                check_context,
+                function,
+            },
             node,
-            function,
             &substituted,
             bindings,
             &mut effects,
-            formal.is_none().then_some(signature.parameters.as_slice()),
+            (signature, formal.is_none()),
         )?;
         if formal.is_none() && self.body.repair_calls.is_some() {
             let call = self.effect_repair_call(
@@ -1020,9 +1134,9 @@ impl<'unit> Checker<'_, 'unit> {
                         {
                             "this call gives these two entries of the callee's row the same positions: pass positions this call proves do not overlap, or replace the callee's row entries at or below their common path with one `writes` entry of that path"
                         } else if left.argument == right.argument && unnamed_positions {
-                            "these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                            super::super::super::repairs::joined_argument_overlap(true)
                         } else if left.argument == right.argument {
-                            "these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
+                            super::super::super::repairs::joined_argument_overlap(false)
                         } else {
                             "pass places that do not overlap, or pass the shared place through one argument only"
                         },
@@ -1123,14 +1237,15 @@ impl<'unit> Checker<'_, 'unit> {
     /// atomic statement's binder contributes its path for that statement,
     /// which removes it [SHARE-3].
     fn project_call_effects(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
-        caller: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         effects: &mut EffectSet,
-        retained_reference_parameters: Option<&[ParameterSignature]>,
+        (signature, retain_reference_parameters): (&FunctionSignature, bool),
     ) -> Result<(), CheckStop> {
+        let caller = context.function;
         for entry in entries {
             for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
                 if !caller
@@ -1141,8 +1256,20 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     continue;
                 }
-                if retained_reference_parameters
-                    .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)
+                if entry.write && self.body.rewritten_index_repair.is_none() {
+                    self.body.rewritten_index_repair = self
+                        .rewritten_index_repair(
+                            context,
+                            node,
+                            &entry.place,
+                            bindings,
+                            Some(signature),
+                        )
+                        .ok()
+                        .flatten();
+                }
+                if retain_reference_parameters
+                    && signature.parameters[entry.argument].mode != CheckedMode::Own
                 {
                     if !self.types.effect_repairs.is_capture() {
                         if entry.write {
@@ -1914,6 +2041,9 @@ impl<'unit> DeclarationInventory<'unit> {
         }
         Ok(())
     }
+}
+
+impl<'unit> TypeContext<'unit> {
     /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
     /// call an allocating prelude row.
     ///
@@ -1926,18 +2056,23 @@ impl<'unit> DeclarationInventory<'unit> {
         node: NodeId,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
-        if !self.no_heap || !HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str()) {
+        if !self.declarations.no_heap
+            || !HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str())
+        {
             return Ok(());
         }
-        self.issue_node(
+        self.declarations.issue_node(
             SemanticRule::Stor8,
             node,
             SemanticIssueKind::HeapTypeUnderNoHeap {
-                spelling: signature.name.clone(),
+                spelling: self.render_called_function(signature, node)?,
                 mechanical_fix: super::super::super::types::STOR8_NO_HEAP,
             },
         )
     }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
     /// An indexed actual has an ephemeral image rather than a rereadable
     /// place image. All path steps are in the one suffix list [GRAM-5].
     fn call_goal_place_contains_subscript(&self, place: NodeId) -> Result<bool, CheckStop> {

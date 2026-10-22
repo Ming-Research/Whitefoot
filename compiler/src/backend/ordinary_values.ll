@@ -363,6 +363,134 @@ entry:
   ret void
 }
 
+; The host-path opens [PRE-2]: a `PathEncoding` crosses as its one-bit tag,
+; which its C body takes zero-extended.
+declare i32 @wf__body_open_host_read_start(ptr, ptr, ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.fs.open_host_read.start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_open_host_read_start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_open_host_read_finish(ptr, ptr, ptr, ptr, ptr, ptr)
+
+define void @wf_std.fs.open_host_read.finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation) align 64 {
+entry:
+  call void @wf__body_open_host_read_finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_open_host_read_bytes_start(ptr, ptr, ptr, ptr, ptr, i64, i64, i8 zeroext, ptr)
+
+define i32 @wf_std.fs.open_host_read_bytes.start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path.data, i64 %path.len, i64 %start, i64 %end, i1 %encoding, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %path.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %path.len, ptr %view.len, align 8
+  %encoding.tag = zext i1 %encoding to i8
+  %state = call i32 @wf__body_open_host_read_bytes_start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %view, i64 %start, i64 %end, i8 zeroext %encoding.tag, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_open_host_read_bytes_finish(ptr, ptr, ptr, ptr, ptr, i64, i64, i8 zeroext, ptr)
+
+define void @wf_std.fs.open_host_read_bytes.finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path.data, i64 %path.len, i64 %start, i64 %end, i1 %encoding, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %path.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %path.len, ptr %view.len, align 8
+  %encoding.tag = zext i1 %encoding to i8
+  call void @wf__body_open_host_read_bytes_finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %view, i64 %start, i64 %end, i8 zeroext %encoding.tag, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_open_host_directory_read_start(ptr, ptr, ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.fs.open_host_directory_read.start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_open_host_directory_read_start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_open_host_directory_read_finish(ptr, ptr, ptr, ptr, ptr, ptr)
+
+define void @wf_std.fs.open_host_directory_read.finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation) align 64 {
+entry:
+  call void @wf__body_open_host_directory_read_finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_open_host_directory_read_bytes_start(ptr, ptr, ptr, ptr, ptr, i64, i64, i8 zeroext, ptr)
+
+define i32 @wf_std.fs.open_host_directory_read_bytes.start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path.data, i64 %path.len, i64 %start, i64 %end, i1 %encoding, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %path.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %path.len, ptr %view.len, align 8
+  %encoding.tag = zext i1 %encoding to i8
+  %state = call i32 @wf__body_open_host_directory_read_bytes_start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %view, i64 %start, i64 %end, i8 zeroext %encoding.tag, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_open_host_directory_read_bytes_finish(ptr, ptr, ptr, ptr, ptr, i64, i64, i8 zeroext, ptr)
+
+define void @wf_std.fs.open_host_directory_read_bytes.finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path.data, i64 %path.len, i64 %start, i64 %end, i1 %encoding, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %path.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %path.len, ptr %view.len, align 8
+  %encoding.tag = zext i1 %encoding to i8
+  call void @wf__body_open_host_directory_read_bytes_finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %view, i64 %start, i64 %end, i8 zeroext %encoding.tag, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_open_host_directory_start(ptr, ptr, ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.fs.open_host_directory.start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_open_host_directory_start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_open_host_directory_finish(ptr, ptr, ptr, ptr, ptr, ptr)
+
+define void @wf_std.fs.open_host_directory.finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation) align 64 {
+entry:
+  call void @wf__body_open_host_directory_finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_open_host_directory_bytes_start(ptr, ptr, ptr, ptr, ptr, i64, i64, i8 zeroext, ptr)
+
+define i32 @wf_std.fs.open_host_directory_bytes.start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path.data, i64 %path.len, i64 %start, i64 %end, i1 %encoding, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %path.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %path.len, ptr %view.len, align 8
+  %encoding.tag = zext i1 %encoding to i8
+  %state = call i32 @wf__body_open_host_directory_bytes_start(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %view, i64 %start, i64 %end, i8 zeroext %encoding.tag, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_open_host_directory_bytes_finish(ptr, ptr, ptr, ptr, ptr, i64, i64, i8 zeroext, ptr)
+
+define void @wf_std.fs.open_host_directory_bytes.finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %path.data, i64 %path.len, i64 %start, i64 %end, i1 %encoding, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %path.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %path.len, ptr %view.len, align 8
+  %encoding.tag = zext i1 %encoding to i8
+  call void @wf__body_open_host_directory_bytes_finish(ptr %result, ptr %factory, ptr %paths, ptr %base, ptr %view, i64 %start, i64 %end, i8 zeroext %encoding.tag, ptr %operation)
+  ret void
+}
+
 declare i32 @wf__body_open_directory_source_start(ptr, ptr, ptr, ptr)
 
 define i32 @wf_std.fs.open_directory_source.start(ptr %result, ptr %factory, ptr %directory, ptr %operation) align 64 {
@@ -753,6 +881,16 @@ entry:
   ret i64 %value
 }
 
+declare void @wf__body_local_offset_seconds(ptr, ptr, i64)
+
+define { i8, i64 } @wf_std.time.local_offset_seconds(ptr %clock, i64 %at) align 64 {
+entry:
+  %result = alloca { i8, i64 }, align 8
+  call void @wf__body_local_offset_seconds(ptr %result, ptr %clock, i64 %at)
+  %offset = load { i8, i64 }, ptr %result, align 8
+  ret { i8, i64 } %offset
+}
+
 declare void @wf__body_exit_status(ptr, i8 zeroext)
 
 define void @wf_std.process.exit_status(ptr %result, i8 %code) align 64 {
@@ -1033,4 +1171,20 @@ define i64 @wf_std.process.release_map_reserve(ptr %map, ptr %meter) align 64 {
 entry:
   %freed = call i64 @wf__body_release_map_reserve(ptr %map, ptr %meter)
   ret i64 %freed
+}
+
+declare void @wf__body_open_files_limit(ptr, ptr)
+
+define void @wf_std.process.open_files_limit(ptr %result, ptr %factory) align 64 {
+entry:
+  tail call void @wf__body_open_files_limit(ptr %result, ptr %factory)
+  ret void
+}
+
+declare void @wf__body_raise_open_files_limit(ptr, ptr, i64)
+
+define void @wf_std.process.raise_open_files_limit(ptr %result, ptr %factory, i64 %wanted) align 64 {
+entry:
+  tail call void @wf__body_raise_open_files_limit(ptr %result, ptr %factory, i64 %wanted)
+  ret void
 }

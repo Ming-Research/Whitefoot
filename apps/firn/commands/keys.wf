@@ -972,40 +972,38 @@ fn run_rename(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   let logged = store^.logging;
   let outcome = rename_missing;
   atomic slots = &store^.keys[keys], m = &store^.meta {
-    if source < slots^.len {
-      let kind = entry_kind(slot: &slots^[source], client: client);
+    let kind = entry_kind(slot: &slots^[source], client: client);
+    if client^.state == state_expired {
+      if logged {
+        log_removal(log: &m^.log, key: source_key);
+      }
+    }
+    if kind == 0_u64 {
+    } else if keys.len == 1_u64 {
+      set outcome = rename_same;
+    } else {
+      let observed = entry_kind(slot: &slots^[target], client: client);
       if client^.state == state_expired {
         if logged {
-          log_removal(log: &m^.log, key: source_key);
+          log_removal(log: &m^.log, key: target_key);
         }
       }
-      if kind == 0_u64 {
-      } else if keys.len == 1_u64 {
-        set outcome = rename_same;
-      } else if target < slots^.len {
-        let observed = entry_kind(slot: &slots^[target], client: client);
-        if client^.state == state_expired {
-          if logged {
-            log_removal(log: &m^.log, key: target_key);
-          }
+      let occupied = observed != 0_u64;
+      let refused = band(fresh, occupied);
+      if refused {
+        set outcome = rename_occupied;
+      } else {
+        let moved = None<Entry>();
+        swap(first: &slots^[source], second: &moved);
+        let at = held_expiry(slot: &moved);
+        set slots^[target] = move moved;
+        if at != 0_u64 {
+          queue_expiry(meta: m, key: target_key, at: at, env: env);
         }
-        let occupied = observed != 0_u64;
-        let refused = band(fresh, occupied);
-        if refused {
-          set outcome = rename_occupied;
-        } else {
-          let moved = None<Entry>();
-          swap(first: &slots^[source], second: &moved);
-          let at = held_expiry(slot: &moved);
-          set slots^[target] = move moved;
-          if at != 0_u64 {
-            queue_expiry(meta: m, key: target_key, at: at, env: env);
-          }
-          if logged {
-            log_command(log: &m^.log, input: input, args: args);
-          }
-          set outcome = rename_done;
+        if logged {
+          log_command(log: &m^.log, input: input, args: args);
         }
+        set outcome = rename_done;
       }
     }
   }
@@ -1083,36 +1081,32 @@ fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let logged = store^.logging;
   let done = False();
   atomic slots = &store^.keys[keys], m = &store^.meta {
-    if source < slots^.len {
-      let kind = entry_kind(slot: &slots^[source], client: client);
+    let kind = entry_kind(slot: &slots^[source], client: client);
+    if client^.state == state_expired {
+      if logged {
+        log_removal(log: &m^.log, key: source_key);
+      }
+    }
+    if kind != 0_u64 {
+      let observed = entry_kind(slot: &slots^[target], client: client);
       if client^.state == state_expired {
         if logged {
-          log_removal(log: &m^.log, key: source_key);
+          log_removal(log: &m^.log, key: target_key);
         }
       }
-      if kind != 0_u64 {
-        if target < slots^.len {
-          let observed = entry_kind(slot: &slots^[target], client: client);
-          if client^.state == state_expired {
-            if logged {
-              log_removal(log: &m^.log, key: target_key);
-            }
-          }
-          let vacant = observed == 0_u64;
-          let allowed = bor(vacant, replace);
-          if allowed {
-            let copied = held_copy(slot: &slots^[source]);
-            let at = held_expiry(slot: &copied);
-            set slots^[target] = move copied;
-            if at != 0_u64 {
-              queue_expiry(meta: m, key: target_key, at: at, env: env);
-            }
-            if logged {
-              log_command(log: &m^.log, input: input, args: args);
-            }
-            set done = True();
-          }
+      let vacant = observed == 0_u64;
+      let allowed = bor(vacant, replace);
+      if allowed {
+        let copied = held_copy(slot: &slots^[source]);
+        let at = held_expiry(slot: &copied);
+        set slots^[target] = move copied;
+        if at != 0_u64 {
+          queue_expiry(meta: m, key: target_key, at: at, env: env);
         }
+        if logged {
+          log_command(log: &m^.log, input: input, args: args);
+        }
+        set done = True();
       }
     }
   }

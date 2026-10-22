@@ -20,6 +20,7 @@ mod lexer;
 mod library;
 mod lowering;
 mod prelude;
+mod release;
 mod resolution;
 mod semantic;
 mod source;
@@ -34,6 +35,8 @@ mod target;
 mod toolchain;
 
 pub use toolchain::clang_executable;
+#[doc(hidden)]
+pub use toolchain::{Toolchain, prepare_toolchain, resolved_toolchain};
 
 /// The stack each worker of [`in_parallel`] runs on, as large as the
 /// compiler driver's own: a worker runs the same recursive checks.
@@ -148,16 +151,15 @@ pub use backend::{
     COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WAIT_HOST_SOURCE, COMPLETION_WAIT_WINDOWS_SOURCE,
     COMPLETION_WINDOWS_IOCP_HEADER, COMPLETION_WINDOWS_IOCP_SOURCE, CONCURRENT_MAP_HEADER,
     CONCURRENT_MAP_LAYOUT_HEADER, CONCURRENT_MAP_SOURCE, DISPATCH_LEDGER_PREFIX,
-    FLOOR_RUNTIME_SOURCE, FLOOR_STACK_BYTES,
-    FLOOR_WINDOWS_RUNTIME_SOURCE, FORK_CAPSULE_HEADER, FORK_CAPSULE_SOURCE, HEAP_SOURCE,
-    KEYED_TABLE_SOURCE, LOCK_LEDGER_PREFIX, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM,
-    ORDINARY_VALUES_SOURCE, RESTRICTED_CHILD_COMPILE_ARGUMENTS, SCHED_CORE_HEADER,
-    SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER,
-    SCHED_PRIM_HOST_SOURCE, SCHED_PRIM_WINDOWS_SOURCE, SNAPSHOT_EXPORT_HEADER,
-    SNAPSHOT_EXPORT_SOURCE, WINDOWS_RUNTIME_HEADER, WINDOWS_RUNTIME_SOURCE,
+    FLOOR_RUNTIME_SOURCE, FLOOR_STACK_BYTES, FLOOR_WINDOWS_RUNTIME_SOURCE, FORK_CAPSULE_HEADER,
+    FORK_CAPSULE_SOURCE, HEAP_SOURCE, KEYED_TABLE_SOURCE, LOCK_LEDGER_PREFIX,
+    ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
+    RESTRICTED_CHILD_COMPILE_ARGUMENTS, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER,
+    SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SCHED_PRIM_HOST_SOURCE, SCHED_PRIM_WINDOWS_SOURCE,
+    SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, WINDOWS_RUNTIME_HEADER, WINDOWS_RUNTIME_SOURCE,
     module_requires_heap_runtime, module_requires_parallel_runtime, stack_ledger,
 };
-pub use backend::{FragmentGranularity, LlvmModule, SplitFailure, split_module};
+pub use backend::{FragmentGranularity, LlvmModule, Sanitizer, SplitFailure, split_module};
 pub use driver::*;
 pub use graph::*;
 /// Where one call into an actualized recursive component starts counting the

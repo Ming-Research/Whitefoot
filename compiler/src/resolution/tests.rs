@@ -3216,17 +3216,21 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[250].1, "decision_cell_read");
     assert_eq!(first[252].1, "claim_written");
     assert_eq!(first[254].1, "claim_killed");
+    assert_eq!(first[256].1, "shared_close");
+    assert_eq!(first[257].1, "T");
+    assert_eq!(first[258].1, "shared");
     // PRE-1: 54 opaque records + 31 enum records + four built-in records +
-    // 167 function/parameter/range records = 256. Frozen adds four opaque
+    // 170 function/parameter/range records = 259. Frozen adds four opaque
     // records and frozen_new/frozen_share add three each; ScanStep adds five
     // enum records and map_scan_within seven call records; release adds its
     // function, T and value, three records; key_set_bytes adds its function
     // and value parameter, two records; DecisionCell adds two opaque records,
     // DecisionState four enum records and the five decision-cell functions
-    // nine records. Count every declaration in the preorder, including
-    // owner-local ones.
-    assert_eq!(first.len(), 256);
-    assert_eq!(first.last().map(|record| record.1.as_str()), Some("cell"));
+    // nine records; shared_close adds its function, T and shared, three
+    // records. Count every declaration in the preorder, including owner-local
+    // ones.
+    assert_eq!(first.len(), 259);
+    assert_eq!(first.last().map(|record| record.1.as_str()), Some("shared"));
     assert!(
         first
             .iter()
@@ -3407,5 +3411,16 @@ fn uses_under_a_subtree_match_a_scan_of_every_use() {
                 .collect::<Vec<_>>();
             assert_eq!(indexed, scanned, "uses under {prefix:?}");
         }
+    });
+}
+
+#[test]
+fn match_constant_identifier_and_variant_label_have_separate_roles() {
+    with_one_resolution(b"const code: u8 = 1_u8;\n\nenum Flag {\n  A();\n}\n\nfn select(value: u8, flag: Flag) -> result: unit pure {\n  match value {\n    code => {\n    }\n    else => {\n    }\n  }\n  match flag {\n    A() => {\n    }\n  }\n  return unit;\n}\n", |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else { panic!("integer named const and enum label must resolve: {outcome:?}"); };
+        let value = resolved.lexical_uses().iter().find(|usage| usage.role() == LexicalUseRole::IntegerMatchValue).unwrap();
+        assert_eq!(value.spelling(), "code");
+        assert!(matches!(value.target(), ResolvedTarget::Source { class: DeclarationClass::NamedConst, .. }));
+        assert!(resolved.deferred_uses().iter().any(|usage| usage.role() == DeferredUseRole::ArmVariant && usage.spelling() == "A"));
     });
 }

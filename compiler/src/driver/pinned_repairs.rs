@@ -6,29 +6,45 @@
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
 //! Adding or rewording a repair means adding or updating a pair here or in
-//! its family module; the repairs still printed without one are listed in
-//! status board item coord-wfbl-01-25.
+//! its family module. Constructor, ownership, placement and linear-exit
+//! repairs are pinned in `remaining_repairs`, including multi-module fields.
 
-use super::CompilerLimits;
+use super::{CompilationFailureKind, CompilerLimits, compile};
+use crate::SourceInput;
 
 mod call_separations;
+mod captured_indices;
+mod cell_consumption;
+mod clause_requirements;
 mod collisions_and_killed_facts;
 mod common_syntax;
 mod content_moves;
+mod derived_measures;
+mod effect_row_categories;
 mod enum_routed_ensures;
+mod entry_formers;
 mod floats;
 mod harness;
 mod interface_applications;
 mod lexical_syntax;
+mod lost_header_relations;
 mod postcondition_places;
 mod prelude_opaque;
+mod proof_place_spellings;
 mod qualified_constants;
 mod qualified_names;
 mod recursive_effects;
+mod redundant_conditions;
+mod remaining_repairs;
 mod reserved_names;
+mod rewritten_effect_indices;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
+mod unavailable_summaries;
+mod writer_operations;
+mod writer_ownership;
+mod writer_references;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -792,6 +808,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "FN-8",
         sentences: &[
             "\n  disposition: Unproved\n",
+            "\n  instantiated_goal: values[span.start..span.end].len <= 2_u64\n",
             "\n  mechanical_fix: `values[span.start..span.end].len` is the difference of its endpoints [REF-4], and its endpoints `span.start` and `span.end` are not bindings, so no fact names that difference: copy each into a `let` binding before the call and form the range from the bindings, then, where the start is at most the end, bind the difference of the bindings with the exact `-` (a `-wrap` difference carries no relation to the range's length) and establish the requirement over it\n",
         ],
         repaired: &[br#"struct Span {
@@ -2523,7 +2540,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2566,7 +2583,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2585,7 +2602,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2603,7 +2620,7 @@ alias Inputs = std::process::Inputs;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   let DirectoryRead() = move directory;
@@ -2621,7 +2638,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   close_directory(factory: &factory, directory: move directory);
@@ -3762,42 +3779,6 @@ fn nested(strip: &[Array<u64, 4>], i: u64) -> result: u64 writes(strip) contract
 
 fn main() -> status: ExitStatus pure {
   return exit_status(code: 0_u8);
-}
-"#],
-    },
-    RepairPair {
-        name: "writable-len-field-counted-endpoint.wf",
-        rejected: br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let count = 0_u64;
-  for (i in 0_u64..spans[1_u64].len) {
-    set count = count +wrap 1_u64;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "ENT-2",
-        sentences: &[
-            "\n  mechanical_fix: bind the computed u64 value with one preceding ordinary let and use that term as the endpoint\n",
-        ],
-        repaired: &[br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let count = 0_u64;
-  let length = spans[1_u64].len;
-  for (i in 0_u64..length) {
-    set count = count +wrap 1_u64;
-  }
-  return std::process::exit_status(code: 0_u8);
 }
 "#],
     },

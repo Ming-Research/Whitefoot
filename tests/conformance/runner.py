@@ -25,7 +25,7 @@ Verdict = ("accept",) | ("reject", [DIAGNOSTIC...]) | ("run", exit) | ("unsuppor
 Manifest line (JSON):
   {"id": str, "rules": [rule_id...], "expect": EXPECT, "arrange": ARRANGE?,
    "status": "runnable", "doc": str}
-  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R}
+  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R,"span":SPAN?}
          | {"kind":"reject","diagnostics":[DIAGNOSTIC...]} | {"kind":"run","exit":N}
          | {"kind":"unsupported","why":str}
   DIAGNOSTIC = {"rule":R, "source_ordinal":N, "byte_start":N, "byte_end":N,
@@ -33,6 +33,12 @@ Manifest line (JSON):
   A rule-only rejection asserts exactly one diagnostic. A diagnostics list is
   nonempty and fixes every rejection in report order; expected, when present,
   fixes the exact ordered terminal labels rather than diagnostic prose.
+
+  SPAN = {"start":N,"end":N}: zero-based, half-open byte offsets in the
+         case's single `.wf` source, as DIAG-1 defines them. Only a reject
+         case may assert a span; module-form cases cannot yet assert one.
+         The rule and span must belong to the same rejection. An adapter
+         supplies no span when that rejection belongs to another source.
 
   status: runnable = must match expect. It is the only status. There is no
           skipped and no expected-failure status: a case whose declared verdict
@@ -54,11 +60,19 @@ never executed must not carry one. Every byte string is lowercase hex so the
 corpus can express non-UTF-8 argument and path bytes exactly and diff them
 readably:
 
-  ARRANGE = {"argv": ["<hex>"...]?,          the complete native argument vector
+  ARRANGE = {"argv": [BYTES...]?,            the complete native argument vector
              "stdin": "<hex>"?,              standard input body
              "files": [FIXTURE...]?,         fixtures under the initial directory
              "redirect": {"stdout": NAME?, "stderr": NAME?}?}
-  FIXTURE = {"path":"<hex>", "bytes":"<hex>"} | {"path":"<hex>", "directory":true}
+  FIXTURE = {"path":"<hex>", "bytes":BYTES} | {"path":"<hex>", "directory":true}
+          | {"path":"<hex>", "link":"<hex>"}
+  BYTES   = "<hex>" | {"initial":"<hex>"}
+
+A `link` fixture is a symbolic link whose target is the given bytes. A BYTES
+object denotes the absolute path of the invocation's initial directory, a `/`,
+then the given bytes, so a case can name a file by an absolute path although
+the adapter chooses where the initial directory is. Fixtures are made in
+listed order.
 
 `argv` is the COMPLETE native argument vector, position 0 included, exactly as
 the ordinary Args library value delivers it: `argv[i]` is what the program
@@ -102,9 +116,18 @@ def matches(v, expect):
                     and len(reached) == len(expect["diagnostics"])
                     and all(all(actual.get(key) == value for key, value in wanted.items())
                             for actual, wanted in zip(reached, expect["diagnostics"])))
-        return (v[1] == expect["rule"] if isinstance(v[1], str)
-                else isinstance(v[1], list) and len(v[1]) == 1
-                and v[1][0].get("rule") == expect["rule"])
+        if isinstance(v[1], str):
+            # A rule-only verdict may carry the rejection's span as a third element.
+            return (v[1] == expect["rule"]
+                    and ("span" not in expect or (len(v) > 2 and v[2] == expect["span"])))
+        if not (isinstance(v[1], list) and len(v[1]) == 1
+                and v[1][0].get("rule") == expect["rule"]):
+            return False
+        # The span is in the case's single source, bundle ordinal 0.
+        return ("span" not in expect
+                or (v[1][0].get("source_ordinal") == 0
+                    and v[1][0].get("byte_start") == expect["span"]["start"]
+                    and v[1][0].get("byte_end") == expect["span"]["end"]))
     return ((k == "accept" and v[0] == "accept")
             or (k == "run" and v[0] == "run" and v[1] == expect["exit"])
             # `why` is the adapter's prose; the corpus asserts the verdict kind,
@@ -199,6 +222,16 @@ def hex_errors(label, value, allow_empty=True):
     return []
 
 
+def arranged_bytes_errors(label, value):
+    """A BYTES value: a hex byte string, or an object whose one member
+    `initial` is the hex suffix after the initial directory's absolute path."""
+    if isinstance(value, dict):
+        if set(value) != {"initial"}:
+            return [f"{label} must be a hex byte string or an object with exactly the member initial"]
+        return hex_errors(f"{label}.initial", value["initial"])
+    return hex_errors(label, value)
+
+
 def arrange_errors(label, arrange):
     """Check one invocation arrangement. Keys are a closed set: an unknown key is a
     silently ignored intention, which is worse in a corpus than a rejected line."""
@@ -215,7 +248,7 @@ def arrange_errors(label, arrange):
             errors.append(f"{label}: argv must be a nonempty list")
         else:
             for position, argument in enumerate(argv):
-                errors += hex_errors(f"{label}: argv[{position}]", argument)
+                errors += arranged_bytes_errors(f"{label}: argv[{position}]", argument)
 
     if "stdin" in arrange:
         errors += hex_errors(f"{label}: stdin", arrange["stdin"])
@@ -231,16 +264,18 @@ def arrange_errors(label, arrange):
                 if not isinstance(fixture, dict):
                     errors.append(f"{where} must be an object")
                     continue
-                unknown = sorted(set(fixture) - {"path", "bytes", "directory"})
+                unknown = sorted(set(fixture) - {"path", "bytes", "directory", "link"})
                 if unknown:
                     errors.append(f"{where}: unknown fixture keys: {' '.join(unknown)}")
                 errors += hex_errors(f"{where}.path", fixture.get("path"), allow_empty=False)
                 paths.append(fixture.get("path"))
-                is_file, is_directory = "bytes" in fixture, "directory" in fixture
-                if is_file == is_directory:
-                    errors.append(f"{where} must carry exactly one of bytes, directory")
-                elif is_file:
-                    errors += hex_errors(f"{where}.bytes", fixture["bytes"])
+                kinds = [kind for kind in ("bytes", "directory", "link") if kind in fixture]
+                if len(kinds) != 1:
+                    errors.append(f"{where} must carry exactly one of bytes, directory, link")
+                elif kinds == ["bytes"]:
+                    errors += arranged_bytes_errors(f"{where}.bytes", fixture["bytes"])
+                elif kinds == ["link"]:
+                    errors += hex_errors(f"{where}.link", fixture["link"], allow_empty=False)
                 elif fixture["directory"] is not True:
                     errors.append(f"{where}.directory must be true")
             duplicate = sorted({path for path in paths if paths.count(path) > 1})
@@ -342,8 +377,12 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
             if set(expect) != {"kind", "diagnostics"}:
                 errors.append(f"{case_id}: reject expectation needs exactly one of rule, diagnostics")
             errors += diagnostic_errors(case_id, expect["diagnostics"], case_rules)
-        elif set(expect) != expectation_fields[kind]:
+        elif set(expect) != expectation_fields[kind] and not (
+            kind == "reject" and set(expect) == expectation_fields[kind] | {"span"}
+        ):
             fields = " ".join(sorted(expectation_fields[kind]))
+            if kind == "reject":
+                fields += " (with optional span)"
             errors.append(
                 f"{case_id}: {kind} expectation fields must be exactly: {fields}"
             )
@@ -351,6 +390,17 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
             reject_rule = expect.get("rule")
             if reject_rule not in case_rules:
                 errors.append(f"{case_id}: reject rule must appear in case rules")
+            if "span" in expect:
+                span = expect["span"]
+                if not isinstance(span, dict) or set(span) != {"start", "end"} or not all(
+                    type(span[key]) is int and span[key] >= 0 for key in ("start", "end")
+                ) or span["start"] > span["end"]:
+                    errors.append(f"{case_id}: span needs nonnegative integer start <= end")
+                elif f"{case_id}/" in actual_sources:
+                    errors.append(f"{case_id}: span requires a single .wf source")
+                elif f"{case_id}.wf" in actual_sources:
+                    if span["end"] > len((cases_dir / f"{case_id}.wf").read_bytes()):
+                        errors.append(f"{case_id}: span exceeds source byte length")
         elif kind == "run" and type(expect.get("exit")) is not int:
             errors.append(f"{case_id}: run expectation requires an integer exit")
         elif kind == "unsupported" and not expect.get("why"):

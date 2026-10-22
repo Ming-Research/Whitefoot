@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn walk(n: u64) -> result: u64 pure {
+  if n == 0_u64 {
+    return n;
+  }
+  let owner = array_filled::<u8, 0>(value: 0_u8);
+  let view = &owner;
+  let next = n - 1_u64;
+  return musttail walk(n: next);
+}
+
+fn main() -> status: ExitStatus pure {
+  let result = walk(n: 4_u64);
+  if result != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

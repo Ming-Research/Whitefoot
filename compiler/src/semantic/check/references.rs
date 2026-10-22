@@ -231,6 +231,63 @@ pub(super) enum ReferenceValidity {
     Invalid(InvalidationEvent),
 }
 
+/// [REF-1] the selected target of a reference value, separately from its
+/// possible storage supports. Aliases copy this identity; equal candidate
+/// sets do not establish equal choices. Captured selectors identify their
+/// original evaluations; this identity supplies no numeric or effect facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ReferenceSelection {
+    Exact(ResolvedPlace),
+    Choice {
+        origin: ReferenceSelectionOrigin,
+        suffix: Vec<PlaceStep>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ReferenceSelectionOrigin {
+    Occurrence(crate::NodePath, BindingId),
+    Loop(LoopReferenceToken),
+}
+
+impl ReferenceSelection {
+    pub(super) fn extend(&mut self, step: PlaceStep) {
+        match self {
+            Self::Exact(place) => place.path.push(step),
+            Self::Choice { suffix, .. } => suffix.push(step),
+        }
+    }
+
+    /// Reuse the path comparison on relative suffixes of one choice. Its
+    /// origin holder need not remain in scope and is never a display path.
+    fn comparison_place(&self) -> ResolvedPlace {
+        match self {
+            Self::Exact(place) => place.clone(),
+            Self::Choice { origin, suffix } => {
+                let owner = match origin {
+                    ReferenceSelectionOrigin::Occurrence(_, owner) => *owner,
+                    ReferenceSelectionOrigin::Loop(token) => token.owner,
+                };
+                let mut place = ResolvedPlace::binding(owner);
+                place.path.clone_from(suffix);
+                place
+            }
+        }
+    }
+
+    pub(super) fn same_target(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Exact(_), Self::Exact(_)) => {}
+            (Self::Choice { origin: left, .. }, Self::Choice { origin: right, .. })
+                if left == right => {}
+            _ => return false,
+        }
+        let left = self.comparison_place();
+        let right = other.comparison_place();
+        left.root == right.root && left.contains(&right) && right.contains(&left)
+    }
+}
+
 /// What one reference binding names [REF-1].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ReferenceInfo {
@@ -239,6 +296,9 @@ pub(super) struct ReferenceInfo {
     /// join, where [REF-1] takes the union of the incoming edges' sets and
     /// every check must hold for every member.
     pub(super) paths: Vec<ResolvedPlace>,
+    /// Formations and receiving joins establish this before a source
+    /// reference is used. Address-validity-only guards do not consume it.
+    pub(super) selection: Option<ReferenceSelection>,
     /// Places a write or move of which invalidates the reference as one of
     /// its paths would, though the reference names nothing of them: the key
     /// set an entry binder's entries follow [SHARE-2], whose elements a write
@@ -271,14 +331,30 @@ impl ReferenceInfo {
     /// One freshly formed reference naming every path a joined base may
     /// select at run time [REF-1]. No member is representative: validity,
     /// overlap and effect judgments must retain the complete union.
-    fn formed_paths(kind: ReferenceKind, paths: Vec<ResolvedPlace>) -> Self {
+    pub(super) fn formed_paths(kind: ReferenceKind, paths: Vec<ResolvedPlace>) -> Self {
+        let selection = match paths.as_slice() {
+            [place] => Some(ReferenceSelection::Exact(place.clone())),
+            _ => None,
+        };
         Self {
             kind,
             paths,
+            selection,
             anchors: Vec::new(),
             validity: ReferenceValidity::Valid,
             loop_dependencies: Vec::new(),
             preservations: Vec::new(),
+        }
+    }
+
+    /// Give a newly joined choice a stable identity for this occurrence.
+    /// Existing selections, including an alias's snapshot, keep theirs.
+    pub(super) fn anchor_selection(&mut self, node: &crate::NodePath, binding: BindingId) {
+        if self.selection.is_none() {
+            self.selection = Some(ReferenceSelection::Choice {
+                origin: ReferenceSelectionOrigin::Occurrence(node.clone(), binding),
+                suffix: Vec::new(),
+            });
         }
     }
 
@@ -293,6 +369,9 @@ impl ReferenceInfo {
     /// The selection is checked under the current refinement [ENT-3.S15];
     /// its existing place does not depend on that fact's lexical extent.
     pub(super) fn extend(&mut self, step: PlaceStep) {
+        if let Some(selection) = &mut self.selection {
+            selection.extend(step);
+        }
         for path in &mut self.paths {
             path.path.push(step);
         }
@@ -314,6 +393,14 @@ impl ReferenceInfo {
     /// An index one edge superseded is superseded after the join too, so the
     /// same capture on both edges stays one member rather than two.
     pub(super) fn join(&mut self, other: &Self) {
+        if !self
+            .selection
+            .as_ref()
+            .zip(other.selection.as_ref())
+            .is_some_and(|(left, right)| left.same_target(right))
+        {
+            self.selection = None;
+        }
         for path in &other.paths {
             if !self.paths.contains(path) {
                 self.paths.push(path.clone());
@@ -370,6 +457,10 @@ impl ReferenceInfo {
         if !widen_captures {
             return Ok(None);
         }
+        self.selection = Some(ReferenceSelection::Choice {
+            origin: ReferenceSelectionOrigin::Loop(token),
+            suffix: Vec::new(),
+        });
         let mut widened = Vec::with_capacity(self.paths.len());
         for (ordinal, path) in self.paths.iter().enumerate() {
             widened.push(path.loop_carried(
@@ -549,9 +640,10 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// Whether `entry` is `access` or a proper prefix of it [EFF-1].
     ///
-    /// [EFF-2] states the relation as "the body accesses storage at or below
-    /// its path", and an effect path is a root formal plus a complete step
-    /// list, so "below" is exactly the prefix order on those steps.
+    /// [EFF-2] exhibits a declared entry by "an access at or below its path"
+    /// of an admitted category, and an effect path is a root formal plus a
+    /// complete step list, so "below" is exactly the prefix order on those
+    /// steps.
     pub(super) fn effect_path_covers(entry: &CheckedStatePath, access: &CheckedStatePath) -> bool {
         if entry.root != access.root {
             return false;
@@ -735,17 +827,23 @@ impl<'unit> Checker<'_, 'unit> {
         let Some(reference) = &local.reference else {
             return Ok(());
         };
+        self.check_reference_info_valid(local.declaration, reference, node)
+    }
+
+    pub(super) fn check_reference_info_valid(
+        &mut self,
+        declaration: DeclarationId,
+        reference: &ReferenceInfo,
+        node: NodeId,
+    ) -> Result<(), CheckStop> {
         match &reference.validity {
             ReferenceValidity::Invalid(event) => self.types.declarations.issue_node(
                 SemanticRule::Ref2,
                 node,
                 SemanticIssueKind::InvalidReferenceUse {
-                    binder: self
-                        .types
-                        .declarations
-                        .declaration_spelling(local.declaration)?,
+                    binder: self.types.declarations.declaration_spelling(declaration)?,
                     event: event.phrase(),
-                    mechanical_fix: REF2_FORM_AGAIN,
+                    mechanical_fix: REF2_FORM_AGAIN.to_owned(),
                 },
             ),
             ReferenceValidity::Valid if !reference.loop_dependencies().is_empty() => {
@@ -759,17 +857,15 @@ impl<'unit> Checker<'_, 'unit> {
                     .deferred_loop_reference_uses
                     .push(DeferredLoopReferenceUse {
                         node,
-                        declaration: local.declaration,
+                        declaration,
                         dependencies: reference.loop_dependencies().to_vec(),
                         preservations: reference.preservations.clone(),
                     });
                 Ok(())
             }
-            ReferenceValidity::Valid => self.demand_reference_preservations(
-                node,
-                local.declaration,
-                &reference.preservations,
-            ),
+            ReferenceValidity::Valid => {
+                self.demand_reference_preservations(node, declaration, &reference.preservations)
+            }
         }
     }
 
@@ -809,10 +905,12 @@ impl<'unit> Checker<'_, 'unit> {
         shifts_origin: bool,
     ) {
         HandleWatch::observe(bindings, window);
-        for local in bindings.values_mut() {
-            let Some(reference) = &mut local.reference else {
-                continue;
-            };
+        for reference in bindings.values_mut().flat_map(|local| {
+            local
+                .reference
+                .iter_mut()
+                .chain(local.commit_target.iter_mut())
+        }) {
             // The subject is a reference *into* the window, formed under a
             // bound the operation ends: `&r[i]` under `i < r.len` and
             // `&r[lo..hi]` under `hi <= r.len` [REF-4]. A reference to the
@@ -841,10 +939,12 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         leaving: &[BindingId],
     ) {
-        for local in bindings.values_mut() {
-            let Some(reference) = &mut local.reference else {
-                continue;
-            };
+        for reference in bindings.values_mut().flat_map(|local| {
+            local
+                .reference
+                .iter_mut()
+                .chain(local.commit_target.iter_mut())
+        }) {
             if reference
                 .paths
                 .iter()
@@ -1086,7 +1186,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 place_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `p^` before selecting a member or element",
+                    mechanical_fix: "write `p^` before selecting a member or element".to_owned(),
                 },
             );
         }
@@ -1099,11 +1199,11 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 place_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself",
+                    mechanical_fix: "apply `^` only to a reference; name an owned place as itself".to_owned(),
                 },
             );
         }
-        // [TYPE-10] `pages` is admitted in a page-count read, not in a
+        // [MSR-1] `pages` is admitted in a page-count read, not in a
         // borrow of that derived observation. Judge its containing type so
         // an ordinary source struct's fields named `pages` and `len` keep
         // their ordinary [REF-1] meaning.
@@ -1121,68 +1221,47 @@ impl<'unit> Checker<'_, 'unit> {
                 .source_spelling(suffixes[suffixes.len() - 1])?
                 == ".len"
         {
-            let (_, selected, _) = self.resolve_storage_path(
+            let selected = match self.selected_place_shape(
                 context,
-                &suffixes[..suffixes.len() - 2],
-                root_type,
+                place_node,
+                &written_suffixes[..written_suffixes.len() - 2],
                 bindings,
-                loop_depth,
-                true,
-            )?;
+                root_role,
+            )? {
+                Some(shape) if !shape.run => Some(shape.ty),
+                Some(_) => None,
+                None => {
+                    let (_, selected, _) = self.resolve_storage_path(
+                        context,
+                        &suffixes[..suffixes.len() - 2],
+                        root_type,
+                        bindings,
+                        loop_depth,
+                        true,
+                    )?;
+                    Some(selected)
+                }
+            };
             if matches!(
                 selected,
-                CheckedType::Window {
+                Some(CheckedType::Window {
                     shape: WindowShape::Paged,
                     ..
-                }
+                })
             ) {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Type10, place_node,
-                    SemanticIssueKind::ReservedPseudoField {
-                        spelling: "pages".to_owned(),
-                        mechanical_fix: "read the page count as `p.pages.len`; borrow a declared field or an initialized page",
-                    },
-                );
+                return self.derived_measure_borrow(place_node);
             }
         }
-        // [REF-4, OP-15] a range holder's length is a captured observation,
-        // not a declared field of its element type. Keep that observation
-        // outside the storage-member walk even when the element is itself
-        // measured, so `&part^.len`, `.cap`, or `.head` cannot select an
-        // element's descriptor; [MSR-1] gives a range no cap or head.
-        if written_deref
-            && root_binding
-                .as_ref()
-                .is_some_and(|local| local.mode.is_range())
-            && let Some(first) = suffixes.first()
-            && let Some(measure) = self
-                .types
-                .declarations
-                .tree
-                .source_spelling(*first)?
-                .strip_prefix('.')
-                .and_then(super::types::measure_named)
+        // [MSR-1] a range holder and a selected run expose a length
+        // observation without a field declaration. Classify the prefix by
+        // its declared shape so an element's declared len remains borrowable.
+        if let Some((last, prefix)) = written_suffixes.split_last()
+            && self.types.declarations.tree.source_spelling(*last)? == ".len"
+            && self
+                .selected_place_shape(context, place_node, prefix, bindings, root_role)?
+                .is_some_and(|shape| shape.run)
         {
-            let (expected, found) = if measure == CheckedMeasure::Length {
-                (
-                    "a source struct, whose declared field this suffix selects".to_owned(),
-                    "a range reference's captured length, which is not a declared storage field"
-                        .to_owned(),
-                )
-            } else {
-                (
-                    "a measured place whose measure table has this row".to_owned(),
-                    format!(
-                        "a range reference, which has no `{}` measure",
-                        measure.spelling()
-                    ),
-                )
-            };
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
-                *first,
-                SemanticIssueKind::type_mismatch(expected, found),
-            );
+            return self.derived_measure_borrow(place_node);
         }
         // [REF-4] `&x[lo..hi]` forms a range reference. The range step is the
         // whole of the formation and selects no element place, so it is
@@ -1289,7 +1368,7 @@ impl<'unit> Checker<'_, 'unit> {
             let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
             self.check_place_offset(offset_node, &offset)?;
             let captured = self.body.note_capture(
-                Checker::captured_of(offset_node, &offset.expression)
+                self.captured_of(offset_node, &offset.expression)
                     .unwrap_or(CapturedValue::unknown()),
                 bindings,
             );
@@ -1352,10 +1431,13 @@ impl<'unit> Checker<'_, 'unit> {
                 place,
                 selected: true,
             }));
+            let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Single, places.clone());
+            reference.selection =
+                Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
             return Ok(TypedExpression {
                 expression,
                 mode: CheckedMode::Reference,
-                reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Single, places)),
+                reference: Some(reference),
                 reference_value: true,
                 effects,
                 accesses,
@@ -1449,6 +1531,8 @@ impl<'unit> Checker<'_, 'unit> {
             writable,
             write_places: places.clone(),
         };
+        reference.selection =
+            Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
         let mut accesses = carried
             .accesses
             .into_iter()
@@ -1469,6 +1553,18 @@ impl<'unit> Checker<'_, 'unit> {
             effects: carried.effects,
             accesses,
         })
+    }
+
+    /// [MSR-1] reject the complete path, naming its by-value observation.
+    fn derived_measure_borrow<T>(&self, place: NodeId) -> Result<T, CheckStop> {
+        let spelling = self.types.declarations.tree.source_spelling(place)?;
+        self.types.declarations.issue_node(
+            SemanticRule::Msr1,
+            place,
+            SemanticIssueKind::BorrowOfDerivedMeasure {
+                mechanical_fix: super::repairs::derived_measure_borrow(&spelling),
+            },
+        )
     }
 
     /// Resolve storage and leave a terminal segment/page selector to REF-4.
@@ -1634,7 +1730,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let mut probe = bindings.clone();
                 let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
                 self.check_place_offset(offset_node, &offset)?;
-                let Some(captured) = Checker::captured_of(offset_node, &offset.expression) else {
+                let Some(captured) = self.captured_of(offset_node, &offset.expression) else {
                     return self
                         .types
                         .declarations
@@ -1730,10 +1826,13 @@ impl<'unit> Checker<'_, 'unit> {
             place,
             selected: true,
         }));
+        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Range, places.clone());
+        reference.selection =
+            Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Range,
-            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
+            reference: Some(reference),
             reference_value: true,
             effects: carried.effects,
             accesses,
@@ -1841,7 +1940,7 @@ impl<'unit> Checker<'_, 'unit> {
             let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
             self.check_place_offset(offset_node, &offset)?;
             let captured = self.body.note_capture(
-                Checker::captured_of(offset_node, &offset.expression)
+                self.captured_of(offset_node, &offset.expression)
                     .unwrap_or(CapturedValue::unknown()),
                 bindings,
             );
@@ -2054,6 +2153,9 @@ impl<'unit> Checker<'_, 'unit> {
             }
             carried.effects = carried.effects.union(value.effects.clone());
             carried.accesses.extend(value.accesses.clone());
+            if let Ok(spelling) = self.types.declarations.tree.source_spelling(node) {
+                self.types.source_spellings.insert(node, spelling);
+            }
             endpoints.push(value);
         }
         let end = endpoints
@@ -2065,11 +2167,11 @@ impl<'unit> Checker<'_, 'unit> {
         // [REF-1, OWN-7] each endpoint keeps the occurrence that evaluated it,
         // whatever its form, so this formation's endpoint images are its own.
         let captured_start = self.body.note_capture(
-            Checker::captured_endpoint_of(start_node, &start.expression)?,
+            Checker::captured_endpoint_of(start_node, &start.expression)?.with_source(start_node),
             bindings,
         );
         let captured_end = self.body.note_capture(
-            Checker::captured_endpoint_of(end_node, &end.expression)?,
+            Checker::captured_endpoint_of(end_node, &end.expression)?.with_source(end_node),
             bindings,
         );
         // [OWN-7] the formed reference names the base path extended by its
@@ -2104,6 +2206,9 @@ impl<'unit> Checker<'_, 'unit> {
             place,
             selected: true,
         }));
+        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Range, places.clone());
+        reference.selection =
+            Some(self.payload_selection_identity(&expression, &places, carrier, bindings)?);
         Ok(TypedExpression {
             expression,
             mode: if run {
@@ -2111,7 +2216,7 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 CheckedMode::Range
             },
-            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
+            reference: Some(reference),
             reference_value: true,
             effects: carried.effects,
             accesses,
@@ -2203,10 +2308,17 @@ impl<'unit> Checker<'_, 'unit> {
             CapturedTerm::Binding(binding) | CapturedTerm::Superseded(binding) => {
                 bindings.values().find(|local| local.binding == binding)?
             }
-            CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Opaque => {
+            CapturedTerm::Literal(_)
+            | CapturedTerm::Const(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => {
                 return None;
             }
         };
+        if local.mode != super::super::model::CheckedMode::Own {
+            return None;
+        }
         let holds_call_value =
             matches!(captured.term, CapturedTerm::Binding(_)) && local.call_value;
         if !holds_call_value && !self.body.call_value_captures.contains(&captured.capture) {
@@ -2633,6 +2745,90 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<(), CheckStop> {
         self.invalidate_references_with_separation(bindings, written, event, None)
     }
+    /// [REF-1, ENT-5] a captured offset stops naming its current source
+    /// when any support member changes. A holder replacement reaches only
+    /// that holder; an ordinary storage write resolves reference support.
+    /// Neither operation changes the storage an existing reference captured.
+    pub(super) fn supersede_reference_offsets(
+        &self,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        written: &ResolvedPlace,
+        holder_only: bool,
+    ) {
+        let superseded = bindings
+            .values()
+            .flat_map(|local| local.reference.iter().chain(&local.commit_target))
+            .flat_map(|reference| reference.paths.iter().chain(&reference.anchors))
+            .flat_map(ResolvedPlace::spelled_indices)
+            .filter_map(|(_, term)| {
+                let overwritten = self.captured_places.support(term).iter().any(|read| {
+                    if written.root == read.root && written.path.is_empty() {
+                        return true;
+                    }
+                    // A holder replacement writes no referent storage.
+                    if holder_only {
+                        return false;
+                    }
+                    let mut targets = match read.root {
+                        PlaceRoot::Binding(binding) => bindings
+                            .values()
+                            .find(|local| local.binding == binding)
+                            .and_then(|local| local.reference.as_ref())
+                            .map(|reference| reference.paths.clone())
+                            .unwrap_or_else(|| {
+                                vec![ResolvedPlace {
+                                    path: Vec::new(),
+                                    ..read.clone()
+                                }]
+                            }),
+                        PlaceRoot::Constant(_) => vec![ResolvedPlace {
+                            path: Vec::new(),
+                            ..read.clone()
+                        }],
+                    };
+                    targets
+                        .iter_mut()
+                        .for_each(|target| target.path.extend(&read.path));
+                    targets
+                        .iter()
+                        .any(|target| places_overlap(&UnprovedSeparations, target, written))
+                });
+                overwritten.then_some(term)
+            })
+            .collect::<Vec<_>>();
+        for reference in bindings.values_mut().flat_map(|local| {
+            local
+                .reference
+                .iter_mut()
+                .chain(local.commit_target.iter_mut())
+        }) {
+            for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
+                for term in &superseded {
+                    if let CapturedTerm::Binding(binding) = term {
+                        path.supersede_binding(*binding);
+                    } else {
+                        path.supersede_term(*term);
+                    }
+                }
+            }
+        }
+
+        // [REF-1] a reference keeps the index value its formation read, so a
+        // write of that binding leaves the reference valid but ends the
+        // binding's spelling as a name for its index. [EFF-1] A parameter no
+        // longer holds its call value.
+        if written.path.is_empty()
+            && let PlaceRoot::Binding(binding) = written.root
+        {
+            for local in bindings
+                .values_mut()
+                .filter(|local| local.binding == binding)
+            {
+                local.call_value = false;
+            }
+        }
+    }
+
     /// The event site fixes the proof context. Preserving a bystander is an
     /// optional question until a later use demands this validity fact.
     pub(super) fn invalidate_references_with_separation(
@@ -2643,28 +2839,7 @@ impl<'unit> TypeContext<'unit> {
         site: Option<&crate::NodePath>,
     ) -> Result<(), CheckStop> {
         HandleWatch::observe(bindings, written);
-        // [REF-1] a reference keeps the index value its formation read, so a
-        // write of that binding leaves the reference valid but ends the
-        // binding's spelling as a name for its index. [EFF-1] A parameter no
-        // longer holds its call value.
-        if written.path.is_empty()
-            && let PlaceRoot::Binding(binding) = written.root
-        {
-            for reference in bindings
-                .values_mut()
-                .filter_map(|local| local.reference.as_mut())
-            {
-                for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
-                    path.supersede_binding(binding);
-                }
-            }
-            for local in bindings
-                .values_mut()
-                .filter(|local| local.binding == binding)
-            {
-                local.call_value = false;
-            }
-        }
+        self.supersede_reference_offsets(bindings, written, false);
         let include_equal = matches!(
             event,
             InvalidationEvent::PrefixMoved | InvalidationEvent::PrefixReleased
@@ -2691,46 +2866,61 @@ impl<'unit> TypeContext<'unit> {
         // and naming them reads the same bindings this walk updates.
         let mut preserved = Vec::new();
         for (declaration, local) in bindings.iter_mut() {
-            // A write to the enum itself ends every refinement occurrence for
-            // that enum even when an equal-path reference remains valid under
-            // the proper-prefix write rule. A payload-field write is below
-            // the witnessed enum and therefore does not end the fact.
+            // [ENT-3.S15, ENT-5] the enum's whole storage supports its
+            // variant fact, so any overlapping write ends that occurrence.
+            // An already captured payload reference follows REF-2 separately.
             for witness in &mut local.refinement_witnesses {
-                if written.may_be_prefix_of(&oracle, &witness.place, true) {
+                if places_overlap(&oracle, written, &witness.place) {
                     witness.valid = false;
                 }
             }
-            let Some(reference) = &mut local.reference else {
-                continue;
-            };
-            if primitive_write || !reference.is_valid() {
-                continue;
-            }
-            let mut invalidated = reference
-                .anchors
-                .iter()
-                .any(|anchor| written.may_be_prefix_of(&oracle, anchor, include_equal));
-            for path in &reference.paths {
-                if invalidated {
-                    break;
-                }
-                if !written.may_be_prefix_of(&oracle, path, include_equal) {
+            for (commit_target, reference) in local
+                .reference
+                .iter_mut()
+                .map(|reference| (false, reference))
+                .chain(
+                    local
+                        .commit_target
+                        .iter_mut()
+                        .map(|reference| (true, reference)),
+                )
+            {
+                if primitive_write || !reference.is_valid() {
                     continue;
                 }
-                if let Some((site, (positions, window))) =
-                    site.zip(Checker::separable_by_position(written, path))
-                {
-                    preserved.push((*declaration, site, positions, window, path.clone()));
-                } else {
-                    invalidated = true;
-                    break;
+                let mut invalidated = reference
+                    .anchors
+                    .iter()
+                    .any(|anchor| written.may_be_prefix_of(&oracle, anchor, include_equal));
+                for path in &reference.paths {
+                    if invalidated {
+                        break;
+                    }
+                    if !written.may_be_prefix_of(&oracle, path, include_equal) {
+                        continue;
+                    }
+                    if let Some((site, (positions, window))) =
+                        site.zip(Checker::separable_by_position(written, path))
+                    {
+                        preserved.push((
+                            *declaration,
+                            commit_target,
+                            site,
+                            positions,
+                            window,
+                            path.clone(),
+                        ));
+                    } else {
+                        invalidated = true;
+                        break;
+                    }
+                }
+                if invalidated {
+                    reference.invalidate(event.clone());
                 }
             }
-            if invalidated {
-                reference.invalidate(event.clone());
-            }
         }
-        for (declaration, site, positions, window, path) in preserved {
+        for (declaration, commit_target, site, positions, window, path) in preserved {
             let query = CheckedCallSeparation {
                 site: site.clone(),
                 occasion: super::super::model::CheckedSeparationOccasion::Call,
@@ -2747,10 +2937,13 @@ impl<'unit> TypeContext<'unit> {
                 right_spelling: self.render_resolved_place(&path, bindings)?,
                 one_argument: false,
             };
-            let Some(reference) = bindings
-                .get_mut(&declaration)
-                .and_then(|local| local.reference.as_mut())
-            else {
+            let Some(reference) = bindings.get_mut(&declaration).and_then(|local| {
+                if commit_target {
+                    local.commit_target.as_mut()
+                } else {
+                    local.reference.as_mut()
+                }
+            }) else {
                 continue;
             };
             if !reference.preservations.contains(&query) {
@@ -2820,12 +3013,13 @@ mod tests {
                 let local = LocalBinding {
                     binding: BindingId(0),
                     declaration: id,
-                    mode: CheckedMode::Reference,
-                    ty: CheckedType::Unit,
+                    mode: CheckedMode::Own,
+                    ty: CheckedType::Integer(crate::semantic::model::IntegerType::U64),
                     live: true,
                     loop_depth: 0,
                     compiler_updated: false,
                     reference: None,
+                    commit_target: None,
                     refinement_witnesses: Vec::new(),
                     handle_watch: None,
                     call_value: true,
@@ -2838,6 +3032,10 @@ mod tests {
                 place.path.push(PlaceStep::Field(2));
                 assert_eq!(checker.captured_parameter(capture, &bindings), expected.0);
                 assert_eq!(checker.is_atomic_binder(id), expected.1);
+                // [EFF-1] an offset is a value parameter, while an effect
+                // root is a reference parameter: exercise each in its mode.
+                bindings.get_mut(&id).unwrap().mode = CheckedMode::Reference;
+                assert_eq!(checker.captured_parameter(capture, &bindings), None);
                 let paths = checker
                     .effect_paths_for_place(declarations.tree.root(), &place, &bindings)
                     .unwrap_or_else(|_| panic!("the place projects without a stop"))
@@ -2869,6 +3067,14 @@ mod tests {
                     checker.captured_parameter(superseded, &bindings),
                     expected.0
                 );
+                // Recorded call-value captures do not turn a reference
+                // parameter into an admitted value-parameter offset.
+                for mode in [CheckedMode::Reference, CheckedMode::Range, CheckedMode::Run] {
+                    bindings.get_mut(&id).unwrap().mode = mode;
+                    assert_eq!(checker.captured_parameter(capture, &bindings), None);
+                    assert_eq!(checker.captured_parameter(superseded, &bindings), None);
+                }
+                bindings.get_mut(&id).unwrap().mode = CheckedMode::Own;
                 checker.body.call_value_captures.clear();
                 bindings.clear();
                 assert_eq!(checker.captured_parameter(capture, &bindings), None);
@@ -2918,6 +3124,7 @@ mod tests {
                     path,
                 },
             )),
+            commit_target: None,
             refinement_witnesses: Vec::new(),
             handle_watch: None,
             call_value: false,
@@ -3069,8 +3276,85 @@ mod tests {
             other_formation.paths[0]
                 .spelled_indices()
                 .collect::<Vec<_>>(),
-            [(CaptureId::source(1), BindingId(1))]
+            [(CaptureId::source(1), CapturedTerm::Binding(BindingId(1)))]
         );
+    }
+
+    /// [REF-1, ENT-5] a `set` target's selected payload storage, held while
+    /// its right-hand side is checked, captures its projected offset like a
+    /// reference does: a write of the offset's support ends that offset's
+    /// spelling there too. A holder-only replacement and a write of another
+    /// field leave it current.
+    #[test]
+    fn a_support_write_supersedes_a_projected_offset_in_a_set_payload_target() {
+        use crate::semantic::places::{CaptureId, CapturedTerm, CapturedValue};
+        crate::resolution::with_each_declaration_role(|resolved| {
+            let declarations = DeclarationInventory {
+                resolved,
+                ledger_line_starts: Default::default(),
+                no_heap: false,
+                tree: TreeView::new(resolved.syntax()).unwrap(),
+            };
+            let types = TypeContext::new(&declarations);
+            // `set t[s.k].Some.value = ...`: t is BindingId(0), s BindingId(1).
+            let field = |ordinal: u32| {
+                let mut place = ResolvedPlace::binding(BindingId(1));
+                place.path.push(PlaceStep::Field(ordinal));
+                place
+            };
+            let id = types.captured_places.intern(field(0));
+            let mut target = ResolvedPlace::binding(BindingId(0));
+            target.push_subscript(CapturedValue::new(
+                CaptureId::source(0),
+                CapturedTerm::Place(id),
+            ));
+            target.path.push(PlaceStep::Payload {
+                variant: 0,
+                field: 0,
+            });
+            let declaration = DeclarationId::from_index(0).unwrap();
+            let fresh = || {
+                HashMap::from([(
+                    declaration,
+                    LocalBinding {
+                        binding: BindingId(0),
+                        declaration,
+                        mode: CheckedMode::Own,
+                        ty: CheckedType::Integer(crate::semantic::model::IntegerType::U64),
+                        live: true,
+                        loop_depth: 0,
+                        compiler_updated: false,
+                        reference: None,
+                        commit_target: Some(ReferenceInfo::formed_paths(
+                            ReferenceKind::Single,
+                            vec![target.clone()],
+                        )),
+                        refinement_witnesses: Vec::new(),
+                        handle_watch: None,
+                        call_value: false,
+                        read_only_state: false,
+                    },
+                )])
+            };
+            let offset_term = |bindings: &HashMap<DeclarationId, LocalBinding>| {
+                let target = bindings[&declaration].commit_target.as_ref().unwrap();
+                assert!(target.is_valid(), "superseding writes no referent storage");
+                let [PlaceStep::Index(value), PlaceStep::Payload { .. }] =
+                    target.paths[0].path.as_slice()
+                else {
+                    panic!("the target keeps its subscript and payload steps");
+                };
+                value.term
+            };
+
+            let mut bindings = fresh();
+            types.supersede_reference_offsets(&mut bindings, &field(1), false);
+            assert_eq!(offset_term(&bindings), CapturedTerm::Place(id));
+            types.supersede_reference_offsets(&mut bindings, &field(0), true);
+            assert_eq!(offset_term(&bindings), CapturedTerm::Place(id));
+            types.supersede_reference_offsets(&mut bindings, &field(0), false);
+            assert_eq!(offset_term(&bindings), CapturedTerm::SupersededPlace(id));
+        });
     }
 
     /// [REF-1] classify when a contribution retains its entering shape and

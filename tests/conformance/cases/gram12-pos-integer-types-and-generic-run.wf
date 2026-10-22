@@ -1,0 +1,249 @@
+fn edges_i8(value: i8) -> result: u8 pure {
+  match value {
+    -128_i8 => {
+      return 1_u8;
+    }
+    127_i8 => {
+      return 2_u8;
+    }
+    else => {
+      return 3_u8;
+    }
+  }
+}
+
+fn edges_u8(value: u8) -> result: u8 pure {
+  match value {
+    0_u8 => {
+      return 1_u8;
+    }
+    255_u8 => {
+      return 2_u8;
+    }
+    else => {
+      return 3_u8;
+    }
+  }
+}
+
+fn edges_i16(value: i16) -> result: u8 pure {
+  match value {
+    -32768_i16 => {
+      return 1_u8;
+    }
+    32767_i16 => {
+      return 2_u8;
+    }
+    else => {
+      return 3_u8;
+    }
+  }
+}
+
+fn edges_u16(value: u16) -> result: u8 pure {
+  match value {
+    0_u16 => {
+      return 1_u8;
+    }
+    65535_u16 => {
+      return 2_u8;
+    }
+    else => {
+      return 3_u8;
+    }
+  }
+}
+
+fn edges_i32(value: i32) -> result: u8 pure {
+  match value {
+    -2147483648_i32 => {
+      return 1_u8;
+    }
+    2147483647_i32 => {
+      return 2_u8;
+    }
+    else => {
+      return 3_u8;
+    }
+  }
+}
+
+fn edges_u32(value: u32) -> result: u8 pure {
+  match value {
+    0_u32 => {
+      return 1_u8;
+    }
+    4294967295_u32 => {
+      return 2_u8;
+    }
+    else => {
+      return 3_u8;
+    }
+  }
+}
+
+fn edges_i64(value: i64) -> result: u8 pure {
+  match value {
+    -9223372036854775808_i64 => {
+      return 1_u8;
+    }
+    9223372036854775807_i64 => {
+      return 2_u8;
+    }
+    else => {
+      return 3_u8;
+    }
+  }
+}
+
+fn edges_u64(value: u64) -> result: u8 pure {
+  match value {
+    0_u64 => {
+      return 1_u8;
+    }
+    18446744073709551615_u64 => {
+      return 2_u8;
+    }
+    else => {
+      return 3_u8;
+    }
+  }
+}
+
+fn generic<T: Int>(value: T) -> result: u8 pure {
+  match value {
+    0_T => {
+      return 0_u8;
+    }
+    1_T => {
+      return 1_u8;
+    }
+    else => {
+      return 2_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let i8_min = edges_i8(value: -128_i8);
+  if i8_min != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i8_max = edges_i8(value: 127_i8);
+  if i8_max != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i8_middle = edges_i8(value: 0_i8);
+  if i8_middle != 3_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u8_min = edges_u8(value: 0_u8);
+  if u8_min != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u8_max = edges_u8(value: 255_u8);
+  if u8_max != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u8_middle = edges_u8(value: 1_u8);
+  if u8_middle != 3_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i16_min = edges_i16(value: -32768_i16);
+  if i16_min != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i16_max = edges_i16(value: 32767_i16);
+  if i16_max != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i16_middle = edges_i16(value: 0_i16);
+  if i16_middle != 3_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u16_min = edges_u16(value: 0_u16);
+  if u16_min != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u16_max = edges_u16(value: 65535_u16);
+  if u16_max != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u16_middle = edges_u16(value: 1_u16);
+  if u16_middle != 3_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i32_min = edges_i32(value: -2147483648_i32);
+  if i32_min != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i32_max = edges_i32(value: 2147483647_i32);
+  if i32_max != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i32_middle = edges_i32(value: 0_i32);
+  if i32_middle != 3_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u32_min = edges_u32(value: 0_u32);
+  if u32_min != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u32_max = edges_u32(value: 4294967295_u32);
+  if u32_max != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u32_middle = edges_u32(value: 1_u32);
+  if u32_middle != 3_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i64_min = edges_i64(value: -9223372036854775808_i64);
+  if i64_min != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i64_max = edges_i64(value: 9223372036854775807_i64);
+  if i64_max != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let i64_middle = edges_i64(value: 0_i64);
+  if i64_middle != 3_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u64_min = edges_u64(value: 0_u64);
+  if u64_min != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u64_max = edges_u64(value: 18446744073709551615_u64);
+  if u64_max != 2_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let u64_middle = edges_u64(value: 1_u64);
+  if u64_middle != 3_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let generic_i8_0 = generic::<i8>(value: 0_i8);
+  if generic_i8_0 != 0_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let generic_i8_1 = generic::<i8>(value: 1_i8);
+  if generic_i8_1 != 1_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let generic_i8_2 = generic::<i8>(value: 2_i8);
+  if generic_i8_2 != 2_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let generic_u64_0 = generic::<u64>(value: 0_u64);
+  if generic_u64_0 != 0_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let generic_u64_1 = generic::<u64>(value: 1_u64);
+  if generic_u64_1 != 1_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let generic_u64_2 = generic::<u64>(value: 2_u64);
+  if generic_u64_2 != 2_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -164,6 +164,11 @@ the work-branch and merge boundary.
   attribution, Q155 comparison of join reduction, affine-index reuse and
   backward proof queries, the lazy-index differentials, historical M5 reuse results, and the
   manual base/twin/head timing panel on the CI 14900K runner.
+- [Machine-checked soundness of the specification](investigations/spec-proof/DESIGN.md):
+  the rule-level defects that motivate a proof, which rules carry each safety
+  claim, three proof assistants and five modeling approaches compared, the
+  same-work check that keeps a Lean model in step with the specification, the
+  first phase's fragment, theorem and cost.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are on the
