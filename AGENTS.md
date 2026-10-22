@@ -224,8 +224,10 @@ build time apart from test and program execution.
   any other push, a draft pull request's included, skips their checks, and
   the event of marking a pull request ready skips them when its head already
   has a successful manual run of the same workflow. `gate.yml` runs the groups
-  on Linux only while macOS is off (wf-gate-no-macos); its job `Gate on both
-  platforms` passes only when every group is green on Linux for the revision,
+  on Linux only while macOS is off (wf-gate-no-macos), and on macOS as well in
+  a manual run started with `-f macos=true`, which a compiler release requires
+  of its commit; its job `Gate on both platforms` passes only when every group
+  is green on each platform the run was asked for, for the revision,
   and its job `No temporary workflow` fails while a `tmp-` workflow file
   exists in the checked head, and while it fails the correctness groups and
   `Gate on both platforms` do not run. The success of `Gate on both platforms`
@@ -265,7 +267,9 @@ build time apart from test and program execution.
   `firn-check-time.yml` (Firn's check on the 14900K runner) on request, which
   are experiments and never a gate.
 - Compiler releases: `compiler-release.yml`, dispatched when a downstream
-  project needs a main commit, publishes that commit's compiler as release
+  project needs a main commit that has a successful gate run with macOS jobs
+  (started by `gh workflow run gate.yml --ref <branch whose tip is the commit>
+  -f macos=true`), publishes that commit's compiler as release
   `wf-<12 hex digits>`, with `bundle_toolchain` as
   `wf-<12 hex digits>-bundled`, which carries clang and lld, or an unmerged
   commit's as experiment release `wf-exp-<12 hex digits>`, and
