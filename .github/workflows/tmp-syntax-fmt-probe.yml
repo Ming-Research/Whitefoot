@@ -1,5 +1,5 @@
-# Temporary workflow for kit-req-diag-syntax-fmt: runs the static group and the
-# compiler lint that a draft push does not start. Removed before the full check.
+# Temporary workflow for kit-req-diag-syntax-fmt: runs the static group, the
+# compiler lint and the tests of the touched modules that a draft push does not start. Removed before the full check.
 name: tmp-syntax-fmt-probe
 
 on:
@@ -62,3 +62,27 @@ jobs:
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Compiler lint
         run: make -C compiler lint
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Library tests of the syntax and driver modules
+        run: |
+          perl .github/run-check.pl focused/lib cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --locked --offline -- syntax:: driver::
+      - name: Canonical corpus and guide examples
+        run: |
+          perl .github/run-check.pl focused/corpus cargo test --manifest-path compiler/Cargo.toml --profile gate --test corpus --locked --offline -- canonical_corpus:: doc_examples::
