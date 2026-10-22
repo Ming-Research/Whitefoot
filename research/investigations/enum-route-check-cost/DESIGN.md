@@ -809,6 +809,88 @@ by applying the earlier runs' adaptation diffs and then the compiler's own
 mechanical fixes. This run's result is the one reported; it is repeated only if
 a twin median lies outside its own min–max range or an exit code is not 0.
 
+Result ([run 39725157249](https://github.com/Ming-Research/Whitefoot/actions/runs/39725157249),
+workflow head `328e8ae95`, whose `compiler/` is that of `ef01fc5ca`; every exit
+code was 0 and every twin median lay inside its own range, so nothing was
+repeated; the three workloads again ran on different hosted CPUs, so only ratios
+within one workload compare). The ratio column is the median over the rounds of
+the per-round ratio to `base`, with the min–max over the rounds:
+
+| Workload (host CPU) | Side | rounds | median CPU s | ratio to `base` (median, min–max) |
+|---|---|---:|---:|---:|
+| `pkg::vm` (EPYC 7763) | `base` (`7d9118eba`) | 5 | 16.48 | 1.000 |
+| | `twin` | 5 | 16.46 | 0.999 (0.990–1.005) |
+| | `main` (`1fbd6623d`) | 5 | 11.80 | 0.722 (0.716–0.731) |
+| | `branch` | 5 | 9.56 | 0.583 (0.580–0.594) |
+| `pkg::test` (EPYC 9V74) | `base` (`d837678c6905`) | 3 | 2.06 | 1.000 |
+| | `twin` | 3 | 2.04 | 0.995 (0.981–0.995) |
+| | `main` | 1 | 594.58 | 288.631 |
+| | `branch` | 3 | 2.10 | 1.019 (1.014–1.029) |
+| Firn (EPYC 9V45) | `base` (`7d9118eba`, source without `host_paths`, `process_id`) | 5 | 53.59 | 1.000 |
+| | `twin` | 5 | 53.96 | 0.998 (0.987–1.017) |
+| | `main` | 5 | 65.22 | 1.239 (1.166–1.248) |
+| | `branch` | 5 | 57.78 | 1.067 (0.998–1.122) |
+
+Against the criteria written above: `pkg::vm` 0.583 and `pkg::test` 1.019 meet
+their at-most-1.03 and at-most-1.5 criteria. **Firn does not meet its at-most-1.03
+criterion: the branch/base median is 1.067.** Its per-round branch/base ratios
+are 1.122, 0.998, 1.039, 1.081 and 1.067, and the twin's median (0.998, range
+0.987–1.017) shows a noise of about 2%, so the excess is outside the noise of
+this run, unlike the 1.027 of the earlier Firn run, whose margin was smaller
+than its noise (branch range 0.979–1.072, twin 0.976). The two Firn
+measurements on trees one merge of main apart have overlapping ranges, and the
+base column is the noisier one in both. `pkg::vm` branch/main is 0.808
+(0.807–0.821, per-round); Firn branch/main is 0.866 (0.852–0.905), the five
+per-round ratios being 0.905, 0.852, 0.890, 0.866 and 0.861; `pkg::test` runs
+the branch 283 times faster than `main` once (2.10 s against 594.58 s).
+
+Counters of the Firn compilers (one counted run each):
+
+| Counter | `base` | `main` | `branch` | branch vs `base` | branch vs `main` |
+|---|---:|---:|---:|---:|---:|
+| `join:join` | 241,482 | 993,281 | 248,315 | +2.8% | −75.0% |
+| `join:pairs_evaluated` | 7,477,212 | 7,453,179 | 6,309,063 | −15.6% | −15.4% |
+| `closure:cells_sum` | 67,231,069 | 80,662,125 | 61,453,106 | −8.6% | −23.8% |
+| `closure:rows_sum` | 2,220,141 | 3,211,049 | 2,376,122 | +7.0% | −26.0% |
+| `closure:count` | 165,907 | 248,964 | 188,963 | +13.9% | −24.1% |
+| `function:intern_calls` | 40,303,170 | 50,664,822 | 32,413,865 | −19.6% | −36.0% |
+| `snapshot:cells_sum` | 30,793,300 | 39,311,968 | 22,613,478 | −26.6% | −42.5% |
+| `function:affine_attempts` | 41,744 | 69,241 | 69,241 | +65.9% | 0% |
+| `function:affine_interval_warm_probes` | 0 | 215,561 | 215,561 | new | 0% |
+| `function:affine_interval_construction_probes` | 0 | 93,430 | 93,430 | new | 0% |
+
+What these columns do and do not settle. They settle that the fix still removes
+the #431 work on this tree: the branch counts a quarter of `main`'s
+joins and 24% fewer closure cells, and runs Firn in 0.866 of `main`'s time. They
+do not settle where the remaining 6.7% over pre-#431 main comes from, because
+`base` and `branch` differ by every change in main since `7d9118eba` (65
+first-parent merges), not only by this change. Four observations bear on the
+attribution, none of them a measurement of it:
+
+- The affine-interval counters are 0 in `base` and identical in `main` and
+  `branch`, so that work comes from other merges in main; the branch's join
+  pairs, closure cells, intern calls and snapshot cells are below `base`'s, while
+  its closure count (+13.9%) and closure rows (+7.0%) are above it.
+- #431 cost Firn 14.7% on the tree and Firn source of the first measurement
+  (median ratio 1.147), so removing exactly that cost from `main` would give
+  1 / 1.147 = 0.872 of `main`'s time here if the cost were unchanged; the
+  observed 0.866 is at or below that, within the 2% noise.
+- On the original tree this change measured 0.978 of pre-#431 Firn (run
+  38420072424, third candidate), before the merges of main that followed.
+- `main` itself moved from 1.171 of `base` (`7b11c52fb`) to 1.239 (`1fbd6623d`)
+  between the two Firn runs, a rise of 5.8%, and the branch from 1.027 to 1.067,
+  a rise of 3.9%: both rose with main's later merges.
+
+A direct separation needs one more column, which this run does not have: the
+compiler of the #431 merge commit `af7665be6`, whose first parent is `7d9118eba`
+(`git log --first-parent 7d9118eba..af7665be6` lists only that merge), on the same
+source as `base`. Then `af7665be6`/`base` is #431's own cost on this source,
+`main`/`af7665be6` is what the 65 merges since add on top of it, and
+`branch`/`main` is this change's effect, so that the 6.7% divides between them.
+It is not run here; whether to run it, and which criterion the Firn row then
+holds (this change's own effect rather than the ratio to a `base` 65 merges
+old), is asked of the architect.
+
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
 record, ENT-5, the checker-facts decisions, and the directly affected fact-state
