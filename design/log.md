@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-21 A deadlock report names where every waiting context waits
+
+Nodes: compiler/waiting-contexts, compiler/incremental-compilation
+
+Summary: A deadlock report enumerates an intrusive roster under one lock, registering the root once and each child at its first actual guard or join park and removing it before reclamation, because at all-stuck every live context is such a waiter while registering every child at spawn cost 8.4% on one driver's concurrent spawns; a guard registers under its watch lock with the roster lock nested inside. The pre-registered one-percent comparison rejected no spawn panel, five of eight being inconclusive against the twin's spread, so the global roster stays provisional. Diagnostic fields occupy a cold tail initialized at first registration, and every all-stuck decision calls one inactive predicate. Cache keys still exclude host display paths, and emitted wait-site positions are templates whose display path is bound from the current invocation on reuse, so a different spelling of the same graph reuses its build while its reports name the paths this invocation wrote.
+
 ## 2026-10-21 Windows programs target MinGW, and a bundled release gains a Windows x86-64 package
 
 Nodes: compiler/toolchain-resolution, compiler/downstream-releases, compiler/waiting-contexts
@@ -202,14 +208,6 @@ Nodes: compiler/cleanup-traversal, language/ownership/linearity, language/waitin
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve Ming-Research/Whitefoot#437 (head 47003fdd5)'s specification revision and design-tree change: key sets and concurrent hash maps count as types whose release does work?" (translated), adding the comment that the root cause is that the checker does not know which values hold runtime resources and that adding exceptions one by one is a stopgap (translated); that broader question is recorded as its own board item.
 
 Summary: Semantic tail-transfer eligibility and backend cleanup emission read one cycle-safe type-release classification instead of separate lists in the checker, the IR and the backend, which had diverged and let a KeySet's release pass as empty; the parallel mode's broader storage-reclaim question derives from the same shapes and stays conservative. Release-action emptiness follows the actions a type can execute, so a constant-zero Array, Slots or Ring contributes no element action while its element type keeps its linearity obligation. A KeySet returns its runtime-held storage on release and a ConcurrentHashMap releases its held values and then returns its storage, independently of their declared fields.
-
-## 2026-10-14 A deadlock report names where every waiting context waits
-
-Nodes: compiler/waiting-contexts, compiler/incremental-compilation
-
-Owner-approved: On the shared status board on 2026-10-14, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the three decisions Whitefoot#450 (head commit d7c6dc77f: the deadlock report names the position of every waiting context) adds to the design tree and the cache decision it rewrites and splits in two?" (translated), whose background set out each decision with the report before and after, the cost comparison on the 14900K and the owner's one judgment, a single global roster under one lock reopened as per-driver rosters when contention is measured.
-
-Summary: A deadlock report enumerates an intrusive roster under one lock, registering the root once and each child at its first actual guard or join park and removing it before reclamation, because at all-stuck every live context is such a waiter while registering every child at spawn cost 8.4% on one driver's concurrent spawns; a guard registers under its watch lock with the roster lock nested inside. The pre-registered one-percent comparison rejected no spawn panel, five of eight being inconclusive against the twin's spread, so the global roster stays provisional. Diagnostic fields occupy a cold tail initialized at first registration, and every all-stuck decision calls one inactive predicate. Cache keys still exclude host display paths, and emitted wait-site positions are templates whose display path is bound from the current invocation on reuse, so a different spelling of the same graph reuses its build while its reports name the paths this invocation wrote.
 
 ## 2026-10-13 The range walk checks every object partition of possibly aliased atomic targets
 
