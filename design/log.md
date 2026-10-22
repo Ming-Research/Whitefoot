@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-22 A continuing kill event's overlap at the loop head is judged without facts
+
+Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention
+
+Summary: ENT-5 did not say in which state the loop head judges whether a continuing kill event may kill a pre-loop fact, and judging index separation needs facts that on a later iteration come from the head being formed. The new decision states the judgment the checker already makes: index, range and page steps at one position always overlap there, field and payload steps and window parts separate as usual, and liveness proved before the loop holds at the event; a lost fact is kept by a header invariant. Compiler probes on main's compiler (this item's temporary workflow) show a body write of `a[1]` or of `a[j]` with `j` unchanged removing `a[2] == 0` from the head and a loop with no element write keeping it. Refused: separation by pre-loop facts, which is unsound when the body changes the offset; separation by facts no continuing event writes, a second implicit pass the invariant already covers; separation by literal offsets only.
+
 ## 2026-10-21 A call's range write footprint is bounded by its first captured range, and capability limits are judged per obligation
 
 Nodes: compiler/range-judgment
