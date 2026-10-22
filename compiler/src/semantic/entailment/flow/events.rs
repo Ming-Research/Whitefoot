@@ -162,8 +162,8 @@ impl Input<'_, '_> {
     /// [OWN-7].
     ///
     /// A written place that names a measure word of P -- `writes(window.len)`
-    /// in an [OP-10] row, which [WIN-2] states "is itself a write target and
-    /// overlaps no slot" -- does not contain P, and the containment above
+    /// in an [OP-10] row, which [WIN-2] states is a descriptor word an effect
+    /// row may write and overlaps no slot -- does not contain P, and the containment above
     /// alone would let the pre-call relations of P survive the operation that
     /// changes them. Such a write reaches exactly the word it names, because
     /// [EFF-2]'s both-ways check is what admits the row: a body that changed

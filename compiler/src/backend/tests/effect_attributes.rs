@@ -10,8 +10,9 @@
 //! Why `willreturn` specifically, and why not just the combination:
 //!
 //! [EFF-3] of the active kernel specification says a call whose row is `pure`
-//! "and which allocates nothing licenses deduplication and reordering with
-//! equal arguments. Elimination of an unused licensed call additionally
+//! "which allocates nothing, and which creates no shared object, frozen
+//! object, concurrent hash map or key set [SHARE-1] licenses deduplication and
+//! reordering with equal arguments. Elimination of an unused licensed call additionally
 //! requires a termination proof; v0 provides no termination checker, so unused
 //! calls are not eliminated. The source spelling `pure` excludes state reads
 //! and state writes; it does not promise termination."
