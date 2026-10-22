@@ -803,7 +803,7 @@ variant_names! {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, OperationFamily,
         RangeArithmetic, RangeOrdinaryGoal, RangeOperationIntervals,
-        RangeLoopNesting, PageLengthPostcondition,
+        RangeLoopNesting, RangeCallFootprint, PageLengthPostcondition,
     }
 }
 
@@ -1069,7 +1069,7 @@ impl Report for ResolutionIssue {
         report_variants!(ResolutionIssueKind, kind, fields;
             ContractShape(shape);
             MisplacedHeapDeclaration { admitted };
-            ReservedName { spelling, declaration_role, class, inventory_ordinal };
+            ReservedName { spelling, declaration_role, class, inventory_ordinal, mechanical_fix };
             MatchBinderFreshness { spelling, paired_field, earlier_binder, arm_entry_conflicts };
             DeclarationCollision { spelling, conflicts, mechanical_fix };
             InvisibleUse { spelling, role, admissible, origins, mechanical_fix };
