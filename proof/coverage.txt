@@ -47,7 +47,7 @@ outside OP-4 c64f316138920ce9 capacity and storage, which the model does not des
 outside OP-4 fa19a463e6c858f7 discharge: the fragment's checker
 outside OP-4 0d38d77e458de31a discharge: the fragment's checker
 outside OP-4 20f6dfd8f41d31cc discharge: the fragment's checker
-outside OP-4 a2089ed121a02fa3 runtime-capacity shapes: outside the first phase
+outside OP-4 a73aa9d4653c60b0 runtime-capacity shapes: outside the first phase
 outside OP-4 4feea15f046b6f9c narrowing and address formation, which the model does not describe
 
 rule OP-5
@@ -270,7 +270,7 @@ outside FN-1 589d06fe6921d9cd match and value initializers: outside the first ph
 outside FN-1 e3298281138640fa match and value initializers: outside the first phase
 outside FN-1 155fef9a66a4cd58 match and value initializers: outside the first phase
 outside FN-1 5958cd29709bc1a7 propagate: outside the first phase
-outside FN-1 eb8c3f011d4af201 atomic blocks: outside the first phase
+outside FN-1 7e2bbd5393c576f2 atomic blocks: outside the first phase
 outside FN-1 2df6e8408a127e8f counted loops: outside the first phase
 outside FN-1 5e8c840013257636 counted loops: outside the first phase
 outside FN-1 3ee7c38f4aa6b381 counted loops: outside the first phase

@@ -11,6 +11,12 @@ Nodes: language/ownership/reference-validity, compiler/checker-facts
 
 Summary: A decision is added: `set p = e;` evaluates `e` first and then evaluates the target in the state `e` left, so, other than an atomic in-place update, it means exactly binding `e` and assigning the binding; the atomic update keeps the place it reads out because its first argument reads the target's offsets, which the call's pairwise effect comparison keeps its function from writing. Two accepted programs showed that a target evaluated first can go stale across its right-hand side, a double free after `remove_at` shifted the target's slot and a store into the block `grow` released ([incidental finding 6](../research/investigations/spec-proof/DESIGN.md#incidental-findings)). The checker's fact node now says an assignment target's captures read the state the right-hand side left. Refused: holding the target's storage under reference validity across the right-hand side, the atomic update's prefix condition for every assignment, and reading subscripts first while locating the place afterwards.
 
+## 2026-10-22 A continuing kill event's overlap at the loop head is judged without facts
+
+Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention
+
+Summary: ENT-5 did not say in which state the loop head judges whether a continuing kill event may kill a pre-loop fact, and judging index separation needs facts that on a later iteration come from the head being formed. The new decision states the judgment the checker already makes: index, range and page steps at one position always overlap there, field and payload steps and window parts separate as usual, and liveness proved before the loop holds at the event; a lost fact is kept by a header invariant. Compiler probes on main's compiler (this item's temporary workflow) show a body write of `a[1]` or of `a[j]` with `j` unchanged removing `a[2] == 0` from the head and a loop with no element write keeping it. Refused: separation by pre-loop facts, which is unsound when the body changes the offset; separation by facts no continuing event writes, a second implicit pass the invariant already covers; separation by literal offsets only.
+
 ## 2026-10-21 A call's range write footprint is bounded by its first captured range, and capability limits are judged per obligation
 
 Nodes: compiler/range-judgment
