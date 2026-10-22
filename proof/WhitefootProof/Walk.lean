@@ -98,7 +98,7 @@ where
       else q.l0.any fun cs => cs.any fun alts => alts.all (refutedAlt st.l0)
     | _ => false
 
-/-- The size of a Goal expression, the fuel of a query over it. -/
+/-- The size of a Goal expression, which bounds a query's fuel. -/
 def GExpr.size : GExpr → Nat
   | .index _ off => off.size + 1
   | .infix _ a b | .op2 _ a b | .aff _ a b | .cmp _ a b => a.size + b.size + 1
@@ -405,8 +405,12 @@ def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
     let o : Origins := if r.call.isSome then {} else origins env st c r.val.gexpr
     let gen ← get
     if !st.contra && (!o.goals.isEmpty || o.cmp.isSome) then
+      -- A query path follows each definition link at most once, since a link's
+      -- right-hand side reads only earlier bindings; every other step descends
+      -- the goal's complete expansion. That bounds the query's depth.
+      let fuel (g : GExpr) : Nat := (st.expand g).size + st.links.length + 1
       let holds (sgn : Bool) : Bool :=
-        o.goals.all (fun g => signed env gen st (g.size + 1) sgn g) &&
+        o.goals.all (fun g => signed env gen st (fuel g) sgn g) &&
         (o.cmp.all fun (op, a, b) => derivable st.l0 (relFacts (if sgn then op else op.negate) a b))
       if holds true then fail "OP-5" "the condition is always true"
       if holds false then fail "OP-5" "the condition is always false"
