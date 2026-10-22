@@ -3181,7 +3181,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[136].1, "place_back");
     assert_eq!(first[171].1, "grow_paged");
     assert_eq!(first[175].1, "paged_page_len");
-    // v0.161 inserts `clear` with W, T and window after `take_front`: four
+    // v0.162 inserts `clear` with W, T and window after `take_front`: four
     // records. Every later ordinal shifts by four.
     assert_eq!(first[186].1, "clear");
     assert_eq!(first[187].1, "W");

@@ -10,11 +10,17 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
-## 2026-10-22 v0.161: `clear` empties a window and keeps its storage
+## 2026-10-22 v0.162: `clear` empties a window and keeps its storage
 
 Rules: changed OP-10, OP-13, PRE-1
 
 Summary: A program that reuses one window, such as a byte buffer emptied after every batch, could not set its length to zero without one `take_back` per element or a transfer of every element into another window, and the read-only length leaves a library no other way, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. PRE-1 adds the record `clear<W, T: drop>`, and OP-10 makes it the eleventh window operation over `Slots`, `Ring` and `Paged`: it runs each element's derived release in ascending logical order, sets the length to zero, keeps the storage, capacity, ring origin and pages, allocates nothing, visits no element when the element release is empty, refuses a linear element type at every call, and ends every element, range and page reference into the window while a reference to the window itself stays valid. OP-13 names `clear` as a bump allocator's reset. The element bound was chosen on the status board: every droppable element type, instead of a reset restricted to elements that need no release.
+
+## 2026-10-21 v0.161: a call forgets every projection that overlaps a path its effect row writes
+
+Rules: changed RANGE-2
+
+Summary: RANGE-2's call sentence said a call forgets every location the callee's row writes through a reference argument, one element where the argument names one element; "location" was read as a whole versioned storage, so a call writing `row.g` forgot the range facts on `row.f` of the same element. It now forgets each projection that overlaps a path the callee's row writes after substituting the reference argument's path [EFF-5], under the overlap relation of [OWN-7] and the window parts of [WIN-2], within that element where the argument names one element. Selection ground: effect rows, the ordinary facts a call deletes and the range judgment's direct assignments already distinguish paths, and a write in the same section already forgets what [OWN-7] overlaps, so the call was the one coarser place; naming overlap rather than only the written path and the paths below it keeps the ancestors of a written path, an element against its page and a window part against the elements forgotten, so no fact survives a write that could change it.
 
 ## 2026-10-21 v0.160: the invocation supplies the process identifier, the wall clock reads the local time offset and the handle factory reads and raises the open-files limit
 
