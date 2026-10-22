@@ -1279,7 +1279,7 @@ The target argument carries [OWN-1]'s spelling of its own class and no other.
 Its target `p` is any owned place named by a path [REF-1] and writable under [SET-1], a place reached through `^` of a reference parameter whose declared row carries `writes` of that path included.
 Its effect is `writes(p)`.
 `f` must return the place's type and must have no failure exit — every declared result ordinal is the place's type and no `ensures when` route removes a normal return.
-`f`'s declared row must not write, move out of, or free any prefix of `p`, nor write any place an offset atom of `p` reads, while reading anything and writing other disjoint storage is admitted [EFF-5]; a row that does is a hard error citing OP-12 at the complete `call`, carrying that substituted path. The target is therefore located once, at the call's first argument, and the place [SET-1]'s target evaluation names after the call is that same place.
+`f`'s declared row must not write, move out of, or free any prefix of `p`, while reading anything and writing disjoint storage is admitted [EFF-5]; a row that does is a hard error citing OP-12 at the complete `call`, carrying that substituted path. The first argument reads every place an offset atom of `p` reads, and [EFF-5] refuses a row that writes one of them, so the target is located once, at the call's first argument, and the place [SET-1]'s target evaluation names after the call is that same place.
 Nothing is said about termination.
 A failure is an enum in the place, not a second result.
 A call that fails the result condition is not an atomic update and is judged as an ordinary `set` [SET-1], in which the consumed argument would kill the target root [OWN-1]; the resulting rejection cites OWN-1 at the argument `atom`.
@@ -1712,7 +1712,7 @@ Two declared paths rooted at one parameter overlap at every position when one is
 Two effects one argument supplies whose declared paths overlap at every position reach that storage through that one parameter, and the callee's body is checked against both [EFF-2]; their writes still apply [ENT-5]'s support-survival classification, with reach from [CALL-5], and invalidate references under clause 3.
 
 1. Two compared effects on overlapping paths [OWN-7] where at least one is a write must be proved disjoint, by different roots, by index and range positions proved apart, by page positions proved distinct, or by an index, range or page position proved apart from a window's `.next` or `.free` [WIN-2], and are otherwise a hard error citing EFF-5 at the complete `call`, carrying both substituted paths and a repair [DIAG-1]. Read/read overlap is admitted. The built-in `swap` [OP-11] is the one operation whose two arguments may name the same place.
-2. A by-value argument contributes a consumption (`move`) or a read (copy) of its place to this same comparison.
+2. A by-value argument contributes a consumption (`move`) or a read (copy) of its place, and a read of every place its offset atoms read, to this same comparison.
 3. Every live reference, including an actual argument, receives the invalidations of every substituted write under [REF-2]. A content write at or below its captured target preserves it; argument membership does not protect it from another actual's destructive ancestor write.
 
 A function body is checked against its own row: every statement's effect and every callee's substituted row must be exactly covered by the declared row [EFF-2].

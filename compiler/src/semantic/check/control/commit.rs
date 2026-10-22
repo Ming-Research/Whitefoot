@@ -23,8 +23,7 @@ use crate::syntax::NodeId;
 use crate::{DeclarationId, Production, SemanticCompilerFailure, SemanticIssueKind, SemanticRule};
 
 use super::super::super::model::{CheckedMode, CheckedSetTarget, CheckedStatement};
-use super::super::super::places::{CaptureId, PlaceRoot, ResolvedPlace};
-use crate::syntax::views::PlaceSuffix;
+use super::super::super::places::{PlaceRoot, ResolvedPlace};
 use super::super::expressions::{MutationTarget, ResolvedPlaceSet, WIN3_LINEAR_TARGET};
 use super::super::references::{InvalidationEvent, RequiredReferent};
 use super::super::{CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding};
@@ -46,10 +45,6 @@ pub(in crate::semantic::check) struct CommitReadOut {
     /// its read-out only to that call's first actual; an occurrence in any
     /// later actual follows ordinary [OWN-1].
     call: Option<crate::NodePath>,
-    /// The occurrences of the target's own subscript offsets and range
-    /// endpoints. [OP-12] refuses a row that writes a place one of them
-    /// reads; an index a reference fixed at its formation is not among them.
-    offsets: Vec<CaptureId>,
     atomic_call: bool,
     argument_zero: bool,
     read_out_allowed: bool,
@@ -350,22 +345,6 @@ impl<'unit> Checker<'_, 'unit> {
             let value = self.check_expression(context, value_node, bindings, loop_depth)?;
             return Ok((value, false));
         };
-        let mut offsets = Vec::new();
-        for suffix in self
-            .types
-            .declarations
-            .tree
-            .descendants_with(target_node, Production::Psuffix)?
-        {
-            let occurrences = match self.types.declarations.tree.place_suffix(suffix)? {
-                PlaceSuffix::Index { offset } => vec![offset],
-                PlaceSuffix::Range { start, end } => vec![start, end],
-                PlaceSuffix::Member(_) | PlaceSuffix::Dereference => Vec::new(),
-            };
-            offsets.extend(occurrences.into_iter().map(|occurrence| {
-                CaptureId::source(u32::try_from(occurrence.index()).unwrap_or(u32::MAX - 1))
-            }));
-        }
         self.body.commit_read_outs = vec![CommitReadOut {
             // [REF-1, OP-12] exact read-out matching uses the unique member
             // where one exists and the holder identity for a true union.
@@ -374,7 +353,6 @@ impl<'unit> Checker<'_, 'unit> {
             element: mutation.element,
             ty: mutation.target.ty(),
             call,
-            offsets,
             atomic_call: false,
             argument_zero: false,
             read_out_allowed: false,
@@ -686,7 +664,7 @@ impl BodyChecker {
     pub(in crate::semantic::check) fn atomic_update_target(
         &self,
         call: &crate::NodePath,
-    ) -> Option<(ResolvedPlace, &[CaptureId])> {
+    ) -> Option<ResolvedPlace> {
         let targets = &self.commit_read_outs;
         let [target] = &targets[..] else {
             return None;
@@ -694,7 +672,7 @@ impl BodyChecker {
         if !target.atomic_call || target.call.as_ref() != Some(call) {
             return None;
         }
-        Some((target.place.identity.clone(), &target.offsets))
+        Some(target.place.identity.clone())
     }
 }
 

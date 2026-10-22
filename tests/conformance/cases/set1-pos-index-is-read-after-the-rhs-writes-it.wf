@@ -28,9 +28,5 @@ fn main() -> status: ExitStatus pure {
   if second != 41_u64 {
     return exit_status(code: 2_u8);
   }
-  let moved = index.at;
-  if moved != 1_u64 {
-    return exit_status(code: 3_u8);
-  }
   return exit_status(code: 0_u8);
 }

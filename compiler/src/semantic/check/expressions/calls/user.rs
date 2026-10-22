@@ -918,13 +918,9 @@ impl<'unit> Checker<'_, 'unit> {
     }
 
     /// [OP-12] "`f`'s declared row must not write, move out of, or free any
-    /// prefix of `p`, nor write any place an offset atom of `p` reads, while
-    /// reading anything and writing other disjoint storage is admitted
-    /// [EFF-5]; a row that does is a hard error citing OP-12 at the complete
-    /// `call`, carrying that substituted path."
-    ///
-    /// The second half keeps the place read out at the first argument the
-    /// place [SET-1] names when it evaluates the target after the call.
+    /// prefix of `p`, while reading anything and writing disjoint storage is
+    /// admitted [EFF-5]; a row that does is a hard error citing OP-12 at the
+    /// complete `call`, carrying that substituted path."
     ///
     /// The update is recognized from the two halves the two rules hold: the
     /// enclosing `set` knows its target place and has already checked the
@@ -939,7 +935,7 @@ impl<'unit> Checker<'_, 'unit> {
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<ResolvedPlace>, CheckStop> {
-        let Some((target, own_offsets)) = self
+        let Some(target) = self
             .body
             .atomic_update_target(self.types.declarations.tree.path(node)?)
         else {
@@ -956,33 +952,16 @@ impl<'unit> Checker<'_, 'unit> {
         if first.clone().term_identity() != target.clone().term_identity() {
             return Ok(None);
         }
-        // Every place the target's own subscripts and range endpoints read;
-        // an offset a reference fixed at its formation reads nothing now.
-        let offset_reads = target
-            .path
-            .iter()
-            .flat_map(|step| match step {
-                PlaceStep::Index(offset) | PlaceStep::Page(offset) => vec![*offset],
-                PlaceStep::Range(range) => vec![range.start, range.end],
-                _ => Vec::new(),
-            })
-            .filter(|offset| own_offsets.contains(&offset.capture))
-            .flat_map(|offset| self.types.captured_places.support(offset.term))
-            .collect::<Vec<_>>();
         for entry in entries {
             // The target argument's own by-value contribution is the update's
             // own transfer, not a reach of the row; every other argument's
             // write, consume, or free is the row reaching the caller's
-            // storage, and a prefix of the target, or storage an offset of
-            // the target reads, is what [OP-12] refuses.
+            // storage, and a prefix of the target is what [OP-12] refuses.
             if !entry.write
                 || entry.argument == 0
-                || (!entry
+                || !entry
                     .place
                     .may_be_prefix_of(&UnprovedSeparations, &target, true)
-                    && !offset_reads
-                        .iter()
-                        .any(|read| places_overlap(&UnprovedSeparations, read, &entry.place)))
             {
                 continue;
             }
@@ -992,7 +971,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::AtomicUpdateReachesTargetPrefix {
                     target: self.types.render_resolved_place(&target, bindings)?,
                     effect: self.types.render_resolved_place(&entry.place, bindings)?,
-                    mechanical_fix: "declare a row that reaches no prefix of the updated place and writes nothing its subscripts read: reading anything and writing other disjoint storage is admitted, and an update whose callee must reach the place is written as ordinary statements instead",
+                    mechanical_fix: "declare a row that reaches no prefix of the updated place: reading anything and writing storage disjoint from it is admitted, and an update whose callee must reach the place is written as ordinary statements instead",
                 },
             );
         }

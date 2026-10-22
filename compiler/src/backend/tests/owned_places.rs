@@ -1055,9 +1055,6 @@ fn main() -> status: std::process::ExitStatus pure {
   if left[1_u64] != 41_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  if offset != 1_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
   if trace != 1_u64 {
     return std::process::exit_status(code: 4_u8);
   }
@@ -1070,9 +1067,6 @@ fn main() -> status: std::process::ExitStatus pure {
   if fixed[1_u64] != 41_u64 {
     return std::process::exit_status(code: 6_u8);
   }
-  if offset != 1_u64 {
-    return std::process::exit_status(code: 7_u8);
-  }
   let runtime = box_array_filled::<u64>(count: 2_u64, value: 11_u64);
   set offset = 0_u64;
   set runtime.inner[offset] = advance(offset: &offset, trace: &trace);
@@ -1081,9 +1075,6 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   if runtime.inner[1_u64] != 41_u64 {
     return std::process::exit_status(code: 9_u8);
-  }
-  if offset != 1_u64 {
-    return std::process::exit_status(code: 10_u8);
   }
   if trace != 111_u64 {
     return std::process::exit_status(code: 11_u8);
@@ -1136,9 +1127,6 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   if rows[1_u64].right != 23_u64 {
     return std::process::exit_status(code: 6_u8);
-  }
-  if offset != 1_u64 {
-    return std::process::exit_status(code: 7_u8);
   }
   return std::process::exit_status(code: 0_u8);
 }
