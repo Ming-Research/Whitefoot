@@ -243,12 +243,11 @@ impl TargetLayout {
     }
 
     /// Minimum alignment guaranteed by the selected target's heap allocator:
-    /// 16 bytes on every record, the fundamental alignment C requires of
-    /// `malloc` (`_Alignof(max_align_t)`, pinned by a static assertion in the
-    /// runtime's `heap.c`), and the largest alignment any language type has
-    /// ([OP-9]). Keeping this explicit checks wider element representations
-    /// against the allocator promise rather than assuming the address ABI
-    /// guarantees it.
+    /// 16 bytes on every record, which is the largest alignment any language
+    /// type has ([OP-9]) and which the supported hosts' allocators return,
+    /// pinned by the static assertion in the runtime's `heap.c`. Keeping this
+    /// explicit checks wider element representations against the allocator
+    /// promise rather than assuming the address ABI guarantees it.
     pub(super) const fn runtime_allocation_alignment(self) -> u64 {
         self.allocator_alignment
     }

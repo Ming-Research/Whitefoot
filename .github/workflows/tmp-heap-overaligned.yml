@@ -10,6 +10,9 @@
 #            wider element alignment could move)
 #   conformance  the whole conformance adapter
 #   windows  the native Windows heap alignment probe
+#   darwin   the heap alignment tests on macOS arm64, with the alignments
+#            max_align_t and malloc give there
+#   arm-linux  the heap alignment tests on aarch64 Linux
 # Removed before the full check; the gate fails while a tmp- workflow exists.
 name: tmp-heap-overaligned
 
@@ -151,3 +154,85 @@ jobs:
           clang --version
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
             --test corpus -- native_windows::heap_and_pool_storage_meet_the_recorded_alignment
+
+  darwin:
+    name: darwin
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record the alignments max_align_t and malloc give
+        run: |
+          uname -m
+          cat > "$RUNNER_TEMP/align.c" <<'EOF'
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <stddef.h>
+          int main(void) {
+              unsigned worst = 16;
+              for (size_t n = 1; n < 100000; n += 7) {
+                  void *p = malloc(n);
+                  unsigned a = 1;
+                  while (((uintptr_t)p % (a * 2)) == 0 && a < 4096) a *= 2;
+                  if (a < worst) worst = a;
+                  void *q = realloc(p, n * 2 + 1);
+                  unsigned b = 1;
+                  while (((uintptr_t)q % (b * 2)) == 0 && b < 4096) b *= 2;
+                  if (b < worst) worst = b;
+                  free(q);
+              }
+              printf("alignof(max_align_t)=%zu smallest malloc/realloc alignment=%u\n",
+                     _Alignof(max_align_t), worst);
+              return 0;
+          }
+          EOF
+          /usr/bin/clang -O1 -o "$RUNNER_TEMP/align" "$RUNNER_TEMP/align.c"
+          "$RUNNER_TEMP/align"
+
+      - name: Install the host toolchain
+        run: |
+          test -x /usr/bin/clang
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Run the heap alignment tests
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 2400
+        run: |
+          cd compiler
+          perl ../.github/run-check.pl tmp/darwin cargo test --profile gate --lib --locked --offline -- heap_alignment overaligned_meters
+
+  arm-linux:
+    name: arm-linux
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          uname -m
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Run the heap alignment tests
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 2400
+        run: |
+          cd compiler
+          perl ../.github/run-check.pl tmp/arm-linux cargo test --profile gate --lib --locked --offline -- heap_alignment overaligned_meters

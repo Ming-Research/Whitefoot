@@ -304,6 +304,9 @@ fn a_hash_map_stores_meters_and_preserves_them_when_rebuilt() {
     );
 }
 
+/// A shared object and a shared map take their blocks from the runtime pool,
+/// whose alignment target qualification already accepted for a meter; this
+/// keeps their end-to-end run with the other containers.
 #[test]
 fn shared_objects_and_maps_accept_meter_state_and_entries() {
     run(

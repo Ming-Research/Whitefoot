@@ -6,12 +6,22 @@
 #include <string.h>
 
 /* target.rs records 16 bytes as the alignment of every heap block this unit
- * hands out, because C requires malloc and realloc to return storage suitable
- * for any type of fundamental alignment, `max_align_t`. Each supported target
- * has 16 there; a host where it is smaller fails to build here instead of
- * returning an under-aligned element block. */
+ * hands out. C guarantees that through `max_align_t`, the alignment malloc and
+ * realloc return storage suitable for, wherever it is 16: x86-64 and aarch64
+ * Linux and x86-64 Windows. Apple's `max_align_t` is a long double, 8 bytes on
+ * arm64, which understates its allocator: libmalloc returns 16-byte-aligned
+ * blocks on both architectures, as clang's default `new` alignment of 16 on
+ * Darwin assumes, so there only the 64-bit pointer is asserted. The alignment
+ * tests check the pointers the allocator returns on the hosts that run them. A
+ * host the assertion rejects fails to build here instead of returning an
+ * under-aligned element block. */
+#if defined(__APPLE__)
+_Static_assert(sizeof(void *) == 8,
+               "the heap blocks must meet the 16-byte alignment target.rs records");
+#else
 _Static_assert(_Alignof(max_align_t) >= 16,
                "the heap blocks must meet the 16-byte alignment target.rs records");
+#endif
 
 /* Array stores one 8-byte word, Slots two, and Ring and Paged three. Paged's
  * empty directory begins after those three words and has no entries. target.rs
