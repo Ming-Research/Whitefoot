@@ -247,6 +247,10 @@ impl Analyzer<'_, '_> {
                 break;
             }
             continues = self.walk_statement(statement, state, frontier);
+            self.reasoning().observe_summary_context(state);
+            for edge in frontier.iter() {
+                self.reasoning().observe_summary_context(&edge.state);
+            }
         }
         if continues {
             let depth = self.frames.scopes.len() - 1;
@@ -277,7 +281,9 @@ impl Analyzer<'_, '_> {
                     KillEvent::Consume { .. } | KillEvent::EntryImageHolderConsume { .. } => {
                         FlowEventKind::PostconditionCallConsume
                     }
-                    KillEvent::Write { .. } | KillEvent::EntryImageHolderWrite { .. } => {
+                    KillEvent::Rebind { .. }
+                    | KillEvent::Write { .. }
+                    | KillEvent::EntryImageHolderWrite { .. } => {
                         FlowEventKind::PostconditionCallWrite
                     }
                 };
@@ -394,22 +400,7 @@ impl Analyzer<'_, '_> {
             self.vocabulary
                 .proof_event(FlowEventKind::PostconditionReceiverWrite, Some(node_path))
         });
-        if !result.is_empty() {
-            let live = self.reasoning().event_live_bounds(state, &target_kills);
-            let separations = EventSeparations {
-                ledger: &state.separations,
-                live: &live,
-            };
-            for result in &mut result {
-                self.reasoning()
-                    .apply_kills_one(&separations, &mut result.facts, &target_kills);
-            }
-        }
-        if let Some(target_event) = target_event {
-            self.apply_kills_each(state, &target_kills, |_, _| target_event);
-        } else {
-            self.apply_kills(state, &target_kills);
-        }
+        self.apply_kills_with_pending_results(state, &target_kills, &mut result, target_event);
         // [MSR-3] the placement's second half, after the target's own kills:
         // the committed place's measures are the datums minted before them.
         if commit_reached
@@ -471,26 +462,27 @@ impl Analyzer<'_, '_> {
             // access through the binding's new value.
             let bindings = place.spelled_indices().collect::<Vec<_>>();
             let mut identity_preserved = true;
-            for (capture, binding) in bindings {
+            for (capture, source) in bindings {
+                let mut support = place.clone();
+                support.path.clear();
+                support
+                    .path
+                    .push(PlaceStep::Index(CapturedValue::new(capture, source)));
                 if prepared.kills.iter().any(|event| {
-                    self.input.affine_event_kills_binding(
+                    self.input.event_kills_offset_support(
                         &prepared.entry_separations(&state.separations),
-                        binding,
+                        &support,
                         event,
                     )
                 }) || target_kills.iter().any(|event| {
                     self.input
-                        .affine_event_kills_binding(&state.separations, binding, event)
+                        .event_kills_offset_support(&state.separations, &support, event)
                 }) {
-                    // A direct page selection can already have discarded its
-                    // occurrence in favor of current spelling. That spelling
-                    // cannot name the old value after this write, and minting
-                    // a replacement capture would assert an invented identity.
                     if !matches!(capture, CaptureId::Source(_) | CaptureId::LoopHeader { .. }) {
                         identity_preserved = false;
                         break;
                     }
-                    place.supersede_binding(binding);
+                    place.supersede_term(source);
                 }
             }
             let destinations = vec![identity_preserved.then(|| {
@@ -586,6 +578,10 @@ impl Analyzer<'_, '_> {
         frontier: &mut Vec<FlowEdge>,
     ) -> bool {
         // Every checked statement is a real source action (docs are erased).
+        self.reasoning().observe_summary_context(state);
+        for edge in frontier.iter() {
+            self.reasoning().observe_summary_context(&edge.state);
+        }
         // Continue and break route the pending inputs to their own sinks.
         if !matches!(
             statement,
@@ -865,6 +861,7 @@ impl Analyzer<'_, '_> {
                     None,
                     judgment.reached,
                     std::slice::from_ref(&result),
+                    &[scrutinee],
                 );
                 self.declare(*binding);
                 if let Some(success) = result.iter().find(|result| result.success) {
@@ -1166,6 +1163,26 @@ impl Analyzer<'_, '_> {
                     target_refuted,
                 };
 
+                let lost_header = if !certificate_written
+                    && !target_proved
+                    && !target_refuted
+                    && target_failure.is_none()
+                {
+                    let goals = target
+                        .iter()
+                        .map(|target| target_goal(target, target_right))
+                        .chain(
+                            partner.iter().map(|partner| target_goal(partner, partner_right)),
+                        )
+                        .collect::<Vec<_>>();
+                    if goals.is_empty() {
+                        None
+                    } else {
+                        self.reasoning().explain_lost_header(state, &goals)
+                    }
+                } else {
+                    None
+                };
                 // A participating function may defer this target. Publication
                 // follows its own proof point; acceptance still owes the record.
                 if let Some(target) = target
@@ -1197,6 +1214,7 @@ impl Analyzer<'_, '_> {
                     name: proof.name.clone(),
                     certificate_written,
                     check,
+                    lost_header,
                 });
                 true
             }
@@ -1266,6 +1284,7 @@ impl Analyzer<'_, '_> {
                     affine_result.as_ref(),
                     judgment.reached,
                     &results,
+                    &returned,
                 );
                 self.apply_kills(state, &events);
                 false
@@ -1540,6 +1559,7 @@ impl Analyzer<'_, '_> {
                             };
                             self.frames.loops[position].continues.push(edge);
                         } else {
+                            self.frames.loops[position].break_sites.push(edge.site);
                             self.frames.loops[position].breaks.push(edge.state);
                         }
                     }
@@ -1547,6 +1567,7 @@ impl Analyzer<'_, '_> {
                 false
             }
             CheckedStatement::Match {
+                condition,
                 scrutinee,
                 match_type,
                 arms,
@@ -1574,6 +1595,9 @@ impl Analyzer<'_, '_> {
                 } else {
                     ArmFacts::default()
                 };
+                if let Some(site) = condition {
+                    self.judging().judge_condition(site, &facts, state);
+                }
                 let mut exits = Vec::new();
                 for arm in arms {
                     let payload = payload.iter().find(|payload| {
@@ -1590,6 +1614,7 @@ impl Analyzer<'_, '_> {
             }
             CheckedStatement::ValueMatchLet {
                 node_path,
+                condition,
                 binding,
                 result_type,
                 result_mode,
@@ -1617,6 +1642,9 @@ impl Analyzer<'_, '_> {
                 } else {
                     ArmFacts::default()
                 };
+                if let Some(site) = condition {
+                    self.judging().judge_condition(site, &facts, state);
+                }
                 self.frames.gives.push(GiveFrame {
                     scope_depth: self.frames.scopes.len(),
                     loop_depth: self.frames.loops.len(),
@@ -1704,6 +1732,7 @@ impl Analyzer<'_, '_> {
                     invariant_atoms: HashSet::new(),
                     capture_path: None,
                     breaks: Vec::new(),
+                    break_sites: Vec::new(),
                     continues: Vec::new(),
                 });
                 let mut body_state = state.clone();
@@ -1734,11 +1763,15 @@ impl Analyzer<'_, '_> {
                 // Each break state already left the loop's name scope in
                 // `exit_counted_loops_from`; its header conclusions stay.
                 let frame = self.frames.loops.pop();
-                let breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
+                let (breaks, break_sites, templates) = frame
+                    .map(|frame| (frame.breaks, frame.break_sites, frame.templates))
+                    .unwrap_or_default();
                 let has_breaks = !breaks.is_empty();
                 // [FN-1, ENT-5] only breaks resolved to this loop reach its
                 // continuation; an empty join has no continuing path.
                 *state = self.join_with_transport(&breaks, &[]);
+                self.reasoning()
+                    .record_exit_header_losses(state, &breaks, &break_sites, &templates);
                 if !has_breaks {
                     state.entry_images = head_entry_images;
                 }
@@ -1906,6 +1939,7 @@ impl Analyzer<'_, '_> {
                     invariant_atoms,
                     capture_path: Some(range_path.clone()),
                     breaks: Vec::new(),
+                    break_sites: Vec::new(),
                     continues: Vec::new(),
                 });
                 let mut body_state = head.clone();
@@ -1969,7 +2003,9 @@ impl Analyzer<'_, '_> {
                 // Each break state already left the loop's name scope in
                 // `exit_counted_loops_from`; its header conclusions stay.
                 let frame = self.frames.loops.pop();
-                let breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
+                let (breaks, break_sites, templates) = frame
+                    .map(|frame| (frame.breaks, frame.break_sites, frame.templates))
+                    .unwrap_or_default();
 
                 // Unlike an ordinary loop, the real false-header edge always
                 // contributes. Binder and captures leave scope before it or
@@ -2027,6 +2063,11 @@ impl Analyzer<'_, '_> {
                 exits.extend(breaks);
                 self.frames.scopes.pop();
                 *state = self.join_with_transport(&exits, &[]);
+                let mut exit_sites = Vec::with_capacity(1 + break_sites.len());
+                exit_sites.push(node_path.clone());
+                exit_sites.extend(break_sites);
+                self.reasoning()
+                    .record_exit_header_losses(state, &exits, &exit_sites, &templates);
                 record_continuing(&mut state.continuing, &outer_continuing);
                 true
             }

@@ -8,19 +8,12 @@ struct Mixed {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "TYPE-2: mixed-width integer fields (i32/u8/u64) exercise per-field load/store widths.";
+  doc "TYPE-2: mixed-width integer fields (i32/u8/u64) exercise per-field load/store widths; each field read at its own width contributes to the exit status 115.";
   let m = Mixed(a: 100_i32, b: 5_u8, c: 1000_u64);
-  if m.a == 100_i32 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  if m.b == 5_u8 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
-  if m.c == 1000_u64 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
-  return exit_status(code: 0_u8);
+  let a_part = cvt::<i32, u8>(m.a);
+  let c_rest = m.c - 990_u64;
+  let c_part = cvt::<u64, u8>(c_rest);
+  let partial = a_part +wrap m.b;
+  let code = partial +wrap c_part;
+  return exit_status(code: code);
 }

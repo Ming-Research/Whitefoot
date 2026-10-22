@@ -666,8 +666,20 @@ impl Input<'_, '_> {
         projections
             .iter()
             .map(|projection| {
-                projection.instantiate_formal(|ordinal| {
+                projection.instantiate_formal(|ordinal, projected| {
                     let offset = self.function.parameters.get(ordinal as usize)?;
+                    if let Some((id, _)) = projected {
+                        let mut place = ResolvedPlace::binding(offset.binding);
+                        place.path = self.context.captured_places.formal(id);
+                        let id = self.context.captured_places.intern(place);
+                        let term = if self.context.captured_places.get(id).path.is_empty() {
+                            CapturedTerm::Binding(offset.binding)
+                        } else {
+                            CapturedTerm::Place(id)
+                        };
+                        return Some(CapturedValue::new(CaptureId::SpellingDetermined, term));
+                    }
+
                     Some(
                         CapturedValue::new(
                             CaptureId::source(u32::MAX),
@@ -1158,7 +1170,14 @@ impl Reasoning<'_, '_, '_> {
         state.ambiguous_goal_origins.remove(&binding);
     }
 
+    /// Reuse only an admission-specific record completed by this routine.
+    /// Its children, struct fields and deterministic numeric metadata are then
+    /// identical to a rebuild, including metadata whose final value is None;
+    /// a record inserted directly into GoalTable must still be completed.
     pub(super) fn intern_goal_expression(&mut self, expression: GoalExpression) -> GoalId {
+        if let Some(goal) = self.vocabulary.goals.complete_id(&expression) {
+            return goal;
+        }
         if let GoalExpression::Operation {
             row: GoalOperation::Boolean(_),
             arguments,
@@ -1230,6 +1249,7 @@ impl Reasoning<'_, '_, '_> {
                 .goals
                 .set_struct_equality_fields(goal, equal, fields);
         }
+        self.vocabulary.goals.mark_metadata_complete(goal);
         goal
     }
 

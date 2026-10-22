@@ -1,13 +1,17 @@
+fn same(left: u64, right: u64) -> result: unit pure contract {
+  requires left == right;
+} {
+  return unit;
+}
+
 fn probe(seed: u64, stop: Bool) -> result: unit pure {
-  doc "Both header equality bounds close the impossible disequality edge after continuing kills remove the initial copies.";
+  doc "Both header equality bounds discharge the equality requirement inside the body after continuing kills remove the initial copies.";
   let x = seed;
   let y = seed;
   loop (
     invariant tied: x == y
   ) {
-    if x != y {
-      let impossible = 18446744073709551615_u64 + 1_u64;
-    }
+    same(left: x, right: y);
     if stop {
       break;
     }

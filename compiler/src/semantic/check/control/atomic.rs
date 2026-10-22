@@ -1,8 +1,7 @@
 //! Atomic targets and their ordinary reference, effect and scope judgments [SHARE-2].
 use super::super::super::model::{
-    BindingId, CheckedArrayRoot, CheckedCallSeparation, CheckedCallSeparationPositions,
-    CheckedExpression, CheckedMode, CheckedNominalKind, CheckedRangeSource,
-    CheckedSeparationOccasion, CheckedSetTarget, CheckedShared, CheckedStatePath, CheckedStatement,
+    BindingId, CheckedCallSeparation, CheckedCallSeparationPositions, CheckedExpression, CheckedMode,
+    CheckedNominalKind, CheckedSeparationOccasion, CheckedShared, CheckedStatePath, CheckedStatement,
     CheckedTarget, CheckedTargetKind, CheckedType, IntegerType, expression_children,
 };
 use super::super::super::places::{
@@ -377,24 +376,26 @@ impl Checker<'_, '_> {
         self.check_held_protection(&held_writes, &block_bindings, &held_calls)?;
         self.body.held_calls.truncate(held_call_start);
         self.body.held_writes.truncate(held_write_start);
-        for (((target, place), aliases), watch) in targets
+        let named_bindings = self.atomic_part_mentions(node)?;
+        for ((((target, place), aliases), declaration), watch) in targets
             .iter_mut()
             .zip(&places)
             .zip(&header_aliases)
+            .zip(&declarations)
             .zip(&watches)
         {
             // No event the guard and block were checked with may have
             // written, moved or released the handle place, on any path
-            // through them.
-            target.kept_by_place = watch.as_ref().is_some_and(|watch| !watch.disturbed());
-            if !guard
-                .as_ref()
-                .is_some_and(|g| expression_mentions(&g.0, target.binding))
-                && !checked
-                    .statements
-                    .iter()
-                    .any(|s| statement_mentions(s, target.binding))
-            {
+            // through them. A handle to a linear state ends only in a
+            // `shared_close`, a waiting call no block contains, so every
+            // handle the block may move away still names the object when the
+            // statement completes [SHARE-1, PROV-6].
+            target.kept_by_place = watch.as_ref().is_some_and(|watch| !watch.disturbed())
+                || matches!(
+                    self.types.linearity_class(check_context, target.state)?,
+                    super::super::linearity::LinearityClass::Linear
+                );
+            if !named_bindings.contains(&declaration.id()) {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
                     *place,
@@ -739,6 +740,26 @@ impl Checker<'_, '_> {
                 .collect(),
         ))
     }
+    /// Source mentions survive proof erasure and inactive generic range clauses.
+    /// Only the guard and block count; the target declarations and places do not.
+    fn atomic_part_mentions(&self, node: NodeId) -> Result<HashSet<DeclarationId>, CheckStop> {
+        let declarations = &self.types.declarations;
+        let parts = declarations
+            .tree
+            .children_with(node, Production::Expr)?
+            .into_iter()
+            .chain(declarations.tree.children_with(node, Production::Stmt)?);
+        let mut named = HashSet::new();
+        for part in parts {
+            let prefix = declarations.tree.path(part)?.components();
+            for usage in declarations.resolved.lexical_uses_under(prefix) {
+                if let ResolvedTarget::Source { declaration, .. } = usage.target() {
+                    named.insert(declaration);
+                }
+            }
+        }
+        Ok(named)
+    }
     /// The guard and the block, checked with the binders in scope and inside
     /// the atomic statement, so a waiting call or another atomic statement in
     /// either is refused [SHARE-2].
@@ -918,98 +939,6 @@ impl Checker<'_, '_> {
         }
         Ok(false)
     }
-}
-
-/// Whether a checked statement, or a block it holds, names `binding`.
-fn statement_mentions(statement: &CheckedStatement, binding: BindingId) -> bool {
-    let expression = |value: &CheckedExpression| expression_mentions(value, binding);
-    let block = |statements: &[CheckedStatement]| {
-        statements
-            .iter()
-            .any(|statement| statement_mentions(statement, binding))
-    };
-    match statement {
-        CheckedStatement::Let { value, .. }
-        | CheckedStatement::DestructuringLet { value, .. }
-        | CheckedStatement::Evaluate { value, .. }
-        | CheckedStatement::DropExpression { value, .. }
-        | CheckedStatement::Return { value, .. }
-        | CheckedStatement::Give { value, .. } => expression(value),
-        CheckedStatement::PropagateLet { scrutinee, .. } => expression(scrutinee),
-        CheckedStatement::Set { target, value, .. } => {
-            let target = match target {
-                CheckedSetTarget::Place(place) => place.binding == binding,
-                CheckedSetTarget::RangeIndex(place) => {
-                    place.root.binding == binding || place.offsets().any(expression)
-                }
-                CheckedSetTarget::Storage(root) => {
-                    root.binding() == Some(binding) || root.offsets().any(expression)
-                }
-            };
-            target || expression(value)
-        }
-        CheckedStatement::Match {
-            scrutinee, arms, ..
-        }
-        | CheckedStatement::ValueMatchLet {
-            scrutinee, arms, ..
-        } => expression(scrutinee) || arms.iter().any(|arm| block(&arm.body)),
-        CheckedStatement::Loop { body, .. } => block(body),
-        CheckedStatement::CountedRange {
-            lower, upper, body, ..
-        } => expression(lower) || expression(upper) || block(body),
-        CheckedStatement::Atomic {
-            targets,
-            guard,
-            body,
-            ..
-        } => {
-            targets
-                .iter()
-                .flat_map(CheckedTarget::expressions)
-                .any(expression)
-                || guard.as_deref().is_some_and(expression)
-                || block(body)
-        }
-        CheckedStatement::Proof(_)
-        | CheckedStatement::Break { .. }
-        | CheckedStatement::Continue { .. } => false,
-    }
-}
-
-/// Whether a checked expression names `binding` as a place's root or as a
-/// value.
-fn expression_mentions(expression: &CheckedExpression, binding: BindingId) -> bool {
-    let names = match expression {
-        CheckedExpression::Binding { binding: named, .. }
-        | CheckedExpression::DerefAddressed { binding: named, .. }
-        | CheckedExpression::Project { binding: named, .. }
-        | CheckedExpression::BoxTake { binding: named, .. } => *named == binding,
-        CheckedExpression::BorrowAddressed { root, .. }
-        | CheckedExpression::ContainerMeasure { root, .. }
-        | CheckedExpression::ReadStorage { root, .. } => root.binding() == Some(binding),
-        CheckedExpression::BorrowSegment { root, .. } => root.binding() == Some(binding),
-        CheckedExpression::ArrayMeasure { root, .. }
-        | CheckedExpression::ArrayIndex { root, .. } => {
-            matches!(root, CheckedArrayRoot::Binding { binding: named, .. } if *named == binding)
-        }
-        CheckedExpression::BufferMeasure { root, .. }
-        | CheckedExpression::BufferIndex { root, .. } => root.binding == binding,
-        CheckedExpression::RangeMeasure { root, .. } => root.binding == binding,
-        CheckedExpression::RangeElementMeasure { place, .. }
-        | CheckedExpression::RangeIndex { place, .. }
-        | CheckedExpression::BorrowRangeIndex { place, .. } => place.root.binding == binding,
-        CheckedExpression::RangeOf { source, .. } => match source {
-            CheckedRangeSource::Storage(root) => root.binding() == Some(binding),
-            CheckedRangeSource::Range(root) => root.binding == binding,
-            CheckedRangeSource::Element(place) => place.root.binding == binding,
-        },
-        _ => false,
-    };
-    names
-        || expression_children(expression)
-            .into_iter()
-            .any(|child| expression_mentions(child, binding))
 }
 
 fn targets_alias_declarations(

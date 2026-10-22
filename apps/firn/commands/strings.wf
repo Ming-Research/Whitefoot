@@ -929,9 +929,7 @@ fn long_write(long: &Box<Slots<u8>>, input: &[u8], span: Span, offset: u64) -> r
     let target = imax(doubled, end);
     let fits = target <= 4611686018427387904_u64;
     if fits {
-      if target >= long^.inner.cap {
-        grow(cell: long, capacity: target);
-      }
+      grow(cell: long, capacity: target);
     }
   }
   loop @zeros {
@@ -1371,21 +1369,19 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   atomic slots = &store^.keys[keys], m = &store^.meta {
     let blocked = False();
     for @checked (rank in 0_u64..keys.len) {
-      if rank < slots^.len {
-        let kind = entry_kind(slot: &slots^[rank], client: client);
-        if client^.state == state_expired {
-          if logged {
-            let position = key_position(positions: &client^.key_metadata, index: rank);
-            let index = position -wrap 1_u64;
-            let place = key_bounds(input: input, args: args, index: index);
-            let key = &input^[place.start..place.end];
-            log_removal(log: &m^.log, key: key);
-          }
+      let kind = entry_kind(slot: &slots^[rank], client: client);
+      if client^.state == state_expired {
+        if logged {
+          let position = key_position(positions: &client^.key_metadata, index: rank);
+          let index = position -wrap 1_u64;
+          let place = key_bounds(input: input, args: args, index: index);
+          let key = &input^[place.start..place.end];
+          log_removal(log: &m^.log, key: key);
         }
-        if kind != 0_u64 {
-          set blocked = True();
-          break @checked;
-        }
+      }
+      if kind != 0_u64 {
+        set blocked = True();
+        break @checked;
       }
     }
     if blocked {

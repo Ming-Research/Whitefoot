@@ -3801,6 +3801,8 @@ typedef struct {
     size_t pool_bytes;
     _Alignas(max_align_t) unsigned char value[];
 } wf_frozen;
+_Static_assert(sizeof(wf_frozen) == 16, "Frozen allocation header ABI");
+_Static_assert(offsetof(wf_frozen, value) == 16, "Frozen payload offset ABI");
 
 static wf_frozen *wf_frozen_header(void *value) {
     return (wf_frozen *)((unsigned char *)value - offsetof(wf_frozen, value));
