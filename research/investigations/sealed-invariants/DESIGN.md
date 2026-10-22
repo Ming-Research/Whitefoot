@@ -27,8 +27,10 @@ be handed on. By the same provisional rule the state the last `shared_close`
 returns keeps only its own invariants: every struct value it owns starts in
 debt at the binding the result continues into, and a hand-off of the unbound
 result fails while that state may own one [TYPE-11.S2, TYPE-11.S4]; the
-supplied results the specification table below calls sealed exclude it
-([below](#prelude-host-and-module-boundaries)). A hand-off of a whole
+supplied results the specification table below calls sealed exclude it,
+and sealing, which that table calls type-based, also reads the identities of
+four prelude functions, at a concrete instance those of a function-kind
+parameter's actual ([below](#prelude-host-and-module-boundaries)). A hand-off of a whole
 container still needs every element restored, as result 2 states. A map and an `Entries` own none of their
 entries: a hand-off of one requires no debt below an entry, so a body owes
 every entry it reaches through a reference parameter or an atomic target
@@ -380,10 +382,13 @@ restored debts are removed.
 T6 **Call.** After the hand-off of every argument, the callee's projected
 writes apply T2 to the anchors strictly above each argument's place, and to
 no anchor at or below a reference argument's referent: the callee left that
-referent sealed (T7). The call's results are sealed, apart from the values
-below the state a `shared_close` result holds, which enter in debt
-([below](#prelude-host-and-module-boundaries)). This rule needs only the
-callee's declared row and the declared parameter types, never its body.
+referent sealed (T7). The call's results carry no debt, and a binding that
+receives a `shared_close` result takes the unfolding below its state. This
+rule needs only the callee's declared row, the declared parameter and result
+types and whether the callee is `shared_close` or one of T5's three prelude
+rows, never its body; at a concrete instance, a call through a function-kind
+parameter is a call of its actual
+([below](#prelude-host-and-module-boundaries)).
 
 T7 **Body exit.** Each `return` and propagated error exit is a hand-off of
 the returned value and of the referent of every reference parameter whose
@@ -984,9 +989,14 @@ no field restriction from TYPE-11 at all. Both are sound under A′.
 PRE-1, PRE-2] that is generic in T has no way to form a value of T except by
 moving or copying one it was given through its parameters or found in
 storage its parameters reach, and it changes such values only by moving
-them. Under A′ every such value is sealed when the call begins (every
-argument and referent is a hand-off), so every T value the definition returns
-or leaves in the caller's storage is valid. The specification states this
+them. Under A′ a value that a hand-off delivers to the call, as an argument
+or a referent, is valid, and so is every value it owns, so every such T value
+the definition returns or leaves in the caller's storage is valid. `swap`,
+`release` and `map_clear` receive no hand-off (T5): they exchange, release or
+clear the values they are given and form none, and T10 moves the debts with
+the values `swap` exchanges. `shared_close` returns a state it found through
+a handle, which owns nothing, so no hand-off delivered it (below). The
+specification states this
 as a supplied-definition obligation (part of the trusted base, as the row
 exactness of [EFF-2] already is) and drops the rule that a supplied
 definition promises no generated postcondition. This is what lets
@@ -1026,25 +1036,41 @@ a value. Cases: `type11-neg-shared-close-state-field-unchecked`,
 `type11-pos-shared-close-state-field-checked`,
 `type11-neg-shared-close-result-stored-whole`,
 `type11-neg-shared-close-result-given-whole`,
-`type11-pos-shared-close-state-own-invariant` and
-`type11-neg-shared-close-generic-wrapper`; a hand-off of the unbound result
+`type11-pos-shared-close-state-own-invariant`,
+`type11-neg-shared-close-generic-wrapper` and
+`type11-neg-shared-close-function-actual`; a hand-off of the unbound result
 is a return, a `give` or a store, since a call argument and a construction
 operand are atoms [GRAM-5].
 
 **Module boundaries.** The sealing boundary is a property of declared types
-alone: parameters sealed at entry, written reference parameters sealed at
-exit, results sealed. A module's verdicts therefore still depend only on the
+and of the identities of four prelude functions: parameters sealed at entry,
+written reference parameters sealed at exit, results carrying no debt, the
+arguments of `swap`, `release` and `map_clear` no hand-offs, and a binding of
+a `shared_close` result in debt below its state. The prelude is fixed and
+every module imports it, so a module's verdicts still depend only on the
 interfaces it imports [MOD-8]. A struct's invariants, and hence its read
 sets, are part of its declaration in the module interface; a client that
 cannot name a private field cannot write it except by replacing a whole
 value, which is a sealed store. The call-graph component rules of [DIAG-2]
 gain nothing, because no generated postcondition is published any more:
-the result's sealedness is type-based, not a summary.
+whether a result carries debt is read from the declared types and the
+callee's prelude identity, not from a summary.
 
-**Function-kind parameters.** Sealedness is the same for a formal signature
-and every actual, since it is read from the parameter and result types; a
-call through a formal uses the formal's row for T6, as every other effect
-judgment does [EFF-2]. [FN-4]'s refinement queries lose the generated
+**Function-kind parameters.** A concrete instance of a body resolves each
+call through a function-kind parameter to a call of its actual [FN-2, FN-5],
+and the prelude identities above apply there: a formal bound to
+`fn shared_close::<S>` gives the binding of its result the debts below the
+state, and a hand-off of its unbound result fails, while the arguments of
+one bound to `fn swap::<T>` are no hand-offs; the call's projected writes
+still use the formal's row for T6, as every other effect judgment does
+[EFF-2]. At the body's symbolic instance the formal is no prelude function,
+so its arguments are handed off and its result carries no debt. That
+judgment may trust a result a concrete instance puts in debt, and stays
+sound because generics are monomorphization-only and every concrete
+instance is checked again as concrete code [FN-2], so the code that runs has
+been judged with its actual (case
+`type11-neg-shared-close-function-actual`).
+[FN-4]'s refinement queries lose the generated
 clauses that formal and actual used to share, so a formal `ensures` that
 restates a result's invariant would no longer follow from an actual that
 writes none. Each query therefore takes, beside its written premise set,
