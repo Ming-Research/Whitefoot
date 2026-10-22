@@ -19,8 +19,8 @@ version does); any other entry is the next minor version after the entry below
 it. A new entry names a version only to start the next major version. Cite an
 entry by its date and title until it merges and by its version after. An
 archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
-file added by a change that edits no rule, as each archive of the earlier
-procedure was; git holds the rest of the history.
+file added by a change that edits no rule. The earlier procedure archived the
+outgoing version with every amendment; git holds the rest of the history.
 
 ## 2026-10-22 the specification carries no version, and an amendment adds no archive
 
