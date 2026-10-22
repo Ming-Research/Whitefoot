@@ -1,11 +1,13 @@
 # The Lean model of the specification and its proofs, `proof/`
 # (design/language/soundness-proof.md). The sentence coverage check fails
-# when a covered rule's text and the model's coverage list disagree, and the
+# when a covered rule's text and the model's coverage list disagree, the
 # build fails when a proof does not check or any declaration of the model
-# depends on an axiom beyond Lean's standard three. A pull request that
-# changes the specification, the model or this workflow runs it on every push,
-# drafts included, so a covered rule cannot change without the model changing
-# in the same work; a push to main with such a change runs it again.
+# depends on an axiom beyond Lean's standard three, and the conformance
+# comparison fails when the model disagrees with a conformance case written in
+# its fragment. A pull request that changes the specification, the model, the
+# conformance cases or this workflow runs it on every push, drafts included,
+# so a covered rule or a compared case cannot change without the model
+# changing in the same work; a push to main with such a change runs it again.
 name: proof
 
 on:
@@ -14,11 +16,13 @@ on:
     paths:
       - spec/kernel-spec.md
       - proof/**
+      - tests/conformance/**
       - .github/workflows/proof.yml
   pull_request:
     paths:
       - spec/kernel-spec.md
       - proof/**
+      - tests/conformance/**
       - .github/workflows/proof.yml
   workflow_dispatch:
 
@@ -56,6 +60,10 @@ jobs:
       - name: Proofs
         working-directory: proof
         run: perl ../.github/run-check.pl proof-build lake build
+
+      - name: Conformance cases in the fragment
+        working-directory: proof
+        run: perl ../.github/run-check.pl proof-conformance lake exe conformance
 
       # run-check.pl appended every stage over its budget in
       # .github/time-budgets.txt, or without one, to this record.
