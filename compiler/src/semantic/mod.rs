@@ -1697,9 +1697,10 @@ pub enum UnsupportedSemanticFeature {
     OwnershipJoin,
     /// An OP-1 family outside the implemented scalar and nominal-tag families.
     OperationFamily,
-    /// A range derivation whose exact arithmetic [RANGE-3] leaves the
-    /// checker's 128-bit integers. It names no rule: the specified
-    /// arithmetic has no bound, so reaching here is a checker gap.
+    /// A range term [RANGE-1] or a range derivation [RANGE-3] whose exact
+    /// arithmetic leaves the checker's 128-bit integers. It names no rule:
+    /// the specified arithmetic has no bound, so reaching here is a checker
+    /// gap.
     RangeArithmetic,
     /// A selected ordinary goal whose site the range walk cannot represent or
     /// reach. Goals outside RANGE-2's range-term shape keep their ordinary verdict.

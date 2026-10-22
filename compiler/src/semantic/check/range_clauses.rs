@@ -14,8 +14,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 mod aggregate;
+mod exact;
 mod vacuous;
 use aggregate::RangeOperand;
+use exact::{Exact, ExactSum};
 
 use crate::syntax::NodeId;
 use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
@@ -921,6 +923,8 @@ impl Checker<'_, '_> {
         self.range_comparison_operands(context, node, comparison, left, right, names)
     }
 
+    /// One whole side or operand: its arithmetic is exact while it is formed
+    /// [RANGE-1], and only the normalized result is narrowed to `i128`.
     fn range_expression(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -928,6 +932,27 @@ impl Checker<'_, '_> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
     ) -> Result<RangeOperand, CheckStop> {
+        match self.range_affine(context, node, bindings, names)? {
+            RangeFormed::Operand(operand) => Ok(operand),
+            RangeFormed::Sum(sum) => match sum.narrowed() {
+                Some(term) => Ok(term.into()),
+                // The specified value is exact and has no bound, so a side
+                // past the checker's integers is its limit, not a verdict.
+                None => self
+                    .types
+                    .declarations
+                    .unsupported(crate::UnsupportedSemanticFeature::RangeArithmetic, node),
+            },
+        }
+    }
+
+    fn range_affine(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        names: &RangeNames,
+    ) -> Result<RangeFormed, CheckStop> {
         let children = self.types.declarations.tree.children(node)?.to_vec();
         let Some((&first, rest)) = children.split_first() else {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
@@ -939,7 +964,7 @@ impl Checker<'_, '_> {
         if rest.is_empty() {
             return Ok(first);
         }
-        let mut terms = vec![(1_i128, first.integer(self, node, names)?)];
+        let mut sum = first.integer(self, node, names)?;
         for pair in rest.as_chunks::<2>().0 {
             let [token] = self.types.declarations.tree.direct_token_indices(pair[0])? else {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
@@ -949,13 +974,12 @@ impl Checker<'_, '_> {
                 b"-" => -1_i128,
                 _ => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
             };
-            terms.push((
-                sign,
-                self.range_product(context, pair[1], bindings, names)?
-                    .integer(self, node, names)?,
-            ));
+            let term = self
+                .range_product(context, pair[1], bindings, names)?
+                .integer(self, node, names)?;
+            sum.add(&Exact::from(sign), term);
         }
-        Ok(range_sum(terms).into())
+        Ok(RangeFormed::Sum(sum))
     }
 
     fn range_product(
@@ -964,7 +988,7 @@ impl Checker<'_, '_> {
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<RangeOperand, CheckStop> {
+    ) -> Result<RangeFormed, CheckStop> {
         let factors = self
             .types
             .declarations
@@ -979,19 +1003,21 @@ impl Checker<'_, '_> {
                 let right_term = self
                     .range_factor(context, *right, bindings, names)?
                     .integer(self, node, names)?;
-                let (constant, value) = match (&left_term, &right_term) {
-                    (CheckedRangeTerm::Constant(constant), _) => (*constant, right_term),
-                    (_, CheckedRangeTerm::Constant(constant)) => (*constant, left_term),
-                    _ => {
-                        return self.invalid_range(
-                            SemanticRule::Range1,
-                            node,
-                            "a range term multiplies two terms neither of which is a constant",
-                            "multiply one term by an integer literal or a named integer const",
-                        );
-                    }
+                let (constant, value) = if let Some(constant) = left_term.constant().cloned() {
+                    (constant, right_term)
+                } else if let Some(constant) = right_term.constant().cloned() {
+                    (constant, left_term)
+                } else {
+                    return self.invalid_range(
+                        SemanticRule::Range1,
+                        node,
+                        "a range term multiplies two terms neither of which is a constant",
+                        "multiply one term by an integer literal or a named integer const",
+                    );
                 };
-                Ok(range_sum(vec![(constant, value)]).into())
+                let mut scaled = ExactSum::default();
+                scaled.add(&constant, value);
+                Ok(RangeFormed::Sum(scaled))
             }
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
@@ -1003,14 +1029,14 @@ impl Checker<'_, '_> {
         node: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
-    ) -> Result<RangeOperand, CheckStop> {
+    ) -> Result<RangeFormed, CheckStop> {
         if let Some(nested) = self
             .types
             .declarations
             .tree
             .first_child_with(node, Production::AffineExpr)?
         {
-            return self.range_expression(context, nested, bindings, names);
+            return self.range_affine(context, nested, bindings, names);
         }
         if let Some(atom) = self
             .types
@@ -1018,7 +1044,9 @@ impl Checker<'_, '_> {
             .tree
             .first_child_with(node, Production::Atom)?
         {
-            return self.range_atom(context, atom, bindings, names);
+            return Ok(RangeFormed::Operand(
+                self.range_atom(context, atom, bindings, names)?,
+            ));
         }
         self.invalid_range(
             SemanticRule::Range1,
@@ -1080,7 +1108,7 @@ impl Checker<'_, '_> {
             );
         };
         let operand = self.range_place(context, place, bindings, names)?;
-        // Preserve the already-typed place before range_sum can cancel it
+        // Preserve the already-typed place before normalization can cancel it
         // or multiply it by zero. Clause erasure changes no alias premise.
         names
             .contract_reads
@@ -1727,49 +1755,25 @@ impl Checker<'_, '_> {
     }
 }
 
-/// The canonical sum of weighted terms: nested sums flatten, constants fold,
-/// and a single unit term stands alone.
-fn range_sum(terms: Vec<(i128, CheckedRangeTerm)>) -> CheckedRangeTerm {
-    let mut constant = 0_i128;
-    let mut flat: Vec<(i128, CheckedRangeTerm)> = Vec::new();
-    let mut pending = terms;
-    while let Some((weight, term)) = pending.pop() {
-        match term {
-            CheckedRangeTerm::Constant(value) => {
-                constant = constant.saturating_add(weight.saturating_mul(value));
-            }
-            CheckedRangeTerm::Sum {
-                terms,
-                constant: inner,
-            } => {
-                constant = constant.saturating_add(weight.saturating_mul(inner));
-                for (coefficient, nested) in terms {
-                    pending.push((weight.saturating_mul(coefficient), nested));
-                }
-            }
-            other => {
-                if let Some(existing) = flat.iter_mut().find(|(_, term)| *term == other) {
-                    existing.0 = existing.0.saturating_add(weight);
-                } else {
-                    flat.push((weight, other));
-                }
-            }
+/// A side, term or factor while it is formed: a lone operand keeps its type
+/// for value equality and variant relations, and arithmetic forms an exact
+/// sum that `range_expression` narrows once the side is complete.
+enum RangeFormed {
+    Operand(RangeOperand),
+    Sum(ExactSum),
+}
+
+impl RangeFormed {
+    fn integer(
+        self,
+        checker: &Checker<'_, '_>,
+        node: NodeId,
+        names: &RangeNames,
+    ) -> Result<ExactSum, CheckStop> {
+        match self {
+            Self::Operand(operand) => Ok(ExactSum::of(operand.integer(checker, node, names)?)),
+            Self::Sum(sum) => Ok(sum),
         }
-    }
-    flat.retain(|(weight, _)| *weight != 0);
-    flat.sort_by(|left, right| left.1.cmp(&right.1));
-    if constant == 0 && flat.len() == 1 && flat[0].0 == 1 {
-        return flat
-            .pop()
-            .map(|(_, term)| term)
-            .unwrap_or(CheckedRangeTerm::Constant(0));
-    }
-    if flat.is_empty() {
-        return CheckedRangeTerm::Constant(constant);
-    }
-    CheckedRangeTerm::Sum {
-        terms: flat,
-        constant,
     }
 }
 

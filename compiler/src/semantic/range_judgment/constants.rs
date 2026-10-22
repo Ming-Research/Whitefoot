@@ -99,8 +99,15 @@ pub(crate) fn judge(
         };
         frame.places.insert(place, view);
     }
-    if facts::vacuous(&mut world, clause, &frame) {
-        return None;
+    match facts::vacuous(&mut world, clause, &frame) {
+        Ok(true) => return None,
+        Ok(false) => {}
+        Err(_) => {
+            return Some(RangeIssue::Unsupported {
+                node: node.clone(),
+                feature: super::super::UnsupportedSemanticFeature::RangeArithmetic,
+            });
+        }
     }
     let binders: Vec<_> = clause.binders.iter().map(|_| world.opaque(None)).collect();
     let failure = |relation, capacity| RangeIssue::Undischarged {
@@ -110,8 +117,15 @@ pub(crate) fn judge(
         relation,
         capacity,
     };
-    let Some(formed) = facts::form(&mut world, clause, &frame, &binders, &[]) else {
-        return Some(failure(None, None));
+    let formed = match facts::form(&mut world, clause, &frame, &binders, &[]) {
+        Ok(formed) => formed,
+        Err(facts::Unformed::Unviewed) => return Some(failure(None, None)),
+        Err(facts::Unformed::Arithmetic) => {
+            return Some(RangeIssue::Unsupported {
+                node: node.clone(),
+                feature: super::super::UnsupportedSemanticFeature::RangeArithmetic,
+            });
+        }
     };
     for (position, conclusion) in formed.conclusions.iter().enumerate() {
         let (mut units, choices) = state.premises(&world);

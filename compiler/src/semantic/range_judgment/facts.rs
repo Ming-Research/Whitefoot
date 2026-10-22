@@ -126,6 +126,16 @@ pub(super) struct Formed {
     pub(super) conclusions: Vec<Rule>,
 }
 
+/// Why a clause did not form in a frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Unformed {
+    /// The frame cannot view one of the clause's places.
+    Unviewed,
+    /// A coefficient or constant left the checker's `i128`, the arithmetic
+    /// limit [`Capacity::Arithmetic`] names; never a source verdict.
+    Arithmetic,
+}
+
 /// Forms clause terms in one frame at one tuple.
 struct Former<'world> {
     world: &'world mut World,
@@ -135,9 +145,17 @@ struct Former<'world> {
     bounds: Vec<Literal>,
     guards: Vec<Literal>,
     fixed_lengths: BTreeSet<CheckedRangePlace>,
+    /// Whether a sum or an offset left `i128` while forming.
+    arithmetic: bool,
 }
 
 impl Former<'_> {
+    /// `value`, recording that its arithmetic failed where it is `None`.
+    fn checked(&mut self, value: Option<Linear>) -> Option<Linear> {
+        self.arithmetic |= value.is_none();
+        value
+    }
+
     /// Record only lengths actually substituted while forming terms. Delay
     /// descriptor reads until formation succeeds; the vacuity check must not
     /// introduce reads for a clause with no instances.
@@ -277,7 +295,7 @@ impl Former<'_> {
                             .map(|index| *index + prefix.len() as u32)
                             .collect();
                         let mut selected = prefix;
-                        selected.push(offset.plus(index)?);
+                        selected.push(self.checked(offset.plus(index))?);
                         selected.extend_from_slice(&values[1..]);
                         Some(self.projected_read(
                             version,
@@ -353,7 +371,9 @@ impl Former<'_> {
             CheckedRangeTerm::Sum { terms, constant } => {
                 let mut sum = Linear::constant(*constant);
                 for (weight, part) in terms {
-                    sum = sum.plus(&self.term(part)?.scaled(*weight)?)?;
+                    let part = self.term(part)?;
+                    let scaled = part.scaled(*weight).and_then(|part| sum.plus(&part));
+                    sum = self.checked(scaled)?;
                 }
                 Some(sum)
             }
@@ -450,8 +470,15 @@ pub(super) const fn comparison(comparison: RangeComparison) -> Relation {
 
 /// An empty range contributes no tuple and no projected reads to a problem.
 /// Compare affine endpoints before forming the clause's guards/conclusions;
-/// fresh binders preserve dependencies between two written ranges.
-pub(super) fn vacuous(world: &mut World, clause: &CheckedRangeClause, frame: &Frame) -> bool {
+/// fresh binders preserve dependencies between two written ranges. An
+/// endpoint the frame cannot view leaves the clause to [`form`], which
+/// reports why. A range no other range empties whose endpoints or width
+/// leave `i128` is the arithmetic limit, not a nonempty range.
+pub(super) fn vacuous(
+    world: &mut World,
+    clause: &CheckedRangeClause,
+    frame: &Frame,
+) -> Result<bool, Capacity> {
     let binders: Vec<_> = clause.binders.iter().map(|_| world.opaque(None)).collect();
     let mut former = Former {
         world,
@@ -461,28 +488,35 @@ pub(super) fn vacuous(world: &mut World, clause: &CheckedRangeClause, frame: &Fr
         bounds: Vec::new(),
         guards: Vec::new(),
         fixed_lengths: BTreeSet::new(),
+        arithmetic: false,
     };
-    clause.binders.iter().any(|binder| {
+    let empty = clause.binders.iter().any(|binder| {
         let Some(start) = former.term(&binder.start) else {
             return false;
         };
         let Some(end) = former.term(&binder.end) else {
             return false;
         };
-        end.minus(&start)
+        former
+            .checked(end.minus(&start))
             .is_some_and(|width| width.is_constant() && width.constant <= 0)
-    })
+    });
+    if !empty && former.arithmetic {
+        return Err(Capacity::Arithmetic);
+    }
+    Ok(empty)
 }
 
-/// Forms `clause` in `frame` at the tuple `binders`, or `None` where the
-/// frame cannot view one of its places.
+/// Forms `clause` in `frame` at the tuple `binders`, or says why it does not
+/// form: the frame cannot view one of its places, or its arithmetic leaves
+/// the checker's `i128`.
 pub(super) fn form(
     world: &mut World,
     clause: &CheckedRangeClause,
     frame: &Frame,
     binders: &[Linear],
     iterations: &[Linear],
-) -> Option<Formed> {
+) -> Result<Formed, Unformed> {
     let mut former = Former {
         world,
         frame,
@@ -491,56 +525,67 @@ pub(super) fn form(
         bounds: Vec::new(),
         guards: Vec::new(),
         fixed_lengths: BTreeSet::new(),
+        arithmetic: false,
     };
-    let mut premises = Vec::new();
-    for (position, binder) in clause.binders.iter().enumerate() {
-        let value = binders.get(position)?.clone();
-        let start = former.term(&binder.start)?;
-        let end = former.term(&binder.end)?;
-        premises.push(Literal::new(value.clone(), Relation::GreaterEqual, start));
-        premises.push(Literal::new(value, Relation::Less, end));
+    match former.clause(clause) {
+        _ if former.arithmetic => Err(Unformed::Arithmetic),
+        Some(formed) => Ok(formed),
+        None => Err(Unformed::Unviewed),
     }
-    let mut conditions = Vec::new();
-    for guard in &clause.guards {
-        let literal = former.relation(guard)?;
-        if former.guards.is_empty() {
-            premises.push(literal);
-        } else {
-            conditions.push(Rule {
-                guards: std::mem::take(&mut former.guards),
+}
+
+impl Former<'_> {
+    fn clause(&mut self, clause: &CheckedRangeClause) -> Option<Formed> {
+        let mut premises = Vec::new();
+        for (position, binder) in clause.binders.iter().enumerate() {
+            let value = self.binders.get(position)?.clone();
+            let start = self.term(&binder.start)?;
+            let end = self.term(&binder.end)?;
+            premises.push(Literal::new(value.clone(), Relation::GreaterEqual, start));
+            premises.push(Literal::new(value, Relation::Less, end));
+        }
+        let mut conditions = Vec::new();
+        for guard in &clause.guards {
+            let literal = self.relation(guard)?;
+            if self.guards.is_empty() {
+                premises.push(literal);
+            } else {
+                conditions.push(Rule {
+                    guards: std::mem::take(&mut self.guards),
+                    conclusions: vec![literal],
+                });
+            }
+        }
+        // [RANGE-1] the ranges' and guards' reads condition every conclusion;
+        // each conclusion's own reads, element selections and payload variants
+        // alike, condition that conclusion only, so conclusions over payloads of
+        // different variants each hold where their own variant is held.
+        premises.append(&mut self.bounds);
+        let mut conclusions = Vec::new();
+        for conclusion in &clause.conclusions {
+            let literal = self.relation(conclusion)?;
+            let mut guards = std::mem::take(&mut self.bounds);
+            guards.append(&mut self.guards);
+            let mut seen: BTreeSet<Literal> = premises.iter().cloned().collect();
+            guards.retain(|literal| seen.insert(literal.clone()));
+            conclusions.push(Rule {
+                guards,
                 conclusions: vec![literal],
             });
         }
+        // An expanded equality guard repeats the outer read's bounds in every
+        // leaf. Each conclusion needs the conjunction once; repeated literals
+        // otherwise cause a full theory probe per leaf per conclusion during
+        // saturation.
+        let mut seen = BTreeSet::new();
+        premises.retain(|literal| seen.insert(literal.clone()));
+        Some(Formed {
+            type_facts: self.frame.type_facts(self.world, &self.fixed_lengths),
+            premises,
+            conditions,
+            conclusions,
+        })
     }
-    // [RANGE-1] the ranges' and guards' reads condition every conclusion;
-    // each conclusion's own reads, element selections and payload variants
-    // alike, condition that conclusion only, so conclusions over payloads of
-    // different variants each hold where their own variant is held.
-    premises.append(&mut former.bounds);
-    let mut conclusions = Vec::new();
-    for conclusion in &clause.conclusions {
-        let literal = former.relation(conclusion)?;
-        let mut guards = std::mem::take(&mut former.bounds);
-        guards.append(&mut former.guards);
-        let mut seen: BTreeSet<Literal> = premises.iter().cloned().collect();
-        guards.retain(|literal| seen.insert(literal.clone()));
-        conclusions.push(Rule {
-            guards,
-            conclusions: vec![literal],
-        });
-    }
-    // An expanded equality guard repeats the outer read's bounds in every
-    // leaf. Each conclusion needs the conjunction once; repeated literals
-    // otherwise cause a full theory probe per leaf per conclusion during
-    // saturation.
-    let mut seen = BTreeSet::new();
-    premises.retain(|literal| seen.insert(literal.clone()));
-    Some(Formed {
-        type_facts: frame.type_facts(former.world, &former.fixed_lengths),
-        premises,
-        conditions,
-        conclusions,
-    })
 }
 
 /// One read of a clause whose indices name bound variables directly.
@@ -682,9 +727,11 @@ impl Query {
         binders: &[Linear],
         iterations: &[Linear],
         atoms: &mut BTreeSet<AtomId>,
-    ) {
-        let Some(formed) = form(world, &fact.clause, &fact.frame, binders, iterations) else {
-            return;
+    ) -> Result<(), Capacity> {
+        let formed = match form(world, &fact.clause, &fact.frame, binders, iterations) {
+            Ok(formed) => formed,
+            Err(Unformed::Unviewed) => return Ok(()),
+            Err(Unformed::Arithmetic) => return Err(Capacity::Arithmetic),
         };
         for literal in formed.type_facts {
             if self.type_facts.insert(literal.clone()) {
@@ -717,6 +764,7 @@ impl Query {
                     .push(conditional_instance(&conclusion, &formed.conditions));
             }
         }
+        Ok(())
     }
 }
 
@@ -814,7 +862,7 @@ pub(super) fn judge(
         for (fact_id, _) in &entries {
             let fact = &facts[*fact_id as usize];
             let mut triggers = Vec::new();
-            if vacuous(world, &fact.clause, &fact.frame) {
+            if vacuous(world, &fact.clause, &fact.frame)? {
                 continue;
             }
             let mut projections = BTreeMap::new();
@@ -884,7 +932,7 @@ pub(super) fn judge(
                         expected == *projection
                     };
                     if matches {
-                        match_trigger(view, trigger, *version, indices, &mut candidates);
+                        match_trigger(view, trigger, *version, indices, &mut candidates)?;
                     }
                 }
             }
@@ -925,7 +973,7 @@ pub(super) fn judge(
                 .map(|(_, sets)| sets.as_slice())
                 .unwrap_or_default();
             for guards in sets {
-                query.add_instance(world, fact, guards, &binders, &[], &mut atoms);
+                query.add_instance(world, fact, guards, &binders, &[], &mut atoms)?;
             }
         }
         expand(world, &mut atoms, &mut expanded, &mut query)?;
@@ -934,11 +982,11 @@ pub(super) fn judge(
     // do not seed additional automatic rounds.
     for (fact_id, binders, iterations) in written {
         let fact = &facts[*fact_id as usize];
-        if !vacuous(world, &fact.clause, &fact.frame)
+        if !vacuous(world, &fact.clause, &fact.frame)?
             && seen.insert((*fact_id, binders.clone(), iterations.clone()))
         {
             count_instance(&mut counts, *fact_id)?;
-            query.add_instance(world, fact, &[], binders, iterations, &mut atoms);
+            query.add_instance(world, fact, &[], binders, iterations, &mut atoms)?;
         }
     }
     expand(world, &mut atoms, &mut expanded, &mut query)?;
@@ -978,7 +1026,7 @@ fn match_trigger(
     version: VersionId,
     indices: &[Linear],
     candidates: &mut [BTreeSet<Linear>],
-) {
+) -> Result<(), Capacity> {
     let (view_version, prefix, offset) = match view {
         PlaceView::Run {
             version,
@@ -990,17 +1038,17 @@ fn match_trigger(
         PlaceView::Element {
             version, indices, ..
         } => (*version, indices.as_slice(), None),
-        PlaceView::Unknown => return,
+        PlaceView::Unknown => return Ok(()),
     };
     let expected = prefix.len() + trigger.positions.len();
     if view_version != version
         || indices.len() < expected
         || (!trigger.descendants && indices.len() != expected)
     {
-        return;
+        return Ok(());
     }
     if indices[..prefix.len()] != *prefix {
-        return;
+        return Ok(());
     }
     for (position, binder) in trigger.positions.iter().enumerate() {
         let Some(binder) = binder else {
@@ -1008,14 +1056,17 @@ fn match_trigger(
         };
         let index = &indices[prefix.len() + position];
         let value = match offset {
-            // The last position of a run view is relative to its offset.
-            Some(offset) if position == 0 => index.minus(offset),
-            _ => Some(index.clone()),
+            // The last position of a run view is relative to its offset. A
+            // relative index outside `i128` is a candidate this checker
+            // cannot hold, the arithmetic limit rather than a dropped tuple.
+            Some(offset) if position == 0 => index.minus(offset).ok_or(Capacity::Arithmetic)?,
+            _ => index.clone(),
         };
-        if let (Some(value), Some(set)) = (value, candidates.get_mut(*binder as usize)) {
+        if let Some(set) = candidates.get_mut(*binder as usize) {
             set.insert(value);
         }
     }
+    Ok(())
 }
 
 fn collect_literal(literal: &Literal, atoms: &mut BTreeSet<AtomId>) {
@@ -1452,6 +1503,7 @@ mod aggregate_tests {
             bounds: Vec::new(),
             guards: Vec::new(),
             fixed_lengths: BTreeSet::new(),
+            arithmetic: false,
         };
         assert_eq!(
             former.term(&CheckedRangeTerm::ConstGeneric { declaration, ty }),
@@ -1592,7 +1644,9 @@ mod aggregate_tests {
         // The owed clause and distinct instances share the descriptor fact.
         // Every instance still contributes every projection and its atoms.
         for binder in [k, world.opaque(None)] {
-            query.add_instance(&mut world, &fact, &[], &[binder], &[], &mut atoms);
+            query
+                .add_instance(&mut world, &fact, &[], &[binder], &[], &mut atoms)
+                .unwrap();
         }
         assert_eq!(query.type_facts, expected);
         assert_eq!(query.rules.len(), 2 * fact.clause.conclusions.len());
@@ -1720,13 +1774,89 @@ mod aggregate_tests {
                 shape: CheckedRangeShape::Run,
             },
         });
-        assert!(vacuous(&mut world, &fact.clause, &fact.frame));
+        assert_eq!(vacuous(&mut world, &fact.clause, &fact.frame), Ok(true));
         assert!(
             world
                 .atoms
                 .iter()
                 .all(|atom| !matches!(atom.def, AtomDef::Read { .. }))
         );
+    }
+
+    #[test]
+    fn a_range_width_past_i128_is_the_arithmetic_limit_unless_another_is_empty() {
+        use crate::semantic::range_facts::CheckedRangeBinder;
+        let mut world = World::default();
+        let mut fact = projected_fact(&mut world, 1);
+        // Both endpoints fit, but the width 1 - i128::MIN does not: the range
+        // is nonempty, and the checker cannot say how wide.
+        fact.clause.binders.push(CheckedRangeBinder {
+            start: CheckedRangeTerm::Constant(i128::MIN),
+            end: CheckedRangeTerm::Constant(1),
+        });
+        assert_eq!(
+            vacuous(&mut world, &fact.clause, &fact.frame),
+            Err(Capacity::Arithmetic),
+            "an unformed width is not a nonempty range"
+        );
+        // An empty second range leaves the clause no tuple whatever the first.
+        fact.clause.binders.push(CheckedRangeBinder {
+            start: CheckedRangeTerm::Constant(0),
+            end: CheckedRangeTerm::Constant(0),
+        });
+        assert_eq!(vacuous(&mut world, &fact.clause, &fact.frame), Ok(true));
+    }
+
+    #[test]
+    fn a_relative_trigger_index_past_i128_is_the_arithmetic_limit() {
+        let mut world = World::default();
+        let version = world.new_version(VersionDef::Initial);
+        let trigger = Trigger {
+            place: CheckedRangePlace {
+                root: CheckedRangeRoot::Result(0),
+                path: Vec::new(),
+                fixed_length: None,
+            },
+            shape: CheckedRangeShape::Run,
+            positions: vec![Some(0)],
+            projection: Vec::new(),
+            descendants: false,
+            unchanged: false,
+        };
+        // Element k of this run is the container's element at 1 + k.
+        let view = PlaceView::Run {
+            container: 0,
+            version,
+            generation: 0,
+            prefix: Vec::new(),
+            offset: Linear::constant(1),
+            length: Linear::constant(4),
+        };
+        let mut candidates = vec![BTreeSet::new()];
+        // The read at i128::MIN selects k = i128::MIN - 1, outside i128: a
+        // tuple the checker cannot hold, not one the read does not select.
+        assert_eq!(
+            match_trigger(
+                &view,
+                &trigger,
+                version,
+                &[Linear::constant(i128::MIN)],
+                &mut candidates,
+            ),
+            Err(Capacity::Arithmetic)
+        );
+        assert!(candidates[0].is_empty(), "{candidates:?}");
+        assert_eq!(
+            match_trigger(
+                &view,
+                &trigger,
+                version,
+                &[Linear::constant(3)],
+                &mut candidates,
+            ),
+            Ok(())
+        );
+        assert_eq!(candidates[0], BTreeSet::from([Linear::constant(2)]));
     }
 
     #[test]

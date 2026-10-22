@@ -246,11 +246,27 @@ pub(crate) fn judge_program(
                 .deferred
                 .iter()
                 .any(|(_, answer)| *answer != walk::DeferredAnswer::Proved);
-            let issues = match walker.imprecise.take() {
-                Some(node) if !walker.issues.is_empty() || unproved => {
+            let forgot = !walker.issues.is_empty() || unproved;
+            // Nor can a walk whose own arithmetic left `i128` [RANGE-3]: it
+            // answers the limit rather than an ordinary rejection.
+            if walker.arithmetic.is_some() {
+                for (_, answer) in &mut walker.deferred {
+                    if *answer == walk::DeferredAnswer::Unproved {
+                        *answer = walk::DeferredAnswer::Inconclusive;
+                    }
+                }
+            }
+            let issues = match (walker.imprecise.take(), walker.arithmetic.take()) {
+                (Some(node), _) if forgot => {
                     vec![RangeIssue::Unsupported {
                         node,
                         feature: super::UnsupportedSemanticFeature::RangeLoopNesting,
+                    }]
+                }
+                (_, Some(node)) if forgot => {
+                    vec![RangeIssue::Unsupported {
+                        node,
+                        feature: super::UnsupportedSemanticFeature::RangeArithmetic,
                     }]
                 }
                 _ => walker.issues,

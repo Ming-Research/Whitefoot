@@ -252,7 +252,7 @@ impl Walker<'_> {
                 offset,
                 ..
             }) => {
-                prefix.push(offset.plus(&index)?);
+                prefix.push(self.checked(offset.plus(&index))?);
                 Value::Ref(View::Element {
                     container,
                     indices: prefix,
@@ -642,7 +642,7 @@ impl Walker<'_> {
         &mut self,
         state: &State,
         uses: &[CheckedProofUse],
-    ) -> Option<Written> {
+    ) -> Result<Written, facts::Unformed> {
         let mut written = Vec::new();
         for step in uses {
             let CheckedProofUseSource::Range(step) = &step.source else {
@@ -652,16 +652,17 @@ impl Walker<'_> {
                 .facts
                 .iter()
                 .copied()
-                .find(|fact| self.facts[*fact as usize].clause.declaration == step.fact)?;
+                .find(|fact| self.facts[*fact as usize].clause.declaration == step.fact)
+                .ok_or(facts::Unformed::Unviewed)?;
             let frame = self.facts[fact as usize].frame.clone();
             let arguments = step
                 .arguments
                 .iter()
                 .map(|argument| self.certificate_term(state, &frame, argument, &[]))
-                .collect::<Option<Vec<_>>>()?;
+                .collect::<Result<Vec<_>, _>>()?;
             written.push((fact, arguments, Vec::new()));
         }
-        Some(written)
+        Ok(written)
     }
 }
 

@@ -85,8 +85,8 @@ impl Walker<'_> {
             }
             _ => return None,
         };
-        let next =
-            length.plus(&Linear::constant(if name == "place_back" { 1 } else { -1 }))?;
+        let step = if name == "place_back" { 1 } else { -1 };
+        let next = self.checked(length.plus(&Linear::constant(step)))?;
         // Descriptor mutation is not an element-only access for RANGE-5.
         self.unplaced_view(view, true, node, state);
         let value = if name == "place_back" {

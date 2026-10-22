@@ -633,6 +633,128 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// A postcondition `result <relation> <bound>` of a function that returns
+/// 2^64 - 1, over a range with one tuple.
+fn largest_bound(relation: &str, bound: &str) -> Vec<u8> {
+    format!(
+        "fn largest() -> result: u64 pure contract {{
+  ensures forall huge(k in 0_u64..1_u64): result {relation} {bound};
+}} {{
+  return 18446744073709551615_u64;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let value = largest();
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_term_whose_product_passes_i128_is_judged_at_its_exact_value() {
+    // (2^64 - 1)^2 passes i128 and the side, (2^64 - 1)(2^63 - 1), fits.
+    // Clamping the product at i128::MAX read the bound as 2^63 - 1, below
+    // the result, which accepted `>=` and rejected `<=` [RANGE-1].
+    let bound = "18446744073709551615_u64 *(18446744073709551615_u64 * 1_u64) - 18446744073709551615_u64 *(9223372036854775808_u64 * 1_u64)";
+    with_semantics(&largest_bound("<=", bound), |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "every u64 result is below the bound: {outcome:?}"
+        );
+    });
+    with_semantics(&largest_bound(">=", bound), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+    });
+}
+
+#[test]
+fn a_term_whose_value_passes_i128_is_unsupported_not_clamped() {
+    // A constant clamped at i128::MAX accepted the first clause, and a
+    // coefficient clamped at i128::MAX rejected the second under RANGE-3;
+    // each value is exact and has no bound, so the limit is the checker's.
+    for bound in [
+        "18446744073709551615_u64 *(18446744073709551615_u64 * 1_u64)",
+        "18446744073709551615_u64 *(18446744073709551615_u64 * k)",
+    ] {
+        with_semantics(&largest_bound("<=", bound), |outcome| {
+            let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+                panic!("expected an unsupported capability for {bound}, got {outcome:?}");
+            };
+            assert_eq!(
+                unsupported.feature(),
+                crate::UnsupportedSemanticFeature::RangeArithmetic
+            );
+        });
+    }
+}
+
+/// A body that forms `first = (2^64 - 1) * x` and `second = (2^64 - 1) *
+/// first` for `x == 0`, then runs `statement`. Ordinary entailment proves
+/// both products from x's interval [0, 0] [ENT-3.S7], so neither site owes
+/// a deferred goal; the walk holds `first` exactly, but `second`'s
+/// coefficient (2^64 - 1)^2 leaves `i128` and the walk forgets its value.
+fn forgotten_product(statement: &str) -> Vec<u8> {
+    format!(
+        "fn need(xs: &[u64], v: u64) -> result: unit pure contract {{
+  requires forall matched(k in 0_u64..xs^.len): xs^[k] == v;
+}} {{
+  return unit;
+}}
+
+fn probe(xs: &[u64], x: u64) -> result: unit reads(xs) contract {{
+  requires x == 0_u64;
+  requires 1_u64 <= xs^.len;
+  requires forall zero(k in 0_u64..xs^.len): xs^[k] == 0_u64;
+}} {{
+  let first = x * 18446744073709551615_u64;
+  let second = first * 18446744073709551615_u64;
+  let e = xs^[0_u64];
+  {statement}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_walk_that_forgot_a_value_past_i128_leaves_nothing_rejected() {
+    // Each obligation holds, since second is 0. Over `first`, which the walk
+    // holds, each is proved, so the forgotten `second` alone does not stop
+    // the walk. Over `second`, the call's RANGE-3 requirement fails as a
+    // walk issue and the invariant stays an unproved deferred goal; each
+    // would be a rejection, but the walk lost the value to its own
+    // arithmetic, so the verdict is the checker's limit [RANGE-3].
+    for statement in ["need(xs: xs, v: {value});", "invariant agrees: e == {value};"] {
+        let held = statement.replace("{value}", "first");
+        with_semantics(&forgotten_product(&held), |outcome| {
+            assert!(
+                matches!(outcome, SemanticOutcome::Complete(_)),
+                "{held}: {outcome:?}"
+            );
+        });
+        let forgotten = statement.replace("{value}", "second");
+        with_semantics(&forgotten_product(&forgotten), |outcome| {
+            let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+                panic!("{forgotten}: expected the arithmetic limit, got {outcome:?}");
+            };
+            assert_eq!(
+                unsupported.feature(),
+                crate::UnsupportedSemanticFeature::RangeArithmetic
+            );
+        });
+    }
+}
+
 /// A loop whose write to `cells` waits behind a chain of `flags` flags,
 /// each set an iteration after the one before, so each dry walk of the
 /// header reaches one more of them. `header` opens the loop; an ordinary

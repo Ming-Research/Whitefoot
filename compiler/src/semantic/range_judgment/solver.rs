@@ -234,41 +234,41 @@ struct Inequality(Linear);
 impl Inequality {
     /// `left <= right`.
     fn at_most(left: &Linear, right: &Linear) -> Option<Self> {
-        Some(Self(left.minus(right)?).normalized())
+        Self(left.minus(right)?).normalized()
     }
 
     /// `left < right`, which over the integers is `left - right <= -1`.
     fn below(left: &Linear, right: &Linear) -> Option<Self> {
-        Some(Self(left.minus(right)?.plus_constant(1)?).normalized())
+        Self(left.minus(right)?.plus_constant(1)?).normalized()
     }
 
     /// Divides by the coefficients' common divisor and floors the bound,
     /// which is exact over the integers: the tightening [RANGE-3] applies to
-    /// each inequality a literal forms.
-    fn normalized(self) -> Self {
+    /// each inequality a literal forms. A divisor beyond `i128`, which only
+    /// coefficients all `i128::MIN` have, is this checker's arithmetic
+    /// limit: `None`, never an untightened inequality.
+    fn normalized(self) -> Option<Self> {
         let divisor = self.0.terms.iter().fold(0_u128, |gcd, (_, value)| {
             greatest_divisor(gcd, value.unsigned_abs())
         });
-        let Ok(divisor) = i128::try_from(divisor) else {
-            return self;
-        };
+        let divisor = i128::try_from(divisor).ok()?;
         if divisor <= 1 {
-            return self;
+            return Some(self);
         }
-        // `sum <= -constant`: floor the bound `-constant / divisor`.
-        let Some(bound) = self.0.constant.checked_neg() else {
-            return self;
-        };
-        let floored = bound.div_euclid(divisor);
-        Self(Linear {
+        // `sum <= -constant`: floor the bound `-constant / divisor`, which is
+        // the ceiling of `constant / divisor`. Formed without negating, it
+        // stays in `i128` for every constant.
+        let ceiling = self.0.constant.div_euclid(divisor)
+            + i128::from(self.0.constant.rem_euclid(divisor) != 0);
+        Some(Self(Linear {
             terms: self
                 .0
                 .terms
                 .iter()
                 .map(|(atom, value)| (*atom, value / divisor))
                 .collect(),
-            constant: -floored,
-        })
+            constant: ceiling,
+        }))
     }
 
     /// Divides by the common divisor of the coefficients and the constant,
@@ -1868,6 +1868,26 @@ mod tests {
         let inequality = Inequality::at_most(&x.scaled(2).unwrap(), &Linear::constant(1)).unwrap();
         assert_eq!(inequality.0.terms, vec![(0, 1)]);
         assert_eq!(inequality.0.constant, 0);
+    }
+
+    #[test]
+    fn normalization_tightens_a_bound_whose_negation_leaves_i128() {
+        // 2x + i128::MIN <= 0 means x <= 2^126. Negating the constant to
+        // floor the bound would leave i128; its ceiling over 2 does not.
+        let side = Linear {
+            terms: vec![(0, 2)],
+            constant: i128::MIN,
+        };
+        let inequality = Inequality::at_most(&side, &Linear::constant(0)).unwrap();
+        assert_eq!(inequality.0.terms, vec![(0, 1)]);
+        assert_eq!(inequality.0.constant, -(1 << 126));
+        // A common divisor of 2^127 is the arithmetic limit, not an
+        // untightened inequality.
+        let lowest = Linear {
+            terms: vec![(0, i128::MIN)],
+            constant: 1,
+        };
+        assert_eq!(Inequality::at_most(&lowest, &Linear::constant(0)), None);
     }
 
     /// x != 0, x >= 0, x < 1 under `choices` two-way choices of independent

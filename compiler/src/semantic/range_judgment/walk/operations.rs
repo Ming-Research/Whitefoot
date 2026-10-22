@@ -61,6 +61,9 @@ impl Walker<'_> {
                     .as_ref()
                     .map_or(Value::Unknown, |value| Value::Int(value.clone()));
                 if arithmetic_limit {
+                    // The result is forgotten whether or not this site owes
+                    // an ordinary goal; later obligations may need it.
+                    self.arithmetic.get_or_insert_with(|| carrier.clone());
                     self.ordinary_arithmetic_limit(
                         carrier,
                         &ObligationSubject::Source {
