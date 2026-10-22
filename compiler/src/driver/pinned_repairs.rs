@@ -36,6 +36,7 @@ mod qualified_names;
 mod recursive_effects;
 mod redundant_conditions;
 mod remaining_repairs;
+mod reserved_names;
 mod rewritten_effect_indices;
 mod selector_scope;
 mod shared_maps;
