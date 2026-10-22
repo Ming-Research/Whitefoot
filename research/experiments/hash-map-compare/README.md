@@ -64,7 +64,10 @@ representation has no resumable scan. It times `hash_map_scan` calls with
 limit 64 one by one, with a callback that only counts: over 1,000,000,
 4,000,000 and 32,000,000 uniform pairs, each call continuing the last after
 one untimed pass, and over 64, 1,024 and 65,536 pairs sharing one hash, every
-call starting at the call that holds their chain. By their layout (24 bytes a
+call starting at the call that holds their chain. A call hashes the pairs at
+both ends of its range again, so each mode passes the key binding its map was
+built with (a uniform hash, or one hash for every key) and the key
+environment, which neither hash reads. By their layout (24 bytes a
 slot, 8 for its chain link, 8 for a chain head; capacity 2^20, 2^22 and 2^25)
 the three uniform tables take about 42 MB, 168 MB and 1.34 GB, computed, not
 measured. The 4,000,000- and 32,000,000-pair tables are far larger than the

@@ -1,4 +1,4 @@
-# Kernel Specification v0.157
+# Kernel Specification v0.160
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -620,7 +620,7 @@ The places a value can take are a binding, a value parameter, a result, a field,
 [TYPE-10] Window parts are names, not declarations.
 `len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes, the key set and the entries [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and they change only through the operations of [OP-10] and [OP-13], the key-set insertions of [SHARE-1], and a replacement [SET-1] or exchange [OP-11] of the whole value that holds them.
 `next`, `last`, `filled`, and `free` are the four window parts [WIN-2]; they are vocabulary for effect rows and the overlap judgment only, selected by the window type of the place they follow, and they occupy no declaration domain and reserve nothing: a binding, a field of another type, or a label may carry the same spelling.
-`pages` following a `Paged` place is a selector, not a field, and occupies no declaration domain. It is admitted only in the measure `p.pages.len` [MSR-1], as the base of a page subscript whose use [OP-4] judges, and in a page-selection effect path [EFF-1]; a different use is a hard error citing TYPE-10 at the complete `place`.
+`pages` following a `Paged` place is a selector, not a field, and occupies no declaration domain. Its measure use `p.pages.len` is judged by [MSR-1], its use as the base of a page subscript by [OP-4], and its page-selection effect path by [EFF-1]; a different use is a hard error citing TYPE-10 at the complete `place`.
 A read of a window part, a `borrow_expr` over one, and a write of one are each a hard error citing TYPE-10 at the complete `place`, with a repair [DIAG-1].
 
 [TYPE-7] Reading through a reference is explicit.
@@ -700,7 +700,7 @@ A struct-typed const is laid out as one read-only static aggregate in the nomina
 
 [OWN-1] Every value has exactly one owner.
 A type has two capabilities, copy and drop, and its class is read from them: a type with both is *copy*, a type with drop alone is *affine*, and a type with neither is *linear* [PROV-6]; no type has copy without drop.
-Primitives (TYPE-1) have both. Every other type has a capability exactly when every part it owns has it [PROV-6] — its owned fields, its variant payload fields, its `Box` content, and the elements of a storage shape — and its declaration does not remove it [GRAM-2]: `nocopy` removes copy, and `nodrop` removes drop and copy with it. A tag-only enum and a struct of copy fields are therefore copy, `Bool` being the canonical case; the prelude declares `Slots`, `Ring`, `Segments`, `Paged` and `Box` `nocopy` [PRE-1] and the host modules declare every host handle `nocopy` or `nodrop` [PRE-2], so a type owning one of them is not copy, and an `Array` has the capabilities of its element type [TYPE-9].
+Primitives (TYPE-1) have both. Every other type has a capability exactly when every part it owns has it [PROV-6] — its owned fields, its variant payload fields, its `Box` content, the elements of a storage shape, and the state of a `Shared<T>` handle — and its declaration does not remove it [GRAM-2]: `nocopy` removes copy, and `nodrop` removes drop and copy with it. A tag-only enum and a struct of copy fields are therefore copy, `Bool` being the canonical case; the prelude declares `Slots`, `Ring`, `Segments`, `Paged` and `Box` `nocopy` [PRE-1] and the host modules declare every host handle `nocopy` or `nodrop` [PRE-2], so a type owning one of them is not copy, and an `Array` has the capabilities of its element type [TYPE-9].
 A type parameter has the capabilities its bound grants [PROV-6], so a generic nominal's class is decided at each instance from its arguments.
 An affine or linear place rooted in a live own-mode binding is consumed exactly once by an explicit `move p`, including an own-place match scrutinee [OWN-13], a propagation operand [ERR-3], and the `move place` of a destructuring consume [PROV-6].
 A bare `place` expression used as an owned affine or linear value is a hard error, and `move p` on a copy value is a hard error (copy values are used bare — one spelling per meaning, FORM-1), each with a repair [DIAG-1].
@@ -809,10 +809,10 @@ A binding whose value is linear [PROV-6] takes no compiler-derived release on su
 This rule states the liveness premise [SET-1] rechecks after a right-hand side, and the premise [OWN-11] reads at a backedge; it adds no scope-exit action and removes none.
 
 [PROV-6] Linearity is a property of the type, closed under ownership.
-A type is linear, lacking the drop capability [OWN-1], exactly when its declaration carries the `nodrop` modifier [GRAM-2] or it owns, at any depth, a linear type; a struct, an enum, a storage shape or a `Box` [TYPE-9] owning a linear part is linear, and every other type is copy or affine by [OWN-1].
+A type is linear, lacking the drop capability [OWN-1], exactly when its declaration carries the `nodrop` modifier [GRAM-2] or it owns, at any depth, a linear type; a struct, an enum, a storage shape, a `Box` [TYPE-9] or a `Shared<T>` handle [SHARE-1] owning a linear part is linear, and every other type is copy or affine by [OWN-1].
 Linearity is a property of the type and not of a scope.
 This rule refines [OWN-1]'s classification and replaces none of it: a copy value is never linear, and a value this rule does not make linear keeps exactly the disposition [OWN-1] and [STOR-3] give it.
-A type owns its fields, its enum variant payloads, its `Box` content [TYPE-9], and the elements of a storage shape it is [TYPE-9]; a `Frozen<T>` handle owns no `T`, the value its field `inner` names being held by its frozen object [SHARE-1].
+A type owns its fields, its enum variant payloads, its `Box` content [TYPE-9], and the elements of a storage shape it is [TYPE-9]; a `Shared<T>` handle owns its state's type `T`, because the handle whose close is last receives the state [SHARE-1], and that ownership adds no edge to its executable release graph; a `SharedRead<T>` or `Frozen<T>` handle owns no `T`, the value being held by its object [SHARE-1].
 A full `Array` has the same element-type ownership closure as a window [WIN-1]: if T is linear then `Array<T, N>` is linear, including when N is zero; a zero extent changes the executed element count, not this type-level judgment.
 A written type argument is owned through the field, payload, or element position it lands in and never by the type that writes it.
 
@@ -1116,7 +1116,7 @@ Conversion that ROUNDS into a float format is `cvt.nearest` [OP-6], whose suffix
 [OP-4] An element subscript `p[i]` selects one element place of an indexable base: the base place `p`'s final selection must be `Array<T, N>`, `Array<T>`, `Slots<T, N>`, `Slots<T>`, `Ring<T, N>`, `Ring<T>`, `Paged<T>`, an `Entries<V>`, whose element type T is `Option<V>` [SHARE-2], a `ConcurrentHashMap<V>`, whose element type T is `Option<V>` [SHARE-2], or a run of T elements selected below or named by a range reference `&[T]` or `&Run<T>` [TYPE-9, REF-4], a runtime-capacity form, an `Entries`, a `ConcurrentHashMap` and a range reference alike being reached through `^` [TYPE-7], and the subscripted place's selected type is exactly that element type T — derived from the base place's already-fixed type [TYPE-5] — written where the binding carries an annotation, derived at a body `let` — by the same declared-type selection that types a field suffix, never from expected type or cross-statement inference; an element subscript whose base's final selection is not one of those indexable types or runs is a hard error citing OP-4 at that subscript's `psuffix` node.
 A `const` item whose type is `Array<T, N>` is indexable on the same terms [CONST-2].
 A segment subscript `s[i]` of a `Segments<T>` place and a page subscript `p.pages[k]` of a `Paged<T>` place select runs of T elements [REF-4], with bases `s` and `p.pages` respectively; the following bounds and offset judgments apply to each run selector as to an element subscript.
-A run-selecting place is admitted exactly as the complete place of its [REF-4] borrow, as the base of its `len` measure read [MSR-1], or as the base of a further element subscript, whose element place is an ordinary element place [OP-4]; every other use of the run-selecting place is a hard error citing [OP-4] at the run selector's `psuffix`.
+A run-selecting place is admitted exactly as the complete place of its [REF-4] borrow, as the base of its `len` measure [MSR-1], or as the base of a further element subscript, whose element place is an ordinary element place [OP-4]; every other use of the run-selecting place is a hard error citing [OP-4] at the run selector's `psuffix`.
 A run-selecting place denotes exactly the [REF-1] place its borrow resolves to, with the same effect attribution [EFF-2], overlap judgment [OWN-7] and parallel permission [PAR-1, PAR-2].
 A `ConcurrentHashMap<V>` subscript's offset atom has type `&[u8]` or is a place of type `KeySet`, admitted as the complete place of a `borrow_expr` alone; [SHARE-2] defines both selections. A `ConcurrentHashMap` subscript carries no obligation and reads or writes with no runtime check in every build mode, since a map holds an entry under every key [SHARE-1]. An offset of another type, and a `KeySet` offset outside a `borrow_expr`, are each a hard error citing OP-4 at the offset `atom`, with a repair [DIAG-1].
 A subscript of every base but a `ConcurrentHashMap` carries the bounds obligation `i < p.len` [ENT-6], and `i` is a logical offset whose storage slot [WIN-1] fixes, so the obligation is against `p.len` for every indexable base and never against `p.cap`.
@@ -1654,13 +1654,29 @@ One row states each access once. An entry is covered by another entry of the row
 [EFF-2] A concrete function declaration exhibits the union of its resolved body accesses and calls.
 The body contribution is syntactic over the complete function body. Erased definitions and contracts [FN-8, FN-9], proofs, and the compiler-owned captures, comparison and update of a counted loop contribute nothing. Contract-read separation at a call is governed by [EFF-5].
 Every source occurrence contributes even in an FN-8 uninhabited instance. No path condition, constant evaluation, proof, optimizer result, or backend reachability narrows the conservative structural normal-control graph [FN-1].
-An allocation or a release contributes no path [STOR-8].
+
+Body operations contribute the following access categories; target, operand, offset and endpoint evaluations contribute through their own operations, and the following paragraphs attribute and project the resulting paths.
+
+| body operation | exhibited access categories |
+|---|---|
+| Reading a value from a place [TYPE-7, OP-15] | Read of the selected storage |
+| Dispatching a `match` on an enum place [OWN-13] | Read of the scrutinee storage, which holds the enum tag |
+| Beginning an atomic statement [SHARE-2] | Read of each target's handle place and of the storage its index atom names |
+| Committing a value assignment to a target live at statement entry [SET-1] | Write of the target storage |
+| Reinitializing a complete binding dead at statement entry [SET-1] | No target-storage access contribution |
+| Read-modify-write `set p = p +wrap x;` [SET-1, OP-2] | Read of p through the right-hand side and write of p at commit |
+| Atomic in-place update [OP-12] | The effect [OP-12] states |
+| Handing over a value by `move`, `give`, `return`, or structural repacking [GIVE-1, FN-1, OWN-1] | Contributions of value evaluation; the transfer adds no read or write |
+| Forming a reference to a path or range [REF-1, REF-4] | Contributions of offset and endpoint evaluation; naming the referent adds no read or write of its contents |
+| Forming a page reference `&p.pages[k]` [REF-4] | The read specified by [REF-4] |
+| Calling a callable [EFF-1, EFF-5] | Read for each projected `reads` entry and write for each projected `writes` entry |
+| Allocation or release [STOR-8] | No access contribution |
 
 At a function-kind parameter or named member call [FN-5], the instantiated formal's written row is the authoritative callable boundary. Its paths undergo the same resolved-place projection and ENT-5 support kill as ordinary callee paths; the selected actual's narrower covered row never substitutes for that boundary. Generic spelling checking retains formal-rooted contributions under the written bounds, including an owned parameter that later has a copy instance. Concrete rechecking verifies the fixed containing declaration's row under the same formal interface and independently checks each actual against FN-4 and its own row. No adapter, dummy read, widened runtime access, or law supplies an exhibited path.
 
 Every read or write is attributed after ordinary place resolution [REF-1]. A reference parameter's effect path names the path the reference names rather than the reference variable. An access rooted in a formal contributes the most precise static path EFF-1 admits for that resolved place; a dynamic element or range maps to its nearest statically nameable enclosing path.
 An unknown descendant cover maps to its nearest statically nameable containing prefix by the same rule; no wildcard is written in an effect row. Substitution retains the actual's captured target and the declared finite suffix for [OWN-7], rather than treating the actual as equal to its anchor.
-Moving, returning, or structurally repacking an owner contributes no read or write merely by transferring it. After transfer into a local binding or aggregate field, subsequent accesses are attributed to that destination's resolved storage. A whole-place replacement changes the value at that place without changing the place's effect root. No effect root follows an owned value through moves, results, or replacements.
+After transfer into a local binding or aggregate field, subsequent accesses are attributed to that destination's resolved storage. A whole-place replacement changes the value at that place without changing the place's effect root. No effect root follows an owned value through moves, results, or replacements.
 A const root and `immutable-const` contribute no read effect. An access rooted only in local storage contributes no enclosing formal-rooted effect, including through a local reference; the checked access and its ordinary footprint remain.
 A write is admitted only where ordinary ownership already admits it [SET-1]. An effect path grants no permission.
 
@@ -1668,8 +1684,14 @@ At a call, each declared effect path selects its root formal's actual argument a
 The actuals' call data are captured after argument evaluation and before the call. Each projected write applies [ENT-5]'s support-survival classification, then CALL-6 instantiates entry terms from that call datum and exit terms from the actual's resolved return place. This substitution does not inspect the callee body and retains no owned-result or exclusive-referent ancestry.
 Framing an action out of an enclosing row removes no checked action or ordinary effect footprint. Optimization is governed by EFF-3 and the source's value, ownership and control semantics.
 
-A SET-1 commit contributes a write. SET-1's reinitialization of a complete binding already dead at statement entry keeps its no-previous-owner exception. Target and right-hand-side evaluation contribute ordinarily.
-A declared entry is exhibited when the body accesses storage at or below its path. Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
+A declared entry is exhibited by an access at or below its path whose category is admitted by this table:
+
+| declared entry | exhibited access categories |
+|---|---|
+| `writes(path)` | Write |
+| `reads(path)` | Read or write |
+
+Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
 A PRE-1 or PRE-2 function signature is the ordinary declared boundary; its supplied definition must satisfy the same boundary [SCOPE-3, PRE-1, PRE-2]. No source body is fabricated for it and no alternate effect rule applies to its calls.
 
 [EFF-3] A call whose row is `pure`, whose boundary is decision-cell-free [SHARE-3], which is not a waiting call [WAIT-1], and which allocates nothing licenses deduplication and reordering with equal arguments.
@@ -2378,7 +2400,7 @@ A program that needs two host operations ordered passes both through one owner w
 Each context executes its own constructs one at a time, in the order they define, and a call that is not spawned executes in its caller's context in that order.
 A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
 A context waits at a waiting host call until the host has produced its outcome, at an atomic statement until the statement takes effect [SHARE-3], and at a join until the joined context has completed [WAIT-3].
-Which of several outstanding operations completes first, how the host effects of different contexts interleave, the order of shared effects [SHARE-3], the positions of byte sequences, the extents of map scans, the bytes a release of a map's reserve reports and the bytes `key_set_bytes` reports [SHARE-1], and the invocation's runtime driver count [PRE-2] are inputs of the execution: two executions that receive the same inputs in the same order execute every context identically.
+Which of several outstanding operations completes first, how the host effects of different contexts interleave, the order of shared effects [SHARE-3], the order in which the handles of one object end [SHARE-1], the positions of byte sequences, the extents of map scans, the bytes a release of a map's reserve reports and the bytes `key_set_bytes` reports [SHARE-1], and the invocation's runtime driver count and process identifier [PRE-2] are inputs of the execution: two executions that receive the same inputs in the same order execute every context identically.
 The snapshot creation result, child termination, collection outcomes and unconstrained traversal orders of [SNAP-2, SNAP-3] are also inputs of the execution. A snapshot child executes one supplied encoder under [SNAP-3] and creates no Whitefoot context or source continuation.
 Where a context executes, and whether two contexts execute at the same time, are not observable.
 While every context, from every point of its execution, reaches in finitely many steps its completion or a wait, each context that does not wait, or waits for a host outcome that has been produced or for a context that has completed, eventually takes its next step, and each atomic statement that has begun, and that has no guard or whose guard is true in its targets' states at every point from some point on, eventually takes effect. The waiting cancellation-state update [PRE-2] has the same progress guarantee as an unguarded atomic statement; a firing that makes a guard persistently true is covered by this guarantee for guarded statements.
@@ -2400,7 +2422,8 @@ The starting context joins the started one, waiting there until it has completed
 A value of either prelude type `Shared<T>` or `SharedRead<T>` [PRE-1] is a handle to a shared object, which holds one value of type `T`, its state.
 `shared_new` moves its argument into a new shared object and returns a handle to it, `shared_map_new` returns a handle to a new shared object whose state is a concurrent hash map whose every entry is `None`, sized for its argument's number of `Some` entries, and `shared_share` returns a further handle to the object its argument names.
 `shared_read` returns a `SharedRead<T>` retaining the same object as its `Shared<T>` argument, and `shared_read_share` returns a further `SharedRead<T>` retaining the object its argument names. There is no conversion from a `SharedRead<T>` handle to a `Shared<T>` handle.
-Releasing a handle [OWN-1, STOR-3] releases that handle. An object's state is released when its last handle has been released and no atomic statement on it is executing.
+`shared_close` consumes its `Shared<T>` argument [OWN-1] and ends that handle. Releasing a handle [OWN-1, STOR-3] ends that handle. The handles of one object end in one total order [WAIT-2]. When the last to end is a close, that close returns `Some` holding the object's state, which then belongs to its caller, and every other close returns `None`. When the last to end is a release, the state is released once no atomic statement on the object is executing.
+A `Shared<T>` whose `T` is linear is linear [PROV-6], so each of its handles ends in a close. A type argument for `T` that is linear has no part, at any depth of field, payload field, element, `Box` content or the state of a `Shared` handle, that is that `Shared<T>`, since a handle its own object held would keep the object's last close from being reached; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part a depth-first walk of the type's parts in declaration order reaches, the walk visiting each type once [DIAG-1]. A type argument is judged at a generic function's symbolic instance, under the classes its type parameters have there [PROV-6], and again at each concrete instance [FN-2].
 The state of a shared object is storage of no binding and belongs to no context [WAIT-2]. Paths into it start at it [REF-1], and the targets of an atomic statement [SHARE-2] are the only forms that form one.
 A value of the prelude type `Frozen<T>` [PRE-1] is a handle to a frozen object, which holds one value of type `T`, read as the handle's readonly field `inner`. `frozen_new` moves its argument into a new frozen object and returns a handle to it, and `frozen_share` returns a further handle to the object its argument names; no operation writes a frozen object's value, so it is the value `frozen_new` moved in for as long as the object lives.
 A type argument for `T` has no part, at any depth of field, payload field, element or `Box` content, that is a `Shared<U>`, a `SharedRead<U>`, a `DecisionCell` [PRE-1] or a host handle [PRE-2], so nothing a frozen object holds changes; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part a depth-first walk of the type's parts in declaration order reaches, the walk visiting each type once [DIAG-1].
@@ -2457,7 +2480,7 @@ The statement's footprint is its handle places and index atoms, read, together w
 
 [SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.
 Its guard and block execute with exclusive access to the states its targets name, and every read and write they make of those states takes effect at that point. When the statement has a guard, the guard is true in those states at that point.
-The shared effects are atomic statements, cancellation-state updates [PRE-2], and the `decision_cell_read`, `claim_written` and `claim_killed` calls [PRE-1]. They take effect in one total order [WAIT-2], respecting the source order of nonoverlapping constructs in each context and the order of effects whose calls have returned before another begins.
+The shared effects are atomic statements, cancellation-state updates [PRE-2], and the `shared_close`, `decision_cell_read`, `claim_written` and `claim_killed` calls [PRE-1]. They take effect in one total order [WAIT-2], respecting the source order of nonoverlapping constructs in each context and the order of effects whose calls have returned before another begins.
 Each decision-cell read or claim takes effect at its own point between its call and return, separate from the enclosing atomic statement's point. Its returned value is the cell's state immediately after that point. The enclosing statement's state accesses retain their single-point meaning above; the verdict publishes no intermediate contents of its targets.
 A decision-cell-free callable boundary has no `DecisionCell` in any parameter or result type, recursively through fields, payload fields, elements, `Box` content and shared or frozen content, and each callable boundary in its function-kind parameters and interface members is decision-cell-free. This judgment uses the concrete substitutions of [FN-2, FN-5] and visits each type and callable boundary once. It inspects declarations and no implementation body.
 A statement whose guard is false in its targets' states at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
@@ -2504,7 +2527,7 @@ opaque nocopy struct Box<T> {
   inner: T;
 }
 
-opaque nocopy struct Shared<T: drop> {
+opaque nocopy struct Shared<T> {
 }
 
 opaque nocopy struct SharedRead<T: drop> {
@@ -2683,9 +2706,9 @@ fn take_front<W, T>(window: &W) -> value: T writes(window) contract {
   ensures window^.head <= window^.cap;
 };
 fn swap<T>(first: &T, second: &T) -> result: unit writes(first), writes(second);
-fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
+fn shared_new<T>(value: T) -> result: Shared<T> pure;
 fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>> pure;
-fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
+fn shared_share<T>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 fn shared_read<T: drop>(shared: &Shared<T>) -> result: SharedRead<T> reads(shared);
 fn shared_read_share<T: drop>(shared: &SharedRead<T>) -> result: SharedRead<T> reads(shared);
 fn frozen_new<T: drop>(value: T) -> result: Frozen<T> pure;
@@ -2723,12 +2746,13 @@ fn decision_cell_share(cell: &DecisionCell) -> result: DecisionCell reads(cell);
 fn decision_cell_read(cell: &DecisionCell) -> result: DecisionState reads(cell);
 fn claim_written(cell: &DecisionCell) -> result: DecisionState reads(cell);
 fn claim_killed(cell: &DecisionCell) -> result: DecisionState reads(cell);
+fn shared_close<T>(shared: Shared<T>) -> result: Option<T> pure waits;
 ```
 
 The definition of `release` returns `unit` and releases its parameter under the ordinary leaving-edge rules [STOR-3, PROV-6].
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_bytes`, `key_set_read_key`, `free_empty`, `release`, `decision_cell_new`, `decision_cell_share`, `decision_cell_read`, `claim_written` and `claim_killed`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_bytes`, `key_set_read_key`, `free_empty`, `release`, `decision_cell_new`, `decision_cell_share`, `decision_cell_read`, `claim_written`, `claim_killed` and `shared_close`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the seven standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net`, `std::process` and `std::snapshot`, registered by these rows of the standard library's graph:
 
@@ -2748,6 +2772,15 @@ A host handle is an opaque struct [TYPE-2] a host module declares with no fields
 An opaque struct a host module declares with fields, `Instant`, `CancelState`, `CancelSource` or `CancelWatch`, has the representation and capabilities its fields give it [PROV-6], and its fields have their declared visibility [MOD-6]. Its values originate in definitions the build supplies [TYPE-2].
 A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for an outstanding host outcome. The nonwaiting `capture_export` performs the one synchronous creation attempt of [SNAP-3], returning its immediate outcome while the atomic statement holds its states; it neither suspends its context nor waits for child output or termination.
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(deadline: d, cancel: c)` has returned `Ok`, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
+`local_offset_seconds(clock: c, at: t)` reads the host's local time rule for the second s, the greatest integer not above t divided by 10^9, which is the calendar instant s seconds after 1970-01-01T00:00:00Z. Its offset d is the number of seconds by which the local calendar date and time that the following table gives for s, read as a UTC calendar date and time, follows s, negative when it precedes s. It returns `Some` containing d when the table's conversion gives a local calendar time for s and d satisfies the postconditions of `local_offset_seconds`'s signature, and `None` otherwise. Each reading is an input of the execution [WAIT-2], as a clock reading is.
+
+| Host | Local calendar date and time for s |
+|---|---|
+| POSIX | The broken-down time the host C library's `localtime` gives for s, whose rule the `TZ` environment variable selects when set and the host's system zone selects otherwise, daylight saving time included |
+| Windows | The broken-down time the C runtime's `_localtime64_s` gives for s after `_tzset`, whose rule `TZ` in the C runtime's own format selects when set and the system zone's current rule selects otherwise |
+| Another host whose C library has `localtime` | The broken-down time that `localtime` gives for s |
+| Another host whose C library has no `localtime` | s itself, so the result is `Some` containing zero |
+
 `CancelSource` and `CancelWatch` are opaque structs whose private fields hold, respectively, a `Shared<CancelState>` and a `SharedRead<CancelState>` of one shared cancellation state. Their capabilities and field-wise release follow [PROV-6]. `cancel_source` creates that state with `fired` false; `cancel_share` returns another source of the same state and `cancel_watch` returns a watch of it. `cancel_state` returns a `SharedRead<CancelState>` retaining that same state, with its readable `fired: Bool` field. The waiting `cancel_fire` performs the false-to-true transition as an atomic state update in [SHARE-3]'s order, waking guards that observe it and supplying the host-wait cancellation below; repeated firings leave it true. A statement observing true is ordered after that transition, and its state observations have [SHARE-3]'s single-point meaning, including shared-state updates completed before the firing. Firing does not mean cancelled host calls have returned, contexts have joined or cleanup has completed, and supplies no independent order on unrelated host effects, whose order remains [HOST-1]'s. Dropping a source or watch releases only its shared handle and neither fires nor clears the state; the explicit `close_cancel_source` and `close_cancel_watch` consume and drop their argument; sources, watches and shared views retain it under [SHARE-1]. `cancel_never` returns a watch retaining a private shared state for which no source is made available, so its state and every view of it remain false. These handles consume no host handle credit.
 A host function with a parameter `deadline: Option<Instant>` bounds its wait by it and takes `cancel: &CancelWatch` immediately after it. With `None` no clock deadline bounds the wait. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`. When the watch fires before the host has produced the outcome, the outcome is `Cancelled`; a watch already fired when the call begins ends the wait at once. Both outcomes are carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request. The call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced only by reaching the supplied deadline, and `Cancelled` only by the supplied watch firing. An outcome the host has already produced wins over both, so neither discards a completed transfer. A deadline and a firing that race may produce either outcome; that selection and a race with the host's own outcome are inputs of the execution [WAIT-2]. `sleep_until` takes a watch after its required deadline and returns `Ok(value: unit)` for reaching the deadline or `Err(error: unit)` for cancellation, under the same race rule. File-system functions take neither bound.
 `MemoryMeter` observes this execution's process memory. The heap the program holds consists of the requested bytes of every live allocation made for emitted program storage, including direct page and directory allocations, plus the granted sizes of live runtime-pool blocks and the requested bytes of the host descriptor registry. Allocator usable-size rounding, unused pool reserves, released blocks retained by an allocator, executable mappings and stacks do not contribute to that holding. When nothing allocates or releases while `heap_in_use` takes its reading, neither another context nor a statement of the reading's own context that overlaps it [PAR-1], the reading equals that holding. Otherwise its nonnegative reading may differ from the holding at every single instant during the reading by at most the bytes those concurrent allocations and releases moved. `resident_bytes` returns `Some` containing the operating system's resident set size of the process, which includes resident pages independently of whether their allocations remain live, or `None` when the host cannot report it. Failure to obtain a resident-set reading does not terminate the execution. Each memory reading is an input of the execution [WAIT-2], as a clock reading is; reads write their meter, and meters related by `meter_share` observe the same process with ordering governed by [HOST-1].
@@ -2756,8 +2789,9 @@ The self-changing host handles are the host handles of this table. Through each,
 | Self-changing host handle | Value its host functions observe |
 |---|---|
 | `std::time::Clock` | The monotonic clock's reading, through `now` |
-| `std::time::WallClock` | The calendar time, through `unix_nanoseconds` |
+| `std::time::WallClock` | The calendar time and the local time rule, through `unix_nanoseconds` and `local_offset_seconds` |
 | `std::process::MemoryMeter` | The process memory, through `heap_in_use`, `resident_bytes` and `release_map_reserve` |
+| `std::io::HandleFactory` | The open-files limit, which another process may change, through `open_files_limit` |
 
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
@@ -2779,7 +2813,15 @@ A host-path open's path is a sequence of native code units: a byte on a POSIX ho
 The normalized form of a path is the one the host's `GetFullPathNameW` produces from it: each `/` becomes `\`, each `.` component is removed, each `..` component removes the component before it but never the drive or share root, and the last component loses its trailing periods and spaces; a relative or root-relative path is normalized after the path the host reports for base when the open looks it up. A relative path, or a drive-relative path on base's drive, whose normalized form begins with the path the host reports for base, compared code unit for code unit, and then ends or continues after a separator is looked up from base's directory object by the components after base, so a rename of base or of a directory above it does not change what it opens; every other normalized path, one that spells base in another letter case included, is looked up by its full spelling, and one the host normalizes to a device path returns `InvalidPath` carrying `ERROR_INVALID_NAME` and origin 1. The open creates no entry, changes no process state such as the working directory, and makes one lookup of the path; a host refusal of the lookup or the open is `Err` carrying the host's code and origin 1 — on a POSIX host `ENOENT` as `NotFound`, `ENOTDIR` as `NotDirectory`, and `EACCES` and `EPERM` as `PermissionDenied`, and on a Windows host `ERROR_FILE_NOT_FOUND` and `ERROR_PATH_NOT_FOUND` as `NotFound`, `ERROR_DIRECTORY` as `NotDirectory`, and `ERROR_ACCESS_DENIED` as `PermissionDenied`.
 `open_host_read` and `open_host_read_bytes` open a regular file; for a directory they open they return `IsDirectory`, and for another kind of object they open `Unsupported`, each a runtime-synthesized condition that closes what was opened. The other four open an existing directory and never create one; for an object that is not a directory they return `NotDirectory`. `open_host_directory` and `open_host_directory_bytes` return the read and write halves of the one directory the lookup opened, which close separately, and spend two handle credits; when either half cannot be obtained, the open returns `Err`, holds neither half and spends no credit. A directory a host-path open returns is an ordinary `DirectoryRead` or `Directory`, below which the name rule above holds.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
-`TcpConnection`, `AcceptedConnection`, `Directory` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
+The budget the invocation's factory draws on starts with c(n) credits on a POSIX host, where n is the soft open-files limit when the invocation starts and c(n) = max(0, min(n, 2^20) - 64), and with 4096 credits on every other host.
+The open-files limit is the host's per-process limit on the files a process may hold open. `open_files_limit` and `raise_open_files_limit` read and change it by the following table, where a limit the host reports as unlimited reads as 2^64 - 1, a refusal by the host is `Err` carrying the host's code and origin 11 and changes nothing, and each reading is an input of the execution [WAIT-2].
+
+| Host | `open_files_limit(factory: f)` | `raise_open_files_limit(factory: f, wanted: w)` |
+|---|---|---|
+| POSIX | `Ok` containing the soft and hard `RLIMIT_NOFILE` limits `getrlimit` reports | `Ok` containing the limits, unchanged, when w is at most the soft limit; otherwise the outcome of `setrlimit` setting the soft limit to w and keeping the hard limit, which the host refuses when w exceeds the hard limit, and whose success returns `Ok` containing the limits `getrlimit` reports after it and adds max(0, c(m) - c(n)) credits to the budget f draws on, n being the soft limit before the call and m the soft limit after it |
+| Every other host, Windows included | `Unsupported`, a runtime-synthesized condition | `Unsupported`, a runtime-synthesized condition, changing nothing |
+
+`TcpConnection`, `AcceptedConnection`, `Directory`, `Inputs` and `OpenFilesLimit` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 A `SocketAddress` is one IPv4 address or one IPv6 address together with a port. `socket_address_v4` gives the IPv4 address whose four octets in written order are `a` to `d`, `socket_address_v6` gives the IPv6 address whose eight 16-bit groups in written order are `a` to `h`, and each gives `port` as its port. The peer `tcp_accept` returns and the address `local_address` returns are the host's report of one endpoint in that same form: its family is the family the host reports, so an IPv4 peer that the host reports through an IPv6 listener as an IPv4-mapped address is an IPv6 address, and an IPv6 report keeps its address and port without its scope identifier or flow label. `socket_address_ip` returns `Ipv4` carrying the four octets of an IPv4 address, or `Ipv6` carrying the eight groups of an IPv6 address, in written order, and `socket_address_port` returns the port. For all arguments, `socket_address_ip` of `socket_address_v4(a: a, b: b, c: c, d: d, port: p)` returns `Ipv4(a: a, b: b, c: c, d: d)`, `socket_address_ip` of `socket_address_v6` returns `Ipv6` with that call's eight groups in the same order, and `socket_address_port` of either returns `p`. Reading an address reads only that value.
 `local_address` returns the host's report of the local endpoint of the connection whose receiving half `receive` is: for a connection `tcp_accept` returned, the address and port its peer reached; for a connection `tcp_connect` opened, the address and port the host gave its own end. A receiving half denotes its connection until `close_receive` consumes it, whether or not the sending half has been closed. The query transfers no byte and leaves the connection's state unchanged. A host refusal of the query returns `Err` carrying the host's code and origin 10.
 When the invocation [PROG-3] supplies `Inputs`, its `drivers` field holds the number of drivers the runtime uses to execute contexts [WAIT-2], after applying the runtime's configuration and host rules. That count is fixed before the entry runs, remains fixed for the whole execution, and is at least one. Driver threads may start on first need; their later start must establish that same number of drivers. A runtime unable to establish it stops with a report under [SCOPE-3]. These guarantees describe the invocation-supplied value; source construction and assignment retain the ordinary field rules [TYPE-2, SET-1].
@@ -2790,6 +2832,8 @@ On an embedded, single-threaded or single-driver target the count is one. On a t
 | Unset, empty, or an integer equal to zero | The available CPU count. |
 | A positive integer at most the runtime's driver upper bound | That integer. |
 | A negative integer, an integer over the runtime's driver upper bound, or text the runtime's integer parser does not accept | Stop before entry with a configuration diagnostic and no program outcome [SCOPE-3]. |
+
+When the invocation supplies `Inputs`, its `process_id` field holds `Some` containing the identifier the host gives the operating-system process executing the program, which is the value of `getpid` on POSIX and of `GetCurrentProcessId` on Windows, on a host that gives that process an identifier, and `None` on a host that gives it none. That value is fixed before the entry runs and remains fixed for the whole execution; this describes the invocation-supplied value, and source construction and assignment retain the ordinary field rules [TYPE-2, SET-1].
 
 A runtime-produced `IoError` with a nonzero `code` carries the failed condition's host error code: an `errno` value on POSIX hosts, and a Windows system error code, including Winsock codes, on Windows. Windows native `NTSTATUS` failures are converted to that system error-code namespace; equivalent socket conditions may be normalized to a common system code before classification. A runtime-synthesized condition in a variant with a `code` field carries zero. In a runtime-produced variant with an `origin` field, that field identifies the failed operation class, with the following meanings; it is independent of the error variant and is not an additional code to format.
 
@@ -2806,6 +2850,7 @@ A runtime-produced `IoError` with a nonzero `code` carries the failed condition'
 | 8 | Close |
 | 9 | Synchronization, truncation or namespace operation |
 | 10 | Socket address query |
+| 11 | Open-files limit query or change |
 
 `error_copy_description` selects a description by the following table. Its selection ignores `origin`. The host text is host-version dependent.
 
@@ -2916,6 +2961,11 @@ public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool p
 public fn sleep_until(deadline: Instant, cancel: &CancelWatch) -> result: Result<unit, unit> reads(cancel) waits doc "Returns Ok with unit when the monotonic clock reaches deadline, or Err with unit when cancel ends the wait.";
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
+
+public fn local_offset_seconds(clock: &WallClock, at: i64) -> result: Option<i64> reads(clock) contract {
+  ensures when Some(value: offset): -86400_i64 < offset;
+  ensures when Some(value: offset): offset < 86400_i64;
+} doc "Returns the local time offset of the second containing at, as specified by PRE-2.";
 
 public opaque struct CancelSource {
   state: Shared<CancelState>;
@@ -3356,6 +3406,7 @@ public struct Inputs {
   public stops: StopSignals;
   public memory_meter: MemoryMeter;
   public host_paths: Option<HostPaths>;
+  public process_id: Option<u64>;
 }
 
 public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
@@ -3373,6 +3424,15 @@ public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Retu
 public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";
 
 public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
+
+public struct OpenFilesLimit {
+  public soft: u64;
+  public hard: u64;
+}
+
+public fn open_files_limit(factory: &HandleFactory) -> result: Result<OpenFilesLimit, IoError> reads(factory) doc "Returns the soft and hard limits on the files the process may hold open, as specified by PRE-2.";
+
+public fn raise_open_files_limit(factory: &HandleFactory, wanted: u64) -> result: Result<OpenFilesLimit, IoError> writes(factory) doc "Raises the soft limit on the files the process may hold open to wanted, as specified by PRE-2.";
 ```
 
 `std::snapshot`, the record `snapshot/module.wfm`:
@@ -3661,6 +3721,8 @@ The subscript admission is what makes `table[i].len` a term, so a storage whose 
 Its subscripts and their offsets are those [ENT-2] clause (b) admits.
 
 For an admitted measure place P of type `Paged<T>`, `P.pages.len` is additionally a u64 measure term with value `ceil(P.len / B)`, the number of pages holding initialized elements, using [OP-13]'s B and mathematical arithmetic. It is zero for an empty window and counts no page that holds only free slots. Its support is [MSR-2], and it adds no term relating an element index to a page index.
+
+A `borrow_expr` whose complete `place` selects a measure with no field declaration — the `len` of `&[T]` or `&Run<T>`, the `len` of a run-selecting place [OP-4], or a `Paged` page count — is a hard error citing MSR-1 at that complete `place`, with a repair [DIAG-1], and the measure is read by value [OP-15].
 
 The table classifies the prelude's readonly measure fields and reference lengths by what each denotes and whether it is *exact* or *bounded*; the page count is the derived measure defined above.
 The rule is that the table exists, gives every measured type a row, and gives every cell exactly one of *exact*, *bounded*, or *absent*.

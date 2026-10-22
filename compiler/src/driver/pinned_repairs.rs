@@ -13,17 +13,21 @@ use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod captured_indices;
 mod cell_consumption;
 mod clause_requirements;
 mod collisions_and_killed_facts;
 mod common_syntax;
 mod content_moves;
+mod derived_measures;
+mod effect_row_categories;
 mod enum_routed_ensures;
 mod entry_formers;
 mod floats;
 mod harness;
 mod interface_applications;
 mod lexical_syntax;
+mod lost_header_relations;
 mod postcondition_places;
 mod prelude_opaque;
 mod proof_place_spellings;
@@ -32,9 +36,11 @@ mod qualified_names;
 mod recursive_effects;
 mod redundant_conditions;
 mod remaining_repairs;
+mod rewritten_effect_indices;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
+mod unavailable_summaries;
 mod writer_operations;
 mod writer_ownership;
 mod writer_references;
@@ -2533,7 +2539,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2576,7 +2582,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2595,7 +2601,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2613,7 +2619,7 @@ alias Inputs = std::process::Inputs;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   let DirectoryRead() = move directory;
@@ -2631,7 +2637,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   close_directory(factory: &factory, directory: move directory);

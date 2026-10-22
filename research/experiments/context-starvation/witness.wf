@@ -98,7 +98,7 @@ fn timer(deadline: std::time::Instant, factory: &std::io::HandleFactory, output:
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: stops, memory_meter: meter, host_paths: unused_host_paths) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: stops, memory_meter: meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: writable) = move directory;
   let closed_write = std::fs::close_directory_write(factory: &factory, directory: move writable);
   let closed_read = std::fs::close_directory(factory: &factory, directory: move cwd);

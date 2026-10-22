@@ -213,21 +213,21 @@ const TARGET_COMPILE_ARGUMENTS: &[&str] = &[];
 /// The linker a link-time-optimized link runs on this host, and the
 /// argument prefix naming the directory where a ThinLTO link of fragments
 /// keeps the optimized objects it produces: the host's own linker on macOS,
-/// whose LTO support ships with its toolchain, and LLD elsewhere. On Linux,
-/// LLD's default layout gives the code segment a virtual address that differs
-/// from its file offset, which perf 6.17's DWARF unwinder resolves wrongly;
-/// `-z separate-code` page-aligns it so the unwinder finds the right frames.
+/// whose LTO support ships with its toolchain, and LLD elsewhere. On Windows
+/// that is LLD's MinGW driver, which takes the GNU driver's spelling of the
+/// cache option. On Linux, LLD's default layout gives the code segment a
+/// virtual address that differs from its file offset, which perf 6.17's DWARF
+/// unwinder resolves wrongly; `-z separate-code` page-aligns it so the
+/// unwinder finds the right frames.
 #[cfg(target_os = "macos")]
 const LTO_LINKER: &[&str] = &[];
 #[cfg(target_os = "macos")]
 const THIN_LINK_CACHE: &str = "-Wl,-cache_path_lto,";
 #[cfg(target_os = "windows")]
 const LTO_LINKER: &[&str] = &["-fuse-ld=lld"];
-#[cfg(target_os = "windows")]
-const THIN_LINK_CACHE: &str = "-Wl,/lldltocache:";
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 const LTO_LINKER: &[&str] = &["-fuse-ld=lld", "-Wl,-z,separate-code"];
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "macos"))]
 const THIN_LINK_CACHE: &str = "-Wl,--thinlto-cache-dir=";
 
 /// The libraries this host's link needs. The ordinary Windows library uses
