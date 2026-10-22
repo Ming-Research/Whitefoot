@@ -1527,6 +1527,7 @@ fn run_settled(
 }
 
 fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> (AnalysisRun, HashMap<CheckedLoopId, Debts>) {
+    let function = analyzer.input.function;
     analyzer.input.collect_bindings();
     analyzer.input.collect_postcondition_entry_images();
     let mut state = ProofFlowState {
