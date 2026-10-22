@@ -161,7 +161,7 @@ pub(super) fn attach(
             Some(GRAPH_FIX)
         } else if previous(1, F::Give) && (at(boundary, F::If) || at(boundary, F::Match)) {
             Some(GIVE_CONDITIONAL_FIX)
-        } else if in_expression && (at(boundary, F::If) || at(boundary, F::Match)) {
+        } else if expects(T::Literal) && (at(boundary, F::If) || at(boundary, F::Match)) {
             Some(CONDITIONAL_OPERAND_FIX)
         } else if expects(T::Fixed(F::Pure))
             && (at(boundary, F::LeftBrace) || at(boundary, F::Waits))

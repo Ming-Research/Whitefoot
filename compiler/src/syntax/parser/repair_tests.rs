@@ -771,6 +771,49 @@ fn a_conditional_in_an_operand_position_offers_the_let_form() {
     assert!(matches!(outcome(source, false), ParseOutcome::Complete(_)));
 }
 
+/// A statement that ends without its `;` and is followed by an `if` or
+/// `match` statement is refused at that word, but it is a missing `;` the
+/// writer must supply, not a conditional used as an operand: only a word
+/// where an operand can start takes the `let` repair.
+#[test]
+fn a_missing_semicolon_before_a_conditional_statement_keeps_its_own_view() {
+    for (source, word) in [
+        (
+            b"fn f(c: Bool) -> r: u32 pure { let x = 1_u32 if c { return 2_u32; } return x; }".as_slice(),
+            "if",
+        ),
+        (
+            b"fn f(c: Bool) -> r: u32 pure { let x = 0_u32; set x = 1_u32 if c { return 2_u32; } return x; }".as_slice(),
+            "if",
+        ),
+        (
+            b"fn f(c: Bool) -> r: u32 pure { return 1_u32 if c { return 2_u32; } }".as_slice(),
+            "if",
+        ),
+        (
+            b"fn f(c: Bool) -> r: u32 pure { let x = 1_u32 match c { True => { return 2_u32; } else => { return 3_u32; } } return x; }".as_slice(),
+            "match",
+        ),
+    ] {
+        let result = outcome(source, false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("a missing semicolon must reject: {result:?}");
+        };
+        assert_eq!(issue_bytes(source, issue), word.as_bytes());
+        for repair in [
+            crate::diagnostic_repairs::CONDITIONAL_OPERAND_FIX,
+            crate::diagnostic_repairs::GIVE_CONDITIONAL_FIX,
+        ] {
+            assert_ne!(
+                issue.mechanical_fix,
+                Some(SyntaxRepair::Fixed(repair)),
+                "{}",
+                String::from_utf8_lossy(source)
+            );
+        }
+    }
+}
+
 #[test]
 fn result_route_does_not_offer_match_arm_omission_syntax() {
     for result_selector in ["", "r is "] {
