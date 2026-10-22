@@ -1,10 +1,10 @@
 /-!
 # Integer value semantics
 
-The value part of [OP-2] for add, subtract, multiply, negation, absolute value
-and the six comparisons: the closed integer types and their value sets,
-wrapping, and the exact, defined, wrap and checked forms. Division, remainder
-and shifts are outside this slice.
+The value part of [OP-2] for add, subtract, multiply, division, remainder,
+negation, absolute value and the six comparisons: the closed integer types and
+their value sets, wrapping, and the exact, defined, wrap and checked forms.
+The checked division and remainder forms and the shifts are outside the model.
 
 A `-- spec <ID> <hash>` line above a definition marks the specification line
 that definition formalizes; `lake exe coverage` checks every mark against the
@@ -12,7 +12,6 @@ specification's current text (see `coverage.txt`).
 
 An exact form returns `none` where its domain query is false: the
 specification gives that operation no result, and the model takes no step.
-`iabs.wrap` returns `none` away from `MIN(T)` for the same reason.
 -/
 
 namespace Whitefoot
@@ -127,7 +126,7 @@ no result elsewhere. -/
 def exactForm (op : ArithOp) (t : IntTy) (a b : Int) : Option Int :=
   if op.defined t a b then some (op.math a b) else none
 
--- spec OP-2 b2f9211f8c7d02cf
+-- spec OP-2 299be1f06a798026
 /-- The wrap form: `wrap_T` of the mathematical result. -/
 def wrapForm (op : ArithOp) (t : IntTy) (a b : Int) : Int :=
   t.wrap (op.math a b)
@@ -168,6 +167,35 @@ theorem checkedForm_ok_iff {op : ArithOp} {t : IntTy} {a b r : Int} :
 
 end ArithOp
 
+/-- Division and remainder. -/
+inductive DivOp where
+  | div | rem
+  deriving DecidableEq, Repr
+
+namespace DivOp
+
+-- spec OP-2 22ab98f1d1da2f04
+-- spec OP-2 c6366c225d68f036
+/-- The domain queries `/defined` and `%defined` at T. -/
+def defined (_ : DivOp) (t : IntTy) (n d : Int) : Bool :=
+  decide (d ≠ 0 ∧ (t.signed = false ∨ n ≠ t.minVal ∨ d ≠ -1))
+
+-- spec OP-2 ee8acc5f10f1aecd
+/-- The mathematical result: the quotient truncated toward zero, and the
+remainder `n - (n / d) * d`, which has the dividend's sign or is zero. -/
+def math : DivOp → Int → Int → Int
+  | .div, n, d => n.tdiv d
+  | .rem, n, d => n.tmod d
+
+-- spec OP-2 5503711c8aacc135
+-- spec OP-2 4b4e29c4a85cddd1
+/-- The exact form: the result where the domain query holds, and no result
+elsewhere. There is no wrap form. -/
+def exactForm (op : DivOp) (t : IntTy) (n d : Int) : Option Int :=
+  if op.defined t n d then some (op.math n d) else none
+
+end DivOp
+
 /-- Negation and absolute value, defined for the signed types. -/
 inductive UnaryOp where
   | neg | abs
@@ -192,14 +220,17 @@ def defined (_ : UnaryOp) (t : IntTy) (x : Int) : Bool :=
 def exactForm (op : UnaryOp) (t : IntTy) (x : Int) : Option Int :=
   if op.defined t x then some (op.math x) else none
 
--- spec OP-2 b2f9211f8c7d02cf
-/-- The wrap form: `wrap_T(-x)` for negation, and `MIN(T)` for the absolute value
-of `MIN(T)`. OP-2 gives `iabs.wrap` no result at any other operand, and OP-8
-names only its lowering, so the model takes no step there until a rule states
-one (`wf-spec-rule-gaps`). -/
-def wrapForm : UnaryOp → IntTy → Int → Option Int
-  | .neg, t, x => some (t.wrap (-x))
-  | .abs, t, x => if x = t.minVal then some t.minVal else none
+-- spec OP-2 299be1f06a798026
+/-- The wrap form: `wrap_T` of the mathematical result, for negation and the
+absolute value alike. -/
+def wrapForm (op : UnaryOp) (t : IntTy) (x : Int) : Int :=
+  t.wrap (op.math x)
+
+/-- On a signed type, `iabs.wrap(MIN(T))` returns `MIN(T)`, the consequence OP-2
+states of the absolute value's wrap form. -/
+theorem abs_wrapForm_minVal {t : IntTy} (hs : t.signed = true) :
+    UnaryOp.abs.wrapForm t t.minVal = t.minVal := by
+  cases t <;> simp [IntTy.signed] at hs <;> decide
 
 -- spec OP-2 12ccb1e9b931d855
 /-- The checked form. -/
@@ -221,18 +252,18 @@ theorem exactForm_mem {op : UnaryOp} {t : IntTy} {x r : Int} (hs : t.signed = tr
   · rw [ite_eq_right hd] at h
     cases h
 
-/-- On a signed type, where its domain query holds, exact negation returns the
-wrap form's result, so a discharged negation needs no runtime test. -/
-theorem neg_exactForm_eq_wrapForm {t : IntTy} {x : Int} (hs : t.signed = true)
-    (hx : t.Mem x) (hd : UnaryOp.neg.defined t x = true) :
-    UnaryOp.neg.exactForm t x = UnaryOp.neg.wrapForm t x := by
-  have hr : UnaryOp.neg.exactForm t x = some (UnaryOp.neg.math x) := by
+/-- On a signed type, where its domain query holds, the exact form returns the
+wrap form's result, so a discharged negation or absolute value needs no runtime
+test. -/
+theorem exactForm_eq_wrapForm {op : UnaryOp} {t : IntTy} {x : Int} (hs : t.signed = true)
+    (hx : t.Mem x) (hd : op.defined t x = true) :
+    op.exactForm t x = some (op.wrapForm t x) := by
+  have hr : op.exactForm t x = some (op.math x) := by
     unfold exactForm
     rw [ite_eq_left hd]
-  have hr' : UnaryOp.neg.exactForm t x = some (-x) := hr
-  have hm : t.Mem (-x) := exactForm_mem hs hx hr'
-  rw [hr']
-  show some (-x) = some (t.wrap (-x))
+  have hm : t.Mem (op.math x) := exactForm_mem hs hx hr
+  rw [hr]
+  show some (op.math x) = some (t.wrap (op.math x))
   rw [IntTy.wrap_of_mem hm]
 
 /-- On a signed type, the checked form returns `Ok` exactly where the exact form

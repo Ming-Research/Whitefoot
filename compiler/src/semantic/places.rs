@@ -2366,8 +2366,8 @@ mod tests {
         ));
     }
 
-    /// [WIN-2] the measure `r.len` is itself a write target and overlaps no
-    /// slot.
+    /// [WIN-2] the measure `r.len` is a descriptor word an effect row may
+    /// write, and it overlaps no slot.
     #[test]
     fn a_measure_overlaps_no_slot() {
         let map = PlaceMap::default();

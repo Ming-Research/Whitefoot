@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "The fact a[2] == 0 the head loses to the body's write of a[1] is kept by a header range invariant over a[2..3], whose preservation proves the write of a[1] outside that range inside the iteration.";
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  let small = array_filled::<u8, 2>(value: 1_u8);
+  set a[2_u64] = 0_u64;
+  let i = 0_u64;
+  loop @l (
+    invariant forall kept(k in 2_u64..3_u64): a[k] == 0_u64
+  ) {
+    let seen = small[a[2_u64]];
+    set a[1_u64] = 100_u64;
+    set i = i +wrap 1_u64;
+    if i < 4_u64 {
+    } else {
+      break @l;
+    }
+  }
+  return exit_status(code: 0_u8);
+}
