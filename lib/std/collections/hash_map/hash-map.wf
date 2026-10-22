@@ -1,6 +1,5 @@
 fn hash_map_extend<K, V, const ceiling: u64>(cells: &Box<Slots<HashMapSlot<K, V>>>, target: u64) -> result: unit writes(cells) contract {
   requires cells^.inner.len <= target;
-  requires target <= ceiling;
   ensures cells^.inner.len == target;
   ensures cells^.inner.cap >= target;
 } {
@@ -22,13 +21,65 @@ fn hash_map_extend<K, V, const ceiling: u64>(cells: &Box<Slots<HashMapSlot<K, V>
   return unit;
 }
 
+fn hash_map_room(count: u64) -> room: u64 pure {
+  doc "The pairs a map with count buckets holds before hash_map_put rebuilds it: count less a quarter of count, rounded down.";
+  let quarter = count / 4_u64;
+  return count - quarter;
+}
+
+fn hash_map_buckets(capacity: u64) -> count: u64 pure {
+  doc "The bucket count for a capacity: zero for none, else the least power of two that is at least two and whose room is at least the capacity, saturating at 2^63.";
+  if capacity == 0_u64 {
+    return 0_u64;
+  }
+  let buckets = 2_u64;
+  for (step in 0_u64..62_u64) {
+    let room = hash_map_room(count: buckets);
+    if room < capacity {
+      set buckets = buckets +wrap buckets;
+    }
+  }
+  return buckets;
+}
+
+fn hash_map_shift(count: u64) -> shift: u32 pure {
+  doc "The right shift that keeps the top log2(count) bits of a mixed hash, for a power-of-two count of at least two; 63 for any smaller count.";
+  let remaining = count;
+  let shift = 64_u32;
+  for (step in 0_u64..64_u64) {
+    if remaining > 1_u64 {
+      set remaining = ishr.wrap(remaining, 1_u32);
+      set shift = shift -sat 1_u32;
+    }
+  }
+  if shift > 63_u32 {
+    set shift = 63_u32;
+  }
+  return shift;
+}
+
+fn hash_map_home(hash: u64, shift: u32, count: u64) -> index: u64 pure contract {
+  requires count > 0_u64;
+  ensures index < count;
+} {
+  doc "The home bucket: the top bits of the hash after one odd multiplication, so keys whose hashes differ only in low bits still spread. Each home is a contiguous interval of the mixed hash space and doubling the bucket count splits every interval in two; the scan cursor is a position in that space.";
+  let mixed = hash *wrap 11400714819323198485_u64;
+  let high = ishr.wrap(mixed, shift);
+  if high < count {
+    return high;
+  }
+  return 0_u64;
+}
+
 fn hash_map_new<K, V, const ceiling: u64>(capacity: u64) -> result: HashMap<K, V, ceiling> pure contract {
   requires capacity <= ceiling;
 } {
-  doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Rebuild can change bucket positions; no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite probe bounds hold even when they are inconsistent, provided callbacks return.";
-  let cells = box_slots_new::<HashMapSlot<K, V>>(capacity: capacity);
-  hash_map_extend::<K, V, ceiling>(cells: &cells, target: capacity);
-  return HashMap<K, V, ceiling>(cells: move cells, length: 0_u64, vacated: 0_u64);
+  doc "The ceiling is the maximum public capacity and the most pairs the map holds: reserve never exceeds it and put refuses a pair beyond it. The bucket count is zero or a power of two of at least two, and each key's home bucket is the top bits of its hash after one odd multiplication. Capacity counts the pairs the map holds before put rebuilds it: three quarters of the bucket count, rounded up, and at most the ceiling. Rebuild moves pairs between buckets; no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite probe bounds hold even when they are inconsistent, provided callbacks return.";
+  let buckets = hash_map_buckets(capacity: capacity);
+  let cells = box_slots_new::<HashMapSlot<K, V>>(capacity: buckets);
+  hash_map_extend::<K, V, ceiling>(cells: &cells, target: buckets);
+  let shift = hash_map_shift(count: buckets);
+  return HashMap<K, V, ceiling>(cells: move cells, length: 0_u64, vacated: 0_u64, shift: shift);
 }
 
 fn hash_map_len<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> length: u64 reads(map) {
@@ -36,8 +87,12 @@ fn hash_map_len<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> lengt
 }
 
 fn hash_map_capacity<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> capacity: u64 reads(map) {
-  doc "Capacity counts the materialized buckets available to probing.";
-  return map^.cells.inner.len;
+  doc "Capacity counts the pairs the map holds before hash_map_put rebuilds it: three quarters of its power-of-two bucket count, rounded up, and at most the ceiling.";
+  let room = hash_map_room(count: map^.cells.inner.len);
+  if room > ceiling {
+    return ceiling;
+  }
+  return room;
 }
 
 fn hash_map_probe(home: u64, step: u64, count: u64) -> index: u64 pure contract {
@@ -78,7 +133,7 @@ fn hash_map_find<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMa
   let hash = HashMapKey::hash(env: env, key: key);
   let count = map^.cells.inner.len;
   for (step in 0_u64..count) {
-    let home = hash % count;
+    let home = hash_map_home(hash: hash, shift: map^.shift, count: count);
     let index = hash_map_probe(home: home, step: step, count: count);
     let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: key, env: env);
     match action {
@@ -101,7 +156,7 @@ fn hash_map_lookup<interface HashMapKey<K, E>, V, F, R, fn observe(env: &F, key:
   let hash = HashMapKey::hash(env: key_env, key: key);
   let count = map^.cells.inner.len;
   for (step in 0_u64..count) {
-    let home = hash % count;
+    let home = hash_map_home(hash: hash, shift: map^.shift, count: count);
     let index = hash_map_probe(home: home, step: step, count: count);
     let slot = &map^.cells.inner[index];
     match slot^ {
@@ -129,7 +184,7 @@ fn hash_map_edit<interface HashMapKey<K, E>, V, F, R, fn update(env: &F, key: &K
   let hash = HashMapKey::hash(env: key_env, key: key);
   let count = map^.cells.inner.len;
   for (step in 0_u64..count) {
-    let home = hash % count;
+    let home = hash_map_home(hash: hash, shift: map^.shift, count: count);
     let index = hash_map_probe(home: home, step: step, count: count);
     let slot = &map^.cells.inner[index];
     match slot^ {
@@ -181,7 +236,7 @@ fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
   let count = map^.cells.inner.len;
   let available = count;
   for @probe (step in 0_u64..count) {
-    let home = hash % count;
+    let home = hash_map_home(hash: hash, shift: map^.shift, count: count);
     let index = hash_map_probe(home: home, step: step, count: count);
     let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: &key, env: env);
     match action {
@@ -249,21 +304,19 @@ fn hash_map_is_available<K, V>(slot: &HashMapSlot<K, V>) -> result: Bool reads(s
   }
 }
 
-fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {
-  doc "Direct migration keeps the original enum buckets and uses one temporary inline one-slot window for a pending pair. Refusal precedes owner mutation. Every exchange result has useful behavior: Inserted empties the staging window; Replaced and Full restore their complete returned owner for retry. Each attempt hashes the current staged key and probes only occupancy, never equality. With at most the old bucket count of owners and at least that many fresh destinations, each retained owner reaches a vacant bucket in one capacity-bounded scan. No global occupancy fact authorizes a discard or a partial operation. A zero-capacity rebuild is allocation-free. The backing swap does not publish an extent relation under the current proof rules, so this function promises no monotone extent postcondition; subsequent operations read their current bounds.";
-  if capacity > ceiling {
-    return Err<unit, unit>(error: unit);
-  }
+fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, buckets: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {
+  doc "Direct migration keeps the original enum buckets and uses one temporary inline one-slot window for a pending pair. Refusal precedes owner mutation. Every exchange result has useful behavior: Inserted empties the staging window; Replaced and Full restore their complete returned owner for retry. Each attempt hashes the current staged key and probes only occupancy, never equality. With at most the old bucket count of owners and at least that many fresh destinations, each retained owner reaches a vacant bucket in one capacity-bounded scan. No global occupancy fact authorizes a discard or a partial operation. A zero-bucket rebuild is allocation-free. The bucket count is a power of two of at least two, which the callers derive with hash_map_buckets, and the shift for its home positions is set before the first pair moves. The backing swap does not publish an extent relation under the current proof rules, so this function promises no monotone extent postcondition; subsequent operations read their current bounds.";
   let old_count = map^.cells.inner.len;
-  if capacity < old_count {
+  if buckets < old_count {
     return Err<unit, unit>(error: unit);
   }
-  if capacity == 0_u64 {
+  if buckets == 0_u64 {
     return Ok<unit, unit>(value: unit);
   }
-  let previous = box_slots_new::<HashMapSlot<K, V>>(capacity: capacity);
-  hash_map_extend::<K, V, ceiling>(cells: &previous, target: capacity);
+  let previous = box_slots_new::<HashMapSlot<K, V>>(capacity: buckets);
+  hash_map_extend::<K, V, ceiling>(cells: &previous, target: buckets);
   swap(first: &map^.cells, second: &previous);
+  set map^.shift = hash_map_shift(count: buckets);
   loop @old_cells {
     if previous.inner.len == 0_u64 {
       break @old_cells;
@@ -285,7 +338,7 @@ fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
           let hash = HashMapKey::hash(env: env, key: &pending[0_u64].key);
           let count = map^.cells.inner.len;
           for @vacancy (step in 0_u64..count) {
-            let home = hash % count;
+            let home = hash_map_home(hash: hash, shift: map^.shift, count: count);
             let index = hash_map_probe(home: home, step: step, count: count);
             let available = hash_map_is_available::<K, V>(slot: &map^.cells.inner[index]);
             if available {
@@ -316,42 +369,40 @@ fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
   if capacity > ceiling {
     return Err<unit, unit>(error: unit);
   }
-  if capacity <= map^.cells.inner.len {
+  let room = hash_map_room(count: map^.cells.inner.len);
+  if capacity <= room {
     return Ok<unit, unit>(value: unit);
   }
-  let rebuilt = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);
+  let buckets = hash_map_buckets(capacity: capacity);
+  let rebuilt = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, buckets: buckets, env: env);
   return rebuilt;
 }
 
 fn hash_map_rehash<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {
-  let capacity = map^.cells.inner.len;
-  let rebuilt = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);
+  let buckets = map^.cells.inner.len;
+  let rebuilt = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, buckets: buckets, env: env);
   return rebuilt;
 }
 
 fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) {
   let buckets = map^.cells.inner.len;
   let used = map^.length +sat map^.vacated;
-  let quarter = buckets / 4_u64;
-  let limit = buckets - quarter;
+  let limit = hash_map_room(count: buckets);
   let crowded = used >= limit;
-  let below_ceiling = buckets < ceiling;
+  let below_ceiling = limit < ceiling;
   let rebuild = band(crowded, below_ceiling);
   if rebuild {
-    let target = ceiling;
+    let target = buckets;
     let live = map^.length;
     let half = limit / 2_u64;
     if live < half {
       set target = buckets;
     } else if buckets == 0_u64 {
-      set target = 1_u64;
-    } else if buckets <= 9223372036854775807_u64 {
-      let widened = buckets + buckets;
-      if widened <= ceiling {
-        set target = widened;
-      }
+      set target = 2_u64;
+    } else if buckets <= 4611686018427387904_u64 {
+      set target = buckets + buckets;
     }
-    let grown = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: target, env: env);
+    let grown = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, buckets: target, env: env);
   }
   let attempted = hash_map_try_put::<HashMapKey<K, E>, V, ceiling>(map: map, key: move key, value: move value, env: env);
   return move attempted;
@@ -411,8 +462,66 @@ fn hash_map_pair_consume<interface HashMapConsume<K, V, E>>(pair: HashMapPair<K,
   return unit;
 }
 
+fn hash_map_scan<interface HashMapKey<K, E>, V, F, fn visit(env: &F, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, cursor: u64, limit: u64, key_env: &E, visit_env: &F) -> result: u64 reads(map), reads(key_env), writes(visit_env) contract {
+  requires limit > 0_u64;
+} {
+  doc "Resumable scan. The cursor is a position in the mixed hash space: zero starts a pass, any value is accepted, and the returned cursor continues it, with zero meaning the pass is complete. The call lends to visit every pair whose home is one of up to limit consecutive home buckets, in hash-position order, then returns the position after the last of them. Empty homes count toward the limit, so a call can lend no pair and still advance. A call walks from its first home to the first vacant bucket after its last home, and hashes the pairs of the runs at either end to lend only those whose home it covers; many keys of one home, or keys of adjacent homes that crowd together, lengthen that walk, so the limit is a hint for work, not a cap on pairs. Between calls the map may change in any way: every pair present from the start of a pass to its completion is lent at least once, a pair can be lent again after the bucket count changes or after the map changes, and a pair inserted or removed during the pass may or may not be lent. A pass over an unchanged map lends every pair once. The limit is at least one, so every call that does not finish the pass advances it.";
+  let count = map^.cells.inner.len;
+  if count == 0_u64 {
+    return 0_u64;
+  }
+  let shift = map^.shift;
+  let start = ishr.wrap(cursor, shift);
+  if start >= count {
+    return 0_u64;
+  }
+  let rest = count - start;
+  let span = rest;
+  let end = count;
+  if limit < rest {
+    set span = limit;
+    set end = start + limit;
+  }
+  let opened = False();
+  for @walk (step in 0_u64..count) {
+    let index = hash_map_probe(home: start, step: step, count: count);
+    let trailing = step >= span;
+    let slot = &map^.cells.inner[index];
+    match slot^ {
+      HashMapVacant() => {
+        if trailing {
+          break @walk;
+        }
+        set opened = True();
+      }
+      HashMapDeleted() => {
+      }
+      HashMapFilled(key: saved_key, value: saved_value) => {
+        let inside = True();
+        let leading = bnot(opened);
+        let edge = bor(leading, trailing);
+        if edge {
+          let hash = HashMapKey::hash(env: key_env, key: saved_key);
+          let home = hash_map_home(hash: hash, shift: shift, count: count);
+          let after_start = home >= start;
+          let offset = home -wrap start;
+          let before_end = offset < span;
+          set inside = band(after_start, before_end);
+        }
+        if inside {
+          visit(env: visit_env, key: saved_key, value: saved_value);
+        }
+      }
+    }
+  }
+  if end >= count {
+    return 0_u64;
+  }
+  return ishl.wrap(end, shift);
+}
+
 fn hash_map_free<interface HashMapConsume<K, V, E>, const ceiling: u64>(map: HashMap<K, V, ceiling>, env: &E) -> result: unit writes(env) {
-  let HashMap(cells: storage, length: live, vacated: unused) = move map;
+  let HashMap(cells: storage, length: live, vacated: unused, shift: width) = move map;
   loop @cleanup {
     if storage.inner.len == 0_u64 {
       break @cleanup;
