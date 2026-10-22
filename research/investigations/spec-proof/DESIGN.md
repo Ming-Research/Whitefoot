@@ -524,6 +524,20 @@ checked, since no fragment case comes near them; and a continuing kill event
 binding, without proving two offsets distinct or apart, so the checker can
 reject a loop the rule accepts, never accept one it rejects.
 
+On the fragment's cases the checker agrees with every one it compares: all 39
+`accept` and 46 `run` cases in the fragment are accepted, the run cases
+reaching their expected status, and all 86 `reject` cases whose expected rule
+is covered are rejected, 35 of the fragment's 119 by the parser and the rest by
+the checker. Two disagreements appeared on the way, both errors of the model
+and both fixed in it: a relation between two terms whose difference is one
+term was read as no L0 fact, and the `\u{H}` escapes of a doc text item were
+not checked [FORM-5, FORM-7]. The slice adds 2,723 lines of Lean in five
+modules, 503 of them coverage marks, and adds 52 lines to the parser and 32
+to the conformance harness. With it the build of the model and harness took
+10.2 s and 16.5 s on two runs, against 7.7 s on the main line's run of the
+same day; on the slower run every module took 1.5 to 1.8 times as long, the
+unchanged lexer included.
+
 ## Cost
 
 Precedents with measured sizes:

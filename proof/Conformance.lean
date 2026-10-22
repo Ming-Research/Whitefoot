@@ -42,7 +42,7 @@ def Counts.line (kind : String) (c : Counts) : String :=
     s!"{c.rejected} rejected by the parser" ++
     (if kind == "run" then s!", {c.ran} run to their expected status" else "") ++
     (if kind == "reject" then
-      s!"; of the rest, {c.compared} cite a covered rule and the checker rejects {c.checked}"
+      s!"; {c.compared} cite a covered rule, and {c.checked} of those are rejected"
     else s!", {c.accepted} accepted by the checker")
 
 /-- Programs the run cases do not exercise, each with a test of its outcome. -/
