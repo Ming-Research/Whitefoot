@@ -217,7 +217,10 @@ self_test() {
           cat "$work/entries"; } > spec/log.md.new
         mv spec/log.md.new spec/log.md
     }
-    amend_logged() { amend "$1"; entry "${2:-2026-01-02 Second}" 'Rules: X-2' 'Summary: Amend.'; }
+    amend_logged() { # amend_logged LINE [HEADING [RULES-LINE [SUMMARY-LINE]]]
+        amend "$1"
+        entry "${2:-2026-01-02 Second}" "${3:-Rules: X-2}" "${4:-Summary: Amend.}"
+    }
 
     branch unchanged
     expect pass 'is unchanged' 'an unchanged branch'
@@ -318,13 +321,17 @@ self_test() {
     git checkout -q main
     git reset -q --hard HEAD~1
 
-    # Two branches amend different lines and add an entry each. The second to
-    # merge takes main's entry and keeps its own on top, with no conflict.
+    # Two branches amend different lines and add an entry each, with different
+    # texts. The second to merge takes main's entry and keeps its own on top,
+    # with no conflict and no entry losing a line to the other. Union may drop
+    # the blank line between entries, so the merged log is compared without
+    # blank lines against the preface, both new entries and the old entries.
+    git show main:spec/log.md | grep -v '^$' > "$work/base-log"
     branch first
-    amend_logged 2 '2026-01-02 First'
+    amend_logged 2 '2026-01-02 First' 'Rules: X-2' 'Summary: Amended by the first.'
     git add -A && git commit -qm first
     branch second
-    amend_logged 6 '2026-01-03 Second'
+    amend_logged 6 '2026-01-03 Second' 'Rules: X-6' 'Summary: Amended by the second.'
     git add -A && git commit -qm second
     git checkout -q main && git merge -q --ff-only first
     git checkout -q second
@@ -334,12 +341,14 @@ self_test() {
         exit 1
     }
     expect pass 'one new log entry' 'a merge of two branches that each added an entry'
-    test "$(grep -m 1 '^## ' spec/log.md)" = '## 2026-01-03 Second' &&
-        test "$(grep -c '^## ' spec/log.md)" -eq 3 || {
-        echo 'spec archives self-test: the union merge did not keep both entries, the branch first:' >&2
-        cat spec/log.md >&2
+    awk '/^## / && !done { print "## 2026-01-03 Second\nRules: X-6\nSummary: Amended by the second.\n## 2026-01-02 First\nRules: X-2\nSummary: Amended by the first."; done = 1 } { print }' "$work/base-log" > "$work/expected-log"
+    grep -v '^$' spec/log.md > "$work/merged-log"
+    cmp -s "$work/merged-log" "$work/expected-log" || {
+        echo 'spec archives self-test: the union merge did not keep both entries whole, the branch first:' >&2
+        diff "$work/expected-log" "$work/merged-log" >&2 || true
         exit 1
     }
+    expect pass 'is new and complete' 'readiness of the merged branch, its entry whole' --require-approval
     git checkout -q main
     git reset -q --hard HEAD~1
 

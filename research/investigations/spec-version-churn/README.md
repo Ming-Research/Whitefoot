@@ -119,5 +119,6 @@ Counted the same way over a later period: an amendment that still needs a
 manual change to a title, an archive or a log heading after a merge of main, or
 `check-spec-archives.sh` rejecting a log that `union` merged correctly, or a
 version that changes for an existing entry. The check's self-test merges two
-branches that each add an entry and requires the merge to be clean and
-accepted.
+branches that each add an entry and requires the merge to be clean, both
+entries whole and the result ready (an entry the merge left without a body
+fails the readiness check).
