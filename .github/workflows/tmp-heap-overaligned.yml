@@ -1,0 +1,132 @@
+# TEMPORARY quick check for the over-aligned heap storage PR (item
+# wf-bl-heap-overaligned) after it merged main. It runs what the change
+# touches, as the gate's own commands do, with no time budget record so no
+# budget verdict is produced:
+#   static   make static (spec archives, English text, design lint, clippy, ...)
+#   lib      every lib test (heap alignment, completion, window and driver tests)
+#   runtime  the runtime group (the frozen and shared-object C units and the
+#            concurrent map's C probe)
+#   windows  the native Windows aligned-heap probe
+# Removed before the full check; the gate fails while a tmp- workflow exists.
+name: tmp-heap-overaligned
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  quick:
+    name: ${{ matrix.stage }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [static, lib, runtime]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Set the scratch root
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          if git symbolic-ref -q HEAD | grep -qx refs/heads/main; then
+            echo "checkout is on main"
+          else
+            git branch -f main origin/main
+          fi
+          git log --oneline -1 main
+
+      - name: Select the design review base
+        if: matrix.stage == 'static'
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
+          git log --oneline -1 "$design_review_base"
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          ld.lld --version
+          /usr/bin/clang --version
+          python3 --version
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          cat /proc/sys/kernel/core_pattern
+
+      - name: static
+        if: matrix.stage == 'static'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: make static
+
+      - name: lib
+        if: matrix.stage == 'lib'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: |
+          ulimit -c 0
+          cd compiler
+          perl ../.github/run-check.pl tmp/lib cargo test --profile gate --lib --locked --offline
+
+      - name: runtime
+        if: matrix.stage == 'runtime'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: make check-group GROUP=runtime
+
+  windows:
+    name: windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned llvm-mingw
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          root=$(bash .github/toolchain/fetch-llvm-mingw.sh .github/toolchain/llvm-assets.json \
+            "$RUNNER_TEMP/llvm-mingw-archives" "$RUNNER_TEMP/llvm-mingw" | tail -n 1)
+          echo "LLVM_MINGW_ROOT=$root" >> "$GITHUB_ENV"
+          cygpath -w "$root/bin" >> "$GITHUB_PATH"
+
+      - name: Run the native Windows aligned-heap probe
+        timeout-minutes: 15
+        env:
+          CARGO_BUILD_JOBS: 2
+          RUST_TEST_THREADS: 2
+          RUST_MIN_STACK: 8388608
+        run: |
+          clang --version
+          cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
+            --test corpus -- native_windows::aligned_heap_and_pool_storage_preserve_alignment_and_accounting

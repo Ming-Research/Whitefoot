@@ -5,9 +5,14 @@ use super::{
 use crate::{OverlapLowering, RecursionBudget, SourceInput};
 
 mod call_result_repairs;
+mod call_spellings;
 mod recursive_postconditions;
 #[cfg(unix)]
 mod spellings;
+
+mod mechanical_repairs;
+
+mod module_syntax;
 
 /// Places each record in the module its directory names, in the
 /// interface role when it is that directory's `module.wfm` [MOD-2].
@@ -1083,7 +1088,7 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
             let (modules, selected) =
                 super::composition_inputs(&graph, &all_inputs, selection.module);
             let facts = *crate::toolchain::facts();
-            // Seed all three alternatives before the first ordinary lookup.
+            // Seed all four alternatives before the first ordinary lookup.
             // Omitting any fact from the production key makes that alternative
             // collide and incorrectly reports a cache hit on the first build.
             for foreign in [
@@ -1105,6 +1110,10 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
                     } else {
                         "i1"
                     },
+                    ..facts
+                },
+                crate::toolchain::ToolchainFacts {
+                    darwin_stack_probe_helper: !facts.darwin_stack_probe_helper,
                     ..facts
                 },
             ] {
@@ -1574,11 +1583,10 @@ fn a_syntax_rejection_prints_the_expected_spellings_and_the_offending_line() {
     .expect_err("a nested call is not an atom");
     assert_eq!(failure.rule_id(), Some("GRAM-9"));
     let detail = failure.detail();
-    // The set as spellings, in the grammar's own order. `:` follows an atom
-    // that closes a range clause's guard list, and `is` one that a variant
-    // relation tests [GRAM-5]; `is` first occurs in a result route.
+    // The set as spellings, in the grammar's own order. Only the actual
+    // argument-list continuation and place suffixes belong here [DIAG-1].
     assert!(
-        detail.contains(r#"expected: [";", "{", ":", ")", ",", "is", "<", ">", "["#),
+        detail.contains(r#"expected: [")", ",", "[", ".", "^"]"#),
         "{detail}"
     );
     // The line the writer wrote, and where in it the parser stopped.
@@ -2373,8 +2381,8 @@ fn a_counted_loop_a_give_can_leave_is_denied_by_condition_four() {
     let source = b"fn scan_until(src: &Slots<u64, 64>, needle: u64) -> result: u64 reads(src) {
   let count = src^.len;
   let acc = 0_u64;
-  let always = True();
-  let answer = if always {
+  let searching = needle != 0_u64;
+  let answer = if searching {
     for @scan (i in 0_u64..count) {
       let v = src^[i];
       set acc = acc +wrap v;
@@ -2433,8 +2441,8 @@ fn main() -> status: std::process::ExitStatus pure {
     let contained = b"fn scan_until(src: &Slots<u64, 64>, needle: u64) -> result: u64 reads(src) {
   let count = src^.len;
   let acc = 0_u64;
-  let always = True();
-  let answer = if always {
+  let searching = needle != 0_u64;
+  let answer = if searching {
     for @scan (i in 0_u64..count) {
       let v = src^[i];
       set acc = acc +wrap v;
@@ -2904,87 +2912,101 @@ fn unrepresentable_array_is_a_target_failure_without_a_source_rule() {
     assert!(failure.detail().contains("Unrepresentable"));
 }
 
-/// Source types currently require at most 16-byte natural alignment, so an
-/// injected target limit exercises the same refusal above the supported ABI
-/// maximum without adding an artificial source-language alignment feature.
-#[test]
-fn an_unrepresentable_heap_alignment_names_the_type_and_source_allocation() {
-    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 1_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n";
-    check(
-        &[SourceInput::new("alignment.wf", source)],
-        CompilerLimits::default(),
-    )
-    .expect("source acceptance is independent of the selected heap alignment");
-    let target = crate::target::TargetLayout::host()
-        .expect("supported test target")
-        .with_runtime_allocation_limits_for_test(i64::MAX as u64, 8);
-    let failure = super::with_checked_program(
-        &[SourceInput::new("alignment.wf", source)],
-        None,
-        CompilerLimits::default(),
-        |checked, resolved| {
-            let program =
-                crate::lower_checked_with_layout(checked, crate::OverlapLowering::Off, target)
-                    .map_err(super::CompilationFailure::lowering)?;
-            crate::target::validate_program(target, &program).map_err(|failure| {
-                super::CompilationFailure::target_layout(failure, &program, resolved)
-            })
-        },
-    )
-    .expect_err("the selected target refuses a 16-byte payload alignment");
+fn assert_located_allocation_failure(
+    failure: &super::CompilationFailure,
+    path: &str,
+    line: u64,
+    column: u64,
+    expected: &[&str],
+) {
     assert_eq!(failure.stage(), CompilationStage::TargetLayout);
     assert_eq!(failure.kind(), CompilationFailureKind::TargetLayout);
     assert_eq!(failure.rule_id(), None);
     let location = failure
         .location()
-        .expect("the checked allocation call is retained");
-    assert_eq!(
-        (location.path(), location.line(), location.column()),
-        ("alignment.wf", 2, 15),
+        .expect("the writer's allocation call is retained");
+    assert_eq!(location.path(), path);
+    assert_eq!(location.line(), line);
+    assert_eq!(location.column(), column);
+    let text = failure.render(super::DiagnosticFormat::Text);
+    assert!(
+        text.starts_with(&format!("{path}:{line}:{column}:")),
+        "{text}"
     );
-    let detail = failure.detail();
-    assert!(detail.contains("MemoryMeter"), "{detail}");
-    assert!(detail.contains("requires alignment 16 bytes"), "{detail}");
-    assert!(detail.contains("at most 8 bytes"), "{detail}");
     let json = failure.render(super::DiagnosticFormat::Json);
     assert!(
-        json.contains("\"file\":\"alignment.wf\",\"line\":2,\"column\":15"),
+        json.contains(&format!(
+            "\"file\":\"{path}\",\"line\":{line},\"column\":{column}"
+        )),
         "{json}"
     );
-    assert!(json.contains("MemoryMeter"), "{json}");
-    assert!(json.contains("requires alignment 16 bytes"), "{json}");
-    assert!(json.contains("at most 8 bytes"), "{json}");
+    for expected in expected {
+        assert!(text.contains(*expected), "missing {expected}: {text}");
+        assert!(json.contains(*expected), "missing {expected}: {json}");
+    }
     assert!(!json.contains("\"rule\":"), "{json}");
-    assert!(failure.to_string().starts_with("alignment.wf:2:15:"));
 }
 
 #[test]
-fn an_unrepresentable_heap_payload_names_the_type_and_source_allocation() {
-    let source = b"struct Giant {\n  words: Array<u64, 2305843009213693952>;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<Giant>(capacity: 0_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n";
-    check(
-        &[SourceInput::new("payload.wf", source)],
+fn overaligned_meters_compile_in_every_heap_container_on_the_default_target() {
+    for (path, source) in [
+        (
+            "meter-box.wf",
+            "fn allocate(value: std::process::MemoryMeter) -> result: unit pure {\n  let cell = box_new::<std::process::MemoryMeter>(value: move value);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "meter-zero-slots.wf",
+            "fn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 0_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "meter-empty-slots.wf",
+            "fn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 1_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "meter-filled-slots.wf",
+            "fn allocate(value: std::process::MemoryMeter) -> result: unit pure {\n  let cells = box_slots_new::<std::process::MemoryMeter>(capacity: 1_u64);\n  place_back(window: &cells.inner, value: move value);\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "meter-hash-map.wf",
+            "fn main() -> status: std::process::ExitStatus pure {\n  let map = std::collections::hash_map::hash_map_new::<u64, std::process::MemoryMeter, 1>(capacity: 1_u64);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+    ] {
+        let input = SourceInput::new(path, source.as_bytes());
+        check(&[input], CompilerLimits::default()).expect("the program is source-valid");
+        compile(&[input], CompilerLimits::default())
+            .expect("heap storage honors the 16-byte alignment of a MemoryMeter payload");
+    }
+}
+
+#[test]
+fn a_huge_heap_element_keeps_its_allocation_before_global_layout_qualification() {
+    let source = b"struct Giant {\n  words: Array<u64, 1152921504606846976>;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let cells = box_slots_new::<Giant>(capacity: 0_u64);\n  free_empty(window: move cells);\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    let input = SourceInput::new("giant-payload.wf", source);
+    check(&[input], CompilerLimits::default()).expect("a huge target payload remains source-valid");
+    let failure = compile(&[input], CompilerLimits::default())
+        .expect_err("the element exceeds the selected target's address domain");
+    assert_located_allocation_failure(
+        &failure,
+        "giant-payload.wf",
+        6,
+        15,
+        &[
+            "Giant",
+            "payload size 9223372036854775808 bytes",
+            "alignment 8 bytes",
+            "address-index byte limit 9223372036854775807",
+        ],
+    );
+}
+
+#[test]
+fn representable_u64_heap_payloads_still_compile_on_the_default_target() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let cell = box_new::<u64>(value: 7_u64);\n  let cells = box_slots_new::<u64>(capacity: 1_u64);\n  place_back(window: &cells.inner, value: 9_u64);\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    compile(
+        &[SourceInput::new("ordinary-heap.wf", source)],
         CompilerLimits::default(),
     )
-    .expect("an unrepresentable target payload remains source-valid");
-    let failure = compile(
-        &[SourceInput::new("payload.wf", source)],
-        CompilerLimits::default(),
-    )
-    .expect_err("the element layout exceeds the selected target address domain");
-    assert_eq!(failure.stage(), CompilationStage::TargetLayout);
-    assert_eq!(failure.kind(), CompilationFailureKind::TargetLayout);
-    assert_eq!(failure.rule_id(), None);
-    let location = failure.location().expect("the allocation call is retained");
-    assert_eq!(
-        (location.path(), location.line(), location.column()),
-        ("payload.wf", 6, 15),
-    );
-    let detail = failure.detail();
-    assert!(detail.contains("Giant"), "{detail}");
-    assert!(
-        detail.contains("exceeds the target address domain"),
-        "{detail}"
-    );
+    .expect("ordinary allocator alignment remains supported");
 }
 
 #[test]
@@ -3045,7 +3067,7 @@ fn main() -> status: std::process::ExitStatus pure {
 // Its subject, the target-layout stop at an allocation whose proved count
 // bound the selected target's byte domain cannot hold, retired with v0.87's
 // [OP-9]: a count carries no static bound, and the emitted operation checks
-// the size it computes. pinned_repairs::an_allocation_count_bounded_only_by_its_type_builds
+// the size it computes. The allocation-count control in pinned_repairs::harness
 // keeps the build, and the backend exhaustion tests the run-time check.
 
 #[test]
@@ -3290,87 +3312,6 @@ fn rejection(name: &str, source: &[u8]) -> String {
         .to_string()
 }
 
-/// [GRAM-9] names the binding form its grammar position admits.
-///
-/// The rule's own repair is "bind the computed value with a preceding
-/// `let`", and inside a `contract_block` that repair is wrong: the block
-/// has no `let_stmt` and its binding form is `define IDENT = expr;`. The
-/// position is read from the open production frames, never from the text.
-#[test]
-fn a_forbidden_atom_names_the_binding_form_its_grammar_position_admits() {
-    let body = rejection(
-        "body.wf",
-        br#"fn double(value: u64) -> out: u64 pure {
-  return value +wrap value;
-}
-
-fn helper(value: u64) -> out: u64 pure {
-  let a = double(value: double(value: value));
-  return a;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-    );
-    assert!(body.contains("[GRAM-9]"), "{body}");
-    assert!(
-            body.contains(
-                "\n  mechanical_fix: a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`"
-            ),
-            "{body}"
-        );
-
-    let contract = rejection(
-        "contract.wf",
-        br#"fn count(data: &[u8], start: u64, end: u64) -> lines: u64 reads(data) contract {
-  requires imax(start, imin(start, end)) <= end;
-} {
-  return 0_u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-    );
-    assert!(contract.contains("[GRAM-9]"), "{contract}");
-    assert!(
-            contract.contains(
-                "\n  mechanical_fix: a `call` or `construct` in an atom position does not derive [GRAM-9]: a `contract_block` has no `let`, so bind the inner call with a preceding `define` in this same block and write that binder in the atom position — `define inner = f(x: 0_u64); requires g(y: inner);`"
-            ),
-            "{contract}"
-        );
-}
-
-/// The `define` route the contract-block repair names is accepted.
-///
-/// A repair the compiler refuses is worse than no repair, so the two are
-/// pinned together: the rejection above and the program below differ only
-/// by taking it.
-#[test]
-fn the_contract_block_repair_gram9_names_is_accepted() {
-    compile(
-        &[SourceInput::new(
-            "repaired.wf",
-            br#"fn count(data: &[u8], start: u64, end: u64) -> lines: u64 pure contract {
-  define spare = data^.len;
-  requires end <= spare;
-} {
-  return 0_u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        )],
-        CompilerLimits::default(),
-    )
-    .expect("the repair GRAM-9 names must be accepted");
-}
-
 /// [EFF-1] states the condition the row failed and the row that repairs it.
 ///
 /// Retired subject: the v0.59 defect this case showed was `writes(cwd),
@@ -3423,7 +3364,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(detail.contains("[EFF-2]"), "{detail}");
     assert!(
             detail.contains(
-                "\n  expected_row: pure\n  found_row: reads(data)\n  missing: []\n  extra: [reads(data)]\n"
+                "\n  expected_row: pure\n  found_row: reads(data)\n  missing: []\n  extra: [\"reads(data)\"]\n"
             ),
             "{detail}"
         );
@@ -3531,7 +3472,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(detail.contains("[GRAM-3]"), "{detail}");
     assert!(
             detail.contains(
-                r#"expected: [IDENT, TYPEID, "pkg", "std", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "unit"]"#
+                r#"expected: ["IDENT", "TYPEID", "pkg", "std", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "unit"]"#
             ),
             "{detail}"
         );

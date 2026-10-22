@@ -1,0 +1,17 @@
+fn selected(value: u8) -> result: unit pure {
+  match value {
+    'A'_u8 => {
+      return unit;
+    }
+    65_u8 => {
+      return unit;
+    }
+    else => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

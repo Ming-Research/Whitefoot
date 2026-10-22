@@ -18,9 +18,6 @@ fn main() -> status: ExitStatus pure {
   set b.inner = move replacement;
   let taken = move b.inner;
   let final_value = taken.value;
-  if final_value == 42_u64 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<u64, u8>(final_value);
+  return exit_status(code: status_code);
 }

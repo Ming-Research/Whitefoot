@@ -54,6 +54,7 @@ pub(crate) fn prepare_dispatch_layout(
     target: TargetLayout,
     fragments: bool,
 ) -> Result<PreparedDispatch<'_>, BackendFailure> {
+    crate::toolchain::prepare_toolchain().map_err(|_| BackendFailure::Toolchain)?;
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let empty = || PreparedDispatch {
         program: Cow::Borrowed(program),

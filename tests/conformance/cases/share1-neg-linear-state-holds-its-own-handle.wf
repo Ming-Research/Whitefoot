@@ -1,0 +1,11 @@
+nodrop struct Left {
+  right: Option<Shared<Right>>;
+}
+
+struct Right {
+  left: Option<Shared<Left>>;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

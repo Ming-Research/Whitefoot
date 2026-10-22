@@ -6,19 +6,22 @@ use std::collections::{HashMap, HashSet};
 
 use crate::syntax::NodeId;
 use crate::{
-    DeclarationId, DeclarationRole, DeferredUseRole, FixedTerminal, Production,
-    SemanticCompilerFailure, SemanticIssueKind, SemanticRule, UnsupportedSemanticFeature,
+    DeclarationClass, DeclarationId, DeclarationRole, DeferredUseRole, FixedTerminal,
+    LexicalUseRole, Production, ResolvedTarget, SemanticCompilerFailure, SemanticIssueKind,
+    SemanticLocation, SemanticRule, UnsupportedSemanticFeature,
 };
 
 use super::super::super::model::{
     CheckedEnumType, CheckedExpression, CheckedField, CheckedMatchArm, CheckedMatchBinder,
-    CheckedMode, CheckedNominalKind, CheckedProjectedDrop, CheckedStatement, CheckedType,
+    CheckedMatchSelection, CheckedMatchType, CheckedMode, CheckedNominalKind, CheckedProjectedDrop,
+    CheckedStatement, CheckedType, CheckedValue, FunctionId,
 };
 use super::super::super::places::{PlaceRoot, PlaceStep};
 use super::super::super::tree::ConditionalAlternative;
 use super::super::references::{ReferenceInfo, RequiredReferent};
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, RefinementWitness};
 use super::{BlockResult, ControlCounters, ControlScope, GiveContext, LoopTransferState};
+use crate::syntax::views::MatchArmHeader;
 
 #[derive(Clone)]
 struct VariantDescriptor {
@@ -32,9 +35,18 @@ struct MatchDescriptor {
     variants: Vec<VariantDescriptor>,
 }
 
+struct ArmDescriptor {
+    name: String,
+    selection: CheckedMatchSelection,
+    variant: Option<VariantDescriptor>,
+}
+
 pub(super) struct MatchResult {
+    /// [OP-5] the complete condition `expr` of an `if` or `value_if`, whose
+    /// source redundancy the entailment walk judges; `None` for a source match.
+    pub(super) condition: Option<crate::NodePath>,
     pub(super) scrutinee: CheckedExpression,
-    pub(super) enum_type: CheckedEnumType,
+    pub(super) match_type: CheckedMatchType,
     pub(super) arms: Vec<CheckedMatchArm>,
     /// [GIVE-1] the mode and type the delivery set derived, or `None` for a
     /// statement `match` and for a value initializer that delivers nothing.
@@ -94,13 +106,21 @@ impl<'unit> Checker<'_, 'unit> {
         // not one of these at v0.60: its content is the ordinary field
         // `inner` [TYPE-9], so a `Box` scrutinee is the ordinary wrong-type
         // judgment [TYPE-5] the descriptor below makes.
-        if matches!(
+        if (matches!(
             spelling,
             ScrutineeSpelling::Other | ScrutineeSpelling::OwnedPlace
-        ) && scrutinee.reference_value
-            && self
-                .types
-                .satisfies_referent_requirement(scrutinee.expression.ty(), RequiredReferent::Enum)?
+        ) || matches!(
+            scrutinee.expression.ty(),
+            CheckedType::Integer(_) | CheckedType::GenericInt(_)
+        ))
+            && scrutinee.reference_value
+            && (matches!(
+                scrutinee.expression.ty(),
+                CheckedType::Integer(_) | CheckedType::GenericInt(_)
+            ) || self.types.satisfies_referent_requirement(
+                scrutinee.expression.ty(),
+                RequiredReferent::Enum,
+            )?)
         {
             return self.types.declarations.issue_node(
                 SemanticRule::Type7,
@@ -115,7 +135,13 @@ impl<'unit> Checker<'_, 'unit> {
         // extended by that payload step [REF-1]. `p^` reads the value
         // at the path `p` names everywhere else, so the reading is made here,
         // where the rule distinguishes the two, and not at the place walk.
-        if spelling == ScrutineeSpelling::Dereferenced && scrutinee.reference.is_none() {
+        if spelling == ScrutineeSpelling::Dereferenced
+            && scrutinee.reference.is_none()
+            && !matches!(
+                scrutinee.expression.ty(),
+                CheckedType::Integer(_) | CheckedType::GenericInt(_)
+            )
+        {
             // Place checking retains both the selected members and every
             // place read to evaluate their operands. Only the selected set is
             // the borrowed-match referent; an index loaded from another place
@@ -146,9 +172,21 @@ impl<'unit> Checker<'_, 'unit> {
             scrutinee.reference = Some(reference);
         }
         let scrutinee = scrutinee;
-        let descriptor = self
-            .types
-            .match_descriptor(scrutinee.expression.ty(), expression_node)?;
+        let descriptor = if matches!(
+            scrutinee.expression.ty(),
+            CheckedType::Integer(_) | CheckedType::GenericInt(_)
+        ) {
+            None
+        } else {
+            Some(
+                self.types
+                    .match_descriptor(scrutinee.expression.ty(), expression_node)?,
+            )
+        };
+        let match_type = descriptor.as_ref().map_or_else(
+            || CheckedMatchType::Integer(scrutinee.expression.ty()),
+            |descriptor| CheckedMatchType::Enum(descriptor.enum_type),
+        );
         let base_bindings = bindings.clone();
         let base_keys = base_bindings.keys().copied().collect::<Vec<_>>();
         let base_key_set = base_keys.iter().copied().collect::<HashSet<_>>();
@@ -162,47 +200,18 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .tree
             .children_with(node, Production::Arm)?;
-        let mut seen = HashSet::new();
-        let mut duplicate_arm = None;
-        let mut resolved_variants = Vec::with_capacity(arm_nodes.len());
-        for arm_node in &arm_nodes {
-            let variant = self
-                .types
-                .declarations
-                .match_variant(&descriptor, *arm_node)?
-                .clone();
-            if let CheckedEnumType::Nominal(owner) = descriptor.enum_type {
-                self.types.reject_inaccessible_variant(
-                    check_context,
-                    owner,
-                    &variant.name,
-                    *arm_node,
-                )?;
-            }
-            if !seen.insert(variant.tag) {
-                duplicate_arm.get_or_insert(*arm_node);
-            }
-            resolved_variants.push(variant);
-        }
-        let missing_variants = descriptor
-            .variants
-            .iter()
-            .filter(|variant| !seen.contains(&variant.tag))
-            .map(|variant| variant.name.clone())
-            .collect::<Vec<_>>();
-        if !missing_variants.is_empty() {
-            return self.types.declarations.issue_node(
-                SemanticRule::Err2,
+        let resolved_arms = if let Some(descriptor) = &descriptor {
+            self.resolve_enum_match_arms(
+                check_context,
+                context.function.id,
                 node,
-                SemanticIssueKind::NonExhaustiveMatch { missing_variants },
-            );
-        }
-        if let Some(arm) = duplicate_arm {
-            return self
-                .types
-                .declarations
-                .unsupported(UnsupportedSemanticFeature::DuplicateMatchArm, arm);
-        }
+                scrutinee.expression.ty(),
+                descriptor,
+                &arm_nodes,
+            )?
+        } else {
+            self.resolve_integer_match_arms(context, node, scrutinee.expression.ty(), &arm_nodes)?
+        };
 
         let mut arms = Vec::with_capacity(arm_nodes.len());
         let mut normal_states = Vec::new();
@@ -226,70 +235,75 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
         let mut all_paths_deliver = true;
-        for (arm_node, variant) in arm_nodes.into_iter().zip(&resolved_variants) {
+        for (arm_node, arm) in arm_nodes.into_iter().zip(&resolved_arms) {
             let arm_scope = ControlScope {
                 loops: scope.loops,
                 give_context: local_give_context.as_ref().or(scope.give_context),
             };
             let mut arm_bindings = base_bindings.clone();
-            // [ENT-3.S15] the arm witnesses its tracked scrutinee, even
-            // when `..` binds no payload. Keep that occurrence on its root's
-            // ordinary flow state so writes, aliases and joins share the
-            // existing witness invalidation machinery.
             let origin = self.types.declarations.tree.path(arm_node)?.clone();
-            let places = if let Some(reference) = &scrutinee.reference {
-                reference.paths.clone()
-            } else if spelling == ScrutineeSpelling::OwnedPlace {
-                scrutinee
-                    .accesses
-                    .iter()
-                    .filter(|access| access.selected)
-                    .map(|access| access.place.clone())
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            let selection = if places.is_empty() {
-                None
-            } else {
-                Some(self.payload_selection_identity(
-                    &scrutinee.expression,
-                    &places,
-                    expression_node,
-                    bindings,
-                )?)
-            };
-            for place in places {
-                if let PlaceRoot::Binding(root) = place.root
-                    && let Some(local) = arm_bindings
-                        .values_mut()
-                        .find(|local| local.binding == root)
-                {
-                    local.refinement_witnesses.push(RefinementWitness {
-                        origin: origin.clone(),
-                        selection: selection
-                            .clone()
-                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
-                        place,
-                        variant: variant.tag,
-                        valid: true,
-                    });
-                }
-            }
-            let variant_ordinal = descriptor
-                .variants
-                .iter()
-                .position(|candidate| candidate.name == variant.name);
-            let (binders, covered) = self.check_match_binders(
-                check_context,
-                variant,
-                (descriptor.enum_type, variant_ordinal),
-                arm_node,
-                &mut arm_bindings,
-                counters,
-                scope.loops.len(),
-                &scrutinee,
-            )?;
+            let (binders, covered) =
+                if let (Some(descriptor), Some(variant)) = (&descriptor, &arm.variant) {
+                    // [ENT-3.S15] the arm witnesses its tracked scrutinee, even
+                    // when `..` binds no payload. Keep that occurrence on its root's
+                    // ordinary flow state so writes, aliases and joins share the
+                    // existing witness invalidation machinery.
+                    let places = if let Some(reference) = &scrutinee.reference {
+                        reference.paths.clone()
+                    } else if spelling == ScrutineeSpelling::OwnedPlace {
+                        scrutinee
+                            .accesses
+                            .iter()
+                            .filter(|access| access.selected)
+                            .map(|access| access.place.clone())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let selection = if places.is_empty() {
+                        None
+                    } else {
+                        Some(self.payload_selection_identity(
+                            &scrutinee.expression,
+                            &places,
+                            expression_node,
+                            bindings,
+                        )?)
+                    };
+                    for place in places {
+                        if let PlaceRoot::Binding(root) = place.root
+                            && let Some(local) = arm_bindings
+                                .values_mut()
+                                .find(|local| local.binding == root)
+                        {
+                            local.refinement_witnesses.push(RefinementWitness {
+                                origin: origin.clone(),
+                                selection: selection
+                                    .clone()
+                                    .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                                place,
+                                variant: variant.tag,
+                                valid: true,
+                            });
+                        }
+                    }
+                    let variant_ordinal = descriptor
+                        .variants
+                        .iter()
+                        .position(|candidate| candidate.name == variant.name);
+                    self.check_match_binders(
+                        check_context,
+                        variant,
+                        (descriptor.enum_type, variant_ordinal),
+                        arm_node,
+                        &mut arm_bindings,
+                        counters,
+                        scope.loops.len(),
+                        &scrutinee,
+                    )?
+                } else {
+                    (Vec::new(), Vec::new())
+                };
             let statements = self
                 .types
                 .declarations
@@ -325,7 +339,7 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 Vec::new()
             };
-            let label = format!("the `{}` arm", variant.name);
+            let label = format!("the `{}` arm", arm.name);
             if checked.can_continue {
                 normal_states.push(arm_bindings);
                 normal_labels.push(label.clone());
@@ -341,7 +355,7 @@ impl<'unit> Checker<'_, 'unit> {
             arms.push(CheckedMatchArm {
                 node_path: self.types.declarations.tree.path(arm_node)?.clone(),
                 label,
-                tag: variant.tag,
+                selection: arm.selection,
                 binders,
                 covered,
                 body: checked.statements,
@@ -373,8 +387,9 @@ impl<'unit> Checker<'_, 'unit> {
             )?;
         }
         Ok(MatchResult {
+            condition: None,
             scrutinee: scrutinee.expression,
-            enum_type: descriptor.enum_type,
+            match_type,
             arms,
             delivered: local_give_context.as_ref().and_then(GiveContext::delivered),
             delivered_reference: local_give_context
@@ -533,9 +548,10 @@ impl<'unit> Checker<'_, 'unit> {
                 )?;
                 BlockResult {
                     statements: vec![CheckedStatement::Match {
+                        condition: chained.condition,
                         node_path: self.types.declarations.tree.path(*nested)?.clone(),
                         scrutinee: chained.scrutinee,
-                        enum_type: chained.enum_type,
+                        match_type: chained.match_type,
                         arms: chained.arms,
                         continues: chained.can_continue,
                     }],
@@ -614,7 +630,7 @@ impl<'unit> Checker<'_, 'unit> {
             arms.push(CheckedMatchArm {
                 node_path: self.types.declarations.tree.path(node)?.clone(),
                 label,
-                tag: variant.tag,
+                selection: CheckedMatchSelection::Variant(variant.tag),
                 binders: Vec::new(),
                 covered: Vec::new(),
                 body: checked.statements,
@@ -640,8 +656,9 @@ impl<'unit> Checker<'_, 'unit> {
                 .map_err(|stop| self.conditional_join_repair(check_context, &base_bindings, stop))?;
         }
         Ok(MatchResult {
+            condition: Some(self.types.declarations.tree.path(expression_node)?.clone()),
             scrutinee: condition.expression,
-            enum_type: CheckedEnumType::Bool,
+            match_type: CheckedMatchType::Enum(CheckedEnumType::Bool),
             arms,
             delivered: local_give_context.as_ref().and_then(GiveContext::delivered),
             delivered_reference: local_give_context
@@ -713,9 +730,245 @@ impl<'unit> Checker<'_, 'unit> {
         }
     }
 
-    /// [GRAM-10] binds the payload fields an arm writes, in declared order,
-    /// and returns with its binders the releases of the fields a final `..`
-    /// covers in an own-place match [WIN-3, STOR-3].
+    /// [GRAM-12, TYPE-6, ERR-2] enum header and complete-variant judgments.
+    fn resolve_enum_match_arms(
+        &mut self,
+        check_context: &CheckContext<'_>,
+        function: FunctionId,
+        node: NodeId,
+        scrutinee_type: CheckedType,
+        descriptor: &MatchDescriptor,
+        arm_nodes: &[NodeId],
+    ) -> Result<Vec<ArmDescriptor>, CheckStop> {
+        let mut seen = HashSet::new();
+        let mut duplicate = None;
+        let mut arms = Vec::with_capacity(arm_nodes.len());
+        for arm_node in arm_nodes {
+            if !matches!(
+                self.types.declarations.tree.match_arm_header(*arm_node)?,
+                MatchArmHeader::Variant(_)
+            ) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Gram12,
+                    *arm_node,
+                    SemanticIssueKind::InvalidIntegerMatchArm {
+                        reason: "an enum scrutinee requires a variant TYPEID and payload binders"
+                            .to_owned(),
+                        mechanical_fix: "write a variant header belonging to the scrutinee's enum"
+                            .to_owned(),
+                    },
+                );
+            }
+            let variant = self
+                .types
+                .declarations
+                .match_variant(descriptor, *arm_node)?
+                .clone();
+            if let CheckedEnumType::Nominal(owner) = descriptor.enum_type {
+                self.types.reject_inaccessible_variant(
+                    check_context,
+                    owner,
+                    &variant.name,
+                    *arm_node,
+                )?;
+            }
+            if !seen.insert(variant.tag) {
+                duplicate.get_or_insert(variant.name.clone());
+            }
+            arms.push(ArmDescriptor {
+                name: variant.name.clone(),
+                selection: CheckedMatchSelection::Variant(variant.tag),
+                variant: Some(variant),
+            });
+        }
+        let missing_variants = descriptor
+            .variants
+            .iter()
+            .filter(|variant| !seen.contains(&variant.tag))
+            .map(|variant| variant.name.clone())
+            .collect::<Vec<_>>();
+        // [ERR-2] record the site and keep walking, so one compilation lists
+        // every incomplete match; the first recorded event is the rejection.
+        if !missing_variants.is_empty() {
+            self.record_non_exhaustive_match(function, node, scrutinee_type, missing_variants)?;
+        }
+        if let Some(variant) = duplicate {
+            return self.types.declarations.issue_node(
+                SemanticRule::Err2,
+                node,
+                SemanticIssueKind::DuplicateMatchVariant {
+                    variant,
+                    mechanical_fix: "remove the repeated variant arm".to_owned(),
+                },
+            );
+        }
+        Ok(arms)
+    }
+
+    fn resolve_integer_match_arms(
+        &self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        ty: CheckedType,
+        arm_nodes: &[NodeId],
+    ) -> Result<Vec<ArmDescriptor>, CheckStop> {
+        let mut seen = HashMap::new();
+        let mut fallback = None;
+        let mut arms = Vec::with_capacity(arm_nodes.len());
+        for (ordinal, arm_node) in arm_nodes.iter().copied().enumerate() {
+            let header = self.types.declarations.tree.match_arm_header(arm_node)?;
+            if header == MatchArmHeader::Else {
+                if fallback.is_some() || ordinal + 1 != arm_nodes.len() {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Gram12,
+                        arm_node,
+                        SemanticIssueKind::InvalidIntegerMatchArm {
+                            reason: "an integer match has at most one `else`, in its final arm"
+                                .to_owned(),
+                            mechanical_fix: "keep one `else` arm and move it after every value arm"
+                                .to_owned(),
+                        },
+                    );
+                }
+                fallback = Some(arm_node);
+                arms.push(ArmDescriptor {
+                    name: "else".to_owned(),
+                    selection: CheckedMatchSelection::Else,
+                    variant: None,
+                });
+                continue;
+            }
+            let (value, name) = match header {
+                MatchArmHeader::Literal(token) => {
+                    let bytes = self.types.declarations.tree.token_bytes(token)?;
+                    let value = if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
+                        let identity = self.types.check_generic_numeric_identity(context, arm_node, bytes.first() == Some(&b'1'))?;
+                        let CheckedExpression::Constant(value) = identity.expression else {
+                            return Err(SemanticCompilerFailure::InvalidResolution.into());
+                        };
+                        value
+                    } else {
+                        self.types.declarations.parse_literal(arm_node, token)?
+                    };
+                    (value, String::from_utf8_lossy(bytes).into_owned())
+                }
+                MatchArmHeader::Constant(token) => {
+                    let usage = self.types.declarations.use_at(context.check_context, arm_node, LexicalUseRole::IntegerMatchValue)?;
+                    let ResolvedTarget::Source { declaration, class: DeclarationClass::NamedConst } = usage.target() else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let constant = self.types.constants.get(&declaration).copied().ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    (self.types.constant(constant)?.value.clone(), String::from_utf8_lossy(self.types.declarations.tree.token_bytes(token)?).into_owned())
+                }
+                MatchArmHeader::Variant(_) => return self.types.declarations.issue_node(SemanticRule::Gram12, arm_node,
+                    SemanticIssueKind::InvalidIntegerMatchArm {
+                        reason: "an integer scrutinee requires one integer literal, named const, or `else`".to_owned(),
+                        mechanical_fix: "replace the variant header with one constant of the scrutinee's integer type".to_owned(),
+                    }),
+                MatchArmHeader::Else => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
+            };
+            let integer = match value {
+                CheckedValue::Integer {
+                    ty: integer_type,
+                    bits,
+                } if CheckedType::Integer(integer_type) == ty => {
+                    let value = i128::from(bits);
+                    if integer_type.signed() && bits & (1_u64 << (integer_type.width() - 1)) != 0 {
+                        value - (1_i128 << integer_type.width())
+                    } else {
+                        value
+                    }
+                }
+                CheckedValue::NumericIdentity {
+                    ty: value_type,
+                    one,
+                } if value_type == ty && matches!(ty, CheckedType::GenericInt(_)) => {
+                    i128::from(one)
+                }
+                _ => {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Gram12,
+                        arm_node,
+                        SemanticIssueKind::InvalidIntegerMatchArm {
+                            reason: format!(
+                                "the arm value must have exact integer type {}",
+                                self.types.checked_type_name(ty)?
+                            ),
+                            mechanical_fix: format!(
+                                "write an integer literal or named const of type {}",
+                                self.types.checked_type_name(ty)?
+                            ),
+                        },
+                    );
+                }
+            };
+            if let Some(earlier) = seen.insert(integer, arm_node) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Gram12,
+                    arm_node,
+                    SemanticIssueKind::DuplicateIntegerMatchValue {
+                        value: integer,
+                        earlier: SemanticLocation::SourceNode(
+                            self.types.declarations.tree.path(earlier)?.clone(),
+                            self.types.declarations.tree.coordinate(earlier)?,
+                        ),
+                        mechanical_fix: "remove the later arm or give it a distinct integer value"
+                            .to_owned(),
+                    },
+                );
+            }
+            arms.push(ArmDescriptor {
+                name,
+                selection: CheckedMatchSelection::Integer(integer),
+                variant: None,
+            });
+        }
+        if seen.is_empty() {
+            return self.types.declarations.issue_node(
+                SemanticRule::Gram12,
+                node,
+                SemanticIssueKind::InvalidIntegerMatchArm {
+                    reason: "an integer match has at least one value arm".to_owned(),
+                    mechanical_fix: "add a literal or named-const value arm".to_owned(),
+                },
+            );
+        }
+        // Distinct well-typed labels all lie in the domain, so cardinality
+        // decides completeness without enumerating the type's values.
+        let (complete, domain) = match ty {
+            CheckedType::Integer(integer_type) => {
+                let count = 1_u128 << integer_type.width();
+                (
+                    seen.len() as u128 == count,
+                    format!("all {count} mathematical values"),
+                )
+            }
+            CheckedType::GenericInt(_) => (
+                false,
+                "the complete domain of every admitted Int type".to_owned(),
+            ),
+            _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+        };
+        if complete == fallback.is_some() {
+            return self.types.declarations.issue_node(
+                SemanticRule::Err2,
+                node,
+                SemanticIssueKind::InvalidIntegerMatchCoverage {
+                    integer_type: self.types.checked_type_name(ty)?,
+                    domain,
+                    mechanical_fix: if complete {
+                        "remove the unnecessary `else` arm"
+                    } else {
+                        "add one final `else => { ... }` arm to cover every other value"
+                    }
+                    .to_owned(),
+                },
+            );
+        }
+        Ok(arms)
+    }
+
+    /// [GRAM-10] bind the payload fields in declared order and derive covered releases.
     #[allow(clippy::too_many_arguments)]
     fn check_match_binders(
         &mut self,
@@ -1162,7 +1415,7 @@ impl<'unit> TypeContext<'unit> {
                         SemanticRule::Type5,
                         node,
                         SemanticIssueKind::type_mismatch(
-                            "an enum scrutinee, whose variants the arms match",
+                            "an integer or enum scrutinee, whose values or variants the arms match",
                             self.checked_type_name(ty)?,
                         ),
                     );
@@ -1184,7 +1437,7 @@ impl<'unit> TypeContext<'unit> {
                 SemanticRule::Type5,
                 node,
                 SemanticIssueKind::type_mismatch(
-                    "an enum scrutinee, whose variants the arms match",
+                    "an integer or enum scrutinee, whose values or variants the arms match",
                     self.checked_type_name(ty)?,
                 ),
             ),

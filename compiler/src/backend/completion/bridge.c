@@ -3741,8 +3741,10 @@ typedef struct {
     void *pool_raw;
     _Alignas(16) unsigned char value[];
 } wf_frozen;
+_Static_assert(sizeof(wf_frozen) == WF_FROZEN_HEADER_BYTES,
+               "Frozen allocation header ABI");
 _Static_assert(offsetof(wf_frozen, value) == WF_FROZEN_HEADER_BYTES,
-               "frozen value storage has the target-qualified header extent");
+               "Frozen payload offset ABI");
 
 static wf_frozen *wf_frozen_header(void *value) {
     return (wf_frozen *)((unsigned char *)value - offsetof(wf_frozen, value));

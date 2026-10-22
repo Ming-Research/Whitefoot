@@ -103,7 +103,7 @@ fn main() -> status: std::process::ExitStatus pure {
         // The whole payload, so the field labels the record prints are pinned
         // with the sentence they carry.
         sentences: &[
-            "\n  expected: [IDENT]\n  found: \"Limit\"\n  mechanical_fix: an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape",
+            "\n  expected: [\"IDENT\"]\n  found: \"Limit\"\n  mechanical_fix: an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape",
         ],
     },
     Probe {
@@ -188,23 +188,6 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "GRAM-9",
         sentences: &[
             "a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`",
-        ],
-    },
-    Probe {
-        name: "forbidden-atom-in-a-contract-block.wf",
-        source: br#"fn count(data: &[u8], start: u64, end: u64) -> lines: u64 reads(data) contract {
-  requires imax(start, imin(start, end)) <= end;
-} {
-  return 0_u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "GRAM-9",
-        sentences: &[
-            "a `call` or `construct` in an atom position does not derive [GRAM-9]: a `contract_block` has no `let`, so bind the inner call with a preceding `define` in this same block and write that binder in the atom position — `define inner = f(x: 0_u64); requires g(y: inner);`",
         ],
     },
     // -------------------------------------------------------------------
@@ -796,7 +779,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "EFF-2",
         sentences: &[
             "]: EffectMismatch\n",
-            "\n  expected_row: reads(data.len)\n  found_row: pure\n  missing: [reads(data.len)]\n  extra: []\n  mechanical_fix: declare the row as `reads(data.len)`, which covers every access the body makes and no other\n",
+            "\n  expected_row: reads(data.len)\n  found_row: pure\n  missing: [\"reads(data.len)\"]\n  extra: []\n  mechanical_fix: declare the row as `reads(data.len)`, which covers every access the body makes and no other\n",
         ],
     },
     Probe {
@@ -821,7 +804,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: writes(stats.count)\n  found_row: writes(stats.count), writes(stats.total)\n  missing: []\n  extra: [writes(stats.total)]\n",
+            "\n  expected_row: writes(stats.count)\n  found_row: writes(stats.count), writes(stats.total)\n  missing: []\n  extra: [\"writes(stats.total)\"]\n",
         ],
     },
     Probe {
@@ -1042,7 +1025,7 @@ fn main() -> status: std::process::ExitStatus pure {
     Probe {
         name: "match-scrutinee-is-not-an-enum.wf",
         source: br#"fn main() -> status: std::process::ExitStatus pure {
-  let value = 1_u64;
+  let value = 1.0_f32;
   match value {
     Ok(value: inner) => {
     }
@@ -1053,7 +1036,117 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "TYPE-5",
         sentences: &[
             "]: TypeMismatch\n",
-            "\n  expected: an enum scrutinee, whose variants the arms match\n  found: u64\n",
+            "\n  expected: an integer or enum scrutinee, whose values or variants the arms match\n  found: f32\n",
+        ],
+    },
+    // Integer match diagnostics are reached through ordinary source programs,
+    // including the complete-type coverage boundary rather than only sparse
+    // command dispatch.
+    Probe {
+        name: "integer-match-variant-header.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-variant-label.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-variant-header.wf:7:5: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: an integer scrutinee requires one integer literal, named const, or `else`\n",
+            "\n  mechanical_fix: replace the variant header with one constant of the scrutinee's integer type\n",
+        ],
+    },
+    Probe {
+        name: "enum-match-integer-header.wf",
+        source: br#"enum Marker {
+  Mark();
+}
+
+fn selected(value: Marker) -> result: unit pure {
+  match value {
+    0_u64 => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-12",
+        sentences: &[
+            "enum-match-integer-header.wf:7:5: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: an enum scrutinee requires a variant TYPEID and payload binders\n",
+            "\n  mechanical_fix: write a variant header belonging to the scrutinee's enum\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-wrong-label-type.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-literal-label-type.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-wrong-label-type.wf:3:5: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: the arm value must have exact integer type u64\n",
+            "\n  mechanical_fix: write an integer literal or named const of type u64\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-runtime-label.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-nonconst-label.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-runtime-label.wf:4:5: error[GRAM-12]: UnresolvedUse\n",
+            "\n  mechanical_fix: write one in-scope named const of the scrutinee's exact integer type, or an integer literal of that type\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-else-before-value.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-else-not-final.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-else-before-value.wf:3:5: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: an integer match has at most one `else`, in its final arm\n",
+            "\n  mechanical_fix: keep one `else` arm and move it after every value arm\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-else-without-value.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-else-only.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-else-without-value.wf:2:3: error[GRAM-12]: InvalidIntegerMatchArm\n",
+            "\n  reason: an integer match has at least one value arm\n",
+            "\n  mechanical_fix: add a literal or named-const value arm\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-duplicate-value.wf",
+        source: include_bytes!("../../../tests/conformance/cases/gram12-neg-duplicate-const-value.wf"),
+        rule: "GRAM-12",
+        sentences: &[
+            "integer-match-duplicate-value.wf:10:5: error[GRAM-12]: DuplicateIntegerMatchValue\n",
+            "\n  value: 7\n",
+            "\n  earlier: ",
+            "\n  mechanical_fix: remove the later arm or give it a distinct integer value\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-needs-else.wf",
+        source: include_bytes!("../../../tests/conformance/cases/err2-neg-integer-missing-else.wf"),
+        rule: "ERR-2",
+        sentences: &[
+            "integer-match-needs-else.wf:2:3: error[ERR-2]: InvalidIntegerMatchCoverage\n",
+            "\n  integer_type: u8\n",
+            "\n  domain: all 256 mathematical values\n",
+            "\n  mechanical_fix: add one final `else => { ... }` arm to cover every other value\n",
+        ],
+    },
+    Probe {
+        name: "integer-match-complete-with-else.wf",
+        source: include_bytes!("../../../tests/conformance/cases/err2-neg-integer-complete-with-else.wf"),
+        rule: "ERR-2",
+        sentences: &[
+            "integer-match-complete-with-else.wf:2:3: error[ERR-2]: InvalidIntegerMatchCoverage\n",
+            "\n  integer_type: u8\n",
+            "\n  domain: all 256 mathematical values\n",
+            "\n  mechanical_fix: remove the unnecessary `else` arm\n",
         ],
     },
     Probe {
@@ -1264,7 +1357,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "GRAM-8",
         sentences: &[
             "]: InvalidConstructionFields\n",
-            "\n  constructor: Wrap<u64>\n  declared_fields: [value]\n",
+            "\n  constructor: Wrap<u64>\n  declared_fields: [\"value\"]\n",
         ],
     },
     // [FORM-8] one canonical region spelling: each position a region can

@@ -2262,12 +2262,12 @@ fn subscript_offsets(
 /// value here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SubscriptedTerm {
-    /// Every offset is a captured literal, const or binding [REF-1], so the
-    /// place has the term identity the entailment fragment interns.
+    /// Every offset is a captured literal, const or tracked place [REF-1],
+    /// so the place has the identity the entailment fragment interns.
     Represented,
-    /// An offset is a tracked place with projections, which ENT-2 admits but
-    /// no captured value names. This is a compiler capability limit, reported
-    /// as unsupported, not a language rejection [DIAG-1].
+    /// An admitted tracked offset has no captured representation. This is a
+    /// compiler capability limit, reported as unsupported, not a language
+    /// rejection [DIAG-1].
     Unrepresented,
 }
 
@@ -2358,8 +2358,8 @@ fn selects_readonly_fragment_field(
 }
 
 /// Whether one checked offset reads an [ENT-2] clause (a) tracked place:
-/// a binding, possibly below field selections, `^` suffixes and `Box`
-/// content, with no subscript.
+/// a binding, possibly below field selections, enum-payload selections, `^`
+/// suffixes and `Box` content, with no subscript.
 fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
     match offset {
         CheckedExpression::Binding {
@@ -2373,6 +2373,21 @@ fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
         | CheckedExpression::DerefAddressed { .. } => true,
         CheckedExpression::BoxDeref { value, .. }
         | CheckedExpression::ProjectValue { value, .. } => is_tracked_place_read(value),
+        // [ENT-2] clause (a) admits enum-payload suffixes; a payload read is
+        // checked as storage below its root, with no subscript or measure.
+        CheckedExpression::ReadStorage { root, .. } => {
+            root.path
+                .iter()
+                .any(|step| matches!(step, CheckedPlaceStep::Payload { .. }))
+                && root.path.iter().all(|step| {
+                    matches!(
+                        step,
+                        CheckedPlaceStep::Field(_)
+                            | CheckedPlaceStep::Payload { .. }
+                            | CheckedPlaceStep::BoxReferent(_)
+                    )
+                })
+        }
         _ => false,
     }
 }
@@ -2818,11 +2833,24 @@ pub(crate) struct CheckedMatchBinder {
     pub(crate) ty: CheckedType,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedMatchType {
+    Enum(CheckedEnumType),
+    Integer(CheckedType),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedMatchSelection {
+    Variant(u32),
+    Integer(i128),
+    Else,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedMatchArm {
     pub(crate) node_path: NodePath,
     pub(crate) label: String,
-    pub(crate) tag: u32,
+    pub(crate) selection: CheckedMatchSelection,
     pub(crate) binders: Vec<CheckedMatchBinder>,
     /// [GRAM-10, WIN-3, STOR-3] in an own-place match, the release of each
     /// payload field a final `..` covers, taken on entry to the arm: one
@@ -2996,15 +3024,22 @@ pub(crate) enum CheckedStatement {
         drops: Vec<CheckedDrop>,
     },
     Match {
+        /// [OP-5] the complete source condition of an `if_stmt` or an
+        /// `else if` link, whose redundancy is judged; an enum `match` has
+        /// none.
+        condition: Option<NodePath>,
         /// The complete written `match` or `if`, including a chained `else if`.
         node_path: NodePath,
         scrutinee: CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: Vec<CheckedMatchArm>,
         continues: bool,
     },
     ValueMatchLet {
         node_path: NodePath,
+        /// [OP-5] the complete source condition of a `value_if`; a
+        /// `value_match` has none.
+        condition: Option<NodePath>,
         kind: ValueInitializerKind,
         binding: BindingId,
         result_type: CheckedType,
@@ -3020,7 +3055,7 @@ pub(crate) enum CheckedStatement {
         /// parameter does; no other result mode carries one.
         result_range_element: Option<CheckedElement>,
         scrutinee: CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: Vec<CheckedMatchArm>,
         continues: bool,
     },
@@ -3410,9 +3445,8 @@ impl CheckedCallSeparationPositions {
     /// is never proved, and a pair with no other candidate is one no named
     /// position separates [EFF-5, OWN-7].
     pub(crate) fn names_its_values(self) -> bool {
-        let named = |value: super::places::CapturedValue| {
-            value != super::places::CapturedValue::unknown()
-        };
+        let named =
+            |value: super::places::CapturedValue| value != super::places::CapturedValue::unknown();
         let named_range =
             |range: super::places::CapturedRange| named(range.start) && named(range.end);
         match self {
@@ -3724,13 +3758,13 @@ impl FunctionMentions {
                 }
                 CheckedStatement::Match {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     ..
                 }
                 | CheckedStatement::ValueMatchLet {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     ..
                 } => {
@@ -3743,8 +3777,12 @@ impl FunctionMentions {
                         self.types.push(*result_type);
                         self.elements.extend(result_range_element.iter().copied());
                     }
-                    if let CheckedEnumType::Nominal(nominal) = enum_type {
-                        self.types.push(CheckedType::Nominal(*nominal));
+                    match match_type {
+                        CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) => {
+                            self.types.push(CheckedType::Nominal(*nominal));
+                        }
+                        CheckedMatchType::Integer(ty) => self.types.push(*ty),
+                        CheckedMatchType::Enum(CheckedEnumType::Bool) => {}
                     }
                     self.expression(scrutinee);
                     for arm in arms {
@@ -3785,6 +3823,12 @@ impl FunctionMentions {
                     ..
                 } => {
                     self.types.extend(targets.iter().map(|t| t.state));
+                    // A key-set target builds an Entries descriptor when it
+                    // acquires the map, even if only erased proofs name it.
+                    self.types.extend(targets.iter().filter_map(|target| {
+                        matches!(target.kind, CheckedTargetKind::MapSet(_))
+                            .then_some(target.referent)
+                    }));
                     for key in targets
                         .iter()
                         .flat_map(crate::semantic::CheckedTarget::expressions)

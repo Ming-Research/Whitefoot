@@ -1,0 +1,16 @@
+fn probe(rows: &[Slots<u8, 8>], i: u64, j: u64, k: u64) -> result: u8 writes(rows) contract {
+  requires i < j;
+  requires j < rows^.len;
+  requires k < rows^[i].len;
+} {
+  doc "ENT-5 kills the entry relation naming j when j is rebound to i. OWN-7 must compare the indices at the write, where they are equal, so the later inner subscript lacks its OP-4 proof.";
+  set j = i;
+  set rows^[j] = slots_new::<u8, 8>();
+  let value = rows^[i][k];
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checking probe must refuse a proof based on the superseded value of j.";
+  return std::process::exit_status(code: 0_u8);
+}

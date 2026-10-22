@@ -3,9 +3,9 @@
 //! them.
 //!
 //! Everything here is derived from a type and a scope, never from a name, a
-//! signature, or a statement's shape. The release graph is the one object the
-//! compiler-derived release and `dispose p;` both walk; the linearity
-//! predicate is that graph read against what the scope holds.
+//! signature, or a statement's shape. Type-level ownership determines
+//! linearity; the shared release classification separately determines which
+//! actions can execute, including the absence of elements at zero extent.
 
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use crate::syntax::NodeId;
 use crate::{Production, SemanticIssueKind, SemanticRule, TerminalPredicate};
 
-use super::super::model::{CheckedMode, CheckedNominalKind, CheckedType, NominalId};
+use super::super::model::{CheckedMode, CheckedNominalKind, CheckedShared, CheckedType, NominalId};
 use super::CheckStop;
 
 /// [OWN-1, PROV-6] the class read from a type's two capabilities, copy and
@@ -102,7 +102,8 @@ impl<'unit> TypeContext<'unit> {
         }
     }
     /// The types one nominal owns directly [PROV-6]: its fields, its enum
-    /// variant payloads and its `box` referent.
+    /// variant payloads and its `box` referent, and the state of a shared
+    /// object's handle for its linearity alone.
     fn owned_components(&self, id: NominalId) -> Result<Vec<CheckedType>, CheckStop> {
         Ok(match &self.nominal(id)?.kind {
             CheckedNominalKind::Struct { fields } => fields.iter().map(|field| field.ty).collect(),
@@ -111,37 +112,36 @@ impl<'unit> TypeContext<'unit> {
                 .flat_map(|variant| variant.fields.iter().map(|field| field.ty))
                 .collect(),
             CheckedNominalKind::Box { referent, .. } => vec![*referent],
-            // A handle owns a share of its object, whose state the runtime
-            // releases with the last handle [SHARE-1]; `T: drop` keeps the
-            // handle affine.
-            CheckedNominalKind::Opaque | CheckedNominalKind::Shared { .. } => Vec::new(),
+            // A handle to a linear state is linear, since the handle whose
+            // `shared_close` is last receives the state [PROV-6, SHARE-1];
+            // its release action stays the handle's own leaf [STOR-3]. The
+            // prelude bounds every other handle's state and a table's values
+            // by `drop`.
+            CheckedNominalKind::Shared {
+                state,
+                shape: CheckedShared::Object,
+            } => vec![*state],
+            CheckedNominalKind::Opaque
+            | CheckedNominalKind::Shared {
+                shape: CheckedShared::Map { .. },
+                ..
+            } => Vec::new(),
         })
     }
     /// [PROV-6] the nodes of this type's release graph, each visited once.
     ///
     /// A loan-bearing value contributes no node, which is why a view can
-    /// neither be disposed nor make its holder linear. The visited set is
-    /// what makes the walk terminate on a graph with a cycle, whose refusal
-    /// is DEFERRED.
+    /// neither own a release nor make its holder linear. The visited set
+    /// makes this type-level walk terminate even when the graph has a cycle.
     pub(in crate::semantic) fn release_graph_nodes(
         &self,
         ty: CheckedType,
-    ) -> Result<Vec<CheckedType>, CheckStop> {
-        self.storage_type_nodes(ty, false)
-    }
-    /// Share the owned release walk with the scheduling query for writes
-    /// through references. That query also follows view elements: replacing
-    /// an entry can release its payload even though the view owns nothing.
-    fn storage_type_nodes(
-        &self,
-        ty: CheckedType,
-        through_views: bool,
     ) -> Result<Vec<CheckedType>, CheckStop> {
         let mut nodes = Vec::new();
         let mut seen_nominals = HashSet::new();
         let mut pending = vec![ty];
         while let Some(current) = pending.pop() {
-            if !through_views && self.is_loan_bearing(current)? {
+            if self.is_loan_bearing(current)? {
                 continue;
             }
             if let CheckedType::Nominal(id) = current
@@ -159,9 +159,6 @@ impl<'unit> TypeContext<'unit> {
                 // A run owns the elements of its window [BLK-1], so its
                 // element is a sub-node exactly as a field is.
                 CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
-                    pending.push(self.element_type(element)?);
-                }
-                CheckedType::Entries { element } if through_views => {
                     pending.push(self.element_type(element)?);
                 }
                 CheckedType::Nominal(id) => pending.extend(self.owned_components(id)?),
@@ -195,69 +192,83 @@ impl<'unit> TypeContext<'unit> {
         ty: CheckedType,
         mode: CheckedMode,
     ) -> Result<bool, CheckStop> {
-        for node in self.storage_type_nodes(ty, mode.is_reference())? {
-            match node {
-                CheckedType::Buffer { .. }
-                | CheckedType::Segments { .. }
-                | CheckedType::Window { capacity: None, .. }
-                | CheckedType::KeySet
-                | CheckedType::Generic(_) => return Ok(true),
-                CheckedType::Nominal(id)
-                    if matches!(
-                        self.nominal(id)?.kind,
-                        CheckedNominalKind::Box { .. } | CheckedNominalKind::Shared { .. }
-                    ) =>
-                {
-                    return Ok(true);
-                }
-                _ => {}
-            }
-        }
-        Ok(false)
+        crate::release::has_release(
+            ty,
+            crate::release::ReleaseQuery::StorageReclaim {
+                through_views: mode.is_reference(),
+            },
+            |current| self.release_shape(None, current),
+        )
     }
 
     /// [STOR-3, FN-10] whether the release graph can execute an action.
-    /// The capability class alone is insufficient: a nocopy aggregate of
-    /// scalars and a statically empty run both have empty releases.
+    /// Capability alone is insufficient: a nocopy aggregate of scalars and
+    /// a statically empty run both have empty releases.
     pub(super) fn has_nonempty_release(
         &self,
         check_context: &CheckContext<'_>,
         ty: CheckedType,
     ) -> Result<bool, CheckStop> {
-        let mut pending = vec![ty];
-        let mut visited = HashSet::new();
-        while let Some(current) = pending.pop() {
-            if !visited.insert(current) {
-                continue;
+        crate::release::has_release(ty, crate::release::ReleaseQuery::Scope, |current| {
+            self.release_shape(Some(check_context), current)
+        })
+    }
+
+    fn release_shape(
+        &self,
+        check_context: Option<&CheckContext<'_>>,
+        ty: CheckedType,
+    ) -> Result<crate::release::ReleaseShape<CheckedType>, CheckStop> {
+        use super::super::model::WindowShape;
+        use crate::release::ReleaseShape;
+        Ok(match ty {
+            CheckedType::KeySet => ReleaseShape::KeySet,
+            CheckedType::Nominal(id) => match &self.nominal(id)?.kind {
+                CheckedNominalKind::Box { .. } => ReleaseShape::Box,
+                CheckedNominalKind::Shared { .. } => ReleaseShape::Shared,
+                CheckedNominalKind::Struct { .. } | CheckedNominalKind::Enum { .. } => {
+                    ReleaseShape::Owned(self.owned_components(id)?)
+                }
+                CheckedNominalKind::Opaque => ReleaseShape::Empty,
+            },
+            CheckedType::Window {
+                shape: WindowShape::Paged,
+                ..
+            } => ReleaseShape::Paged,
+            CheckedType::Array { element, length } => ReleaseShape::Repeated {
+                element: self.element_type(element)?,
+                statically_empty: length.value() == Some(0),
+                runtime_backing: false,
+            },
+            CheckedType::Window {
+                element, capacity, ..
+            } => ReleaseShape::Repeated {
+                element: self.element_type(element)?,
+                statically_empty: capacity.and_then(super::super::model::CheckedConst::value)
+                    == Some(0),
+                runtime_backing: capacity.is_none(),
+            },
+            CheckedType::Buffer { element } | CheckedType::Segments { element } => {
+                ReleaseShape::Repeated {
+                    element: self.element_type(element)?,
+                    statically_empty: false,
+                    runtime_backing: true,
+                }
             }
-            match current {
-                CheckedType::Generic(_) if !self.is_copy_type(check_context, current)? => {
-                    return Ok(true);
-                }
-                CheckedType::Nominal(id) => {
-                    if matches!(
-                        self.nominal(id)?.kind,
-                        CheckedNominalKind::Box { .. } | CheckedNominalKind::Shared { .. }
-                    ) {
-                        return Ok(true);
-                    }
-                    pending.extend(self.owned_components(id)?);
-                }
-                CheckedType::Array { element, length } if length.value() != Some(0) => {
-                    pending.push(self.element_type(element)?);
-                }
-                CheckedType::Window {
-                    element, capacity, ..
-                } if capacity.and_then(super::super::model::CheckedConst::value) != Some(0) => {
-                    pending.push(self.element_type(element)?);
-                }
-                CheckedType::Buffer { element } | CheckedType::Segments { element } => {
-                    pending.push(self.element_type(element)?);
-                }
-                _ => {}
-            }
-        }
-        Ok(false)
+            CheckedType::Entries { element } => ReleaseShape::Borrowed(self.element_type(element)?),
+            CheckedType::Generic(_) => ReleaseShape::Unknown {
+                may_release: match check_context {
+                    Some(context) => !self.is_copy_type(context, ty)?,
+                    None => true,
+                },
+            },
+            CheckedType::Unit
+            | CheckedType::Bool
+            | CheckedType::Integer(_)
+            | CheckedType::Float(_)
+            | CheckedType::GenericInt(_)
+            | CheckedType::GenericFloat(_) => ReleaseShape::Empty,
+        })
     }
     /// [PROV-6] the linearity class of a value of this type in the scope now
     /// being checked.

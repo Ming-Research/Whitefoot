@@ -1187,6 +1187,62 @@ impl FunctionEmitter<'_, '_> {
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
 
+    /// [SHARE-1] `shared_close`'s count: the runtime counts one handle out
+    /// with an acquire-release decrement and says whether it was the last.
+    pub(super) fn emit_shared_count_out(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        object: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if ty != IrType::Bool || !self.is_object_handle(object)? {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let prefix = labels("close", result);
+        self.names(&["wf__shared_release"]);
+        writeln!(
+            self.output,
+            "  %{prefix}.count = call i32 @wf__shared_release(ptr {})\n  {} = icmp ne i32 %{prefix}.count, 0",
+            self.value_name(object),
+            self.value_name(result),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// [SHARE-1] returns an object whose last handle was counted out, its
+    /// state already moved out, to the runtime.
+    pub(super) fn emit_shared_free(
+        &mut self,
+        result: IrValueId,
+        object: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if !self.is_object_handle(object)? {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.names(&["wf__shared_free"]);
+        writeln!(
+            self.output,
+            "  call void @wf__shared_free(ptr {})",
+            self.value_name(object)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+    }
+
+    /// Whether `object` is a handle to a shared object, not to a table.
+    fn is_object_handle(&self, object: IrValueId) -> Result<bool, BackendFailure> {
+        let Some(IrType::Nominal(nominal)) = self.value_type(object) else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            self.nominal(nominal)?.kind(),
+            IrNominalKind::Shared {
+                shape: IrShared::Object,
+                ..
+            }
+        ))
+    }
+
     /// Takes the object for a statement already holding an entry of one of
     /// its state's tables, where the frame never suspends.
     pub(super) fn emit_shared_take(

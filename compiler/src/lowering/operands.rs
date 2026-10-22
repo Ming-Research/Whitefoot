@@ -71,7 +71,8 @@ macro_rules! terminator_operands {
                 .map($value)
                 .chain(drops.$iter().map(|drop| drop.$drop()))
                 .collect(),
-            IrTerminator::Match { scrutinee, .. } => vec![$value(scrutinee)],
+            IrTerminator::Match { scrutinee, .. }
+            | IrTerminator::IntegerMatch { scrutinee, .. } => vec![$value(scrutinee)],
             IrTerminator::Return { value, drops } => std::iter::once($value(value))
                 .chain(drops.$iter().map(|drop| drop.$drop()))
                 .collect(),
@@ -136,6 +137,8 @@ macro_rules! operation_operands {
             | IrOperation::ContextAwait { start: value }
             | IrOperation::SharedState { object: value, .. }
             | IrOperation::SharedRetain { object: value, .. }
+            | IrOperation::SharedCountOut { object: value }
+            | IrOperation::SharedFree { object: value }
             | IrOperation::DecisionCell { object: value, .. }
             | IrOperation::SharedAcquire { object: value }
             | IrOperation::SharedTake { object: value }

@@ -245,6 +245,7 @@ pub struct CanonicalIssue {
     pub(crate) expected: String,
     /// The exact trivia bytes the source carries there instead.
     pub(crate) found: String,
+    pub(crate) mechanical_fix: Option<&'static str>,
 }
 
 impl CanonicalIssue {
@@ -258,6 +259,12 @@ impl CanonicalIssue {
     #[must_use]
     pub const fn location(&self) -> &CanonicalLocation {
         &self.location
+    }
+
+    /// Returns a repair for the rejected trivia position, when available.
+    #[must_use]
+    pub const fn mechanical_fix(&self) -> Option<&'static str> {
+        self.mechanical_fix
     }
 }
 
