@@ -95,12 +95,6 @@ structure View where
   premises : List Ineq
   images : List Ineq
 
-/-- `DIRECT(A)` [ENT-6]: a contradictory state; a strongest canonical L0 image
-with A's coefficient vector and a bound no greater than A's; or the bound
-interval substitution gives every remaining atom, its upper endpoint for a
-positive coefficient and its lower endpoint for a negative one. An atom's
-endpoints are the strongest of its interval and the L0 images over that atom
-alone. -/
 /-- An atom's endpoints for interval substitution [ENT-6]: the strongest of
 its interval and the L0 images over that atom alone. -/
 def View.hi (v : View) (x : Nat) : Int :=
@@ -117,6 +111,12 @@ def View.substMax (v : View) (xs : Coeffs) : Int :=
 
 -- spec ENT-6 3ec3128a964e0e54
 -- spec ENT-6 f26a113dfd860040
+/-- `DIRECT(A)` [ENT-6]: a contradictory state; a strongest canonical L0 image
+with A's coefficient vector and a bound no greater than A's; or the bound
+interval substitution gives every remaining atom, its upper endpoint for a
+positive coefficient and its lower endpoint for a negative one. An atom's
+endpoints are the strongest of its interval and the L0 images over that atom
+alone. -/
 def direct (v : View) (a : Ineq) : Bool :=
   v.contra || v.images.any (fun r => r.xs == a.xs && decide (r.c ≤ a.c)) ||
     decide (v.substMax a.xs ≤ a.c)
