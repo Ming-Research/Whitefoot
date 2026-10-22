@@ -1,5 +1,5 @@
 fn change_content(cell: &Option<u64>) -> result: u64 reads(cell), writes(cell.Some.value) {
-  doc "A primitive payload write kills the current variant fact while preserving the already selected payload place.";
+  doc "A primitive payload write kills the current variant fact.";
   match &cell^ {
     None() => {
       return 0_u64;
@@ -12,7 +12,7 @@ fn change_content(cell: &Option<u64>) -> result: u64 reads(cell), writes(cell.So
 }
 
 fn write_after_content_change(cell: &Option<u64>) -> result: unit writes(cell) {
-  doc "The set target is captured before the right-hand side; a primitive content write cannot prevent its valid commit.";
+  doc "SET-1 evaluates the payload target after the right-hand side, whose content write ended the variant fact, so the payload selection is refused; binding the value and matching again is the accepted spelling.";
   match &cell^ {
     None() => {
       return unit;
@@ -25,7 +25,6 @@ fn write_after_content_change(cell: &Option<u64>) -> result: unit writes(cell) {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "The right-hand side first writes 41, then the captured target commit must replace it with the returned 11.";
   let cell = Some<u64>(value: 7_u64);
   let changed = write_after_content_change(cell: &cell);
   match &cell {

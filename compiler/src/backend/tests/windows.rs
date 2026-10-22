@@ -1596,7 +1596,7 @@ fn chunk_summary_instances_preserve_window_abi_and_avoid_allocation() {
 }
 
 #[test]
-fn a_projected_window_target_is_formed_once_before_rhs() {
+fn a_projected_window_target_is_formed_once_after_rhs() {
     let source = br#"struct Columns {
   left: Box<Array<u16>>;
   right: Box<Array<u16>>;
@@ -1638,8 +1638,8 @@ fn main() -> status: std::process::ExitStatus pure {
     // are in `update`'s destination-form body (compiler/src/backend/abi.rs).
     let update = emitted_body(&llvm, "update");
     // The length read projects the field once for the explicit control. The
-    // target captures the complete element address once before the RHS, and
-    // the store uses that address without rereading its parent [SET-1].
+    // target forms the complete element address once after the RHS, and the
+    // store uses that address without rereading its parent [SET-1].
     //
     // STOR-1 places the descriptor in the one heap object. Capture therefore
     // loads the Box pointer from its field slot, then forms an address into
@@ -1664,7 +1664,10 @@ fn main() -> status: std::process::ExitStatus pure {
         .next_back()
         .expect("captured pointer definition")
         .trim();
-    assert!(guard < captured && captured < rhs && rhs < store);
+    assert!(guard < rhs && rhs < captured && captured < store);
+    // Only the length read projects the field before the RHS; the target's
+    // projection is formed after it.
+    assert_eq!(update[..rhs].matches(&columns).count(), 1);
     // Bounded copies of Columns load both Box fields too. Count reads of
     // the captured field address, whose result the target chain below uses;
     // the two Columns GEPs above still forbid reevaluating that projection.
@@ -1685,29 +1688,29 @@ fn main() -> status: std::process::ExitStatus pure {
         1,
         "the target's Box pointer is loaded once: {update}"
     );
-    let address = update[captured..rhs]
+    let address = update[captured..store]
         .lines()
         .find_map(|line| {
             line.trim()
                 .strip_suffix(&format!(" = getelementptr i8, ptr {pointer}, i64 0"))
         })
-        .expect("the captured pointer forms the array address before the RHS");
+        .expect("the captured pointer forms the array address after the RHS");
     let element_projection = format!(
         " = getelementptr inbounds {{ i64, [0 x i16] }}, ptr {address}, i64 0, i32 1, i64 "
     );
     assert_eq!(update.matches(&element_projection).count(), 1);
-    let element = update[captured..rhs]
+    let element = update[captured..store]
         .lines()
         .find(|line| line.contains(&element_projection))
         .and_then(|line| line.trim().split_once(" = ").map(|(result, _)| result))
-        .expect("the element address uses the captured array address before the RHS");
-    let target = update[captured..rhs]
+        .expect("the element address uses the captured array address after the RHS");
+    let target = update[captured..store]
         .lines()
         .find_map(|line| {
             line.trim()
                 .strip_suffix(&format!(" = getelementptr i8, ptr {element}, i64 0"))
         })
-        .expect("the complete typed target is captured before the RHS");
+        .expect("the complete typed target is formed after the RHS");
     assert_eq!(update.matches("store i16").count(), 1);
     assert!(
         update[store..]
@@ -1719,8 +1722,6 @@ fn main() -> status: std::process::ExitStatus pure {
             .unwrap()
             .ends_with(&format!("ptr {target}"))
     );
-    assert!(!update[rhs..store].contains("load ptr, ptr "));
-    assert!(!update[rhs..store].contains(&columns));
     assert!(!update.contains("call void @wf_trap"));
 
     let output = compile_and_run(&llvm);

@@ -10,6 +10,12 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/data-model/kernel-minimality
 
 Summary: A program that reuses one byte buffer per batch could not empty it without one boundary operation per element or a transfer of every element into another window, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. The kernel therefore owns `clear` over every droppable element type: it runs each element's derived release, sets the length to zero and keeps the storage, capacity, ring origin and pages, so an element type that needs no release is reset independently of length. Clearing leaves the list of operations that begin as source libraries, and clearing as a source library over `take_back` is recorded as rejected.
+## 2026-10-22 An assignment evaluates its right-hand side before its target
+
+Nodes: language/ownership/reference-validity, compiler/checker-facts
+
+Summary: A decision is added: `set p = e;` evaluates `e` first and then evaluates the target in the state `e` left, so, other than an atomic in-place update, it means exactly binding `e` and assigning the binding; the atomic update keeps the place it reads out because its first argument reads the target's offsets, which the call's pairwise effect comparison keeps its function from writing. Two accepted programs showed that a target evaluated first can go stale across its right-hand side, a double free after `remove_at` shifted the target's slot and a store into the block `grow` released ([incidental finding 6](../research/investigations/spec-proof/DESIGN.md#incidental-findings)). The checker's fact node now says an assignment target's captures read the state the right-hand side left. Refused: holding the target's storage under reference validity across the right-hand side, the atomic update's prefix condition for every assignment, and reading subscripts first while locating the place afterwards.
+
 ## 2026-10-22 Heap storage holds elements aligned up to 16 bytes with the ordinary allocator
 
 Nodes: compiler/storage-representation
