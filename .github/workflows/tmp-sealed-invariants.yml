@@ -1,7 +1,8 @@
 # Temporary: the focused checks of the sealed type invariant work (the
 # compiler build and lint, every unit test after main's merge, every
 # conformance case's verdict with each failing case listed, the documentation
-# examples main's check reads through the branch's compiler), the verdicts
+# examples main's check reads through the branch's compiler, and the
+# container and snapshot programs main's HashMap change brought in), the verdicts
 # of the `shared_close` cases under the compiler before their rule, the trial
 # compile of the downstream programs with the branch's compiler and the
 # base's, and the repository-level static checks and the change-log check
@@ -63,6 +64,12 @@ jobs:
         run: |
           perl .github/run-check.pl sealed-doc-examples cargo test --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --test corpus -- doc_examples:: --nocapture
+      - name: Check main's new HashMap programs through the branch's compiler
+        if: always()
+        run: |
+          perl .github/run-check.pl sealed-hash-map-programs cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --test corpus -- \
+            programs::containers:: programs::snapshot_export:: --nocapture
   # The new `shared_close` cases under the compiler of the merge that brought
   # `shared_close` in, before the rule that keeps the values below its state
   # in debt: that compiler takes the result as a sealed call result, so each
@@ -167,7 +174,7 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Build the branch's compiler and the base's
         run: |
-          git fetch --depth=1 origin 76d72befed433cd8f9c94dd7161d64a15918df66
+          git fetch --depth=1 origin bb3f14d285fc4031205986e38576ab466fd5596a
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
           if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
             # A decided condition counts as discharged in both compilers,
