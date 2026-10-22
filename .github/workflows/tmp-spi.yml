@@ -96,4 +96,4 @@ jobs:
           perl .github/run-check.pl spec-prose-integrity make --no-print-directory spec-prose-integrity
           perl .github/run-check.pl guidance make --no-print-directory guidance
           perl .github/run-check.pl repository-invariants make --no-print-directory repository-invariants
-          perl .github/run-check.pl design-lint make --no-print-directory design-lint
+          perl .github/run-check.pl design-lint make --no-print-directory design-lint DESIGN_REVIEW_BASE="$(git merge-base origin/main HEAD)"
