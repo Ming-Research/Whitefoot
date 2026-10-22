@@ -379,16 +379,19 @@ is not restored rejects the program there (see
 [diagnostics](#rejection-and-diagnostics)). After a successful hand-off the
 restored debts are removed.
 
-T6 **Call.** After the hand-off of every argument, the callee's projected
-writes apply T2 to the anchors strictly above each argument's place, and to
-no anchor at or below a reference argument's referent: the callee left that
-referent sealed (T7). The call's results carry no debt, and a binding that
-receives a `shared_close` result takes the unfolding below its state. This
-rule needs only the callee's declared row, the declared parameter and result
-types and whether the callee is `shared_close` or one of T5's three prelude
-rows, never its body; at a concrete instance, a call through a function-kind
-parameter is a call of its actual
-([below](#prelude-host-and-module-boundaries)).
+T6 **Call.** After the hand-offs of its arguments (T5), the callee's
+projected writes apply T2 to the anchors strictly above each argument's
+place, and to no anchor at or below a reference argument's referent: the
+callee left a referent it received in a hand-off sealed (T7 at a source
+callee's exits, parametricity at a supplied definition's), and `swap` and
+`map_clear`, whose arguments are no hand-offs, move (T10) or clear (T5's
+release) the values below theirs without writing into one. The call's
+results carry no debt, and a binding that receives a `shared_close` result
+takes the unfolding below its state. This rule needs only the callee's
+declared row, the declared parameter and result types and whether the callee
+is `shared_close` or one of T5's three prelude rows, never its body; at a
+concrete instance, a call through a function-kind parameter is a call of its
+actual ([below](#prelude-host-and-module-boundaries)).
 
 T7 **Body exit.** Each `return` and propagated error exit is a hand-off of
 the returned value and of the referent of every reference parameter whose
@@ -593,17 +596,18 @@ program, every activation's abstract state paired with its runtime state.
   only on an edge where the anchor exists there (T13's premises); by SI it
   is true there, so it cannot make a reachable edge contradictory, and the
   fact intersection stays sound.
-- *Calls through write references.* Before the call T5 proves every argument
-  referent sealed. The callee starts with D empty over that referent (T1)
-  and must restore every debt at or below it at every exit (T7), so the
-  referent is valid again when control returns; T6 therefore adds no debt at
-  or below the referent and SI holds there. Anchors strictly above the
-  referent may have lost a cross-field relation through the callee's writes;
-  T6 applies T2 to them, using the callee's declared row, whose exactness
-  [EFF-2] guarantees it covers every write. A callee taking `&u64` at the
-  argument `&idx.value` writes below the anchor `idx`, which is above the
-  referent, so the caller owes `idx`'s restoration (case
-  `type11-neg-u64-helper-breaks` below).
+- *Calls through write references.* Before an ordinary call T5 proves every
+  argument referent sealed; `swap`, `release` and `map_clear`, which T5
+  exempts, fall under the exchange and release cases. The callee starts with
+  D empty over that referent (T1) and must restore every debt at or below it
+  at every exit (T7), so the referent is valid again when control returns;
+  T6 therefore adds no debt at or below the referent and SI holds there.
+  Anchors strictly above the referent may have lost a cross-field relation
+  through the callee's writes; T6 applies T2 to them, using the callee's
+  declared row, whose exactness [EFF-2] guarantees it covers every write. A
+  callee taking `&u64` at the argument `&idx.value` writes below the anchor
+  `idx`, which is above the referent, so the caller owes `idx`'s restoration
+  (case `type11-neg-u64-helper-breaks` below).
 - *Removals.* T8 removes a debt only when the instance is proved in the
   current state, so I holds at that moment, which is exactly what SI asks.
   T3 removes a debt only when the store is proved to have replaced that very
