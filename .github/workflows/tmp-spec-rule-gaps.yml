@@ -32,9 +32,7 @@ jobs:
           DESIGN_REVIEW_BASE: origin/main
         run: make design-lint
       - name: Readiness check
-        env:
-          DESIGN_REVIEW_BASE: origin/main
-        run: make design-ready
+        run: make design-ready DESIGN_REVIEW_BASE="$(git merge-base origin/main HEAD)"
       - name: Conformance structure and coverage
         run: make conformance
 
@@ -222,7 +220,11 @@ jobs:
           WF
           cp "$GITHUB_WORKSPACE/tests/conformance/cases/call1-pos-a-shared-borrow-keeps-every-fact.wf" case-call1.wf
           cp "$GITHUB_WORKSPACE/tests/conformance/cases/win2-pos-part-effect-row.wf" case-win2.wf
-          for probe in case-call1 case-win2 straight-literal-index loop-moving-index loop-fixed-index loop-no-write loop-literal-index call-unnamed-alias call-unnamed-alias-plain nodrop-const; do
+          cp "$GITHUB_WORKSPACE/tests/conformance/cases/inv1-pos-header-invariant-keeps-element-fact.wf" case-inv1-pos.wf
+          cp "$GITHUB_WORKSPACE/tests/conformance/cases/inv1-neg-header-invariant-moving-index-write.wf" case-inv1-neg.wf
+          cp "$GITHUB_WORKSPACE/tests/conformance/cases/ent5-neg-loop-head-literal-index-write.wf" case-ent5-neg.wf
+          cp "$GITHUB_WORKSPACE/tests/conformance/cases/const2-neg-whole-linear-struct.wf" case-const2-neg.wf
+          for probe in case-call1 case-win2 case-inv1-pos case-inv1-neg case-ent5-neg case-const2-neg straight-literal-index loop-moving-index loop-fixed-index loop-no-write loop-literal-index call-unnamed-alias call-unnamed-alias-plain nodrop-const; do
             set +e
             "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" -o "$probe" "$probe.wf"
             compiled=$?
