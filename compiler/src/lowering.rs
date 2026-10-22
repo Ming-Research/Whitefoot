@@ -368,7 +368,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 45] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 46] = [
     // [OP-13] construction and storage conversion functions.
     "box_new",
     "array_filled",
