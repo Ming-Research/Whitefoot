@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-21 HashMap probes from high-bit homes and scans from a hash-space cursor
+
+Nodes: language/data-model/hash-map-storage
+
+Summary: The ordinary HashMap could not offer a resumable bounded scan, because a home of the hash modulo the bucket count lets a rebuild reposition keys relative to any physical cursor, and the [hash-scan study](../research/investigations/hash-scan/DESIGN.md#why-a-physical-bucket-cursor-is-insufficient-for-todays-linear-probing) found pairs present throughout a pass that a bucket cursor never reports. The map still probes linearly, but its bucket count is now zero or a power of two of at least two and a key's home is the top bits of its hash after one odd multiplication, so each home is an interval of the hash space that doubling splits in two; capacity now counts the pairs held before a rebuild, three quarters of the buckets and at most the ceiling, and the ceiling bounds pairs. `hash_map_scan` resumes from a position in the hash space, takes the key binding, and lends every pair homed in up to limit buckets, hashing only the pairs at the two ends of its walk, so its limit is a hint as Redis 7.2.16's COUNT is. Home-bucket chains were built and measured first: the [second comparison](../research/investigations/hash-scan/DESIGN.md#second-comparison-the-link-word-in-the-node) found hits and removals still slower than probing and more memory at ten thousand pairs, so they are refused with the stable-identifier directory, cache-line buckets with fingerprints, pairs inline in chain heads, a parallel link array, stored hashes, a physical cursor, low-bit homes with a reverse-binary cursor, and lending without hashing the end runs.
+
 ## 2026-10-21 Windows programs target MinGW, and a bundled release gains a Windows x86-64 package
 
 Nodes: compiler/toolchain-resolution, compiler/downstream-releases, compiler/waiting-contexts
