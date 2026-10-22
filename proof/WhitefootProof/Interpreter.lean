@@ -189,7 +189,7 @@ def evalOp : TableOp → List Value → Eval Value
   | .band, [.bool a, .bool b] => .ok (.bool (a && b))
   | .bor, [.bool a, .bool b] => .ok (.bool (a || b))
   | .bxor, [.bool a, .bool b] => .ok (.bool (a != b))
-  | .bnot, [.bool a] => .ok (.bool !a)
+  | .bnot, [.bool a] => .ok (.bool (!a))
   | _, _ => ill "a table operation with operands it does not take"
 
 /-- The value of an expression that calls no function of the program:
@@ -423,8 +423,8 @@ def stepIf (p : Program) (f : Frame) (callers : List Frame) (c : Expr) (thn els 
   Step.ofEval (evalExpr p f.env c) fun v =>
     match v with
     | .bool b =>
-      .next { frames := { f with kont := .stmts (if b then thn else els) ::
-        .scope f.env.length :: k } :: callers }
+      let kont : List Kont := .stmts (if b then thn else els) :: .scope f.env.length :: k
+      .next { frames := { f with kont } :: callers }
     | _ => .halt (.illFormed "an if condition that is not a Bool")
 
 /-- One statement of the running frame, followed by `k`. -/
@@ -447,15 +447,15 @@ where
   /-- `loop { … }` enters its body; the end of the body enters it again. -/
   stepLoop (f : Frame) (callers : List Frame) (label : Option String) (body : List Stmt)
       (k : List Kont) : Step :=
-    .next { frames := { f with kont := .stmts body :: .loop label body f.env.length :: k } ::
-      callers }
+    let kont : List Kont := .stmts body :: .loop label body f.env.length :: k
+    .next { frames := { f with kont } :: callers }
   -- spec FN-1 a3703e88ae515ee0
   -- spec FN-1 1d8e64f64176a68a
   /-- `break` leaves its loop for the statement after it. -/
   stepBreak (f : Frame) (callers : List Frame) (label : Option String) (k : List Kont) : Step :=
     match findLoop label k with
-    | some (_, _, d, rest) => .next { frames := { f with env := f.env.restore d, kont := rest } ::
-        callers }
+    | some (_, _, d, rest) =>
+      .next { frames := { f with env := f.env.restore d, kont := rest } :: callers }
     | none => .halt (.illFormed "a break outside its loop")
   -- spec FN-1 05ca73acf9655ecd
   /-- `continue` enters its loop's body again. -/
@@ -463,8 +463,8 @@ where
       Step :=
     match findLoop label k with
     | some (l, body, d, rest) =>
-      .next { frames := { f with env := f.env.restore d,
-        kont := .stmts body :: .loop l body d :: rest } :: callers }
+      let kont : List Kont := .stmts body :: .loop l body d :: rest
+      .next { frames := { f with env := f.env.restore d, kont } :: callers }
     | none => .halt (.illFormed "a continue outside its loop")
 
 -- spec FN-1 825e55475a4a1460
@@ -483,8 +483,8 @@ def step (p : Program) (c : Config) : Step :=
     | .stmts [] :: k => .next { frames := { f with kont := k } :: callers }
     | .scope d :: k => .next { frames := { f with env := f.env.restore d, kont := k } :: callers }
     | .loop l body d :: k =>
-      .next { frames := { f with env := f.env.restore d,
-        kont := .stmts body :: .loop l body d :: k } :: callers }
+      let kont : List Kont := .stmts body :: .loop l body d :: k
+      .next { frames := { f with env := f.env.restore d, kont } :: callers }
     | .stmts (s :: ss) :: k => stepStmt p f callers s (.stmts ss :: k)
 
 /-- At most `n` steps from a configuration. -/

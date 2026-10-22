@@ -31,34 +31,25 @@ inductive ParseError where
 
 namespace Parser
 
-/-- A parser over the token array from a position. -/
-structure P (α : Type) where
-  run : Array Tok → Nat → Except ParseError (α × Nat)
+/-- A parser: the token array to read, and the position as state. -/
+abbrev P := StateT Nat (ReaderT (Array Tok) (Except ParseError))
 
-instance : Monad P where
-  pure a := ⟨fun _ i => .ok (a, i)⟩
-  bind m f := ⟨fun ts i =>
-    match m.run ts i with
-    | .ok (a, j) => (f a).run ts j
-    | .error e => .error e⟩
-
-instance {α : Type} : Inhabited (P α) :=
-  ⟨⟨fun _ _ => .error (.reject "GRAM-1" "no parse")⟩⟩
-
-def fail {α : Type} (e : ParseError) : P α := ⟨fun _ _ => .error e⟩
+def fail {α : Type} (e : ParseError) : P α := throw e
 
 def outside {α : Type} (what : String) : P α := fail (.outside what)
 
 def reject {α : Type} (rule msg : String) : P α := fail (.reject rule msg)
 
 /-- The token `k` places ahead of the cursor. -/
-def peekAt (k : Nat) : P (Option Tok) := ⟨fun ts i => .ok (ts[i + k]?, i)⟩
+def peekAt (k : Nat) : P (Option Tok) := do
+  let ts ← read
+  return ts[(← get) + k]?
 
 def peek : P (Option Tok) := peekAt 0
 
-def advance : P Unit := ⟨fun _ i => .ok ((), i + 1)⟩
+def advance : P Unit := modify (· + 1)
 
-def atEnd : P Bool := ⟨fun ts i => .ok (ts.size ≤ i, i)⟩
+def atEnd : P Bool := do return decide ((← read).size ≤ (← get))
 
 def show? : Option Tok → String
   | some (.lower s) | some (.upper s) | some (.opname s) | some (.oper s) | some (.num s)
@@ -748,7 +739,6 @@ end Parser
 
 namespace Resolve
 
-open Parser (outside)
 
 def checkTy (p : Program) : Ty → Except ParseError Unit
   | .named path =>
@@ -815,7 +805,7 @@ def parseProgram (src : String) : Except ParseError Program := do
   let toks ← match Lexer.tokens src with
     | .ok ts => .ok ts
     | .error e => .error (.reject "GRAM-1" e)
-  let (p, _) ← Parser.program.run toks 0
+  let (p, _) ← (Parser.program.run 0).run toks
   p.resolve
   return p
 

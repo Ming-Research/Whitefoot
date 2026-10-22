@@ -254,9 +254,10 @@ build time apart from test and program execution.
   `map-sanitizers.yml` on every push to a PR that changes the concurrent
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
-  `proof.yml` on every push to a PR that changes the specification, `proof/`
-  or that workflow, drafts included, and on such a push to `main` (the Lean
-  model's sentence coverage and proofs, on the PR's head),
+  `proof.yml` on every push to a PR that changes the specification, `proof/`,
+  the conformance cases or that workflow, drafts included, and on such a push
+  to `main` (the Lean model's sentence coverage, its proofs and its run over
+  the conformance cases in its fragment, on the PR's head),
   `compute-regression.yml` on ready PRs that touch measured inputs (paired
   WF-to-WF timing; a draft shows it skipped; each push to `main` there only
   builds and caches that commit's compiler for later PRs' merge-base
