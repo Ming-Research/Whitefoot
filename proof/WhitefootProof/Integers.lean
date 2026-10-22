@@ -1,10 +1,10 @@
 /-!
 # Integer value semantics
 
-The value part of [OP-2] for add, subtract, multiply, negation, absolute value
-and the six comparisons: the closed integer types and their value sets,
-wrapping, and the exact, defined, wrap and checked forms. Division, remainder
-and shifts are outside this slice.
+The value part of [OP-2] for add, subtract, multiply, division, remainder,
+negation, absolute value and the six comparisons: the closed integer types and
+their value sets, wrapping, and the exact, defined, wrap and checked forms.
+The checked division and remainder forms and the shifts are outside the model.
 
 A `-- spec <ID> <hash>` line above a definition marks the specification line
 that definition formalizes; `lake exe coverage` checks every mark against the
@@ -166,6 +166,35 @@ theorem checkedForm_ok_iff {op : ArithOp} {t : IntTy} {a b r : Int} :
   · simp [hm]
 
 end ArithOp
+
+/-- Division and remainder. -/
+inductive DivOp where
+  | div | rem
+  deriving DecidableEq, Repr
+
+namespace DivOp
+
+-- spec OP-2 22ab98f1d1da2f04
+-- spec OP-2 c6366c225d68f036
+/-- The domain queries `/defined` and `%defined` at T. -/
+def defined (_ : DivOp) (t : IntTy) (n d : Int) : Bool :=
+  decide (d ≠ 0 ∧ (t.signed = false ∨ n ≠ t.minVal ∨ d ≠ -1))
+
+-- spec OP-2 ee8acc5f10f1aecd
+/-- The mathematical result: the quotient truncated toward zero, and the
+remainder `n - (n / d) * d`, which has the dividend's sign or is zero. -/
+def math : DivOp → Int → Int → Int
+  | .div, n, d => n.tdiv d
+  | .rem, n, d => n.tmod d
+
+-- spec OP-2 5503711c8aacc135
+-- spec OP-2 4b4e29c4a85cddd1
+/-- The exact form: the result where the domain query holds, and no result
+elsewhere. There is no wrap form. -/
+def exactForm (op : DivOp) (t : IntTy) (n d : Int) : Option Int :=
+  if op.defined t n d then some (op.math n d) else none
+
+end DivOp
 
 /-- Negation and absolute value, defined for the signed types. -/
 inductive UnaryOp where
