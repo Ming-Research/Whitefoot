@@ -11,6 +11,12 @@ Nodes: compiler/range-judgment
 
 Summary: Two decisions are added. Provisionally, when a call's argument is a formed range, its write footprint is bounded by the first captured range and the full path frame is kept only as diagnostic provenance, because that separates range overlap from read identity without adding equalities to the accepting query, instead of versioning storage by full path, whose correspondence to the fixed derivation rules is unsettled; some same-range sibling-field proofs report an implementation limit until a program needs that precision, and a requirement whose reads lost their provenance at a join, a `give`, an aggregate copy or an aggregate or routed result, or whose formal selector identities are not remapped, keeps the ordinary verdict even where RANGE-2 and OWN-7 admit the program, a known exception to the rule that a limit of the checker is never reported as the program's error and not a rule of the language. A capability limit is judged per failed obligation from its conclusion, quantifier bounds, guards and read domains, instead of replacing every conclusion of a function with an unresolved write, and the counterfactual queries that explain a precision loss serve diagnostics only and never acceptance.
 
+## 2026-10-22 Taking turns with a resource that must be closed explicitly needs no lease construct
+
+Nodes: language/waiting/shared-objects
+
+Summary: Several running contexts that take turns with one resource that must be closed explicitly, such as the write file of a log, were thought to need a construct that lends the resource and makes sure it is put back. With a shared object whose state may be linear, the resource sits in a one-slot window that is the state: a guarded atomic statement moves it out, the context uses it as an ordinary linear local across waiting calls and a second statement puts it back, so the checker already requires it to be consumed on every path, it cannot be copied, a context that wants it waits in its guard, and the handle that ends last receives it and closes it exactly once. The shared-objects node now records that decision. Refused: a lexical lease block and an explicit lease value, each with a reclaim protocol and a contract against swapping the file away, because they add only the automatic put back and a same-window contract that refuses the file swap of a log rewrite.
+
 ## 2026-10-21 HashMap probes from high-bit homes and scans from a hash-space cursor
 
 Nodes: language/data-model/hash-map-storage
