@@ -27,9 +27,7 @@ fn byte_reuse(meter: &MemoryMeter) -> code: u8 writes(meter) {
   if refilled != built {
     return 2_u8;
   }
-  if bytes.inner.cap != 65536_u64 {
-    return 3_u8;
-  }
+  invariant still_retained: bytes.inner.cap == 65536_u64;
   return 0_u8;
 }
 

@@ -352,5 +352,5 @@ fn clear_reuses_storage_and_releases_every_element_in_both_lowering_modes() {
     // Ring: one backing and six boxes. Boxed Paged of an 808-byte element,
     // B = 4 [OP-13]: the cell and three pages, and 10 + 10 boxes. With the
     // byte buffer: 1 + 65 + 7 + 24 = 97.
-    execute_container_program("clear", &sources, 97, false);
+    execute_container_program("clear", &sources, 97, 0, false);
 }

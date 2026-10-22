@@ -18,9 +18,7 @@ fn main() -> status: ExitStatus pure {
   let origin = r.head;
   clear(window: &r);
   invariant ring_empty: r.len == 0_u64;
-  if r.head != origin {
-    return exit_status(code: 1_u8);
-  }
+  invariant ring_origin: r.head == origin;
   place_back(window: &r, value: 6_u64);
   if r[0_u64] != 6_u64 {
     return exit_status(code: 2_u8);
@@ -46,9 +44,7 @@ fn main() -> status: ExitStatus pure {
   clear(window: &p.inner);
   invariant paged_empty: p.inner.len == 0_u64;
   invariant paged_retained: p.inner.cap == 1025_u64;
-  if p.inner.pages.len != 0_u64 {
-    return exit_status(code: 3_u8);
-  }
+  invariant paged_no_page: p.inner.pages.len == 0_u64;
   for (
     i in 0_u64..1025_u64,
     invariant refilled: p.inner.len == i

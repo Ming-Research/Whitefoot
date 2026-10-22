@@ -22,12 +22,6 @@ fn clear_reuses_bytes() -> code: u8 pure {
   clear(window: &bytes.inner);
   invariant empty: bytes.inner.len == 0_u64;
   invariant retained: bytes.inner.cap == 65536_u64;
-  if bytes.inner.len != 0_u64 {
-    return 2_u8;
-  }
-  if bytes.inner.cap != 65536_u64 {
-    return 3_u8;
-  }
   for (
     i in 0_u64..65536_u64,
     invariant refilling: bytes.inner.len == i
@@ -91,9 +85,7 @@ fn clear_releases_wrapped_ring() -> code: u8 pure {
   let origin = ring.inner.head;
   clear(window: &ring.inner);
   invariant empty: ring.inner.len == 0_u64;
-  if ring.inner.head != origin {
-    return 21_u8;
-  }
+  invariant origin_kept: ring.inner.head == origin;
   if first.inner != 1_u8 {
     return 22_u8;
   }

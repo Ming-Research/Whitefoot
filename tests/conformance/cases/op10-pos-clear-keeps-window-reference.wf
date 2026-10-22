@@ -5,7 +5,8 @@ fn main() -> status: std::process::ExitStatus pure {
   place_back(window: window, value: 65_u8);
   clear(window: window);
   place_back(window: window, value: 66_u8);
-  if window^.len != 1_u64 {
+  invariant refilled: window^.len == 1_u64;
+  if window^[0_u64] != 66_u8 {
     return std::process::exit_status(code: 1_u8);
   }
   return std::process::exit_status(code: 0_u8);
