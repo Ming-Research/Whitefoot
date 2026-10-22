@@ -25,6 +25,7 @@ impl Walker<'_> {
                 container,
                 indices,
                 projection,
+                ..
             } => {
                 let mut path = projection.clone().unwrap_or_default();
                 path.push(CheckedRangeProjection::BoxContent);
@@ -68,6 +69,7 @@ impl Walker<'_> {
                 container,
                 indices,
                 projection: Some(projection),
+                ..
             } => {
                 let version = state.version(&mut self.world, *container);
                 let mut path = projection.clone();
@@ -110,7 +112,11 @@ impl Walker<'_> {
                 path.push(CheckedRangeProjection::Index(at.len() as u32));
             }
             at.push(next.clone());
-            self.read_projection(state, container, at, Some(path), result, node)
+            let barrier = match view {
+                View::Element { barrier, .. } => barrier.as_ref(),
+                _ => None,
+            };
+            self.read_projection(state, container, at, Some(path), result, node, barrier)
         };
         if let Some(old_generation) = generation {
             let new_generation = self.world.new_generation();
