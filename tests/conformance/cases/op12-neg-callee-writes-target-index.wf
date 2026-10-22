@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn advanced(current: Box<u64>, cursor: &u64) -> result: Box<u64> writes(cursor) contract {
+  ensures cursor^ == 1_u64;
+} {
+  doc "OP-12 refuses this callee at the update site: its declared row writes the binding the target's subscript reads.";
+  set cursor^ = 1_u64;
+  return move current;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-12: the update reads its target out at the first argument, slot 0, and SET-1 evaluates the target after the call, when the cursor is 1; a row that writes a place an offset of the target reads would make those two places differ, so it is a hard error at the complete call.";
+  let v = slots_new::<Box<u64>, 2>();
+  let first = box_new::<u64>(value: 1_u64);
+  place_back(window: &v, value: move first);
+  let second = box_new::<u64>(value: 2_u64);
+  place_back(window: &v, value: move second);
+  let cursor = 0_u64;
+  set v[cursor] = advanced(current: move v[cursor], cursor: &cursor);
+  return exit_status(code: 0_u8);
+}

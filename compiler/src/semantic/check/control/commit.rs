@@ -2,9 +2,9 @@
 //!
 //! `set_stmt := "set" place "=" expr ";"` [GRAM-4] writes exactly one place,
 //! so this rule has one written form. The order is the rule's order — the
-//! target is resolved and evaluated without reading or consuming the value
-//! stored there, then the right-hand side, then the premises [SET-1] rechecks
-//! under [LIV-1], then the one commit.
+//! right-hand side, then the target resolved and evaluated in the state it
+//! left, without reading or consuming the value stored there, with every
+//! target premise judged there under [LIV-1], then the one commit.
 //!
 //! v0.59's multi-target commit is retired with [LIV-2]: the target list, the
 //! ordinal types a call's result list supplied, the pairwise overlap
@@ -23,9 +23,10 @@ use crate::syntax::NodeId;
 use crate::{DeclarationId, Production, SemanticCompilerFailure, SemanticIssueKind, SemanticRule};
 
 use super::super::super::model::{CheckedMode, CheckedSetTarget, CheckedStatement};
-use super::super::super::places::{PlaceRoot, PlaceStep, ResolvedPlace};
+use super::super::super::places::{CaptureId, PlaceRoot, ResolvedPlace};
+use crate::syntax::views::PlaceSuffix;
 use super::super::expressions::{MutationTarget, ResolvedPlaceSet, WIN3_LINEAR_TARGET};
-use super::super::references::{InvalidationEvent, ReferenceInfo, ReferenceKind, RequiredReferent};
+use super::super::references::{InvalidationEvent, RequiredReferent};
 use super::super::{CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding};
 use super::{ControlScope, StatementResult};
 
@@ -45,6 +46,10 @@ pub(in crate::semantic::check) struct CommitReadOut {
     /// its read-out only to that call's first actual; an occurrence in any
     /// later actual follows ordinary [OWN-1].
     call: Option<crate::NodePath>,
+    /// The occurrences of the target's own subscript offsets and range
+    /// endpoints. [OP-12] refuses a row that writes a place one of them
+    /// reads; an index a reference fixed at its formation is not among them.
+    offsets: Vec<CaptureId>,
     atomic_call: bool,
     argument_zero: bool,
     read_out_allowed: bool,
@@ -182,38 +187,32 @@ impl<'unit> Checker<'_, 'unit> {
             return Ok(result);
         }
 
-        // [SET-1] the target is resolved and evaluated first, without reading
-        // or consuming the value stored there.
-        let revives =
-            self.types
+        // [SET-1] evaluates the right-hand side first, under ordinary
+        // ownership. [OP-12] alone recognizes its direct call's first target
+        // actual as an atomic read-out rather than a root-killing consume.
+        let (value, atomic_read_out) =
+            self.check_commit_value(context, target_node, value_node, bindings, scope.loops.len())?;
+        // A complete binding dead where the target is evaluated is
+        // reinitialized; an [OP-12] read-out is the update's own transfer, and
+        // its commit writes the place it read [PAR-2].
+        let revives = !atomic_read_out
+            && self
+                .types
                 .declarations
                 .commit_revives_binding(check_context, target_node, bindings)?;
+
+        // [SET-1] target evaluation then resolves the target in the state the
+        // right-hand side left, without reading or consuming the value stored
+        // there, and every target judgment below is made in that state.
         let mut mutation =
             self.check_set_target(context, target_node, bindings, scope.loops.len())?;
         if revives {
-            // An entry-dead complete binding has no current owner whose state
-            // this initialization could write [SET-1, EFF-2]. Its bare target
+            // A dead complete binding has no current owner whose state this
+            // initialization could write [SET-1, EFF-2]. Its bare target
             // evaluates no offsets and no other expressions.
             mutation.effects = EffectSet::NONE;
         }
-        let mut effects = mutation.effects.clone();
-
-        // [SET-1] evaluates the right-hand side under ordinary ownership.
-        // [OP-12] alone recognizes its direct call's first target actual as
-        // an atomic read-out rather than a root-killing consume.
-        bindings
-            .get_mut(&mutation.declaration)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            .commit_target = Self::commit_payload_reference(&mutation)?;
-        let outcome =
-            self.check_commit_value(context, &mutation, value_node, bindings, scope.loops.len());
-        let captured_target = bindings
-            .get_mut(&mutation.declaration)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            .commit_target
-            .take();
-        let (value, atomic_read_out) = outcome?;
-        effects = effects.union(value.effects.clone());
+        let effects = value.effects.clone().union(mutation.effects.clone());
 
         // [TYPE-5] "the right-hand side of `set p = e;` must produce exactly
         // `own T` ... After the TYPE-7 implicit-read exclusivity below, a
@@ -258,7 +257,6 @@ impl<'unit> Checker<'_, 'unit> {
             &mutation,
             target_node,
             atomic_read_out,
-            captured_target.as_ref(),
             bindings,
         )?;
         // [WIN-3, STOR-3] "Assigning over a live owned place releases the old
@@ -317,7 +315,7 @@ impl<'unit> Checker<'_, 'unit> {
     fn check_commit_value(
         &mut self,
         context: FunctionContext<'_, '_>,
-        mutation: &MutationTarget,
+        target_node: NodeId,
         value_node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
@@ -328,14 +326,55 @@ impl<'unit> Checker<'_, 'unit> {
             }
             _ => None,
         };
+        // [OP-12] an atomic update locates its target at the call's first
+        // argument, before the call's effects, and its row condition makes
+        // that the place [SET-1]'s target evaluation names after the call.
+        // So only a direct call needs the place now, and it is resolved on a
+        // copy of the entry state purely to name it: a target this cannot
+        // resolve offers no read-out, and its rejection, if any, is the one
+        // target evaluation reports after the right-hand side.
+        let mutation = match call {
+            Some(_) => {
+                let mut entry = bindings.clone();
+                let noted = self.body.call_value_captures.clone();
+                let mutation =
+                    self.check_set_target(context, target_node, &mut entry, loop_depth).ok();
+                // The probe reads the offsets' entry values; whether a capture
+                // holds a parameter's call value is noted by target evaluation.
+                self.body.call_value_captures = noted;
+                mutation
+            }
+            None => None,
+        };
+        let Some(mutation) = mutation else {
+            let value = self.check_expression(context, value_node, bindings, loop_depth)?;
+            return Ok((value, false));
+        };
+        let mut offsets = Vec::new();
+        for suffix in self
+            .types
+            .declarations
+            .tree
+            .descendants_with(target_node, Production::Psuffix)?
+        {
+            let occurrences = match self.types.declarations.tree.place_suffix(suffix)? {
+                PlaceSuffix::Index { offset } => vec![offset],
+                PlaceSuffix::Range { start, end } => vec![start, end],
+                PlaceSuffix::Member(_) | PlaceSuffix::Dereference => Vec::new(),
+            };
+            offsets.extend(occurrences.into_iter().map(|occurrence| {
+                CaptureId::source(u32::try_from(occurrence.index()).unwrap_or(u32::MAX - 1))
+            }));
+        }
         self.body.commit_read_outs = vec![CommitReadOut {
             // [REF-1, OP-12] exact read-out matching uses the unique member
             // where one exists and the holder identity for a true union.
             // After a read-out, liveness ranges over every storage member.
-            place: mutation.place.clone(),
+            place: mutation.place,
             element: mutation.element,
             ty: mutation.target.ty(),
             call,
+            offsets,
             atomic_call: false,
             argument_zero: false,
             read_out_allowed: false,
@@ -349,18 +388,17 @@ impl<'unit> Checker<'_, 'unit> {
         Ok((outcome?, read_out))
     }
 
-    /// [SET-1] the premises rechecked after the right-hand side, under
-    /// [LIV-1].
+    /// [SET-1] the target premises judged at target evaluation, after the
+    /// right-hand side, under [LIV-1].
     fn judge_commit_admission(
         &mut self,
         check_context: &CheckContext<'_>,
         mutation: &MutationTarget,
         target_node: NodeId,
         atomic_read_out: bool,
-        captured_target: Option<&super::super::references::ReferenceInfo>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
-        // The root's liveness is re-established after the right-hand side
+        // The root's liveness is judged after the right-hand side
         // [SET-1, LIV-1]. A complete binding this commit reinitializes is the
         // one dead root a commit revives — because it was already dead when
         // the statement resolved it, or because this statement's own read-out
@@ -381,9 +419,6 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         self.revalidate_mutation_access(mutation.through_reference, bindings, target_node)?;
-        if !atomic_read_out && let Some(reference) = captured_target {
-            self.check_reference_info_valid(mutation.declaration, reference, target_node)?;
-        }
         let ty = mutation.target.ty();
         if self.types.is_copy_type(check_context, ty)? || atomic_read_out || !root_live {
             return Ok(());
@@ -552,46 +587,6 @@ impl<'unit> Checker<'_, 'unit> {
         )))
     }
 
-    /// [SET-1, REF-2] retain the storage selected by a newly written payload
-    /// step across the RHS. Inline fields inherit that storage; they do not
-    /// form another reference whose proper prefixes must remain unwritten.
-    /// Later Box or subscript selections do select storage and stay in the
-    /// captured path. References already used to reach the target are checked
-    /// separately by `revalidate_mutation_access`.
-    fn commit_payload_reference(
-        mutation: &MutationTarget,
-    ) -> Result<Option<ReferenceInfo>, CheckStop> {
-        let written = match &mutation.target {
-            CheckedSetTarget::Place(_) => return Ok(None),
-            CheckedSetTarget::RangeIndex(place) => place.place_path(),
-            CheckedSetTarget::Storage(root) => root.place_path(),
-        };
-        if !written
-            .iter()
-            .any(|step| matches!(step, PlaceStep::Payload { .. }))
-        {
-            return Ok(None);
-        }
-        let inline_fields = written
-            .iter()
-            .rev()
-            .take_while(|step| matches!(step, PlaceStep::Field(_)))
-            .count();
-        let mut selected = mutation.place.members.clone();
-        for member in &mut selected {
-            let length = member
-                .path
-                .len()
-                .checked_sub(inline_fields)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            member.path.truncate(length);
-        }
-        Ok(Some(ReferenceInfo::formed_paths(
-            ReferenceKind::Single,
-            selected,
-        )))
-    }
-
     /// Whether this target is the complete binding its own declaration names,
     /// which is the one target shape a commit reinitializes [SET-1].
     ///
@@ -636,7 +631,12 @@ impl BodyChecker {
     fn take_commit_storage_read_out(&mut self, place: &ResolvedPlace, element: bool) -> bool {
         let targets = &mut self.commit_read_outs;
         for target in targets.iter_mut() {
-            if target.read_out || target.element != element || target.place.identity != *place {
+            // Both places are resolved in the statement's entry state, before
+            // any effect of the call, so equal offset terms denote one value.
+            if target.read_out
+                || target.element != element
+                || target.place.identity.clone().term_identity() != place.clone().term_identity()
+            {
                 continue;
             }
             if !target.read_out_allowed {
@@ -686,7 +686,7 @@ impl BodyChecker {
     pub(in crate::semantic::check) fn atomic_update_target(
         &self,
         call: &crate::NodePath,
-    ) -> Option<ResolvedPlace> {
+    ) -> Option<(ResolvedPlace, &[CaptureId])> {
         let targets = &self.commit_read_outs;
         let [target] = &targets[..] else {
             return None;
@@ -694,7 +694,7 @@ impl BodyChecker {
         if !target.atomic_call || target.call.as_ref() != Some(call) {
             return None;
         }
-        Some(target.place.identity.clone())
+        Some((target.place.identity.clone(), &target.offsets))
     }
 }
 

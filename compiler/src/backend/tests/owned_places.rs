@@ -13,7 +13,7 @@
 //!   owners is [OP-11] `swap`, and the read-and-commit is [OP-12]'s atomic
 //!   in-place update `set p = f(move p, args...);`. The capture, adjacency and
 //!   release properties those two also carried are kept by
-//!   `an_element_target_is_captured_before_the_rhs_changes_its_index`,
+//!   `an_element_target_is_located_after_the_rhs_changes_its_index`,
 //!   `zero_sized_aggregate_assignment_preserves_adjacent_fields` and
 //!   `box_assignment_updates_the_owner_and_releases_each_cell_once`.
 //! - `general_and_extent_boxes_keep_distinct_cleanup_actions` and
@@ -35,7 +35,7 @@
 //!   so no refusal arm exists to preserve effects across.
 //!   `nested_and_residual_cleanup_preserve_release_graph_order` keeps the
 //!   release-order coverage.
-//! - `indexed_targets_are_captured_before_disjoint_rhs_effects`,
+//! - `indexed_targets_are_located_after_disjoint_rhs_effects`,
 //!   `aggregate_loop_carries_and_element_swaps_preserve_both_owners` and
 //!   `loop_owner_sources_cover_later_iterations_and_counted_exhaustion` each
 //!   lost their multi-target commit `set (a, b) = e, f;` with [LIV-2] and kept
@@ -1022,17 +1022,20 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 }
 
-/// [SET-1] resolves and evaluates its target before the right-hand side, so a
-/// call that writes the index binding still commits to the slot the statement
-/// named. Slots and both fixed- and runtime-capacity Arrays share this rule.
+/// [SET-1] evaluates the right-hand side before it resolves the target, so a
+/// call that writes the index binding commits to the slot that binding names
+/// afterwards. Slots and both fixed- and runtime-capacity Arrays share this
+/// rule.
 ///
 /// The two-target half of this case retired with [LIV-2]: `set (a, b) = e, f;`
 /// has no v0.60 production, [SET-1] writes exactly one place, and the
 /// `finish` helper that supplied the second right-hand side went with it.
 #[test]
-fn indexed_targets_are_captured_before_disjoint_rhs_effects() {
+fn indexed_targets_are_located_after_disjoint_rhs_effects() {
     let module = compile(
-        br#"fn advance(offset: &u64, trace: &u64) -> result: u64 writes(offset), writes(trace) {
+        br#"fn advance(offset: &u64, trace: &u64) -> result: u64 writes(offset), writes(trace) contract {
+  ensures offset^ == 1_u64;
+} {
   set offset^ = 1_u64;
   let shifted = trace^ *wrap 10_u64;
   set trace^ = shifted +wrap 1_u64;
@@ -1045,12 +1048,11 @@ fn main() -> status: std::process::ExitStatus pure {
   place_back(window: &left, value: 5_u64);
   let offset = 0_u64;
   let trace = 0_u64;
-  invariant single_target_bound: offset < left.len;
   set left[offset] = advance(offset: &offset, trace: &trace);
-  if left[0_u64] != 41_u64 {
+  if left[0_u64] != 3_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  if left[1_u64] != 5_u64 {
+  if left[1_u64] != 41_u64 {
     return std::process::exit_status(code: 2_u8);
   }
   if offset != 1_u64 {
@@ -1061,12 +1063,11 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   let fixed = array_filled::<u64, 2>(value: 7_u64);
   set offset = 0_u64;
-  invariant fixed_target_bound: offset < fixed.len;
   set fixed[offset] = advance(offset: &offset, trace: &trace);
-  if fixed[0_u64] != 41_u64 {
+  if fixed[0_u64] != 7_u64 {
     return std::process::exit_status(code: 5_u8);
   }
-  if fixed[1_u64] != 7_u64 {
+  if fixed[1_u64] != 41_u64 {
     return std::process::exit_status(code: 6_u8);
   }
   if offset != 1_u64 {
@@ -1074,12 +1075,11 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   let runtime = box_array_filled::<u64>(count: 2_u64, value: 11_u64);
   set offset = 0_u64;
-  invariant runtime_target_bound: offset < runtime.inner.len;
   set runtime.inner[offset] = advance(offset: &offset, trace: &trace);
-  if runtime.inner[0_u64] != 41_u64 {
+  if runtime.inner[0_u64] != 11_u64 {
     return std::process::exit_status(code: 8_u8);
   }
-  if runtime.inner[1_u64] != 11_u64 {
+  if runtime.inner[1_u64] != 41_u64 {
     return std::process::exit_status(code: 9_u8);
   }
   if offset != 1_u64 {
@@ -1096,21 +1096,23 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_success(&retain_calls(&module));
 }
 
-/// The same capture over an aggregate element: the commit lands in the slot
-/// the statement named, not in the slot the right-hand side's write of the
-/// index binding would name afterwards.
+/// The same order over an aggregate element: the commit lands in the slot the
+/// right-hand side's write of the index binding names afterwards, not in the
+/// slot the binding named when the statement began.
 ///
 /// The displaced row's read-out retired with [SET-2]; [WIN-3] releases the old
 /// element at the commit instead.
 #[test]
-fn an_element_target_is_captured_before_the_rhs_changes_its_index() {
+fn an_element_target_is_located_after_the_rhs_changes_its_index() {
     let module = compile(
         br#"struct Row {
   left: u64;
   right: u64;
 }
 
-fn replacement(offset: &u64) -> result: Row writes(offset) {
+fn replacement(offset: &u64) -> result: Row writes(offset) contract {
+  ensures offset^ == 1_u64;
+} {
   set offset^ = 1_u64;
   return Row(left: 19_u64, right: 23_u64);
 }
@@ -1122,18 +1124,17 @@ fn main() -> status: std::process::ExitStatus pure {
   let second = Row(left: 11_u64, right: 13_u64);
   place_back(window: &rows, value: second);
   let offset = 0_u64;
-  invariant target_bound: offset < rows.len;
   set rows[offset] = replacement(offset: &offset);
-  if rows[0_u64].left != 19_u64 {
+  if rows[0_u64].left != 3_u64 {
     return std::process::exit_status(code: 3_u8);
   }
-  if rows[0_u64].right != 23_u64 {
+  if rows[0_u64].right != 5_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  if rows[1_u64].left != 11_u64 {
+  if rows[1_u64].left != 19_u64 {
     return std::process::exit_status(code: 5_u8);
   }
-  if rows[1_u64].right != 13_u64 {
+  if rows[1_u64].right != 23_u64 {
     return std::process::exit_status(code: 6_u8);
   }
   if offset != 1_u64 {

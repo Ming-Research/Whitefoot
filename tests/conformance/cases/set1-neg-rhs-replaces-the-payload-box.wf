@@ -13,7 +13,7 @@ fn replace_box(cell: &Option<Box<u64>>) -> result: u64 reads(cell), writes(cell.
 }
 
 fn write_after_box_replacement(cell: &Option<Box<u64>>) -> result: unit writes(cell) {
-  doc "A target below Box.inner must retain the dynamic storage boundary across its right-hand side.";
+  doc "SET-1 evaluates the target below Box.inner after the right-hand side, whose payload write ends the arm's variant fact, so the payload selection is refused.";
   match &cell^ {
     None() => {
       return unit;

@@ -70,8 +70,10 @@ jobs:
           make conformance
           make conformance-run
       # The new rejected cases must be accepted by the compiler at the merge
-      # base, so that each one witnesses the defect the change removes.
-      - name: New rejected cases are accepted before the fix
+      # base, so that each one witnesses the defect the change removes; the
+      # accepted cases that write the new storage are run there to show the
+      # old order's outcome.
+      - name: New cases at the merge base
         if: matrix.stage == 'base'
         run: |
           base=$(git merge-base origin/main HEAD)
@@ -82,8 +84,6 @@ jobs:
           status=0
           for case in \
             set1-neg-rhs-shifts-the-target-slot \
-            set1-neg-rhs-grows-the-target-block \
-            set1-neg-rhs-replaces-the-target-box \
             set1-neg-rhs-takes-back-the-target-slot \
             set1-neg-rhs-shifts-the-target-slot-through-a-parameter; do
             if "$compiler" --check "tests/conformance/cases/$case.wf"; then
@@ -93,12 +93,7 @@ jobs:
               status=1
             fi
           done
-          # The explicit-reference spelling was already refused under REF-2.
-          if "$compiler" --check tests/conformance/cases/set1-neg-rhs-shifts-the-referenced-target-slot.wf; then
-            echo "accepted at the base: the explicit-reference spelling"
-            status=1
-          fi
-          for case in set1-neg-rhs-shifts-the-target-slot set1-neg-rhs-grows-the-target-block set1-neg-rhs-replaces-the-target-box; do
+          for case in set1-neg-rhs-shifts-the-target-slot set1-pos-rhs-grows-the-target-block set1-pos-rhs-replaces-the-target-box set1-pos-rhs-shifts-before-the-target-is-located; do
             "$compiler" -o "$RUNNER_TEMP/$case" "tests/conformance/cases/$case.wf" || true
             if [ -x "$RUNNER_TEMP/$case" ]; then
               code=0; "$RUNNER_TEMP/$case" || code=$?

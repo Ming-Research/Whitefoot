@@ -1159,7 +1159,9 @@ pub enum SemanticIssueKind {
     /// The row of the callee of an [OP-12] atomic in-place update reaches a
     /// prefix of the updated place: it writes it, moves out of it, or frees
     /// it, any of which would make the old value's transfer and the result's
-    /// commit two observable steps rather than one.
+    /// commit two observable steps rather than one; or it writes storage an
+    /// offset of the place reads, so the place read out would not be the
+    /// place the commit writes.
     AtomicUpdateReachesTargetPrefix {
         /// The place being updated, as the caller spells it.
         target: String,
