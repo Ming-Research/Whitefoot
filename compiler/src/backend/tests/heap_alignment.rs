@@ -24,8 +24,16 @@ const SUFFIX: &str = r#"  let after = std::process::heap_in_use(meter: &meter);
 
 /// Observe the production allocator's returned pointers, including after
 /// growth, rather than infer alignment from a successful unaligned host load.
-/// The 16 bytes are the alignment `target.rs` records for every heap block.
-fn run(body: &str, declarations: &str, minimum_allocations: usize, minimum_retakes: usize) {
+/// The 16 bytes are the alignment `target.rs` records for every heap block;
+/// `skew` moves each observed pointer off its allocation by that many bytes,
+/// so a nonzero skew stands for an allocator that guarantees less.
+fn run_observed(
+    body: &str,
+    declarations: &str,
+    minimum_allocations: usize,
+    minimum_retakes: usize,
+    skew: usize,
+) -> std::process::Output {
     // The canonical form keeps aliases contiguous, then one blank line before
     // the first function; `declarations` begin with their own aliases.
     let separator = if declarations.is_empty() { "\n" } else { "" };
@@ -42,7 +50,7 @@ fn run(body: &str, declarations: &str, minimum_allocations: usize, minimum_retak
 extern int wf_fixture_main(int, char **);
 static unsigned allocations, retakes;
 static void require_aligned(void *block) {{
-    if (block == NULL || (uintptr_t)block % 16 != 0) exit(98);
+    if (block == NULL || ((uintptr_t)block + {skew}) % 16 != 0) exit(98);
 }}
 void *wf_observe_take(uint64_t bytes) {{
     void *block = wf__heap_take(bytes);
@@ -64,10 +72,31 @@ int main(int argc, char **argv) {{
 }}
 "#
     );
-    let output = compile_link_and_run(&observed, Some(&host), &[]);
+    compile_link_and_run(&observed, Some(&host), &[])
+}
+
+fn run(body: &str, declarations: &str, minimum_allocations: usize, minimum_retakes: usize) {
+    let output = run_observed(body, declarations, minimum_allocations, minimum_retakes, 0);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+/// The observer is itself a check: a block that is only eight-byte aligned
+/// ends the run with its distinct status instead of passing.
+#[test]
+fn the_observer_rejects_a_block_aligned_to_only_eight_bytes() {
+    let output = run_observed(
+        r#"  let value = std::process::meter_share(meter: &meter);
+  let cell = box_new::<MemoryMeter>(value: move value);
+  release::<Box<MemoryMeter>>(value: move cell);
+"#,
+        "",
+        1,
+        0,
+        8,
+    );
+    assert_eq!(output.status.code(), Some(98), "{output:?}");
 }
 
 #[test]
