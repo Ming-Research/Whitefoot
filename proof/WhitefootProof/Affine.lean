@@ -101,13 +101,12 @@ positive coefficient and its lower endpoint for a negative one. An atom's
 endpoints are the strongest of its interval and the L0 images over that atom
 alone. -/
 def direct (v : View) (a : Ineq) : Bool :=
-  v.contra || v.images.any (fun r => r.xs == a.xs && decide (r.c ≤ a.c)) ||
-    let hi (x : Nat) : Int := v.images.foldl (fun acc r =>
-      if r.xs == [(x, 1)] then min acc r.c else acc) (v.interval x).2
-    let lo (x : Nat) : Int := v.images.foldl (fun acc r =>
-      if r.xs == [(x, -1)] then max acc (-r.c) else acc) (v.interval x).1
-    let total := a.xs.foldl (fun acc (x, k) => acc + (if k > 0 then k * hi x else k * lo x)) 0
-    decide (total ≤ a.c)
+  let hi (x : Nat) : Int := v.images.foldl (fun acc r =>
+    if r.xs == [(x, 1)] then min acc r.c else acc) (v.interval x).2
+  let lo (x : Nat) : Int := v.images.foldl (fun acc r =>
+    if r.xs == [(x, -1)] then max acc (-r.c) else acc) (v.interval x).1
+  let total := a.xs.foldl (fun acc (x, k) => acc + (if k > 0 then k * hi x else k * lo x)) 0
+  v.contra || v.images.any (fun r => r.xs == a.xs && decide (r.c ≤ a.c)) || decide (total ≤ a.c)
 
 /-- The two integer tightenings of an accumulated sum [ENT-6]: by the factor
 that makes S's coefficients exactly k times T's, then by the greatest common

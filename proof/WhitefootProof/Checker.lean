@@ -79,7 +79,7 @@ end GExpr
 
 /-- A captured division [ENT-3.S7]: its quotient's atom and the images of its
 dividend and divisor. -/
-structure Quot where
+structure Division where
   q : Nat
   dividend : Form
   divisor : Form
@@ -100,7 +100,7 @@ structure State where
   stable : List Nat := []
   /-- Live origin links: each binding with its defining right-hand side [ENT-3]. -/
   links : List (Nat × GExpr) := []
-  quotients : List Quot := []
+  quotients : List Division := []
   deriving Repr, Inhabited
 
 /-- A binding in scope. -/
@@ -482,11 +482,13 @@ def joinImage (t : IntTy) (fs : List Form) : M Form := do
     if rest.all (· == f) then return f
     let g ← get
     let norm (f : Form) : Form × Int × Int :=
-      f.xs.foldl (fun (base, lo, hi) (x, a) =>
+      f.xs.foldl (fun (acc : Form × Int × Int) (xa : Nat × Int) =>
+        let (base, lo, hi) := acc
+        let (x, a) := xa
         if g.deltas.contains x then
           let (l, h) := ((g.atoms.find? (·.1 == x)).map (·.2)).getD (0, 0)
           (base, lo + min (a * l) (a * h), hi + max (a * l) (a * h))
-        else ({ base with xs := addTerm base.xs x a }, lo, hi)) ({}, f.c, f.c)
+        else ({ base with xs := addTerm base.xs x a }, lo, hi)) (({} : Form), f.c, f.c)
     let ns := fs.map norm
     match ns with
     | (b, _, _) :: _ =>
@@ -695,7 +697,7 @@ def domainQuery (goal : GExpr) (op : InfixOp) (t : IntTy) (a b : Val) : Query :=
     | .divide _ _, some _, some fb =>
       if !t.signed then some [(Ineq.le (Form.const 1) fb, none)] else none
     | _, _, _ => none
-  let product := match op, a.image, b.image with
+  let product : Option (Val × Val × IntTy) := match op, a.image, b.image with
     | .arith .mul _, some fa, some fb => if fa.isConst || fb.isConst then none else some (a, b, t)
     | _, _, _ => none
   { goal := some goal, l0, affine, product }
@@ -799,7 +801,7 @@ def evalAtom (env : Env) (st : State) : Atom → M Val
       affine := o.image.map fun f => [(Ineq.le f (Form.const ((n : Int) - 1)), none)] }
     if !discharged env g st q then fail "OP-4" s!"the subscript of `{b}` is not proved below its length"
     let img ← typeAtom t
-    return { image := some img, gexpr := o.gexpr.map (.index v.id ·), ty := .int t }
+    return { image := some img, gexpr := o.gexpr.map (GExpr.index v.id ·), ty := .int t }
 
 /-- Evaluate a right-hand side whose operands are atoms. Each exact integer
 operation's domain is proved [OP-2]; a call of a function of the program has
@@ -856,7 +858,8 @@ def evalRhs (env : Env) (st : State) (e : Expr) : M Rhs := do
         if m == .exact then
           let gen ← get
           let goal := (mk1 (GExpr.op1 (.unary u .defined)) va.gexpr).getD .unit
-          let q : Query := { goal := some goal,
+          let q : Query := {
+            goal := some goal,
             l0 := va.term.map fun (x, k) => if x == .z then
                 [[if k != t.minVal then ([], []) else ([⟨.z, .z, -1⟩], [])]]
               else [[([], [⟨x, .z, t.minVal - k⟩])]],

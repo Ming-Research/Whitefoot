@@ -156,7 +156,7 @@ where
   capture (st : State) (img : Form) (r : Rhs) : State :=
     let st := match r.quot, img.xs with
       | some (fa, fd, lit), [(q, 1)] =>
-        let st := { st with quotients := st.quotients ++ [⟨q, fa, fd⟩] }
+        let st := { st with quotients := st.quotients ++ [({ q, dividend := fa, divisor := fd } : Division)] }
         match lit with
         | some k => if k > 0 then { st with premises := st.premises ++ [Ineq.le (img.scale k) fa] } else st
         | none => st
@@ -370,7 +370,7 @@ postconditions over their symbolic datums, each one term, must not be
 contradictory under ENT-4. -/
 def consistent (p : Program) (f : FnDecl) : Judge Unit := do
   let ty (x : String) : Option IntTy :=
-    if x == f.result then match Static.normTy p f.resultTy with | .int t => some t | _ => none
+    if x == f.result then (match Static.normTy p f.resultTy with | .int t => some t | _ => none)
     else (f.params.find? (·.name == x)).bind fun prm => match Static.normTy p prm.ty with
       | .int t => some t
       | _ => none
@@ -399,7 +399,7 @@ def checkFn (p : Program) (f : FnDecl) : M Unit := do
   st := { st with stable := vars.map (·.id), l0 := close env.live [] [] }
   for r in f.requires do
     st := establishRequire env st r
-  let _ ← walkList env st f.body
+  discard <| walkList env st f.body
 
 end Checker
 
@@ -408,7 +408,7 @@ function's fact judgments. -/
 def Program.check (p : Program) : Judge Unit := do
   Static.checkProgram p
   for f in p.fns do
-    let _ ← (Checker.checkFn p f).run {}
+    discard <| (Checker.checkFn p f).run {}
 
 /-- Whether the checker accepts a program. -/
 def Program.accepts (p : Program) : Bool :=

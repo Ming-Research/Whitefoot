@@ -692,8 +692,8 @@ partial def fnDecl : P FnDecl := do
     if (← isTok (punct "}")) then do advance; return []
     else return (← stmt) :: (← items)
   let body ← items
-  return { name, params := ps, result, resultTy, contract := written, requires := rs,
-    ensures := es, body }
+  return { name, params := ps, result, resultTy, contract := written,
+           requires := rs, ensures := es, body }
 
 -- spec GRAM-2 565f16f1b7627f60
 /-- An `alias_decl` [GRAM-2]. -/

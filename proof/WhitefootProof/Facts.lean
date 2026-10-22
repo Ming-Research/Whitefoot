@@ -74,7 +74,7 @@ structure L0 where
 def L0.bottom : L0 := { contra := true }
 
 /-- The terms the facts of a state name, with `extra` and Z, each once. -/
-def universe (extra : List Term) (bs : List Bound) (ds : List Diseq) : Array Term :=
+def termUniverse (extra : List Term) (bs : List Bound) (ds : List Diseq) : Array Term :=
   let all := Term.z :: extra ++ bs.flatMap (fun b => [b.a, b.b]) ++ ds.flatMap (fun d => [d.a, d.b])
   (all.eraseDups).toArray
 
@@ -136,7 +136,7 @@ def implicitBounds (t : Term) : List Bound :=
 facts of `live` and of every term they name [ENT-4]. A negative cycle, `t - t
 <= -1` for some t, makes the state contradictory. -/
 def close (live : List Term) (bs : List Bound) (ds : List Diseq) : L0 :=
-  let terms := universe live bs ds
+  let terms := termUniverse live bs ds
   let n := terms.size
   let idx : Term → Nat := fun t => (terms.toList.findIdx? (· == t)).getD 0
   let all := bs ++ terms.toList.flatMap implicitBounds
