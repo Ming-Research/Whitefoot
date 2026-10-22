@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "The body writes a[i] with an index it changes; i != 2 holds before the loop but not at a later iteration, so the header invariant a[2] == 0 is not preserved.";
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  set a[2_u64] = 0_u64;
+  let i = 0_u64;
+  loop @l (
+    invariant kept: a[2_u64] == 0_u64
+  ) {
+    if i < 4_u64 {
+      set a[i] = 100_u64;
+    }
+    set i = i +wrap 1_u64;
+    if i < 4_u64 {
+    } else {
+      break @l;
+    }
+  }
+  return exit_status(code: 0_u8);
+}

@@ -27,6 +27,40 @@ jobs:
         env:
           DESIGN_REVIEW_BASE: origin/main
         run: make static
+      - name: Design tree check
+        env:
+          DESIGN_REVIEW_BASE: origin/main
+        run: make design-lint
+      - name: Readiness check
+        env:
+          DESIGN_REVIEW_BASE: origin/main
+        run: make design-ready
+      - name: Conformance structure and coverage
+        run: make conformance
+
+  conformance-run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Decline core dumps
+        run: sudo sysctl -w kernel.core_pattern=core
+      - name: Native conformance adapter
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 3000
+        run: make conformance-run
 
   probes:
     runs-on: ubuntu-24.04
@@ -138,6 +172,17 @@ jobs:
             return std::process::exit_status(code: 0_u8);
           }
           WF
+          # ENT-5 control: the same write of a[1] in straight-line code.
+          cat > straight-literal-index.wf <<'WF'
+          fn main() -> status: std::process::ExitStatus pure {
+            let a = array_filled::<u64, 4>(value: 0_u64);
+            let small = array_filled::<u8, 2>(value: 1_u8);
+            set a[2_u64] = 0_u64;
+            set a[1_u64] = 100_u64;
+            let seen = small[a[2_u64]];
+            return std::process::exit_status(code: 0_u8);
+          }
+          WF
           # ENT-5 controls: the loop writes no element of a, and the loop
           # writes a[1] at a literal index.
           cat > loop-no-write.wf <<'WF'
@@ -177,7 +222,7 @@ jobs:
           WF
           cp "$GITHUB_WORKSPACE/tests/conformance/cases/call1-pos-a-shared-borrow-keeps-every-fact.wf" case-call1.wf
           cp "$GITHUB_WORKSPACE/tests/conformance/cases/win2-pos-part-effect-row.wf" case-win2.wf
-          for probe in case-call1 case-win2 loop-moving-index loop-fixed-index loop-no-write loop-literal-index call-unnamed-alias call-unnamed-alias-plain nodrop-const; do
+          for probe in case-call1 case-win2 straight-literal-index loop-moving-index loop-fixed-index loop-no-write loop-literal-index call-unnamed-alias call-unnamed-alias-plain nodrop-const; do
             set +e
             "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" -o "$probe" "$probe.wf"
             compiled=$?
