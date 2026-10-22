@@ -695,7 +695,8 @@ fn growing_the_backing_window_preserves_a_formed_range_length() {
     assert_accepts(source);
 }
 
-/// [CALL-1] through a reference the callee only reads, every fact survives.
+/// [CALL-1] a reference parameter the callee only reads contributes no write,
+/// so with no other writing argument every fact survives.
 #[test]
 fn a_read_only_reference_argument_keeps_every_fact() {
     assert_accepts(include_bytes!(

@@ -75,8 +75,9 @@ use crate::{DeclarationId, NodePath};
 pub(crate) enum CallTransport {
     /// [CALL-1] A reference parameter whose declared row carries no `writes`
     /// of any path rooted at it. [EFF-2]'s both-ways check then lets no
-    /// `writes` occurrence project onto the actual's place, so the call is a
-    /// kill event for no fact supported by it.
+    /// `writes` occurrence project from this parameter: it contributes no
+    /// write, and a fact supported by the actual dies only through another
+    /// argument's projected write.
     ReadOnlyReference,
     /// [CALL-2] A value delivered at an `own` parameter. An affine or linear
     /// actual is a consuming use, which kills every fact whose support
