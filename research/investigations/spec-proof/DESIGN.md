@@ -420,8 +420,8 @@ slice's work, and only for cases whose rule is covered.
 The slice's model is 186 lines of syntax tree, 208 of lexer, 812 of parser and
 513 of interpreter, with 98 lines of conformance harness and 29 added to the
 integer semantics: 1,846 lines, 1,353 of them neither blank nor comment. It
-took three engineer turns and four `proof.yml` runs to the first green
-comparison: two failed to compile, and one green run showed a parser defect,
+took three engineer turns and four `proof.yml` runs to a comparison with no
+known defect: two failed to compile, and one green run showed a parser defect,
 the closing `>` of `Array<u64, 4>` read as a comparison, which put 112 cases
 outside the fragment wrongly.
 
@@ -457,9 +457,9 @@ Each run of `proof.yml` downloads the pinned Lean (about 20 s on GitHub's
 machines), builds the model and proofs and, once the model parses programs,
 runs the fragment's conformance cases. The first slice's coverage check takes
 about 2.5 s and its proofs about 4 s; with the second slice the build of the
-model, the coverage checker and the conformance executable takes 8.8 s and the
-conformance run 0.7 s. The stages' budgets follow the measurements as they
-grow.
+model, the coverage checker and the conformance executable takes 8.8 to 9.8 s
+and the conformance run 0.7 to 0.9 s over three runs. The stages' budgets
+follow the measurements as they grow.
 
 Each later change of the specification costs, by the measurement in
 [Keeping the proof in step](#keeping-the-proof-in-step), made for a larger
