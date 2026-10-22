@@ -75,7 +75,7 @@ attribute after extraction so the unsigned binaries can run:
 xattr -dr com.apple.quarantine whitefoot
 ```
 
-### Put the compiler on PATH
+### Put the compiler on PATH on Linux and macOS
 
 The archive has no enclosing directory, so extraction puts `bin/` directly
 under `whitefoot/`. On either platform:
@@ -88,6 +88,57 @@ whitefootc --help
 Keep the extracted package together: `bin/whitefootc` uses the bundled
 toolchain beside it. Add the `PATH` setting, with an absolute installation
 path, to your shell's startup file if you want it in later sessions.
+
+### Windows x86-64
+
+Windows Server 2022 is the qualified Windows host. Other Windows releases
+are unqualified. The package needs no Visual Studio, Windows SDK, Visual C++
+runtime, Rust or LLVM: it carries its toolchain, and the programs it builds
+import only Windows's own libraries. The commands below are for PowerShell.
+Set the release tag once, replacing the example:
+
+```powershell
+$release_tag = 'wf-<12 hex digits>-bundled'
+```
+
+Download the Windows archive and its published checksum file. The progress
+display makes downloads in Windows PowerShell very slow, so turn it off first:
+
+```powershell
+$ProgressPreference = 'SilentlyContinue'
+$base = "https://github.com/Ming-Research/Whitefoot/releases/download/$release_tag"
+Invoke-WebRequest "$base/whitefootc-windows-x86_64-bundled.zip" -OutFile whitefootc-windows-x86_64-bundled.zip
+Invoke-WebRequest "$base/SHA256SUMS" -OutFile SHA256SUMS
+```
+
+Verify the archive against the checksum file:
+
+```powershell
+$archive = 'whitefootc-windows-x86_64-bundled.zip'
+$expected = (Get-Content SHA256SUMS | Where-Object { $_ -like "*$archive" }).Substring(0, 64)
+$actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+if ($actual -eq $expected) { "${archive}: OK" } else { "${archive}: FAILED" }
+```
+
+The check must report `whitefootc-windows-x86_64-bundled.zip: OK` before
+you extract it. The archive has no enclosing directory, so extraction puts
+`bin\` directly under `whitefoot\`:
+
+```powershell
+Expand-Archive $archive -DestinationPath whitefoot
+```
+
+Put the compiler on the `PATH` of this PowerShell session:
+
+```powershell
+$env:PATH = "$PWD\whitefoot\bin;$env:PATH"
+whitefootc --help
+```
+
+Keep the extracted package together: `bin\whitefootc.exe` uses the bundled
+toolchain beside it. To keep the compiler on `PATH` in later sessions, add
+the absolute path of `whitefoot\bin` to your user `PATH` in the Windows
+settings.
 
 ### Build from source
 
@@ -142,6 +193,17 @@ The last command prints `4`. Run it immediately after the program: `$?`
 holds the preceding command's exit status. This example uses the status to
 show a value; zero usually means success in a command-line tool.
 
+In PowerShell on Windows, name the executable with `.exe`; `$LASTEXITCODE`
+holds the exit status of the last program it ran:
+
+```powershell
+whitefootc first.wf -o first.exe
+.\first.exe
+echo $LASTEXITCODE
+```
+
+The last command prints `4` here too.
+
 Copy the source exactly. Whitefoot requires canonical spacing, two spaces
 per indentation level, and a final newline. It has no comments. These
 rules are specified by FORM-1 and FORM-2 in the
@@ -180,6 +242,8 @@ You can request just the compiler's check:
 ```sh
 whitefootc --check rejected.wf
 ```
+
+The command is the same in PowerShell.
 
 Bare `+` means an exact sum. The compiler must prove that each addition
 fits in a `u8`, whose maximum is 255. This loop supplies no such proof. In
@@ -226,7 +290,15 @@ whitefootc checked.wf -o checked
 echo "$?"
 ```
 
-This prints `1`: the first addition fits, and the second takes the failure
+In PowerShell on Windows:
+
+```powershell
+whitefootc checked.wf -o checked.exe
+.\checked.exe
+echo $LASTEXITCODE
+```
+
+Either prints `1`: the first addition fits, and the second takes the failure
 branch. The condition proves the exact `+` safe in its then-block. The
 branch is part of the program's chosen behavior. Whitefoot adds no hidden
 overflow check or trap to the exact operation.
