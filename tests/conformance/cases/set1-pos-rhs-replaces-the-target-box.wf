@@ -9,7 +9,7 @@ fn rebox(cell: &Box<u64>) -> result: u64 writes(cell) {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "SET-1, REF-2: the target b.inner is the content of the box b holds when the target is evaluated. rebox replaces that box, a write of b, which is a proper prefix of the target, so the commit would store into the released box. The commit is refused.";
+  doc "SET-1: the right-hand side runs first. rebox replaces the box b holds and releases the old one, so the target b.inner, evaluated after it, is the content of the new box, which then holds 7. Evaluating the target first, as before, stored into the released box.";
   let b = box_new::<u64>(value: 1_u64);
   set b.inner = rebox(cell: &b);
   if b.inner == 7_u64 {

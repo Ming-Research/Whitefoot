@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "SET-1: the repair of set1-neg-rhs-shifts-the-target-slot. The removed box is bound with let first, so the target v[1_u64] is evaluated and its bound checked after remove_at, in the window it left, and the commit replaces the box that is now second.";
+  doc "SET-1: the spelling of set1-pos-rhs-shifts-before-the-target-is-located with the value bound by let first. Both mean the same: the target v[1_u64] is evaluated after remove_at, in the window it left, and the commit replaces the box that is now second.";
   let v = slots_new::<Box<u64>, 4>();
   let first = box_new::<u64>(value: 1_u64);
   place_back(window: &v, value: move first);

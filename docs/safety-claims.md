@@ -40,7 +40,7 @@ An accepted program does not read or write outside an object's storage, use a va
 |---|---|---|---|---|
 | `OP-4` | Every subscript carries the obligation `i < len`. The checker proves it or rejects the program; no bounds check is emitted. | `op4-neg-index-undischarged`, `op4-neg-counted-past-array-end`, `op4-neg-segments-index-past-count` | `op4-pos-index-discharged` | |
 | `OWN-1` | Every value has one owner. A binding whose value was moved is dead, and a later use is rejected. | `own1-neg-index-atom-after-move` | `own1-pos-consume-once` | |
-| `REF-2` | A reference is valid only until a write, move, release or window change reaches its path; using an invalid one is rejected, and so is a `set` whose right-hand side invalidated the storage its target selected. | `ref2-neg-paged-element-after-grow`, `set1-neg-rhs-shifts-the-target-slot` | `ref2-pos-reference-used-before-sibling-move`, `set1-pos-rhs-appends-beside-the-target-slot` | |
+| `REF-2` | A reference is valid only until a write, move, release or window change reaches its path; using an invalid one is rejected. | `ref2-neg-paged-element-after-grow` | `ref2-pos-reference-used-before-sibling-move` | |
 | `REF-3` | A reference never escapes the function that formed it: it cannot be returned or stored in an aggregate. | `own4-neg-return-local-borrow` | `ref3-pos-index-result` | |
 | `LIV-1` | Every join agrees on which bindings are live, so each release at scope exit is unconditional and runs once. | `liv1-neg-branches-disagree-on-liveness` | `liv1-pos-loop-moves-and-restores-an-outer-binding` | |
 | `STOR-3` | Releases are derived by the compiler and run exactly once on every edge that leaves the owner's scope. | | `stor3-pos-box-drop-region`, `continue-pos-cleanup` | |
@@ -73,13 +73,13 @@ An accepted program does not read storage that holds no value. A slot outside a 
 | Rule | Contribution | Rejecting cases | Accepting cases | Other evidence |
 |---|---|---|---|---|
 | `WIN-1` | The initialized slots of a window are exactly the `len` slots beginning at `head` modulo `cap` (at slot zero on `Slots` and `Paged`), every other slot holds nothing, and a subscript is bounded by `len`, never by capacity. | | `win1-pos-window-is-len-slots` | |
-| `OP-4` | The subscript obligation is `i < len`, so a read of a slot below capacity but not below `len` is rejected, as is a read of a window formed empty. | `win1-neg-subscript-above-len`, `op4-neg-a-run-element-read-carries-its-obligation` | `op4-pos-index-discharged` | |
+| `OP-4` | The subscript obligation is `i < len`, so a read or an assignment target of a slot below capacity but not below `len` is rejected, as is a read of a window formed empty. | `win1-neg-subscript-above-len`, `op4-neg-a-run-element-read-carries-its-obligation`, `set1-neg-rhs-shifts-the-target-slot` | `op4-pos-index-discharged` | |
 | `OP-13` | `slots_new`, `ring_new`, `box_slots_new`, `box_ring_new` and `box_paged_new` build an empty window, `slots_from_array` consumes a full array into a full window, and `array_filled` and `box_array_filled` fill every slot with the supplied value, so no construction leaves an uninitialized slot inside a window or an array. | | `op13-pos-segments-empty-run`, `type9-pos-segments-fill-and-join` | |
 | `WIN-3` | There is no take operation and no hole: a move out of a window slot or an array element is rejected. | `win3-neg-move-out-of-window-slot` | `win3-pos-overwrite-releases-affine` | |
 | `OWN-1` | A dead binding cannot be read. | `own1-neg-index-atom-after-move` | `own1-pos-consume-once` | |
 | `LIV-1` | At every join all predecessors agree on which bindings are live, so no path reads a binding another path moved. | `liv1-neg-branches-disagree-on-liveness` | `liv1-pos-loop-moves-and-restores-an-outer-binding` | |
 | `OWN-11` | A loop body may not leave an outer binding dead at its backedge, so no iteration starts with a binding the previous one consumed. | `own11-neg-move-outer-in-loop` | `own11-pos-loop-inner-region` | |
-| `SET-1` | Assignment revives a dead binding, and its premises are rechecked after the right-hand side. | | `win3-pos-affine-set-target-releases-old-value` | |
+| `SET-1` | Assignment revives a dead binding, and its target is evaluated and judged after the right-hand side, so the store never reaches storage the right-hand side moved or released. | | `win3-pos-affine-set-target-releases-old-value`, `set1-pos-rhs-grows-the-target-block` | |
 
 ### No silent overflow
 

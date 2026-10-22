@@ -25,10 +25,7 @@ use crate::{DeclarationId, Production, SemanticCompilerFailure, SemanticIssueKin
 use super::super::super::model::{CheckedMode, CheckedSetTarget, CheckedStatement};
 use super::super::super::places::{PlaceRoot, PlaceStep, ResolvedPlace};
 use super::super::expressions::{MutationTarget, ResolvedPlaceSet, WIN3_LINEAR_TARGET};
-use super::super::references::{
-    InvalidationEvent, ReferenceInfo, ReferenceKind, ReferenceValidity, RequiredReferent,
-    SET1_BIND_THE_VALUE_FIRST,
-};
+use super::super::references::{InvalidationEvent, ReferenceInfo, ReferenceKind, RequiredReferent};
 use super::super::{CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding};
 use super::{ControlScope, StatementResult};
 
@@ -207,7 +204,7 @@ impl<'unit> Checker<'_, 'unit> {
         bindings
             .get_mut(&mutation.declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            .commit_target = Self::commit_target_witness(&mutation)?;
+            .commit_target = Self::commit_payload_reference(&mutation)?;
         let outcome =
             self.check_commit_value(context, &mutation, value_node, bindings, scope.loops.len());
         let captured_target = bindings
@@ -385,20 +382,6 @@ impl<'unit> Checker<'_, 'unit> {
         }
         self.revalidate_mutation_access(mutation.through_reference, bindings, target_node)?;
         if !atomic_read_out && let Some(reference) = captured_target {
-            // [SET-1, REF-2] the commit writes the storage the target selected
-            // before the right-hand side, so that selection must still be
-            // valid after it.
-            if let ReferenceValidity::Invalid(event) = &reference.validity {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Ref2,
-                    target_node,
-                    SemanticIssueKind::InvalidatedSetTarget {
-                        target: self.types.declarations.tree.source_spelling(target_node)?,
-                        event: event.target_phrase(),
-                        mechanical_fix: SET1_BIND_THE_VALUE_FIRST,
-                    },
-                );
-            }
             self.check_reference_info_valid(mutation.declaration, reference, target_node)?;
         }
         let ty = mutation.target.ty();
@@ -569,19 +552,13 @@ impl<'unit> Checker<'_, 'unit> {
         )))
     }
 
-    /// [SET-1, REF-2] retain the storage the target selects across the RHS:
-    /// the target path without its trailing inline field selections. Inline
-    /// fields inherit their owner's storage; they do not form another
-    /// reference whose proper prefixes must remain unwritten, so an RHS that
-    /// writes the owner's contents keeps a field target. A payload, Box,
-    /// subscript, page or range selection does select storage and stays in
-    /// the captured path, so an RHS that replaces the enum or the Box, or
-    /// writes the window or ends the bound its subscript was checked under,
-    /// invalidates it. A target of inline fields alone selects its root's
-    /// own storage, whose liveness the commit rechecks directly. References
-    /// already used to reach the target are checked separately by
-    /// `revalidate_mutation_access`.
-    fn commit_target_witness(
+    /// [SET-1, REF-2] retain the storage selected by a newly written payload
+    /// step across the RHS. Inline fields inherit that storage; they do not
+    /// form another reference whose proper prefixes must remain unwritten.
+    /// Later Box or subscript selections do select storage and stay in the
+    /// captured path. References already used to reach the target are checked
+    /// separately by `revalidate_mutation_access`.
+    fn commit_payload_reference(
         mutation: &MutationTarget,
     ) -> Result<Option<ReferenceInfo>, CheckStop> {
         let written = match &mutation.target {
@@ -589,9 +566,9 @@ impl<'unit> Checker<'_, 'unit> {
             CheckedSetTarget::RangeIndex(place) => place.place_path(),
             CheckedSetTarget::Storage(root) => root.place_path(),
         };
-        if written
+        if !written
             .iter()
-            .all(|step| matches!(step, PlaceStep::Field(_)))
+            .any(|step| matches!(step, PlaceStep::Payload { .. }))
         {
             return Ok(None);
         }

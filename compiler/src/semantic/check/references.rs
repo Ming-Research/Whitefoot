@@ -74,12 +74,6 @@ pub(super) const REF1_NAME_THE_PATH: &str = "name the path the reference names";
 /// [REF-2]'s restructuring for a use of an invalidated reference.
 pub(super) const REF2_FORM_AGAIN: &str = "form the reference again after that event";
 
-/// [SET-1]'s restructuring for a `set` whose right-hand side invalidated its
-/// own target: the value is bound first, so the target is evaluated after the
-/// event, in the state it left.
-pub(super) const SET1_BIND_THE_VALUE_FIRST: &str =
-    "bind the right-hand side's value with `let` before this `set`, then assign the bound value";
-
 /// [REF-3]'s restructuring for an escaping reference.
 pub(super) const REF3_RETURN_AN_INDEX: &str =
     "return an index and let the caller form the reference";
@@ -169,23 +163,6 @@ impl InvalidationEvent {
             Self::RootScopeEnded => "the scope of the local variable the path starts at ended",
             Self::WindowBoundaryMoved => {
                 "a window operation moved the boundary or origin the reference was formed under"
-            }
-        }
-    }
-
-    /// The same event, worded for the storage a `set` target selected before
-    /// its right-hand side [SET-1].
-    pub(super) const fn target_phrase(&self) -> &'static str {
-        match self {
-            Self::PrefixWritten => "a proper prefix of the target's selected storage was written",
-            Self::PrefixMoved => {
-                "the target's selected storage or a prefix of it was moved out of"
-            }
-            Self::PrefixReleased => "the target's selected storage or a prefix of it was released",
-            Self::CallWrite => "a call wrote a proper prefix of the target's selected storage",
-            Self::RootScopeEnded => "the scope of the local variable the target starts at ended",
-            Self::WindowBoundaryMoved => {
-                "a window operation moved the boundary or origin the target's subscript was checked under"
             }
         }
     }
@@ -3228,13 +3205,11 @@ mod tests {
             InvalidationEvent::RootScopeEnded,
             InvalidationEvent::WindowBoundaryMoved,
         ];
-        for wording in [InvalidationEvent::phrase, InvalidationEvent::target_phrase] {
-            let mut phrases: Vec<&'static str> = events.iter().map(wording).collect();
-            let written = phrases.len();
-            phrases.sort_unstable();
-            phrases.dedup();
-            assert_eq!(phrases.len(), written, "two events share one phrase");
-        }
+        let mut phrases: Vec<&'static str> = events.iter().map(InvalidationEvent::phrase).collect();
+        let written = phrases.len();
+        phrases.sort_unstable();
+        phrases.dedup();
+        assert_eq!(phrases.len(), written, "two events share one phrase");
     }
 
     /// [REF-1] the join of two incoming edges is the union of the path sets

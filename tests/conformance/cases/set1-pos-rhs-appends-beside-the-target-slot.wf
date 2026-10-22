@@ -11,7 +11,7 @@ fn push(window: &Slots<u64, 4>, value: u64) -> result: u64 writes(window.next), 
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "SET-1, REF-2: the target r[0_u64] is checked under 0 < r.len before the right-hand side. push writes only the append slot and the length, which leaves that bound holding and moves no filled slot, so the target stays valid and the commit stores 9 into the first slot beside the appended 5.";
+  doc "SET-1: the right-hand side runs first. push appends 5 and its ensures keeps 0 < r.len, so the target r[0_u64], evaluated after it, is in bounds and the commit stores 9 into the first slot beside the appended 5.";
   let r = slots_new::<u64, 4>();
   place_back(window: &r, value: 1_u64);
   set r[0_u64] = push(window: &r, value: 5_u64);

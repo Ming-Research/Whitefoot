@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "SET-1, REF-2, OP-10: the target r[1_u64] is checked under 1 < r.len before the right-hand side. take_back lowers r.len to 1, so the commit would write a slot the window no longer fills. The right-hand side ended the bound the target's subscript was checked under, so the commit is refused.";
+  doc "SET-1, OP-4: the right-hand side runs first. take_back lowers r.len to 1, so the target r[1_u64], evaluated after it, is out of bounds and its subscript is refused. Evaluating the target first, as before, wrote a slot the window no longer fills.";
   let r = slots_new::<u64, 4>();
   place_back(window: &r, value: 1_u64);
   place_back(window: &r, value: 2_u64);

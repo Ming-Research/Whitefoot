@@ -631,7 +631,7 @@ There is no implicit read through a reference [TYPE-4, META-2].
 `place^` where `place` is not a reference, a `Box` included, is a hard error citing TYPE-7 at the complete `place`, with a repair [DIAG-1].
 
 [SET-1] Place assignment.
-For `set p = e;`, target evaluation first resolves and evaluates the complete `p` without reading or consuming the value stored there.
+For `set p = e;`, the right-hand side `e` is evaluated first; target evaluation then resolves and evaluates the complete `p` in the state `e` left, without reading or consuming the value stored there, and the commit stores the value of `e` there.
 A `set` target must resolve to a binding already in scope: a `set` whose target name resolves to nothing declares nothing and is a hard error citing SET-1 at that `place`, with a repair [DIAG-1].
 A nested place is evaluated from its base outward; at each subscript, the base place is evaluated before its offset atom, and the subscript's [OP-4] discharge obligation is judged at that target place exactly as in read position, so accepted target evaluation executes no runtime check and cannot trap.
 Field suffixes introduce no runtime evaluation.
@@ -646,20 +646,18 @@ A `for_stmt` binder is compiler-updated state and is never source-writable; a ta
 A target satisfying the writable-root condition is writable exactly when its root is live or it is the complete own-mode value binding [OWN-1, OWN-11].
 These specific rules own their stated violations; every other failure of this closed writability relation cites SET-1 at the complete target `place` child of the `set_stmt`, carrying the resolved root class and the required writable classes.
 
-The right-hand side is then checked under [TYPE-5] and evaluated under its ordinary expression, ownership, effect, and partial-operation domain rules.
-The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable under the same writable-root and live-or-complete-binding conditions.
-If the right-hand side moved a strict prefix of the target place, the commit is a later write of a dead root under OWN-1.
-If it invalidated a reference the target path is reached through, [REF-2] rejects the commit.
-Target evaluation also forms the target's selected place: the resolved target path less its trailing struct field selections, which share the storage of the place they select from, so that a target of struct fields alone selects its root, whose liveness this rule rechecks itself. The commit writes that storage, so the selected place is held under [REF-2] across `e`, exactly as a reference to it formed at target evaluation, and an [OP-12] update's read-out of the target is not one of its invalidating events; if `e` invalidated it, the commit is a hard error citing REF-2 at the complete target `place`, carrying the invalidating event, with a repair binding the value of `e` with a `let` before the `set` and assigning the bound value [DIAG-1].
-This is a static acceptance check: at runtime every target component is evaluated exactly once before `e`, and lowering carries the resulting target address and offset values across `e` rather than evaluating source again.
-No root-liveness or writability fact from before the right-hand side bypasses the post-state check.
+The right-hand side is checked under [TYPE-5] and evaluated under its ordinary expression, ownership, effect, and partial-operation domain rules, on the normal continuation of the statement's entry.
+Every judgment of target evaluation is made on the normal continuation of `e`: the writable-root and live-or-complete-binding conditions above, each subscript's [OP-4] discharge, and the validity [REF-2] of each reference the target path is reached through; no fact from before `e` that `e` killed reaches them.
+`set p = e;` therefore means exactly `let t = e; set p = move t;`, or `set p = t;` when the value is copy, for a fresh binding `t`.
+At runtime `e` is evaluated once, then each target component exactly once, then the one store; nothing evaluated for the target is carried across `e`.
+An [OP-12] atomic update locates its target at its call's first argument instead, under the conditions that rule states, which make that place the one target evaluation after the call names.
 
-On successful revalidation, assignment performs exactly one write of the resulting value into `p`.
+On successful target evaluation, assignment performs exactly one write of the resulting value into `p`.
 The old value's disposition at the commit is [WIN-3]'s.
 A commit derives no drop, release, finalizer, or cleanup edge beyond that disposition.
 The new value occupies the same place and the target root is live after the commit, reinitializing a dead complete binding [OWN-1, OWN-11].
 The store occurs only after right-hand-side evaluation completes; until that commit point a live target retains its previous value.
-The checked program retains the exact target path, each required target check, the right-hand-side value, the post-right-hand-side liveness and writability judgments, and the single store before lowering [DIAG-2].
+The checked program retains the right-hand-side value, the exact target path with each required target check and its liveness and writability judgments, made after the right-hand side, and the single store before lowering [DIAG-2].
 
 [CONST-1] The grammar production `const` of the fence below is usable at `Array<T, N>` sizes and `const` targs, and, being the `const` alternative of `targ` [GRAM-3], at every const argument of a compiler-owned storage nominal [TYPE-9].
 
@@ -709,7 +707,7 @@ That spelling judgment is made once per written body: at a concrete instance of 
 Resolving and evaluating the target of SET-1 does not by itself read, copy, or move the selected value or its affine owner.
 After any consuming use, the whole binding rooting `p` is dead (partial moves kill the whole binding) [WIN-3]; any later use of a dead binding, and any write or `set` of a place projected, dereferenced, or subscripted from a dead root, is an error at the later use or target place.
 `swap` is not a consuming use: it swaps the stored values of its two places, leaves both roots live, and leaves each root the sole owner of the value the other held [OP-11].
-SET-1 rechecks its premises after its right-hand side under [LIV-1]; a dead binding is revived only by a [SET-1] commit whose target is that complete binding, which reinitializes it, and by nothing else.
+SET-1 judges its target after its right-hand side under [LIV-1]; a dead binding is revived only by a [SET-1] commit whose target is that complete binding, which reinitializes it, and by nothing else.
 
 [REF-1] A reference is a local name for a path.
 A path starts at a local variable, a parameter, a named const [CONST-2] or the state of the object an atomic statement's target names [SHARE-1], and continues through field selections, `^` (a reference's referent [TYPE-7]), an index step, a range or page step [REF-4], or an enum payload step [GRAM-5].
@@ -807,7 +805,7 @@ This agreement is judged before any capability limit of a conforming checker rep
 Because the status agrees at every join, whether a compiler-derived release runs on an edge leaving a scope is not runtime state: on every edge leaving a scope — a `break`, a `continue`, a `give`, a `propagate` error edge, the function-return edge, and a block exit — every binding of that scope that is live on that edge takes its compiler-derived release there, unconditionally, and a binding that is dead takes none [STOR-3].
 Which release runs inside a live value may still be selected by that value's own discriminant, exactly as an enum's derived drop selects on its variant today.
 A binding whose value is linear [PROV-6] takes no compiler-derived release on such an edge and is refused there instead, because the compiler never releases a linear value.
-This rule states the liveness premise [SET-1] rechecks after a right-hand side, and the premise [OWN-11] reads at a backedge; it adds no scope-exit action and removes none.
+This rule states the liveness premise [SET-1] judges at target evaluation, after a right-hand side, and the premise [OWN-11] reads at a backedge; it adds no scope-exit action and removes none.
 
 [PROV-6] Linearity is a property of the type, closed under ownership.
 A type is linear, lacking the drop capability [OWN-1], exactly when its declaration carries the `nodrop` modifier [GRAM-2] or it owns, at any depth, a linear type; a struct, an enum, a storage shape, a `Box` [TYPE-9] or a `Shared<T>` handle [SHARE-1] owning a linear part is linear, and every other type is copy or affine by [OWN-1].
@@ -1281,7 +1279,7 @@ The target argument carries [OWN-1]'s spelling of its own class and no other.
 Its target `p` is any owned place named by a path [REF-1] and writable under [SET-1], a place reached through `^` of a reference parameter whose declared row carries `writes` of that path included.
 Its effect is `writes(p)`.
 `f` must return the place's type and must have no failure exit — every declared result ordinal is the place's type and no `ensures when` route removes a normal return.
-`f`'s declared row must not write, move out of, or free any prefix of `p`, while reading anything and writing disjoint storage is admitted [EFF-5]; a row that does is a hard error citing OP-12 at the complete `call`, carrying that substituted path.
+`f`'s declared row must not write, move out of, or free any prefix of `p`, nor write any place an offset atom of `p` reads, while reading anything and writing other disjoint storage is admitted [EFF-5]; a row that does is a hard error citing OP-12 at the complete `call`, carrying that substituted path. The target is therefore located once, at the call's first argument, and the place [SET-1]'s target evaluation names after the call is that same place.
 Nothing is said about termination.
 A failure is an enum in the place, not a second result.
 A call that fails the result condition is not an atomic update and is judged as an ordinary `set` [SET-1], in which the consumed argument would kill the target root [OWN-1]; the resulting rejection cites OWN-1 at the argument `atom`.

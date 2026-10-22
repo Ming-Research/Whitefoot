@@ -4,13 +4,13 @@ alias exit_status = std::process::exit_status;
 fn rotate(window: &Slots<Box<u64>, 4>) -> result: unit writes(window) contract {
   requires window^.len == 2_u64;
 } {
-  doc "The target is reached through the reference parameter. The parameter stays valid, since remove_at writes only below its referent, but the slot the target selected is shifted.";
+  doc "The target is reached through the reference parameter and evaluated after the right-hand side, when the window holds one element.";
   set window^[1_u64] = remove_at(window: window, index: 0_u64);
   return unit;
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "SET-1, REF-2: the target window^[1_u64] is evaluated before the right-hand side. remove_at shifts the filled part of the window the parameter names and ends the bound the subscript was checked under, so the commit is refused although the reference it is reached through stays valid.";
+  doc "SET-1, OP-4: the right-hand side runs first, and remove_at leaves one element in the window the parameter names, so the target window^[1_u64], evaluated after it, is out of bounds and its subscript is refused although the reference it is reached through stays valid.";
   let v = slots_new::<Box<u64>, 4>();
   let first = box_new::<u64>(value: 1_u64);
   place_back(window: &v, value: move first);

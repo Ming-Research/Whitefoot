@@ -959,7 +959,6 @@ impl Report for SemanticIssueKind {
             OpaqueDestructuring { nominal, mechanical_fix };
             UseAfterMove { mechanical_fix };
             InvalidReferenceUse { binder, event, mechanical_fix };
-            InvalidatedSetTarget { target, event, mechanical_fix };
             UnestablishedPayloadVariant { place, variant, mechanical_fix };
             ReferenceToReferenceVariable { mechanical_fix };
             EscapingReference { mechanical_fix };
