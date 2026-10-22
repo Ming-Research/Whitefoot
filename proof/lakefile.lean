@@ -19,3 +19,9 @@ lean_lib StandardAxioms
 @[default_target]
 lean_exe coverage where
   root := `Coverage
+
+-- `lake exe conformance` runs the model on the conformance cases written in
+-- the fragment; `Conformance.lean` describes the comparison.
+@[default_target]
+lean_exe conformance where
+  root := `Conformance
