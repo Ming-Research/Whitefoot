@@ -1,5 +1,5 @@
-# Temporary workflow for kit-req-diag-syntax-fmt: builds the compiler and prints
-# the rejection each probe source gets. Removed before the full check.
+# Temporary workflow for kit-req-diag-syntax-fmt: runs the static group and the
+# compiler lint that a draft push does not start. Removed before the full check.
 name: tmp-syntax-fmt-probe
 
 on:
@@ -10,66 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  probe:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: true
-      - name: Install the host toolchain
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          rustup default stable
-      - name: Fetch locked compiler dependencies
-        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
-      - name: Build the compiler
-        run: perl .github/run-check.pl probe/build cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline
-      - name: Write the probes
-        run: |
-          mkdir -p "$RUNNER_TEMP/probes"
-          cd "$RUNNER_TEMP/probes"
-          tail=$'fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}'
-          printf 'struct Holder {\n  data: Box<[u8; 256]>;\n}\n\n%s\n' "$tail" > a1-field-box-rust-array.wf
-          printf 'fn f(data: &[u8; 256]) -> r: u64 pure {\n  return 0_u64;\n}\n\n%s\n' "$tail" > a2-param-ref-rust-array.wf
-          printf 'fn f(data: [u8; 256]) -> r: u64 pure {\n  return 0_u64;\n}\n\n%s\n' "$tail" > a3-param-rust-array.wf
-          printf 'fn f() -> r: [u8; 4] pure {\n  return 0_u64;\n}\n\n%s\n' "$tail" > a4-result-rust-array.wf
-          printf 'fn f(data: Box<[u8]>) -> r: u64 pure {\n  return 0_u64;\n}\n\n%s\n' "$tail" > a5-param-box-slice.wf
-          printf 'struct Holder {\n  data: Array<u8, 4>;\n}\n\nfn f(data: &[u8; 4]) -> r: u64 pure {\n  return 0_u64;\n}\n\n%s\n' "$tail" > a6-ref-array-after-ok.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n  let big = 5_u64;\n  let x = if big > 3_u64 {\n    give if big > 4_u64 { 1_u64 } else { 2_u64 };\n  } else {\n    give 0_u64;\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n' > g1-give-if.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n  let big = 5_u64;\n  let x = if big > 3_u64 {\n    give match big {\n      5_u64 => {\n        give 1_u64;\n      }\n      else => {\n        give 2_u64;\n      }\n    };\n  } else {\n    give 0_u64;\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n' > g2-give-match.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n  let big = 5_u64;\n  let x = if big > 3_u64 {\n    give 1_u64;\n  } else {\n    give 0_u64;\n  }\n  return if big > 4_u64 { 1_u8 } else { 2_u8 };\n}\n' > g3-return-if.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n  let big = 5_u64;\n  let x = big;\n  return std::process::exit_status(code: if big > 3_u64 { 1_u8 } else { 2_u8 });\n}\n' > g4-arg-if.wf
-          printf 'fn helper() -> r: u64 pure {\n  return 1_u64;\n}\n\n\nfn main() -> status: std::process::ExitStatus pure {\n  let a =  1_u64;\n  let b = a +wrap\n    2_u64;\n\n  return std::process::exit_status(code: 0_u8);\n}\n' > f1-four-faults.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n\n\nfn other() -> r: u64 pure {\n  return 1_u64;\n}\n' > f2-gap-only.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n\n  return std::process::exit_status(code: 0_u8);\n}\n' > f3-blank-only.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);   \n}\n' > f4-trailing.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n' > f5-clean.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}' > f6-no-final-lf.wf
-          printf 'fn main() -> status: std::process::ExitStatus pure {\n  let a = 1_u64;\n  let b = a +wrap\n    2_u64;\n  return std::process::exit_status(code: 0_u8);\n}\n' > f7-multiline-only.wf
-          ls -l
-      - name: Check each probe
-        run: |
-          cd "$RUNNER_TEMP/probes"
-          for f in *.wf; do
-            echo "=================== $f"
-            "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" --check "$f" || true
-            echo "-- exit $?"
-          done
-      - name: Format each FORM-2 probe
-        run: |
-          cd "$RUNNER_TEMP/probes"
-          for f in f*.wf; do
-            cp "$f" "$f.formatted"
-            "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" --format "$f.formatted" || true
-            echo "=================== diff $f"
-            diff -u "$f" "$f.formatted" || true
-          done
   static:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -88,49 +28,37 @@ jobs:
           rustup default stable
       - name: Fetch locked compiler dependencies
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
-      - name: Static group
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+          git log --oneline -1 main
+      - name: Select the design review base
         env:
-          DESIGN_REVIEW_BASE: origin/main
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
+          git log --oneline -1 "$design_review_base"
+      - name: Static group
         run: make static
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Compiler lint
         run: make -C compiler lint
-  unit:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: true
-      - name: Install the host toolchain
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          rustup default stable
-      - name: Fetch locked compiler dependencies
-        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
-      - name: Every library test
-        run: make -C compiler test-build-unit test-unit
-  corpus:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: true
-      - name: Install the host toolchain
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          rustup default stable
-      - name: Fetch locked compiler dependencies
-        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
-      - name: Every integration and binary test
-        run: make -C compiler test-build-corpus test-corpus
