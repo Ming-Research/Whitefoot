@@ -536,7 +536,8 @@ modules, 503 of them coverage marks, and adds 52 lines to the parser and 32
 to the conformance harness. With it the build of the model and harness took
 10.2 s and 16.5 s on two runs, against 7.7 s on the main line's run of the
 same day; on the slower run every module took 1.5 to 1.8 times as long, the
-unchanged lexer included.
+unchanged lexer included. The build's provisional budget rises from 15 s to
+25 s, 1.5 times that first 16.5 s run rounded up to 5 s.
 
 ## Cost
 
