@@ -499,7 +499,7 @@ A value that is no place read — a literal, a call result, a construction — c
 
 [TYPE-11.S4]
 - S4 (hand-offs).
-Each hand-off below requires every debt that may be at or below a handed place to be restored, or satisfied at that place [TYPE-11.S5], in the state before the hand-off's own events, and removes the restored ones; a debt whose anchor passes an entry of a map or an `Entries` below the handed place's level [TYPE-11.S2] is not required, since the handed value owns none of that entry [TYPE-11.S1]:
+Each hand-off below requires every debt that may be at or below a handed place and whose anchor passes no entry of a map or an `Entries` below that place's level [TYPE-11.S2] to be restored, or satisfied at that place [TYPE-11.S5], in the state before the hand-off's own events, and removes the restored ones; the value at a handed place owns no such entry [TYPE-11.S1]:
 
 | hand-off | handed places | rule and site of a failure |
 |---|---|---|
