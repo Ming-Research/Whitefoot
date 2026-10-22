@@ -12,7 +12,8 @@
 # downstream wants to try, such as a performance experiment, gets an
 # experiment release, `wf-exp-` and the commit's first 12 hex digits, of any
 # commit whose own gate run passed on both platforms (a draft pull request's
-# push starts no gate; dispatch gate.yml on the branch to qualify its tip):
+# push starts no gate; qualify its tip with the manual gate run described
+# below), made by:
 #
 #   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true
 #
@@ -100,11 +101,11 @@ on:
   workflow_dispatch:
     inputs:
       commit:
-        description: A commit on main whose gate passed; empty takes main's tip
+        description: A commit on main whose gate passed on both platforms; empty takes main's tip
         type: string
         default: ""
       experiment:
-        description: Release an unmerged commit whose gate passed, as wf-exp-<hash>
+        description: Release an unmerged commit whose gate passed on both platforms, as wf-exp-<hash>
         type: boolean
         default: false
       bundle_toolchain:
