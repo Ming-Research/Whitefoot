@@ -72,6 +72,12 @@ pub(crate) fn enum_tag_width(
     }
 }
 
+/// The one Windows target whitefootc emits and links for: x86-64 MinGW with
+/// the Universal C Runtime, linked by LLD (compiler/toolchain-resolution).
+/// This is clang's own spelling of the target, so the module's `target
+/// triple` and the `--target` every clang command passes are the same bytes.
+pub(crate) const WINDOWS_X86_64_TRIPLE: &str = "x86_64-w64-windows-gnu";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TargetLayout {
     triple: &'static str,
@@ -87,8 +93,10 @@ impl TargetLayout {
     ///
     /// Keeping selection explicit lets tests inspect a target which is not the
     /// machine running them. A spelling not listed here is unsupported rather
-    /// than being approximated by a nearby ABI: in particular, the Windows GNU
-    /// and MSVC targets do not share a mangling or runtime contract.
+    /// than being approximated by a nearby ABI: in particular, the one Windows
+    /// record is the MinGW target, named only by the exact spelling clang
+    /// prints for it, [`WINDOWS_X86_64_TRIPLE`]; the MSVC ABI has no record
+    /// because its stack-probe helper and C runtime contract differ.
     pub(crate) fn for_triple(triple: &str) -> Result<Self, TargetLayoutFailure> {
         match triple {
             "aarch64-apple-darwin" => Ok(Self {
@@ -123,13 +131,15 @@ impl TargetLayout {
                 allocator_parameter_max: u64::MAX,
                 allocator_alignment: 8,
             }),
-            "x86_64-pc-windows-msvc" => Ok(Self {
-                triple: "x86_64-pc-windows-msvc",
-                // The x86-64 MSVC ABI probes a large downward-growing frame
-                // through __chkstk before adjusting RSP. This is the symbol
-                // clang emits for the target, and the MSVC runtime supplies it;
-                // the GNU target's differently named helper is not compatible.
-                stack_probe: "__chkstk",
+            WINDOWS_X86_64_TRIPLE => Ok(Self {
+                triple: WINDOWS_X86_64_TRIPLE,
+                // The x86-64 MinGW target probes a large downward-growing
+                // frame through ___chkstk_ms before adjusting RSP, which
+                // compiler-rt's builtins (or libgcc) supply to every MinGW
+                // link. LLVM selects the helper by target on Windows; the
+                // record names it so the frame contract is stated, not
+                // inferred.
+                stack_probe: "___chkstk_ms",
                 data_layout: "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
@@ -156,14 +166,13 @@ impl TargetLayout {
         {
             return Self::for_triple("x86_64-unknown-linux-gnu");
         }
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_os = "windows",
-            target_env = "msvc",
-            target_vendor = "pc"
-        ))]
+        // The emitted program's ABI is the native toolchain's, not the one
+        // whitefootc itself was built for: every clang command names this
+        // triple ([`crate::Toolchain::command`]), so an MSVC-hosted or a
+        // GNU-hosted compiler emits and links the same MinGW (UCRT) program.
+        #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
         {
-            return Self::for_triple("x86_64-pc-windows-msvc");
+            return Self::for_triple(WINDOWS_X86_64_TRIPLE);
         }
         #[allow(unreachable_code)]
         Err(TargetLayoutFailure::UnsupportedHost)
@@ -200,7 +209,7 @@ impl TargetLayout {
             "__chkstk_darwin" => {
                 "\"probe-stack\"=\"inline-asm\" \"stack-probe-size\"=\"4096\""
             }
-            "__chkstk" => "\"probe-stack\"=\"__chkstk\"",
+            "___chkstk_ms" => "\"probe-stack\"=\"___chkstk_ms\"",
             "inline-asm" => "\"probe-stack\"=\"inline-asm\"",
             _ => unreachable!("the closed target records select a known stack probe"),
         }
@@ -2496,7 +2505,7 @@ mod stack_probe_tests {
         for (triple, attributes) in [
             ("aarch64-unknown-linux-gnu", "\"probe-stack\"=\"inline-asm\""),
             ("x86_64-unknown-linux-gnu", "\"probe-stack\"=\"inline-asm\""),
-            ("x86_64-pc-windows-msvc", "\"probe-stack\"=\"__chkstk\""),
+            ("x86_64-w64-windows-gnu", "\"probe-stack\"=\"___chkstk_ms\""),
         ] {
             let target = TargetLayout::for_triple(triple).expect("supported non-Darwin target");
             for helper in [false, true] {
