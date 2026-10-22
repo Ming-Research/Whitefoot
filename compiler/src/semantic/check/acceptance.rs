@@ -107,12 +107,56 @@ impl<'unit> DeclarationInventory<'unit> {
             | RecordAnswer::Postcondition(_)
             | RecordAnswer::Uninhabited => &record.site,
         };
+        if let Some(position) = self.set_target_position(path)? {
+            return Ok(position);
+        }
         Ok(path
             .components()
             .iter()
             .copied()
             .map(ProofPosition::Child)
             .collect())
+    }
+    /// [SET-1] evaluates a `set`'s target after its right-hand side, so a
+    /// record formed in the target is decided after every record of the
+    /// value, and before the statements that follow.
+    fn set_target_position(&self, path: &NodePath) -> Result<Option<Vec<ProofPosition>>, CheckStop> {
+        let Some(mut current) = self.tree.node_with_path(path) else {
+            return Ok(None);
+        };
+        while let Some(parent) = self.tree.parent(current)? {
+            if self.tree.production(parent)? == Production::SetStmt
+                && self.tree.production(current)? == Production::Place
+            {
+                let [value] = self.tree.children_with(parent, Production::Expr)?[..] else {
+                    return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+                };
+                let set = self.tree.path(parent)?.components();
+                let mut position = set
+                    .iter()
+                    .copied()
+                    .map(ProofPosition::Child)
+                    .collect::<Vec<_>>();
+                position.extend(
+                    self.tree
+                        .path(value)?
+                        .components()
+                        .last()
+                        .copied()
+                        .map(ProofPosition::Child),
+                );
+                position.push(ProofPosition::AfterSubtree);
+                position.extend(
+                    path.components()[set.len()..]
+                        .iter()
+                        .copied()
+                        .map(ProofPosition::Child),
+                );
+                return Ok(Some(position));
+            }
+            current = parent;
+        }
+        Ok(None)
     }
     /// The enclosing `loop_stmt` or `for_stmt` of one loop-header invariant.
     ///
