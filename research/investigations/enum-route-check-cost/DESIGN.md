@@ -635,6 +635,41 @@ Sides and what each result shows:
   `join:pairs_evaluated` and `closure:cells_sum` of both compilers say where
   the work differs from main.
 
+Result ([run 39693987787](https://github.com/Ming-Research/Whitefoot/actions/runs/39693987787),
+workflow head `0f904ca1a`, whose compiler tree equals the head that `131338b85`
+and the later heads carry; every exit code was 0; the three workloads ran on
+different hosted CPUs, so only ratios within one workload are comparable):
+
+| Workload (host CPU) | Side | rounds | median CPU s | ratio to `base` (median, min–max) |
+|---|---|---:|---:|---:|
+| `pkg::vm` (EPYC 7763) | `base` (`7d9118eba`) | 5 | 16.18 | 1.000 |
+| | `twin` | 5 | 16.17 | 1.000 (0.996–1.002) |
+| | `main` (`7b11c52fb`) | 5 | 11.56 | 0.715 (0.714–0.716) |
+| | `branch` | 5 | 9.41 | 0.582 (0.579–0.584) |
+| `pkg::test` (EPYC 9V74) | `base` (`d837678c6905`) | 3 | 1.58 | 1.000 |
+| | `twin` | 3 | 1.57 | 1.000 (0.987–1.000) |
+| | `main` | 1 | 453.80 | 285.409 |
+| | `branch` | 3 | 1.61 | 1.025 (1.006–1.032) |
+
+Both Halo rows meet their acceptance rows: `pkg::vm` branch/base 0.582 against
+at most 1.03, `pkg::test` branch/base 1.025 against at most 1.5. `main` is
+faster than `base` on `pkg::vm` because of changes between the two that are
+not this work's; branch/main is 9.41 / 11.56 = 0.814 there. The Halo counters
+(one counted run each; `main` was not counted for `pkg::test`):
+
+| Counter | `pkg::vm` `base` | `pkg::vm` `main` | `pkg::vm` `branch` | `pkg::test` `base` | `pkg::test` `branch` |
+|---|---:|---:|---:|---:|---:|
+| `join:join` | 25,170 | 290,038 | 28,568 | 827 | 827 |
+| `join:pairs_evaluated` | 1,122,732 | 1,554,023 | 1,176,621 | 641,730 | 565,698 |
+| `closure:cells_sum` | 8,288,239 | 14,034,924 | 9,605,432 | 4,141,909 | 4,584,258 |
+
+Firn in this run had no `base` column (EPYC 9V74, five rounds): `main` 84.25 s
+and `branch` 73.28 s, branch/main 0.869 (0.866–0.876) against a `main` twin at
+0.995 (0.983–1.008); joins 993,232 in `main` and 248,266 in `branch`, join pairs
+7,448,963 and 6,304,847, closure cells 80,599,956 and 61,390,351. The branch
+range lies wholly below 1 and the twin's straddles it, so on every workload the
+fix still removes the #431 work from current main.
+
 ### Firn baseline column on the final head
 
 The acceptance row for Firn asks for the median ratio of the merged head to
@@ -679,6 +714,62 @@ source. Columns and what each result shows:
   the run. The bound is on those work counters, not on CPU time; a branch/base
   median above 1.03 by less than what the counters leave room for would still
   be reported as above 1.03.
+
+Result ([run 39715369711](https://github.com/Ming-Research/Whitefoot/actions/runs/39715369711),
+EPYC 9V45, workflow head `131338b85` with the same compiler tree as `0f904ca1a`;
+the step removed two bindings, `host_paths` and `process_id`, both on one line of
+`firn/server/server.wf`, and the baseline compiler then accepted the source;
+every exit code was 0):
+
+| Compiler | rounds | median CPU s | ratio to `base` (median, min–max) |
+|---|---:|---:|---:|
+| `base` (`7d9118eba`, source without the two bindings) | 5 | 53.47 | 1.000 |
+| `twin` (same binary as `base`) | 5 | 53.38 | 0.976 (0.963–1.034) |
+| `main` (`7b11c52fb`) | 5 | 63.10 | 1.171 (1.139–1.245) |
+| `branch` (final head) | 5 | 54.89 | 1.027 (0.979–1.072) |
+
+The branch/base median is 1.027, which meets the acceptance row's at most 1.03,
+by a margin smaller than this run's noise: the twin's own median ratio is 0.976
+with a 0.963–1.034 range, and the branch range 0.979–1.072 contains 1, so five
+pairs detect neither a regression nor an improvement against pre-#431 main. The
+spread is mainly the `base` column (51.64–56.10 s, 8.6% between its lowest and
+highest round), while `branch` (54.14–55.37 s) and `main` (62.50–64.29 s) are
+tight. Per-round branch/base: 1.072, 0.985, 0.979, 1.027, 1.054. The
+regression itself is visible in the same run: `main` is 1.171 of `base`, and
+branch/main is 54.89 / 63.10 = 0.870, the same as the 0.869 of the previous run
+on a different hosted CPU.
+
+Counters (one counted run each):
+
+| Counter | `base` | `main` | `branch` |
+|---|---:|---:|---:|
+| `join:join` | 241,482 | 993,232 | 248,266 |
+| `join:pairs_evaluated` | 7,477,212 | 7,448,963 | 6,304,847 |
+| `closure:cells_sum` | 67,231,069 | 80,599,956 | 61,390,351 |
+| `function:intern_calls` | 40,303,170 | 50,656,817 | 32,406,930 |
+| `closure:rows_sum` | 2,220,141 | 3,207,658 | 2,372,719 |
+| `function:affine_interval_warm_probes` | 0 | 216,036 | 216,036 |
+
+Against `base` the branch counts 15.7% fewer join pairs, 8.7% fewer closure
+cells, 19.6% fewer intern calls, 2.8% more joins and 6.9% more closure rows.
+The affine-interval probes are work that the compilers after `base` perform and
+`base` does not, in the same amount in `main` and `branch`, so they come from
+other changes in main, not from this work. The counters give no sign of checker
+work that the fix adds over `base`; they do not explain CPU time, and the 2.7%
+median excess is within the noise above.
+
+The bindings' contribution to these counters is bounded by the shift from the
+first merge's run (source without any of the bindings; its `base` counters are
+identical to this run's `base` counters, so the stripped source is that run's
+source for the baseline compiler) to this run: closure cells +1,178 in both
+columns (`main` 80,598,778 to 80,599,956, `branch` 61,389,173 to 61,390,351),
+intern calls +1,384 in both (50,655,433 to 50,656,817; 32,405,546 to
+32,406,930), closure rows +278 in both (3,207,380 to 3,207,658; 2,372,441 to
+2,372,719), joins and join pairs unchanged. That is at most 0.002% of the
+branch's cells, 0.004% of its intern calls and 0.012% of its rows. The shift
+also contains whatever the `main` of the first merge and `7b11c52fb` differ by,
+so it is an upper bound for the two bindings, and it is a bound on work
+counters, not on CPU time.
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this
