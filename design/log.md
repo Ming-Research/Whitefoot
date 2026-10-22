@@ -10,6 +10,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/data-model/kernel-minimality
 
 Summary: A program that reuses one byte buffer per batch could not empty it without one boundary operation per element or a transfer of every element into another window, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. The kernel therefore owns `clear` over every droppable element type: it runs each element's derived release, sets the length to zero and keeps the storage, capacity, ring origin and pages, so an element type that needs no release is reset independently of length. Clearing leaves the list of operations that begin as source libraries, and clearing as a source library over `take_back` is recorded as rejected.
+
 ## 2026-10-22 A continuing kill event's overlap at the loop head is judged without facts
 
 Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention

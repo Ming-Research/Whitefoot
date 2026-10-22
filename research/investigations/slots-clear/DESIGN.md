@@ -40,9 +40,9 @@ specification text in OP-10, OP-13 and PRE-1, the checker's drop bound and
 reference invalidation, and the lowering below. The acceptance cases of the
 last sections became the `op10-`, `prov6-` and `ref2-` clear cases in
 `tests/conformance/`, the backend tests of the emitted clear body in
-`compiler/src/backend/tests/windows.rs`, and the two programs
-`tests/programs/window_clear_heap.wf` (heap meter) and
-`tests/programs/containers/clear-program.wf` (allocation count). The rest of
+`compiler/src/backend/tests/windows.rs`, and the program
+`tests/programs/containers/clear-program.wf`, whose allocation observer counts
+every allocation and requires each to be released exactly once. The rest of
 this record is the proposal as written before selection: its statements that
 nothing was compiled or run describe that time. One difference from
 it, observed in CI: the checker does not derive `p.pages.len == 0` from a cleared `Paged`'s

@@ -147,18 +147,3 @@ fn a_call_result_sharing_a_copied_input_reads_the_original_input() {
     assert!(output.stdout.is_empty(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
 }
-
-#[test]
-fn clear_keeps_window_storage_and_returns_element_heap_to_the_prefill_value() {
-    // [OP-10] status 1 or 2: the heap after building a 64 KiB byte buffer
-    // moved across clear or the refill, so clear replaced the storage or the
-    // refill allocated. Status 12: clearing 32 boxed bytes did not return the
-    // heap to its value before the fill, so an element was not released or
-    // the backing was. Status 21: scope release afterwards is unbalanced, as a
-    // double release of a cleared element would make it.
-    let program = build_program(&compile_program("window_clear_heap.wf"));
-    let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    assert!(output.stdout.is_empty(), "{output:?}");
-    assert!(output.stderr.is_empty(), "{output:?}");
-}
