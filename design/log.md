@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-22 Taking turns with a resource that must be closed explicitly needs no lease construct
+
+Nodes: language/waiting/shared-objects
+
+Summary: Several running contexts that take turns with one resource that must be closed explicitly, such as the write file of a log, were thought to need a construct that lends the resource and makes sure it is put back. With a shared object whose state may be linear, the resource sits in a one-slot window that is the state: a guarded atomic statement moves it out, the context uses it as an ordinary linear local across waiting calls and a second statement puts it back, so the checker already requires it to be consumed on every path, it cannot be copied, a context that wants it waits in its guard, and the handle that ends last receives it and closes it exactly once. The shared-objects node now records that decision. Refused: a lexical lease block and an explicit lease value, each with a reclaim protocol and a contract against swapping the file away, because they add only the automatic put back and the contract refuses the file swap of a log rewrite. The owner chose this on 2026-10-22 (board item firn-req-linear-resource-lease, option A); the study is on that item.
+
 ## 2026-10-21 Windows programs target MinGW, and a bundled release gains a Windows x86-64 package
 
 Nodes: compiler/toolchain-resolution, compiler/downstream-releases, compiler/waiting-contexts
