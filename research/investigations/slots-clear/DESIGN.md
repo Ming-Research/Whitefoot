@@ -32,6 +32,23 @@ constraint ([constitution](../../../docs/constitution.md#performance)), using
 the investigation method in [the research guide](../../README.md). It introduces
 no writer access to window metadata and no unproved partial operation.
 
+## Selection and implementation
+
+The owner selected the general drop form, `clear<W, T: drop>` over `Slots`,
+`Ring` and `Paged`, on the status board. Whitefoot#486 implements it: the
+specification text in OP-10, OP-13 and PRE-1, the checker's drop bound and
+reference invalidation, and the lowering below. The acceptance cases of the
+last sections became the `op10-`, `prov6-` and `ref2-` clear cases in
+`tests/conformance/`, the backend tests of the emitted clear body in
+`compiler/src/backend/tests/windows.rs`, and the two programs
+`tests/programs/window_clear_heap.wf` (heap meter) and
+`tests/programs/containers/clear-program.wf` (allocation count). The rest of
+this record is the proposal as written before selection: its statements that
+nothing was compiled or run describe that time. One measured difference from
+it: the checker does not derive `p.pages.len == 0` from a cleared `Paged`'s
+length, so the case checks the page count at run time instead of stating it
+as an invariant.
+
 ## Existing operations do not supply the required reset
 
 WIN-1 makes `len` the entire initialized-window boundary and reserves changes to
