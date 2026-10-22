@@ -862,7 +862,7 @@ above it on its path.
 distinct struct types shared along paths it is exponential: with `N0`
 declaring an invariant and each `Ni` holding two `N(i-1)` fields, an entry
 of type `Nk` starts with 2^k debts from k + 1 declarations (derived from
-`owned_anchor_debts`, not run). The checker keeps the debt set as a list
+`unfolding_below`, not run). The checker keeps the debt set as a list
 and finds a key by a linear search at each addition, so forming that set
 takes on the order of 4^k key comparisons, and every later join, loop
 header and hand-off walks it. A continuation into a local binding (T4) of
