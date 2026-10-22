@@ -730,18 +730,45 @@ fn a_conditional_after_give_offers_the_statement_and_let_forms() {
             ))
         );
     }
-    // A conditional after `return` has no `give` to repair.
-    let source = b"fn f(c: Bool) -> r: u32 pure { return if c { 1_u32 } else { 2_u32 }; }";
-    let result = outcome(source, false);
-    let ParseOutcome::SourceIssue(issue) = result else {
-        panic!("a conditional after return must reject: {result:?}");
-    };
-    assert_ne!(
-        issue.mechanical_fix,
-        Some(SyntaxRepair::Fixed(
-            crate::diagnostic_repairs::GIVE_CONDITIONAL_FIX
-        ))
-    );
+}
+
+/// An `if` or `match` where an operand stands, after `return`, in a call's
+/// argument or in a `set`, has no statement form to offer: it is repaired to
+/// the `let` initializer alone, and the `let` initializer itself is accepted.
+#[test]
+fn a_conditional_in_an_operand_position_offers_the_let_form() {
+    for (source, word) in [
+        (
+            b"fn f(c: Bool) -> r: u32 pure { return if c { 1_u32 } else { 2_u32 }; }".as_slice(),
+            "if",
+        ),
+        (
+            b"fn f(c: Bool) -> r: u32 pure { return match c { True => { give 1_u32; } else => { give 2_u32; } }; }".as_slice(),
+            "match",
+        ),
+        (
+            b"fn f(c: Bool) -> r: u32 pure { let x = 0_u32; set x = if c { 1_u32 } else { 2_u32 }; return x; }".as_slice(),
+            "if",
+        ),
+        (
+            b"fn f(c: Bool) -> r: u32 pure { return id(value: if c { 1_u32 } else { 2_u32 }); }".as_slice(),
+            "if",
+        ),
+    ] {
+        let result = outcome(source, false);
+        let ParseOutcome::SourceIssue(issue) = result else {
+            panic!("a conditional operand must reject: {result:?}");
+        };
+        assert_eq!(issue_bytes(source, issue), word.as_bytes());
+        assert_eq!(
+            issue.mechanical_fix,
+            Some(SyntaxRepair::Fixed(
+                crate::diagnostic_repairs::CONDITIONAL_OPERAND_FIX
+            ))
+        );
+    }
+    let source = b"fn f(c: Bool) -> r: u32 pure { let x = if c { give 1_u32; } else { give 2_u32; } return x; }";
+    assert!(matches!(outcome(source, false), ParseOutcome::Complete(_)));
 }
 
 #[test]

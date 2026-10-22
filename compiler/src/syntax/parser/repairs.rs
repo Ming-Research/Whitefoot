@@ -3,9 +3,10 @@
 use super::{DiagnosticResult, DiagnosticSite, ProbeContext, SyntaxRepair, fixed, has};
 use crate::ClassifiedToken;
 use crate::diagnostic_repairs::{
-    ALIAS_FIX, ARRAY_FIX, ARRAY_TYPE_FIX, BOOLEAN_OPERATION_FIX, BORROW_MUT_FIX, EFFECT_ROW_FIX,
-    ENTRY_FIX, FLAT_OPERATION_FIX, GIVE_CONDITIONAL_FIX, GRAPH_FIX, INVARIANT_FIX, LET_MUT_FIX,
-    LET_TYPE_FIX, LOOP_FIX, MATCH_BINDER_FIX, RANGE1_BOOLEAN_AND_FIX, VALUE_MATCH_FIX,
+    ALIAS_FIX, ARRAY_FIX, ARRAY_TYPE_FIX, BOOLEAN_OPERATION_FIX, BORROW_MUT_FIX,
+    CONDITIONAL_OPERAND_FIX, EFFECT_ROW_FIX, ENTRY_FIX, FLAT_OPERATION_FIX, GIVE_CONDITIONAL_FIX,
+    GRAPH_FIX, INVARIANT_FIX, LET_MUT_FIX, LET_TYPE_FIX, LOOP_FIX, MATCH_BINDER_FIX,
+    RANGE1_BOOLEAN_AND_FIX, VALUE_MATCH_FIX,
 };
 use crate::syntax::grammar::{LookaheadPredicate, Production};
 use crate::syntax::terminal::{FixedTerminal as F, TerminalPredicate as T};
@@ -160,6 +161,8 @@ pub(super) fn attach(
             Some(GRAPH_FIX)
         } else if previous(1, F::Give) && (at(boundary, F::If) || at(boundary, F::Match)) {
             Some(GIVE_CONDITIONAL_FIX)
+        } else if in_expression && (at(boundary, F::If) || at(boundary, F::Match)) {
+            Some(CONDITIONAL_OPERAND_FIX)
         } else if expects(T::Fixed(F::Pure))
             && (at(boundary, F::LeftBrace) || at(boundary, F::Waits))
         {

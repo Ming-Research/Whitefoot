@@ -873,6 +873,36 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
+        // [GIVE-1] a conditional where `return` takes its operand has no
+        // statement form to offer; the repair binds it with `let` first.
+        name: "syntax-return-conditional.wf",
+        rejected: br#"fn pick(flag: Bool) -> result: u64 pure {
+  return if flag { 1_u64 } else { 2_u64 };
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-3",
+        sentences: &[
+            "\n  mechanical_fix: an `if` or `match` is not an expression: a conditional value is only a `let` initializer [GRAM-4, GRAM-7, GIVE-1]; bind it first, as in `let x = if c { give a; } else { give b; }` (no `;` after its closing `}`), and write `x` where the conditional stood\n",
+        ],
+        repaired: &[br#"fn pick(flag: Bool) -> result: u64 pure {
+  let value = if flag {
+    give 1_u64;
+  } else {
+    give 2_u64;
+  }
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         // [FORM-2] four independent layout faults: the rejection names the
         // first, and the repair lists all four, whose making is the canonical
         // source.

@@ -202,8 +202,8 @@ drop the marker.
   says so instead of suggesting a guard.
 - **Not a batch.** One rejection per compile keeps each one exact, at the
   cost of a round per mistake. A layout rejection names only the first
-  difference too, but its repair lists every layout difference of the
-  source, so they are fixed together.
+  difference too, but its repair lists the layout differences of the
+  source, the first twenty of them, so they are fixed together.
 - **Not a compiler failure.** A missing compiler capability, an internal
   error or running out of resources also stops the compiler, but the record
   cites no rule and names a category such as `Unsupported` instead of

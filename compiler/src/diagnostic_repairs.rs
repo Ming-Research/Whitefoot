@@ -34,6 +34,11 @@ pub(crate) const ARRAY_TYPE_FIX: &str = "there is no `[T; N]` type: a constant-c
 /// FORM-3 refusal of `if` in an expression slot is not what the writer needs.
 pub(crate) const GIVE_CONDITIONAL_FIX: &str = "`give` takes an expression, and `if` and `match` are not expressions: a conditional value is only a `let` initializer [GRAM-4, GRAM-7, GIVE-1]; to deliver from branches, write the `if` or `match` here as a statement whose every branch ends in its own `give`, as in `if c { give a; } else { give b; }`, or bind the conditional first with `let x = if c { give a; } else { give b; }` (no `;` after its closing `}`) and write `give x;`";
 
+/// An `if` or `match` where an operand stands (after `return`, in a call's
+/// argument, in a `set`): the same refusal as after `give`, whose statement
+/// form does not apply, so the only repair is the `let` initializer.
+pub(crate) const CONDITIONAL_OPERAND_FIX: &str = "an `if` or `match` is not an expression: a conditional value is only a `let` initializer [GRAM-4, GRAM-7, GIVE-1]; bind it first, as in `let x = if c { give a; } else { give b; }` (no `;` after its closing `}`), and write `x` where the conditional stood";
+
 pub(crate) const FLAT_OPERATION_FIX: &str = "bind each operation with its own preceding `let` and pass the binding as the operand; an expression has one operation over two atoms, with no chaining or parenthesized subexpressions [GRAM-6, GRAM-9]";
 
 pub(crate) const EFFECT_ROW_FIX: &str = "write an effect row after the result binding: `pure` for no effects, or `reads(path)` and `writes(path)` entries describing the body's reference accesses; write `waits` after that row [GRAM-2, EFF-1]";
@@ -125,8 +130,13 @@ const LAYOUT_NEIGHBOR_CHARS: usize = 24;
 /// difference; this sentence lists them all, so one round repairs the layout.
 /// `total` counts every difference, `listed` the ones the sentence names.
 pub(crate) fn canonical_layout_fix(total: u64, listed: &[LayoutDifference]) -> String {
+    let shown = u64::try_from(listed.len()).unwrap_or(u64::MAX);
     let mut sentence = if total == 1 {
         "make the change below to reach the canonical layout; it gives the bytes FORM-2 requires between two terminals [FORM-2]: ".to_owned()
+    } else if total > shown {
+        format!(
+            "{total} gaps differ from the canonical layout; make the {shown} changes below, then compile again; each gives the bytes FORM-2 requires between two terminals [FORM-2]: "
+        )
     } else {
         format!(
             "make all {total} changes below to reach the canonical layout, then compile again; each gives the bytes FORM-2 requires between two terminals [FORM-2]: "
@@ -138,7 +148,6 @@ pub(crate) fn canonical_layout_fix(total: u64, listed: &[LayoutDifference]) -> S
         }
         sentence.push_str(&layout_change(difference));
     }
-    let shown = u64::try_from(listed.len()).unwrap_or(u64::MAX);
     if total > shown {
         sentence.push_str(&format!("; and {} more after these", total - shown));
     }

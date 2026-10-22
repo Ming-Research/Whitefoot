@@ -830,7 +830,101 @@ fn a_repair_past_the_listing_bound_counts_the_rest() {
         assert_eq!(issue.difference_count, 25);
         assert_eq!(issue.differences.len(), 20);
         let fix = issue.mechanical_fix().expect("a rejection lists its gaps");
-        assert!(fix.starts_with("make all 25 changes below"), "{fix}");
+        // The lead says how many gaps differ and how many the sentence names.
+        assert!(
+            fix.starts_with("25 gaps differ from the canonical layout; make the 20 changes below"),
+            "{fix}"
+        );
         assert!(fix.ends_with("; and 5 more after these"), "{fix}");
+    });
+}
+
+/// What an audit of one source under one work ceiling came to, as far as the
+/// repair goes.
+#[derive(Debug, Eq, PartialEq)]
+enum Reached {
+    ResourceFailure,
+    Rejection(Option<String>),
+    Other,
+}
+
+fn reached_under(source: &[u8], max_work: u64) -> Reached {
+    let inputs = [SourceInput::new("format.wf", source)];
+    with_parsed(&inputs, |parsed| {
+        let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
+            panic!("complete derivation must finalize");
+        };
+        let limits = CanonicalLimits {
+            max_work,
+            ..CANONICAL_LIMITS
+        };
+        match audit_canonical(*finalized, limits) {
+            CanonicalOutcome::ResourceFailure(_) => Reached::ResourceFailure,
+            CanonicalOutcome::SourceIssue(issue) => Reached::Rejection(issue.mechanical_fix()),
+            _ => Reached::Other,
+        }
+    })
+}
+
+/// [FORM-2, DIAG-1] the walk that lists the gaps has a work ceiling of its
+/// own: the audit stops at the first fault, so a source it rejects with little
+/// work may be too long to list. The rejection is then still the audit's,
+/// without a list, and not a resource failure.
+#[test]
+fn a_repair_past_the_work_ceiling_leaves_the_rejection_without_a_list() {
+    let source = twenty_five_layout_faults();
+    let source = source.as_bytes();
+    assert!(matches!(
+        reached_under(source, CANONICAL_LIMITS.max_work),
+        Reached::Rejection(Some(_))
+    ));
+    assert_eq!(reached_under(source, 0), Reached::ResourceFailure);
+    // The smallest ceiling the audit itself fits under, found by bisection.
+    let (mut below, mut at) = (0, CANONICAL_LIMITS.max_work);
+    while at - below > 1 {
+        let middle = below + (at - below) / 2;
+        if reached_under(source, middle) == Reached::ResourceFailure {
+            below = middle;
+        } else {
+            at = middle;
+        }
+    }
+    assert_eq!(reached_under(source, at), Reached::Rejection(None));
+}
+
+/// [FORM-2] the repair lists the gaps of the source the rejection is in, not
+/// those of the first source of the bundle.
+#[test]
+fn the_listed_gaps_belong_to_the_rejected_source() {
+    let inputs = [
+        SourceInput::new(
+            "first.wf",
+            b"fn first() -> result: unit pure {\n  let a = 1_u64;\n  let b = 2_u64;\n  return unit;\n}\n",
+        ),
+        SourceInput::new(
+            "second.wf",
+            b"fn second() -> result: unit pure {\n  let a =  1_u64;\n  let b = 2_u64;\n  let c =  3_u64;\n  return unit;\n}\n",
+        ),
+    ];
+    with_parsed(&inputs, |parsed| {
+        let FinalizeOutcome::Complete(finalized) = finalize(parsed, FINALIZE_LIMITS) else {
+            panic!("two sources must finalize");
+        };
+        let CanonicalOutcome::SourceIssue(issue) = audit_canonical(*finalized, CANONICAL_LIMITS)
+        else {
+            panic!("a non-canonical second source must reject");
+        };
+        assert_eq!(
+            issue.location().coordinate().source(),
+            SourceId::from_ordinal(1)
+        );
+        assert_eq!(issue.difference_count, 2);
+        let lines: Vec<u64> = issue.differences.iter().map(|gap| gap.line).collect();
+        assert_eq!(lines, [2, 4]);
+        assert!(
+            issue
+                .mechanical_fix()
+                .is_some_and(|fix| fix.starts_with("make all 2 changes below")),
+        );
     });
 }
