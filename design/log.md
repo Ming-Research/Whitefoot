@@ -5,11 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-10-21 Heap storage holds elements aligned up to 16 bytes with the ordinary allocator
+## 2026-10-22 Heap storage holds elements aligned up to 16 bytes with the ordinary allocator
 
 Nodes: compiler/storage-representation
 
 Summary: The target records state 16 bytes, not 8, as the alignment of the heap blocks the runtime hands out, so `std::process::MemoryMeter` and the other 16-aligned opaque host handles can be stored in a Box cell, Slots, Ring, Paged and the HashMap built on Slots instead of failing in target qualification. Nothing else in the runtime changes: the allocator of each supported host returns 16-byte-aligned blocks, which `heap.c` asserts through `_Alignof(max_align_t)` wherever C's fundamental alignment is 16 and, on Apple, where `max_align_t` is 8 bytes on arm64 although libmalloc returns 16, through the 64-bit pointer alone, the alignment tests observing the returned pointers. Shared objects and shared-map entries already qualified through their pool blocks (state at offset 64, 16-byte entry grain), and a `Frozen` payload cannot hold a host handle [SHARE-1]. [OP-9] admits no stored type above 16, so an aligned system allocation up to 4096 bytes, with an original pointer stored beside each pool object, a 32-byte frozen header and a 4096-byte shared empty header, and the variant that derives the original address from the element type's static alignment, were refused as ranges nothing reaches that every `Frozen` and `Shared` object would pay for. A stored type aligned above 16 bytes reopens the decision.
+
 ## 2026-10-22 Taking turns with a resource that must be closed explicitly needs no lease construct
 
 Nodes: language/waiting/shared-objects
