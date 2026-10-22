@@ -128,26 +128,26 @@ fn record(words: &Box<Slots<u64>>, value: u64) -> result: unit writes(words) {
   return unit;
 }
 
-fn pass_pairs(map: &HashMap<u64, u64, ceiling>) -> pairs: u64 reads(map) {
-  doc "One whole untimed pass of limit-bucket calls, which warms the caches and returns the pairs it lent.";
+fn pass_pairs(map: &HashMap<u64, u64, ceiling>, keys: &HoldKeys) -> pairs: u64 reads(map), reads(keys) {
+  doc "One whole untimed pass of limit-bucket calls over a map built with HoldKey, which warms the caches and returns the pairs it lent.";
   let count = Count(pairs: 0_u64, sum: 0_u64);
-  let cursor = hash_map_scan::<u64, u64, Count, fn hold_visit, ceiling>(map: map, cursor: 0_u64, limit: limit, env: &count);
+  let cursor = hash_map_scan::<HoldKey, u64, Count, fn hold_visit, ceiling>(map: map, cursor: 0_u64, limit: limit, key_env: keys, visit_env: &count);
   loop @pass {
     if cursor == 0_u64 {
       break @pass;
     }
-    set cursor = hash_map_scan::<u64, u64, Count, fn hold_visit, ceiling>(map: map, cursor: cursor, limit: limit, env: &count);
+    set cursor = hash_map_scan::<HoldKey, u64, Count, fn hold_visit, ceiling>(map: map, cursor: cursor, limit: limit, key_env: keys, visit_env: &count);
   }
   return count.pairs;
 }
 
-fn find_chain(map: &HashMap<u64, u64, ceiling>, size: u64) -> start: Option<u64> reads(map) {
-  doc "The cursor of the call in a pass that lends at least size pairs, the call that holds the shared chain, or None when no call does.";
+fn find_chain(map: &HashMap<u64, u64, ceiling>, size: u64, keys: &HoldKeys) -> start: Option<u64> reads(map), reads(keys) {
+  doc "The cursor of the call in a pass over a map built with HoldSameKey that lends at least size pairs, the call that holds the shared chain, or None when no call does.";
   let count = Count(pairs: 0_u64, sum: 0_u64);
   let start = 0_u64;
   loop @pass {
     let before = count.pairs;
-    let next = hash_map_scan::<u64, u64, Count, fn hold_visit, ceiling>(map: map, cursor: start, limit: limit, env: &count);
+    let next = hash_map_scan::<HoldSameKey, u64, Count, fn hold_visit, ceiling>(map: map, cursor: start, limit: limit, key_env: keys, visit_env: &count);
     let lent = count.pairs -wrap before;
     if lent >= size {
       return Some<u64>(value: start);
@@ -160,23 +160,36 @@ fn find_chain(map: &HashMap<u64, u64, ceiling>, size: u64) -> start: Option<u64>
   return None<u64>();
 }
 
-fn time_calls(map: &HashMap<u64, u64, ceiling>, calls: u64, from: u64, restart: Bool, clock: &Clock, durations: &Box<Slots<u64>>, lent: &Box<Slots<u64>>) -> result: u64 reads(map), writes(clock), writes(durations), writes(lent) {
-  doc "Times calls scan calls one by one, recording each call's nanoseconds and pairs. With restart every call starts at from; otherwise each call continues where the last stopped, and a finished pass starts the next at zero. Returns the sum of the values lent.";
+fn time_uniform_calls(map: &HashMap<u64, u64, ceiling>, calls: u64, keys: &HoldKeys, clock: &Clock, durations: &Box<Slots<u64>>, lent: &Box<Slots<u64>>) -> result: u64 reads(map), reads(keys), writes(clock), writes(durations), writes(lent) {
+  doc "Times calls scan calls one by one over a map built with HoldKey, the first at cursor zero and each later one where the last stopped, a finished pass starting the next at zero, and records each call's nanoseconds and pairs. Returns the sum of the values lent.";
   let count = Count(pairs: 0_u64, sum: 0_u64);
-  let cursor = from;
+  let cursor = 0_u64;
   for (call in 0_u64..calls) {
     let before = count.pairs;
     let started = now(clock: clock);
-    let next = hash_map_scan::<u64, u64, Count, fn hold_visit, ceiling>(map: map, cursor: cursor, limit: limit, env: &count);
+    let next = hash_map_scan::<HoldKey, u64, Count, fn hold_visit, ceiling>(map: map, cursor: cursor, limit: limit, key_env: keys, visit_env: &count);
     let ended = now(clock: clock);
     let elapsed = nanoseconds_from(earlier: started, later: ended);
     record(words: durations, value: elapsed);
     let pairs = count.pairs -wrap before;
     record(words: lent, value: pairs);
-    if restart {
-    } else {
-      set cursor = next;
-    }
+    set cursor = next;
+  }
+  return count.sum;
+}
+
+fn time_chain_calls(map: &HashMap<u64, u64, ceiling>, calls: u64, from: u64, keys: &HoldKeys, clock: &Clock, durations: &Box<Slots<u64>>, lent: &Box<Slots<u64>>) -> result: u64 reads(map), reads(keys), writes(clock), writes(durations), writes(lent) {
+  doc "Times calls scan calls one by one over a map built with HoldSameKey, every call starting at from, and records each call's nanoseconds and pairs. Returns the sum of the values lent.";
+  let count = Count(pairs: 0_u64, sum: 0_u64);
+  for (call in 0_u64..calls) {
+    let before = count.pairs;
+    let started = now(clock: clock);
+    let next = hash_map_scan::<HoldSameKey, u64, Count, fn hold_visit, ceiling>(map: map, cursor: from, limit: limit, key_env: keys, visit_env: &count);
+    let ended = now(clock: clock);
+    let elapsed = nanoseconds_from(earlier: started, later: ended);
+    record(words: durations, value: elapsed);
+    let pairs = count.pairs -wrap before;
+    record(words: lent, value: pairs);
   }
   return count.sum;
 }
@@ -355,22 +368,20 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let status = 2_u8;
   if mode == 1_u64 {
     let map = uniform_map(size: size, keys: &keys);
-    let pairs = pass_pairs(map: &map);
+    let pairs = pass_pairs(map: &map, keys: &keys);
     if pairs < size {
       set status = 3_u8;
     } else {
-      let continuing = False();
-      let sum = time_calls(map: &map, calls: calls, from: 0_u64, restart: continuing, clock: &clock, durations: &durations, lent: &lent);
+      let sum = time_uniform_calls(map: &map, calls: calls, keys: &keys, clock: &clock, durations: &durations, lent: &lent);
       set status = report(mode: mode, size: size, durations: &durations, lent: &lent, factory: &factory, output: &output);
     }
     release_map(map: move map);
   }
   if mode == 2_u64 {
     let map = same_map(size: size, keys: &keys);
-    match find_chain(map: &map, size: size) {
+    match find_chain(map: &map, size: size, keys: &keys) {
       Some(value: start) => {
-        let restarting = True();
-        let sum = time_calls(map: &map, calls: calls, from: start, restart: restarting, clock: &clock, durations: &durations, lent: &lent);
+        let sum = time_chain_calls(map: &map, calls: calls, from: start, keys: &keys, clock: &clock, durations: &durations, lent: &lent);
         set status = report(mode: mode, size: size, durations: &durations, lent: &lent, factory: &factory, output: &output);
       }
       None() => {
