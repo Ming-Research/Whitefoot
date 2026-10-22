@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stage: [static, unit, conformance, base]
+        stage: [static, unit, conformance, base, restore]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,3 +114,18 @@ jobs:
             echo "rejected at the base: op12-pos-atomic-update-of-an-indexed-slot"
           fi
           exit "$status"
+      # The read-out probe restores the call-value notes; without that line
+      # set1-neg-row-index-written-by-the-rhs must be accepted, so the case
+      # guards it.
+      - name: The new row case fails without the probe's restore
+        if: matrix.stage == 'restore'
+        run: |
+          grep -q 'self.body.call_value_captures = noted;' compiler/src/semantic/check/control/commit.rs
+          sed -i 's/self.body.call_value_captures = noted;//' compiler/src/semantic/check/control/commit.rs
+          perl .github/run-check.pl tmp-restore-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
+          if compiler/target/gate/whitefootc --check tests/conformance/cases/set1-neg-row-index-written-by-the-rhs.wf; then
+            echo "accepted without the restore: set1-neg-row-index-written-by-the-rhs"
+          else
+            echo "rejected without the restore: set1-neg-row-index-written-by-the-rhs"
+            exit 1
+          fi

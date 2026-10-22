@@ -7,9 +7,10 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 
 ## 2026-10-22 An assignment evaluates its right-hand side before its target
 
-Nodes: language/ownership/reference-validity
+Nodes: language/ownership/reference-validity, compiler/checker-facts
 
-Summary: A decision is added: `set p = e;` evaluates `e` first and then evaluates the target in the state `e` left, so it means exactly binding `e` and assigning the binding; the atomic update keeps the place it reads out because its first argument reads the target's offsets, which the call's pairwise effect comparison keeps its function from writing. Two accepted programs showed that a target evaluated first can go stale across its right-hand side, a double free after `remove_at` shifted the target's slot and a store into the block `grow` released ([incidental finding 6](../research/investigations/spec-proof/DESIGN.md#incidental-findings)). Refused: holding the target's storage under reference validity across the right-hand side, the atomic update's prefix condition for every assignment, and reading subscripts first while locating the place afterwards.
+Summary: A decision is added: `set p = e;` evaluates `e` first and then evaluates the target in the state `e` left, so, other than an atomic in-place update, it means exactly binding `e` and assigning the binding; the atomic update keeps the place it reads out because its first argument reads the target's offsets, which the call's pairwise effect comparison keeps its function from writing. Two accepted programs showed that a target evaluated first can go stale across its right-hand side, a double free after `remove_at` shifted the target's slot and a store into the block `grow` released ([incidental finding 6](../research/investigations/spec-proof/DESIGN.md#incidental-findings)). The checker's fact node now says an assignment target's captures read the state the right-hand side left. Refused: holding the target's storage under reference validity across the right-hand side, the atomic update's prefix condition for every assignment, and reading subscripts first while locating the place afterwards.
+
 ## 2026-10-21 HashMap probes from high-bit homes and scans from a hash-space cursor
 
 Nodes: language/data-model/hash-map-storage

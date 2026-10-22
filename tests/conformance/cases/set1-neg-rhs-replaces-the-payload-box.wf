@@ -1,5 +1,5 @@
 fn replace_box(cell: &Option<Box<u64>>) -> result: u64 reads(cell), writes(cell.Some.value) {
-  doc "The right-hand-side call replaces the Box and frees the cell containing the captured target.";
+  doc "The right-hand-side call replaces the Box payload and frees its old cell.";
   match &cell^ {
     None() => {
       return 0_u64;

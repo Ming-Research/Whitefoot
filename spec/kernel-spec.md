@@ -648,9 +648,9 @@ These specific rules own their stated violations; every other failure of this cl
 
 The right-hand side is checked under [TYPE-5] and evaluated under its ordinary expression, ownership, effect, and partial-operation domain rules, on the normal continuation of the statement's entry.
 Every judgment of target evaluation is made on the normal continuation of `e`: the writable-root and live-or-complete-binding conditions above, each subscript's [OP-4] discharge, and the validity [REF-2] of each reference the target path is reached through; no fact from before `e` that `e` killed reaches them.
-`set p = e;` therefore means exactly `let t = e; set p = move t;`, or `set p = t;` when the value is copy, for a fresh binding `t`.
+A `set p = e;` that is not an [OP-12] atomic update therefore means exactly `let t = e; set p = move t;`, or `set p = t;` when the value is copy, for a fresh binding `t`.
 At runtime `e` is evaluated once, then each target component exactly once, then the one store; nothing evaluated for the target is carried across `e`.
-An [OP-12] atomic update locates its target at its call's first argument instead, under the conditions that rule states, which make that place the one target evaluation after the call names.
+An [OP-12] atomic update reads its target out at its call's first argument, under the conditions that rule states, which make that place the one target evaluation after the call names.
 
 On successful target evaluation, assignment performs exactly one write of the resulting value into `p`.
 The old value's disposition at the commit is [WIN-3]'s.
