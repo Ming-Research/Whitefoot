@@ -554,8 +554,9 @@ the merged compiler accepts is accepted by those two compilers, so a
 branch/base ratio on one source is not measurable. The adapt step now also
 appends the missing field with an unused binding, and this run's sides are the
 two compilers that accept the adapted source. The ratio to pre-#431 main needs
-a base column on a source without that one binding; the baseline run recorded
-after the final-head re-measurement below adds it.
+a base column on a source without the bindings of the `Inputs` fields the
+baseline lacks; the baseline run recorded after the final-head re-measurement
+below adds it.
 
 Same method as the first merge's Firn run otherwise: five interleaved rounds,
 compiler user+sys CPU, no check cache, then one work-counter run per compiler.
@@ -639,31 +640,43 @@ Sides and what each result shows:
 The acceptance row for Firn asks for the median ratio of the merged head to
 pre-#431 main (`7d9118eba`) of at most 1.03, measured in a run on the final
 head. The final-head run above timed Firn without that column, because the
-baseline compiler cannot check the adapted source (it has no `host_paths`
-field) and the column was judged unmeasurable until the acceptance returned to
-the direct criterion; the missing column could not be foreseen before the run.
-This run adds it, for Firn only, in one run on the same hosted machine type:
-five interleaved rounds, compiler user+sys CPU, no check cache, and one
-work-counter run per compiler.
+baseline compiler cannot check the adapted source (its `Inputs` lacks fields
+the adapted source binds) and the column was judged unmeasurable until the
+acceptance returned to the direct criterion; the missing column could not be
+foreseen before the run. This run adds it, for Firn only, in one run on the
+same hosted machine type: five interleaved rounds, compiler user+sys CPU, no
+check cache, and one work-counter run per compiler.
 
-The baseline compiler checks a copy of the adapted source with the one
-`host_paths` binding removed; the merged compilers check the adapted source
-with it. That binding is the whole difference between the two sources.
-Columns and what each result shows:
+The baseline compiler checks a copy of the adapted source from which the
+bindings of the `Inputs` fields it does not declare are removed; the merged
+compilers check the adapted source with them. Those bindings are the whole
+difference between the two sources. The first attempt
+([run 39694799784](https://github.com/Ming-Research/Whitefoot/actions/runs/39694799784))
+removed only `host_paths` and stopped at the baseline compiler's check of that
+source: GRAM-10 `InvalidMatchFields`, `Inputs` declared without `process_id`,
+the field main gained with the process-id change merged in `7b11c52fb`. The
+plan had assumed a single binding because the earlier adaptation reported
+only the first missing field. The step now removes, from the line the baseline
+compiler reports, every `unused_<field>` binding of a field its own diagnostic
+does not declare, repeating for at most five rejections, fails unless the
+baseline then accepts the source, and lists the bindings it removed. It also
+applies the final-head run's complete adaptation diff
+([run 39693987787](https://github.com/Ming-Research/Whitefoot/actions/runs/39693987787),
+186 fixes) instead of redoing those fixes, which gives the same adapted
+source. Columns and what each result shows:
 
-- `base`: `7d9118eba` on the source without the binding, the denominator. A
+- `base`: `7d9118eba` on the source without those bindings, the denominator. A
   branch/base median of at most 1.03 meets the row; a larger median rejects
   it.
 - `twin`: the `base` binary on the same source again; the median and min–max of
   its ratio to `base` are this run's noise, read as before.
 - `main` (`7b11c52fb`, with the #431 regression) and `branch` (the final head),
-  both on the source with the binding: the join, join-pair and closure-cell
-  counters of the two columns show the work the fix removes. The binding's own
-  contribution is bounded by the shift between the first merge's run (source
-  without the binding) and the final-head run (with it): +1,110 closure cells,
-  +1,290 intern calls and +210 closure rows in both columns, no change in join
-  pairs, against 61.4M cells, 32.4M intern calls and 2.37M rows in the branch
-  column. The bound is on those work counters, not on CPU time; a branch/base
+  both on the adapted source with the bindings: the join, join-pair and
+  closure-cell counters of the two columns show the work the fix removes. The
+  bindings' own contribution is bounded by the shift of these counters, in both
+  columns, from the first merge's run (source without any of the bindings) to
+  this run, set against this run's branch column; the figures are written after
+  the run. The bound is on those work counters, not on CPU time; a branch/base
   median above 1.03 by less than what the counters leave room for would still
   be reported as above 1.03.
 

@@ -1,16 +1,18 @@
 # Temporary (board item enum-route-check-cost); remove before the branch is ready.
 # Firn's whole-program check on the final head against the pre-regression main
 # (base), in one run: the baseline compiler cannot check the adapted source
-# because main gave `Inputs` a `host_paths` field after it, so it checks a copy
-# of the adapted source with that one binding removed, and the merged compilers
-# (main with the regression, and the branch) check the adapted source. Columns:
+# because main gave `Inputs` fields (`host_paths`, `process_id`) after it, so it
+# checks a copy of the adapted source with the bindings of the fields it does
+# not declare removed, and the merged compilers (main with the regression, and
+# the branch) check the adapted source. Columns:
 # base, a twin of base for the noise, main, branch. Compiler CPU (user + system),
 # five interleaved rounds, plus one work-counter run per compiler. The columns
 # and what each result shows are written in the study record before the run.
 #
-# The adapt step first applies the diff of an earlier run's adaptation, then the
-# compiler's own mechanical fix for each remaining rejection (OP-5, EFF-2, the
-# `held` rename and the missing `Inputs` field), one at a time, with the merged
+# The adapt step first applies the complete adaptation diff of the final-head
+# timing run (which already holds every fix the merged compiler asked for), then
+# the compiler's own mechanical fix for any remaining rejection (OP-5, EFF-2, the
+# `held` rename and the missing `Inputs` fields), one at a time, with the merged
 # compiler.
 name: tmp-firn-baseline
 
@@ -56,8 +58,8 @@ jobs:
             rounds: 5
             main_rounds: 5
             adapt_max: 400
-            adapt_run: '39682072749'
-            adapt_artifact: tmp-halo-check-cost-0
+            adapt_run: '39693987787'
+            adapt_artifact: tmp-halo-check-cost-2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -228,24 +230,35 @@ jobs:
             perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
           done
-      - name: Source without the host_paths binding, and the baseline compiler's check of it
+      - name: Source without the Inputs bindings the baseline lacks, and the baseline compiler's check of it
         if: steps.adapt.outputs.accepted == 'true'
+        env:
+          ARGS: ${{ matrix.args }}
         run: |
           cp -a "$RUNNER_TEMP/halo" "$RUNNER_TEMP/halo0"
           python3 - <<'PY'
-          import os, pathlib
-          src = pathlib.Path(os.environ['RUNNER_TEMP']) / 'halo0'
-          needle = ', host_paths: unused_host_paths'; changed = 0
-          for path in src.rglob('*.wf'):
-              if '.git' in path.relative_to(src).parts: continue
-              text = path.read_text()
-              if needle in text:
-                  path.write_text(text.replace(needle, '')); changed += 1; print('removed the binding in', path.relative_to(src))
-          assert changed == 1, f'expected one file with the binding, found {changed}'
+          import os, pathlib, re, subprocess, sys
+          temp = pathlib.Path(os.environ['RUNNER_TEMP']); src = temp / 'halo0'; out = temp / 'out'
+          base = temp / 'base/compiler/target/gate/whitefootc'; cmd = os.environ['ARGS'].split()
+          site = re.compile(r'rejected: (\S+?):(\d+):\d+: error\[GRAM-10\]: InvalidMatchFields')
+          removed = []
+          for n in range(6):
+              r = subprocess.run([str(base), *cmd], cwd=src, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              if r.returncode == 0: break
+              m = site.search(r.stdout); d = re.search(r'declared_fields: \[(.*?)\]', r.stdout)
+              if not m or not d or n == 5: print(r.stdout); sys.exit('the baseline compiler rejects the source for another reason')
+              declared = set(re.findall(r'\w+', d.group(1)))
+              path = src / m.group(1); lines = path.read_text().split('\n'); i = int(m.group(2)) - 1
+              extra = [x for x in re.findall(r', (\w+): unused_\1(?=[,)])', lines[i]) if x not in declared]
+              if not extra: print(r.stdout); sys.exit('no unused binding of an undeclared field on the reported line')
+              for x in extra: lines[i] = lines[i].replace(f', {x}: unused_{x}', '', 1)
+              path.write_text('\n'.join(lines)); removed += [f'{x} at {m.group(1)}:{m.group(2)}' for x in extra]
+              print('removed', extra, 'at', m.group(1), m.group(2), flush=True)
+          (out / 'baseline-removed.txt').write_text('\n'.join(removed) + '\n')
+          line = f'## Baseline source: removed {len(removed)} unused binding(s): {removed}; the baseline compiler accepts it\n'
+          print(line, flush=True)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(line)
           PY
-          cd "$RUNNER_TEMP/halo0"
-          "$RUNNER_TEMP/base/compiler/target/gate/whitefootc" ${{ matrix.args }}
-          echo "the baseline compiler accepts the source without the binding"
       - name: Interleaved checks and counters
         if: steps.adapt.outputs.accepted == 'true'
         env:
