@@ -1,0 +1,4 @@
+fn process_id_as_u64(inputs: &std::process::Inputs) -> result: u64 reads(inputs.process_id) {
+  doc "PRE-2 fixes process_id as Option<u64>, None on a host that gives the process no identifier; returning it as u64 must fail FN-1 at the return. Before the field was added lookup failed earlier and could not establish the intended type mismatch.";
+  return inputs^.process_id;
+}

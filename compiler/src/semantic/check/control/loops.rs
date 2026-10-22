@@ -452,7 +452,7 @@ impl<'unit> Checker<'_, 'unit> {
             SemanticIssueKind::InvalidReferenceUse {
                 binder: self.types.declarations.declaration_spelling(declaration)?,
                 event: event.phrase(),
-                mechanical_fix: super::super::references::REF2_FORM_AGAIN,
+                mechanical_fix: super::super::references::REF2_FORM_AGAIN.to_owned(),
             },
         )
     }

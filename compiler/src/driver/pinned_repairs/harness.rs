@@ -4,7 +4,7 @@ use super::super::{CompilationFailureKind, CompilerLimits, check, compile, with_
 use crate::SourceInput;
 
 /// Every function a source declares, by the name its `fn` introduces.
-fn declared_functions(source: &[u8]) -> Vec<String> {
+pub(super) fn declared_functions(source: &[u8]) -> Vec<String> {
     let text = std::str::from_utf8(source).expect("a pinned source is UTF-8");
     text.split("fn ")
         .skip(1)
@@ -38,23 +38,29 @@ pub(super) fn run_pairs() {
     for pair in super::REPAIRS
         .iter()
         .chain(super::call_separations::CALL_SEPARATIONS)
+        .chain(super::captured_indices::CAPTURED_INDICES)
         .chain(super::cell_consumption::CELL_CONSUMPTION)
         .chain(super::content_moves::CONTENT_MOVES)
+        .chain(super::derived_measures::DERIVED_MEASURES)
+        .chain(super::effect_row_categories::EFFECT_ROW_CATEGORIES)
         .chain(super::prelude_opaque::PRELUDE_OPAQUE)
         .chain(super::proof_place_spellings::PROOF_PLACE_SPELLINGS)
         .chain(super::qualified_constants::QUALIFIED_CONSTANTS)
         .chain(super::recursive_effects::RECURSIVE_EFFECTS)
+        .chain(super::rewritten_effect_indices::REWRITTEN_EFFECT_INDICES)
         .chain(super::remaining_repairs::REMAINING_REPAIRS)
         .chain(super::storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(super::shared_maps::SHARED_MAPS)
         .chain(super::floats::FLOATS)
         .chain(super::interface_applications::INTERFACE_APPLICATIONS)
+        .chain(super::lost_header_relations::LOST_HEADER_RELATIONS)
         .chain(super::lexical_syntax::LEXICAL_SYNTAX)
         .chain(super::qualified_names::QUALIFIED_NAMES)
         .chain(super::selector_scope::SELECTOR_SCOPE)
         .chain(super::enum_routed_ensures::ENUM_ROUTED_ENSURES)
         .chain(super::entry_formers::ENTRY_FORMERS)
         .chain(super::collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
+        .chain(super::unavailable_summaries::UNAVAILABLE_SUMMARIES)
         .chain(super::redundant_conditions::REDUNDANT_CONDITIONS)
         .chain(super::clause_requirements::CLAUSE_REQUIREMENTS)
         .chain(super::writer_operations::WRITER_OPERATIONS)
@@ -62,6 +68,7 @@ pub(super) fn run_pairs() {
         .chain(super::writer_references::WRITER_REFERENCES)
         .chain(super::postcondition_places::POSTCONDITION_PLACES)
         .chain(super::common_syntax::COMMON_SYNTAX)
+        .chain(super::reserved_names::RESERVED_NAMES)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
@@ -159,7 +166,7 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);
