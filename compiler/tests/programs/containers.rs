@@ -258,13 +258,35 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
         "containers/hash-map-program.wf",
         include_bytes!("../../../tests/programs/containers/hash-map-program.wf"),
     )];
-    // Seventeen map backings, ten payload/query child Boxes, and one fresh
-    // Box returned by the borrowed edit callback and consumed by its caller.
-    // The growth case adds ten backings: a map of eight buckets, its doubled
-    // and its same-capacity rebuild, a map of three buckets and its doubled
-    // rebuild, two maps of sixteen buckets, one doubled and one rebuilt at the
-    // same capacity, and a map at its ceiling that is not rebuilt.
-    execute_container_program("hash-map", &sources, 38, 0, false);
+    // The observer counts every Box allocation, at any capacity (a capacity-0
+    // Box shares the empty header and is counted at its release or first
+    // growth). Each map allocates one backing at creation and one at every
+    // rebuild. Map backings per case: scalars 4 (a map and its reserve and
+    // rehash, a zero-ceiling map), wrapping 3 (rehash, reserve), cycle 2,
+    // edit 1, owned 1 (two buckets already hold its ceiling of two), units 4
+    // (zero buckets, then two, then four, and a rehash), growth 10 (capacity
+    // 6 doubled and rebuilt at the same count, 3 doubled, two of capacity 12,
+    // one doubled and one rebuilt at the same count, and a map at its ceiling
+    // that is not rebuilt), resumable scan 17 (16 -> 512 buckets under 300
+    // insertions and one rehash; an empty map; 16 -> 1024 with insertions
+    // after part of a pass; a colliding map; a wrapping map). With ten
+    // payload/query child Boxes and the Box returned by the borrowed edit
+    // callback: 53.
+    execute_container_program("hash-map", &sources, 53, 0, false);
+}
+
+#[test]
+fn hash_map_scan_reports_every_member_of_a_million_under_churn_and_growth() {
+    // Firn's witness for the resumable scan; the program checks coverage,
+    // completion and mid-pass growth itself and exits nonzero on any miss.
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/hash-map-scan-witness.wf",
+        include_bytes!("../../../tests/programs/containers/hash-map-scan-witness.wf"),
+    )];
+    let output = build_program(&compile_sources(&sources)).run_with_workers(None);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
 }
 
 #[test]

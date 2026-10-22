@@ -423,7 +423,9 @@ install the compiler and run your first program.
 
 You need Rust stable, at least the `rust-version` in
 [compiler/Cargo.toml](compiler/Cargo.toml), and clang: `/usr/bin/clang` on
-Linux and macOS, or `clang` on `PATH` on Windows.
+Linux and macOS, or on Windows the `clang` on `PATH` of an
+[llvm-mingw](https://github.com/mstorsjo/llvm-mingw) release, since the
+compiler targets `x86_64-w64-windows-gnu`.
 
 ```sh
 git clone https://github.com/Ming-Research/Whitefoot.git && cd Whitefoot
