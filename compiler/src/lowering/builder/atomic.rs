@@ -124,6 +124,12 @@ impl IrBuilder<'_> {
             .and_then(|path| self.lock_ledger_sources.get(path))
             .cloned()
             .unwrap_or_else(|| ledger_site.clone());
+        let target_site = |target: &CheckedTarget| {
+            self.target_ledger_sources
+                .get(&target.node_path)
+                .cloned()
+                .unwrap_or_else(|| SourceDescription::literal("<unknown site>"))
+        };
         let mut eager_direct = BTreeMap::new();
         for (group_index, indexes) in grouped.values().enumerate() {
             let source = indexes.iter().find_map(|index| {
@@ -132,18 +138,13 @@ impl IrBuilder<'_> {
                     target.kind,
                     CheckedTargetKind::MapEntry(_) | CheckedTargetKind::MapSet(_)
                 ) {
-                    Some(
-                        self.target_ledger_sources
-                            .get(&target.node_path)
-                            .cloned()
-                            .unwrap_or_else(|| SourceDescription::literal("<unknown site>")),
-                    )
+                    Some(target_site(target))
                 } else if guard_roots.iter().any(|root| root.binding == target.binding) {
                     Some(guard_site.clone())
                 } else if !body_roots.iter().any(|root| root.binding == target.binding) {
                     // Proof-only targets have no executable first use to
                     // trigger a lazy take, but the statement still holds them.
-                    Some(target.ledger_site.clone())
+                    Some(target_site(target))
                 } else {
                     None
                 }

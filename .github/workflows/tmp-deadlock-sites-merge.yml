@@ -1,0 +1,112 @@
+# TEMPORARY quick check for Whitefoot#450 (kit-req-diag-trial1) after merging
+# main, which added a proof-only target branch to the atomic lowering that read
+# the target's former ledger_site field. It runs what the merge touches, as the
+# gate's own commands do:
+#   static       make static (design lint, English text, source sizes, ...)
+#   lint         clippy over every target, warnings denied
+#   unit         every lib test (checker, lowering, driver and wait-site tests)
+#   contexts     the program tests of the context and deadlock programs
+# Removed before the full check; the gate fails while a tmp- workflow exists.
+name: tmp-deadlock-sites-merge
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  quick:
+    name: ${{ matrix.stage }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [static, lint, unit, contexts]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Set the scratch root
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          if git symbolic-ref -q HEAD | grep -qx refs/heads/main; then
+            echo "checkout is on main"
+          else
+            git branch -f main origin/main
+          fi
+          git log --oneline -1 main
+
+      - name: Select the design review base
+        if: matrix.stage == 'static'
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
+          git log --oneline -1 "$design_review_base"
+
+      - name: Install the host toolchain
+        if: matrix.stage != 'static'
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          ld.lld --version
+          /usr/bin/clang --version
+          python3 --version
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        if: matrix.stage != 'static'
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          cat /proc/sys/kernel/core_pattern
+
+      - name: static
+        if: matrix.stage == 'static'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 900
+        run: make static
+
+      - name: lint
+        if: matrix.stage == 'lint'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: make -C compiler lint
+
+      - name: unit
+        if: matrix.stage == 'unit'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: |
+          ulimit -c 0
+          cd compiler
+          perl ../.github/run-check.pl tmp/unit cargo test --profile gate --lib --locked --offline
+
+      - name: contexts
+        if: matrix.stage == 'contexts'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: |
+          ulimit -c 0
+          cd compiler
+          perl ../.github/run-check.pl tmp/contexts cargo test --profile gate --test corpus --locked --offline -- programs::contexts
