@@ -1,0 +1,64 @@
+# The Lean model of the specification and its proofs, `proof/`
+# (design/language/soundness-proof.md). The sentence coverage check fails
+# when a covered rule's text and the model's coverage list disagree, and the
+# build fails when a proof does not check or any declaration of the model
+# depends on an axiom beyond Lean's standard three. A pull request that
+# changes the specification, the model or this workflow runs it on every push,
+# drafts included, so a covered rule cannot change without the model changing
+# in the same work; a push to main with such a change runs it again.
+name: proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - spec/kernel-spec.md
+      - proof/**
+      - .github/workflows/proof.yml
+  pull_request:
+    paths:
+      - spec/kernel-spec.md
+      - proof/**
+      - .github/workflows/proof.yml
+  workflow_dispatch:
+
+concurrency:
+  group: proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    name: Lean model and proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # The pull request's head, the revision a merge would take.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Name the time-budget record
+        run: echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
+
+      # elan installs the release `proof/lean-toolchain` pins.
+      - name: Install the pinned Lean toolchain
+        working-directory: proof
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$RUNNER_TEMP/elan-init.sh"
+          sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/lake" --version
+
+      - name: Sentence coverage
+        working-directory: proof
+        run: perl ../.github/run-check.pl proof-coverage lake exe coverage
+
+      - name: Proofs
+        working-directory: proof
+        run: perl ../.github/run-check.pl proof-build lake build
+
+      # run-check.pl appended every stage over its budget in
+      # .github/time-budgets.txt, or without one, to this record.
+      - name: Hold every stage to its time budget
+        if: always()
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"

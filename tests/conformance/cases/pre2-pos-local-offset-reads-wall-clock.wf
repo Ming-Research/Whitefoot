@@ -1,0 +1,4 @@
+fn offset_at(clock: &std::time::WallClock, at: i64) -> result: Option<i64> reads(clock) {
+  doc "PRE-2: local_offset_seconds reads its wall clock and returns Option<i64>, so a wrapper that declares only a read of the clock and returns the reading unchanged is admitted.";
+  return std::time::local_offset_seconds(clock: clock, at: at);
+}

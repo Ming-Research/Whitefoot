@@ -1,0 +1,10 @@
+fn length_of(values: &Segments<u8>, index: u64) -> result: u64 reads(values) contract {
+  requires index < values^.len;
+} {
+  let n = &values^[index].len;
+  return n^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

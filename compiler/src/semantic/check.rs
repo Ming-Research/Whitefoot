@@ -12,6 +12,7 @@ mod frozen;
 mod generics;
 mod goal_instances;
 mod held;
+mod index_write_repairs;
 mod inventory;
 mod linearity;
 mod lock_ledger_sources;
@@ -28,6 +29,7 @@ pub(in crate::semantic) mod repairs;
 mod requires;
 mod schedule;
 mod spawn;
+mod summary_repairs;
 mod support;
 mod tail_calls;
 mod text_literals;
@@ -584,6 +586,11 @@ struct DeclarationInventory<'unit> {
 /// extend this context directly; checking phases select ordered views of it.
 struct TypeContext<'unit> {
     declarations: &'unit DeclarationInventory<'unit>,
+    /// Exact source text for diagnostic-only captured-value occurrences.
+    source_spellings: HashMap<NodeId, String>,
+    postcondition_clauses:
+        HashMap<(FunctionId, crate::NodePath), super::postcondition::PostconditionClause>,
+    postcondition_sources: HashMap<crate::NodePath, super::postcondition::PostconditionSource>,
     view: InventoryView,
     nominals: Vec<CheckedNominal>,
     /// Counts the changes to `nominals`: an instance appended or completed.
@@ -648,6 +655,8 @@ struct TypeContext<'unit> {
 /// a reference-summary retry; the completed attempt publishes its own facts.
 #[derive(Default)]
 struct BodyChecker {
+    /// Explanation only: an uncovered call write uses a rewritten row index.
+    rewritten_index_repair: Option<String>,
     /// Allocated and populated only by an EFF-2 rejection replay.
     repair_calls: Option<Vec<effect_repairs::EffectCall>>,
     /// [LIV-2] the target places of the `set` commit whose right-hand side is
@@ -849,6 +858,7 @@ fn check_semantics_with(
                     issue.kind,
                     SemanticIssueKind::EffectMismatch {
                         expected_row: None,
+                        mechanical_fix: None,
                         ..
                     }
                 ) =>
@@ -1403,10 +1413,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             true,
             None,
         )?;
-        let mut functions = function_inventory
+        let (mut functions, binding_names): (Vec<_>, Vec<_>) = function_inventory
             .into_iter()
-            .map(|checked| checked.function)
-            .collect::<Vec<_>>();
+            .map(|checked| (checked.function, checked.binding_names))
+            .unzip();
         for function in &mut functions {
             function.body_disposition = function.entailment.body_disposition;
         }
@@ -1439,6 +1449,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         &ranges[index].discharged,
                         &ranges[index].inconclusive,
                     )
+                    .map_err(|stop| {
+                        self.explain_summary_stop(
+                            stop,
+                            function,
+                            &baseline_functions,
+                            &callees,
+                            &binding_names[index],
+                        )
+                    })
                     .map_err(|stop| self.types.attribute_to_request(function.id, stop))
                 {
                     Ok(()) => {}
@@ -2186,14 +2205,18 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 &signature.declared_effects,
                 signature,
             )?;
-            // An acyclic repair keeps origin/main's exact text. Recursive
+            // Rewritten-index repairs keep the declared row. Other recursive
             // rows are withheld until the rejection-only replay validates them.
             // If source graph classification is unavailable, replay is conservative.
             let recursive = self.types.effect_repairs.is_ordinary()
                 && self
                     .requires_recursive_row_repair(signature)
                     .unwrap_or(true);
-            let (expected_row, mechanical_fix) = if recursive {
+            let (expected_row, mechanical_fix) = if let Some(repair) =
+                &self.body.rewritten_index_repair
+            {
+                (None, Some(repair.clone()))
+            } else if recursive {
                 (None, None)
             } else {
                 let expected = self.types.render_effect_row(&suggested, signature)?;
@@ -3561,6 +3584,9 @@ impl<'unit> TypeContext<'unit> {
     fn new(declarations: &'unit DeclarationInventory<'unit>) -> Self {
         Self {
             declarations,
+            source_spellings: HashMap::new(),
+            postcondition_clauses: HashMap::new(),
+            postcondition_sources: HashMap::new(),
             view: InventoryView::default(),
             nominal_templates: Default::default(),
             prelude_nominals: Default::default(),

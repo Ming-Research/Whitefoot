@@ -286,7 +286,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Wait1,
                 node,
                 SemanticIssueKind::WaitingCallOutsideWaitingFunction {
-                    callee: signature.name.clone(),
+                    callee: self.types.render_called_function(signature, node)?,
                     context: "a function that does not wait",
                     mechanical_fix: WAIT1_DECLARE_THE_CALLER_WAITING,
                 },
@@ -336,7 +336,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Gram11,
                 node,
-                Checker::invalid_named_arguments(signature),
+                self.invalid_named_arguments(signature, node)?,
             );
         }
         let mut arguments = Vec::with_capacity(fields.len());
@@ -360,7 +360,7 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Gram11,
                     field,
-                    Checker::invalid_named_arguments(signature),
+                    self.invalid_named_arguments(signature, node)?,
                 );
             }
             let atom = self
@@ -485,7 +485,7 @@ impl<'unit> Checker<'_, 'unit> {
                             }
                             super::super::super::references::ReferenceValidity::Valid => "",
                         },
-                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN,
+                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN.to_owned(),
                     },
                 );
             }
@@ -522,10 +522,14 @@ impl<'unit> Checker<'_, 'unit> {
             argument_atoms.push(atom);
 
             actual_paths.push(paths);
+            if let Ok(spelling) = self.types.declarations.tree.source_spelling(atom) {
+                self.types.source_spellings.insert(atom, spelling);
+            }
             actual_captures.push(
                 self.body.note_capture(
                     self.captured_of(atom, &argument.expression)
-                        .unwrap_or_else(CapturedValue::unknown),
+                        .unwrap_or_else(CapturedValue::unknown)
+                        .with_source(atom),
                     bindings,
                 ),
             );
@@ -549,7 +553,6 @@ impl<'unit> Checker<'_, 'unit> {
         // [STOR-8] a unit carrying the no-heap declaration cannot call an
         // allocating prelude row; [OP-11] refuses a `swap` over a copy place.
         self.types
-            .declarations
             .reject_allocating_call_under_no_heap(node, signature)?;
         self.types
             .reject_swap_over_copy(check_context, node, signature)?;
@@ -747,12 +750,15 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(
+            FunctionContext {
+                check_context,
+                function,
+            },
             node,
-            function,
             &substituted,
             bindings,
             &mut effects,
-            formal.is_none().then_some(signature.parameters.as_slice()),
+            (signature, formal.is_none()),
         )?;
         if formal.is_none() && self.body.repair_calls.is_some() {
             let call = self.effect_repair_call(
@@ -1231,14 +1237,15 @@ impl<'unit> Checker<'_, 'unit> {
     /// atomic statement's binder contributes its path for that statement,
     /// which removes it [SHARE-3].
     fn project_call_effects(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
-        caller: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         effects: &mut EffectSet,
-        retained_reference_parameters: Option<&[ParameterSignature]>,
+        (signature, retain_reference_parameters): (&FunctionSignature, bool),
     ) -> Result<(), CheckStop> {
+        let caller = context.function;
         for entry in entries {
             for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
                 if !caller
@@ -1249,8 +1256,20 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     continue;
                 }
-                if retained_reference_parameters
-                    .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)
+                if entry.write && self.body.rewritten_index_repair.is_none() {
+                    self.body.rewritten_index_repair = self
+                        .rewritten_index_repair(
+                            context,
+                            node,
+                            &entry.place,
+                            bindings,
+                            Some(signature),
+                        )
+                        .ok()
+                        .flatten();
+                }
+                if retain_reference_parameters
+                    && signature.parameters[entry.argument].mode != CheckedMode::Own
                 {
                     if !self.types.effect_repairs.is_capture() {
                         if entry.write {
@@ -2022,6 +2041,9 @@ impl<'unit> DeclarationInventory<'unit> {
         }
         Ok(())
     }
+}
+
+impl<'unit> TypeContext<'unit> {
     /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
     /// call an allocating prelude row.
     ///
@@ -2034,18 +2056,23 @@ impl<'unit> DeclarationInventory<'unit> {
         node: NodeId,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
-        if !self.no_heap || !HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str()) {
+        if !self.declarations.no_heap
+            || !HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str())
+        {
             return Ok(());
         }
-        self.issue_node(
+        self.declarations.issue_node(
             SemanticRule::Stor8,
             node,
             SemanticIssueKind::HeapTypeUnderNoHeap {
-                spelling: signature.name.clone(),
+                spelling: self.render_called_function(signature, node)?,
                 mechanical_fix: super::super::super::types::STOR8_NO_HEAP,
             },
         )
     }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
     /// An indexed actual has an ephemeral image rather than a rereadable
     /// place image. All path steps are in the one suffix list [GRAM-5].
     fn call_goal_place_contains_subscript(&self, place: NodeId) -> Result<bool, CheckStop> {

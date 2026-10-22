@@ -168,11 +168,25 @@ impl Input<'_, '_> {
     /// implication needs only its retained query.
     pub(super) fn available_call_postconditions(
         &self,
+        call: &crate::NodePath,
         function: super::super::super::model::FunctionId,
         formal: Option<&super::super::super::model::CheckedCallContract>,
     ) -> Vec<AvailablePostcondition> {
         let Some(formal) = formal else {
-            return self.available_postconditions(function);
+            let mut available = self.available_postconditions(function);
+            if let Some(restored) = &self.restored_summary
+                && restored.call.node_path == *call
+                && restored.call.callee == function
+            {
+                available.extend(restored.postconditions.iter().map(|(clause, identity)| {
+                    AvailablePostcondition {
+                        relation: clause.relation.clone(),
+                        route: clause.selector.route,
+                        authority: super::super::RelationProvenance::Verified(identity.clone()),
+                    }
+                }));
+            }
+            return available;
         };
         formal
             .postconditions
@@ -2687,6 +2701,7 @@ impl Judging<'_, '_, '_> {
         affine_result: Option<&AffineForm>,
         value_reached: bool,
         forwarded: &[Vec<ResultEvidence>],
+        returned: &[&CheckedExpression],
     ) {
         if self.output.postconditions.is_empty() {
             return;
@@ -2753,7 +2768,10 @@ impl Judging<'_, '_, '_> {
                         )
                     })
                 });
-            let residual = self.reasoning().render_relation(&relation);
+            let residual = self.reasoning().render_relation(
+                &relation,
+                postcondition.relation.operands[0].ty(),
+            );
 
             let entry_images = self.input.postcondition_entry_images[index]
                 .iter()
@@ -2779,15 +2797,38 @@ impl Judging<'_, '_, '_> {
                 &states.affine,
                 unavailable,
             );
+            let lost_header = if complete.disposition == PostconditionDisposition::Unproved
+                && !unavailable
+            {
+                let mut state = states.clone();
+                state.facts = conditional_facts;
+                self.reasoning().explain_lost_header(
+                    &state,
+                    &[ProofGoal::Ordering {
+                        relation: &relation,
+                        affine: affine_target.as_deref(),
+                    }],
+                )
+            } else {
+                None
+            };
+            let clause = if complete.disposition == PostconditionDisposition::Discharged {
+                String::new()
+            } else {
+                self.input
+                    .render_postcondition_clause(postcondition, &selected, returned)
+            };
             self.output.postconditions[index]
                 .exits
                 .push(PostconditionExit {
                     statement: statement.clone(),
                     relation,
                     residual,
+                    clause,
                     entry_images,
                     disposition: complete.disposition,
                     derivation: complete.derivation,
+                    lost_header,
                 });
         }
     }
@@ -3099,7 +3140,10 @@ impl Analyzer<'_, '_> {
         // that names it in `ensures`; the place's one state renders as the
         // place itself, which names that state there.
         let length_text = match (denotation, length) {
-            (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(length),
+            (PlaceDenotation::EntryImage, Some(length)) => self.reasoning().render_term(
+                length,
+                CheckedType::Integer(super::super::super::model::IntegerType::U64),
+            ),
             _ => plain_length.clone(),
         };
         // [MSR-3] the one state of a parameter can differ from what the body
