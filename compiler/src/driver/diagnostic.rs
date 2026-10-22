@@ -803,7 +803,7 @@ variant_names! {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, OperationFamily,
         RangeArithmetic, RangeOrdinaryGoal, RangeOperationIntervals,
-        RangeLoopNesting, PageLengthPostcondition,
+        RangeLoopNesting, RangeCallFootprint, PageLengthPostcondition,
     }
 }
 
