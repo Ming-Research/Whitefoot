@@ -256,7 +256,9 @@ const WAITING_RESULT: &str = "fn wait_for_value(cell: Shared<u64>) -> result: u8
 ";
 
 /// These joins have different source causes: a later statement names the
-/// binding, or an ordinary conditional block ends without naming it.
+/// binding, or an ordinary conditional block ends without naming it. The
+/// condition reads a parameter because [OP-5] refuses a condition the checker
+/// decides.
 #[test]
 fn a_deadlock_report_distinguishes_binding_use_from_ordinary_block_end() {
     let cases = [
@@ -274,13 +276,17 @@ fn a_deadlock_report_distinguishes_binding_use_from_ordinary_block_end() {
         ),
         (
             "deadlock_block_end.wf",
-            "fn main() -> status: std::process::ExitStatus pure waits {
+            "fn run(go: u64) -> status: std::process::ExitStatus pure waits {
   let cell = shared_new::<u64>(value: 0_u64);
-  if 0_u64 == 0_u64 {
+  if go == 0_u64 {
     let handle = shared_share::<u64>(shared: &cell);
     let pending = spawn wait_for_value(cell: move handle);
   }
   return std::process::exit_status(code: 0_u8);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  return run(go: 0_u64);
 }
 ",
             "waits at deadlock_block_end.wf:13:3 to join the context spawned at deadlock_block_end.wf:12:5 (implicit join at the end of this block)",

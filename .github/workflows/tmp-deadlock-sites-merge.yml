@@ -5,7 +5,7 @@
 #   static       make static (design lint, English text, source sizes, ...)
 #   lint         clippy over every target, warnings denied
 #   unit         every lib test (checker, lowering, driver and wait-site tests)
-#   contexts     the program tests of the context and deadlock programs
+#   corpus       every integration test (programs, conformance adapter, docs)
 # Removed before the full check; the gate fails while a tmp- workflow exists.
 name: tmp-deadlock-sites-merge
 
@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stage: [static, lint, unit, contexts]
+        stage: [static, lint, unit, corpus]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,11 +102,11 @@ jobs:
           cd compiler
           perl ../.github/run-check.pl tmp/unit cargo test --profile gate --lib --locked --offline
 
-      - name: contexts
-        if: matrix.stage == 'contexts'
+      - name: corpus
+        if: matrix.stage == 'corpus'
         env:
           WHITEFOOT_CHECK_TIMEOUT: 1500
         run: |
           ulimit -c 0
           cd compiler
-          perl ../.github/run-check.pl tmp/contexts cargo test --profile gate --test corpus --locked --offline -- programs::contexts
+          perl ../.github/run-check.pl tmp/corpus cargo test --profile gate --bins --test '*' --locked --offline
