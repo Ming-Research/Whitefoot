@@ -90,8 +90,8 @@ Whitefoot's extra merge preconditions:
    pull request states what changed and its selection ground, answered
    against the exact revision being merged. The specification's bytes are its
    identity, the released archives are immutable, and git is the history.
-6. When the merge changes `spec/kernel-spec.md` or `proof/`, `proof.yml`
-   passes on the exact revision being merged.
+6. When the merge changes `spec/kernel-spec.md`, `proof/` or the conformance
+   cases, `proof.yml` passes on the exact revision being merged.
 
 **Conformance evidence** is `tests/conformance` case source and manifest
 content, its runner and adapter, gate-integrity tests, and any collection or
