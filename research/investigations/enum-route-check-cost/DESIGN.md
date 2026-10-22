@@ -887,9 +887,90 @@ compiler of the #431 merge commit `af7665be6`, whose first parent is `7d9118eba`
 source as `base`. Then `af7665be6`/`base` is #431's own cost on this source,
 `main`/`af7665be6` is what the 65 merges since add on top of it, and
 `branch`/`main` is this change's effect, so that the 6.7% divides between them.
-It is not run here; whether to run it, and which criterion the Firn row then
-holds (this change's own effect rather than the ratio to a `base` 65 merges
-old), is asked of the architect.
+It is not run in this run; the next section plans it.
+
+### Separating the cost of #431 from the other merges in main, on the head that merges
+
+Written before the measurement. The previous section leaves open whether the
+6.7% by which the Firn branch exceeds `base` (`7d9118eba`) is left by this change
+or added by the 65 merges of main between `base` and the head. The architect
+approved one more measurement on the head that merges, after the fourth merge of
+main brought 85 more commits (the head's merge base with main is `48b94ccfc`),
+with these columns on the same adapted source, in one run, five interleaved
+rounds, compiler user+sys CPU, no check cache, one work-counter run per
+compiler:
+
+- `base`: `7d9118eba`, main just before #431, on the source without the two
+  `Inputs` bindings it lacks (Firn), as before.
+- `twin`: the `base` binary again; its ratio to `base` is this run's noise.
+- `c431`: `af7665be6`, the merge of #431. Its first parent is `7d9118eba`
+  (`git log --first-parent 7d9118eba..af7665be6` lists only that merge), so it is
+  `base` plus #431 and nothing else. On the same source as `base`. Not run for
+  `pkg::test`, whose criterion has a wide margin.
+- `main`: `48b94ccfc`, the merge base of the head with main, with the #431
+  regression and without this change.
+- `branch`: the head that merges (merge base `48b94ccfc`), so that the only
+  difference between `main` and `branch` is this change.
+
+A column "main with #431 reverted" would be more direct than the product below,
+and was tried first: applying the reverse of #431's `compiler/` diff
+(`git diff af7665be6^1 af7665be6 -- compiler`, 20 files) to `48b94ccfc` with
+`git apply -R --3way` conflicts in `semantic/check/ensures.rs`,
+`semantic/range_judgment/walk.rs`, `semantic/range_judgment/walk/calls.rs`,
+`semantic/entailment/flow/walk.rs`, `semantic/entailment/flow/postconditions.rs` and
+`driver/pinned_repairs.rs`, and does not apply to
+`driver/pinned_repairs/enum_routed_ensures.rs`. Merges since #431 changed the
+same code, so there is no clean revert on this main, and a whole-merge revert
+conflicts in the same hunks; the `c431` column is used instead.
+
+Per round the run records `a` = `c431`/`base` (the cost of #431 itself on this
+source), `b` = `main`/`c431` (what the merges since #431 add), `c` =
+`branch`/`main` (this change's effect), `D` = `branch`/`base` (the acceptance row's
+ratio), and `N` = `c` × `a` (the branch against the main that has #431's cost
+removed, if that cost is the same on the later main). Medians over the rounds,
+with min–max.
+
+Decision rules, fixed now, for the Firn row (`pkg::vm` and `pkg::test` keep their
+rows, `D` at most 1.03 and at most 1.5):
+
+1. `D` ≤ 1.03: the row's own criterion is met; nothing else is needed.
+2. `D` > 1.03 and `N` ≤ 1.03: this change removes at least what #431 added, and
+   the rest of the excess comes from the merges since. The criterion of the row
+   is the owner's; a card goes to the owner with the segment figures, and the
+   row stays open until it is ruled.
+3. `D` > 1.03 and `N` > 1.03: this change still leaves cost on Firn. The work
+   counters are then profiled for the residual (closure count +13.9% and
+   closure rows +7.0% over `base` in the previous run are the first suspects)
+   before anything else.
+
+A larger median than 1.03 rejects, as in the earlier rows; the run is repeated
+only if a twin median lies outside its own min–max range or an exit code is not
+0. `N` carries the noise of two ratios, about twice the twin's range, and is
+read by its median.
+
+`N` assumes that #431's relative cost on the later main equals its cost at
+`c431`. Two checks on the work counters, which are deterministic, can refute it;
+they are evaluated on Firn and on `pkg::vm`:
+
+- **P1.** `function:affine_interval_warm_probes` and
+  `function:affine_interval_construction_probes` are 0 in `base` and in `c431` and
+  positive in `main` and `branch`. A positive value in `c431` means #431
+  contains affine work, and the affine counters do not separate the two segments.
+- **P2.** The counters #431 raised (`join:join`, `snapshot:rows_sum`,
+  `closure:count`) move between `c431` and `main` by at most a tenth of the
+  amount #431 added (`c431` minus `base`). A larger movement means merges since
+  #431 changed the work #431 caused, and `a` does not carry over to `main`. The
+  tenth is picked; the values are reported whatever they are.
+
+If P1 or P2 is refuted, `N` is not used, the segment figures are reported
+as they are, and the architect is asked again.
+
+The run reuses the adapted sources of the earlier runs where they apply, and
+additionally saves the adaptation of the Halo library checked out inside Firn
+(`deps/halo-wf`, a submodule that the outer diff does not contain), which the
+earlier runs redid every time.
+
+### Reviews
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
 uncommitted change against the initial fix checkout, the new workflow and this

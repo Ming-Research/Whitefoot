@@ -1,19 +1,24 @@
 # Temporary (board item enum-route-check-cost); remove before the branch is ready.
-# Re-times, on the compiler tree of the pull request head (after the last two
-# merges of origin/main), the three workloads of the acceptance rows in one run:
-# Halo's pkg::vm and pkg::test checks and Firn's whole-program check. Compiler
-# CPU (user + system), interleaved rounds, plus one work-counter run per
-# compiler. Compilers: the pre-regression compiler of the acceptance row (base)
-# and a twin of it for the noise, main at the merge base without the fix (main),
-# and this branch (branch). The pre-regression compiler cannot check Firn's
-# adapted source, because main gave `Inputs` fields (`host_paths`, `process_id`)
-# after it, so for Firn base and twin check a copy of the adapted source with
-# the bindings of the fields they do not declare removed.
+# Times, on the compiler tree of the head that merges (after the fourth merge of
+# origin/main), the three workloads of the acceptance rows in one run: Halo's
+# pkg::vm and pkg::test checks and Firn's whole-program check. Compiler CPU
+# (user + system), interleaved rounds, plus one work-counter run per compiler.
+# Compilers: the pre-regression compiler of the acceptance row (base) and a twin
+# of it for the noise; the merge of #431 (c431, whose first parent is base, so
+# base plus #431 only; not for pkg::test); main at the merge base without the
+# fix (main); and this branch (branch). The columns, the per-round segment
+# ratios (a = c431/base, b = main/c431, c = branch/main, N = c * a) and the
+# decision rules are written in the study record before the run. The
+# pre-regression compiler cannot check Firn's adapted source, because main gave
+# `Inputs` fields (`host_paths`, `process_id`) after it, so for Firn base, twin
+# and c431 check a copy of the adapted source with the bindings of the fields
+# they do not declare removed.
 #
 # The adapt step first applies the complete adaptation diff of the earlier
-# final-head timing run, then the compiler's own mechanical fix for any remaining
+# timing run, then the compiler's own mechanical fix for any remaining
 # rejection, one at a time, with the merged compiler, so every compiler times the
-# same accepted source.
+# same accepted source. The adaptation of the library checked out inside Firn
+# (a submodule the outer diff does not contain) is saved as well.
 name: tmp-final-timing
 
 on:
@@ -37,7 +42,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
-  MAIN_REVISION: 1fbd6623d3f00d4883bf2e309d2db448082b0a57
+  MAIN_REVISION: 48b94ccfc3c32642b81e573a72ef1fb619884952
+  C431_REVISION: af7665be6
   WHITEFOOT_CHECK_TIMEOUT: 1800
 
 jobs:
@@ -56,11 +62,12 @@ jobs:
             rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
             args: --graph lib/halo/modules.wfg --check-module pkg::vm
             base: 7d9118eba
+            c431: 'true'
             rounds: 5
             main_rounds: 5
             adapt_max: 300
-            adapt_run: '39693987787'
-            adapt_artifact: tmp-halo-check-cost-0
+            adapt_run: '39725157249'
+            adapt_artifact: tmp-final-timing-0
             strip: 'false'
           # pkg::test: the baseline is the compiler of the earlier run; main
           # takes about ten minutes a check, so it runs once.
@@ -69,11 +76,12 @@ jobs:
             rev: 9de699da3261322eaa750c21f31ae290ef5e93cf
             args: --graph tests/halo-vm/modules.wfg --check-module pkg::test
             base: d837678c6905
+            c431: 'false'
             rounds: 3
             main_rounds: 1
             adapt_max: 100
-            adapt_run: '39693987787'
-            adapt_artifact: tmp-halo-check-cost-1
+            adapt_run: '39725157249'
+            adapt_artifact: tmp-final-timing-1
             strip: 'false'
           # Firn whole program, at the revision the 10-13 measurement used.
           - label: firn
@@ -81,11 +89,12 @@ jobs:
             rev: b83b67fa0d7b463dbafe5429b013efc04e39076a
             args: --graph firn/modules.wfg --entry firn --check
             base: 7d9118eba
+            c431: 'true'
             rounds: 5
             main_rounds: 5
             adapt_max: 400
-            adapt_run: '39693987787'
-            adapt_artifact: tmp-halo-check-cost-2
+            adapt_run: '39725157249'
+            adapt_artifact: tmp-final-timing-2
             strip: 'true'
     steps:
       - uses: actions/checkout@v4
@@ -96,11 +105,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/out"
           rustup default stable
           if [ -n "${{ matrix.base }}" ]; then git worktree add --detach "$RUNNER_TEMP/base" "${{ matrix.base }}"; fi
+          if [ "${{ matrix.c431 }}" = true ]; then git worktree add --detach "$RUNNER_TEMP/c431" "$C431_REVISION"; fi
           git worktree add --detach "$RUNNER_TEMP/main" "$MAIN_REVISION"
           git clone --quiet "https://github.com/Ming-Research/${{ matrix.repo }}.git" "$RUNNER_TEMP/halo"
           git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "${{ matrix.rev }}"
           git -C "$RUNNER_TEMP/halo" submodule update --init --quiet
-          { printf 'base=%s\nmain=%s\nbranch=%s\nsource=%s\n' "$([ -d "$RUNNER_TEMP/base" ] && git -C "$RUNNER_TEMP/base" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
+          { printf 'base=%s\nc431=%s\nmain=%s\nbranch=%s\nsource=%s\n' "$([ -d "$RUNNER_TEMP/base" ] && git -C "$RUNNER_TEMP/base" rev-parse HEAD)" "$([ -d "$RUNNER_TEMP/c431" ] && git -C "$RUNNER_TEMP/c431" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
       - name: Build the merged compiler
         run: |
           perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
@@ -114,6 +124,9 @@ jobs:
           dir=$(mktemp -d "$RUNNER_TEMP/earlier.XXXXXX")
           if gh run download "$ADAPT_RUN" --repo "$GITHUB_REPOSITORY" -n "$ADAPT_ARTIFACT" -D "$dir"; then
             git -C "$RUNNER_TEMP/halo" apply --exclude='deps/*' --whitespace=nowarn "$dir/adapt.diff" && echo "applied the earlier diff" || echo "the earlier diff did not apply; adapting from the original source"
+            if [ -f "$dir/deps-adapt.diff" ] && [ -d "$RUNNER_TEMP/halo/deps/halo-wf" ]; then
+              git -C "$RUNNER_TEMP/halo/deps/halo-wf" apply --whitespace=nowarn "$dir/deps-adapt.diff" && echo "applied the earlier library diff" || echo "the earlier library diff did not apply"
+            fi
           else
             echo "no earlier artifact; adapting from the original source"
           fi
@@ -249,10 +262,17 @@ jobs:
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(line)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f: f.write('accepted=' + ('true' if end == 'accepted' else 'false') + '\n')
           PY
+      - name: Save the library adaptation
+        if: steps.adapt.outputs.accepted == 'true'
+        run: |
+          if [ -d "$RUNNER_TEMP/halo/deps/halo-wf" ]; then
+            git -C "$RUNNER_TEMP/halo/deps/halo-wf" diff > "$RUNNER_TEMP/out/deps-adapt.diff"
+            wc -l "$RUNNER_TEMP/out/deps-adapt.diff"
+          fi
       - name: Build the other compilers
         if: steps.adapt.outputs.accepted == 'true'
         run: |
-          for tree in "$RUNNER_TEMP/main" "$RUNNER_TEMP/base"; do
+          for tree in "$RUNNER_TEMP/main" "$RUNNER_TEMP/base" "$RUNNER_TEMP/c431"; do
             [ -d "$tree" ] || continue
             perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
@@ -303,6 +323,7 @@ jobs:
           bins = {}
           if has_base: bins['base'] = temp / 'base/compiler/target/gate/whitefootc'
           bins['twin'] = temp / (ref + '/compiler/target/gate/whitefootc')
+          if (temp / 'c431').is_dir(): bins['c431'] = temp / 'c431/compiler/target/gate/whitefootc'
           bins['main'] = temp / 'main/compiler/target/gate/whitefootc'
           bins['branch'] = ws / 'compiler/target/gate/whitefootc'
           cmd = os.environ['ARGS'].split()
@@ -312,7 +333,7 @@ jobs:
               timing = out / (tag + '-' + label + '.time'); e = dict(env)
               if counters: e['WHITEFOOT_CHECK_WORK'] = str(out / (tag + '-' + which + '-work.tsv'))
               r = subprocess.run(['perl', str(ws / '.github/run-check.pl'), 'thc-' + label, '/usr/bin/time', '-q', '-f', '%e\t%U\t%S', '-o', str(timing), str(bins[which]), *cmd],
-                                 cwd=temp / ('halo0' if which in ('base', 'twin') and (temp / 'halo0').is_dir() else 'halo'), env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                                 cwd=temp / ('halo0' if which in ('base', 'twin', 'c431') and (temp / 'halo0').is_dir() else 'halo'), env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
               (out / (tag + '-' + label + '.log')).write_text(r.stdout)
               wall, user, sys_ = map(float, timing.read_text().split()[-3:])
               return r.returncode, user + sys_
@@ -341,10 +362,25 @@ jobs:
                       for row in csv.reader(f, delimiter='\t'):
                           if len(row) == 7 and row[6].isdigit(): t[row[3] + ':' + row[5]] += int(row[6])
               totals[w] = t
-          fixed = ['join:join', 'join:pairs_evaluated', 'closure:cells_sum']
+          fixed = ['join:join', 'join:pairs_evaluated', 'closure:cells_sum', 'snapshot:rows_sum', 'closure:count',
+                   'function:affine_interval_warm_probes', 'function:affine_interval_construction_probes']
           keys = fixed + [k for k in sorted(set().union(*totals.values()), key=lambda k: -max(t[k] for t in totals.values())) if k not in fixed][:20]
           ws_ = list(totals)
           lines += ['', '| Counter | ' + ' | '.join(ws_) + ' |', '|---|' + '---:|' * len(ws_)] + [f"| {k} | " + ' | '.join(str(totals[w][k]) for w in ws_) + ' |' for k in keys]
+          if 'c431' in bins:
+              def seg(top, bottom):
+                  r = [p[top] / p[bottom] for p in paired.values() if top in p and bottom in p]
+                  return r
+              def cell(r): return f"{statistics.median(r):.3f} ({min(r):.3f}-{max(r):.3f}) {' '.join(f'{x:.3f}' for x in r)}"
+              rounds_all = [p for p in paired.values() if all(w in p for w in ('base', 'c431', 'main', 'branch'))]
+              a_ = [p['c431'] / p['base'] for p in rounds_all]; b_ = [p['main'] / p['c431'] for p in rounds_all]
+              c_ = [p['branch'] / p['main'] for p in rounds_all]; d_ = [p['branch'] / p['base'] for p in rounds_all]
+              n_ = [x * y for x, y in zip(c_, a_)]
+              lines += ['', f'Segments over {len(rounds_all)} rounds (median, min-max, per-round values in round order):', '',
+                        '| Ratio | what it is | median (min-max) per round |', '|---|---|---|',
+                        f"| a = c431/base | #431 itself | {cell(a_)} |", f"| b = main/c431 | merges since #431 | {cell(b_)} |",
+                        f"| c = branch/main | this change | {cell(c_)} |", f"| D = branch/base | the acceptance row's ratio | {cell(d_)} |",
+                        f"| N = c*a | branch against main without #431's cost | {cell(n_)} |"]
           summary = '\n'.join(lines) + '\n'; print(summary)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(summary)
           PY
