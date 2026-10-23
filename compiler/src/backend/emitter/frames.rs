@@ -81,7 +81,7 @@ pub(super) fn frame_runtime_declarations() -> Module {
         ("wf__context_pass", "i32", &["ptr"]),
         ("wf__context_prepare", "ptr", &["i64"]),
         ("wf__context_launch", "void", &["ptr", "ptr", "ptr"]),
-        ("wf__context_join_wait", "i32", &["ptr", "ptr"]),
+        ("wf__context_join_wait", "i32", &["ptr", "ptr", "ptr"]),
         ("wf__context_root_begin", "void", &[]),
         ("wf__context_root_run", "void", &["ptr"]),
     ];
@@ -445,11 +445,12 @@ impl FunctionEmitter<'_, '_> {
         group: &str,
     ) -> Result<(), BackendFailure> {
         let prefix = labels("join", result);
+        let site = self.wait_site_operand(result);
         self.names(&["wf__context_join_wait", "llvm.coro.save"]);
         writeln!(
             self.output,
             "  %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
-             %{prefix}.parked = call i32 @wf__context_join_wait(ptr {}, ptr {HANDLE})\n  \
+             %{prefix}.parked = call i32 @wf__context_join_wait(ptr {}, ptr {HANDLE}, ptr {site})\n  \
              %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
              {prefix}.suspend:",
