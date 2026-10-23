@@ -1683,8 +1683,9 @@ struct wf_driver {
     wf_context *run_head;
     wf_context *run_tail;
     _Atomic unsigned run_count;
-    /* Set while this driver is parked with nothing to run, and when a driver
-     * that made work ready woke it to look for some. */
+    /* Set while this driver is parked or polling with nothing to run, until
+     * wf_run_take hands it work, and when a driver that made work ready woke
+     * it to look for some. */
     _Atomic unsigned idle;
     _Atomic unsigned searcher;
     wf_context *parked;
