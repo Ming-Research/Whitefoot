@@ -158,23 +158,26 @@ impl BranchWeights {
             // must not reverse Result's failure classification.
             return mixed_weights(&unlikely, STRUCTURAL_LIKELY_WEIGHT);
         }
+        // S3 only predicts inside an actually split dispatch loop, where
+        // continuing the loop without a call is the handler's fast path. A
+        // call-free return is no such evidence: an early return on a degenerate
+        // input is as often the rare side of the branch as the common one.
+        let header = header?;
         if !calls || targets.len() != 2 || targets[0].block() == targets[1].block() {
             return None;
         }
         let regions: Vec<_> = targets
             .iter()
-            .map(|target| self.reachable(target.block().index(), header))
+            .map(|target| self.reachable(target.block().index(), Some(header)))
             .collect();
         // LLVM retains ordinary loops. Only the selected dispatch header
         // disappears; inner loops still suppress this call prediction.
         if regions.iter().any(|region| region[block.index()]) {
             return None;
         }
-        let mut endpoints = self.returns.clone();
-        if let Some(header) = header {
-            endpoints[header] = true;
-        }
-        let call_free = self.all_paths(&endpoints, header, true);
+        let mut continues = vec![false; self.successors.len()];
+        continues[header] = true;
+        let call_free = self.all_paths(&continues, Some(header), true);
         let contains_call: Vec<_> = regions
             .iter()
             .map(|region| {
@@ -184,10 +187,11 @@ impl BranchWeights {
                     .any(|(member, call)| *member && *call)
             })
             .collect();
-        // An entirely call-free path to return/header witnesses that a call
-        // on the other side cannot post-dominate this branch. Requiring all
-        // paths on the opposite side to be call-free also rejects shared
-        // calls and ties, without an all-pairs post-dominance matrix.
+        // Every path of the opposite side reaching the header without a call
+        // witnesses that a call on this side cannot post-dominate the branch.
+        // Requiring all paths on the opposite side to be call-free also
+        // rejects shared calls and ties, without an all-pairs post-dominance
+        // matrix.
         let cold = [
             contains_call[0] && call_free[targets[1].block().index()],
             contains_call[1] && call_free[targets[0].block().index()],

@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 Unlikely-edge branch weights are placement hints chosen by three general rules
+
+Nodes: compiler/branch-weights
+
+Summary: The compiler supplies LLVM unlikely-edge weights as code-placement hints, separate from correctness facts, by three general rules: failure arms and all-Err paths, paths in a split dispatch loop that return without reaching its header, and, only inside a split dispatch loop, a call-containing side against a side that reaches the restored header without a call. Weights are 1:2000, structural predictions take precedence, and calls are estimated after inlining with a provisional sixteen-instruction proxy. The Halo call-path probe attributed the hot arms' entry spills to placement under unknown frequency. The call-side rule first also counted a call-free return as evidence; the ordinary HashMap's removal then lost the inlining of its lookup and ran 2.6% to 3.4% slower, so the rule now takes only a loop continuation. preserve_most entries, callee-level cold, default profile-guided builds, a source frequency hint and the call-free-return evidence were rejected.
+
 ## 2026-10-23 Cooperative switches account invocations per executor and unwind for pending host work
 
 Nodes: compiler/waiting-contexts, compiler/waiting-contexts/suspension-accounting
@@ -402,14 +408,6 @@ Nodes: language/checks-and-proofs, language/checks-and-proofs/automatic-facts, l
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the specification revision (v0.143 to v0.144) and design-tree change of Whitefoot#431 at commit 400ddd437?" (translated), after choosing option A the same day on the direction card "should routed postconditions extend to any variant of a program-declared enum, beyond Ok and Some?" (translated).
 
 Summary: Written routes were restricted to Result's Ok and Option's Some. They now bind one declared data-supplying field of any variant of any own enum result, because Halo's array-slot and node-slot indices need bounds against different tables and type-invariant routes already carry per-field conditional relations; multi-field clauses are rejected until a program needs a cross-field relation. The checker's conditional fact states, the automatic-facts transport and the range-fact routing are restated per variant field, the rejected implicit success route for an arbitrary enum is restated as having no distinguished success variant, and a propagated error exit owes exactly the written Err range clauses.
-
-## 2026-10-13 Unlikely-edge branch weights are placement hints chosen by three general rules
-
-Nodes: compiler/branch-weights
-
-Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve this design node; after the perf stat result is in and written into the research record, mark ready and merge through the queue; if perf stat contradicts the instruction-reduction ground, raise a new card under the node's reopening conditions" (translated), on the card "approve the design-tree decisions Whitefoot#420 adds for the compiler marking rarely taken branch directions with weights (head commit 138f3b475)?" (translated), whose background listed both decisions and the four rejected alternatives.
-
-Summary: The compiler supplies LLVM unlikely-edge weights as code-placement hints, separate from correctness facts, by three general rules: failure arms and all-Err paths, paths in a split dispatch loop that return without reaching its header, and a call-containing side against a call-free continuation when the call is not unavoidable. Weights are 1:2000, structural predictions take precedence, and calls are estimated after inlining with a provisional sixteen-instruction proxy. The Halo call-path probe attributed the hot arms' entry spills to placement under unknown frequency; fib fell from 841.5 to 752.0 executed instructions per Lua call while 14900K wall time stayed within noise. preserve_most entries, callee-level cold, default profile-guided builds and a source frequency hint were rejected.
 
 ## 2026-10-13 A call inside its own call-graph component receives every callee postcondition as an induction hypothesis
 
