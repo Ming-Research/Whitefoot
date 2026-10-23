@@ -433,9 +433,9 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame);
 void wf__shared_unlock(void *object, uint32_t write);
 void wf__shared_unlock_unwritten(void *object, uint32_t write);
 int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test);
-/* The acquire of a statement that already holds a keyed table's entries,
- * which keeps its driver and never suspends: it returns once the running
- * context holds the object. */
+/* The acquire of a statement that already holds an earlier unit of its
+ * state, a map's entry or a map whole, which keeps its driver and never
+ * suspends: it returns once the running context holds the object. */
 void wf__shared_take(void *object, uint32_t write);
 /* The moments the shared-object runtime's test observes, which it defines
  * this function to see (shared_object_test.c): an unlock hands a parked
@@ -449,14 +449,14 @@ void wf__shared_seen(unsigned moment);
  * over the runtime's concurrent map.  A table value is one pointer, and a
  * key set a `wf_key_set` (concurrent_map.h): its count of keys, then its
  * memory, 16 bytes aligned to 8.  An atomic statement reserves in its frame
- * a `wf_table_entry` for a table it names one key of, and a hold for one it
- * names several keys of, or takes whole; each stays in the frame from its
- * take to its release, so one statement may hold entries of several
- * bindings and several tables at once.  A key, or a key set, a hold is
- * given stays as it is until the hold is taken. */
+ * a `wf_table_entry` for a map of its state it locks by one entry, and a
+ * hold for one it holds whole; each stays in the frame from its take to its
+ * release, so one statement may hold several maps of its state at once.  A
+ * key, or a key set, a hold is given stays as it is until the hold is
+ * taken. */
 #define WF_TABLE_ENTRY_SIZE 40u
 #define WF_TABLE_ENTRY_ALIGN 8u
-#define WF_TABLE_HOLD_SIZE 304u
+#define WF_TABLE_HOLD_SIZE 288u
 #define WF_TABLE_HOLD_ALIGN 8u
 struct wf_key_set;
 struct wf_table_entry;
@@ -538,19 +538,6 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * waits out every statement holding its entries and keeps new ones out
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */
-void wf__atomic_group_take(void *record, uint64_t count);
-/* The same take for a statement's first group, which holds nothing yet: it
- * acquires the group's first object as `wf__shared_acquire` does, answering
- * nonzero, with nothing held, when the frame must suspend and call again,
- * and zero once it holds every target. */
-int wf__atomic_group_acquire(void *record, uint64_t count, void *frame);
-/* Each group has one entry layout; object-only groups consume no metadata.
- * A record's target is its object, its table hold or null, and a 32-bit
- * flag saying whether the statement may write that ordinary object; the
- * release gives up an object no target may write as
- * `wf__shared_unlock_unwritten` does. */
-void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
-                              uint32_t tag_width, uint64_t none_tag);
 void wf__table_hold_read(void *hold);
 void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write);
 void wf__table_held_entries(void *table, const struct wf_key_set *set, uint64_t *entries, void *read_record);

@@ -1719,8 +1719,6 @@ void wf_cmap_hold_begin(wf_cmap_holding *hold, wf_cmap *map) {
     hold->wants = 0;
     hold->whole = 0;
     hold->held = 0;
-    hold->primary = NULL;
-    hold->first = 0;
     hold->read = 0;
 }
 

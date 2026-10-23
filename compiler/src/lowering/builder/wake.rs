@@ -1,14 +1,14 @@
-//! [SHARE-3] The wake test a guard's watch registers for one object target
-//! (compiler/waiting-contexts/state-locks): a condition over that object's
-//! state which the guard implies, so a write that leaves it false cannot
-//! have made the guard true and need not wake the watch.
+//! [SHARE-3] The wake test a guard's watch registers on its object's own
+//! lock (compiler/waiting-contexts/state-locks): a condition over that
+//! object's state which the guard implies, so a write that leaves it false
+//! cannot have made the guard true and need not wake the watch.
 //!
 //! The derivation splits the guard over `and`, `or` and `not`, pushing each
 //! `not` down to the comparisons, and keeps a comparison of a scalar field of
 //! the object (an integer, a `Bool` or a tag-only enum, reached through
 //! fields alone) against a constant, a local the registration captures, or
-//! another such field of the same object. Every other part, including a
-//! comparison over another target, becomes `true`, which only weakens the
+//! another such field of the same object. Every other part, a map's entry or
+//! a cancellation flag included, becomes `true`, which only weakens the
 //! test. A guard reads no state it may change and a local stays as it was
 //! while the frame is parked, so a test false on the state a write leaves
 //! implies the guard false there.
@@ -212,7 +212,6 @@ impl IrBuilder<'_> {
         &self,
         expression: &'guard CheckedExpression,
         binding: BindingId,
-        targets: &[BindingId],
     ) -> Result<Side<'guard>, LoweringFailure> {
         let Ok(ty) = lower_type(self.erasure, expression.ty()) else {
             return Ok(Side::Other);
@@ -232,7 +231,7 @@ impl IrBuilder<'_> {
                 binding: local,
                 consume_root: false,
                 ..
-            } if !targets.contains(local) => self.captured_scalar(*local, ty)?,
+            } if *local != binding => self.captured_scalar(*local, ty)?,
             _ => false,
         };
         Ok(if captured {
@@ -250,15 +249,14 @@ impl IrBuilder<'_> {
         right: &'guard CheckedExpression,
         positive: bool,
         binding: BindingId,
-        targets: &[BindingId],
     ) -> Result<Condition<'guard>, LoweringFailure> {
         let compared = if positive {
             compared
         } else {
             negated(compared)
         };
-        let left = self.wake_side(left, binding, targets)?;
-        let right = self.wake_side(right, binding, targets)?;
+        let left = self.wake_side(left, binding)?;
+        let right = self.wake_side(right, binding)?;
         Ok(match (left, right) {
             (Side::Field(field, ty), Side::Value(value, operand)) if ty == operand => {
                 Condition::Atom(Atom {
@@ -292,7 +290,6 @@ impl IrBuilder<'_> {
         guard: &'guard CheckedExpression,
         positive: bool,
         binding: BindingId,
-        targets: &[BindingId],
     ) -> Result<Condition<'guard>, LoweringFailure> {
         match guard {
             CheckedExpression::BooleanOperation {
@@ -300,7 +297,7 @@ impl IrBuilder<'_> {
                 arguments,
                 ..
             } => match arguments.as_slice() {
-                [inner] => self.wake_condition(inner, !positive, binding, targets),
+                [inner] => self.wake_condition(inner, !positive, binding),
                 _ => Ok(Condition::True),
             },
             CheckedExpression::BooleanOperation {
@@ -311,7 +308,7 @@ impl IrBuilder<'_> {
             } => {
                 let parts = arguments
                     .iter()
-                    .map(|argument| self.wake_condition(argument, positive, binding, targets))
+                    .map(|argument| self.wake_condition(argument, positive, binding))
                     .collect::<Result<Vec<_>, _>>()?;
                 let conjunction = matches!(operation, CheckedBooleanOperation::And) == positive;
                 Ok(if conjunction {
@@ -326,7 +323,7 @@ impl IrBuilder<'_> {
                 ..
             } => match (comparison(*operation), arguments.as_slice()) {
                 (Some(compared), [left, right]) => {
-                    self.wake_comparison(compared, left, right, positive, binding, targets)
+                    self.wake_comparison(compared, left, right, positive, binding)
                 }
                 _ => Ok(Condition::True),
             },
@@ -339,11 +336,11 @@ impl IrBuilder<'_> {
                     } else {
                         IrWakeComparison::NotEqual
                     };
-                    self.wake_comparison(compared, left, right, positive, binding, targets)
+                    self.wake_comparison(compared, left, right, positive, binding)
                 }
                 _ => Ok(Condition::True),
             },
-            _ => Ok(match self.wake_side(guard, binding, targets)? {
+            _ => Ok(match self.wake_side(guard, binding)? {
                 Side::Field(field, IrType::Bool) => Condition::Atom(Atom {
                     field,
                     comparison: if positive {
@@ -358,17 +355,16 @@ impl IrBuilder<'_> {
         }
     }
 
-    /// The wake test of `guard` for the object target `binding`, whose state
-    /// is at `state`, among the statement's `targets`; `None` when the guard
-    /// implies no condition the runtime can check on that state.
+    /// The wake test of `guard` for the object's own lock of the statement
+    /// whose binding is `binding` and whose state is at `state`; `None` when
+    /// the guard implies no condition the runtime can check on that state.
     pub(super) fn wake_test(
         &mut self,
         guard: &CheckedExpression,
         binding: BindingId,
         state: IrValueId,
-        targets: &[BindingId],
     ) -> Result<Option<IrWakeTest>, LoweringFailure> {
-        let condition = self.wake_condition(guard, true, binding, targets)?;
+        let condition = self.wake_condition(guard, true, binding)?;
         let condition = weakened(simplified(condition), ATOMS);
         if matches!(condition, Condition::True) {
             return Ok(None);

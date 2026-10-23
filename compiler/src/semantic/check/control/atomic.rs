@@ -371,7 +371,8 @@ impl Checker<'_, '_> {
         Ok(binding)
     }
     /// Source mentions survive proof erasure and inactive generic range clauses.
-    /// Only the guard and block count; the target declarations and places do not.
+    /// Only the guard and block count; the binding's declaration and the handle
+    /// place do not.
     fn atomic_part_mentions(&self, node: NodeId) -> Result<HashSet<DeclarationId>, CheckStop> {
         let declarations = &self.types.declarations;
         let parts = declarations

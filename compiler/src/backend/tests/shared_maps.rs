@@ -87,7 +87,7 @@ fn lock_ledger_lines(module: &str) -> Vec<&str> {
 /// The ledger line of the unit of the state's own part, `m^`.
 fn object_lock_line(source: &str, timing: &str, first_use: &str) -> String {
     format!(
-        "LOCK lock_run  {}  targets(m^): Ledger  {timing}; first use {}",
+        "LOCK lock_run  {}  unit(m^): Ledger  {timing}; first use {}",
         lock_ledger_position(source, "atomic m"),
         lock_ledger_position(source, first_use),
     )
@@ -189,7 +189,7 @@ fn lock_ledger_names_the_map_unit_that_takes_an_earlier_object_unit() {
     let mut uses = [conditional, entry.clone()];
     uses.sort();
     let expected = format!(
-        "LOCK lock_run  {}  targets(m^): Ledger  on every path; first use {}; taken with targets(m^.1) at {entry}",
+        "LOCK lock_run  {}  unit(m^): Ledger  on every path; first use {}; taken with unit(m^.1) at {entry}",
         lock_ledger_position(&source, "atomic m"),
         uses.join(" | "),
     );
@@ -253,7 +253,7 @@ fn lock_ledger_reports_a_metadata_read_in_both_branches_on_every_path() {
     assert_eq!(lines.len(), 2, "one line per lock unit: {lines:?}");
     let object = lines
         .iter()
-        .find(|line| line.contains("targets(m^): Ledger"))
+        .find(|line| line.contains("unit(m^): Ledger"))
         .expect("the state's own unit is reported");
     assert!(object.contains("  on every path; first use "), "{object}");
     assert!(
@@ -276,18 +276,18 @@ fn lock_ledger_names_an_entry_lock_and_a_whole_map_lock() {
         let module = compile(source.as_bytes());
         lock_ledger_lines(&module)
             .into_iter()
-            .find(|line| line.contains("targets(m^.0): "))
+            .find(|line| line.contains("unit(m^.0): "))
             .map(str::to_owned)
             .expect("the map unit is reported")
     };
     let entry = map_line("");
     assert!(
-        entry.contains("targets(m^.0): map entry  on every path; first use "),
+        entry.contains("unit(m^.0): map entry  on every path; first use "),
         "{entry}"
     );
     let whole = map_line("    set m^.meta.count = map_count::<u8>(map: &m^.table);");
     assert!(
-        whole.contains("targets(m^.0): whole map  on every path; first use "),
+        whole.contains("unit(m^.0): whole map  on every path; first use "),
         "{whole}"
     );
 }
@@ -310,7 +310,7 @@ fn lock_ledger_takes_the_whole_map_for_two_keys() {
     );
     let module = compile(source.as_bytes());
     let expected = format!(
-        "LOCK lock_run  {}  targets(m^.0): whole map  on every path; first use {}",
+        "LOCK lock_run  {}  unit(m^.0): whole map  on every path; first use {}",
         lock_ledger_position(&source, "atomic m"),
         lock_ledger_position(&source, "set m^.table[other]"),
     );
@@ -331,7 +331,7 @@ fn lock_ledger_takes_the_whole_map_for_a_key_the_block_rebinds() {
     );
     let module = compile(source.as_bytes());
     let expected = format!(
-        "LOCK lock_run  {}  targets(m^.0): whole map  on every path; first use {}",
+        "LOCK lock_run  {}  unit(m^.0): whole map  on every path; first use {}",
         lock_ledger_position(&source, "atomic m"),
         lock_ledger_position(&source, "set m^.table[key] = None<u8>();"),
     );
@@ -401,7 +401,7 @@ fn lock_ledger_takes_the_map_entry_and_the_other_field_in_field_order() {
     let site = lock_ledger_position(&source, "atomic m");
     let read = lock_ledger_position(&source, "let observed");
     let map = format!(
-        "LOCK lock_run  {site}  targets(m^.0): map entry  on every path; first use {read}; taken with targets(m^) at {read}"
+        "LOCK lock_run  {site}  unit(m^.0): map entry  on every path; first use {read}; taken with unit(m^) at {read}"
     );
     let object = object_lock_line(&source, "on every path", "let observed");
     assert_eq!(
@@ -412,7 +412,7 @@ fn lock_ledger_takes_the_map_entry_and_the_other_field_in_field_order() {
     let source = lock_ledger_source(META_FIRST, "", body);
     let module = compile(source.as_bytes());
     let map = format!(
-        "LOCK lock_run  {}  targets(m^.1): map entry  on every path; first use {}",
+        "LOCK lock_run  {}  unit(m^.1): map entry  on every path; first use {}",
         lock_ledger_position(&source, "atomic m"),
         lock_ledger_position(&source, "set m^.table[key] = None<u8>();"),
     );

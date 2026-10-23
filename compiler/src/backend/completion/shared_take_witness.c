@@ -255,7 +255,8 @@ static void executor_init(witness_executor *executor, unsigned index) {
 /* ----------------------------------------------- arbitration fixtures */
 
 /* A take on its own thread, standing for a statement on another driver
- * that holds an earlier target; it keeps the object until told. */
+ * that holds an earlier unit of its state; it keeps the object until
+ * told. */
 static void *arbitration_take(void *opaque) {
     witness_executor *executor = opaque;
     bind_executor(executor);

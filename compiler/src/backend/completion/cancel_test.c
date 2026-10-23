@@ -436,7 +436,7 @@ static void guard_races(void) {
     CHECK(view->shared.watching == NULL);
     CHECK(((wf_shared *)ordinary)->watched == 0u);
     CHECK(((wf_shared *)ordinary)->watching == NULL);
-    /* The woken statement retries its targets, as emitted code does, and
+    /* The woken statement takes its units again, as emitted code does, and
      * releases every unit when the cancellation alternative completes. */
     CHECK(wf__shared_acquire(view, 1u, &frame) == 0);
     CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
@@ -567,6 +567,76 @@ static void guard_races(void) {
     CHECK(!wf__shared_release(same));
     CHECK(!wf__shared_release(view));
     CHECK(atomic_load(&wf_never_state.shared.handles) == 1u);
+}
+
+/* [PRE-2] A guard that reads a watch's flag holds its own object and not
+ * the cancellation state: a watch that read the flag clear joins the
+ * state's flag watchers and reads the flag again once linked, the first
+ * firing wakes every flag watcher, and a flag read set links nothing. */
+static void flag_races(void) {
+    wf_cancel_handle source, watch;
+    wf_watch guard;
+    wf_test_guard_phase("cancellation flag: a firing between the read and the link");
+    wf__body_cancel_source(&source);
+    wf__body_cancel_watch(&watch, &source);
+    wf_cancel *view = wf__body_cancel_state(&watch);
+    void *ordinary = wf__shared_new(1u);
+    CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+    CHECK(wf__cancel_flag(view) == 0u);
+    fire_elsewhere(&source);
+    wf__watch_begin(&guard);
+    wf__watch_object(&guard, ordinary, NULL);
+    /* The firing found no flag watcher; the second read after the link
+     * finds the flag set and wakes the watch, so the park answers at once,
+     * where a link that read the flag only before it would park for good. */
+    wf__watch_cancel(&guard, view, 0u);
+    wf__shared_unlock_unwritten(ordinary, 1u);
+    CHECK(wf__watch_park(&guard, &frame) == 0);
+    CHECK(guard.used == 0u && ((wf_shared *)ordinary)->watched == 0u);
+    CHECK(view->flag_watchers.count == 0u && view->flag_watchers.links == NULL);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    /* The retry reads the flag set, and a flag read set links nothing. */
+    CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+    CHECK(wf__cancel_flag(view) == 1u);
+    wf__watch_begin(&guard);
+    wf__watch_cancel(&guard, view, 1u);
+    CHECK(guard.used == 0u && view->flag_watchers.count == 0u);
+    wf__shared_unlock_unwritten(ordinary, 1u);
+    CHECK(wf_shared_reservation((wf_shared *)ordinary) == NULL && wf_context_root.shared_turn == NULL);
+    wf__body_close_cancel_watch(&watch);
+    wf__body_close_cancel_source(&source);
+    CHECK(wf__shared_release(view));
+    wf__shared_free(view);
+
+    wf_test_guard_phase("cancellation flag: a link before the firing");
+    wf__body_cancel_source(&source);
+    wf__body_cancel_watch(&watch, &source);
+    view = wf__body_cancel_state(&watch);
+    CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+    uint8_t seen = wf__cancel_flag(view);
+    CHECK(seen == 0u);
+    wf__watch_begin(&guard);
+    wf__watch_object(&guard, ordinary, NULL);
+    wf__watch_cancel(&guard, view, seen);
+    CHECK(guard.used == 2u && view->flag_watchers.count == 1u);
+    wf__shared_unlock_unwritten(ordinary, 1u);
+    /* The firing wakes the watch off its object's list and the flag
+     * watchers both, before the park, which then answers at once. */
+    fire_elsewhere(&source);
+    CHECK(guard.used == 0u && ((wf_shared *)ordinary)->watched == 0u);
+    CHECK(view->flag_watchers.count == 0u && view->flag_watchers.links == NULL);
+    CHECK(wf__watch_park(&guard, &frame) == 0);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
+    CHECK(wf__cancel_flag(view) == 1u);
+    wf__shared_unlock_unwritten(ordinary, 1u);
+    CHECK(wf_shared_reservation((wf_shared *)ordinary) == NULL && wf_context_root.shared_turn == NULL);
+    wf__body_close_cancel_watch(&watch);
+    wf__body_close_cancel_source(&source);
+    CHECK(wf__shared_release(view));
+    wf__shared_free(view);
+    CHECK(wf__shared_release(ordinary));
+    wf__shared_free(ordinary);
 }
 
 int main(void) {
@@ -775,6 +845,7 @@ int main(void) {
     wf__body_close_cancel_source(&source);
 
     guard_races();
+    flag_races();
     CHECK(close(pair[0]) == 0 && close(pair[1]) == 0);
     atomic_store(&wf_driver_count, 1u);
     while (atomic_load(&wf_drivers_notifying) != 0u) wf_prim_yield();

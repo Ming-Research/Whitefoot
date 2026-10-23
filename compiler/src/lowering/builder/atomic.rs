@@ -214,7 +214,7 @@ impl IrBuilder<'_> {
                     [key] if !used.whole => Some(key),
                     _ => None,
                 };
-                ledger.borrow_mut().push_group(
+                ledger.borrow_mut().push_unit(
                     format!(
                         "{}^{}",
                         target.ledger_name,
@@ -275,7 +275,7 @@ impl IrBuilder<'_> {
             } else {
                 ledger
                     .borrow_mut()
-                    .push_group(format!("{}^", target.ledger_name), target.ledger_state.clone());
+                    .push_unit(format!("{}^", target.ledger_name), target.ledger_state.clone());
                 (None, Lock::Object)
             };
             units.push(Unit {
@@ -454,7 +454,7 @@ impl IrBuilder<'_> {
             IrOperation::Constant(IrConstant::Integer { ty: U64, bits }),
         )
     }
-    fn group_flag(
+    fn unit_flag(
         &mut self,
         flag: IrValueId,
         take: bool,
@@ -497,7 +497,7 @@ impl IrBuilder<'_> {
         self.current = Some(work);
         Ok(done)
     }
-    fn set_group_flag(&mut self, flag: IrValueId, bits: u64) -> Result<(), LoweringFailure> {
+    fn set_unit_flag(&mut self, flag: IrValueId, bits: u64) -> Result<(), LoweringFailure> {
         let v = self.u64_constant(bits)?;
         self.store_addressed(
             flag,
@@ -556,7 +556,7 @@ impl IrBuilder<'_> {
             }
             let done = unit
                 .flag
-                .map(|flag| self.group_flag(flag, true))
+                .map(|flag| self.unit_flag(flag, true))
                 .transpose()?;
             match &unit.lock {
                 // The first unit holds nothing before it, so it waits and
@@ -618,7 +618,7 @@ impl IrBuilder<'_> {
                 }
             }
             if let Some(flag) = unit.flag {
-                self.set_group_flag(flag, 1)?;
+                self.set_unit_flag(flag, 1)?;
             }
             if let Some(done) = done {
                 self.terminate(IrTerminator::Jump {
@@ -685,7 +685,7 @@ impl IrBuilder<'_> {
         for unit in region.units.iter().rev() {
             let done = unit
                 .flag
-                .map(|flag| self.group_flag(flag, false))
+                .map(|flag| self.unit_flag(flag, false))
                 .transpose()?;
             match &unit.lock {
                 Lock::Object => {
@@ -725,7 +725,7 @@ impl IrBuilder<'_> {
                 }
             }
             if let Some(flag) = unit.flag {
-                self.set_group_flag(flag, 0)?;
+                self.set_unit_flag(flag, 0)?;
             }
             if let Some(done) = done {
                 self.terminate(IrTerminator::Jump {
@@ -787,12 +787,11 @@ impl IrBuilder<'_> {
             ],
         })?;
         self.current = Some(watch);
-        let bindings = [region.binding];
         if flags.is_empty()
             && region.units.len() == 1
             && matches!(region.units[0].lock, Lock::Object)
         {
-            let test = self.wake_test(guard, region.binding, region.state, &bindings)?;
+            let test = self.wake_test(guard, region.binding, region.state)?;
             self.define(
                 IrType::Unit,
                 IrOperation::SharedWatch {
@@ -806,8 +805,7 @@ impl IrBuilder<'_> {
             for index in read {
                 match &region.units[index].lock {
                     Lock::Object => {
-                        let test =
-                            self.wake_test(guard, region.binding, region.state, &bindings)?;
+                        let test = self.wake_test(guard, region.binding, region.state)?;
                         self.define(
                             IrType::Unit,
                             IrOperation::WatchObject {

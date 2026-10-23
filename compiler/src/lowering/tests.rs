@@ -1991,7 +1991,7 @@ fn missing_lock_ledger_locations_preserve_lowering() {
         let ledger = &function(program, "main").lock_ledger;
         assert_eq!(ledger.len(), 1, "one lazy lock unit");
         assert!(
-            ledger[0].contains("targets(cell^): u64  on every path; first use test.wf:"),
+            ledger[0].contains("unit(cell^): u64  on every path; first use test.wf:"),
             "the witness reaches its lazy acquisition: {ledger:?}"
         );
         program.functions().to_vec()
@@ -2044,7 +2044,7 @@ fn missing_lock_ledger_locations_preserve_lowering() {
             assert_eq!(
                 function(&lowered, "main").lock_ledger,
                 [format!(
-                    "LOCK main  {atomic_site}  targets(cell^): u64  on every path; first use {first_use_site}"
+                    "LOCK main  {atomic_site}  unit(cell^): u64  on every path; first use {first_use_site}"
                 )]
             );
             for function in &mut lowered.functions {

@@ -3,10 +3,11 @@
 //! graph reaches a request before leaving or cycling; no constant or proof
 //! feasibility is inferred. `on some paths` requires a conditional bypass.
 //! Requests are recorded before the taken-word test: that internal test skips
-//! only a group already held, and runtime suspension resumes acquisition.
-//! `never` means no request is reachable in this graph. SHARE-2 requires the
-//! guard or block to name every target, and proof-only names do not satisfy
-//! that rule, so this is not a way to admit unused targets.
+//! only a unit already held, and runtime suspension resumes acquisition.
+//! `never` means no request is reachable in this graph. A unit the guard and
+//! block reach only through effects or facts is requested before the guard
+//! [SHARE-3], so `never` marks only a unit whose every use lies where the
+//! emitted graph cannot reach.
 
 use super::BuildingBlock;
 use crate::{IrBlockId, IrTerminator};
@@ -14,13 +15,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub(super) struct AtomicLedger {
     site: String,
-    groups: Vec<GroupLedger>,
+    units: Vec<UnitLedger>,
     pub(super) body_entry: Option<IrBlockId>,
     pub(super) exits: HashSet<IrBlockId>,
 }
 
-struct GroupLedger {
-    names: String,
+struct UnitLedger {
+    name: String,
     state: String,
     requests: Vec<TakeSite>,
 }
@@ -36,15 +37,15 @@ impl AtomicLedger {
     pub(super) fn new(site: String) -> Self {
         Self {
             site,
-            groups: Vec::new(),
+            units: Vec::new(),
             body_entry: None,
             exits: HashSet::new(),
         }
     }
 
-    pub(super) fn push_group(&mut self, names: String, state: String) {
-        self.groups.push(GroupLedger {
-            names,
+    pub(super) fn push_unit(&mut self, name: String, state: String) {
+        self.units.push(UnitLedger {
+            name,
             state,
             requests: Vec::new(),
         });
@@ -63,9 +64,9 @@ impl AtomicLedger {
             .map(|(_, source)| source.clone())
             .unwrap_or_else(|| self.site.clone());
         let taken_with = trigger
-            .map(|(group, _)| *group)
-            .filter(|group| *group != index);
-        self.groups[index].requests.push(TakeSite {
+            .map(|(unit, _)| *unit)
+            .filter(|unit| *unit != index);
+        self.units[index].requests.push(TakeSite {
             block,
             source,
             before_guard,
@@ -74,14 +75,14 @@ impl AtomicLedger {
     }
 
     pub(super) fn render(&self, function: &str, blocks: &[BuildingBlock]) -> Vec<String> {
-        self.groups
+        self.units
             .iter()
-            .map(|group| {
-                let eager = group.requests.iter().position(|site| site.before_guard);
+            .map(|unit| {
+                let eager = unit.requests.iter().position(|site| site.before_guard);
                 let (classification, first) = if let Some(index) = eager {
                     ("before the guard", vec![index])
                 } else {
-                    let paths = self.first_requests(group, blocks);
+                    let paths = self.first_requests(unit, blocks);
                     let classification = if paths.first.is_empty() {
                         "never"
                     } else if paths.bypass && paths.conditional {
@@ -92,13 +93,13 @@ impl AtomicLedger {
                     (classification, paths.first)
                 };
                 let mut line = format!(
-                    "LOCK {function}  {}  targets({}): {}  {classification}",
-                    self.site, group.names, group.state,
+                    "LOCK {function}  {}  unit({}): {}  {classification}",
+                    self.site, unit.name, unit.state,
                 );
                 if !first.is_empty() {
                     let uses = first
                         .iter()
-                        .map(|index| group.requests[*index].source.as_str())
+                        .map(|index| unit.requests[*index].source.as_str())
                         .collect::<BTreeSet<_>>()
                         .into_iter()
                         .collect::<Vec<_>>()
@@ -107,11 +108,11 @@ impl AtomicLedger {
                     let causes = first
                         .iter()
                         .filter_map(|index| {
-                            let site = &group.requests[*index];
+                            let site = &unit.requests[*index];
                             site.taken_with.map(|later| {
                                 format!(
-                                    "targets({}) at {}",
-                                    self.groups[later].names, site.source,
+                                    "unit({}) at {}",
+                                    self.units[later].name, site.source,
                                 )
                             })
                         })
@@ -127,7 +128,7 @@ impl AtomicLedger {
             .collect()
     }
 
-    fn first_requests(&self, group: &GroupLedger, blocks: &[BuildingBlock]) -> Paths {
+    fn first_requests(&self, unit: &UnitLedger, blocks: &[BuildingBlock]) -> Paths {
         let mut paths = Paths::default();
         let Some(entry) = self.body_entry else {
             return paths;
@@ -135,7 +136,7 @@ impl AtomicLedger {
         // Iterative depth-first traversal detects a path that can cycle
         // forever before its first request, as well as an early leaving edge.
         let mut requests_by_block: HashMap<IrBlockId, Vec<usize>> = HashMap::new();
-        for (index, site) in group.requests.iter().enumerate() {
+        for (index, site) in unit.requests.iter().enumerate() {
             if !site.before_guard {
                 requests_by_block.entry(site.block).or_default().push(index);
             }

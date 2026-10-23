@@ -162,9 +162,6 @@ typedef struct wf_cmap_holding {
     uint8_t whole;
     /* The map was held whole before it was taken. */
     uint8_t held;
-    /* A merged target forwards its positions into the primary hold. */
-    struct wf_cmap_holding *primary;
-    uint64_t first;
     uint64_t read;
     wf_cmap_held inline_keys[WF_CMAP_HOLD_INLINE];
 } wf_cmap_holding;
