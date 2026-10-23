@@ -184,14 +184,32 @@ jobs:
                   lines = sum(1 for l in body.splitlines() if l.startswith("  "))
                   print(f"{name}: {lines} instructions; calls {calls}")
           PY
-      - name: Remove-insert timing, alternating libraries
+      - name: Images linked by hand, with LLVM's default inlining and with a raised threshold
         run: |
           out="$RUNNER_TEMP/out"
-          for round in 1 2 3 4 5; do
-            for arm in base candidate; do
-              for size in 1000 1000000; do
-                printf '%s %s ' "$arm" "$size"
-                WF_DRIVERS=1 taskset -c 1 "$out/bench-$arm" 6 "$size" 5 0 | tr '\n' ' '
+          root="$out/arms/candidate"
+          printf 'ROOT := %s\nBUILD := %s\nCLANG := /usr/bin/clang\ninclude $(ROOT)/compiler/runtime.mk\nobjects: $(NATIVE_OBJECTS)\n\t@echo $(NATIVE_OBJECTS) > %s/objects.txt\n' \
+            "$root" "$out/rt" "$out" > "$out/rt.mk"
+          make -f "$out/rt.mk" objects
+          objects=$(cat "$out/objects.txt")
+          build() {
+            clang -O2 -falign-functions=64 $3 -Wno-override-module -x ir -c "$out/$1.ll" -o "$out/$2.o"
+            clang -O2 "$out/$2.o" $objects -pthread -lm -o "$out/hand-$2"
+            clang -O2 -falign-functions=64 $3 -Wno-override-module -x ir -S -emit-llvm "$out/$1.ll" -o "$out/$2.hand.ll"
+            printf '%s: calls of hash_map_remove in the optimized module: ' "$2"
+            grep -c 'call .*hash_map_remove\$instance' "$out/$2.hand.ll" || true
+          }
+          build base base ""
+          build candidate candidate ""
+          build candidate inlined "-mllvm -inline-threshold=2000"
+      - name: Remove-insert timing, alternating images
+        run: |
+          out="$RUNNER_TEMP/out"
+          for round in 1 2 3 4 5 6; do
+            for image in bench-base bench-candidate hand-base hand-candidate hand-inlined; do
+              for size in 1000 10000; do
+                printf 'ns %s %s ' "$image" "$size"
+                WF_DRIVERS=1 taskset -c 1 "$out/$image" 6 "$size" 5 0 | awk -F'\t' '{printf "%s ", $5}'
                 echo
               done
             done
