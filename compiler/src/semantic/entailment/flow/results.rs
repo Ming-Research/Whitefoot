@@ -6,6 +6,161 @@
 use super::*;
 use crate::semantic::postcondition::PayloadRoute;
 
+/// Source inventory collected beside binding types, before any flow proof.
+/// A missing binding has no conditional-state reader in this function, even
+/// through copies, assignments or value-initializer deliveries. All versions
+/// of a demanded binding remain live; this does not guess last use.
+#[derive(Default)]
+pub(super) struct ResultDemand {
+    needed: HashSet<BindingId>,
+    sources: HashMap<BindingId, Vec<BindingId>>,
+}
+
+impl ResultDemand {
+    fn require(&mut self, expression: &CheckedExpression) {
+        if let CheckedExpression::Binding { binding, .. } = expression {
+            self.needed.insert(*binding);
+        }
+    }
+
+    fn transfer(&mut self, receiver: BindingId, expression: &CheckedExpression) {
+        if let CheckedExpression::Binding {
+            binding,
+            ty: CheckedType::Nominal(_),
+            ..
+        } = expression
+        {
+            self.sources.entry(receiver).or_default().push(*binding);
+        }
+    }
+
+    /// Nested calls can read routed argument contexts even when the enclosing
+    /// expression's result is discarded. Ordinary argument passing does not
+    /// transport a caller's private conditional state into the callee.
+    fn expression(&mut self, expression: &CheckedExpression) {
+        if let CheckedExpression::UserCall {
+            arguments,
+            routed_requirements,
+            ..
+        } = expression
+        {
+            for requirement in routed_requirements {
+                if let Some(argument) = arguments.get(requirement.subject as usize) {
+                    self.require(argument);
+                }
+            }
+        }
+        for child in expression_children(expression) {
+            self.expression(child);
+        }
+    }
+
+    pub(super) fn observe(
+        &mut self,
+        statement: &CheckedStatement,
+        receiver: Option<BindingId>,
+        routed_return: bool,
+    ) {
+        match statement {
+            CheckedStatement::Let { binding, value, .. } => {
+                self.transfer(*binding, value);
+                self.expression(value);
+            }
+            CheckedStatement::Set { target, value, .. } => {
+                if let CheckedSetTarget::Place(place) = target
+                    && place.fields.is_empty()
+                {
+                    self.transfer(place.binding, value);
+                }
+                match target {
+                    CheckedSetTarget::Place(_) => {}
+                    CheckedSetTarget::RangeIndex(place) => {
+                        for offset in place.offsets() {
+                            self.expression(offset);
+                        }
+                    }
+                    CheckedSetTarget::Storage(place) => {
+                        for offset in place.offsets() {
+                            self.expression(offset);
+                        }
+                    }
+                }
+                self.expression(value);
+            }
+            CheckedStatement::Give { value, .. } => {
+                if let Some(receiver) = receiver {
+                    self.transfer(receiver, value);
+                }
+                self.expression(value);
+            }
+            CheckedStatement::Return { value, .. } => {
+                if routed_return {
+                    self.require(value);
+                    if let CheckedExpression::ConstructStruct { fields, .. } = value {
+                        // Result-list ordinals are held in this aggregate.
+                        for field in fields {
+                            self.require(field);
+                        }
+                    }
+                }
+                self.expression(value);
+            }
+            CheckedStatement::Match {
+                scrutinee, arms, ..
+            }
+            | CheckedStatement::ValueMatchLet {
+                scrutinee, arms, ..
+            } => {
+                if arms.iter().any(|arm| {
+                    arm.binders
+                        .iter()
+                        .any(|binder| binder.mode == CheckedMode::Own)
+                }) {
+                    self.require(scrutinee);
+                }
+                self.expression(scrutinee);
+            }
+            CheckedStatement::PropagateLet { scrutinee, .. } => {
+                // Both the selected success and a routed Err return may read
+                // the operand's context, independent of the new binder's uses.
+                self.require(scrutinee);
+                self.expression(scrutinee);
+            }
+            CheckedStatement::DestructuringLet { value, .. }
+            | CheckedStatement::Evaluate { value, .. }
+            | CheckedStatement::DropExpression { value, .. } => self.expression(value),
+            CheckedStatement::CountedRange { lower, upper, .. } => {
+                self.expression(lower);
+                self.expression(upper);
+            }
+            CheckedStatement::Atomic { target, guard, .. } => {
+                for expression in target.expressions() {
+                    self.expression(expression);
+                }
+                if let Some(guard) = guard {
+                    self.expression(guard);
+                }
+            }
+            CheckedStatement::Proof(_)
+            | CheckedStatement::Loop { .. }
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. } => {}
+        }
+    }
+
+    pub(super) fn finish(&mut self) {
+        let mut pending = self.needed.iter().copied().collect::<Vec<_>>();
+        while let Some(receiver) = pending.pop() {
+            for source in self.sources.get(&receiver).into_iter().flatten() {
+                if self.needed.insert(*source) {
+                    pending.push(*source);
+                }
+            }
+        }
+        self.sources.clear();
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct ResultEvidence {
     /// The routed field's type, which the context's private root is typed
@@ -44,6 +199,26 @@ impl SuccessRoute {
 }
 
 impl Input<'_, '_> {
+    /// Integer Result contexts retain their existing eager policy. Other
+    /// contexts are omitted only if no reader can observe this binding's
+    /// state, including through a later transfer to another local.
+    pub(super) fn needs_result(&self, binding: BindingId, ty: CheckedType) -> bool {
+        self.result_demand.needed.contains(&binding) || self.eager_result(ty)
+    }
+
+    pub(super) fn eager_result(&self, ty: CheckedType) -> bool {
+        self.payload_routes(ty).iter().any(|route| route.eager)
+    }
+
+    pub(super) fn needs_return_result(&self, ty: CheckedType) -> bool {
+        self.eager_result(ty)
+            || self
+                .function
+                .postconditions
+                .iter()
+                .any(|postcondition| postcondition.selector.is_routed())
+    }
+
     /// [ENT-5] the routes of a local own enum value, in variant and then
     /// field order: each field whose type supplies data under [CALL-4] (a
     /// fragment integer, measured type, or aggregate reaching one through
@@ -260,6 +435,11 @@ impl Vocabulary {
     /// Merge ordinary facts into exactly one conditional context. A guard's
     /// contradiction remains local until that value's success is selected.
     pub(super) fn refresh_result(&mut self, result: &mut ResultEvidence, ordinary: &FactState) {
+        // Contradiction already proves every conditional relation. In particular,
+        // an excluded variant needs no ordinary closure prepared on its behalf.
+        if result.facts.all_derivable {
+            return;
+        }
         let ordinary = self.result_ordinary_snapshot(ordinary);
         self.refresh_result_from_snapshot(result, &ordinary);
     }
@@ -278,14 +458,17 @@ impl Vocabulary {
     /// Every Result at one flow point reads the same completed ordinary
     /// snapshot. Sharing its preparation does not combine their guards.
     fn refresh_result_from_snapshot(&self, result: &mut ResultEvidence, ordinary: &FactState) {
+        if result.facts.all_derivable {
+            return;
+        }
         if ordinary.all_derivable {
             result
                 .facts
                 .promote_to_contradiction(ordinary.contradiction);
+            return;
         }
-        if !result.facts.all_derivable
-            && ((result.facts.bounds.is_empty() && result.facts.distinct.is_empty())
-                || result.facts.numeric_core_terms() < ordinary.numeric_core_terms())
+        if (result.facts.bounds.is_empty() && result.facts.distinct.is_empty())
+            || result.facts.numeric_core_terms() < ordinary.numeric_core_terms()
         {
             // Reuse the ordinary core when it covers more registered terms.
             // Importing all conditional candidates gives the same union as
@@ -624,10 +807,13 @@ impl Analyzer<'_, '_> {
             ),
         };
         let goal = ConcreteGoal::new(payload_goal(&requirement.goal.root, &root, step));
-        let context = self.capture_result(call, argument, state).into_iter().find(|result| {
-            result.route.variant == requirement.route.variant
-                && result.route.field == requirement.route.field
-        });
+        let context = self
+            .capture_result(call, argument, state)
+            .into_iter()
+            .find(|result| {
+                result.route.variant == requirement.route.variant
+                    && result.route.field == requirement.route.field
+            });
         let (Some(binding), Some(context)) = (binding, context) else {
             return (goal, state.facts.clone());
         };
@@ -904,7 +1090,10 @@ impl Reasoning<'_, '_, '_> {
         for (relation, parent) in selected.l0_candidates() {
             if relation.terms().iter().any(|term| {
                 self.vocabulary.terms.any_leaf(*term, &|leaf| {
-                    matches!(self.vocabulary.terms.kind(leaf), TermKind::ResultPayload { .. })
+                    matches!(
+                        self.vocabulary.terms.kind(leaf),
+                        TermKind::ResultPayload { .. }
+                    )
                 })
             }) {
                 continue;
@@ -958,7 +1147,11 @@ impl Reasoning<'_, '_, '_> {
             }
             true
         });
-        if !held.is_empty() {
+        if held
+            .values()
+            .flatten()
+            .any(|result| !result.facts.all_derivable)
+        {
             let ordinary = self.vocabulary.result_ordinary_snapshot(&state.facts);
             for result in held.values_mut().flatten() {
                 self.vocabulary
@@ -982,7 +1175,11 @@ impl Analyzer<'_, '_> {
             .collect::<HashSet<_>>();
         let mut held = std::mem::take(&mut state.results);
         held.retain(|binding, _| !exited.contains(binding));
-        if !held.is_empty() {
+        if held
+            .values()
+            .flatten()
+            .any(|result| !result.facts.all_derivable)
+        {
             let ordinary = self.vocabulary.result_ordinary_snapshot(&state.facts);
             for result in held.values_mut().flatten() {
                 self.vocabulary
@@ -1018,10 +1215,22 @@ impl Vocabulary {
         if keys.is_empty() {
             return results;
         }
-        let ordinary = states
-            .iter()
-            .map(|state| self.result_ordinary_snapshot(&state.facts))
-            .collect::<Vec<_>>();
+        // A predecessor contributes its ordinary closure only to routes that
+        // are not already contradictory there. Keep excluded route images for
+        // the join's neutral predecessor and contradiction-parent semantics.
+        let mut ordinary = vec![None; states.len()];
+        // Conditional contexts contain numeric facts only. Their complete
+        // candidate lists include the weaker proofs that later support kills
+        // may expose; matching only selected bounds would lose those proofs.
+        // Ordinary predecessor facts and the term vocabulary are fixed during
+        // this join, so identical inputs also have identical refreshes. Share
+        // that computation without combining the routes' independent guards.
+        #[derive(Eq, Hash, PartialEq)]
+        enum NumericInput {
+            Contradiction(DerivationId),
+            Candidates(Vec<(Relation, DerivationId)>),
+        }
+        let mut joined_inputs: HashMap<Vec<NumericInput>, FactState> = HashMap::new();
         fn find(
             state: &ProofFlowState,
             binding: BindingId,
@@ -1034,16 +1243,48 @@ impl Vocabulary {
             })
         }
         for ((binding, _, _), (payload, route, success)) in keys {
-            let mut images = Vec::new();
-            for (state, ordinary) in states.iter().zip(&ordinary) {
-                let mut result = find(state, binding, route).cloned().unwrap_or(ResultEvidence {
+            let inputs = states
+                .iter()
+                .map(|state| match find(state, binding, route) {
+                    Some(result) if result.facts.all_derivable => NumericInput::Contradiction(
+                        result
+                            .facts
+                            .contradiction
+                            .expect("a contradictory route retains its proof"),
+                    ),
+                    Some(result) => NumericInput::Candidates(result.facts.l0_candidates()),
+                    None => NumericInput::Candidates(Vec::new()),
+                })
+                .collect::<Vec<_>>();
+            let definitely_err = states.iter().all(|state| {
+                find(state, binding, route).is_some_and(|result| result.definitely_err)
+            });
+            if let Some(facts) = joined_inputs.get(&inputs) {
+                results.entry(binding).or_default().push(ResultEvidence {
                     payload,
                     route,
                     success,
-                    facts: FactState::new(),
-                    definitely_err: false,
+                    facts: facts.clone(),
+                    definitely_err,
                 });
-                self.refresh_result_from_snapshot(&mut result, ordinary);
+                continue;
+            }
+            let mut images = Vec::new();
+            for (state, ordinary) in states.iter().zip(&mut ordinary) {
+                let mut result = find(state, binding, route)
+                    .cloned()
+                    .unwrap_or(ResultEvidence {
+                        payload,
+                        route,
+                        success,
+                        facts: FactState::new(),
+                        definitely_err: false,
+                    });
+                if !result.facts.all_derivable {
+                    let ordinary =
+                        ordinary.get_or_insert_with(|| self.result_ordinary_snapshot(&state.facts));
+                    self.refresh_result_from_snapshot(&mut result, ordinary);
+                }
                 images.push(result.facts);
             }
             let event = self.derivations.event(FlowEventKind::Join, None);
@@ -1054,9 +1295,7 @@ impl Vocabulary {
                 &mut self.derivations,
                 event,
             );
-            let definitely_err = states.iter().all(|state| {
-                find(state, binding, route).is_some_and(|result| result.definitely_err)
-            });
+            joined_inputs.insert(inputs, facts.clone());
             results.entry(binding).or_default().push(ResultEvidence {
                 payload,
                 route,
@@ -1078,10 +1317,692 @@ mod tests {
     };
     use crate::semantic::model::FunctionId;
 
+    #[test]
+    fn unread_constructions_copies_and_returns_create_no_conditional_work() {
+        let source = br#"enum Outcome {
+  Some(value: u64);
+  None();
+}
+
+fn unread() -> result: Outcome pure {
+  let original = Outcome::None();
+  let copied = original;
+  set copied = Outcome::Some(value: 7_u64);
+  return Outcome::Some(value: 8_u64);
+}
+"#;
+        crate::semantic::tests::with_semantics(source, |outcome| {
+            let crate::SemanticOutcome::Complete(checked) = outcome else {
+                panic!("unread enum source must check: {outcome:?}");
+            };
+            let function = checked
+                .data
+                .executable_functions()
+                .find(|function| function.name == "unread")
+                .expect("unread");
+            let constant_ids = HashMap::new();
+            let const_parameter_types = HashMap::new();
+            let captured_places = crate::semantic::places::CapturedPlaceTable::default();
+            let context = EntailmentContext {
+                source_spellings: &HashMap::new(),
+                postcondition_clauses: &HashMap::new(),
+                postcondition_sources: &HashMap::new(),
+                type_spellings: &HashMap::new(),
+                captured_places: &captured_places,
+                judge_conditions: true,
+                declarations: &[],
+                callees: &[],
+                constants: &[],
+                constant_ids: &constant_ids,
+                const_parameter_types: &const_parameter_types,
+                copy_type_parameters: &[],
+                nominals: &checked.data.nominals,
+                elements: &checked.data.elements,
+                contract_queries: &[],
+                verified_postconditions: &[],
+                verified_postcondition_proofs: &[],
+                component_postconditions: &[],
+                binding_names: &[],
+            };
+            let mut analyzer = Analyzer::new(&context, function);
+            analyzer.input.collect_bindings();
+            let mut state = ProofFlowState::default();
+            analyzer.walk_block(function.body.as_ref().unwrap(), &mut state, &mut Vec::new());
+            // Inspect before ledger pruning: an unused proof node would vanish
+            // from the final receipt but would still have cost checker work.
+            assert!(state.results.is_empty());
+            assert!(!analyzer.vocabulary.derivations.nodes.iter().any(|node| {
+                matches!(
+                    node,
+                    DerivationNode::ResultErr { .. } | DerivationNode::ResultTransport { .. }
+                )
+            }));
+            assert!(!analyzer.vocabulary.terms.ids().any(|term| {
+                matches!(
+                    analyzer.vocabulary.terms.kind(term),
+                    TermKind::ResultPayload { .. }
+                )
+            }));
+        });
+    }
+
+    #[test]
+    fn route_demand_follows_copy_cycles_and_nested_value_deliveries() {
+        let source = br#"enum Outcome {
+  Some(value: u64);
+  None();
+}
+
+fn probe(flag: Bool, inner: Bool) -> result: u64 pure {
+  let dead = Outcome::None();
+  let dead_copy = dead;
+  let live = Outcome::Some(value: 7_u64);
+  let copied = live;
+  set live = copied;
+  let delivered = if flag {
+    let nested = if inner {
+      give copied;
+    } else {
+      give live;
+    }
+    give nested;
+  } else {
+    give copied;
+  }
+  match delivered {
+    Some(value: n) => {
+      return n;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+"#;
+        crate::semantic::tests::with_semantics(source, |outcome| {
+            let crate::SemanticOutcome::Complete(checked) = outcome else {
+                panic!("route-demand source must check: {outcome:?}");
+            };
+            let function = checked
+                .data
+                .executable_functions()
+                .find(|function| function.name == "probe")
+                .expect("probe");
+            let mut demand = ResultDemand::default();
+            let mut bindings = Vec::new();
+            PlaceMap::for_function_observing(function, |statement, receiver| {
+                if let CheckedStatement::Let { binding, .. }
+                | CheckedStatement::ValueMatchLet { binding, .. } = statement
+                {
+                    bindings.push(*binding);
+                }
+                demand.observe(statement, receiver, false);
+            });
+            demand.finish();
+            assert_eq!(bindings.len(), 6);
+            assert_eq!(
+                bindings
+                    .iter()
+                    .map(|binding| demand.needed.contains(binding))
+                    .collect::<Vec<_>>(),
+                [false, false, true, true, true, true]
+            );
+        });
+    }
+
     /// Compare independently live proofs, not only selected bounds, through
     /// destination collisions, refresh imports and later S12 removal.
     #[test]
     fn numeric_result_transport_preserves_the_complete_candidate_set() {
+        with_vocabulary(|vocabulary| {
+            let from = vocabulary.terms.intern(TermKind::ResultPayload {
+                payload: CheckedType::Integer(IntegerType::I32),
+                path: Vec::new(),
+                measure: None,
+                ty: IntegerType::I32,
+            });
+            let [middle, to] = [0, 1].map(|binding| {
+                vocabulary.terms.intern(TermKind::Place(
+                    ResolvedPlace::binding(BindingId(binding)),
+                    IntegerType::I32,
+                ))
+            });
+            let statement = crate::NodePath {
+                components: vec![0],
+            };
+            let event = vocabulary.derivations.event(FlowEventKind::S1, None);
+            let mut source = FactState::new();
+            for (left, right, bound) in [(from, middle, 5), (to, middle, 10)] {
+                source.establish(
+                    &Relation::Bound { left, right, bound },
+                    &mut vocabulary.derivations,
+                    event,
+                );
+            }
+            let distinct = Relation::Distinct {
+                left: from,
+                right: middle,
+                difference: 0,
+            };
+            source.establish(&distinct, &mut vocabulary.derivations, event);
+            for relation in [
+                Relation::Bound {
+                    left: from,
+                    right: middle,
+                    bound: 0,
+                },
+                distinct,
+            ] {
+                let proof = vocabulary
+                    .derivations
+                    .intern(DerivationNode::PostconditionCall {
+                        detail: Box::new(PostconditionCallDetail {
+                            call: statement.clone(),
+                            relation: relation.clone(),
+                            summary: VerifiedPostconditionSummaryRef {
+                                summary: RelationProvenance::Verified(
+                                    VerifiedPostconditionSummary {
+                                        function: FunctionId(0),
+                                        block: statement.clone(),
+                                        relation_ordinal: 0,
+                                        component: 0,
+                                    },
+                                ),
+                            },
+                            substitutions: Vec::new(),
+                            transfer_events: Vec::new(),
+                            parents: Vec::new(),
+                        }),
+                    });
+                source.establish_from_proof(&relation, proof, &vocabulary.derivations);
+            }
+            let unseeded = source.clone();
+            materialize_closure_before_kill(
+                &mut source,
+                &vocabulary.terms,
+                &vocabulary.goals,
+                &mut vocabulary.derivations,
+            );
+            // Retain alternate witnesses as well as the materialized selection,
+            // so both transport paths must keep every distinct proof candidate.
+            for (relation, proof) in unseeded.l0_candidates() {
+                source.establish_from_proof(&relation, proof, &vocabulary.derivations);
+            }
+            let candidates =
+                |state: &FactState| state.l0_candidates().into_iter().collect::<HashSet<_>>();
+            assert_eq!(candidates(&source), candidates(&source.numeric_snapshot()));
+            let mut transported =
+                vocabulary.substitute_result_facts(&statement, &source, &[(from, to)]);
+            // Reference the previous full import, independent of closed-core reuse.
+            let mut rebuilt = FactState::new();
+            for (relation, parent) in source.l0_candidates() {
+                let substituted = replace_relation_term(&relation, from, to);
+                let parent = if relation.terms().contains(&from) {
+                    vocabulary
+                        .derivations
+                        .intern(DerivationNode::ResultTransport {
+                            statement: statement.clone(),
+                            from,
+                            to,
+                            relation: Box::new(substituted.clone()),
+                            parent,
+                        })
+                } else {
+                    parent
+                };
+                rebuilt.establish_from_proof(&substituted, parent, &vocabulary.derivations);
+            }
+            for remove_calls in [false, true] {
+                if remove_calls {
+                    transported.retain_non_postcondition_candidates(&vocabulary.derivations);
+                    rebuilt.retain_non_postcondition_candidates(&vocabulary.derivations);
+                }
+                assert_eq!(candidates(&transported), candidates(&rebuilt));
+                let actual = close(
+                    &transported,
+                    &vocabulary.terms,
+                    &vocabulary.goals,
+                    &mut vocabulary.derivations,
+                );
+                let expected = close(
+                    &rebuilt,
+                    &vocabulary.terms,
+                    &vocabulary.goals,
+                    &mut vocabulary.derivations,
+                );
+                assert!(!actual.contradictory());
+                assert_eq!(actual.contradictory(), expected.contradictory());
+                for left in vocabulary.terms.ids() {
+                    for right in vocabulary.terms.ids() {
+                        assert_eq!(
+                            actual.tight_bound(left, right),
+                            expected.tight_bound(left, right)
+                        );
+                        let distinct = Relation::Distinct {
+                            left,
+                            right,
+                            difference: 0,
+                        };
+                        assert_eq!(actual.derives(&distinct), expected.derives(&distinct));
+                    }
+                }
+                assert!(actual.derives_bound(to, middle, if remove_calls { 5 } else { -1 }));
+            }
+
+            let foreign = vocabulary.terms.intern(TermKind::ResultPayload {
+                payload: CheckedType::Integer(IntegerType::U8),
+                path: Vec::new(),
+                measure: None,
+                ty: IntegerType::U8,
+            });
+            let mut ordinary = FactState::new();
+            ordinary.establish(
+                &Relation::Bound {
+                    left: to,
+                    right: middle,
+                    bound: 8,
+                },
+                &mut vocabulary.derivations,
+                event,
+            );
+            let ordinary = vocabulary.result_ordinary_snapshot(&ordinary);
+            // Exercise both an unseeded conditional state and a previously
+            // closed context whose core predates a newly registered term.
+            for conditional in [unseeded, source] {
+                let mut refreshed = ResultEvidence {
+                    payload: CheckedType::Integer(IntegerType::I32),
+                    route: PayloadRoute {
+                        variant: 0,
+                        field: 0,
+                        tag: 0,
+                    },
+                    success: true,
+                    facts: conditional.clone(),
+                    definitely_err: false,
+                };
+                assert!(refreshed.facts.numeric_core_terms() < ordinary.numeric_core_terms());
+                let mut imported = conditional;
+                // The former refresh loop is an independent reference for the union.
+                for (relation, parent) in ordinary.l0_candidates() {
+                    if !relation.terms().iter().any(|term| {
+                        matches!(vocabulary.terms.kind(*term), TermKind::ResultPayload { .. })
+                    }) {
+                        imported.establish_from_proof(&relation, parent, &vocabulary.derivations);
+                    }
+                }
+                vocabulary.refresh_result_from_snapshot(&mut refreshed, &ordinary);
+                assert!(closure_is_seeded(&refreshed.facts));
+                assert_eq!(
+                    refreshed.facts.numeric_core_terms(),
+                    ordinary.numeric_core_terms()
+                );
+                assert!(
+                    refreshed
+                        .facts
+                        .l0_candidates()
+                        .iter()
+                        .all(|(relation, _)| { !relation.terms().contains(&foreign) })
+                );
+                for remove_calls in [false, true] {
+                    if remove_calls {
+                        refreshed
+                            .facts
+                            .retain_non_postcondition_candidates(&vocabulary.derivations);
+                        imported.retain_non_postcondition_candidates(&vocabulary.derivations);
+                    }
+                    assert_eq!(candidates(&refreshed.facts), candidates(&imported));
+                    let actual = close(
+                        &refreshed.facts,
+                        &vocabulary.terms,
+                        &vocabulary.goals,
+                        &mut vocabulary.derivations,
+                    );
+                    let expected = close(
+                        &imported,
+                        &vocabulary.terms,
+                        &vocabulary.goals,
+                        &mut vocabulary.derivations,
+                    );
+                    assert!(!actual.contradictory());
+                    for left in vocabulary.terms.ids() {
+                        for right in vocabulary.terms.ids() {
+                            assert_eq!(
+                                actual.tight_bound(left, right),
+                                expected.tight_bound(left, right)
+                            );
+                            let distinct = Relation::Distinct {
+                                left,
+                                right,
+                                difference: 0,
+                            };
+                            assert_eq!(actual.derives(&distinct), expected.derives(&distinct));
+                        }
+                    }
+                    assert_eq!(actual.tight_bound(to, middle), Some(8));
+                    assert_eq!(
+                        actual.tight_bound(from, middle),
+                        Some(if remove_calls { 5 } else { -1 })
+                    );
+                }
+                let contradiction = vocabulary.derivations.intern(DerivationNode::ResultErr {
+                    statement: statement.clone(),
+                });
+                refreshed.facts = FactState::contradictory(contradiction);
+                refreshed.definitely_err = true;
+                vocabulary.refresh_result_from_snapshot(&mut refreshed, &ordinary);
+                assert!(refreshed.facts.all_derivable);
+                assert_eq!(refreshed.facts.contradiction, Some(contradiction));
+                assert!(refreshed.definitely_err);
+            }
+        });
+    }
+
+    #[test]
+    fn excluded_routes_skip_ordinary_snapshots_and_remain_neutral_at_joins() {
+        with_vocabulary(|vocabulary| {
+            let [left, middle, right] = [0, 1, 2].map(|binding| {
+                vocabulary.terms.intern(TermKind::Place(
+                    ResolvedPlace::binding(BindingId(binding)),
+                    IntegerType::I32,
+                ))
+            });
+            let payload = vocabulary.terms.intern(TermKind::ResultPayload {
+                payload: CheckedType::Integer(IntegerType::I32),
+                path: Vec::new(),
+                measure: None,
+                ty: IntegerType::I32,
+            });
+            let event = vocabulary.derivations.event(FlowEventKind::S1, None);
+            let mut ordinary = FactState::new();
+            for (left, right, bound) in [(left, middle, 2), (middle, right, 3)] {
+                ordinary.establish(
+                    &Relation::Bound { left, right, bound },
+                    &mut vocabulary.derivations,
+                    event,
+                );
+            }
+            let contradiction = vocabulary.derivations.intern(DerivationNode::ResultErr {
+                statement: crate::NodePath {
+                    components: vec![0],
+                },
+            });
+            let mut excluded = ResultEvidence {
+                payload: CheckedType::Integer(IntegerType::I32),
+                route: PayloadRoute {
+                    variant: 0,
+                    field: 0,
+                    tag: 0,
+                },
+                success: false,
+                facts: FactState::contradictory(contradiction),
+                definitely_err: true,
+            };
+            let snapshots = |vocabulary: &Vocabulary| {
+                vocabulary
+                    .derivations
+                    .events
+                    .iter()
+                    .filter(|event| event.kind == FlowEventKind::Snapshot)
+                    .count()
+            };
+            let before = snapshots(vocabulary);
+            vocabulary.refresh_result(&mut excluded, &ordinary);
+            assert_eq!(snapshots(vocabulary), before);
+            assert_eq!(excluded.facts.contradiction, Some(contradiction));
+            assert!(excluded.facts.l0_candidates().is_empty());
+            assert!(excluded.definitely_err);
+
+            let holder = BindingId(3);
+            let edge = |result: Option<ResultEvidence>| ProofFlowState {
+                facts: ordinary.clone(),
+                results: result
+                    .map(|result| BTreeMap::from([(holder, vec![result])]))
+                    .unwrap_or_default(),
+                ..ProofFlowState::default()
+            };
+            let excluded_edge = edge(Some(excluded.clone()));
+            let joined =
+                vocabulary.join_result_evidence(&[excluded_edge.clone(), excluded_edge.clone()]);
+            assert_eq!(snapshots(vocabulary), before);
+            let joined = &joined[&holder][0];
+            assert!(joined.facts.all_derivable);
+            assert!(joined.definitely_err);
+            assert!(matches!(
+                &vocabulary.derivations.nodes[joined.facts.contradiction.unwrap().0 as usize],
+                DerivationNode::JoinContradiction { parents, .. }
+                    if parents.len() == 2
+                        && parents.iter().all(|parent| parent.parent == contradiction)
+            ));
+
+            let mut live = excluded;
+            live.facts = FactState::new();
+            live.definitely_err = false;
+            live.facts.establish(
+                &Relation::Bound {
+                    left: payload,
+                    right: ZERO,
+                    bound: 5,
+                },
+                &mut vocabulary.derivations,
+                event,
+            );
+            let live_edge = edge(Some(live));
+            for missing in [false, true] {
+                let mut edges = vec![live_edge.clone(), excluded_edge.clone()];
+                if missing {
+                    edges.push(edge(None));
+                }
+                let joined = vocabulary.join_result_evidence(&edges);
+                let joined = &joined[&holder][0];
+                assert!(!joined.definitely_err);
+                let closed = close(
+                    &joined.facts,
+                    &vocabulary.terms,
+                    &vocabulary.goals,
+                    &mut vocabulary.derivations,
+                );
+                assert!(!closed.contradictory());
+                assert_eq!(closed.derives_bound(payload, ZERO, 5), !missing);
+                assert!(closed.derives_bound(left, right, 5));
+            }
+            // The ordinary chain really needs materialization: the zero-snapshot
+            // assertions above cannot pass merely because their input was empty.
+            assert!(snapshots(vocabulary) > before);
+
+            let mut live = edge(None);
+            let mut selected = ResultEvidence {
+                facts: FactState::new(),
+                definitely_err: false,
+                ..joined.clone()
+            };
+            live.facts = FactState::contradictory(contradiction);
+            vocabulary.refresh_result(&mut selected, &live.facts);
+            assert!(selected.facts.all_derivable);
+            assert_eq!(selected.facts.contradiction, Some(contradiction));
+            assert!(!selected.definitely_err);
+        });
+    }
+
+    #[test]
+    fn route_joins_share_identical_inputs_but_keep_exclusion_masks_separate() {
+        with_vocabulary(|vocabulary| {
+            let term = vocabulary.terms.intern(TermKind::Place(
+                ResolvedPlace::binding(BindingId(0)),
+                IntegerType::I32,
+            ));
+            let holder = BindingId(1);
+            let event = vocabulary.derivations.event(FlowEventKind::S1, None);
+            let contradiction = vocabulary.derivations.intern(DerivationNode::ResultErr {
+                statement: crate::NodePath {
+                    components: vec![0],
+                },
+            });
+            let excluded = |variant| ResultEvidence {
+                payload: CheckedType::Integer(IntegerType::I32),
+                route: PayloadRoute {
+                    variant,
+                    field: 0,
+                    tag: variant,
+                },
+                success: variant == 1,
+                facts: FactState::contradictory(contradiction),
+                definitely_err: true,
+            };
+            let mut edges = [ProofFlowState::default(), ProofFlowState::default()];
+            for (edge, bound) in edges.iter_mut().zip([3, 7]) {
+                edge.facts.establish(
+                    &Relation::Bound {
+                        left: term,
+                        right: ZERO,
+                        bound,
+                    },
+                    &mut vocabulary.derivations,
+                    event,
+                );
+            }
+            edges[0]
+                .results
+                .insert(holder, vec![excluded(0), excluded(1)]);
+            edges[1].results.insert(holder, vec![excluded(2)]);
+            let before = join_events(vocabulary);
+            let mut joined = vocabulary.join_result_evidence(&edges);
+            assert_eq!(join_events(vocabulary) - before, 2);
+            let held = joined.get_mut(&holder).unwrap();
+            assert_eq!(held.len(), 3);
+            assert_eq!(held[0].facts.l0_candidates(), held[1].facts.l0_candidates());
+            assert!(!held[0].success);
+            assert!(held[1].success);
+            for (result, bound) in held.iter().zip([7, 7, 3]) {
+                assert!(!result.definitely_err);
+                let closed = close(
+                    &result.facts,
+                    &vocabulary.terms,
+                    &vocabulary.goals,
+                    &mut vocabulary.derivations,
+                );
+                assert_eq!(closed.tight_bound(term, ZERO), Some(bound));
+            }
+            // Reuse shares immutable stores, not the routes' mutable contexts.
+            held[0].facts.establish(
+                &Relation::Bound {
+                    left: term,
+                    right: ZERO,
+                    bound: 1,
+                },
+                &mut vocabulary.derivations,
+                event,
+            );
+            let unchanged = close(
+                &held[1].facts,
+                &vocabulary.terms,
+                &vocabulary.goals,
+                &mut vocabulary.derivations,
+            );
+            assert_eq!(unchanged.tight_bound(term, ZERO), Some(7));
+        });
+    }
+
+    #[test]
+    fn route_join_reuse_distinguishes_weaker_postcondition_fallbacks() {
+        with_vocabulary(|vocabulary| {
+            let term = vocabulary.terms.intern(TermKind::ResultPayload {
+                payload: CheckedType::Integer(IntegerType::I32),
+                path: Vec::new(),
+                measure: None,
+                ty: IntegerType::I32,
+            });
+            let event = vocabulary.derivations.event(FlowEventKind::S1, None);
+            let statement = crate::NodePath {
+                components: vec![0],
+            };
+            let relation = Relation::Bound {
+                left: term,
+                right: ZERO,
+                bound: 0,
+            };
+            let call = vocabulary
+                .derivations
+                .intern(DerivationNode::PostconditionCall {
+                    detail: Box::new(PostconditionCallDetail {
+                        call: statement.clone(),
+                        relation: relation.clone(),
+                        summary: VerifiedPostconditionSummaryRef {
+                            summary: RelationProvenance::Verified(VerifiedPostconditionSummary {
+                                function: FunctionId(0),
+                                block: statement,
+                                relation_ordinal: 0,
+                                component: 0,
+                            }),
+                        },
+                        substitutions: Vec::new(),
+                        transfer_events: Vec::new(),
+                        parents: Vec::new(),
+                    }),
+                });
+            let mut held = Vec::new();
+            for (variant, bound) in [5, 10, 5].into_iter().enumerate() {
+                let mut facts = FactState::new();
+                facts.establish(
+                    &Relation::Bound {
+                        left: term,
+                        right: ZERO,
+                        bound,
+                    },
+                    &mut vocabulary.derivations,
+                    event,
+                );
+                facts.establish_from_proof(&relation, call, &vocabulary.derivations);
+                held.push(ResultEvidence {
+                    payload: CheckedType::Integer(IntegerType::I32),
+                    route: PayloadRoute {
+                        variant: variant as u32,
+                        field: 0,
+                        tag: variant as u32,
+                    },
+                    success: false,
+                    facts,
+                    definitely_err: false,
+                });
+            }
+            let holder = BindingId(0);
+            let edge = ProofFlowState {
+                results: BTreeMap::from([(holder, held)]),
+                ..ProofFlowState::default()
+            };
+            let before = join_events(vocabulary);
+            let joined = vocabulary.join_result_evidence(&[edge.clone(), edge]);
+            assert_eq!(join_events(vocabulary) - before, 2);
+            for (result, bound) in joined[&holder].iter().zip([5, 10, 5]) {
+                let full = close(
+                    &result.facts,
+                    &vocabulary.terms,
+                    &vocabulary.goals,
+                    &mut vocabulary.derivations,
+                );
+                assert_eq!(full.tight_bound(term, ZERO), Some(0));
+                let mut ordinary = result.facts.clone();
+                ordinary.retain_non_postcondition_candidates(&vocabulary.derivations);
+                let ordinary = close(
+                    &ordinary,
+                    &vocabulary.terms,
+                    &vocabulary.goals,
+                    &mut vocabulary.derivations,
+                );
+                assert_eq!(ordinary.tight_bound(term, ZERO), Some(bound));
+            }
+        });
+    }
+
+    fn join_events(vocabulary: &Vocabulary) -> usize {
+        vocabulary
+            .derivations
+            .events
+            .iter()
+            .filter(|event| event.kind == FlowEventKind::Join)
+            .count()
+    }
+
+    fn with_vocabulary(test: impl FnOnce(&mut Vocabulary)) {
         let constant_ids = HashMap::new();
         let const_parameter_types = HashMap::new();
         let captured_places = crate::semantic::places::CapturedPlaceTable::default();
@@ -1140,263 +2061,6 @@ mod tests {
             entailment: FunctionEntailment::default(),
         };
         let mut analyzer = Analyzer::new(&context, &function);
-        let from = analyzer.vocabulary.terms.intern(TermKind::ResultPayload {
-            payload: CheckedType::Integer(IntegerType::I32),
-            path: Vec::new(),
-            measure: None,
-            ty: IntegerType::I32,
-        });
-        let [middle, to] = [0, 1].map(|binding| {
-            analyzer.vocabulary.terms.intern(TermKind::Place(
-                ResolvedPlace::binding(BindingId(binding)),
-                IntegerType::I32,
-            ))
-        });
-        let statement = crate::NodePath {
-            components: vec![0],
-        };
-        let event = analyzer
-            .vocabulary
-            .derivations
-            .event(FlowEventKind::S1, None);
-        let mut source = FactState::new();
-        for (left, right, bound) in [(from, middle, 5), (to, middle, 10)] {
-            source.establish(
-                &Relation::Bound { left, right, bound },
-                &mut analyzer.vocabulary.derivations,
-                event,
-            );
-        }
-        let distinct = Relation::Distinct {
-            left: from,
-            right: middle,
-            difference: 0,
-        };
-        source.establish(&distinct, &mut analyzer.vocabulary.derivations, event);
-        for relation in [
-            Relation::Bound {
-                left: from,
-                right: middle,
-                bound: 0,
-            },
-            distinct,
-        ] {
-            let proof = analyzer
-                .vocabulary
-                .derivations
-                .intern(DerivationNode::PostconditionCall {
-                    detail: Box::new(PostconditionCallDetail {
-                        call: statement.clone(),
-                        relation: relation.clone(),
-                        summary: VerifiedPostconditionSummaryRef {
-                            summary: RelationProvenance::Verified(VerifiedPostconditionSummary {
-                                function: FunctionId(0),
-                                block: statement.clone(),
-                                relation_ordinal: 0,
-                                component: 0,
-                            }),
-                        },
-                        substitutions: Vec::new(),
-                        transfer_events: Vec::new(),
-                        parents: Vec::new(),
-                    }),
-                });
-            source.establish_from_proof(&relation, proof, &analyzer.vocabulary.derivations);
-        }
-        let unseeded = source.clone();
-        materialize_closure_before_kill(
-            &mut source,
-            &analyzer.vocabulary.terms,
-            &analyzer.vocabulary.goals,
-            &mut analyzer.vocabulary.derivations,
-        );
-        // Retain alternate witnesses as well as the materialized selection,
-        // so both transport paths must keep every distinct proof candidate.
-        for (relation, proof) in unseeded.l0_candidates() {
-            source.establish_from_proof(&relation, proof, &analyzer.vocabulary.derivations);
-        }
-        let candidates =
-            |state: &FactState| state.l0_candidates().into_iter().collect::<HashSet<_>>();
-        assert_eq!(candidates(&source), candidates(&source.numeric_snapshot()));
-        let mut transported =
-            analyzer
-                .vocabulary
-                .substitute_result_facts(&statement, &source, &[(from, to)]);
-        // Reference the previous full import, independent of closed-core reuse.
-        let mut rebuilt = FactState::new();
-        for (relation, parent) in source.l0_candidates() {
-            let substituted = replace_relation_term(&relation, from, to);
-            let parent = if relation.terms().contains(&from) {
-                analyzer
-                    .vocabulary
-                    .derivations
-                    .intern(DerivationNode::ResultTransport {
-                        statement: statement.clone(),
-                        from,
-                        to,
-                        relation: Box::new(substituted.clone()),
-                        parent,
-                    })
-            } else {
-                parent
-            };
-            rebuilt.establish_from_proof(&substituted, parent, &analyzer.vocabulary.derivations);
-        }
-        for remove_calls in [false, true] {
-            if remove_calls {
-                transported.retain_non_postcondition_candidates(&analyzer.vocabulary.derivations);
-                rebuilt.retain_non_postcondition_candidates(&analyzer.vocabulary.derivations);
-            }
-            assert_eq!(candidates(&transported), candidates(&rebuilt));
-            let actual = close(
-                &transported,
-                &analyzer.vocabulary.terms,
-                &analyzer.vocabulary.goals,
-                &mut analyzer.vocabulary.derivations,
-            );
-            let expected = close(
-                &rebuilt,
-                &analyzer.vocabulary.terms,
-                &analyzer.vocabulary.goals,
-                &mut analyzer.vocabulary.derivations,
-            );
-            assert!(!actual.contradictory());
-            assert_eq!(actual.contradictory(), expected.contradictory());
-            for left in analyzer.vocabulary.terms.ids() {
-                for right in analyzer.vocabulary.terms.ids() {
-                    assert_eq!(
-                        actual.tight_bound(left, right),
-                        expected.tight_bound(left, right)
-                    );
-                    let distinct = Relation::Distinct {
-                        left,
-                        right,
-                        difference: 0,
-                    };
-                    assert_eq!(actual.derives(&distinct), expected.derives(&distinct));
-                }
-            }
-            assert!(actual.derives_bound(to, middle, if remove_calls { 5 } else { -1 }));
-        }
-
-        let foreign = analyzer.vocabulary.terms.intern(TermKind::ResultPayload {
-            payload: CheckedType::Integer(IntegerType::U8),
-            path: Vec::new(),
-            measure: None,
-            ty: IntegerType::U8,
-        });
-        let mut ordinary = FactState::new();
-        ordinary.establish(
-            &Relation::Bound {
-                left: to,
-                right: middle,
-                bound: 8,
-            },
-            &mut analyzer.vocabulary.derivations,
-            event,
-        );
-        let ordinary = analyzer.vocabulary.result_ordinary_snapshot(&ordinary);
-        // Exercise both an unseeded conditional state and a previously
-        // closed context whose core predates a newly registered term.
-        for conditional in [unseeded, source] {
-            let mut refreshed = ResultEvidence {
-                payload: CheckedType::Integer(IntegerType::I32),
-                route: PayloadRoute {
-                    variant: 0,
-                    field: 0,
-                    tag: 0,
-                },
-                success: true,
-                facts: conditional.clone(),
-                definitely_err: false,
-            };
-            assert!(refreshed.facts.numeric_core_terms() < ordinary.numeric_core_terms());
-            let mut imported = conditional;
-            // The former refresh loop is an independent reference for the union.
-            for (relation, parent) in ordinary.l0_candidates() {
-                if !relation.terms().iter().any(|term| {
-                    matches!(
-                        analyzer.vocabulary.terms.kind(*term),
-                        TermKind::ResultPayload { .. }
-                    )
-                }) {
-                    imported.establish_from_proof(
-                        &relation,
-                        parent,
-                        &analyzer.vocabulary.derivations,
-                    );
-                }
-            }
-            analyzer
-                .vocabulary
-                .refresh_result_from_snapshot(&mut refreshed, &ordinary);
-            assert!(closure_is_seeded(&refreshed.facts));
-            assert_eq!(
-                refreshed.facts.numeric_core_terms(),
-                ordinary.numeric_core_terms()
-            );
-            assert!(
-                refreshed
-                    .facts
-                    .l0_candidates()
-                    .iter()
-                    .all(|(relation, _)| { !relation.terms().contains(&foreign) })
-            );
-            for remove_calls in [false, true] {
-                if remove_calls {
-                    refreshed
-                        .facts
-                        .retain_non_postcondition_candidates(&analyzer.vocabulary.derivations);
-                    imported.retain_non_postcondition_candidates(&analyzer.vocabulary.derivations);
-                }
-                assert_eq!(candidates(&refreshed.facts), candidates(&imported));
-                let actual = close(
-                    &refreshed.facts,
-                    &analyzer.vocabulary.terms,
-                    &analyzer.vocabulary.goals,
-                    &mut analyzer.vocabulary.derivations,
-                );
-                let expected = close(
-                    &imported,
-                    &analyzer.vocabulary.terms,
-                    &analyzer.vocabulary.goals,
-                    &mut analyzer.vocabulary.derivations,
-                );
-                assert!(!actual.contradictory());
-                for left in analyzer.vocabulary.terms.ids() {
-                    for right in analyzer.vocabulary.terms.ids() {
-                        assert_eq!(
-                            actual.tight_bound(left, right),
-                            expected.tight_bound(left, right)
-                        );
-                        let distinct = Relation::Distinct {
-                            left,
-                            right,
-                            difference: 0,
-                        };
-                        assert_eq!(actual.derives(&distinct), expected.derives(&distinct));
-                    }
-                }
-                assert_eq!(actual.tight_bound(to, middle), Some(8));
-                assert_eq!(
-                    actual.tight_bound(from, middle),
-                    Some(if remove_calls { 5 } else { -1 })
-                );
-            }
-            let contradiction = analyzer
-                .vocabulary
-                .derivations
-                .intern(DerivationNode::ResultErr {
-                    statement: statement.clone(),
-                });
-            refreshed.facts = FactState::contradictory(contradiction);
-            refreshed.definitely_err = true;
-            analyzer
-                .vocabulary
-                .refresh_result_from_snapshot(&mut refreshed, &ordinary);
-            assert!(refreshed.facts.all_derivable);
-            assert_eq!(refreshed.facts.contradiction, Some(contradiction));
-            assert!(refreshed.definitely_err);
-        }
+        test(&mut analyzer.vocabulary);
     }
 }

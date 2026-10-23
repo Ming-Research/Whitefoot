@@ -94,7 +94,7 @@ structure Division where
   q : Nat
   dividend : Form
   divisor : Form
-  deriving Repr
+  deriving DecidableEq, Repr
 
 -- spec ENT-2 e83001c6850a4dc8
 -- spec ENT-6 a9a312a40fa3d1f0
@@ -139,13 +139,24 @@ structure Env where
   params : List (String × Nat)
   loops : List LoopCtx
 
+/-- What the walk knows on entering one statement: the bindings in scope,
+newest first as the interpreter's frame holds them, the fact state, and the
+atoms minted so far with their intervals. -/
+structure _root_.Whitefoot.Snapshot where
+  vars : List Var
+  state : State
+  atoms : List (Nat × Int × Int)
+  deriving Repr
+
 /-- The compiler-owned identities the walk mints: bindings, commit values,
 call datums and atoms share one counter. Each atom has an interval; a join's
-delta atoms are listed apart [ENT-6]. -/
+delta atoms are listed apart [ENT-6]. `points` records the snapshot taken on
+entering each statement the walk visits, by its position; it decides nothing. -/
 structure Gen where
   next : Nat := 0
   atoms : List (Nat × Int × Int) := []
   deltas : List Nat := []
+  points : List (Pos × Snapshot) := []
 
 abbrev M := StateT Gen Judge
 
@@ -474,6 +485,17 @@ def lin : Affine → Option Lin
 /-- A linear form with its zero coefficients removed. -/
 def Lin.clean (l : Lin) : Lin := (l.1, l.2.filter (·.2 != 0))
 
+-- spec FN-9 13f9ec57ad442ca0
+/-- The names a relation's sides carry once each side is normalized to its
+relation term [FN-9]: a name whose coefficients on one side cancel is not
+carried. A side with no linear form carries every name it writes. -/
+def relNames (r : Relation) : List String :=
+  let side (a : Whitefoot.Affine) : List String :=
+    match lin a with
+    | some l => l.clean.2.map (·.1)
+    | none => Affine.names a
+  side r.lhs ++ side r.rhs
+
 /-- A side whose form is one operand with coefficient one plus a constant, or
 a constant alone, as a term operand. -/
 def linTerm (look : String → Option (Term × Int)) (l : Lin) : Option (Term × Int) :=
@@ -686,10 +708,10 @@ def relHolds (env : Env) (g : Gen) (st : State) (r : Relation) : Bool :=
 -- spec ENT-6 84ec16d3c1d28660
 -- spec ENT-6 9d96d6d2ebb7dc6d
 /-- The join of the states reaching one merge [ENT-5, ENT-6]: the L0 join, the
-signed goals, links and premises identical on every non-contradictory input,
-stability where every input keeps it, each binding's joined image; then the
-transport of every enclosing loop's header relation that each such input
-proves. -/
+signed goals, links, premises, call datum images and captured divisions
+identical on every non-contradictory input, stability where every input keeps
+it, each binding's joined image; then the transport of every enclosing loop's
+header relation that each such input proves. -/
 def joinStates (env : Env) (inputs : List State) : M State := do
   let live := inputs.filter (!·.contra)
   match live with
@@ -705,11 +727,11 @@ def joinStates (env : Env) (inputs : List State) : M State := do
       l0 := Fact.join env.live (all.map (·.l0)),
       goals := commonTo rest (·.goals) first.goals,
       images,
-      data := (all.flatMap (·.data)).eraseDups,
+      data := commonTo rest (·.data) first.data,
       premises := commonTo rest (·.premises) first.premises,
       stable := commonTo rest (·.stable) first.stable,
       links := commonTo rest (·.links) first.links,
-      quotients := first.quotients ++ rest.flatMap (·.quotients) }
+      quotients := commonTo rest (·.quotients) first.quotients }
     let g ← get
     let headers := env.loops.reverse.flatMap (·.headers)
     let proved := headers.filter fun r => all.all fun s => relHolds env g s r
@@ -1234,8 +1256,8 @@ def evalRhs (env : Env) (st : State) (e : Expr) : M Rhs := do
 /-- Publish a call's verified postconditions [ENT-3.S12, ENT-3.S13, CALL-6]:
 each operand mints a call datum equal to its pre-transfer term, then, after
 `kill` applies the statement's own kills, each relation is established with
-its result at `dest` and each parameter at its datum. A relation naming the
-result needs a destination; one over a formal whose actual is a receiver
+its result at `dest` and each parameter at its datum. A relation whose
+normalized sides carry the result needs a destination; one over a formal whose actual is a receiver
 `skip` excludes is not published. -/
 def publish (env : Env) (st : State) (f : FnDecl) (args : List (String × Val))
     (dest : Option (Term × Form)) (skip : Option Nat) (kill : State → State) : M State := do
@@ -1252,7 +1274,7 @@ def publish (env : Env) (st : State) (f : FnDecl) (args : List (String × Val))
     | _, _, _ => pure ()
   st := kill st
   for r in f.ensures do
-    let names := (Affine.names r.lhs ++ Affine.names r.rhs)
+    let names := relNames r
     if names.contains f.result && dest.isNone then continue
     if let some x := skip then
       if names.any fun n => (args.find? (·.1 == n)).any fun (_, v) =>

@@ -3,11 +3,11 @@ import WhitefootProof.Syntax
 /-!
 # The checker's judgments without facts
 
-The first half of the fragment's checker: name resolution [TYPE-6, GRAM-11],
-statement-local typing [TYPE-5, OP-1, OP-2, OP-4, OP-5], the shape of a
-contract [FN-8], and statement reachability and completion over the structural
-control-flow graph [FN-1]. Each judgment fails with the rule a conforming
-checker cites. A program that passes them never makes the interpreter stop with
+The first half of the fragment's checker: literal ranges [FORM-7], name
+resolution [TYPE-6, GRAM-11], statement-local typing [TYPE-5, OP-1, OP-2,
+OP-4, OP-5], the shape of a contract [FN-8], and statement reachability and
+completion over the structural control-flow graph [FN-1]. Each judgment fails
+with the rule a conforming checker cites. A program that passes them never makes the interpreter stop with
 `illFormed`: every name resolves, every operand has the type its operation
 takes, and every loop exit resolves. The fact judgments (`Checker.lean`) run
 after these succeed.
@@ -71,10 +71,18 @@ def lookup (sc : Scope) (x : String) : Judge Ty :=
   | some (_, t) => .ok t
   | none => rejectBy "TYPE-6" s!"the name `{x}` is not in scope"
 
+-- spec FORM-7 c21702627a33020e
+-- spec FORM-7 a1daa343146d3542
+/-- A typed integer literal's value lies in its type [FORM-7]. The parser
+already rejects a literal outside it; the checker judges the tree, which need
+not come from the parser. -/
+def literalOk (t : IntTy) (v : Int) : Judge Unit :=
+  if decide (t.Mem v) then .ok () else rejectBy "FORM-7" s!"the literal {v} lies outside its type"
+
 /-- An atom's type: a literal carries its type, a name has its binding's type,
 and an element subscript selects an element of an `Array` by a `u64` offset. -/
 def atomTy (sc : Scope) : Atom → Judge Ty
-  | .int t _ => .ok (.int t)
+  | .int t v => do literalOk t v; .ok (.int t)
   | .unit => .ok .unit
   | .var x => lookup sc x
   | .index b off => do
@@ -179,7 +187,7 @@ def exprTy (p : Program) (sc : Scope) : Expr → Judge Ty
 one direct literal operand [INV-1]. `rule` is the rule that owns the position:
 INV-1 for an invariant, FN-8 for a requirement, FN-9 for a postcondition. -/
 def affineOk (rule : String) (sc : Scope) : Affine → Judge Unit
-  | .atom (.int _ _) => .ok ()
+  | .atom (.int t v) => literalOk t v
   | .atom (.var x) =>
     (match sc.find? (·.1 == x) with
     | some (_, .int _) => .ok ()
