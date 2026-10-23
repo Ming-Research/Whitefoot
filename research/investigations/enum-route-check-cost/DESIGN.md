@@ -1266,8 +1266,9 @@ whatever the verdict on `D`; it carries no verdict of its own.
 
 First attempt (run 39904694496): no measurement was made. The merge of main that
 brought in `dc2bd2f33` adds the PRE-1 record `clear` (specification v0.164),
-which the earlier timing runs, built before that merge, did not have. The pinned
-Firn library declares its own `clear` (`json/text/module.wfm:13`), and the merged
+which the earlier timing runs, built before that merge, did not have. The Halo
+library that the pinned Firn source uses (its `deps/halo-wf` submodule) declares
+its own `clear` (`lib/json/text/module.wfm:13` in that library), and the merged
 compiler rejects that as a collision with a prelude declaration [TYPE-6]. The
 adaptation step had no fix for that rejection, stopped after 0 fixes, and the
 build and round steps were skipped, while the job still ended green. That green
@@ -1306,8 +1307,9 @@ Median CPU seconds: base 87.43, twin 87.39, c431fix 85.30, main 107.43, branch
 - Verdict 2 of the rules above: `D` = 1.078 (1.066–1.084), every one of the 15
   rounds is above 1.03 (smallest 1.061). Measured against the main before #431,
   the Firn row is not met. The earlier medians on neighbouring trees and other
-  hosts (1.027, 1.067, 1.082, 1.029) lie around this interval; 1.029 was the low
-  end of them.
+  hosts (1.027, 1.067, 1.082, 1.029, five pairs each) lie around this interval;
+  the two of them at or below 1.03 (1.027 and 1.029) had per-round ranges that
+  reached 1.072 and 1.188.
 - `E` = 0.974 (0.968–0.984), every round at most 0.998: on the tree where #431
   landed, with this change applied, Firn is below its pre-#431 time. The
   direct column of the previous run (1.013 on another host) agrees in
