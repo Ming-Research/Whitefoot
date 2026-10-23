@@ -52,9 +52,9 @@ theorem reject_bind {α β : Type} {r m : String} (g : α → Judge β) :
 theorem ite_reject {α : Type} {c : Prop} {_ : Decidable c} {r m : String} {x : Judge α} {b : α}
     (h : (if c then rejectBy r m else x) = .ok b) : ¬c ∧ x = .ok b := by
   by_cases hc : c
-  · rw [if_pos hc] at h
+  · rw [ite_cond_eq_true _ _ (eq_true hc)] at h
     exact absurd h reject_ne
-  · rw [if_neg hc] at h
+  · rw [ite_cond_eq_false _ _ (eq_false hc)] at h
     exact ⟨hc, h⟩
 
 theorem discard_ok {ε α : Type} {x : Except ε α} {u : Unit} (h : Functor.discard x = .ok u) :
@@ -525,7 +525,7 @@ theorem namedArgs_ok {names : List String} {as : List (String × Atom)} {u : Uni
 theorem argTypes_cons {sc : Static.Scope} {p : Program} {a : Atom} {t : Ty}
     {rest : List (Atom × Ty)} {u : Unit} (h : Static.argTypes sc p ((a, t) :: rest) = .ok u) :
     Static.atomTy sc a = .ok (Static.normTy p t) ∧ Static.argTypes sc p rest = .ok () := by
-  simp only [Static.argTypes, reject_bind, pure_bind] at h
+  simp only [Static.argTypes, reject_bind] at h
   obtain ⟨ta, hta, h⟩ := bind_ok h
   obtain ⟨hne, h2⟩ := ite_reject h
   have heq : ta = Static.normTy p t := by simpa using hne
@@ -690,7 +690,7 @@ theorem stmts_cons {p : Program} {f : FnDecl} {c : Static.Ctx} {live : Bool} {s 
     live = true ∧ ∃ c' fl fr', Static.stmt p f c s = .ok (c', fl) ∧
       Static.stmts p f c' fl.normal ss = .ok fr' ∧
       fr = { normal := fr'.normal, breaks := Static.addBreaks fl.breaks fr'.breaks } := by
-  simp only [Static.stmts, reject_bind, pure_bind] at h
+  simp only [Static.stmts, reject_bind] at h
   obtain ⟨hl, h⟩ := ite_reject h
   refine ⟨by simpa using hl, ?_⟩
   obtain ⟨⟨c', fl⟩, h1, h⟩ := bind_ok h
@@ -712,7 +712,7 @@ theorem stmt_let {x : String} {e : Expr} (h : Static.stmt p f c (.let_ x e) = .o
 theorem stmt_set_var {x : String} {e : Expr} (h : Static.stmt p f c (.set (.var x) e) = .ok r) :
     ∃ t, Static.lookup c.scope x = .ok t ∧ Static.exprTy p c.scope e = .ok t ∧
       r = (c, { normal := true, breaks := [] }) := by
-  simp only [Static.stmt, reject_bind, pure_bind] at h
+  simp only [Static.stmt, reject_bind] at h
   obtain ⟨-, h⟩ := ite_reject h
   obtain ⟨t, ht, h⟩ := bind_ok h
   obtain ⟨te, hte, h⟩ := bind_ok h
@@ -725,7 +725,7 @@ theorem stmt_set_index {b : String} {off : Atom} {e : Expr}
     (h : Static.stmt p f c (.set (.index b off) e) = .ok r) :
     ∃ t, Static.atomTy c.scope (.index b off) = .ok t ∧ Static.exprTy p c.scope e = .ok t ∧
       r = (c, { normal := true, breaks := [] }) := by
-  simp only [Static.stmt, reject_bind, pure_bind] at h
+  simp only [Static.stmt, reject_bind] at h
   obtain ⟨-, h⟩ := ite_reject h
   obtain ⟨t, ht, h⟩ := bind_ok h
   obtain ⟨te, hte, h⟩ := bind_ok h
@@ -749,7 +749,7 @@ theorem stmt_call {e : Expr} (h : Static.stmt p f c (.call e) = .ok r) :
 theorem stmt_ret {e : Expr} (h : Static.stmt p f c (.ret e) = .ok r) :
     Static.exprTy p c.scope e = .ok (Static.normTy p f.resultTy) ∧
       r = (c, { normal := false, breaks := [] }) := by
-  simp only [Static.stmt, reject_bind, pure_bind] at h
+  simp only [Static.stmt, reject_bind] at h
   obtain ⟨te, hte, h⟩ := bind_ok h
   obtain ⟨hne, h2⟩ := ite_reject h
   have heq : te = Static.normTy p f.resultTy := by simpa using hne
@@ -761,7 +761,7 @@ theorem stmt_if {cond : Expr} {thn els : List Stmt} {he : Bool}
     ∃ a b, Static.exprTy p c.scope cond = .ok .bool ∧ Static.stmts p f c true thn = .ok a ∧
       Static.stmts p f c true els = .ok b ∧
       r = (c, { normal := a.normal || b.normal, breaks := Static.addBreaks a.breaks b.breaks }) := by
-  simp only [Static.stmt, reject_bind, pure_bind] at h
+  simp only [Static.stmt, reject_bind] at h
   obtain ⟨tc, htc, h⟩ := bind_ok h
   obtain ⟨hne, h⟩ := ite_reject h
   have heq : tc = .bool := by simpa using hne
@@ -778,14 +778,14 @@ theorem stmt_loop {label : Option String} {invs : List (String × Relation)} {bo
       r = (c, { normal := decide (fb.breaks.headD 0 > 0), breaks := fb.breaks.drop 1 }) := by
   cases label with
   | none =>
-    simp only [Static.stmt, reject_bind, pure_bind] at h
+    simp only [Static.stmt, reject_bind] at h
     obtain ⟨-, h⟩ := ite_reject h
     obtain ⟨_, -, h⟩ := bind_ok h
     obtain ⟨_, -, h⟩ := bind_ok h
     obtain ⟨fb, hfb, h⟩ := bind_ok h
     exact ⟨fb, hfb, (Except.ok.inj h).symm⟩
   | some l =>
-    simp only [Static.stmt, reject_bind, pure_bind] at h
+    simp only [Static.stmt, reject_bind] at h
     obtain ⟨-, h⟩ := ite_reject h
     obtain ⟨-, h⟩ := ite_reject h
     obtain ⟨_, -, h⟩ := bind_ok h
@@ -809,7 +809,7 @@ theorem stmt_cont {label : Option String} (h : Static.stmt p f c (.cont label) =
 theorem stmt_invariant {n : String} {rel : Relation}
     (h : Static.stmt p f c (.invariant n rel) = .ok r) :
     r = ({ c with invariants := n :: c.invariants }, { normal := true, breaks := [] }) := by
-  simp only [Static.stmt, reject_bind, pure_bind] at h
+  simp only [Static.stmt, reject_bind] at h
   obtain ⟨-, h⟩ := ite_reject h
   obtain ⟨_, -, h⟩ := bind_ok h
   exact (Except.ok.inj h).symm
@@ -830,7 +830,7 @@ theorem checkFn_inv {p : Program} {f : FnDecl} {u : Unit} (h : Static.checkFn p 
     (f.ensures = [] ∨ ∃ t, Static.normTy p f.resultTy = .int t ∧
       RelsOk "FN-9" ((f.result, .int t) :: paramScope p f) f.ensures) ∧
     ∃ fl, Static.stmts p f (initCtx p f) true f.body = .ok fl ∧ fl.normal = false := by
-  simp only [Static.checkFn, reject_bind, pure_bind] at h
+  simp only [Static.checkFn, reject_bind] at h
   obtain ⟨-, h⟩ := ite_reject h
   obtain ⟨_, -, h⟩ := bind_ok h
   obtain ⟨-, h⟩ := ite_reject h
