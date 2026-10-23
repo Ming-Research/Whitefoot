@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 The Linux and macOS packages are qualified by the getting started guide's own commands
+
+Nodes: compiler/downstream-releases
+
+Summary: A decision is added: the acceptance of a bundled release installs the Linux and macOS archives with the commands of their section of the getting started guide and builds and runs the guide's programs with the installed compiler, as the Windows decision already does for the Windows archive, instead of extracting the archive by the acceptance's own command. Only the download (replaced by a copy of the candidate) and, on macOS, `xcode-select --install` (the hosted image already holds the Command Line Tools) differ from what a reader runs. The guide's `apt-get` line becomes the only source of the Linux libraries the toolchain links against, so a library the guide forgets to list is missing in the clean container, apart from those that the check's own `python3` and `strace`, installed first, bring with them.
+
 ## 2026-10-22 An assignment evaluates its right-hand side before its target
 
 Nodes: language/ownership/reference-validity, compiler/checker-facts
