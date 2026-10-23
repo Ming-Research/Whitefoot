@@ -71,10 +71,10 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
         {
             records.insert(record.index(), *record);
         }
-        if let IrOperation::SharedWatch { test: Some(_), .. }
-        | IrOperation::WatchObject { test: Some(_), .. } = operation
+        if let IrOperation::SharedWatch { test: Some(test), .. }
+        | IrOperation::WatchObject { test: Some(test), .. } = operation
         {
-            tests.push(*result);
+            tests.push((*result, test));
         }
         let record = match operation {
             IrOperation::TableLockEntry { record, .. }
@@ -134,8 +134,18 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             key_set_scratch_name(result)
         ));
     }
-    for result in tests {
-        prelude.push_str(&super::wake::wake_test_storage(result));
+    for (result, test) in tests {
+        prelude.push_str(&super::wake::wake_test_storage(
+            result,
+            test.callback.is_some(),
+        ));
+        if test.callback.is_some() {
+            prelude.push_str(&format!(
+                "  {}.captures = alloca [{} x i64], align 8\n",
+                super::wake::wake_test_name(result),
+                test.values.len().saturating_sub(1).max(1),
+            ));
+        }
     }
     prelude
 }

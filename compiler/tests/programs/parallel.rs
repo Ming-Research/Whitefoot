@@ -4,11 +4,11 @@
 use std::process::{Command, Output};
 
 use super::support::{
-    build_program, build_program_from_fragments, compile_program, compile_program_with_overlap,
-    fixture_directory,
+    build_program, build_program_from_fragments, build_program_with_guard_counters, compile_program,
+    compile_program_with_overlap, fixture_directory,
 };
 use crate::support::run_command;
-use whitefoot::{FragmentGranularity, module_requires_parallel_runtime};
+use whitefoot::{FragmentGranularity, module_requires_parallel_runtime, split_module};
 
 /// The recursive corpus program publishes one byte sequence whatever the
 /// recursion budget cuts, and whatever width it was cut for.
@@ -423,6 +423,125 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
                 "drivers {drivers}, round {round}: {output:?}"
             );
         }
+    }
+}
+
+/// A multi-statement guard with an if, match and nested helper call captures
+/// each sequence separately. The writer changes an unrelated field before
+/// advancing written; refusing that relevant write leaves both contexts
+/// waiting and fails the shared harness's deadline/progress check. The C
+/// guard test separately guarantees registration before each false/true
+/// write; these source rendezvous do not expose watch-registration timing.
+#[test]
+fn full_helper_guard_callbacks_admit_relevant_writes_on_one_driver_and_on_two() {
+    let llvm = compile_program("helper_guard_wake.wf");
+    assert!(
+        llvm.as_str().contains(".wake_filter("),
+        "a multi-statement helper guard must register a callable filter"
+    );
+    let fragments = split_module(&llvm, FragmentGranularity::Function)
+        .expect("the guard callback remains splittable with its dependencies");
+    let registration = fragments
+        .iter()
+        .find(|fragment| {
+            fragment.lines().any(|line| {
+                line.contains("store ptr @") && line.contains(".wake_filter,")
+            })
+        })
+        .expect("one fragment registers the full guard callback");
+    let adapter_symbol = registration
+        .lines()
+        .find_map(|line| {
+            let (_, rest) = line.split_once("store ptr @")?;
+            let (symbol, _) = rest.split_once(", ptr ")?;
+            symbol.ends_with(".wake_filter").then_some(symbol)
+        })
+        .expect("the registration stores the callback function pointer");
+    assert!(
+        registration.lines().any(|line| {
+            line.starts_with("declare ") && line.contains(&format!("@{adapter_symbol}("))
+        }),
+        "registration records its function-pointer dependency: {registration}"
+    );
+    let adapter = fragments
+        .iter()
+        .find(|fragment| {
+            fragment.lines().any(|line| {
+                line.starts_with("define ") && line.contains(&format!("@{adapter_symbol}("))
+            })
+        })
+        .expect("the adapter has a definition in its own function fragment");
+    let thunk_symbol = adapter_symbol
+        .strip_suffix(".wake_filter")
+        .expect("adapter names its guard thunk");
+    assert!(
+        adapter.lines().any(|line| {
+            line.starts_with("declare ") && line.contains(&format!("@{thunk_symbol}("))
+        }) && adapter.contains(&format!("call i1 @{thunk_symbol}(")),
+        "adapter records and calls its guard thunk dependency: {adapter}"
+    );
+    let program = build_program(&llvm);
+    for drivers in ["1", "2"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
+        assert!(output.stdout.is_empty(), "drivers {drivers}: {output:?}");
+        assert!(output.stderr.is_empty(), "drivers {drivers}: {output:?}");
+    }
+}
+
+/// Count actual false re-parks, including the lowering and emitted guard.
+/// The helper has an early return and an Option match; its notice stays None,
+/// so it equals the inline comparison for every state this witness reaches.
+/// On one driver, the FIFO launch queue runs the waiter before the writer;
+/// neither child has enough immediate waits to reach the cooperative yield
+/// threshold first. The existing test clock makes the waiter older than the
+/// guard-turn threshold before the first write. With an absent filter, every
+/// unrelated write therefore reserves the object for the waiter: the writer's
+/// next acquisition must wait until the waiter has retried false and parked.
+/// Before helper-guard callbacks, the helper call had no derived filter and
+/// reported eight false re-parks and nine wakes; with the callback, the helper
+/// reports zero and one, as the inline filter does. No sleep, elapsed host time, callback-specific
+/// API or synthetic counter selects this result. Checking one wake also rejects
+/// a run that never registered the waiter before the final write made it ready.
+/// Argument count includes argv[0]. Distinct successful statuses (4 for inline,
+/// 0 for helper) verify mode selection independently of the counters; selecting
+/// inline in both runs must fail even when both counter reports would pass.
+#[test]
+fn helper_and_inline_guards_avoid_false_reparks_after_unrelated_writes() {
+    let llvm = compile_program("helper_guard_false_wakes.wf");
+    let clock = r#"
+#include <stdatomic.h>
+#include <stdint.h>
+
+uint64_t wf__guard_clock_ns(void) {
+    static _Atomic uint64_t now = UINT64_C(1);
+    return atomic_fetch_add_explicit(&now, UINT64_C(2000000), memory_order_relaxed);
+}
+"#;
+    let program = build_program_with_guard_counters(&llvm, clock);
+    let modes: [(&str, &[&[u8]], i32); 2] = [("inline", &[b"inline"], 4), ("helper", &[], 0)];
+    for (mode, arguments, expected_status) in modes {
+        let output =
+            program.run_with_settings_and_arguments(None, &[("WF_DRIVERS", "1")], arguments);
+        assert_eq!(
+            output.status.code(),
+            Some(expected_status),
+            "{mode}: selected guard and completed writes: {output:?}"
+        );
+        assert!(output.stdout.is_empty(), "{mode}: {output:?}");
+        let stderr = std::str::from_utf8(&output.stderr).expect("guard diagnostics are UTF-8");
+        let reports = stderr
+            .lines()
+            .filter_map(|line| line.strip_prefix("guard_counters,"))
+            .collect::<Vec<_>>();
+        assert_eq!(reports.len(), 1, "{mode}: one real counter report: {stderr}");
+        let counters = reports[0]
+            .split(',')
+            .map(|field| field.parse::<u64>().expect("guard counter is an integer"))
+            .collect::<Vec<_>>();
+        assert_eq!(counters.len(), 4, "{mode}: counter report shape: {stderr}");
+        assert_eq!(counters[1], 0, "{mode}: no false re-parks: {stderr}");
+        assert_eq!(counters[0], 1, "{mode}: only the final write wakes: {stderr}");
     }
 }
 

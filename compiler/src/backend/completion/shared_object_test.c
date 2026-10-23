@@ -1101,6 +1101,111 @@ static void wake_phase_end(void) {
         wf__shared_free(wake_object);
 }
 
+/* Full-guard callbacks share a function but each frame captures its own
+ * sequence. The older waiter needs 2, the younger 1. A write of 1 must leave
+ * the older watch linked, not wake it through the younger's captures. The
+ * younger's read-only success also must not pass a false notification on.
+ * A subsequent write of 2 proves that the retained watch was not lost. */
+typedef struct callback_frame {
+    test_frame base;
+    uint64_t sequence;
+    wf_wake_callback filter;
+} callback_frame;
+static void *callback_object;
+static unsigned callback_registered, callback_parks, callback_done;
+static unsigned callback_evaluations[3], callback_order[2];
+
+static int callback_guard(const void *state, const void *captures) {
+    return *(const uint64_t *)state >= *(const uint64_t *)captures;
+}
+
+static void callback_w_step(test_frame *f) {
+    callback_frame *frame = (callback_frame *)f;
+    if (f->begun == 0) {
+        f->begun = (int)++callback_registered;
+        atomic_store(&guard_now, (uint64_t)f->begun);
+        frame->sequence = f->begun == 1 ? 2u : 1u;
+        frame->filter = (wf_wake_callback){WF_WAKE_CALLBACK, {0u}, callback_guard, &frame->sequence};
+    }
+    unsigned id = (unsigned)f->begun;
+    if (wf__shared_acquire(callback_object, 1u, f)) return;
+    callback_evaluations[id] += 1u;
+    if (callback_guard(state_of(callback_object), &frame->sequence)) {
+        callback_order[callback_done++] = id;
+        wf__shared_unlock_unwritten(callback_object, 1u);
+        f->done = 1;
+        return;
+    }
+    callback_parks += 1u;
+    if (!wf__shared_watch(callback_object, 1u, f, &frame->filter))
+        fail("a callback watch without a write did not park (id, parks)", id, callback_parks);
+}
+
+static void *callback_start(void *argument) {
+    (void)argument;
+    callback_frame *frame = wf__context_frame_allocate(sizeof(*frame));
+    memset(frame, 0, sizeof(*frame));
+    frame->base.step = callback_w_step;
+    return frame;
+}
+
+static void callback_r_step(test_frame *f) {
+    if (f->begun == 0) {
+        if (callback_parks != 2u)
+            fail("callback watches did not park before the writer (parks, expected)", callback_parks, 2u);
+        atomic_store(&guard_now, 10u);
+        if (wf__shared_acquire(callback_object, 1u, f))
+            fail("callback writer unexpectedly waited (done, parks)", callback_done, callback_parks);
+        *state_of(callback_object) = 1u;
+        uint64_t ready = atomic_load(&watch_ready);
+        uint64_t tested = atomic_load(&watch_tested);
+        wf__shared_unlock(callback_object, 1u);
+        if (atomic_load(&watch_ready) - ready != 1u || atomic_load(&watch_tested) - tested != 2u)
+            fail("callback write did not test both captures and wake only the true one (ready, tested)",
+                 atomic_load(&watch_ready) - ready, atomic_load(&watch_tested) - tested);
+        f->begun = 1;
+    }
+    while (callback_done != 1u) {
+        if (++f->statements > WAKE_PASSES)
+            fail("true callback waiter did not finish (done, parks)", callback_done, callback_parks);
+        if (wf__context_pass(f)) return;
+    }
+    if (callback_order[0] != 2u || callback_evaluations[1] != 1u || callback_parks != 2u)
+        fail("false callback waiter resumed or reparks after unrelated readiness (first, older evaluations)",
+             callback_order[0], callback_evaluations[1]);
+    if (wf__shared_acquire(callback_object, 1u, f))
+        fail("callback writer retained a notification (done, parks)", callback_done, callback_parks);
+    *state_of(callback_object) = 2u;
+    uint64_t ready = atomic_load(&watch_ready);
+    wf__shared_unlock(callback_object, 1u);
+    if (atomic_load(&watch_ready) - ready != 1u)
+        fail("retained callback watch missed its satisfying write (ready, expected)",
+             atomic_load(&watch_ready) - ready, 1u);
+    f->done = 1;
+}
+
+static void callback_phase_begin(test_frame *root) {
+    atomic_store(&guard_now, 1u);
+    callback_registered = callback_parks = callback_done = 0u;
+    memset(callback_evaluations, 0, sizeof(callback_evaluations));
+    memset(callback_order, 0, sizeof(callback_order));
+    callback_object = wf__shared_new(sizeof(uint64_t));
+    *state_of(callback_object) = 0u;
+    for (unsigned index = 0u; index < 2u; ++index) {
+        void *argument = wf__context_prepare(1u);
+        wf__context_launch(root->group, argument, callback_start);
+    }
+    launch(root, callback_r_step);
+}
+
+static void callback_phase_end(void) {
+    if (callback_done != 2u || callback_order[1] != 1u || callback_parks != 2u
+        || callback_evaluations[1] != 2u || callback_evaluations[2] != 2u)
+        fail("callback watches missed a true state or retried a false state (done, parks)",
+             callback_done, callback_parks);
+    if (wf__shared_release(callback_object)) wf__shared_free(callback_object);
+}
+
 /* A write while another context owns the object's notification (bridge.c's
  * lost-wake guard): such a write cannot pass the notification on, so it marks
  * a rescan when a watch whose test it made true lies where the owner's pass
@@ -1551,6 +1656,9 @@ static void root_step(test_frame *f) {
             } else if (!strcmp(selected_case, "wake") || !strcmp(selected_case, "wake-aged")) {
                 root_phase = !strcmp(selected_case, "wake") ? 7 : 8;
                 wake_phase_begin(f, root_phase == 8);
+            } else if (!strcmp(selected_case, "wake-callback")) {
+                root_phase = 12;
+                callback_phase_begin(f);
             } else if (!strcmp(selected_case, "rescan") || !strcmp(selected_case, "rescan-late")) {
                 root_phase = !strcmp(selected_case, "rescan") ? 9 : 10;
                 rescan_phase_begin(f, root_phase == 10);
@@ -1651,6 +1759,16 @@ static void root_step(test_frame *f) {
     }
     if (root_phase == 11) {
         borrowed_phase_end();
+        if (selected_case != NULL) {
+            f->done = 1;
+            return;
+        }
+        root_phase = 12;
+        callback_phase_begin(f);
+        if (wf__context_join_wait(f->group, f)) return;
+    }
+    if (root_phase == 12) {
+        callback_phase_end();
         f->done = 1;
         return;
     }

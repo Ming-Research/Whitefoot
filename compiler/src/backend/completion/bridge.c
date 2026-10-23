@@ -1236,7 +1236,7 @@ struct wf_watch_link {
     /* Object links only, NULL on a table's list: the link's wake test, in the
      * watching frame, never NULL there; and, on its bucket's newest link,
      * that bucket's place in the object's chain of buckets. */
-    const wf_wake_test *test;
+    const void *test;
     wf_watch_link *bucket_next;
     wf_watch_link **bucket_back;
 };
@@ -1261,6 +1261,9 @@ _Static_assert(_Alignof(wf_watch) == WF_WATCH_ALIGN, "WF_WATCH_ALIGN is a watch'
 _Static_assert(sizeof(wf_wake_atom) == 24u, "a wake atom is 24 bytes");
 _Static_assert(sizeof(wf_wake_test) == WF_WAKE_TEST_SIZE, "WF_WAKE_TEST_SIZE is a wake test's size");
 _Static_assert(offsetof(wf_wake_test, atoms) == 8u, "a wake test's atoms follow its program");
+_Static_assert(sizeof(wf_wake_callback) == WF_WAKE_CALLBACK_SIZE, "a wake callback is 24 bytes");
+_Static_assert(offsetof(wf_wake_callback, evaluate) == 8u, "a wake callback's function follows its tag");
+_Static_assert(offsetof(wf_wake_callback, captures) == 16u, "a wake callback's captures follow its function");
 _Static_assert(offsetof(wf_watch_link, next) == 0u, "a link's back pointer names its predecessor");
 
 /* A statement that cannot park and missed its object keeps this record on
@@ -3144,12 +3147,25 @@ static int wf_guard_before(const wf_context *left, const wf_context *right) {
  * statement first) through `next`, each link's `back` naming its
  * predecessor's `next`, and its newest link, whose `next` is its oldest,
  * carries the bucket's place in the object's chain of buckets, which
- * `watching` heads.  The links of one bucket have byte-identical tests, so
+ * `watching` heads. Atom tests in a bucket are byte-identical; callback
+ * tests share only the identical descriptor pointer and its captures, so
  * a releaser evaluates each bucket's test once, on its newest link's copy,
  * and the oldest watch whose test holds is the oldest head among the
  * buckets whose test holds.  Every access is under wf_watch_lock; the test
  * bytes stay in the watching frame, unchanged while the link is linked. */
 static const wf_wake_test wf_wake_always = {0u, {0u}, {{0u, 0u, 0u, 0u, 0u, 0u, {0u}}}};
+
+static int wf_wake_is_callback(const void *test) {
+    return *(const uint8_t *)test == WF_WAKE_CALLBACK;
+}
+
+/* Validate the fixed callback descriptor without treating its tag as an atom
+ * program length. Compiler eligibility guarantees the callback's purity. */
+static void wf_wake_validate_callback(const wf_wake_callback *test) {
+    for (unsigned index = 0u; index < sizeof(test->reserved); ++index)
+        if (test->reserved[index] != 0u) wf_bridge_fail("a wake callback's reserved byte is nonzero");
+    if (test->evaluate == NULL) wf_bridge_fail("a wake callback has no function");
+}
 
 /* How many atoms a valid program reads; fails on a malformed test, which
  * only a defective compiler emits. */
@@ -3189,9 +3205,12 @@ static size_t wf_wake_bytes(const wf_wake_test *test) {
     return offsetof(wf_wake_test, atoms) + (size_t)used * sizeof(wf_wake_atom);
 }
 
-static int wf_wake_same(const wf_wake_test *left, const wf_wake_test *right) {
-    size_t bytes = wf_wake_bytes(left);
-    return bytes == wf_wake_bytes(right) && memcmp(left, right, bytes) == 0;
+static int wf_wake_same(const void *left, const void *right) {
+    if (wf_wake_is_callback(left) || wf_wake_is_callback(right)) return left == right;
+    const wf_wake_test *left_atoms = (const wf_wake_test *)left;
+    const wf_wake_test *right_atoms = (const wf_wake_test *)right;
+    size_t bytes = wf_wake_bytes(left_atoms);
+    return bytes == wf_wake_bytes(right_atoms) && memcmp(left, right, bytes) == 0;
 }
 
 static uint64_t wf_wake_load(const unsigned char *state, uint32_t offset, unsigned width,
@@ -3234,13 +3253,18 @@ static int wf_wake_atom_holds(const wf_wake_atom *atom, const unsigned char *sta
 
 /* Whether the test holds in the object's state, which the caller's hold or
  * the object's lock keeps still. */
-static int wf_wake_holds(const wf_wake_test *test, const wf_shared *shared) {
+static int wf_wake_holds(const void *descriptor, const wf_shared *shared) {
     const unsigned char *state = (const unsigned char *)shared + WF_SHARED_STATE_OFFSET;
     uint32_t values = 0u;
     WF_GUARD_COUNT(WF_GUARD_COUNT_TEST_EVALUATED);
 #if WF_GUARD_TEST_HOOKS
     wf__watch_seen(WF_WATCH_TESTED);
 #endif
+    if (wf_wake_is_callback(descriptor)) {
+        const wf_wake_callback *callback = (const wf_wake_callback *)descriptor;
+        return callback->evaluate(state, callback->captures) != 0;
+    }
+    const wf_wake_test *test = (const wf_wake_test *)descriptor;
     if (test->length == 0u) return 1;
     for (unsigned index = 0u; index < test->length; ++index) {
         unsigned code = test->program[index];
@@ -3281,7 +3305,7 @@ static void wf_bucket_link_before(wf_watch_link *link, wf_watch_link *place) {
 /* Registers `link` of `self`'s watch in the bucket of its test, at its key's
  * place: a new statement is the newest, so it costs one comparison; a false
  * retry keeps its age and is placed by a walk from the bucket's oldest. */
-static void wf_bucket_insert(wf_shared *shared, wf_watch_link *link, const wf_wake_test *test,
+static void wf_bucket_insert(wf_shared *shared, wf_watch_link *link, const void *test,
                              const wf_context *self) {
     wf_watch_link *newest = shared->watching;
     while (newest != NULL && !wf_wake_same(newest->test, test)) newest = newest->bucket_next;
@@ -3346,7 +3370,7 @@ static int wf_watch_on_unit(const wf_watch *watch, const uint32_t *count) {
  * or a table's when `object` is NULL.  A watch already woken is registered
  * no further, since its park answers at once. */
 static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head,
-                        wf_shared *object, const wf_wake_test *test) {
+                        wf_shared *object, const void *test) {
     wf_context *self = wf_context_current;
     wf_watch_chunk *fresh = NULL;
     if (self == NULL || watch == NULL || watch->context != self) {
@@ -3355,9 +3379,13 @@ static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head,
     if (object != NULL) {
         if (test == NULL) test = &wf_wake_always;
         /* The permanent never state has no pool block; nothing bounds it. */
-        (void)wf_wake_used(test, object->pool_bytes > WF_SHARED_STATE_OFFSET
-                                     ? (uint64_t)(object->pool_bytes - WF_SHARED_STATE_OFFSET)
-                                     : UINT64_MAX);
+        if (wf_wake_is_callback(test)) {
+            wf_wake_validate_callback((const wf_wake_callback *)test);
+        } else {
+            (void)wf_wake_used((const wf_wake_test *)test, object->pool_bytes > WF_SHARED_STATE_OFFSET
+                                         ? (uint64_t)(object->pool_bytes - WF_SHARED_STATE_OFFSET)
+                                         : UINT64_MAX);
+        }
     }
     for (;;) {
         wf_watch_link *link;
@@ -4497,7 +4525,7 @@ void wf__shared_unlock_unwritten(void *object, uint32_t write) {
 void wf__watch_object(void *watch, void *object, const void *test) {
     wf_shared *shared = (wf_shared *)object;
     wf_watch_on((wf_watch *)watch, &shared->watched, &shared->watching, shared,
-                (const wf_wake_test *)test);
+                test);
 }
 
 /* A guard that read only the object registers the context's own watch; one
@@ -4517,7 +4545,7 @@ int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test
         watch = &self->shared_watch;
         wf__watch_begin(watch);
     }
-    wf_watch_on(watch, &shared->watched, &shared->watching, shared, (const wf_wake_test *)test);
+    wf_watch_on(watch, &shared->watched, &shared->watching, shared, test);
     self->shared_woken = 0u;
     self->shared_holds -= 1u;
     wf_spin_lock(&shared->lock);
