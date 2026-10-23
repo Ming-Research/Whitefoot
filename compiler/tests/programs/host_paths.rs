@@ -180,6 +180,7 @@ fn windows_links(program: &CompiledProgram, fixture: &Path, elsewhere: &Path, na
     let real_data = real.join("data");
     std::fs::create_dir_all(&real_data).expect("create the linked tree");
     let junction = |link: &Path, target: &Path| {
+        #[allow(clippy::disallowed_methods, reason = "host tool, not a test program")]
         let made = Command::new("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(link)

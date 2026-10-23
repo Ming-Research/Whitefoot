@@ -79,7 +79,7 @@ through its declared row and contract; the caller does not unfold its body.
 ## Current repair
 
 The checker again invalidates window selections at direct prelude
-`take_back` and `remove_at` calls. It retains unconditional origin-shift and
+`take_back`, `remove_at` and `clear` calls. It retains unconditional origin-shift and
 proper-prefix invalidation. Other supported boundary calls retain the
 ordinary post-call proof query, including admitted direct-result publication.
 

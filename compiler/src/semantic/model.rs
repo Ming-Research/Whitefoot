@@ -3828,6 +3828,12 @@ impl FunctionMentions {
                     ..
                 } => {
                     self.types.extend(targets.iter().map(|t| t.state));
+                    // A key-set target builds an Entries descriptor when it
+                    // acquires the map, even if only erased proofs name it.
+                    self.types.extend(targets.iter().filter_map(|target| {
+                        matches!(target.kind, CheckedTargetKind::MapSet(_))
+                            .then_some(target.referent)
+                    }));
                     for key in targets
                         .iter()
                         .flat_map(crate::semantic::CheckedTarget::expressions)

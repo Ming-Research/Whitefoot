@@ -83,18 +83,33 @@ impl Toolchain {
     }
 
     /// Every compile, probe and assembly command starts here.
+    ///
+    /// On Windows it names the emitted target explicitly, so a clang whose
+    /// default target is MSVC compiles the runtime and the module for the
+    /// same MinGW ABI the module's `target triple` states, rather than
+    /// whichever ABI that clang was configured for.
     pub fn command(&self) -> Command {
         let mut command = Command::new(&self.clang);
+        #[cfg(target_os = "windows")]
+        {
+            let mut target = OsString::from("--target=");
+            target.push(crate::target::WINDOWS_X86_64_TRIPLE);
+            command.arg(target);
+        }
         if let Some(sdk) = &self.sdk {
             command.arg("-isysroot").arg(sdk);
         }
         command
     }
 
-    /// Link selection applies only to packaged tools; source builds retain
+    /// On Windows every link runs LLD's MinGW driver, since the GNU target's
+    /// default linker would otherwise be whatever `ld` clang finds. Elsewhere
+    /// linker selection applies only to packaged tools; source builds retain
     /// their existing ordinary and LTO linker flags unchanged.
     pub fn link_command(&self) -> Command {
         let mut command = self.command();
+        #[cfg(target_os = "windows")]
+        command.arg("-fuse-ld=lld");
         if let Some(linker) = &self.linker {
             #[cfg(target_os = "linux")]
             command.arg("-fuse-ld=lld");
@@ -109,6 +124,7 @@ impl Toolchain {
     /// version line. Length prefixes preserve native OS path bytes unambiguously.
     pub fn cache_identity(&self) -> Result<[u8; 32], String> {
         let version = self.version.get_or_init(|| {
+            #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
             let output = Command::new(&self.clang)
                 .arg("--version")
                 .output()
@@ -178,7 +194,20 @@ fn configure_platform(toolchain: &mut Toolchain, _directory: &Path) -> Result<()
     Ok(())
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(target_os = "windows")]
+fn configure_platform(toolchain: &mut Toolchain, directory: &Path) -> Result<(), String> {
+    // As on Linux, lld selects its driver from argv[0]: `ld.lld` is the GNU
+    // driver, which hands a `-m i386pep` link to its MinGW driver. Keep the
+    // alias spelling for clang's --ld-path; the MinGW headers, import
+    // libraries and compiler-rt builtins are found by the bundled clang
+    // relative to its own directory.
+    let alias = directory.join("ld.lld.exe");
+    executable_path(&alias, "packaged lld GNU driver alias ld.lld.exe")?;
+    toolchain.linker = Some(alias);
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn configure_platform(_toolchain: &mut Toolchain, _directory: &Path) -> Result<(), String> {
     Ok(())
 }
@@ -267,6 +296,7 @@ fn xcrun_path(argument: &str, component: &str) -> Result<PathBuf, String> {
     if argument == "--find" {
         command.arg("ld");
     }
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let output = command.output().map_err(|error| {
         macos_help(format!(
             "cannot discover {component} with {command:?}: {error}"

@@ -220,7 +220,7 @@ fn whole_referent_assignment_kills_the_old_window_facts() {
     // v0.59 wrote this as `let old = replace deref(values) = move empty;`.
     // [SET-1] with [WIN-3]'s disposition is the successor: the assignment
     // releases the displaced affine window instead of reading it out.
-    let source = r#"fn clear(values: &Slots<u64, 4>) -> result: unit writes(values) {
+    let source = r#"fn wipe(values: &Slots<u64, 4>) -> result: unit writes(values) {
   let empty = slots_new::<u64, 4>();
   set values^ = move empty;
   return unit;
@@ -229,7 +229,7 @@ fn whole_referent_assignment_kills_the_old_window_facts() {
 fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u64, 4>();
   place_back(window: &values, value: 7_u64);
-  clear(values: &values);
+  wipe(values: &values);
   let last = take_back(window: &values);
   return std::process::exit_status(code: 0_u8);
 }

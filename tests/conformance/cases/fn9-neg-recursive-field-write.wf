@@ -2,12 +2,12 @@ struct Cell {
   value: u64;
 }
 
-fn clear(out: &Cell, depth: u64) -> done: unit writes(out) contract {
+fn wipe(out: &Cell, depth: u64) -> done: unit writes(out) contract {
   ensures out^.value == 0_u64;
 } {
   if depth > 0_u64 {
     let next = depth - 1_u64;
-    clear(out: out, depth: next);
+    wipe(out: out, depth: next);
     set out^.value = 1_u64;
     return unit;
   }

@@ -167,6 +167,16 @@ the work-branch and merge boundary.
   attribution, Q155 comparison of join reduction, affine-index reuse and
   backward proof queries, the lazy-index differentials, historical M5 reuse results, and the
   manual base/twin/head timing panel on the CI 14900K runner.
+- [Machine-checked soundness of the specification](investigations/spec-proof/DESIGN.md):
+  the rule-level defects that motivate a proof, which rules carry each safety
+  claim, three proof assistants and five modeling approaches compared, the
+  same-work check that keeps a Lean model in step with the specification, the
+  first phase's fragment, theorem and cost.
+- [Specification version churn](investigations/spec-version-churn/README.md):
+  why open amendments of the specification renumbered, re-archived and
+  repaired the change log each time another merged (112 of 307 merges of main
+  over 62 amendments), the alternatives compared, and what would reject the
+  version derived from the log.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are on the

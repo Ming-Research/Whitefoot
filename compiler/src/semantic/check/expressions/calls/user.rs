@@ -485,7 +485,7 @@ impl<'unit> Checker<'_, 'unit> {
                             }
                             super::super::super::references::ReferenceValidity::Valid => "",
                         },
-                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN,
+                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN.to_owned(),
                     },
                 );
             }
@@ -749,12 +749,15 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .invalidate_window_operation_references(node, signature, &substituted, bindings)?;
         self.project_call_effects(
+            FunctionContext {
+                check_context,
+                function,
+            },
             node,
-            function,
             &substituted,
             bindings,
             &mut effects,
-            formal.is_none().then_some(signature.parameters.as_slice()),
+            (signature, formal.is_none()),
         )?;
         if formal.is_none() && self.body.repair_calls.is_some() {
             let call = self.effect_repair_call(
@@ -943,7 +946,9 @@ impl<'unit> Checker<'_, 'unit> {
         let Some([first]) = actual_paths.first().map(Vec::as_slice) else {
             return Ok(None);
         };
-        if *first != target {
+        // Both are resolved before any effect of the call, so equal offset
+        // terms denote one value.
+        if first.clone().term_identity() != target.clone().term_identity() {
             return Ok(None);
         }
         for entry in entries {
@@ -1233,14 +1238,15 @@ impl<'unit> Checker<'_, 'unit> {
     /// atomic statement's binder contributes its path for that statement,
     /// which removes it [SHARE-3].
     fn project_call_effects(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
-        caller: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         effects: &mut EffectSet,
-        retained_reference_parameters: Option<&[ParameterSignature]>,
+        (signature, retain_reference_parameters): (&FunctionSignature, bool),
     ) -> Result<(), CheckStop> {
+        let caller = context.function;
         for entry in entries {
             for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
                 if !caller
@@ -1251,8 +1257,20 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     continue;
                 }
-                if retained_reference_parameters
-                    .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)
+                if entry.write && self.body.rewritten_index_repair.is_none() {
+                    self.body.rewritten_index_repair = self
+                        .rewritten_index_repair(
+                            context,
+                            node,
+                            &entry.place,
+                            bindings,
+                            Some(signature),
+                        )
+                        .ok()
+                        .flatten();
+                }
+                if retain_reference_parameters
+                    && signature.parameters[entry.argument].mode != CheckedMode::Own
                 {
                     if !self.types.effect_repairs.is_capture() {
                         if entry.write {
@@ -1962,8 +1980,12 @@ impl<'unit> TypeContext<'unit> {
 impl<'unit> TypeContext<'unit> {
     /// [OP-10] retain each potentially affected selection's formation bound
     /// as a post-call preservation query where OP-10 permits survival.
-    /// Canonical take_back/remove_at, Ring origin shifts and ordinary
-    /// prefix writes retain their unconditional invalidations [REF-2].
+    /// Canonical take_back/remove_at, `clear`, Ring origin shifts and
+    /// ordinary prefix writes retain their unconditional invalidations
+    /// [REF-2]; `clear` ends every element's lifetime, so every reference
+    /// into its window dies, an empty range included [OP-10].
+    /// Only written entries identify an operated window: a by-value
+    /// argument contributes a read, which ends no reference's bound [EFF-5].
     fn invalidate_window_operation_references(
         &self,
         node: NodeId,
@@ -1971,7 +1993,7 @@ impl<'unit> TypeContext<'unit> {
         entries: &[SubstitutedEntry],
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
-        const BOUND_CHANGING_ROWS: [&str; 8] = [
+        const BOUND_CHANGING_ROWS: [&str; 9] = [
             "take_back",
             "remove_at",
             "append",
@@ -1980,6 +2002,7 @@ impl<'unit> TypeContext<'unit> {
             "take_front",
             "grow",
             "grow_paged",
+            "clear",
         ];
         let prelude = self.declarations.tree.is_prelude_node(signature.node)?;
         let site = self.declarations.tree.path(node)?;
@@ -2012,11 +2035,14 @@ impl<'unit> TypeContext<'unit> {
             };
             let shifts_origin =
                 prelude && matches!(signature.name.as_str(), "place_front" | "take_front");
-            // OP-10 explicitly invalidates selections at these two removal
+            // OP-10 explicitly invalidates selections at these removal
             // operations, even if other facts prove their old bound. A source
             // helper is judged by its own row and published postconditions.
-            let removes_selection =
-                prelude && matches!(signature.name.as_str(), "take_back" | "remove_at");
+            let removes_selection = prelude
+                && matches!(
+                    signature.name.as_str(),
+                    "take_back" | "remove_at" | "clear"
+                );
             if shifts_origin || removes_selection {
                 Checker::invalidate_window_references(bindings, &window, shifts_origin);
             } else {

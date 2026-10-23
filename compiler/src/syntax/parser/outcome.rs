@@ -305,14 +305,20 @@ impl ExpectedBuilder {
 ///
 /// Most repairs are fixed by the grammar position alone. A qualified path
 /// written where a value stands is repaired by the alias that binds its final
-/// name [MOD-4, MOD-5], so that repair names the path the source wrote and its
-/// words are formed from the source bytes when the rejection is rendered.
+/// name [MOD-4, MOD-5], and a name written with a fixed grammar word is
+/// repaired by renaming it [FORM-3], so those repairs name what the source
+/// wrote and their words are formed from the source bytes when the rejection
+/// is rendered.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyntaxRepair {
     /// A sentence the grammar position fixes on its own.
     Fixed(&'static str),
     /// The alias that binds a qualified path's final name.
     QualifiedValue(QualifiedValuePath),
+    /// The rename that frees a name written with a fixed grammar word: the
+    /// coordinate of that word, whose sentence says what in the grammar
+    /// takes it and suggests a spelling the source does not write.
+    ReservedName(SyntaxCoordinate),
 }
 
 impl SyntaxRepair {
@@ -323,6 +329,14 @@ impl SyntaxRepair {
         match self {
             Self::Fixed(sentence) => Some(sentence.to_owned()),
             Self::QualifiedValue(path) => path.sentence(source),
+            Self::ReservedName(name) => {
+                let start = usize::try_from(name.start().value()).ok()?;
+                let end = usize::try_from(name.end().value()).ok()?;
+                let spelling = core::str::from_utf8(source.get(start..end)?).ok()?;
+                crate::diagnostic_repairs::reserved_name_fix(spelling, |candidate| {
+                    crate::diagnostic_repairs::source_word(source, candidate)
+                })
+            }
         }
     }
 
@@ -332,6 +346,7 @@ impl SyntaxRepair {
         match self {
             Self::Fixed(_) => None,
             Self::QualifiedValue(path) => Some(path.source),
+            Self::ReservedName(name) => Some(name.source()),
         }
     }
 }
@@ -422,6 +437,9 @@ impl fmt::Debug for SyntaxIssue {
             }
             Some(SyntaxRepair::QualifiedValue(path)) => {
                 record.field("mechanical_fix", &path);
+            }
+            Some(SyntaxRepair::ReservedName(name)) => {
+                record.field("mechanical_fix", &name);
             }
             None => {}
         }

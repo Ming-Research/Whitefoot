@@ -1,0 +1,32 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn reset(index: &u64) -> result: u64 writes(index) contract {
+  ensures index^ == 0_u64;
+} {
+  doc "Sets the index to 0 and returns the value the caller stores.";
+  set index^ = 0_u64;
+  return 9_u64;
+}
+
+fn write_slot(window: &Slots<u64, 4>, index: u64) -> result: unit writes(window[index]) contract {
+  requires index < window^.len;
+} {
+  doc "The right-hand side sets index to 0 before SET-1 evaluates the target, so index no longer holds its call value there.";
+  set window^[index] = reset(index: &index);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "EFF-1, EFF-2, SET-1: the same-statement form of set1-neg-row-index-write-after-index-parameter-write. The target is evaluated after the right-hand side wrote index, so window^[index] is element 0, not the row's window[index], and the set is refused.";
+  let r = slots_new::<u64, 4>();
+  place_back(window: &r, value: 1_u64);
+  place_back(window: &r, value: 2_u64);
+  let p = &r[0_u64];
+  write_slot(window: &r, index: 1_u64);
+  let seen = p^;
+  if seen == 1_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

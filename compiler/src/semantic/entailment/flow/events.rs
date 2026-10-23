@@ -162,8 +162,8 @@ impl Input<'_, '_> {
     /// [OWN-7].
     ///
     /// A written place that names a measure word of P -- `writes(window.len)`
-    /// in an [OP-10] row, which [WIN-2] states "is itself a write target and
-    /// overlaps no slot" -- does not contain P, and the containment above
+    /// in an [OP-10] row, which [WIN-2] states is a descriptor word an effect
+    /// row may write and overlaps no slot -- does not contain P, and the containment above
     /// alone would let the pre-call relations of P survive the operation that
     /// changes them. Such a write reaches exactly the word it names, because
     /// [EFF-2]'s both-ways check is what admits the row: a body that changed
@@ -1236,11 +1236,33 @@ impl Reasoning<'_, '_, '_> {
         events: &[KillEvent],
         shared_event: Option<FlowEventId>,
     ) {
+        self.invalidate_lost_headers(separations, states, events);
         let removed = self.apply_kills_one(separations, &mut states.facts, events);
         self.record_measure_kills(separations, states, events, &removed);
         self.apply_affine_kills(separations, &mut states.affine, events);
         self.invalidate_entry_images(states, separations, events, shared_event);
         states.record_writes(events);
+    }
+
+    /// Diagnostic relations describe the images at their failed join. Keep
+    /// them across unrelated writes, and discard them when that support dies.
+    pub(super) fn invalidate_lost_headers(
+        &self,
+        separations: &dyn SeparationOracle,
+        states: &mut ProofFlowState,
+        events: &[KillEvent],
+    ) {
+        states.lost_headers.retain(|loss| {
+            !events.iter().any(|event| {
+                event.root_binding().is_some_and(|binding| loss.bindings.contains(&binding))
+                    || loss.support.iter().any(|kind| {
+                        self.vocabulary
+                            .terms
+                            .interned(kind)
+                            .is_none_or(|term| self.event_kills_term(separations, term, event))
+                    })
+            })
+        });
     }
 
     /// [WIN-2, ENT-5] the indices the entry state of `events` proves live,

@@ -32,8 +32,9 @@ of those is probably not the next work.
 
 The active specification `spec/kernel-spec.md`, including its normative worked
 example, defines the language and toolchain judgments, and the conformance
-results state what the compiler implements. Compiler behavior, tests,
-archived code and design prose do not define the language.
+results state what the compiler implements. Compiler behavior, tests, the
+Lean model under `proof/`, archived code and design prose do not define the
+language.
 `docs/constitution.md` owns purpose, objectives, tradeoffs and conditional
 design principles.
 
@@ -89,6 +90,8 @@ Whitefoot's extra merge preconditions:
    pull request states what changed and its selection ground, answered
    against the exact revision being merged. The specification's bytes are its
    identity, the released archives are immutable, and git is the history.
+6. When the merge changes `spec/kernel-spec.md`, `proof/` or the conformance
+   cases, `proof.yml` passes on the exact revision being merged.
 
 **Conformance evidence** is `tests/conformance` case source and manifest
 content, its runner and adapter, gate-integrity tests, and any collection or
@@ -99,24 +102,29 @@ read.
 
 - The active specification `spec/kernel-spec.md` is editable on a work branch;
   released `spec/kernel-spec-vN.md` archives are immutable, and
-  `compiler/build.rs` derives the active identity from its bytes. A branch's
-  amendment lands as one change:
-  1. Archive once per branch: with the local `main` current, copy the base's
-     active bytes to the archive named by their title token, for a base
-     titled `# Kernel Specification v0.69`
-     `git show "$(git merge-base main HEAD)":spec/kernel-spec.md > spec/kernel-spec-v0.69.md`.
-  2. Retitle the active file to the next version, `v0.70`, or `v1.0` for a
-     major revision.
-  3. Edit the rules under the bullets below.
-  4. If `main` advanced the version meanwhile, merging it conflicts on the
-     title: keep main's text, reapply this branch's rule changes, archive
-     main's active bytes under main's version and retitle to the next one.
-  5. In the same change, add the `spec/log.md` entry naming every rule
-     added, changed or retired.
+  `compiler/build.rs` derives the active identity from its bytes. The file
+  carries no version and an amendment adds no archive, so two branches never
+  write the same line to claim a version. A branch's amendment lands as one
+  change:
+  1. Edit the rules under the bullets below.
+  2. In the same change, add the `spec/log.md` entry at the top, headed
+     `## <date> <title>` with no version, naming every rule added, changed or
+     retired. Existing entries stay as written, and merging `main` keeps both
+     branches' entries (`spec/log.md` merges with git's union driver), the
+     branch's first.
 
-  `make static` verifies the archive and title, and `make design-ready`
-  requires that entry. A spec/compiler discrepancy is a technical
-  defect; implementation convenience never selects language behavior.
+  An entry's version is derived from its place in the log:
+  `sh .github/spec-version.sh` prints the active version and `--list` every
+  entry's, counting up from the nearest entry below that names one (an entry
+  names a version only to start a major version such as `v1.0`). Cite a new
+  amendment by its date and title until it merges and by its version after.
+  A milestone is archived by a separate change that edits no rule and adds
+  `spec/kernel-spec-<version>.md`, a copy of the active file.
+
+  `make static` verifies the title, the log's entries and the archives, and
+  `make design-ready` requires the new entry. A spec/compiler discrepancy is
+  a technical defect; implementation convenience never selects language
+  behavior.
 - State each normative fact once; use rule-ID cross-references elsewhere.
   Rule IDs have one definition and bracketed references resolve. Express
   conditions as total positive rules or table data, without exception clauses.
@@ -125,7 +133,8 @@ read.
   comparing and recording semantic differences, and only when meanings match.
 - When the spec changes, bring everything derived from it to the newest version
   in the same work: conformance cases and verdicts, the lexer/parser and
-  generated syntax data, tests and docs.
+  generated syntax data, tests and docs, and the Lean model under `proof/` with
+  its coverage list and proofs.
 - Conformance verdicts and evidence change only with the specification;
   editing a verdict or regenerating evidence to go green is a governance
   breach. A compiler limitation, internal error, timeout or unimplemented
@@ -152,7 +161,10 @@ read.
 
 ### Document roles
 
-- `README.md`: introduction, getting started and navigation.
+- `README.md`: introduction and navigation; points to the user guide.
+- `docs/guide/`: user documents for readers outside the project;
+  `docs/guide/README.md` indexes the guides and owns the checked example
+  convention.
 - `AGENTS.md`: Whitefoot's goal, authority, process additions, approval and
   merge rules, integrity rules, checks and review.
 - `docs/review-checklist.md`: the items a reviewer answers from the diff.
@@ -201,14 +213,16 @@ build time apart from test and program execution.
 
 - `make static`, run by the static group of `gate.yml`, which adds the
   conformance structure, the performance instrument and the compiler's
-  format and lint checks: repository invariants, the specification
+  lint check: repository invariants, the specification
   archives, the README and its translation changed together, prose
   integrity, guidance references, Rust sources under `compiler/src/` over
   4,000 lines listed in `.github/oversized-sources.txt`, the safety claims
   page against the specification and the conformance manifest, and the design
   tree's form, read through the `design/skill` submodule.
 - `make check`, on the revision to merge: the static group plus the compiler
-  build, tests, the conformance adapter and the runtime; `make check-groups`
+  build, tests, the conformance adapter and the runtime. Its corpus group
+  compiles the example programs in `docs/guide/` and both READMEs under the
+  [guide's convention](docs/guide/README.md#writing-examples). `make check-groups`
   lists the groups. `gate.yml` and `io-hosts.yml` check a push to `main`, a
   push to a branch with an open ready pull request, the opening or reopening
   of a ready pull request, the event of marking one ready and a manual run;
@@ -245,6 +259,10 @@ build time apart from test and program execution.
   `map-sanitizers.yml` on every push to a PR that changes the concurrent
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
+  `proof.yml` on every push to a PR that changes the specification, `proof/`,
+  the conformance cases or that workflow, drafts included, and on such a push
+  to `main` (the Lean model's sentence coverage, its proofs and its run over
+  the conformance cases in its fragment, on the PR's head),
   `compute-regression.yml` on ready PRs that touch measured inputs (paired
   WF-to-WF timing; a draft shows it skipped; each push to `main` there only
   builds and caches that commit's compiler for later PRs' merge-base
@@ -278,11 +296,11 @@ system time every 30 seconds, and stops a command after 30 minutes unless
 labeled stage with its budget in `.github/time-budgets.txt` without changing
 the command's status. Linux budgets are per CPU model: the maximum of at least
 its 20 most recent recorded runs plus 10%, rounded up to 5 s, with a 10 s floor.
-Models with fewer runs have no column; unknown models use the stage's largest
-Linux budget, with a note. macOS overruns are report-only, and so are the stages
-named in `WHITEFOOT_BUDGET_REPORT_ONLY` (comma-separated labels; the merge-base
-compiler build uses it, since its cache misses after a runner image change);
-Windows rows keep their rule.
+Models with fewer runs have no column unless the owner adds one; unknown models
+use the stage's largest Linux budget, with a note. macOS overruns are
+report-only, and so are the stages named in `WHITEFOOT_BUDGET_REPORT_ONLY`
+(comma-separated labels; the merge-base compiler build uses it, since its cache
+misses after a runner image change); Windows rows keep their rule.
 The final CI verdict fails on Linux and Windows overruns and on a missing row
 for any host. On a self-hosted runner, inspect an existing lock owner's PID
 instead of starting another heavy command, and after an uncatchable stop

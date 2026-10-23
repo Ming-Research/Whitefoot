@@ -137,6 +137,8 @@ macro_rules! operation_operands {
             | IrOperation::ContextAwait { start: value }
             | IrOperation::SharedState { object: value, .. }
             | IrOperation::SharedRetain { object: value, .. }
+            | IrOperation::SharedCountOut { object: value }
+            | IrOperation::SharedFree { object: value }
             | IrOperation::DecisionCell { object: value, .. }
             | IrOperation::SharedAcquire { object: value }
             | IrOperation::SharedTake { object: value }
@@ -221,7 +223,9 @@ macro_rules! operation_operands {
             IrOperation::RunBoundary { run, value, .. } => std::iter::once($value(run))
                 .chain(value.$iter().map($value))
                 .collect(),
-            IrOperation::RunTaken { run, .. } | IrOperation::SliceFromRun { run } => {
+            IrOperation::RunTaken { run, .. }
+            | IrOperation::RunClear { run }
+            | IrOperation::SliceFromRun { run } => {
                 vec![$value(run)]
             }
             IrOperation::RunShift { run, index, .. } => vec![$value(run), $value(index)],
