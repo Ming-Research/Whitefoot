@@ -157,32 +157,44 @@ jobs:
           sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
           rustup default stable
           sudo apt-get install -y gdb
+      - name: Trace why the stuck check fails
+        run: |
+          python3 - <<'PY'
+          p = 'compiler/src/backend/completion/bridge.c'
+          s = open(p).read()
+          a = s.index('static int wf_contexts_stuck_since(')
+          b = s.index('static int wf_contexts_stuck_locked(void)')
+          body = s[a:b]
+          body = body.replace('return 0;', '{ fprintf(stderr, "[stuck] false at bridge.c:%d\\n", __LINE__); return 0; }')
+          old = """    return wf_invocations_unchanged(sequence)
+        && atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst) == before;"""
+          assert old in body
+          body = body.replace(old, """    int unchanged = wf_invocations_unchanged(sequence);
+    int same = atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst) == before;
+    fprintf(stderr, "[stuck] unchanged=%d changes_same=%d\\n", unchanged, same);
+    return unchanged && same;""")
+          s = s[:a] + body + s[b:]
+          c = s.index('static int wf_invocations_collect(')
+          d = s.index('}\n', c)
+          fn = s[c:d]
+          fn = fn.replace('return 0;', '{ fprintf(stderr, "[stuck] slot %u odd\\n", i); return 0; }')
+          s = s[:c] + fn + s[d:]
+          open(p, 'w').write(s)
+          PY
+          git diff --stat
       - name: Build the compiler and a deadlocking program
         run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
           perl .github/run-check.pl tmp-hang-build cargo build --manifest-path compiler/Cargo.toml \
-            --profile gate --locked --offline --bin whitefootc || \
-            (cargo fetch --locked --manifest-path compiler/Cargo.toml && \
-             perl .github/run-check.pl tmp-hang-build cargo build --manifest-path compiler/Cargo.toml \
-               --profile gate --locked --bin whitefootc)
+            --profile gate --locked --offline --bin whitefootc
           compiler/target/gate/whitefootc tests/programs/deadlock_loop_join.wf -o "$RUNNER_TEMP/loop_join" --par
-      - name: Run it and look at the threads if it hangs
+      - name: Run it with timestamps
         run: |
           for drivers in 1 4; do
             echo "== WF_DRIVERS=$drivers"
-            WF_DRIVERS=$drivers "$RUNNER_TEMP/loop_join" > "$RUNNER_TEMP/out.txt" 2> "$RUNNER_TEMP/err.txt" &
-            pid=$!
-            for i in $(seq 1 15); do
-              if ! kill -0 "$pid" 2>/dev/null; then break; fi
-              sleep 1
-            done
-            if kill -0 "$pid" 2>/dev/null; then
-              echo "::warning::still running after 15 s, WF_DRIVERS=$drivers"
-              sudo gdb -p "$pid" -batch -ex 'thread apply all bt' 2>&1 | tail -120
-              kill -9 "$pid" || true
-            fi
-            wait "$pid" || echo "exit status $?"
-            echo "-- stdout"; cat "$RUNNER_TEMP/out.txt"
-            echo "-- stderr"; cat "$RUNNER_TEMP/err.txt"
+            start=$(date +%s.%N)
+            WF_DRIVERS=$drivers "$RUNNER_TEMP/loop_join" 2>&1 >/dev/null | \
+              while IFS= read -r line; do echo "$(awk -v now="$(date +%s.%N)" -v start="$start" 'BEGIN{printf "%.3f", now - start}') $line"; done || true
           done
 
   static:
