@@ -99,26 +99,26 @@ completed parks' site publications; it is not merely a count observation.
 Root completion is checked separately before reporting. False requires retry
 or continued scheduling and grants no diagnostic snapshot.
 
-The predicate owns the current counter-reading and consistency algorithm.
-Report callers do not read the process-wide active/change counters directly.
-The runtime line's proposed per-thread collect-scan-collect design is not
-selected here; whichever representation is approved must meet this same
-predicate and publication contract. Existing activity hints for driver sleep
-and the separate teardown-quiescence check are not deadlock decisions.
+The predicate owns the counter-reading and consistency algorithm. Report
+callers do not read the invocation sequences or the change generation
+directly. The per-executor collect-scan-collect design is selected in
+[suspension-accounting](../suspension-accounting/DESIGN.md); this predicate and
+publication contract are what it implements. Existing activity hints for
+driver sleep and the separate teardown-quiescence check are not deadlock
+decisions.
 
-The current implementation's publication argument is: the parking context's
-relaxed slot store is sequenced before its invocation's existing sequentially
-consistent decrement of the active-invocation count; the detector's acquire
-read of that count at zero observes the completed invocations through the
-count's read-modify-write release sequence. The ingress and idle publications
-and the unchanged double collection additionally exclude unfinished adoption,
-ready work and a concurrent scheduling transition. Thus the slot store happens
-before the diagnostic read. First initialization is also published by the
-roster lock; its cold atomic storage has no reader before that publication.
-The acquire slot load alone does not turn a
-relaxed store into a release publication; ordering comes from the scheduler
-counters. This argument must be reviewed against the implementation's actual
-publication paths, including a displaced executor's ingress adoption.
+The publication argument is: the parking context's relaxed slot store is
+sequenced before its invocation's closing even sequence store on its physical
+executor, which is sequentially consistent; the detector's first collect reads
+that even value in the same total order, so the slot store happens before the
+diagnostic read. The unchanged second collect, the ingress and idle
+publications and the change generation additionally exclude unfinished
+adoption, ready work and a concurrent scheduling transition. First
+initialization is also published by the roster lock; its cold atomic storage
+has no reader before that publication. The acquire slot load alone does not
+turn a relaxed store into a release publication; ordering comes from the
+sequence stores. The argument covers a displaced executor's ingress adoption
+(suspension-accounting, section 3).
 
 Rejected alternatives:
 
