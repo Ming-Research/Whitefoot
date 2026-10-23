@@ -314,10 +314,16 @@ impl Analyzer<'_, '_> {
                 transfer_events.push(proof_event);
                 proof_event
             });
-            prepared.kills = events;
             prepared.live = live;
         } else {
             self.apply_kills(state, &events);
+        }
+        // [TYPE-11.S7] each referent a call wrote is sealed when it returns.
+        if judgment.reached {
+            self.seal_call_returns(expression, &events, state);
+        }
+        if let Some(prepared) = &mut judgment.prepared_call {
+            prepared.kills = events;
         }
         if let Some(prepared) = &judgment.prepared_call {
             self.reasoning()
@@ -592,6 +598,10 @@ impl Analyzer<'_, '_> {
         {
             state.results.insert(place.binding, result);
         }
+        // [TYPE-11.S7] a stored call result is sealed at its target.
+        if commit_reached {
+            self.seal_set_result(node_path, target, value, &target_kills, state);
+        }
         self.judge_expression_window_bounds(value, state);
     }
 
@@ -678,6 +688,10 @@ impl Analyzer<'_, '_> {
                 if let Some(prepared) = &judgment.prepared_call {
                     self.reasoning()
                         .establish_direct_result(node_path, *binding, value, prepared, state);
+                }
+                // [TYPE-11.S7] a call result is sealed at its binding.
+                if judgment.reached {
+                    self.seal_call_result(&ResolvedPlace::binding(*binding), value, &[], state);
                 }
                 if judgment.reached
                     && value.ty() == CheckedType::Bool
@@ -874,6 +888,13 @@ impl Analyzer<'_, '_> {
                         &[],
                         state,
                     );
+                }
+                // [TYPE-11.S7] each result of a call is sealed at its binder.
+                if judgment.reached {
+                    for (binding, _, _) in bindings {
+                        let binder = ResolvedPlace::binding(*binding);
+                        self.seal_call_result(&binder, value, &[], state);
+                    }
                 }
                 self.judge_expression_window_bounds(value, state);
                 true

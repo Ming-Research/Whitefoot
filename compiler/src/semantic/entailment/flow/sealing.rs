@@ -8,11 +8,12 @@
 //! establishes the instance the delivering hand-off guaranteed.
 
 use super::super::super::model::{
-    CheckedAffineInvariant, CheckedEffects, CheckedShared, FunctionId,
+    CheckedAffineInvariant, CheckedEffectStep, CheckedEffects, CheckedShared, FunctionId,
 };
 use super::super::super::places::places_overlap;
-use super::super::{CalleeSealing, SealingFailure, SealingOrigin, SealingRule};
+use super::super::{CalleeSealing, EntailmentCallee, SealingFailure, SealingOrigin, SealingRule};
 use super::*;
+use std::borrow::Cow;
 
 /// [TYPE-11.S7] one binder datum a read selects.
 struct ReadAnchor {
@@ -1147,6 +1148,47 @@ impl Input<'_, '_> {
         self.goal_place_datum(&image, ty)
     }
 
+    /// [TYPE-11.S7] whether an event of `kills` may have ended what the
+    /// anchor `member` named when a call's return left its value sealed: it
+    /// consumes the anchor's root or rebinds a reference whose target
+    /// identity the anchor carries, replaces what one of its offsets reads
+    /// [ENT-5], or writes, at or above its level, the enum a payload step of
+    /// the anchor selects from, which ends the refinement that step stands on
+    /// [REF-2, ENT-3.S15].
+    fn delivery_ended(
+        &self,
+        separations: &dyn SeparationOracle,
+        member: &ResolvedPlace,
+        kills: &[KillEvent],
+    ) -> bool {
+        let enums = member
+            .path
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| matches!(step, PlaceStep::Payload { .. }))
+            .map(|(at, _)| ResolvedPlace {
+                atomic_aliases: member.atomic_aliases.clone(),
+                root: member.root,
+                path: member.path[..at].to_vec(),
+            })
+            .collect::<Vec<_>>();
+        kills.iter().any(|event| {
+            self.event_kills_offset_support(separations, member, event)
+                || match event {
+                    KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
+                        member.root == PlaceRoot::Binding(*binding)
+                            || carried_by(member, *binding).is_some()
+                    }
+                    KillEvent::Write { place, .. }
+                    | KillEvent::EntryImageHolderWrite { place, .. } => enums.iter().any(|owner| {
+                        let [(least, _), (_, most)] = self.level_bounds(place, owner);
+                        least <= most && places_overlap(separations, place, owner)
+                    }),
+                    KillEvent::EntryImageHolderConsume { .. } => false,
+                }
+        })
+    }
+
     /// [TYPE-11.S3] the debts a continuation from `from` into `onto` takes:
     /// each debt that may be at or below a member of `from`, rebased.
     fn taken_debts(
@@ -1921,6 +1963,161 @@ impl Analyzer<'_, '_> {
         }
     }
 
+    /// [TYPE-11.S7] once the kills `kills` of the statement expression
+    /// `expression` have run, the instance of each affine invariant at each
+    /// referent of the struct one of its calls received in a hand-off at a
+    /// reference parameter whose row writes it: the call's return left that
+    /// referent sealed [TYPE-11.S4].
+    pub(super) fn seal_call_returns(
+        &mut self,
+        expression: &CheckedExpression,
+        kills: &[KillEvent],
+        state: &mut ProofFlowState,
+    ) {
+        if !self.input.sealing {
+            return;
+        }
+        for child in expression_children(expression) {
+            self.seal_call_returns(child, kills, state);
+        }
+        let CheckedExpression::UserCall {
+            function,
+            arguments,
+            formal_effects,
+            ..
+        } = expression
+        else {
+            return;
+        };
+        let context = self.input.context;
+        let callee = context.callee(*function);
+        if callee.map(|callee| callee.sealing).unwrap_or_default() != CalleeSealing::HandsOff {
+            return;
+        }
+        for (index, argument) in arguments.iter().enumerate() {
+            let writes = call_parameter_writes(callee, formal_effects.as_deref(), index);
+            let transport = callee
+                .and_then(|callee| callee.parameter_transports.get(index).copied())
+                .unwrap_or_default();
+            // A range reference's referent is a run, whose elements take no
+            // instance here.
+            if writes.is_none_or(|writes| writes.is_empty())
+                || matches!(
+                    transport,
+                    CallTransport::ReadOnlyReference | CallTransport::ViewedRange
+                )
+            {
+                continue;
+            }
+            let Some(named) = named_place(argument) else {
+                continue;
+            };
+            let members = self
+                .input
+                .argument_referents(argument)
+                .into_iter()
+                .map(|(referent, _)| referent)
+                .collect();
+            let spelled = ResolvedPlace {
+                atomic_aliases: Vec::new(),
+                root: named.root,
+                path: named.steps.iter().chain(&named.suffix).cloned().collect(),
+            };
+            self.seal_delivered(&uncovered(members), &spelled, kills, state);
+        }
+    }
+
+    /// [TYPE-11.S7] after a call result's commit into the place `spelled`
+    /// names, once the commit's kills `kills` have run, the instance of each
+    /// affine invariant of the result's struct there: the callee's return
+    /// handed the result off [TYPE-11.S4].
+    pub(super) fn seal_call_result(
+        &mut self,
+        spelled: &ResolvedPlace,
+        value: &CheckedExpression,
+        kills: &[KillEvent],
+        state: &mut ProofFlowState,
+    ) {
+        if !self.input.sealing || !matches!(value, CheckedExpression::UserCall { .. }) {
+            return;
+        }
+        let members = self.input.resolve_sealed(spelled);
+        self.seal_delivered(&members, spelled, kills, state);
+    }
+
+    /// [TYPE-11.S7] a [SET-1] commit of a call result: the instance at the
+    /// place the commit wrote, after the commit's own kills `kills`.
+    pub(super) fn seal_set_result(
+        &mut self,
+        node_path: &crate::NodePath,
+        target: &CheckedSetTarget,
+        value: &CheckedExpression,
+        kills: &[KillEvent],
+        state: &mut ProofFlowState,
+    ) {
+        if !self.input.sealing {
+            return;
+        }
+        if let KillEvent::Write { place, .. } = self.input.commit_kill(node_path, target) {
+            self.seal_call_result(&place, value, kills, state);
+        }
+    }
+
+    /// [TYPE-11.S7] the instance of each affine invariant of the struct at
+    /// the place `spelled` names, whose resolved members are `members`,
+    /// which a call's return left sealed: over the one member's anchor, or
+    /// over the terms the place forms through a reference to several [ENT-2,
+    /// REF-1], when every member meets the premises and no kill of `kills`
+    /// ended what it names.
+    fn seal_delivered(
+        &mut self,
+        members: &[ResolvedPlace],
+        spelled: &ResolvedPlace,
+        kills: &[KillEvent],
+        state: &mut ProofFlowState,
+    ) {
+        let Some((first, rest)) = members.split_first() else {
+            return;
+        };
+        let member_type = |member: &ResolvedPlace| {
+            self.input
+                .sealed_prefix_types(member)
+                .last()
+                .copied()
+                .flatten()
+        };
+        let Some(ty) = member_type(first) else {
+            return;
+        };
+        let count = self.input.affine_invariants(ty).len();
+        if count == 0
+            || rest.iter().any(|member| member_type(member) != Some(ty))
+            || members
+                .iter()
+                .any(|member| self.input.delivery_ended(&state.separations, member, kills))
+        {
+            return;
+        }
+        for index in 0..count {
+            if !members
+                .iter()
+                .all(|member| self.sealed_anchor(member, index, state))
+            {
+                continue;
+            }
+            let goal = if rest.is_empty() {
+                self.input.sealed_instance(first, index)
+            } else {
+                self.input
+                    .goal_place_datum(spelled, ty)
+                    .and_then(|image| self.input.instance_over(&image, ty, index))
+            };
+            if let Some(goal) = goal {
+                self.establish_instance(Some(ty), index, goal, state);
+            }
+        }
+    }
+
     /// [TYPE-11.S7] the premises of the instance a read selects, at the
     /// anchor of each member of its place.
     fn sealed_members(&self, read: &ReadAnchor, state: &ProofFlowState) -> bool {
@@ -2295,21 +2492,7 @@ impl Analyzer<'_, '_> {
         }
         let offsets = substituted_offsets(callee, actual_captures);
         for (index, argument) in arguments.iter().enumerate() {
-            let boundary_writes = formal_effects.and_then(|effects| {
-                let declaration = callee?.parameter_declarations.get(index)?;
-                Some(
-                    effects
-                        .writes
-                        .iter()
-                        .filter(|path| path.root == *declaration)
-                        .map(|path| path.steps.clone())
-                        .collect::<Vec<_>>(),
-                )
-            });
-            let Some(writes) = boundary_writes
-                .as_ref()
-                .or_else(|| callee.and_then(|callee| callee.parameter_writes.get(index)))
-            else {
+            let Some(writes) = call_parameter_writes(callee, formal_effects, index) else {
                 continue;
             };
             let transport = callee
@@ -2500,4 +2683,32 @@ fn sealed_value(value: &CheckedExpression) -> bool {
             | CheckedExpression::ConstructStruct { .. }
             | CheckedExpression::ConstructEnum { .. }
     )
+}
+
+/// [EFF-5] the declared writes rooted at a call's parameter `index`: the
+/// boundary row's for a call through a function-type parameter, otherwise
+/// the callee's own; none when the callee is unknown.
+fn call_parameter_writes<'callee>(
+    callee: Option<&'callee EntailmentCallee>,
+    formal_effects: Option<&CheckedEffects>,
+    index: usize,
+) -> Option<Cow<'callee, [Vec<CheckedEffectStep>]>> {
+    let boundary = formal_effects.and_then(|effects| {
+        let declaration = callee?.parameter_declarations.get(index)?;
+        Some(
+            effects
+                .writes
+                .iter()
+                .filter(|path| path.root == *declaration)
+                .map(|path| path.steps.clone())
+                .collect::<Vec<_>>(),
+        )
+    });
+    match boundary {
+        Some(writes) => Some(Cow::Owned(writes)),
+        None => callee?
+            .parameter_writes
+            .get(index)
+            .map(|writes| Cow::Borrowed(writes.as_slice())),
+    }
 }

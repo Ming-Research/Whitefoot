@@ -526,14 +526,31 @@ established over the term the read binds (`let v = indexes[i].value;`
 gives `v < 16`). An instance is a fact like any other: a later write that
 overlaps its support kills it [ENT-5], and the same write adds the debt
 (T2), so the fact cannot be re-established until the debt is restored.
-Two points read sealed values without a statement read. At a selected
+Four points read sealed values without a statement read. At a selected
 return, a written postcondition is judged with the instance at each anchor
 of a value or written referent the return hands back that its datums read
 through: T7 has just required each of them sealed, so a clause that
 restates the invariant of a forwarded call result's payload holds. At body
 entry, the instance at each parameter of the struct and at each referent of
 a reference parameter to it is established (T1), the fact the caller's
-hand-off proved.
+hand-off proved. Once the kills of a statement that makes a call have run,
+the instance is established at each referent of the struct the call
+received at a reference parameter whose row writes it, the fact the
+callee's return proved (T7), provided no debt may denote it and no kill of
+the same statement consumed the anchor's root, rebound a reference whose
+target identity the anchor carries, replaced what one of its offsets reads
+or wrote, at or above its level, an enum one of its payload steps selects
+from: those kills would leave the anchor naming something other than the
+referent the call returned. A reference into the referent's window whose
+bound the call re-judges [OP-10, REF-2], a later call's requirement and a
+later subscript then use the instance as they use the body-entry one,
+which before this design the caller took from the generated postcondition
+of the written reference parameter. The binding of a `let`, the binder of
+a destructuring `let` and the target of a `set` commit that receive a
+call's result of the struct take its instance the same way, once the
+statement's kills, for the `set` the commit's own, have run: a result
+carries no debt (T6), and the generated result postcondition this design
+retires gave the caller the same fact.
 
 ## Result 1: restoration obligations are never lost
 
@@ -609,7 +626,11 @@ program, every activation's abstract state paired with its runtime state.
   declared row, whose exactness [EFF-2] guarantees it covers every write. A
   callee taking `&u64` at the argument `&idx.value` writes below the anchor
   `idx`, which is above the referent, so the caller owes `idx`'s restoration
-  (case `type11-neg-u64-helper-breaks` below).
+  (case `type11-neg-u64-helper-breaks` below). The instance T13 establishes
+  at the referent once the call's statement has run its kills is true by
+  SI, since T6 left no debt that may denote it; an anchor above the
+  referent that T6 put in debt gets none (case
+  `type11-neg-written-referent-ancestor-window`).
 - *Removals.* T8 removes a debt only when the instance is proved in the
   current state, so I holds at that moment, which is exactly what SI asks.
   T3 removes a debt only when the store is proved to have replaced that very
@@ -645,9 +666,10 @@ program, every activation's abstract state paired with its runtime state.
   does can falsify an invariant of a place this activation holds.
 - *(b)* follows from SI: T5 restores every debt at or below the handed place,
   so the place is sealed, hence valid.
-- *(c)* T13 fires only for a key with no debt that may denote it, so SI gives
-  the invariant at that anchor at that moment; the instance's support then
-  carries it exactly as long as ENT-5 keeps any fact.
+- *(c)* T13 fires only for a key with no debt that may denote it, at a read
+  and at each of its four other points alike, so SI gives the invariant at
+  that anchor at that moment; the instance's support then carries it
+  exactly as long as ENT-5 keeps any fact.
 
 Every way a value comes into existence is covered: a literal or constant
 (construction checked [TYPE-11, CONST-2]), a construction (its own
