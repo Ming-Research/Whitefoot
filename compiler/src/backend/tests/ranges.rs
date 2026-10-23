@@ -155,6 +155,7 @@ fn bind_compute_host_adapter(module: &str, adapter: &str) -> String {
     let host = directory.join("adapter.ll");
     std::fs::write(&input, module).expect("write adapter module");
     std::fs::write(&host, adapter).expect("write host adapter");
+    #[allow(clippy::disallowed_methods, reason = "host tool, not a test program")]
     let output = Command::new("awk")
         .arg("-f")
         .arg(concat!(
