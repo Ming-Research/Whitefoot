@@ -11,6 +11,12 @@ Nodes: language/contracts, compiler/generic-validation-scope
 
 Summary: A supplied actual may now satisfy each formal `ensures` by its frame or by its stronger own `ensures`: an equality between the exit and entry values of one integer place, or of one measure of a place, is discharged when the actual's declared row writes nothing overlapping that place, so Halo's reads-only host function binds its interface unchanged. Aliasing between the framed place and another parameter's write is left to each call, whose contract-read footprint already separates the framed place (kernel specification FN-4, EFF-5). The compiler decision records how the frame query identifies the exit and entry datums in an isolated zero-premise query and retains the actual and unwritten place as its authority. Refused: implementations declaring wider rows than their bodies, stubs performing a dummy write, a binding-time requirement of a formal access covering the framed place, and discharging frame equalities only for actuals that write nothing.
 
+## 2026-10-22 A manual gate run can add macOS, so a release is qualified once per release
+
+Nodes: compiler/verification
+
+Summary: With the gate on Linux alone, no downstream release could be made, because the release workflow requires a successful gate run with macOS jobs on the released commit and no gate run had any. The gate's manual trigger now takes a `macos` input that runs every group on macOS as well as Linux, and the final job requires every group green on each platform the run was asked for; every other trigger still runs Linux alone. A release is qualified by one such run started on the commit before the release is dispatched, so the macOS queue is entered once per release and not once per pull request, and a fault only macOS shows, such as an unused import that clippy reports on macOS alone, reaches the main line and surfaces when a release is qualified. Linux alone for every other run stays provisional, reopened when the hosted macOS runners no longer hold merges back. Refused: a release from a gate run without macOS jobs, macOS on every push to the main line, a release workflow that runs the macOS groups itself, and a daily scheduled macOS run of the main line in addition.
+
 ## 2026-10-22 A layout rejection lists every differing gap of its source in its repair
 
 Nodes: compiler/diagnostic-repairs, compiler/formatting-command
