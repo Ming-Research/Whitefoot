@@ -6,15 +6,34 @@ added, changed or retired, and a concise `Summary:` of the change and its
 selection ground. The form is the design tree log's, with `Rules:` in place of
 `Nodes:`. The entry is committed with the change, and `make design-ready`
 requires a new entry whenever the active specification changes; it cannot tell
-whether `Rules:` names every changed rule. Older entries also carry an
-`Owner-approved:` line, a field since retired. Earlier versions are the
-released archives beside this file; git holds the rest of the history.
+whether `Rules:` names every changed rule. An entry is never edited and a new
+one goes first. Blank lines between entries do not matter, and the file merges
+with git's union driver, so two branches that each add an entry both keep it.
+Older entries also carry an `Owner-approved:` line, a field since retired.
 
-## 2026-10-23 v0.165: an implementation that leaves a place unwritten discharges an interface's equality between that place's exit and entry values
+The specification carries no version. An entry's version is its place in this
+log: `sh .github/spec-version.sh` prints the active version and `--list` every
+entry's. An entry whose title begins `vA.B` names that version (every entry
+written under the earlier procedure does, and the entry that starts a major
+version does); any other entry is the next minor version after the entry below
+it. A new entry names a version only to start the next major version. Cite an
+entry by its date and title until it merges and by its version after. An
+archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
+file added by a change that edits no rule. The earlier procedure archived the
+outgoing version with every amendment; git holds the rest of the history.
+
+## 2026-10-23 an implementation that leaves a place unwritten discharges an interface's equality between that place's exit and entry values
 
 Rules: changed FN-1, FN-4
 
-Summary: FN-4 states that an actual's row may be a proper subset of the formal's or `pure`, and that a formal `ensures` is discharged by frame when its normalized comparison is an equality with equal displacements between the exit and entry values of one fragment-integer place P, or of one measure of P, rooted at a reference parameter, and no `writes` path in the actual's declared row overlaps P under the structural and literal separations of OWN-7 and WIN-2 with no assumed inequalities between parameter positions. A write through another parameter needs no binding condition, because the formal relation places P in every call's contract-read footprint, which EFF-5 separates from that argument's writes. Every other formal `ensures` still follows only from the actual's own `ensures`, and a frame discharge supplies no premise to another relation's query. FN-1 says the selected actual satisfies its own boundary rather than supplying the proof of the formal's templates. The rule text first drafted against v0.151 is renumbered to v0.165 because main reached v0.164 first. Selection ground: Halo's host interface promises an unchanged stack length for a member that may write the stack, and a host function that only reads the stack could satisfy it neither by its row (rows are exact under EFF-2) nor by its own `ensures` (`entry()` is admitted only on a written parameter); the owner chose this direction, a narrower row discharging the frame promise, on the board card raised for the same gap in Firn's script host.
+Summary: FN-4 states that an actual's row may be a proper subset of the formal's or `pure`, and that a formal `ensures` is discharged by frame when its normalized comparison is an equality with equal displacements between the exit and entry values of one fragment-integer place P, or of one measure of P, rooted at a reference parameter, and no `writes` path in the actual's declared row overlaps P under the structural and literal separations of OWN-7 and WIN-2 with no assumed inequalities between parameter positions. A write through another parameter needs no binding condition, because the formal relation places P in every call's contract-read footprint, which EFF-5 separates from that argument's writes. Every other formal `ensures` still follows only from the actual's own `ensures`, and a frame discharge supplies no premise to another relation's query. FN-1 says the selected actual satisfies its own boundary rather than supplying the proof of the formal's templates. Selection ground: Halo's host interface promises an unchanged stack length for a member that may write the stack, and a host function that only reads the stack could satisfy it neither by its row (rows are exact under EFF-2) nor by its own `ensures` (`entry()` is admitted only on a written parameter); the owner chose this direction, a narrower row discharging the frame promise, on the board card raised for the same gap in Firn's script host.
+
+## 2026-10-22 the specification carries no version, and an amendment adds no archive
+
+Rules: none added, changed or retired; the first line of `spec/kernel-spec.md` is `# Kernel Specification` and names no version
+
+Summary: Every amendment took the next version on its own branch, in the title line, in the archive of the version it replaced and in its log heading, so each amendment that merged first made every other open amendment merge main, renumber, re-archive and run its checks again: of the 62 amendments merged from 2026-10-07 to 2026-10-21, the branches merged main 307 times, 112 of them with both sides editing the title line or the log, and 111 of the 986 branch commits only renumbered or repaired the log. The title line is now `# Kernel Specification`. An amendment adds its entry at the top of this log and no archive, and its version is derived from the log: this entry has no version in its title, so it is the next minor version after the entry below it. The compiler's identity of the specification is still the SHA-256 of its bytes, and the version constant that nothing read is gone. `spec/log.md` merges with git's union driver, and the check that replaces the archive-and-title check keeps every existing entry as written, requires exactly one new entry for a changed specification and none for an unchanged one, and lets a new entry name a version only to start the next major version. Selection ground: the owner's ruling of 2026-10-22 on the board (item spec-version-merge-churn) chose to derive the version from the log; the other approaches were refused because they leave the branch writing a line every other branch also writes (keeping the number and renumbering by script, naming an amendment by date in the title line), change the specification's bytes after the gate has passed on them (a stamp commit on main after each merge), or serialize amendments to about two a day against the 4.4 that merge (one amendment in flight at a time). The existing archives are unchanged, and the versions after the newest of them have none: their text is in git.
+
 ## 2026-10-22 v0.164: `clear` empties a window and keeps its storage
 
 Rules: changed OP-10, OP-13, PRE-1

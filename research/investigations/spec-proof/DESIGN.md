@@ -445,6 +445,117 @@ engineer turns and four more `proof.yml` runs, one of which failed to compile
 and one ran with the fragment list empty on purpose, to print the cases to
 list.
 
+### The third slice: the checker
+
+The third slice adds the fragment's checker, `Program.accepts`, in five
+modules: the judgments that need no facts (`Static.lean`: names [TYPE-6],
+named arguments [GRAM-11], types [TYPE-5, OP-1], contract shapes [FN-8, FN-9],
+reachability and completion [FN-1]); the L0 relation state (`Facts.lean`:
+terms, difference bounds, offset disequalities, the closure of [ENT-4], kills
+and joins of [ENT-5]); the affine images with `DIRECT` and `AUTO`
+(`Affine.lean`, [ENT-6]); the fact sources of [ENT-3], the disposition of
+[MSR-4], joins with header transport, and call obligations and publication
+(`Checker.lean`); and the forward walk over statements, loops, returns and
+the consistency of published relations [CALL-6] (`Walk.lean`). A program the
+checker accepts makes no name or type judgment fail, so the interpreter's
+`illFormed` is excluded by the checker as the first theorem needs.
+
+The phase's rule list left [ENT-6] to a later phase, but more than twenty of
+the fragment's accepted cases are provable only through it: `requires
+2*x <= 8` giving `x <= 4`, a quotient's upper bound, a sum of two nonconstant
+operands. The checker therefore includes the affine core: value images, join
+images with delta atoms, automatic premises, `DIRECT`, `AUTO` with its two
+tightenings, the strongest canonical L0 images, the bridge, the quotient bound
+and the interval product. It leaves out measures, tracked fields and the power
+atom of shifts, which no fragment construct forms. [ENT-4.OT] is modeled only
+as far as origin expansion of established goals; its integer-class
+equalities are not.
+
+The covered rules grow by [TYPE-5], [GRAM-11], [ENT-2] to [ENT-6], the
+[ENT-3] sources the fragment uses (S1, S4, S5, S7, S12, S13 and S16), [MSR-4],
+[INV-1] and [CALL-6]; the lines of [OP-2], [OP-4], [OP-5], [FN-1], [FN-8],
+[FN-9] and [SET-1] that the second slice listed as the checker's are now
+marked where it models them. Reading each line against the model found eight
+places where the model differed from the text, each fixed in the model:
+[GRAM-6]'s two `else` shapes; [SET-1]'s unresolved target; [FN-9]'s
+requirements that a postcondition name a result, that it have a return to be
+proved at, and that a returned value be a term or constant; [ENT-5]'s join
+frontier, under which a merge-only continuation passes its incoming edges on
+unjoined, so that a loop's induction inputs are the edges and not their join;
+the Signed Goal query's affine route, which takes orderings only [ENT-6]; and
+[MSR-4]'s signed division targets, the interval product's premise tightening
+and step 6's candidates, the live bindings. Two amendments of the main line landed during the
+slice: the two lines of [ENT-5] on continuing kill events, one marked and one
+read more strictly (below), and [SET-1]'s order, under which a target's
+subscript is judged after the right-hand side, so the checker discharges it in
+the state the right-hand side and a call's publication leave.
+
+Places where the text admits more than one reading and the checker had to
+choose one, the prior criterion's count:
+
+1. `DIRECT` substitutes for each atom "the strongest closed L0/type bound for
+   that atom" [ENT-6], but an atom is no L0 term. The checker reads it as the
+   atom's interval tightened by the strongest canonical L0 images over that
+   atom alone, `x <= c` and `-x <= c`.
+2. A condition that is the literal `True()` or `False()` is a goal origin
+   [ENT-3], so [OP-5] decides it by [ENT-4]'s implicit proof of the literal;
+   the text's goal origin needs "a pure total operation-table row" at the
+   root, and a Bool literal is a prelude constructor. The case
+   `op5-neg-redundant-literal` expects the rejection.
+3. [ENT-3.S7]'s matched product applies at "a later direct ordinary
+   exact-multiplication binding"; the checker applies it at a `set` commit as
+   well as at a `let`, as the capture itself applies at both.
+4. [MSR-4]'s step 6 relates a candidate to "the goal's right-hand term r"; the
+   checker forms no bridge when the right-hand side is a constant, whose term
+   is Z.
+5. A selected return whose returned value is no [ENT-2] term or constant has
+   no evaluation of the result datum [FN-9]; the checker rejects it citing
+   [FN-9] rather than leaving the relation unproved.
+6. The interval product retains "a strictly tighter endpoint when subtracting
+   that one premise followed by fixed interval substitution proves it"
+   [MSR-4] without saying which endpoint is tried; the checker takes the bound
+   interval substitution gives after subtracting the premise.
+
+Six places, below the prior criterion's ten.
+
+Three simplifications are known and recorded here rather than counted: a
+state is contradictory in the checker when L0 derives `t - t <= -1` or both
+signs of one goal are established, so a goal whose negative sign is derivable
+only through its operation-domain normalization is not found contradictory;
+the `i128` formation limit and the structural ceilings of [INV-1] are not
+checked, since no fragment case comes near them; and a continuing kill event
+[ENT-5] that writes an index of a binding kills every fact reading that
+binding, without proving two offsets distinct or apart, so the checker can
+reject a loop the rule accepts, never accept one it rejects.
+
+On the fragment's cases the checker agrees with every one it compares: all 39
+`accept` and 46 `run` cases in the fragment are accepted, the run cases
+reaching their expected status, and all 86 `reject` cases whose expected rule
+is covered are rejected, 35 of the fragment's 119 by the parser and the rest by
+the checker. Two disagreements appeared on the way, both errors of the model
+and both fixed in it: a relation between two terms whose difference is one
+term was read as no L0 fact, and the `\u{H}` escapes of a doc text item were
+not checked [FORM-5, FORM-7]. The slice adds 2,730 lines of Lean in five
+modules, 504 of them coverage marks, and adds 52 lines to the parser and 70
+to the conformance harness. With it the build of the model and harness took
+10.2 s and 16.5 s on two runs, against 7.7 s on the main line's run of the
+same day; on the slower run every module took 1.5 to 1.8 times as long, the
+unchanged lexer included. The build's provisional budget rises from 15 s to
+25 s, 1.5 times that first 16.5 s run rounded up to 5 s.
+
+The five modules hold 1,576 lines of code by the second slice's count. The
+slice took seven engineer turns and eight `proof.yml` runs to its review: two
+failed to compile, one showed the two disagreements above, two exceeded the
+build budget on the slower host, and a re-run of one of those passed. The
+review found one defect: [OP-5]'s redundancy query bounded its steps by the
+goal's own size, so a condition true only through two definition links went
+unproved and the checker accepted a program the rule rejects. A program
+beside the cases in the conformance harness now checks that rejection; it
+failed before the fix, and the fix bounds the query by the goal's complete
+expansion plus the links it may follow. The fix, with main's [SET-1]
+amendment merged in, took three more engineer turns and two more `proof.yml`
+runs, the first red on that program alone as expected.
+
 ## Cost
 
 Precedents with measured sizes:
