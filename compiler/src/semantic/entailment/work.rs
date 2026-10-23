@@ -17,11 +17,14 @@
 //! - `function`: `joins` counts `join_at` calls; `join_passes` counts their
 //!   full, ordinary-fallback and expanded-row passes; `intern_calls` counts
 //!   ledger interning attempts before deduplication; `closure_cache_hits`
-//!   counts remembered closed-view reuse.
+//!   counts remembered closed-view reuse. `conditions` counts [OP-5]
+//!   condition judgments in a noncontradictory state, `condition_queries`
+//!   their per-origin and per-sign queries, and `redundant_conditions` the
+//!   conditions they decided.
 //! - `function` also aggregates affine work: `affine_attempts` counts query
 //!   preparations (ordinary targets and certificate residuals);
 //!   `affine_memo_hits` and `affine_memo_misses` partition those attempts by
-//!   closed-state identity and complete ordered candidate equality.
+//!   retained L0 content and complete ordered candidate equality.
 //!   `affine_cold_demands` counts distinct vector requests before promotion,
 //!   including absent vectors and the request that triggers promotion.
 //!   `affine_left_candidates_scanned` counts left candidates visited by lazy
@@ -32,7 +35,12 @@
 //!   `affine_final_family_exhaustions` counts those traversals returning no
 //!   proof after the retained entries are exhausted; omitted entries are
 //!   certified failures. Repeated traversals count separately even when
-//!   the complete index is reused. Cold scans are aggregated per request;
+//!   the complete index is reused. `affine_model_views` counts the query
+//!   views whose premises were gathered for a refuting integer point,
+//!   `affine_refutations` and `affine_refutation_misses` partition the
+//!   searches `DIRECT` left open by whether such a point falsified the
+//!   target, and `affine_bridge_refutations` counts step-6 loops that point
+//!   also ended. Cold scans are aggregated per request;
 //!   all affine counters are aggregated per function before emission.
 //! - Additional `function` affine observations (all emitted even when zero):
 //!   `affine_auto_calls_initial` counts initial numeric/bounded-relation AUTO
@@ -131,6 +139,10 @@ struct AffineWork {
     promotions: u64,
     final_family_starts: u64,
     final_family_exhaustions: u64,
+    model_views: u64,
+    refutations: u64,
+    refutation_misses: u64,
+    bridge_refutations: u64,
     extra: [u64; AffineMetric::Count as usize],
 }
 
@@ -239,6 +251,9 @@ struct FunctionWork {
     closure_cache_hits: u64,
     intern_calls: u64,
     affine: AffineWork,
+    conditions: u64,
+    condition_queries: u64,
+    redundant_conditions: u64,
 }
 
 fn update(f: impl FnOnce(&mut FunctionWork)) {
@@ -295,6 +310,18 @@ impl Drop for FunctionScope {
 
 pub(super) fn join() {
     update(|work| work.joins = work.joins.saturating_add(1));
+}
+
+pub(super) fn condition() {
+    update(|work| work.conditions = work.conditions.saturating_add(1));
+}
+
+pub(super) fn condition_query() {
+    update(|work| work.condition_queries = work.condition_queries.saturating_add(1));
+}
+
+pub(super) fn redundant_condition() {
+    update(|work| work.redundant_conditions = work.redundant_conditions.saturating_add(1));
 }
 
 /// Each full, ordinary-fallback or expanded-row pass has its own row width.
@@ -406,6 +433,27 @@ pub(super) fn affine_final_family_exhausted() {
     });
 }
 
+pub(super) fn affine_model_view() {
+    update(|work| work.affine.model_views = work.affine.model_views.saturating_add(1));
+}
+
+pub(super) fn affine_refutation(refuted: bool) {
+    update(|work| {
+        let affine = &mut work.affine;
+        if refuted {
+            affine.refutations = affine.refutations.saturating_add(1);
+        } else {
+            affine.refutation_misses = affine.refutation_misses.saturating_add(1);
+        }
+    });
+}
+
+pub(super) fn affine_bridge_refutation() {
+    update(|work| {
+        work.affine.bridge_refutations = work.affine.bridge_refutations.saturating_add(1);
+    });
+}
+
 impl FunctionWork {
     fn new(name: &str) -> Self {
         Self {
@@ -420,6 +468,9 @@ impl FunctionWork {
             closure_cache_hits: 0,
             intern_calls: 0,
             affine: AffineWork::default(),
+            conditions: 0,
+            condition_queries: 0,
+            redundant_conditions: 0,
         }
     }
 
@@ -439,6 +490,14 @@ impl FunctionWork {
         row("function", 0, "join_passes", self.passes.len() as u64);
         row("function", 0, "intern_calls", self.intern_calls);
         row("function", 0, "closure_cache_hits", self.closure_cache_hits);
+        row("function", 0, "conditions", self.conditions);
+        row("function", 0, "condition_queries", self.condition_queries);
+        row(
+            "function",
+            0,
+            "redundant_conditions",
+            self.redundant_conditions,
+        );
         for (metric, value) in [
             ("affine_attempts", self.affine.attempts),
             ("affine_memo_hits", self.affine.memo_hits),
@@ -457,6 +516,10 @@ impl FunctionWork {
                 "affine_final_family_exhaustions",
                 self.affine.final_family_exhaustions,
             ),
+            ("affine_model_views", self.affine.model_views),
+            ("affine_refutations", self.affine.refutations),
+            ("affine_refutation_misses", self.affine.refutation_misses),
+            ("affine_bridge_refutations", self.affine.bridge_refutations),
         ] {
             row("function", 0, metric, value);
         }

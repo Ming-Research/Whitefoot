@@ -1,17 +1,20 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
+fn same(left: u64, right: u64) -> result: unit pure contract {
+  requires left == right;
+} {
+  return unit;
+}
+
 fn main() -> status: ExitStatus pure {
-  doc "OP-13: slots_from_array consumes a full array into a full window and slots_into_array consumes a window whose len equals its cap.";
+  doc "OP-13: slots_from_array consumes a full array into a full window and slots_into_array consumes a window whose len equals its cap. The call to same states the derived full length as a requirement.";
   let a = array_filled::<u64, 3>(value: 4_u64);
   let s = slots_from_array::<u64, 3>(values: a);
   let n = s.len;
   let back = slots_into_array::<u64, 3>(values: move s);
   let first = back[0_u64];
-  if n == 3_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  same(left: n, right: 3_u64);
   if first == 4_u64 {
   } else {
     return exit_status(code: 2_u8);

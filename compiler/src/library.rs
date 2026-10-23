@@ -261,6 +261,7 @@ pub(crate) const SELF_CHANGING_HOST_HANDLES: &[(&str, &str)] = &[
     ("time", "Clock"),
     ("time", "WallClock"),
     ("process", "MemoryMeter"),
+    ("io", "HandleFactory"),
 ];
 
 /// Reports whether the declaration `name` of the host module at `path` is a

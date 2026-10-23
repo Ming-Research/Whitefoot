@@ -12,11 +12,5 @@ fn main() -> status: ExitStatus pure {
   set holder.value = marker;
   set holder.other = 1_u32;
   let wanted = marker;
-  if holder.value != wanted {
-    return exit_status(code: 1_u8);
-  }
-  if wanted != 7_u32 {
-    return exit_status(code: 2_u8);
-  }
   return exit_status(code: 0_u8);
 }

@@ -328,9 +328,9 @@ fn a_call_through_a_joined_reference_kills_every_possible_targets_fact() {
   return unit;
 }
 
-fn examine(flag: u64) -> result: unit pure {
+fn examine(flag: u64, initial: u64) -> result: unit pure {
   let a = 0_u64;
-  let b = 0_u64;
+  let b = initial;
   let p = if flag == 1_u64 {
     give &a;
   } else {
@@ -344,7 +344,7 @@ fn examine(flag: u64) -> result: unit pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  examine(flag: 0_u64);
+  examine(flag: 0_u64, initial: 0_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -358,9 +358,9 @@ fn a_joined_reference_write_cannot_preserve_a_nonzero_divisor_proof() {
   return unit;
 }
 
-fn examine(flag: u64) -> result: u64 pure {
+fn examine(flag: u64, initial: u64) -> result: u64 pure {
   let a = 1_u64;
-  let b = 1_u64;
+  let b = initial;
   let p = if flag == 1_u64 {
     give &a;
   } else {
@@ -374,7 +374,7 @@ fn examine(flag: u64) -> result: u64 pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let quotient = examine(flag: 0_u64);
+  let quotient = examine(flag: 0_u64, initial: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;

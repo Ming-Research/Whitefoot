@@ -43,7 +43,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
-use super::emission::{DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature};
+use super::emission::{
+    DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature,
+};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, IncomingSnapshots, is_stored_aggregate};
 use crate::target::{
@@ -85,6 +87,8 @@ pub enum BackendFailure {
     SnapshotTargetUnsupported,
     CounterOverflow,
     TextEmission,
+    /// The selected native toolchain or its required probe environment failed.
+    Toolchain,
 }
 
 impl From<std::fmt::Error> for BackendFailure {
@@ -122,6 +126,11 @@ impl LlvmModule {
         }
         self.text = self.model.render();
         Ok(())
+    }
+
+    /// Renders the text again after a change to the model.
+    pub(crate) fn rerender(&mut self) {
+        self.text = self.model.render();
     }
 
     pub(crate) fn encode(&self) -> Vec<u8> {
@@ -282,6 +291,7 @@ fn emit_module(
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
 ) -> Result<LlvmModule, BackendFailure> {
+    crate::toolchain::prepare_toolchain().map_err(|_| BackendFailure::Toolchain)?;
     if snapshot::required(program) && target.triple() != "x86_64-unknown-linux-gnu" {
         return Err(BackendFailure::SnapshotTargetUnsupported);
     }
@@ -691,7 +701,13 @@ fn emit_module(
     {
         text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
     }
-    text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    text.attribute_group(
+        0,
+        format!(
+            "{} uwtable",
+            target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
+        ),
+    );
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     // Emit source acquisition decisions once, independently of backend clones
@@ -2041,12 +2057,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn emit(mut self) -> Result<Module, BackendFailure> {
-        if let Some(module) = snapshot::definition(
-            self.program,
-            self.target,
-            self.function,
-            self.intrinsics,
-        )? {
+        if let Some(module) =
+            snapshot::definition(self.program, self.target, self.function, self.intrinsics)?
+        {
             return Ok(module);
         }
         let declaration = self.function.blocks().is_empty();
@@ -2802,6 +2815,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 source,
                 index,
             } => self.emit_run_transfer(result, ty, *destination, *source, *index),
+            IrOperation::RunClear { run } => self.emit_run_clear(result, ty, *run),
             IrOperation::WindowBlockNew {
                 nominal,
                 capacity,
@@ -2899,6 +2913,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedRetain { nominal, object } => {
                 self.emit_shared_retain(result, ty, *nominal, *object)
             }
+            IrOperation::SharedCountOut { object } => {
+                self.emit_shared_count_out(result, ty, *object)
+            }
+            IrOperation::SharedFree { object } => self.emit_shared_free(result, *object),
             IrOperation::SnapshotAtomicBegin => self.emit_snapshot_atomic(result, true),
             IrOperation::SnapshotAtomicEnd => self.emit_snapshot_atomic(result, false),
             IrOperation::SharedAcquire { object } => {

@@ -6,6 +6,7 @@ alias InputStream = pkg::io::InputStream;
 alias OutputStream = pkg::io::OutputStream;
 alias Args = pkg::text::Args;
 alias Directory = pkg::fs::Directory;
+alias HostPaths = pkg::fs::HostPaths;
 alias Clock = pkg::time::Clock;
 alias WallClock = pkg::time::WallClock;
 
@@ -38,6 +39,8 @@ public struct Inputs {
   public wall_clock: WallClock;
   public stops: StopSignals;
   public memory_meter: MemoryMeter;
+  public host_paths: Option<HostPaths>;
+  public process_id: Option<u64>;
 }
 
 public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
@@ -55,3 +58,12 @@ public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Retu
 public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";
 
 public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
+
+public struct OpenFilesLimit {
+  public soft: u64;
+  public hard: u64;
+}
+
+public fn open_files_limit(factory: &HandleFactory) -> result: Result<OpenFilesLimit, IoError> reads(factory) doc "Returns the soft and hard limits on the files the process may hold open, as specified by PRE-2.";
+
+public fn raise_open_files_limit(factory: &HandleFactory, wanted: u64) -> result: Result<OpenFilesLimit, IoError> writes(factory) doc "Raises the soft limit on the files the process may hold open to wanted, as specified by PRE-2.";

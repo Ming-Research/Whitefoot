@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use crate::syntax::NodeId;
 use crate::{Production, SemanticIssueKind, SemanticRule, TerminalPredicate};
 
-use super::super::model::{CheckedMode, CheckedNominalKind, CheckedType, NominalId};
+use super::super::model::{CheckedMode, CheckedNominalKind, CheckedShared, CheckedType, NominalId};
 use super::CheckStop;
 
 /// [OWN-1, PROV-6] the class read from a type's two capabilities, copy and
@@ -102,7 +102,8 @@ impl<'unit> TypeContext<'unit> {
         }
     }
     /// The types one nominal owns directly [PROV-6]: its fields, its enum
-    /// variant payloads and its `box` referent.
+    /// variant payloads and its `box` referent, and the state of a shared
+    /// object's handle for its linearity alone.
     fn owned_components(&self, id: NominalId) -> Result<Vec<CheckedType>, CheckStop> {
         Ok(match &self.nominal(id)?.kind {
             CheckedNominalKind::Struct { fields } => fields.iter().map(|field| field.ty).collect(),
@@ -111,10 +112,20 @@ impl<'unit> TypeContext<'unit> {
                 .flat_map(|variant| variant.fields.iter().map(|field| field.ty))
                 .collect(),
             CheckedNominalKind::Box { referent, .. } => vec![*referent],
-            // A handle owns a share of its object, whose state the runtime
-            // releases with the last handle [SHARE-1]; `T: drop` keeps the
-            // handle affine.
-            CheckedNominalKind::Opaque | CheckedNominalKind::Shared { .. } => Vec::new(),
+            // A handle to a linear state is linear, since the handle whose
+            // `shared_close` is last receives the state [PROV-6, SHARE-1];
+            // its release action stays the handle's own leaf [STOR-3]. The
+            // prelude bounds every other handle's state and a table's values
+            // by `drop`.
+            CheckedNominalKind::Shared {
+                state,
+                shape: CheckedShared::Object,
+            } => vec![*state],
+            CheckedNominalKind::Opaque
+            | CheckedNominalKind::Shared {
+                shape: CheckedShared::Map { .. },
+                ..
+            } => Vec::new(),
         })
     }
     /// [PROV-6] the nodes of this type's release graph, each visited once.
