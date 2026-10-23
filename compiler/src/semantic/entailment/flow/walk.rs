@@ -1378,74 +1378,17 @@ impl Analyzer<'_, '_> {
             // leaves with it.
             CheckedStatement::Atomic {
                 node_path,
-                targets,
+                target,
                 guard,
                 body,
                 ..
             } => {
-                let invariants = targets
-                    .iter()
-                    .flat_map(|t| t.invariants.iter().cloned())
-                    .collect::<Vec<_>>();
-                for key in targets
-                    .iter()
-                    .flat_map(crate::semantic::CheckedTarget::expressions)
-                {
+                let invariants = target.invariants.clone();
+                for key in target.expressions() {
                     let _ = self.expression_effects(key, state);
                 }
-                let _ = self
-                    .judging()
-                    .judge_atomic_target_separations(node_path, state);
                 let outer_scope_depth = self.frames.scopes.len();
-                self.frames
-                    .scopes
-                    .push(targets.iter().map(|t| t.binding).collect());
-                // [SHARE-2] an entry binding over a key set names one entry
-                // for each of the set's keys, so `e^.len == k.len` holds
-                // where the block begins.
-                for entry in targets {
-                    let (
-                        crate::semantic::CheckedTargetKind::MapSet(set),
-                        CheckedType::Entries { .. },
-                    ) = (&entry.kind, entry.referent)
-                    else {
-                        continue;
-                    };
-                    let CheckedExpression::BorrowAddressed { root: set_root, .. } = set.as_ref()
-                    else {
-                        continue;
-                    };
-                    let targets_root = CheckedContainerRoot {
-                        root: PlaceRoot::Binding(entry.binding),
-                        path: Vec::new(),
-                        ty: entry.referent,
-                        proof_base: None,
-                    };
-                    let left = self.reasoning().place_measure_term(
-                        CheckedMeasure::Length,
-                        container_root_path(&targets_root),
-                        MeasuredKind::Entries,
-                        None,
-                    );
-                    let right = self.reasoning().place_measure_term(
-                        CheckedMeasure::Length,
-                        container_root_path(set_root),
-                        MeasuredKind::KeySet,
-                        None,
-                    );
-                    let event = self
-                        .vocabulary
-                        .proof_event(FlowEventKind::S1, Some(&entry.node_path));
-                    state.facts.establish(
-                        &Relation::Equal {
-                            left,
-                            right,
-                            difference: 0,
-                        },
-                        &mut self.vocabulary.derivations,
-                        event,
-                    );
-                }
+                self.frames.scopes.push(vec![target.binding]);
                 if let Some(guard) = guard {
                     let judgment = self.expression_effects(guard, state);
                     if judgment.reached {

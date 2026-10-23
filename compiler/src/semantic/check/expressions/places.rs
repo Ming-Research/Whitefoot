@@ -1922,56 +1922,6 @@ impl<'unit> TypeContext<'unit> {
             _ => None,
         })
     }
-    /// [SHARE-2, REF-1] indexed atomic roots already carry the selected
-    /// Option/Entries type. Their original self-rooted index is an identity
-    /// prefix, not a second element selection: the number of leading steps
-    /// of `path` that select nothing below the root's own type.
-    fn atomic_index_prefix(
-        &self,
-        local: &LocalBinding,
-        path: &ResolvedPlace,
-    ) -> Result<usize, CheckStop> {
-        let record = self
-            .declarations
-            .resolved
-            .declaration(local.declaration)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if record.role() != crate::DeclarationRole::AtomicBinder
-            || !matches!(path.path.first(), Some(PlaceStep::Index(_)))
-        {
-            return Ok(0);
-        }
-        let node = self
-            .declarations
-            .tree
-            .node_with_path(record.origin().node())
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let ordinal = self
-            .declarations
-            .declarations_at(node, crate::DeclarationRole::AtomicBinder)?
-            .iter()
-            .position(|candidate| candidate.id() == local.declaration)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let targets = self
-            .declarations
-            .tree
-            .children_with(node, Production::Place)?;
-        let target = *targets
-            .get(ordinal)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let suffixes = self
-            .declarations
-            .tree
-            .children_with(target, Production::Psuffix)?;
-        let subscripted = suffixes
-            .last()
-            .map(|suffix| self.declarations.tree.subscript_offset(*suffix))
-            .transpose()?
-            .flatten()
-            .is_some();
-        Ok(usize::from(subscripted))
-    }
-
     fn readonly_path_member(
         &self,
         check_context: &CheckContext<'_>,
@@ -1988,7 +1938,6 @@ impl<'unit> TypeContext<'unit> {
             MapSelection(CheckedType),
         }
 
-        let mut prefix = 0;
         let mut ty = match path.root {
             PlaceRoot::Binding(binding) => {
                 let Some(local) = bindings.values().find(|local| local.binding == binding) else {
@@ -1997,7 +1946,6 @@ impl<'unit> TypeContext<'unit> {
                     // header validity equation. It has no live type here.
                     return Ok(None);
                 };
-                prefix = self.atomic_index_prefix(local, path)?;
                 if local.mode.is_range() {
                     PathType::Range(local.ty)
                 } else {
@@ -2008,7 +1956,7 @@ impl<'unit> TypeContext<'unit> {
                 PathType::Value(self.constant(constant)?.declared_type)
             }
         };
-        for step in &path.path[prefix..] {
+        for step in &path.path {
             if let PathType::MapSelection(entry) = ty {
                 ty = match step {
                     PlaceStep::Payload { .. } | PlaceStep::Index(_) => {
@@ -2193,13 +2141,11 @@ impl<'unit> TypeContext<'unit> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<String, CheckStop> {
         let mut range = false;
-        let mut prefix = 0;
         let (rendered, ty) = match place.root {
             PlaceRoot::Binding(binding) => {
                 match bindings.values().find(|local| local.binding == binding) {
                     Some(local) => {
                         let name = self.declarations.declaration_spelling(local.declaration)?;
-                        prefix = self.atomic_index_prefix(local, place)?;
                         range = local.mode.is_range();
                         if local.mode.is_reference() {
                             (format!("{name}^"), Some(local.ty))
@@ -2220,7 +2166,6 @@ impl<'unit> TypeContext<'unit> {
             rendered,
             ty,
             range,
-            prefix,
             place
                 .path
                 .iter()

@@ -435,7 +435,6 @@ impl IrRecord {
 /// What an [`IrRecord`] holds, which fixes its size.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum IrRecordKind {
-    AtomicGroup { count: u32 },
     TableEntry,
     TableHold,
     Entries,
@@ -1332,40 +1331,12 @@ pub enum IrOperation {
         object: IrValueId,
         wrote: bool,
     },
-    /// [SHARE-1] a new shared map object of `nominal`, whose entries are
-    /// `Option<V>`, sized for `capacity` keys and holding none. Defines its
-    /// owned `Shared<ConcurrentHashMap<V>>` handle.
+    /// [SHARE-1] a new map of the map nominal `nominal`, whose entries are
+    /// `Option<V>`, sized for `capacity` keys and holding none. Defines the
+    /// owned `ConcurrentHashMap<V>`.
     ConcurrentHashMapNew {
         nominal: IrNominalId,
         capacity: IrValueId,
-    },
-    /// Fills target `index` of a type group's record: its object, its
-    /// table hold when it is a map, and, for an ordinary object, whether the
-    /// statement's block or guard may write it, so that the group's release
-    /// gives it up as written only then [SHARE-3]. Defines `Unit`.
-    AtomicGroupTarget {
-        record: IrRecord,
-        index: u32,
-        object: IrValueId,
-        hold: Option<IrRecord>,
-        wrote: bool,
-    },
-    /// [SHARE-2, SHARE-3] takes every target of a type group, as
-    /// `SharedTake` does, for a statement already holding an earlier group.
-    /// Defines `Unit`.
-    AtomicGroupTake {
-        record: IrRecord,
-    },
-    /// [SHARE-2, SHARE-3] takes every target of the statement's first type
-    /// group: waits, as `SharedAcquire` does, until this context holds the
-    /// group's first object, suspending with nothing held, and then takes
-    /// the others. Defines `Unit`.
-    AtomicGroupAcquire {
-        record: IrRecord,
-    },
-    AtomicGroupRelease {
-        record: IrRecord,
-        nominal: Option<IrNominalId>,
     },
     TableHoldRead {
         record: IrRecord,
@@ -1406,6 +1377,13 @@ pub enum IrOperation {
     /// they held are released once the statement holding the table gives
     /// its hold up. Defines `Unit`.
     ConcurrentHashMapClear {
+        table: IrValueId,
+    },
+    /// [SHARE-1] gives up the hold the table `table` keeps for writes no
+    /// statement holds it for, counting the entries it wrote, as the table
+    /// enters a shared state at a path a statement locks it by
+    /// (compiler/waiting-contexts/state-locks). Defines `Unit`.
+    ConcurrentHashMapSettle {
         table: IrValueId,
     },
     /// [SHARE-3] locks the entry under the bytes the range `key` names in the
@@ -1456,19 +1434,6 @@ pub enum IrOperation {
         record: IrRecord,
         table: IrValueId,
     },
-    /// Adds the key the range `key` names to a hold. Defines its position in
-    /// the hold, a `u64`.
-    TableHoldKey {
-        record: IrRecord,
-        key: IrValueId,
-    },
-    /// Adds every key of the key set `set` addresses to a hold, in the set's
-    /// order. Defines the position of the set's first key, a `u64`; key i is
-    /// at that position plus i.
-    TableHoldKeys {
-        record: IrRecord,
-        set: IrValueId,
-    },
     /// Makes a hold's take hold the table whole. Defines `Unit`.
     TableHoldWhole {
         record: IrRecord,
@@ -1478,34 +1443,11 @@ pub enum IrOperation {
     TableHoldTake {
         record: IrRecord,
     },
-    /// The address of the entry added at `position` to the taken hold
-    /// `record`, an `Option<V>` of the table nominal `nominal`.
-    TableHoldSlot {
-        nominal: IrNominalId,
-        record: IrRecord,
-        position: IrValueId,
-    },
     /// [SHARE-3] gives up a hold, each entry kept when it holds `Some` and
     /// removed when it holds `None`. Defines `Unit`.
     TableHoldRelease {
         nominal: IrNominalId,
         record: IrRecord,
-    },
-    /// The entries an entry binding over a key set names [SHARE-2], kept in
-    /// `record`, which [`Self::EntriesFill`] fills when the hold is
-    /// taken. Defines their address, an [`IrAddressed::Entries`].
-    EntriesRecord {
-        record: IrRecord,
-        element: IrElement,
-    },
-    /// Records in the entries `entries` addresses the hold `hold`, the
-    /// position `position` of the first key of the set `set` addresses in
-    /// it, and the set's count. Defines `Unit`.
-    EntriesFill {
-        entries: IrValueId,
-        hold: IrRecord,
-        position: IrValueId,
-        set: IrValueId,
     },
     /// [SHARE-1] an empty key set with room for `capacity` keys. Defines the
     /// set.

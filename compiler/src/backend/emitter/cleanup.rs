@@ -236,7 +236,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__shared_unlock_unwritten", "void", &["ptr", "i32"]),
         ("wf__shared_take", "void", &["ptr", "i32"]),
         ("wf__shared_watch", "i32", &["ptr", "i32", "ptr", "ptr"]),
-        ("wf__shared_map_new", "ptr", &["i64", "i64", "i64"]),
+        ("wf__map_new", "ptr", &["i64", "i64", "i64"]),
         (
             "wf__keyed_table_count",
             "i64",
@@ -265,18 +265,16 @@ pub(super) fn shared_runtime_declarations() -> Module {
             &["ptr", "i64", "i32", "i64", "ptr"],
         ),
         (
+            "wf__keyed_table_settle",
+            "void",
+            &["ptr", "i64", "i32", "i64"],
+        ),
+        (
             "wf__table_lock_entry",
             "ptr",
             &["ptr", "ptr", "i64", "i32", "ptr"],
         ),
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
-        ("wf__atomic_group_take", "void", &["ptr", "i64"]),
-        ("wf__atomic_group_acquire", "i32", &["ptr", "i64", "ptr"]),
-        (
-            "wf__atomic_group_release",
-            "void",
-            &["ptr", "i64", "i64", "i32", "i64"],
-        ),
         ("wf__table_hold_read", "void", &["ptr"]),
         ("wf__table_held_entry", "ptr", &["ptr", "ptr", "i64", "i32"]),
         (
@@ -285,11 +283,8 @@ pub(super) fn shared_runtime_declarations() -> Module {
             &["ptr", "ptr", "ptr", "ptr"],
         ),
         ("wf__table_hold_begin", "void", &["ptr", "ptr"]),
-        ("wf__table_hold_key", "i64", &["ptr", "ptr", "i64"]),
-        ("wf__table_hold_keys", "i64", &["ptr", "ptr"]),
         ("wf__table_hold_whole", "void", &["ptr"]),
         ("wf__table_hold_take", "void", &["ptr"]),
-        ("wf__table_hold_slot", "ptr", &["ptr", "i64"]),
         (
             "wf__table_hold_release",
             "void",

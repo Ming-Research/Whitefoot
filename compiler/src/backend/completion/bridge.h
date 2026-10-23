@@ -485,7 +485,7 @@ uint64_t wf__key_set_read_key(const struct wf_key_set *set, uint64_t index, unsi
  * empties a table its caller's hold holds whole; the entries go to a table
  * of their own, which `release`, the table's drop helper, drains and frees
  * when that hold is given up (`wf__table_hold_release`). */
-void *wf__shared_map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
+void *wf__map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
 uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 uint64_t *wf__keyed_table_drain(void *table);
 void wf__keyed_table_free(void *table);
@@ -498,6 +498,9 @@ uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, stru
                               uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
                            void (*release)(void *));
+/* Gives up the whole hold a map keeps for writes no statement holds it for,
+ * counting the entries it wrote by the slot tag the arguments locate. */
+void wf__keyed_table_settle(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 /* Releases spare cells and retired tables protected by neither an active
  * user's publication nor the whole-map gate, returning their counted heap
  * bytes including table headers, or 0 when nothing is reclaimable or the

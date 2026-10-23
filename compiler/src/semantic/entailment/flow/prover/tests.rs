@@ -240,16 +240,6 @@ fn proof_goal_projections_spell_literal_indices_and_enum_payload_names() {
                 ),
                 "shapes^[3_u64].Circle.radius"
             );
-            assert_eq!(
-                analyzer.input.render_goal_projections_at(
-                    "slot^".to_owned(),
-                    Some(nominal),
-                    false,
-                    1,
-                    &projections,
-                ),
-                "slot^.Circle.radius"
-            );
         });
     });
 }

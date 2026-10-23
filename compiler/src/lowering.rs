@@ -359,7 +359,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// `swap` [OP-11], `free_empty` [OP-14], the mutable/read-only shared-handle rows
 /// `shared_new`, `shared_share`, `shared_close`, `shared_read`, `shared_read_share`,
 /// `frozen_new` and `frozen_share`,
-/// the map's five functions `shared_map_new`, `map_count`, `map_scan`, `map_scan_within`
+/// the map's five functions `map_new`, `map_count`, `map_scan`, `map_scan_within`
 /// and `map_clear`, and the key set's four [SHARE-1].
 ///
 /// The host functions [PRE-2] are deliberately absent: those are body-less
@@ -405,7 +405,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 45] = [
     "shared_read_share",
     "frozen_new",
     "frozen_share",
-    "shared_map_new",
+    "map_new",
     "map_count",
     "map_scan",
     "map_scan_within",

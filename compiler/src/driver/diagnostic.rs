@@ -1002,8 +1002,6 @@ impl Report for SemanticIssueKind {
             WaitInsideAtomic { construct, mechanical_fix };
             TableOffsetNotKey { mechanical_fix };
             TableEntriesNotBorrowed { mechanical_fix };
-            AtomicKeyNotBytes { found, mechanical_fix };
-            AtomicKeyReadsTheState { mechanical_fix };
             AtomicBindingUnused { binding, mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
             AtomicGuardDecisionCell { mechanical_fix };

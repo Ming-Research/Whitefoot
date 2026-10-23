@@ -1057,10 +1057,10 @@ pub(crate) enum CheckedNominalKind {
     },
 }
 
-/// One target of an atomic statement, in written order [SHARE-2].
+/// The target of an atomic statement [SHARE-2].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedTarget {
-    pub(crate) lock_order: Vec<String>,
+    /// The handle place.
     pub(crate) node_path: NodePath,
     /// Source presentation for the non-normative lowering lock ledger.
     pub(crate) ledger_name: String,
@@ -1075,39 +1075,29 @@ pub(crate) struct CheckedTarget {
     /// so the statement counts no handle of its own.
     pub(crate) kept_by_place: bool,
     pub(crate) state: CheckedType,
-    pub(crate) kind: CheckedTargetKind,
-    pub(crate) referent: CheckedType,
+    /// Whether the guard and the block write nothing of the state.
     pub(crate) reads: bool,
-    /// Conservative permission to replace a map entry variant.
-    pub(crate) inserts: bool,
+    /// The paths below the state the guard and the block write, each as its
+    /// steps from the state, the empty path for the whole state; the
+    /// lowering takes the lock units they reach as written
+    /// (compiler/waiting-contexts/state-locks).
+    pub(crate) writes: Vec<Vec<CheckedEffectStep>>,
+    /// The bindings declared outside the statement whose storage the guard
+    /// or the block writes; a map key read from any other binding declared
+    /// outside it names the same entry throughout the statement.
+    pub(crate) written_roots: Vec<BindingId>,
     pub(crate) invariants: Vec<super::goal::CheckedCallRequirement>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum CheckedTargetKind {
-    Object,
-    MapWhole,
-    MapEntry(Box<CheckedExpression>),
-    MapSet(Box<CheckedExpression>),
-}
-
 impl CheckedTarget {
+    /// The expressions the statement evaluates when it begins: its handle
+    /// place's borrow [SHARE-2].
     pub(crate) fn expressions(&self) -> Vec<&CheckedExpression> {
-        let mut result = vec![self.handle.as_ref()];
-        if let CheckedTargetKind::MapEntry(index) | CheckedTargetKind::MapSet(index) = &self.kind {
-            result.push(index);
-        }
-        result
+        vec![self.handle.as_ref()]
     }
 
     pub(crate) fn expressions_mut(&mut self) -> Vec<&mut CheckedExpression> {
-        let mut result = vec![self.handle.as_mut()];
-        if let CheckedTargetKind::MapEntry(index) | CheckedTargetKind::MapSet(index) =
-            &mut self.kind
-        {
-            result.push(index.as_mut());
-        }
-        result
+        vec![self.handle.as_mut()]
     }
 }
 
@@ -3101,15 +3091,14 @@ pub(crate) enum CheckedStatement {
         target: CheckedLoopId,
         drops: Vec<CheckedDrop>,
     },
-    /// [SHARE-2] `atomic IDENT = &place (, IDENT = &place)* (when expr)?
-    /// { stmt* }`: the guard and block run with exclusive access to the
-    /// state of the shared object the target names, at a point where the
-    /// guard holds [SHARE-3].
+    /// [SHARE-2] `atomic IDENT = &place (when expr)? { stmt* }`: the guard
+    /// and block run with exclusive access to the state of the shared
+    /// object the target names, at a point where the guard holds [SHARE-3].
     Atomic {
         /// The complete `atomic_stmt`, which the waiting-call record names
         /// [WAIT-1] and which is the statement's own site.
         node_path: NodePath,
-        targets: Vec<CheckedTarget>,
+        target: Box<CheckedTarget>,
         /// The guard, an owned `Bool` whose footprint writes no path.
         guard: Option<Box<CheckedExpression>>,
         body: Vec<CheckedStatement>,
@@ -3394,11 +3383,6 @@ pub(crate) enum CheckedSeparationOccasion {
     Call,
     /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
     Exchange,
-    /// Two targets of one atomic statement whose handle places overlap
-    /// unless their positions differ, where one is a whole target [SHARE-2].
-    /// The site is the atomic statement, judged when it begins, and the
-    /// diagnostic cites the later target.
-    AtomicTargets(NodePath),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3816,23 +3800,14 @@ impl FunctionMentions {
                     self.types.extend(drops.iter().map(|drop| drop.ty));
                 }
                 CheckedStatement::Atomic {
-                    targets,
+                    target,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => {
-                    self.types.extend(targets.iter().map(|t| t.state));
-                    // A key-set target builds an Entries descriptor when it
-                    // acquires the map, even if only erased proofs name it.
-                    self.types.extend(targets.iter().filter_map(|target| {
-                        matches!(target.kind, CheckedTargetKind::MapSet(_))
-                            .then_some(target.referent)
-                    }));
-                    for key in targets
-                        .iter()
-                        .flat_map(crate::semantic::CheckedTarget::expressions)
-                    {
+                    self.types.extend([target.state]);
+                    for key in target.expressions() {
                         self.expression(key);
                     }
                     if let Some(guard) = guard {

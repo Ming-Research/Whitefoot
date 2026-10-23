@@ -95,6 +95,14 @@
 #include <time.h>
 #include <unistd.h>
 
+/* A shared object whose state is a map, as `shared_new(map_new(capacity))`
+ * makes one. */
+static void *test_shared_map(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
+    void *object = wf__shared_new(sizeof(void *));
+    *(void **)((unsigned char *)object + WF_SHARED_STATE_OFFSET) = wf__map_new(slot_size, slot_align, capacity);
+    return object;
+}
+
 /* P asks until it has been handed the object HANDED_ENOUGH times, and every
  * mutant of the hand-off fails in the first cycle; the run stops after
  * LIMIT_SECONDS, and fails when no cycle advances for STALL_SECONDS. An
@@ -530,7 +538,7 @@ static void launch_guard(test_frame *root, void (*step)(test_frame *)) {
 
 static void guard_phase_begin(test_frame *root) {
     clock_gettime(CLOCK_MONOTONIC, &guard_started);
-    guard_map_object = wf__shared_map_new(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
+    guard_map_object = test_shared_map(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
     guard_table = *(void **)((char *)guard_map_object + WF_SHARED_STATE_OFFSET);
     guard_object = wf__shared_new(sizeof(uint64_t));
     *state_of(guard_object) = 0;
@@ -731,7 +739,7 @@ static void turn_phase_begin(test_frame *root) {
     turn_other = wf__shared_new(sizeof(uint64_t));
     *state_of(turn_object) = 0;
     if (turn_case == TURN_TABLE) {
-        turn_map = wf__shared_map_new(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
+        turn_map = test_shared_map(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
         turn_table = *(void **)((char *)turn_map + WF_SHARED_STATE_OFFSET);
     }
     for (unsigned i = 0; i < turn_waiters; i++)

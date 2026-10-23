@@ -26,6 +26,14 @@
 #include <pthread.h>
 #include <time.h>
 
+/* A shared object whose state is a map, as `shared_new(map_new(capacity))`
+ * makes one. */
+static void *witness_shared_map(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
+    void *object = wf__shared_new(sizeof(void *));
+    *(void **)((unsigned char *)object + WF_SHARED_STATE_OFFSET) = wf__map_new(slot_size, slot_align, capacity);
+    return object;
+}
+
 enum { MAX_Y = 8, BOUND_PER_Y = 64, DEADLINE_SECONDS = 60 };
 /* The arbitration fixtures' executors, and how many more failed looks a
  * claim allowed to run makes before the fixture decides it did not hold. */
@@ -595,7 +603,7 @@ int main(int argc, char **argv) {
 
     object = wf__shared_new(sizeof(uint64_t));
     *object_count() = 0u;
-    map_object = wf__shared_map_new(2u * sizeof(uint64_t), _Alignof(uint64_t), 0u);
+    map_object = witness_shared_map(2u * sizeof(uint64_t), _Alignof(uint64_t), 0u);
     table = *(void **)((unsigned char *)map_object + WF_SHARED_STATE_OFFSET);
     _Alignas(WF_TABLE_ENTRY_ALIGN) unsigned char record[WF_TABLE_ENTRY_SIZE];
     uint64_t *entry = wf__table_lock_entry(table, (const unsigned char *)"E", 1u, 0u,

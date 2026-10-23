@@ -108,13 +108,9 @@ macro_rules! operation_operands {
             | IrOperation::TableEntrySlot { .. }
             | IrOperation::TableUnlockEntry { .. }
             | IrOperation::TableHoldRead { .. }
-            | IrOperation::AtomicGroupTake { .. }
-            | IrOperation::AtomicGroupAcquire { .. }
-            | IrOperation::AtomicGroupRelease { .. }
             | IrOperation::TableHoldWhole { .. }
             | IrOperation::TableHoldTake { .. }
             | IrOperation::TableHoldRelease { .. }
-            | IrOperation::EntriesRecord { .. }
             | IrOperation::WatchBegin { .. }
             | IrOperation::WatchPark { .. } => Vec::new(),
             IrOperation::Call { arguments, .. }
@@ -146,15 +142,10 @@ macro_rules! operation_operands {
             | IrOperation::ConcurrentHashMapNew {
                 capacity: value, ..
             }
-            | IrOperation::AtomicGroupTarget { object: value, .. }
             | IrOperation::ConcurrentHashMapCount { table: value }
             | IrOperation::ConcurrentHashMapClear { table: value }
+            | IrOperation::ConcurrentHashMapSettle { table: value }
             | IrOperation::TableHoldBegin { table: value, .. }
-            | IrOperation::TableHoldKey { key: value, .. }
-            | IrOperation::TableHoldKeys { set: value, .. }
-            | IrOperation::TableHoldSlot {
-                position: value, ..
-            }
             | IrOperation::KeySetNew { capacity: value }
             | IrOperation::KeySetBytes { set: value }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
@@ -172,12 +163,6 @@ macro_rules! operation_operands {
             }
             | IrOperation::TableHeldEntry { table, key, .. }
             | IrOperation::TableLockEntry { table, key, .. } => vec![$value(table), $value(key)],
-            IrOperation::EntriesFill {
-                entries,
-                position,
-                set,
-                ..
-            } => vec![$value(entries), $value(position), $value(set)],
             IrOperation::KeySetInsert { set, key } => vec![$value(set), $value(key)],
             IrOperation::ConcurrentHashMapScan {
                 table,

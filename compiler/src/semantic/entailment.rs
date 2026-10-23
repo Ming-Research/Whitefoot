@@ -366,10 +366,6 @@ pub(crate) enum ObligationFamily {
     /// Disjoint positions exclude proper ancestry at an exchange [OP-11]. The
     /// number is the query's position in the function's call separations.
     ExchangeSeparation(u32),
-    /// Two handle places of one atomic statement, one of a whole target,
-    /// must select different storage [SHARE-2, OWN-7]. The number is the
-    /// query's position in the function's call separations.
-    AtomicTargetSeparation(u32),
     /// A REF-2 use depends on this event-site separation query.
     ReferencePreservation(u32),
 }
@@ -1898,15 +1894,12 @@ pub(super) fn collect_statement_calls(
                 collect_statement_calls(caller, body, calls);
             }
             CheckedStatement::Atomic {
-                targets,
+                target,
                 guard,
                 body,
                 ..
             } => {
-                for key in targets
-                    .iter()
-                    .flat_map(crate::semantic::CheckedTarget::expressions)
-                {
+                for key in target.expressions() {
                     collect_expression_calls(caller, key, calls);
                 }
                 if let Some(guard) = guard {

@@ -58,7 +58,6 @@ pub(super) fn render_place_projections<N: PlaceNames>(
     mut rendered: String,
     mut ty: Option<CheckedType>,
     mut range: bool,
-    index_prefix: usize,
     projections: impl IntoIterator<Item = PlaceProjection>,
 ) -> Result<String, N::Error> {
     let path = projections.into_iter().collect::<Vec<_>>();
@@ -122,10 +121,6 @@ pub(super) fn render_place_projections<N: PlaceNames>(
                 range = true;
             }
             PlaceStep::Index(offset) => {
-                // An indexed atomic binder already names its selected entry.
-                if position < index_prefix {
-                    continue;
-                }
                 rendered.push_str(&format!("[{}]", names.offset(offset)?));
                 let segment = !range && matches!(ty, Some(CheckedType::Segments { .. }));
                 match names.table_entry(ty)? {

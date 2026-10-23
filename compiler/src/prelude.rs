@@ -369,12 +369,6 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
-        "prelude/shared_map_new.wf",
-        PreludeSource::Function,
-        r#"fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>> pure;
-"#,
-    ),
-    (
         "prelude/shared_share.wf",
         PreludeSource::Function,
         r#"fn shared_share<T>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
@@ -402,6 +396,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/frozen_share.wf",
         PreludeSource::Function,
         r#"fn frozen_share<T: drop>(frozen: &Frozen<T>) -> result: Frozen<T> reads(frozen);
+"#,
+    ),
+    (
+        "prelude/map_new.wf",
+        PreludeSource::Function,
+        r#"fn map_new<V: drop>(capacity: u64) -> result: ConcurrentHashMap<V> pure;
 "#,
     ),
     (

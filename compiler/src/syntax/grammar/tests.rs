@@ -183,9 +183,10 @@ fn complete_inventory_is_pinned() {
     // v0.79 adds a STRING arm to the existing `cvalue` alternation
     // [CONST-2]: no decision, and nine rows for its continuations.
     // v0.82's `atomic_stmt` adds its optional guard and its statement
-    // repeat [GRAM-4, SHARE-2]: two decisions. v0.86's entry bindings add
-    // the repeat of `"," IDENT "=" "&" place` after the binder [SHARE-2]:
-    // one decision, which moves every later decision by one.
+    // repeat [GRAM-4, SHARE-2]: two decisions. v0.86's entry bindings added
+    // the repeat of `"," IDENT "=" "&" place` after the binder [SHARE-2],
+    // one decision, and v0.164's one target retires it, so every later
+    // decision moves back by one.
     // v0.82's `type_invariant*` repeat closes `struct_decl` [GRAM-2, TYPE-11]:
     // one decision, which moves every later decision by one.
     // v0.84's range facts [RANGE-1, RANGE-4, RANGE-5] add ten decisions:
@@ -210,8 +211,8 @@ fn complete_inventory_is_pinned() {
     // graph_segment adds a repeat and a choice to 182 decisions; held_clause
     // adds its identifier repeat; v0.150 adds one arm-label choice among a
     // variant pattern, literal, named const and `else` [GRAM-4] and no
-    // production.
-    assert_eq!(DECISIONS.len(), 186);
+    // production. v0.164's one atomic target retires the target repeat.
+    assert_eq!(DECISIONS.len(), 185);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
     // Together these extend the previous 7,816-row inventory by 101.
@@ -478,61 +479,61 @@ fn complete_inventory_is_pinned() {
     assert_eq!(DECISIONS[121].kind(), DecisionKind::Optional);
     // v0.150 inserts the arm-label choice [GRAM-4]. Preorder decision
     // numbering shifts every following decision by one.
-    assert_eq!(DECISIONS[127].production(), Production::Arm);
-    assert_eq!(DECISIONS[127].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[126].production(), Production::Arm);
+    assert_eq!(DECISIONS[126].kind(), DecisionKind::Choice);
     // The call-site marker optional, and v0.82's `atomic_stmt` guard and
     // statement repeat, shift the later place/effect choices; v0.82's
     // retired `for_stmt` marker moves every decision after it back by one,
-    // and v0.84's range decisions and v0.86's entry bindings move them
-    // forward again.
-    assert_eq!(DECISIONS[140].production(), Production::Call);
-    assert_eq!(DECISIONS[140].kind(), DecisionKind::Optional);
+    // v0.84's range decisions and v0.86's entry bindings move them forward
+    // again, and v0.164's one atomic target moves them back by one.
+    assert_eq!(DECISIONS[139].production(), Production::Call);
+    assert_eq!(DECISIONS[139].kind(), DecisionKind::Optional);
     // `psuffix` carries the field, payload and index-or-range choice, and the
     // factored `range_tail?` that keeps the index and range steps
     // strong-LL(2) [GRAM-1, GRAM-5].
     // The projected entry former adds the repeat immediately before these
     // suffix decisions; later decision identities move by one [MSR-3].
     // v0.136's clause suffix choice moves them once more; v0.142 keeps it.
-    assert_eq!(DECISIONS[161].production(), Production::Pbase);
-    assert_eq!(DECISIONS[161].kind(), DecisionKind::Repeat0);
+    assert_eq!(DECISIONS[160].production(), Production::Pbase);
+    assert_eq!(DECISIONS[160].kind(), DecisionKind::Repeat0);
     // The 12 entering rows and 83 exiting rows are unchanged: replacing
     // range_guard's `unchanged` occurrence with range_variant's `is`
     // occurrence removes one FOLLOW provenance row and adds one.
     // The graph-only diagnostic start contributes no place continuation.
-    assert_eq!(DECISIONS[161].rows().len(), 95);
+    assert_eq!(DECISIONS[160].rows().len(), 95);
+    assert_eq!(DECISIONS[161].production(), Production::Psuffix);
+    assert_eq!(DECISIONS[161].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[162].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[162].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[163].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[163].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[162].kind(), DecisionKind::Optional);
     // v0.84's `range_clause` [RANGE-1]: the binder repeat, the optional guard
     // list and its repeat, and the conclusion repeat.
     for (index, kind) in [
-        (164, DecisionKind::Repeat0),
-        (165, DecisionKind::Optional),
+        (163, DecisionKind::Repeat0),
+        (164, DecisionKind::Optional),
+        (165, DecisionKind::Repeat0),
         (166, DecisionKind::Repeat0),
-        (167, DecisionKind::Repeat0),
     ] {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // v0.136's diagnostic-only ordinary unchanged suffix [RANGE-1].
-    assert_eq!(DECISIONS[157].production(), Production::ClauseExpr);
-    assert_eq!(DECISIONS[157].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[156].production(), Production::ClauseExpr);
+    assert_eq!(DECISIONS[156].kind(), DecisionKind::Choice);
     // v0.142 shares comparison, variant and unchanged relations between a
     // guard and a conclusion, then adds the variant's optional `not`.
     // A relation has no bare alternative, so it owns no optional [RANGE-1].
     for (index, production, kind) in [
-        (168, Production::RangeRelation, DecisionKind::Choice),
-        (169, Production::RangeVariant, DecisionKind::Optional),
+        (167, Production::RangeRelation, DecisionKind::Choice),
+        (168, Production::RangeVariant, DecisionKind::Optional),
     ] {
         assert_eq!(DECISIONS[index].production(), production);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // `epsuffix` mirrors it inside an effect row [EFF-1].
+    assert_eq!(DECISIONS[183].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[183].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[184].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[184].kind(), DecisionKind::Choice);
-    assert_eq!(DECISIONS[185].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[185].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[184].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
@@ -728,7 +729,7 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    assert_eq!(DECISIONS.len(), 186);
+    assert_eq!(DECISIONS.len(), 185);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {

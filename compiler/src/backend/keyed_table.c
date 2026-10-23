@@ -95,14 +95,47 @@ uint64_t wf__key_set_read_key(const wf_key_set *set, uint64_t index, unsigned ch
     return length;
 }
 
-void *wf__shared_map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
-    void *object = wf__shared_new(sizeof(void *));
-    *(wf_cmap **)((unsigned char *)object + WF_SHARED_STATE_OFFSET) = wf_cmap_create_entries(slot_size, slot_align, capacity);
-    return object;
+void *wf__map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
+    return wf_cmap_create_entries(slot_size, slot_align, capacity);
+}
+
+/* The whole hold a write to a map runs under. A map no statement holds
+ * whole is written under a hold of its own, taken here at its first such
+ * write: the map is then one only its owner reaches, or one inside a shared
+ * state that the object's own lock covers, and either way one context at a
+ * time writes it (compiler/waiting-contexts/state-locks). */
+static wf_cmap_holding *table_whole(wf_cmap *map) {
+    if (map->whole_hold == NULL) {
+        map->local_hold = take(sizeof(wf_cmap_holding));
+        wf_cmap_hold_begin(map->local_hold, map);
+        wf_cmap_hold_whole(map->local_hold);
+        wf_cmap_hold_take(WF_CMAP_CURRENT_USER(map), map->local_hold);
+    }
+    return map->whole_hold;
+}
+
+/* Gives up the map's own write hold, if it keeps one, counting each entry it
+ * wrote by the slot tag the arguments locate, then releases the entries a
+ * clear took out under it. */
+static void table_settle(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
+    wf_cmap_holding *hold = map->local_hold;
+    if (hold == NULL)
+        return;
+    map->local_hold = NULL;
+    wf_cmap *cleared = map->whole_hold == hold ? wf_cmap_take_cleared(map) : NULL;
+    wf_cmap_hold_release(hold, tag_offset, tag_width, none_tag);
+    wf_cmap_release_cleared(cleared);
+    WF_CMAP_GIVE(hold, sizeof *hold);
+}
+
+void wf__keyed_table_settle(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
+    table_settle((wf_cmap *)table, tag_offset, tag_width, none_tag);
 }
 
 void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write) {
     wf_cmap *map = table;
+    if (write != 0)
+        table_whole(map);
     return wf_cmap_held_entry(map, key, length, write != 0);
 }
 
@@ -120,9 +153,7 @@ void wf__table_held_entries(void *table, const wf_key_set *set, uint64_t *entrie
         entries[2] = set->len;
         return;
     }
-    if (map->whole_hold == NULL)
-        abort(); /* Mutable selections require the enclosing whole hold. */
-    wf_cmap_holding *hold = map->whole_hold;
+    wf_cmap_holding *hold = table_whole(map);
     uint64_t first = wf_cmap_hold_keys(hold, set);
     entries[0] = (uint64_t)(uintptr_t)hold;
     entries[1] = first;
@@ -133,7 +164,12 @@ uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_wi
     return wf_cmap_count_held((wf_cmap *)table, tag_offset, tag_width, none_tag);
 }
 
-uint64_t *wf__keyed_table_drain(void *table) { return (uint64_t *)wf_cmap_drain((wf_cmap *)table); }
+/* A drained map's counts are not read again, so its own write hold is
+ * given up counting by the one tag byte every slot begins with. */
+uint64_t *wf__keyed_table_drain(void *table) {
+    table_settle((wf_cmap *)table, 0, 1, 0);
+    return (uint64_t *)wf_cmap_drain((wf_cmap *)table);
+}
 
 uint64_t wf__keyed_table_scan_within(void *table, uint64_t cursor, uint64_t count, uint64_t limit,
                                     wf_key_set *set, uint32_t *needs, uint64_t tag_offset,
@@ -151,6 +187,7 @@ uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, wf_k
  * (wf__table_hold_release). */
 void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
                            void (*release)(void *)) {
+    table_whole((wf_cmap *)table);
     wf_cmap_clear((wf_cmap *)table, tag_offset, tag_width, none_tag, release);
 }
 
@@ -160,6 +197,7 @@ uint64_t wf__keyed_table_release_reserve(void *table) { return wf_cmap_release_r
  * registered on it; one still registered would be left on a freed list. */
 void wf__keyed_table_free(void *table) {
     wf_cmap *map = (wf_cmap *)table;
+    table_settle(map, 0, 1, 0);
     if (__atomic_load_n(&map->watch.count, __ATOMIC_RELAXED) != 0u)
         abort();
     wf_cmap_destroy(map);

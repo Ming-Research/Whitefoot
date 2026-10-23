@@ -57,7 +57,7 @@ impl AtomicLedger {
         direct: &BTreeMap<usize, String>,
         before_guard: bool,
     ) {
-        // This is the same ordered prefix that take_groups_through emits.
+        // This is the same ordered prefix that take_units_through emits.
         let trigger = direct.range(index..).next();
         let source = trigger
             .map(|(_, source)| source.clone())

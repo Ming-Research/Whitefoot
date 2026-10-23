@@ -2,7 +2,6 @@
 
 #![allow(clippy::panic)]
 
-mod atomic_groups;
 mod contexts;
 mod held_placement;
 mod overlap_storage;

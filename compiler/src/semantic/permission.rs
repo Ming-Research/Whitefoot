@@ -1012,15 +1012,12 @@ impl<'check> Program<'check> {
                 requires
             }
             CheckedStatement::Atomic {
-                targets,
+                target,
                 guard,
                 body,
                 ..
             } => {
-                targets
-                    .iter()
-                    .flat_map(crate::semantic::CheckedTarget::expressions)
-                    .any(expression)
+                target.expressions().into_iter().any(expression)
                     || guard.as_deref().is_some_and(expression)
                     || block(body, inner)
             }

@@ -491,14 +491,13 @@ fn assign_atomic_scopes(
             .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
             .production;
         child_scopes[index] = match production {
-            // The target place stays in the enclosing scope, so it cannot
-            // name a binder; every entry binding's place sees the binders,
-            // since it is reached through the statement's binding [SHARE-2].
+            // The handle place stays in the enclosing scope, so it cannot
+            // name the binder; the statement has that one place [SHARE-2].
             Production::Place if !target_seen => {
                 target_seen = true;
                 enclosing
             }
-            Production::Place | Production::Expr => binding,
+            Production::Expr => binding,
             Production::Stmt => body,
             _ => return Err(ResolutionCompilerFailure::InvalidCanonicalTree),
         };

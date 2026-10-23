@@ -1632,14 +1632,14 @@ impl<'program> IrBuilder<'program> {
                 }
                 CheckedStatement::Atomic {
                     node_path,
-                    targets,
+                    target,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => self.lower_atomic(
                     node_path,
-                    targets,
+                    target,
                     guard.as_deref(),
                     body,
                     fallthrough_drops,
@@ -2628,6 +2628,9 @@ impl<'program> IrBuilder<'program> {
         // computed for the target is carried across the right-hand side.
         let value = self.expression(value)?;
         let target = self.prepare_target(target, displaces_live_value)?;
+        if let Some(displaced) = self.write_keeping_maps(&target, value)? {
+            return self.append_drops(displaced);
+        }
         let displaced = self.displaced_releases(&target)?;
         self.write_target(&target, value)?;
         self.append_drops(displaced)

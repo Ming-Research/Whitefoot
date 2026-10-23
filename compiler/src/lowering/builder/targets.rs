@@ -164,8 +164,19 @@ impl IrBuilder<'_> {
             return Ok(Vec::new());
         }
         let previous = self.read_target(target)?;
+        self.releases_of(previous, target.ty)
+    }
+
+    /// The releases a displaced value `previous` of type `ty` owes, each
+    /// component captured from that value, so a commit that overwrites the
+    /// target before they run cannot change them.
+    fn releases_of(
+        &mut self,
+        previous: IrValueId,
+        ty: IrType,
+    ) -> Result<Vec<IrDrop>, LoweringFailure> {
         let mut drops = Vec::new();
-        let mut pending = vec![(Vec::new(), target.ty)];
+        let mut pending = vec![(Vec::new(), ty)];
         while let Some((path, ty)) = pending.pop() {
             if !crate::lowering::type_derives_release(self.nominals, self.elements, ty)
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?
@@ -193,6 +204,106 @@ impl IrBuilder<'_> {
             }
         }
         Ok(drops)
+    }
+
+    /// [SHARE-1] A write through an address that displaces a live value
+    /// keeps every map the old value holds through struct fields where it
+    /// stands: each takes the new value's entries by exchange, the rest of
+    /// the new value is stored around it, and the displaced value releases
+    /// the new value's maps, which now hold the old entries. A statement
+    /// locks a map of a shared state through the map itself, and loads the
+    /// map's handle before it holds anything, so the map a state field holds
+    /// never changes while the object lives (compiler/waiting-contexts/
+    /// state-locks). `None` when the write keeps no map and is ordinary.
+    pub(super) fn write_keeping_maps(
+        &mut self,
+        target: &PreparedTarget<'_>,
+        value: IrValueId,
+    ) -> Result<Option<Vec<IrDrop>>, LoweringFailure> {
+        let TargetStorage::Address { address, .. } = &target.kind else {
+            return Ok(None);
+        };
+        let paths = self.map_paths(target.ty)?;
+        if !target.displaces_live_value || paths.is_empty() {
+            return Ok(None);
+        }
+        if self.value_type(value)? != target.ty {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let previous = self.read_target(target)?;
+        let mut displaced = previous;
+        for path in &paths {
+            let (kept, taken) = if path.is_empty() {
+                (previous, value)
+            } else {
+                (
+                    self.project_struct_path(previous, path, false)?,
+                    self.project_struct_path(value, path, false)?,
+                )
+            };
+            self.define(
+                IrType::Unit,
+                IrOperation::ConcurrentHashMapSwap {
+                    first: kept,
+                    second: taken,
+                },
+            )?;
+            displaced = if path.is_empty() {
+                taken
+            } else {
+                self.replace_struct_path(displaced, path, taken)?
+            };
+        }
+        self.store_around_maps(*address, value, target.ty)?;
+        Ok(Some(self.releases_of(displaced, target.ty)?))
+    }
+
+    /// Stores every part of `value` that is not a map held through struct
+    /// fields into the storage at `address`, leaving those maps' handles as
+    /// they are.
+    pub(super) fn store_around_maps(
+        &mut self,
+        address: IrValueId,
+        value: IrValueId,
+        ty: IrType,
+    ) -> Result<(), LoweringFailure> {
+        if self.map_paths(ty)?.is_empty() {
+            let referent = IrAddressed::of(ty).ok_or(LoweringFailure::InvalidCheckedProgram)?;
+            return self.store_addressed(address, value, referent);
+        }
+        let IrType::Nominal(nominal) = ty else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let fields = match &self.nominals[nominal.index()].kind {
+            IrNominalKind::Struct { fields } => {
+                fields.iter().map(|field| field.ty).collect::<Vec<_>>()
+            }
+            // A map's handle stays where it is.
+            _ => return Ok(()),
+        };
+        for (index, field_ty) in fields.into_iter().enumerate() {
+            let field = u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?;
+            let referent =
+                IrAddressed::of(field_ty).ok_or(LoweringFailure::InvalidCheckedProgram)?;
+            let field_address = self.define(
+                IrType::Address(referent),
+                IrOperation::ProjectAddress {
+                    address,
+                    projection: IrPlaceStep::Field { nominal, field },
+                },
+            )?;
+            let field_value = self.define(
+                field_ty,
+                IrOperation::ProjectStruct {
+                    aggregate: value,
+                    nominal,
+                    field,
+                    consume_root: false,
+                },
+            )?;
+            self.store_around_maps(field_address, field_value, field_ty)?;
+        }
+        Ok(())
     }
 
     fn check_target_offset(

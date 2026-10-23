@@ -954,13 +954,13 @@ impl<'program> Walker<'program> {
                 None
             }
             CheckedStatement::Atomic {
-                targets,
+                target,
                 node_path,
                 guard,
                 body,
                 continues,
                 ..
-            } => self.atomic_statement(state, targets, node_path, guard.as_deref(), body, *continues),
+            } => self.atomic_statement(state, target, node_path, guard.as_deref(), body, *continues),
         }
     }
 

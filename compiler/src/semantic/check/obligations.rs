@@ -70,11 +70,6 @@ fn obligation_records(
                 separation.site.clone(),
                 ObligationFamily::ExchangeSeparation(query),
             ),
-            (None, CheckedSeparationOccasion::AtomicTargets(target)) => (
-                SemanticRule::Share2,
-                target.clone(),
-                ObligationFamily::AtomicTargetSeparation(query),
-            ),
             (None, CheckedSeparationOccasion::Call) => (
                 SemanticRule::Eff5,
                 separation.site.clone(),
@@ -352,20 +347,14 @@ impl Records<'_> {
             }
             CheckedStatement::Atomic {
                 node_path,
-                targets,
+                target,
                 guard,
                 body,
                 continues,
                 ..
             } => {
-                let invariants = targets
-                    .iter()
-                    .flat_map(|t| t.invariants.iter().cloned())
-                    .collect::<Vec<_>>();
-                for key in targets
-                    .iter()
-                    .flat_map(crate::semantic::CheckedTarget::expressions)
-                {
+                let invariants = target.invariants.clone();
+                for key in target.expressions() {
                     self.expression(key);
                 }
                 if let Some(guard) = guard {

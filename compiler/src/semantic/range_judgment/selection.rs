@@ -370,15 +370,12 @@ impl Selection<'_> {
                     }
                 }
                 CheckedStatement::Atomic {
-                    targets,
+                    target,
                     guard,
                     body,
                     ..
                 } => {
-                    for target in targets
-                        .iter()
-                        .flat_map(crate::semantic::CheckedTarget::expressions)
-                    {
+                    for target in target.expressions() {
                         self.expression(target);
                     }
                     if let Some(guard) = guard {

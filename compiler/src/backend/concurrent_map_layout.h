@@ -134,6 +134,11 @@ struct wf_cmap {
     /* The hold that holds the map whole, from its take to its release, whose
      * entries a swap settles before it exchanges the map's (wf_cmap_swap). */
     wf_cmap_holding *whole_hold;
+    /* The whole hold the map keeps for writes that no statement holds it
+     * for, taken at the first such write and given up when the map enters a
+     * shared state at a path a statement locks it by, or is drained
+     * (wf__keyed_table_settle in keyed_table.c). */
+    wf_cmap_holding *local_hold;
     /* Maps holding the entries a clear took out under the whole hold
      * (wf_cmap_clear), released after it: the list's head on the cleared
      * map, and on each listed map the next one and its release. */

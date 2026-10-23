@@ -2558,15 +2558,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     self.install_statement_call_requirements(check_context, body, requirements)?;
                 }
                 CheckedStatement::Atomic {
-                    targets,
+                    target,
                     guard,
                     body,
                     ..
                 } => {
-                    for key in targets
-                        .iter_mut()
-                        .flat_map(crate::semantic::CheckedTarget::expressions_mut)
-                    {
+                    for key in target.expressions_mut() {
                         self.install_expression_call_requirements(
                             check_context,
                             key,

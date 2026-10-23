@@ -133,6 +133,14 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 
 #include "keyed_table.c"
 
+/* A shared object whose state is a map, as `shared_new(map_new(capacity))`
+ * makes one. */
+static void *map_test_shared_map(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
+    void *object = wf__shared_new(sizeof(void *));
+    *(void **)((unsigned char *)object + WF_SHARED_STATE_OFFSET) = wf__map_new(slot_size, slot_align, capacity);
+    return object;
+}
+
 /* The completion pool grants powers of two from 512 through 2 MiB, then
  * 64 KiB multiples (completion/bridge.c). Count grants on take/give, plus
  * the direct-map/entry deltas, exactly the two counters heap_in_use sums. */
@@ -3370,7 +3378,7 @@ static void tables_read_selection(void) {
 
 /* Independent observations of merge, read mode, and stable missing keys. */
 static void shared_map_groups(void) {
-    void *object = wf__shared_map_new(16, 8, 2);
+    void *object = map_test_shared_map(16, 8, 2);
     wf_cmap *map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
     wf_cmap_holding first, second;
     wf_atomic_target group[2] = {{object, &first, 0}, {object, &second, 0}};
@@ -3406,7 +3414,7 @@ static void shared_map_groups(void) {
      * None into Some. A fixed four-byte release read fails the first round.
      * The group is a statement's first, which a map group takes without
      * parking, so its acquire needs no frame and answers 0. */
-    object = wf__shared_map_new(4, 1, 2);
+    object = map_test_shared_map(4, 1, 2);
     map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
     group[0].object = object; group[1].object = object;
     for (unsigned present = 0; present < 2; ++present) {

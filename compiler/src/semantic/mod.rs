@@ -64,7 +64,7 @@ pub(crate) use model::{
     CheckedProgramData, CheckedProjectedDrop, CheckedRangeElementPlace, CheckedRangeRoot,
     CheckedRangeSource, CheckedReleaseClass, CheckedSegmentIndex, CheckedSegmentSelect,
     CheckedSegmentSource, CheckedSetTarget, CheckedShared, CheckedStatement, CheckedTarget,
-    CheckedTargetDomainObligation, CheckedTargetKind, CheckedType, CheckedValue,
+    CheckedTargetDomainObligation, CheckedType, CheckedValue,
     CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell, MeasuredKind, NominalId,
     PropagationContext, WindowShape,
 };
@@ -1304,30 +1304,15 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
-    /// An entry binding whose index atom is neither a `&[u8]` range nor a
-    /// place of type `KeySet` [SHARE-2].
+    /// A map subscript whose offset is neither a `&[u8]` range nor a place
+    /// of type `KeySet` [OP-4, SHARE-1].
     TableOffsetNotKey {
         mechanical_fix: &'static str,
     },
     TableEntriesNotBorrowed {
         mechanical_fix: &'static str,
     },
-    AtomicKeyNotBytes {
-        /// The key's value.
-        found: String,
-        /// The repair [DIAG-1].
-        mechanical_fix: &'static str,
-    },
-    /// An entry binding whose index atom reads through the statement's
-    /// binding or an earlier entry binding, which the statement reads when
-    /// it begins, before it holds the state [SHARE-2].
-    AtomicKeyReadsTheState {
-        /// The repair [DIAG-1].
-        mechanical_fix: &'static str,
-    },
-    /// An entry binding the guard and block never use, or a statement whose
-    /// guard and block reach nothing of its state through any binding
-    /// [SHARE-2].
+    /// A statement whose guard and block never name its binding [SHARE-2].
     AtomicBindingUnused {
         /// The binding's name.
         binding: String,

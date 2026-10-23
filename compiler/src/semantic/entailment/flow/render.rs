@@ -398,16 +398,10 @@ impl Input<'_, '_> {
             PlaceRoot::Binding(binding) => self.binding_is_range(binding),
             PlaceRoot::Constant(_) => false,
         };
-        let index_prefix = usize::from(
-            matches!(place.root, PlaceRoot::Binding(binding)
-                if self.summary(binding).is_some_and(|summary| summary.indexed_atomic))
-                && matches!(place.path.first(), Some(PlaceStep::Index(_))),
-        );
         self.render_place_projections_at(
             rendered,
             ty,
             range,
-            index_prefix,
             &place.path,
             counted,
         )
@@ -432,7 +426,7 @@ impl Input<'_, '_> {
         projections: &[PlaceStep],
         counted: Option<BinderSpelling<'_>>,
     ) -> String {
-        self.render_place_projections_at(rendered, ty, false, 0, projections, counted)
+        self.render_place_projections_at(rendered, ty, false, projections, counted)
     }
 
     fn render_place_projections_at(
@@ -440,7 +434,6 @@ impl Input<'_, '_> {
         rendered: String,
         ty: Option<CheckedType>,
         range: bool,
-        index_prefix: usize,
         projections: &[PlaceStep],
         counted: Option<BinderSpelling<'_>>,
     ) -> String {
@@ -449,7 +442,6 @@ impl Input<'_, '_> {
             rendered,
             ty,
             range,
-            index_prefix,
             projections
                 .iter()
                 .copied()
@@ -662,16 +654,10 @@ impl Input<'_, '_> {
                 // below the referent.
                 let reference = self.places.is_reference(*root);
                 let base = if reference { format!("{base}^") } else { base };
-                let index_prefix = usize::from(
-                    self.summary(*root)
-                        .is_some_and(|summary| summary.indexed_atomic)
-                        && matches!(projections.first(), Some(GoalProjection::Subscript(_))),
-                );
                 self.render_goal_projections_at(
                     base,
                     ty,
                     admission.root_is_range,
-                    index_prefix,
                     projections,
                 )
             }
@@ -795,7 +781,7 @@ impl Input<'_, '_> {
         root_type: Option<CheckedType>,
         projections: &[GoalProjection],
     ) -> String {
-        self.render_goal_projections_at(base, root_type, false, 0, projections)
+        self.render_goal_projections_at(base, root_type, false, projections)
     }
 
     pub(super) fn render_goal_projections_at(
@@ -803,7 +789,6 @@ impl Input<'_, '_> {
         base: String,
         root_type: Option<CheckedType>,
         range: bool,
-        index_prefix: usize,
         projections: &[GoalProjection],
     ) -> String {
         use crate::semantic::place_render::{PlaceProjection, render_place_projections};
@@ -823,7 +808,6 @@ impl Input<'_, '_> {
             base,
             root_type,
             range,
-            index_prefix,
             projections,
         )
         .unwrap_or_else(|never| match never {})
@@ -868,7 +852,6 @@ impl Input<'_, '_> {
             rendered,
             ty,
             false,
-            0,
             projections,
         )
         .unwrap_or_else(|never| match never {})
@@ -1148,9 +1131,9 @@ impl Reasoning<'_, '_, '_> {
                         }
                     },
                 );
-                let place = self.input.render_place_projections_at(
-                    base, ty, range, 0, projections, None,
-                );
+                let place = self
+                    .input
+                    .render_place_projections_at(base, ty, range, projections, None);
                 measure.map_or(place.clone(), |measure| {
                     format!("{place}.{}", measure.spelling())
                 })
