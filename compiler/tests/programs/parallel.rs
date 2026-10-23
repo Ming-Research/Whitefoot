@@ -566,6 +566,22 @@ fn whole_map_value_reads_release_before_the_next_statement() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
+/// [SHARE-1, TYPE-9, OP-4] a concurrent hash map is an ordinary value, in
+/// one context. Sixteen maps are the elements of one array field of a shared
+/// state, written, read and counted by a database number inside statements
+/// (statuses 1 to 7); each is exchanged in one statement with an empty map
+/// made outside it, which then holds the old entries until it is released,
+/// while the state's map is empty and takes a new entry (8 to 15). Maps in a
+/// local binding (20s), an `Option` payload (30s), a `Box` (40s), another
+/// map's entry (50s) and a frozen object (60s) are written and read where
+/// they are.
+#[test]
+fn maps_are_ordinary_values_in_an_array_a_local_a_payload_a_box_an_entry_and_a_frozen_object() {
+    let program = build_program(&compile_program("map_values.wf"));
+    let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
 /// [SHARE-3] guards that read entries of a map: four pairs pass values
 /// through one entry each, a sender waiting for its entry to be empty and a
 /// taker for it to hold a value, and two contexts wait on a guard reading an

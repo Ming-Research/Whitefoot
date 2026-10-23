@@ -209,13 +209,23 @@ impl IrBuilder<'_> {
             }
             let (path, lock) = if unit < maps.len() {
                 let path = maps[unit].clone();
+                // One key and no whole-map use take only that key's entry.
+                let entry_key = match used.keys.as_slice() {
+                    [key] if !used.whole => Some(key),
+                    _ => None,
+                };
                 ledger.borrow_mut().push_group(
                     format!(
                         "{}^{}",
                         target.ledger_name,
                         path.iter().map(|field| format!(".{field}")).collect::<String>()
                     ),
-                    "map".to_owned(),
+                    if entry_key.is_some() {
+                        "map entry"
+                    } else {
+                        "whole map"
+                    }
+                    .to_owned(),
                 );
                 let steps = path
                     .iter()
@@ -238,8 +248,8 @@ impl IrBuilder<'_> {
                     },
                 )?;
                 let read = !used.written;
-                let lock = match used.keys.as_slice() {
-                    [(key_binding, key)] if !used.whole => {
+                let lock = match entry_key {
+                    Some((key_binding, key)) => {
                         let key = self.expression(key)?;
                         Lock::Entry {
                             nominal: map,
@@ -254,7 +264,7 @@ impl IrBuilder<'_> {
                             stable_absence: several,
                         }
                     }
-                    _ => Lock::Whole {
+                    None => Lock::Whole {
                         nominal: map,
                         table,
                         record: self.record(IrRecordKind::TableHold)?,
@@ -656,11 +666,13 @@ impl IrBuilder<'_> {
         )?))
     }
     /// Whether `address` is the state the innermost statement holds, so that
-    /// a place's field path below it names its map units.
+    /// a place's field path below it names its map units: the address the
+    /// statement began with, or its binding's value, which a join after a
+    /// branch of the block carries as a block parameter.
     pub(super) fn is_held_state(&self, address: IrValueId) -> bool {
-        self.atomics
-            .last()
-            .is_some_and(|region| region.state == address)
+        self.atomics.last().is_some_and(|region| {
+            region.state == address || self.bindings.get(&region.binding) == Some(&address)
+        })
     }
     /// Gives up every unit, last first. After a false guard, `watched`, the
     /// statement wrote nothing; on leaving its block it releases a unit as

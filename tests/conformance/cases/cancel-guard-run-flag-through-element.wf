@@ -1,0 +1,34 @@
+fn fire(source: std::time::CancelSource) -> result: unit pure waits {
+  doc "Fires the source and closes its handle.";
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  doc "Two watches are the elements of an array. The guard reads the second watch's flag through an element step and waits until a spawned context fires its source; the block reads both flags the same way and finds the first unfired and the second fired.";
+  let quiet = std::time::cancel_source();
+  let loud = std::time::cancel_source();
+  let first = std::time::cancel_watch(source: &quiet);
+  let second = std::time::cancel_watch(source: &loud);
+  let slots = slots_new::<std::time::CancelWatch, 2>();
+  place_back(window: &slots, value: move first);
+  place_back(window: &slots, value: move second);
+  let watches = slots_into_array::<std::time::CancelWatch, 2>(values: move slots);
+  let work = shared_new::<u64>(value: 0_u64);
+  spawn fire(source: move loud);
+  let quiet_fired = True();
+  let loud_fired = False();
+  atomic w = &work when watches[1_u64].fired {
+    set quiet_fired = watches[0_u64].fired;
+    set loud_fired = watches[1_u64].fired;
+    set w^ = 1_u64;
+  }
+  std::time::close_cancel_source(source: move quiet);
+  let quiet_unfired = bnot(quiet_fired);
+  let correct = band(quiet_unfired, loud_fired);
+  if correct {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

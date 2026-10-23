@@ -1,0 +1,423 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct Server {
+  dbs: Array<ConcurrentHashMap<u64>, 16>;
+  flushes: u64;
+}
+
+fn databases() -> made: Array<ConcurrentHashMap<u64>, 16> pure {
+  doc "Sixteen empty maps placed into a window one after another and turned into an array, so element i is database i.";
+  let slots = slots_new::<ConcurrentHashMap<u64>, 16>();
+  let db0 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db0);
+  let db1 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db1);
+  let db2 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db2);
+  let db3 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db3);
+  let db4 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db4);
+  let db5 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db5);
+  let db6 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db6);
+  let db7 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db7);
+  let db8 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db8);
+  let db9 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db9);
+  let db10 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db10);
+  let db11 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db11);
+  let db12 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db12);
+  let db13 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db13);
+  let db14 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db14);
+  let db15 = map_new::<u64>(capacity: 2_u64);
+  place_back(window: &slots, value: move db15);
+  let dbs = slots_into_array::<ConcurrentHashMap<u64>, 16>(values: move slots);
+  return move dbs;
+}
+
+fn put(server: &Shared<Server>, db: u64, key: &[u8], value: u64) -> result: unit reads(server), reads(key) waits contract {
+  requires db < 16_u64;
+} {
+  doc "Writes the value under the key in database db, in one statement.";
+  atomic s = &server^ {
+    set s^.dbs[db][key] = Some<u64>(value: value);
+  }
+  return unit;
+}
+
+fn get(server: &Shared<Server>, db: u64, key: &[u8]) -> found: Option<u64> reads(server), reads(key) waits contract {
+  requires db < 16_u64;
+} {
+  doc "Reads the entry under the key in database db, in one statement.";
+  let seen = None<u64>();
+  atomic s = &server^ {
+    set seen = s^.dbs[db][key];
+  }
+  return seen;
+}
+
+fn size(server: &Shared<Server>, db: u64) -> count: u64 reads(server) waits contract {
+  requires db < 16_u64;
+} {
+  doc "Counts the entries of database db, in one statement.";
+  let counted = 0_u64;
+  atomic s = &server^ {
+    set counted = map_count::<u64>(map: &s^.dbs[db]);
+  }
+  return counted;
+}
+
+fn check_databases(server: &Shared<Server>) -> code: u8 reads(server) waits {
+  doc "Reads every database by its number: database i holds 10i + 1 under the key a, and an odd one also holds 10i + 2 under the key b, so its count is its parity plus one. Returns 0, or the code naming the first wrong count or value.";
+  let a = &names[0_u64..1_u64];
+  let b = &names[1_u64..2_u64];
+  for @check (db in 0_u64..16_u64) {
+    let parity = db % 2_u64;
+    let expected_count = parity +wrap 1_u64;
+    let counted = size(server: server, db: db);
+    if counted != expected_count {
+      return 1_u8;
+    }
+    let tens = db *wrap 10_u64;
+    let expected_a = tens +wrap 1_u64;
+    let found_a = get(server: server, db: db, key: a);
+    match found_a {
+      Some(value: seen) => {
+        if seen != expected_a {
+          return 2_u8;
+        }
+      }
+      None() => {
+        return 3_u8;
+      }
+    }
+    let found_b = get(server: server, db: db, key: b);
+    match found_b {
+      Some(value: seen) => {
+        if parity == 0_u64 {
+          return 4_u8;
+        }
+        let expected_b = tens +wrap 2_u64;
+        if seen != expected_b {
+          return 5_u8;
+        }
+      }
+      None() => {
+        if parity == 1_u64 {
+          return 6_u8;
+        }
+      }
+    }
+  }
+  return 0_u8;
+}
+
+fn flush_all(server: &Shared<Server>) -> code: u8 reads(server) waits {
+  doc "Clears every database as FLUSHALL does: for each database number an empty map made outside the statement is exchanged with that database inside one statement, and afterwards the local map holds the old entries, which ordinary local use counts and reads before releasing it. Returns 0, or the code naming the first wrong count or value.";
+  let a = &names[0_u64..1_u64];
+  for @flush (db in 0_u64..16_u64) {
+    let flushed = map_new::<u64>(capacity: 0_u64);
+    atomic s = &server^ {
+      swap(first: &s^.dbs[db], second: &flushed);
+      set s^.flushes = s^.flushes +wrap 1_u64;
+    }
+    let parity = db % 2_u64;
+    let expected_count = parity +wrap 1_u64;
+    let kept = map_count::<u64>(map: &flushed);
+    if kept != expected_count {
+      return 8_u8;
+    }
+    let tens = db *wrap 10_u64;
+    let expected_a = tens +wrap 1_u64;
+    let old = flushed[a];
+    match old {
+      Some(value: seen) => {
+        if seen != expected_a {
+          return 9_u8;
+        }
+      }
+      None() => {
+        return 10_u8;
+      }
+    }
+    release::<ConcurrentHashMap<u64>>(value: move flushed);
+  }
+  return 0_u8;
+}
+
+fn local_map() -> code: u8 pure {
+  doc "A map in a local binding, outside every statement and shared object, is written, overwritten, read, counted and has an entry removed.";
+  let local = map_new::<u64>(capacity: 2_u64);
+  let a = &names[0_u64..1_u64];
+  let b = &names[1_u64..2_u64];
+  set local[a] = Some<u64>(value: 1_u64);
+  set local[b] = Some<u64>(value: 2_u64);
+  set local[a] = Some<u64>(value: 3_u64);
+  let counted = map_count::<u64>(map: &local);
+  if counted != 2_u64 {
+    return 20_u8;
+  }
+  let first = local[a];
+  match first {
+    Some(value: seen) => {
+      if seen != 3_u64 {
+        return 21_u8;
+      }
+    }
+    None() => {
+      return 22_u8;
+    }
+  }
+  set local[b] = None<u64>();
+  let left = map_count::<u64>(map: &local);
+  if left != 1_u64 {
+    return 23_u8;
+  }
+  let removed = local[b];
+  match removed {
+    Some(value: unexpected) => {
+      return 24_u8;
+    }
+    None() => {
+    }
+  }
+  return 0_u8;
+}
+
+fn optional_map() -> code: u8 pure {
+  doc "A map held as the payload of an Option is written through the payload binder of a match through a reference, and a second such match counts and reads it.";
+  let inner = map_new::<u64>(capacity: 1_u64);
+  let maybe = Some<ConcurrentHashMap<u64>>(value: move inner);
+  let a = &names[0_u64..1_u64];
+  match &maybe {
+    Some(value: present) => {
+      set present^[a] = Some<u64>(value: 4_u64);
+    }
+    None() => {
+      return 30_u8;
+    }
+  }
+  match &maybe {
+    Some(value: present) => {
+      let counted = map_count::<u64>(map: present);
+      if counted != 1_u64 {
+        return 31_u8;
+      }
+      let read = present^[a];
+      match read {
+        Some(value: seen) => {
+          if seen != 4_u64 {
+            return 32_u8;
+          }
+        }
+        None() => {
+          return 33_u8;
+        }
+      }
+    }
+    None() => {
+      return 34_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn boxed_map() -> code: u8 pure {
+  doc "A map held as the content of a Box is written, counted and read through the content field.";
+  let inner = map_new::<u64>(capacity: 1_u64);
+  let cell = box_new::<ConcurrentHashMap<u64>>(value: move inner);
+  let a = &names[0_u64..1_u64];
+  set cell.inner[a] = Some<u64>(value: 5_u64);
+  let counted = map_count::<u64>(map: &cell.inner);
+  if counted != 1_u64 {
+    return 40_u8;
+  }
+  let read = cell.inner[a];
+  match read {
+    Some(value: seen) => {
+      if seen != 5_u64 {
+        return 41_u8;
+      }
+    }
+    None() => {
+      return 42_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn nested_map() -> code: u8 pure {
+  doc "A map is the entry value of another map: the outer entry under a holds an inner map, written through a match on that entry through a reference and then counted and read the same way, while the outer entry under b stays absent.";
+  let outer = map_new::<ConcurrentHashMap<u64>>(capacity: 1_u64);
+  let inner = map_new::<u64>(capacity: 1_u64);
+  let a = &names[0_u64..1_u64];
+  let b = &names[1_u64..2_u64];
+  set outer[a] = Some<ConcurrentHashMap<u64>>(value: move inner);
+  match &outer[a] {
+    Some(value: present) => {
+      set present^[b] = Some<u64>(value: 6_u64);
+    }
+    None() => {
+      return 50_u8;
+    }
+  }
+  let outer_count = map_count::<ConcurrentHashMap<u64>>(map: &outer);
+  if outer_count != 1_u64 {
+    return 51_u8;
+  }
+  match &outer[a] {
+    Some(value: present) => {
+      let counted = map_count::<u64>(map: present);
+      if counted != 1_u64 {
+        return 52_u8;
+      }
+      let read = present^[b];
+      match read {
+        Some(value: seen) => {
+          if seen != 6_u64 {
+            return 53_u8;
+          }
+        }
+        None() => {
+          return 54_u8;
+        }
+      }
+    }
+    None() => {
+      return 55_u8;
+    }
+  }
+  match &outer[b] {
+    Some(value: unexpected) => {
+      return 56_u8;
+    }
+    None() => {
+    }
+  }
+  return 0_u8;
+}
+
+fn frozen_map() -> code: u8 pure {
+  doc "A map moved into a frozen object is counted and read through the handle's inner field, with no statement.";
+  let source = map_new::<u64>(capacity: 1_u64);
+  let a = &names[0_u64..1_u64];
+  set source[a] = Some<u64>(value: 8_u64);
+  let frozen = frozen_new::<ConcurrentHashMap<u64>>(value: move source);
+  let counted = map_count::<u64>(map: &frozen.inner);
+  if counted != 1_u64 {
+    return 60_u8;
+  }
+  let read = frozen.inner[a];
+  match read {
+    Some(value: seen) => {
+      if seen != 8_u64 {
+        return 61_u8;
+      }
+    }
+    None() => {
+      return 62_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "A concurrent hash map is an ordinary value. A shared state holds sixteen maps as the elements of one array field, built from map_new results; statements write and read entries by a database number and count each database. Each database is then exchanged with an empty local map in one statement, and the local map holds the old entries outside every statement until it is released, while the state's map is empty and takes a new entry. Maps in a local binding, an Option payload, a Box, another map's entry and a frozen object are written and read where they are. The status is 0, or the code of the first wrong count or value.";
+  let made = databases();
+  let state = Server(dbs: move made, flushes: 0_u64);
+  let server = shared_new::<Server>(value: move state);
+  let a = &names[0_u64..1_u64];
+  let b = &names[1_u64..2_u64];
+  for @fill (db in 0_u64..16_u64) {
+    let tens = db *wrap 10_u64;
+    let value_a = tens +wrap 1_u64;
+    put(server: &server, db: db, key: a, value: value_a);
+    let parity = db % 2_u64;
+    if parity == 1_u64 {
+      let value_b = tens +wrap 2_u64;
+      put(server: &server, db: db, key: b, value: value_b);
+    }
+  }
+  let checked = check_databases(server: &server);
+  if checked != 0_u8 {
+    return exit_status(code: checked);
+  }
+  let total = 0_u64;
+  atomic s = &server {
+    for @count (db in 0_u64..16_u64) {
+      let counted = map_count::<u64>(map: &s^.dbs[db]);
+      set total = total +wrap counted;
+    }
+  }
+  if total != 24_u64 {
+    return exit_status(code: 7_u8);
+  }
+  let flushed = flush_all(server: &server);
+  if flushed != 0_u8 {
+    return exit_status(code: flushed);
+  }
+  let left = 0_u64;
+  let flushes = 0_u64;
+  atomic s = &server {
+    for @empty (db in 0_u64..16_u64) {
+      let counted = map_count::<u64>(map: &s^.dbs[db]);
+      set left = left +wrap counted;
+    }
+    set flushes = s^.flushes;
+  }
+  if left != 0_u64 {
+    return exit_status(code: 11_u8);
+  }
+  if flushes != 16_u64 {
+    return exit_status(code: 12_u8);
+  }
+  put(server: &server, db: 7_u64, key: b, value: 70_u64);
+  let again = size(server: &server, db: 7_u64);
+  if again != 1_u64 {
+    return exit_status(code: 13_u8);
+  }
+  let back = get(server: &server, db: 7_u64, key: b);
+  match back {
+    Some(value: seen) => {
+      if seen != 70_u64 {
+        return exit_status(code: 14_u8);
+      }
+    }
+    None() => {
+      return exit_status(code: 15_u8);
+    }
+  }
+  let local = local_map();
+  if local != 0_u8 {
+    return exit_status(code: local);
+  }
+  let optional = optional_map();
+  if optional != 0_u8 {
+    return exit_status(code: optional);
+  }
+  let boxed = boxed_map();
+  if boxed != 0_u8 {
+    return exit_status(code: boxed);
+  }
+  let nested = nested_map();
+  if nested != 0_u8 {
+    return exit_status(code: nested);
+  }
+  let frozen = frozen_map();
+  if frozen != 0_u8 {
+    return exit_status(code: frozen);
+  }
+  return exit_status(code: 0_u8);
+}

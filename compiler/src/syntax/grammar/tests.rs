@@ -185,7 +185,7 @@ fn complete_inventory_is_pinned() {
     // v0.82's `atomic_stmt` adds its optional guard and its statement
     // repeat [GRAM-4, SHARE-2]: two decisions. v0.86's entry bindings added
     // the repeat of `"," IDENT "=" "&" place` after the binder [SHARE-2],
-    // one decision, and v0.164's one target retires it, so every later
+    // one decision, and GRAM-4's one atomic target retires it, so every later
     // decision moves back by one.
     // v0.82's `type_invariant*` repeat closes `struct_decl` [GRAM-2, TYPE-11]:
     // one decision, which moves every later decision by one.
@@ -211,7 +211,7 @@ fn complete_inventory_is_pinned() {
     // graph_segment adds a repeat and a choice to 182 decisions; held_clause
     // adds its identifier repeat; v0.150 adds one arm-label choice among a
     // variant pattern, literal, named const and `else` [GRAM-4] and no
-    // production. v0.164's one atomic target retires the target repeat.
+    // production. GRAM-4's one atomic target retires the target repeat.
     assert_eq!(DECISIONS.len(), 185);
     // `continue` adds the same statement prefixes and followers as `break`:
     // 72 rows at existing decisions and 29 at its optional label decision.
@@ -249,7 +249,7 @@ fn complete_inventory_is_pinned() {
     // and requires-repeat entry, and `held (` to requires_clause's choice.
     // The new held_clause repeat contributes `, IDENT` and `) ;`: five
     // additional rows. All old pairs survive unchanged under projection.
-    // v0.164's one atomic target retires the target repeat and its 40 rows.
+    // GRAM-4's one atomic target retires the target repeat and its 40 rows.
     assert_eq!(SELECT_ROWS.len(), 8_462);
     let held = LookaheadPredicate::Terminal(TerminalPredicate::Fixed(FixedTerminal::Held));
     let old_rows = DECISIONS
@@ -263,7 +263,8 @@ fn complete_inventory_is_pinned() {
             })
         })
         .count();
-    assert_eq!(old_rows, 8_497);
+    // The rows before HOLD-1 less the 40 the one atomic target retires.
+    assert_eq!(old_rows, 8_457);
     let group = DECISIONS
         .iter()
         .find(|decision| decision.production() == Production::HeldClause)
@@ -486,7 +487,7 @@ fn complete_inventory_is_pinned() {
     // statement repeat, shift the later place/effect choices; v0.82's
     // retired `for_stmt` marker moves every decision after it back by one,
     // v0.84's range decisions and v0.86's entry bindings move them forward
-    // again, and v0.164's one atomic target moves them back by one.
+    // again, and GRAM-4's one atomic target moves them back by one.
     assert_eq!(DECISIONS[139].production(), Production::Call);
     assert_eq!(DECISIONS[139].kind(), DecisionKind::Optional);
     // `psuffix` carries the field, payload and index-or-range choice, and the

@@ -1298,7 +1298,8 @@ impl<'unit> TypeContext<'unit> {
     /// Form one storage member. Access, move and write judgments consume this
     /// result; none of them resolves a field or a Box member independently.
     /// A watch's flag is no storage member: only the place walk that reads it
-    /// in place forms one [PRE-2].
+    /// in place, and the index use that reads it after element steps, form
+    /// one [PRE-2].
     pub(in crate::semantic::check) fn elaborate_place_member(
         &self,
         check_context: &CheckContext<'_>,
@@ -1313,8 +1314,8 @@ impl<'unit> TypeContext<'unit> {
                 .parent(suffix)?
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             return match self.cancellation_flag_use(written)? {
-                // An admitted read through an element step: the flag is read
-                // in place only along field, payload and Box content steps.
+                // An admitted read the index use did not form: its watch is
+                // selected through a base that names no binding's place.
                 CancellationFlagUse::Read => self
                     .declarations
                     .unsupported(UnsupportedSemanticFeature::CompositeValues, written),

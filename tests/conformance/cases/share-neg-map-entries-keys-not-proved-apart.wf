@@ -1,0 +1,29 @@
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct Store {
+  table: ConcurrentHashMap<u8>;
+}
+
+fn write_both(first: &Option<u8>, second: &Option<u8>) -> result: unit writes(first), writes(second) {
+  doc "Writes a value into each of two entries.";
+  set first^ = Some<u8>(value: 1_u8);
+  set second^ = Some<u8>(value: 2_u8);
+  return unit;
+}
+
+fn update(store: &Shared<Store>, first_key: &[u8], second_key: &[u8]) -> result: unit reads(store), reads(first_key), reads(second_key) waits {
+  doc "Passes the entries under two keys from the caller to the writer in one statement; nothing here proves the keys different.";
+  atomic s = &store^ {
+    write_both(first: &s^.table[first_key], second: &s^.table[second_key]);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  doc "The caller passes two keys with different bytes, but the callee sees only two key parameters.";
+  let table = map_new::<u8>(capacity: 2_u64);
+  let state = Store(table: move table);
+  let store = shared_new::<Store>(value: move state);
+  update(store: &store, first_key: &names[0_u64..1_u64], second_key: &names[1_u64..2_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

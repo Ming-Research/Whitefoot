@@ -1,0 +1,50 @@
+const names: Array<u8, 1> =[97_u8];
+
+struct Store {
+  dbs: Array<ConcurrentHashMap<u8>, 2>;
+}
+
+fn put_both(first: &ConcurrentHashMap<u8>, second: &ConcurrentHashMap<u8>, key: &[u8]) -> result: unit reads(key), writes(first), writes(second) {
+  doc "Writes an entry under the key into each of two maps.";
+  set first^[key] = Some<u8>(value: 2_u8);
+  set second^[key] = Some<u8>(value: 3_u8);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  doc "Elements 0 and 1 of the state's array of maps are passed together to a callee that writes both, and each map then holds its own entry: 2 in database 0 and 3 in database 1.";
+  let zero = map_new::<u8>(capacity: 1_u64);
+  let one = map_new::<u8>(capacity: 1_u64);
+  let slots = slots_new::<ConcurrentHashMap<u8>, 2>();
+  place_back(window: &slots, value: move zero);
+  place_back(window: &slots, value: move one);
+  let dbs = slots_into_array::<ConcurrentHashMap<u8>, 2>(values: move slots);
+  let state = Store(dbs: move dbs);
+  let store = shared_new::<Store>(value: move state);
+  let key = &names[0_u64..1_u64];
+  atomic s = &store {
+    put_both(first: &s^.dbs[0_u64], second: &s^.dbs[1_u64], key: key);
+  }
+  let first = None<u8>();
+  let second = None<u8>();
+  atomic s = &store {
+    set first = s^.dbs[0_u64][key];
+    set second = s^.dbs[1_u64][key];
+  }
+  let code = 0_u8;
+  match first {
+    Some(value: seen) => {
+      set code = seen *wrap 10_u8;
+    }
+    None() => {
+    }
+  }
+  match second {
+    Some(value: seen) => {
+      set code = code +wrap seen;
+    }
+    None() => {
+    }
+  }
+  return std::process::exit_status(code: code);
+}

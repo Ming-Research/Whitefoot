@@ -266,6 +266,164 @@ fn lock_ledger_reports_a_metadata_read_in_both_branches_on_every_path() {
     );
 }
 
+/// A block that subscripts the map by one stable key takes that key's entry;
+/// a count of the map takes the whole map. A ledger that names both map
+/// units alike, or a lowering that takes the whole map for one key, fails.
+#[test]
+fn lock_ledger_names_an_entry_lock_and_a_whole_map_lock() {
+    let map_line = |body: &str| {
+        let source = lock_ledger_source(MAP_FIRST, "", body);
+        let module = compile(source.as_bytes());
+        lock_ledger_lines(&module)
+            .into_iter()
+            .find(|line| line.contains("targets(m^.0): "))
+            .map(str::to_owned)
+            .expect("the map unit is reported")
+    };
+    let entry = map_line("");
+    assert!(
+        entry.contains("targets(m^.0): map entry  on every path; first use "),
+        "{entry}"
+    );
+    let whole = map_line("    set m^.meta.count = map_count::<u8>(map: &m^.table);");
+    assert!(
+        whole.contains("targets(m^.0): whole map  on every path; first use "),
+        "{whole}"
+    );
+}
+
+/// Two key bindings declared before the statement subscript the map, so no
+/// one entry covers the block's reaches and the statement takes the whole
+/// map, its one unit. A lowering that locks one key's entry and selects the
+/// other key's entry without a lock fails.
+#[test]
+fn lock_ledger_takes_the_whole_map_for_two_keys() {
+    let source = lock_ledger_source(
+        MAP_FIRST,
+        "",
+        "    set m^.table[other] = Some<u8>(value: 1_u8);",
+    )
+    .replacen(
+        "  atomic m",
+        "  let other = &ledger_names[0_u64..1_u64];\n  atomic m",
+        1,
+    );
+    let module = compile(source.as_bytes());
+    let expected = format!(
+        "LOCK lock_run  {}  targets(m^.0): whole map  on every path; first use {}",
+        lock_ledger_position(&source, "atomic m"),
+        lock_ledger_position(&source, "set m^.table[other]"),
+    );
+    assert_eq!(lock_ledger_lines(&module), [expected.as_str()]);
+}
+
+/// The block rebinds the key before it subscripts the map. The key the
+/// statement began with need not select the entry the block names, so the
+/// statement takes the whole map. A lowering that counts only storage writes
+/// as writes of the key binding, so that a rebinding leaves it stable, locks
+/// the entry under the old key and fails.
+#[test]
+fn lock_ledger_takes_the_whole_map_for_a_key_the_block_rebinds() {
+    let source = lock_ledger_source(
+        MAP_FIRST,
+        "",
+        "    set key = &ledger_names[0_u64..1_u64];",
+    );
+    let module = compile(source.as_bytes());
+    let expected = format!(
+        "LOCK lock_run  {}  targets(m^.0): whole map  on every path; first use {}",
+        lock_ledger_position(&source, "atomic m"),
+        lock_ledger_position(&source, "set m^.table[key] = None<u8>();"),
+    );
+    assert_eq!(lock_ledger_lines(&module), [expected.as_str()]);
+}
+
+/// A key the block rebinds selects the entry under its new bytes, `b`. A
+/// statement that locks the entry under the bytes the key had when the
+/// statement began writes the value under `a` instead, and the program
+/// leaves status 1; a write lost altogether leaves status 2.
+#[test]
+fn a_key_the_block_rebinds_selects_the_entry_under_its_new_bytes() {
+    let source = br#"const key_names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct Ledger {
+  table: ConcurrentHashMap<u8>;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = map_new::<u8>(capacity: 2_u64);
+  let initial = Ledger(table: move table);
+  let state = shared_new::<Ledger>(value: move initial);
+  let key = &key_names[0_u64..1_u64];
+  atomic m = &state {
+    set key = &key_names[1_u64..2_u64];
+    set m^.table[key] = Some<u8>(value: 5_u8);
+  }
+  let first = &key_names[0_u64..1_u64];
+  let under_first = None<u8>();
+  let under_second = None<u8>();
+  atomic m = &state {
+    set under_first = m^.table[first];
+    set under_second = m^.table[key];
+  }
+  match under_first {
+    Some(value: stray) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+    None() => {
+    }
+  }
+  match under_second {
+    Some(value: stored) => {
+      return std::process::exit_status(code: stored);
+    }
+    None() => {
+    }
+  }
+  return std::process::exit_status(code: 2_u8);
+}
+"#;
+    let output = compile_and_run(&compile(source));
+    assert_eq!(output.status.code(), Some(5), "{output:?}");
+}
+
+/// Units are taken in field order whichever field the block uses first. With
+/// the map first, the read of `meta` takes the map's entry with it, before
+/// `meta`; with `meta` first, that read takes `meta` alone and the entry is
+/// taken at its own use. Each ledger lists the units in field order, and a
+/// lowering that takes `meta` before an earlier map, or reports the map whole
+/// for its one key, fails.
+#[test]
+fn lock_ledger_takes_the_map_entry_and_the_other_field_in_field_order() {
+    let body = "    let observed = m^.meta.count;\n    set m^.meta.count = observed;";
+    let source = lock_ledger_source(MAP_FIRST, "", body);
+    let module = compile(source.as_bytes());
+    let site = lock_ledger_position(&source, "atomic m");
+    let read = lock_ledger_position(&source, "let observed");
+    let map = format!(
+        "LOCK lock_run  {site}  targets(m^.0): map entry  on every path; first use {read}; taken with targets(m^) at {read}"
+    );
+    let object = object_lock_line(&source, "on every path", "let observed");
+    assert_eq!(
+        lock_ledger_lines(&module),
+        [map.as_str(), object.as_str()],
+        "the map first"
+    );
+    let source = lock_ledger_source(META_FIRST, "", body);
+    let module = compile(source.as_bytes());
+    let map = format!(
+        "LOCK lock_run  {}  targets(m^.1): map entry  on every path; first use {}",
+        lock_ledger_position(&source, "atomic m"),
+        lock_ledger_position(&source, "set m^.table[key] = None<u8>();"),
+    );
+    let object = object_lock_line(&source, "on every path", "let observed");
+    assert_eq!(
+        lock_ledger_lines(&module),
+        [object.as_str(), map.as_str()],
+        "meta first"
+    );
+}
+
 fn witness(name: &str) -> Vec<u8> {
     std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

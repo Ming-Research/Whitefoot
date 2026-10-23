@@ -965,16 +965,17 @@ distinguishing observations.
 
 ## One object per statement
 
-Specification v0.164 replaces the independent targets above (board item
-`one-object-statement`). The independent-targets design kept a statement
-sound with facts only the runtime had: two handles of one state type may name
-one object, so the checker compared the paths of every two targets whose
-state types unify as paths from one root, and lowering sorted objects by
-identity and merged duplicate holds. Under one object a statement names one
-handle place and binds a reference to the object's whole state. State that
-changes together is one state, its parts reached by ordinary paths from one
-root and told apart by OWN-7 as the parts of any value are, and two objects
-are never held together, so neither comparison nor merge remains.
+The specification amendment of 2026-10-23 (`spec/log.md`, "an atomic statement
+holds one shared object") replaces the independent targets above (board item
+`one-object-statement`). The independent-targets design kept a statement sound
+with facts only the runtime had: two handles of one state type may name one
+object, so the checker compared the paths of every two targets whose state
+types unify as paths from one root, and lowering sorted objects by identity
+and merged duplicate holds. Under one object a statement names one handle
+place and binds a reference to the object's whole state. State that changes
+together is one state, its parts reached by ordinary paths from one root and
+told apart by OWN-7 as the parts of any value are, and two objects are never
+held together, so neither comparison nor merge remains.
 
 ### What the specification changes
 
@@ -1010,7 +1011,12 @@ Field order is now a writer's lever: a state declares its map fields first
 so that statements on different keys run their blocks side by side and meet
 only at the other fields. A statement that selects entries by a key set takes
 its map whole, where a key-set target took only the set's entries; finer units
-for that case belong to the lock-unit work (`one-object-lock-units`).
+for that case belong to the lock-unit work (`one-object-lock-units`). An
+entry lock of a statement that writes only inside the entry's payload takes
+the inserting mode, since the written paths do not say per map whether a
+write may change the entry's variant; for a missing key that makes a cell and
+removes it at unlock, which costs time on misses only, where a per-target flag
+kept an entry target's lock non-inserting.
 
 ### A map as a value
 
@@ -1023,9 +1029,25 @@ position and whose hidden hold had to be settled at publication; access is
 now one rule in every position (an ordinary path and OP-4), and the hold is
 settled at those two points only.
 
+### Cancellation flags
+
+A guard or block reads a watch's flag through the watch's one field, the
+handle of its cancellation state: an acquire read of the state's atomic
+mirror, which the firing sets in its held transition, so a read of true also
+sees every update completed before the firing. A guard that reads a flag
+false cannot use the object watches' buckets and sweep, since it never holds
+the cancellation state and so cannot pass a notification on; it links its
+watch on a plain list in the cancellation state and then reads the flag
+again, and the first firing, after setting the flag, wakes the whole list
+under the watch lock, so a watch linked before the firing is woken by it and
+one linked after it sees the flag set. A guard that read the flag true does
+not link. A statement whose guard reads a flag waits through the general
+watch path even when its object has one unit, where a guard on one object
+alone uses the fused object wait.
+
 ### Conformance transitions
 
-Cases whose rule v0.164 retires are removed: two targets whose handle places
+Cases whose rule that amendment retires are removed: two targets whose handle places
 may overlap or are proved apart, an index step on a target or a handle place
 reached through another target, state types of two targets compared by
 unification, one object held once through two handles, locks over several
@@ -1050,3 +1072,24 @@ after it. No helper's parameter type changed: helpers still take
 paths. Two costs of the rewrite: every statement spells the state path where
 a target binder stood, and the multi-key commands (`DEL`, `MSET`, `MGET` and
 the other key-set statements) take the keys' map whole.
+
+`set_key` in `commands/strings.wf` shows the first cost. Its statement names
+the key's entry at four places, each now `&d^.keys[key]` where it was
+`slot`. Two of its lines before, with the entry and the metadata as two
+targets:
+
+```wf
+atomic slot = &store^.keys[key], m = &store^.meta {
+  let kind = entry_kind(slot: slot, client: client);
+  log_removal(log: &m^.log, key: key);
+}
+```
+
+and after, every part reached by its path from the one binding:
+
+```wf
+atomic d = &store^.data {
+  let kind = entry_kind(slot: &d^.keys[key], client: client);
+  log_removal(log: &d^.meta.log, key: key);
+}
+```

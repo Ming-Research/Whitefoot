@@ -25,6 +25,7 @@ use super::super::references::RequiredReferent;
 /// names.
 const WIN3_NO_SLOT_MOVE: &str = "use take_back, remove_at, or swap [OP-10, OP-11]";
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
+use super::places::CancellationFlagUse;
 use super::{MutationTarget, PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 
 /// The declared type of a written place and whether the place is a run of
@@ -1104,15 +1105,59 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// [OWN-13] whether a place use reads its referent through a reference
     /// without taking it: a match scrutinee spelled through `^`, which
-    /// leaves the scrutinee live and binds each payload as a reference.
+    /// leaves the scrutinee live and binds each payload as a reference. A
+    /// watch whose flag a trailing `fired` reads is read in place too
+    /// [PRE-2].
     fn inspects_referent(
         &self,
         place: NodeId,
         options: PlaceUseOptions,
     ) -> Result<bool, CheckStop> {
         Ok(!options.explicit_move
-            && options.context == PlaceUseContext::InspectReferent
-            && self.types.declarations.tree.place_has_dereference(place)?)
+            && match options.context {
+                PlaceUseContext::Ordinary => false,
+                PlaceUseContext::InspectReferent => {
+                    self.types.declarations.tree.place_has_dereference(place)?
+                }
+                PlaceUseContext::CancellationFlag => true,
+            })
+    }
+
+    /// [PRE-2] whether `flag` is a watch's `fired` after the steps `watch`
+    /// select; a field of that spelling on any other type is that field.
+    fn names_cancellation_flag(
+        &self,
+        context: FunctionContext<'_, '_>,
+        place: NodeId,
+        watch: &[NodeId],
+        flag: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<bool, CheckStop> {
+        let crate::syntax::views::PlaceSuffix::Member(member) =
+            self.types.declarations.tree.place_suffix(flag)?
+        else {
+            return Ok(false);
+        };
+        if member.variant.is_some()
+            || self.types.declarations.tree.token_bytes(member.field)?
+                != crate::library::CANCELLATION_FLAG.as_bytes()
+        {
+            return Ok(false);
+        }
+        let Some(shape) = self.selected_place_shape(
+            context,
+            place,
+            watch,
+            bindings,
+            LexicalUseRole::PlaceBase,
+        )?
+        else {
+            return Ok(false);
+        };
+        match shape.ty {
+            CheckedType::Nominal(nominal) if !shape.run => self.types.is_cancel_watch(nominal),
+            _ => Ok(false),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1126,6 +1171,42 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
+        // [PRE-2] a trailing `fired` on a watch that element steps select
+        // reads that watch's flag; the watch is read in place for its
+        // state's handle and moves nothing.
+        if options.context != PlaceUseContext::CancellationFlag
+            && let Some((&flag, watch)) = suffixes.split_last()
+            && subscript < watch.len()
+            && self.names_cancellation_flag(context, place, watch, flag, bindings)?
+        {
+            let flag_use = self.types.cancellation_flag_use(place)?;
+            if flag_use != CancellationFlagUse::Read {
+                return self.types.refuse_cancellation_flag(place, flag_use);
+            }
+            let watch = self.check_index_use(
+                context,
+                use_node,
+                place,
+                watch,
+                subscript,
+                bindings,
+                PlaceUseOptions {
+                    context: PlaceUseContext::CancellationFlag,
+                    ..options
+                },
+            )?;
+            return Ok(TypedExpression {
+                expression: CheckedExpression::CancelFlag {
+                    carrier: self.types.declarations.tree.path(use_node)?.clone(),
+                    watch: Box::new(watch.expression),
+                },
+                mode: CheckedMode::Own,
+                reference: None,
+                reference_value: false,
+                effects: watch.effects,
+                accesses: watch.accesses,
+            });
+        }
         let subscript =
             self.run_element_subscript(context, place, suffixes, bindings, subscript)?;
         let FunctionContext { check_context, .. } = context;
@@ -2639,7 +2720,12 @@ impl<'unit> Checker<'_, 'unit> {
             // [MSR-1] includes measured values with no [OP-4] element
             // access, notably KeySet and Segments. Resolve their measure
             // places through the contract path's type-to-row mapping too.
-            _ if self.types.satisfies_referent_requirement(ty, required)? => {
+            // [OP-4] any place of map type reaches its entries, a local
+            // binding's as a referent's.
+            _ if self.types.satisfies_referent_requirement(ty, required)?
+                || (required == RequiredReferent::IndexableStorage
+                    && self.table_entry_type(ty).is_some()) =>
+            {
                 let (Some(binding), Some(declaration)) = (binding, declaration) else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
