@@ -156,6 +156,15 @@ is before the executor, run and ingress locks; no callback acquires it
 recursively. A successful transfer keeps `moving` raised through any unlocked
 work and retires it under the mutex.
 
+The deadlock report lists each waiting context's site from a roster under its
+own lock (`design/compiler/waiting-contexts.md`). After a driver's locked scan
+finds the program stuck, the report takes the roster lock and repeats the same
+locked scan before it prints, so the roster cannot change under the traversal
+and the repeat acquires the sites' stores through the even generations like any
+other parked write. The mutex is therefore taken inside the roster lock; no
+section under the mutex adds to or removes from the roster, so the order never
+inverts.
+
 Assume physical threads receive service and finite runtime operations finish.
 Once every unfinished context waits persistently on a false guard or another
 context and no host operation remains, all final invocation publications and

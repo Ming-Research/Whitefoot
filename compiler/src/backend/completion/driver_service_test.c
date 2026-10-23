@@ -15,7 +15,8 @@
 static wf_driver assistant;
 static _Atomic unsigned computing, release_compute, ran_timer;
 enum { FRAME_COMPUTE, FRAME_TIMER, FRAME_EARLY_WAKE, FRAME_HANDOFF_COMPUTE,
-    FRAME_HANDOFF_TIMER, FRAME_LAUNCHER, FRAME_LAUNCHER_CHILD, FRAME_FAIR };
+    FRAME_HANDOFF_TIMER, FRAME_LAUNCHER, FRAME_LAUNCHER_CHILD, FRAME_FAIR,
+    FRAME_WAIT_FINISH };
 static _Atomic unsigned destroyed_child, destroyed_root;
 static pthread_t launcher_thread;
 static wf_cmap *handoff_map;
@@ -30,6 +31,7 @@ static void *start_frame(void *arguments) { return arguments; }
 
 void wf_driver_service_test_destroy(void *opaque) {
     service_frame *frame = opaque;
+    CHECK(wf_context_current == NULL || wf_context_current->roster == NULL);
     if (frame->kind == FRAME_LAUNCHER) {
         CHECK(pthread_equal(pthread_self(), launcher_thread));
         CHECK(atomic_load(&wf_monitor_exited));
@@ -52,6 +54,11 @@ void wf_driver_service_test_resume(void *opaque) {
         CHECK(wf_context_parked_away == WF_SUSPEND_FAIR);
         CHECK(!atomic_load(&wf_context_current->wake_gate));
         frame->stage += 1u;
+    } else if (frame->kind == FRAME_WAIT_FINISH) {
+        if (frame->stage++ == 0u) {
+            CHECK(wf_context_current->roster == NULL);
+            CHECK(wf__context_join_wait(frame->group, frame, "waits in the reclaim test") == 1);
+        } else frame->done = 1;
     } else if (frame->kind == FRAME_HANDOFF_COMPUTE) {
         CHECK(wf__driver_index() == 0u);
         wf_cmap_user *user = wf_cmap_user_at(handoff_map, wf__driver_index());
@@ -84,9 +91,13 @@ void wf_driver_service_test_resume(void *opaque) {
     } else if (frame->kind == FRAME_LAUNCHER) {
         if (frame->stage == 0u) {
             CHECK(wf__driver_index() == 0u);
+            /* Spawning consumes no identity; the first guard/join park assigns it. */
+            uint64_t next_identity = wf_contexts.next_identity;
             service_frame *child = wf__context_prepare(sizeof(*child));
             *child = (service_frame){.kind = FRAME_LAUNCHER_CHILD};
             wf__context_launch(frame->group, child, start_frame);
+            CHECK(wf_contexts.head == &wf_context_root);
+            CHECK(wf_contexts.next_identity == next_identity);
             CHECK(wf_executor_count == 2u && atomic_load(&wf_executors[1].ready));
             /* Controlled instant: the loop takes the queued child before
              * its next idle reap, so the timer remains pending in compute. */
@@ -100,7 +111,7 @@ void wf_driver_service_test_resume(void *opaque) {
             CHECK(wf__driver_index() == 1u);
             atomic_fetch_add(&ran_timer, 1u);
             frame->stage = 2u;
-            CHECK(wf__context_join_wait(frame->group, frame));
+            CHECK(wf__context_join_wait(frame->group, frame, "waits to join a native test context"));
         } else {
             CHECK(wf__driver_index() == 1u);
             CHECK(frame->group[0] == 0u);
@@ -108,6 +119,7 @@ void wf_driver_service_test_resume(void *opaque) {
         }
     } else if (frame->kind == FRAME_LAUNCHER_CHILD) {
         CHECK(wf__driver_index() == 0u);
+        CHECK(wf_context_current->roster == NULL);
         atomic_store(&computing, 1u);
         while (!atomic_load(&release_compute)) wf_prim_yield();
         frame->done = 1;
@@ -116,7 +128,7 @@ void wf_driver_service_test_resume(void *opaque) {
         atomic_store(&computing, 1u);
         while (!atomic_load(&release_compute)) wf_prim_yield();
         CHECK(wf__driver_index() == 0u);
-        CHECK(wf__context_join_wait(frame->group, frame) == 1);
+        CHECK(wf__context_join_wait(frame->group, frame, "waits to join a native test context") == 1);
     } else if (frame->kind == FRAME_TIMER) {
         CHECK(wf__driver_index() == 1u);
         CHECK(wf_context_current == &wf_context_root);
@@ -131,7 +143,7 @@ void wf_driver_service_test_resume(void *opaque) {
         atomic_store(&release_compute, 1u);
         atomic_store(&wf_drivers_stopping, 1u);
     } else {
-        CHECK(wf__context_join_wait(frame->group, frame) == 1);
+        CHECK(wf__context_join_wait(frame->group, frame, "waits to join a native test context") == 1);
         wf_group_finish(frame->group);
         CHECK(atomic_load(&wf_context_current->wake_gate) == WF_WAKE_EARLY);
         CHECK(atomic_load(&wf_driver_self->run_count) == 0u);
@@ -144,6 +156,8 @@ int wf_driver_service_test_done(void *opaque) {
 }
 
 static void fixture_begin(void) {
+    CHECK(wf_contexts.head == NULL);
+    wf_contexts.next_identity = 0u;
     memset(&wf_driver_root, 0, sizeof(wf_driver_root));
     memset(&wf_context_root, 0, sizeof(wf_context_root));
     memset(&assistant, 0, sizeof(assistant));
@@ -177,9 +191,12 @@ static void fixture_begin(void) {
     wf_driver_service = &wf_driver_root;
     wf_context_current = NULL;
     wf_context_root.driver = &wf_driver_root;
+    wf_context_roster_add(&wf_context_root);
 }
 
 static void fixture_end(void) {
+    if (wf_context_root.roster != NULL) wf_context_roster_remove(&wf_context_root);
+    CHECK(wf_contexts.head == NULL);
     CHECK(atomic_load(&wf_drivers_moving) == 0u);
     atomic_store(&wf_driver_count, 1u);
     while (atomic_load(&wf_drivers_notifying)) wf_prim_yield();
@@ -327,7 +344,7 @@ static void idle_quiescence(void) {
     wf_run_push(&wf_driver_root, &ready);
     CHECK(atomic_load(&wf_driver_root.idle));
     CHECK(wf_run_take(&wf_driver_root) == &ready);
-    CHECK(!wf_contexts_stuck(&wf_driver_root));
+    CHECK(!wf_all_contexts_inactive(&wf_driver_root));
     CHECK(!atomic_load(&wf_driver_root.idle));
     CHECK(atomic_load(&wf_drivers_idle) == 1u);
     /* A zero local searcher must not retire another driver's wake claim. */
@@ -347,6 +364,165 @@ static void idle_quiescence(void) {
     wf_driver_end_search(&assistant, 0);
     CHECK(!atomic_load(&assistant.searcher));
     CHECK(!atomic_load(&wf_drivers_searching));
+    fixture_end();
+}
+
+static void wait_sites_and_roster(void) {
+    static const char join_site[] = "waits at test.wf:8:3 to join the context spawned at test.wf:5:5 (implicit join at the end of this block/loop iteration)";
+    static const char guard_site[] = "waits for the guard of the atomic statement at test.wf:3:5";
+    fixture_begin();
+    CHECK(wf_context_root.identity == 0u);
+
+    service_frame frame = {0};
+    uint64_t group[2] = {1u, 0u};
+    wf_context_current = &wf_context_root;
+    CHECK(wf__context_join_wait(group, &frame, join_site) == 1);
+    CHECK(atomic_load(&wf_context_root.wait_site) == join_site);
+    wf_context_commit_wake(&wf_context_root);
+    wf_group_finish(group);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(atomic_load(&wf_context_root.wait_site) == join_site);
+    wf_context_parked_away = 0;
+    CHECK(wf__context_join_wait(group, &frame, guard_site) == 0);
+    CHECK(atomic_load(&wf_context_root.wait_site) == join_site);
+
+    wf_watch watch;
+    wf_watch_list unit = {0};
+    wf__watch_begin(&watch);
+    wf__watch_unit(&watch, &unit);
+    CHECK(wf__watch_park(&watch, &frame, guard_site) == 1);
+    CHECK(atomic_load(&wf_context_root.wait_site) == guard_site);
+    wf_context_commit_wake(&wf_context_root);
+    wf__watch_written(&unit);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(atomic_load(&wf_context_root.wait_site) == guard_site);
+    wf_context_parked_away = 0;
+    wf__watch_begin(&watch);
+    wf__watch_unit(&watch, &unit);
+    /* A different writer publishes the early wake. The registering
+     * context's own releases are quiet while its false guard unwinds. */
+    wf_context_current = NULL;
+    wf__watch_written(&unit);
+    wf_context_current = &wf_context_root;
+    CHECK(watch.state == WF_GUARD_WOKEN);
+    CHECK(wf__watch_park(&watch, &frame, join_site) == 0);
+    CHECK(atomic_load(&wf_context_root.wait_site) == guard_site);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    fixture_end();
+}
+
+static void lazy_wait_registration(void) {
+    static const char join_site[] = "waits in the first join";
+    static const char guard_site[] = "waits in the first guard";
+    static const char zero_site[] = "waits on no watched unit";
+    fixture_begin();
+    /* Match prepare's initialization frontier: cold links, identity and the
+     * atomic slot remain uninitialized until an actual wait registers them. */
+    wf_context child;
+    memset(&child, 0, offsetof(wf_context, roster_next));
+    child.driver = &wf_driver_root;
+    wf_context_current = &child;
+    service_frame frame = {0};
+    uint64_t group[2] = {0u, 0u};
+    CHECK(wf__context_join_wait(group, &frame, join_site) == 0);
+    CHECK(child.roster == NULL && wf_contexts.head == &wf_context_root);
+    CHECK(wf_contexts.next_identity == 1u);
+    wf_watch watch;
+    wf_watch_list unit = {0};
+    wf__watch_begin(&watch);
+    wf__watch_unit(&watch, &unit);
+    wf_context_current = NULL;
+    wf__watch_written(&unit);
+    wf_context_current = &child;
+    CHECK(wf__watch_park(&watch, &frame, guard_site) == 0);
+    CHECK(child.roster == NULL && wf_contexts.next_identity == 1u);
+
+    group[0] = 1u;
+    CHECK(wf__context_join_wait(group, &frame, join_site) == 1);
+    CHECK(child.roster == &wf_contexts && child.identity == 1u);
+    CHECK(child.roster_next == &wf_context_root && wf_contexts.head == &child);
+    CHECK(atomic_load(&child.wait_site) == join_site);
+    wf_context_commit_wake(&child);
+    wf_group_finish(group);
+    CHECK(wf_run_take(&wf_driver_root) == &child);
+    CHECK(atomic_load(&child.wait_site) == join_site);
+    wf_context_parked_away = 0;
+
+    wf__watch_begin(&watch);
+    wf__watch_unit(&watch, &unit);
+    CHECK(wf__watch_park(&watch, &frame, guard_site) == 1);
+    CHECK(child.identity == 1u && wf_contexts.next_identity == 2u);
+    CHECK(atomic_load(&child.wait_site) == guard_site);
+    wf_context_commit_wake(&child);
+    wf__watch_written(&unit);
+    CHECK(wf_run_take(&wf_driver_root) == &child);
+    CHECK(atomic_load(&child.wait_site) == guard_site);
+    wf_context_roster_remove(&child);
+
+    /* A different fresh context first registers through a guard, not a join. */
+    memset(&child, 0, offsetof(wf_context, roster_next));
+    child.driver = &wf_driver_root;
+    wf__watch_begin(&watch);
+    wf__watch_unit(&watch, &unit);
+    CHECK(wf__watch_park(&watch, &frame, guard_site) == 1);
+    CHECK(child.identity == 2u && atomic_load(&child.wait_site) == guard_site);
+    wf_context_commit_wake(&child);
+    wf__watch_written(&unit);
+    CHECK(wf_run_take(&wf_driver_root) == &child);
+    wf_context_roster_remove(&child);
+
+    /* Zero units still means a real false-guard wait and must be reported. */
+    memset(&child, 0, offsetof(wf_context, roster_next));
+    child.driver = &wf_driver_root;
+    wf__watch_begin(&watch);
+    CHECK(wf__watch_park(&watch, &frame, zero_site) == 1);
+    CHECK(child.identity == 3u && atomic_load(&child.wait_site) == zero_site);
+    CHECK(wf_contexts.next_identity == 4u && wf_contexts.head == &child);
+    wf_context_commit_wake(&child);
+    wf_context_roster_remove(&child);
+    CHECK(wf_contexts.head == &wf_context_root);
+    fixture_end();
+}
+
+static void wait_finish_and_reuse(void) {
+    fixture_begin();
+    uint64_t outer_group[2] = {1u, 0u};
+    service_frame *frame = wf__context_prepare(sizeof(*frame));
+    wf_context *child = wf_context_prepared;
+    wf_context_prepared = NULL;
+    *frame = (service_frame){.kind = FRAME_WAIT_FINISH, .group = {1u, 0u}};
+    child->root = child->resume = frame;
+    child->group = outer_group;
+    child->driver = &wf_driver_root;
+    atomic_store(&wf_context_live, 1u);
+    CHECK(child->roster == NULL && wf_contexts.next_identity == 1u);
+    CHECK(wf_context_run(&wf_driver_root, child));
+    CHECK(child->roster == &wf_contexts && child->identity == 1u);
+    wf_group_finish(frame->group);
+    CHECK(wf_run_take(&wf_driver_root) == child);
+    CHECK(wf_context_run(&wf_driver_root, child));
+    /* The destroy callback checks removal before any arena or context reclaim. */
+    CHECK(wf_contexts.head == &wf_context_root && outer_group[0] == 0u);
+    CHECK(atomic_load(&wf_context_live) == 0u);
+
+    frame = wf__context_prepare(sizeof(*frame));
+    wf_context *reused = wf_context_prepared;
+    wf_context_prepared = NULL;
+    CHECK(reused == child && reused->roster == NULL);
+    CHECK(wf_contexts.next_identity == 2u);
+    *frame = (service_frame){.kind = FRAME_WAIT_FINISH, .group = {1u, 0u}};
+    outer_group[0] = 1u;
+    reused->root = reused->resume = frame;
+    reused->group = outer_group;
+    reused->driver = &wf_driver_root;
+    atomic_store(&wf_context_live, 1u);
+    CHECK(wf_context_run(&wf_driver_root, reused));
+    CHECK(reused->identity == 2u && wf_contexts.next_identity == 3u);
+    CHECK(strcmp(atomic_load(&reused->wait_site), "waits in the reclaim test") == 0);
+    wf_group_finish(frame->group);
+    CHECK(wf_run_take(&wf_driver_root) == reused);
+    CHECK(wf_context_run(&wf_driver_root, reused));
+    CHECK(wf_contexts.head == &wf_context_root && outer_group[0] == 0u);
     fixture_end();
 }
 
@@ -513,6 +689,57 @@ static void solitary_sleep_reap(void) {
     fixture_end();
 }
 
+static void announce_idle(wf_driver *driver) {
+    wf_quiescence_lock();
+    wf_driver_idle_locked(driver);
+    wf_quiescence_unlock();
+}
+
+static void inactivity_boundaries(void) {
+    fixture_begin();
+    announce_idle(&wf_driver_root);
+    announce_idle(&assistant);
+    CHECK(wf_all_contexts_inactive(&wf_driver_root));
+
+    /* A published ready context prevents a report even when every logical
+     * driver still has its idle announcement. Taking it reactivates its
+     * driver, which announces idleness again when it next finds nothing. */
+    wf_context ready = {.driver = &assistant};
+    wf_run_push(&assistant, &ready);
+    CHECK(!wf_all_contexts_inactive(&wf_driver_root));
+    CHECK(wf_run_take(&assistant) == &ready);
+    CHECK(!wf_all_contexts_inactive(&wf_driver_root));
+    announce_idle(&assistant);
+    CHECK(wf_all_contexts_inactive(&wf_driver_root));
+
+    wf_context pending = {0};
+    (void)park_record(&pending, WF_COMPLETION_ROUTE_FILE_ADAPTER, 0u);
+    CHECK(!wf_all_contexts_inactive(&wf_driver_root));
+    wf_context_unpark(&wf_driver_root, &pending);
+    wf_context_host_wait_ended(&wf_driver_root);
+    CHECK(wf_all_contexts_inactive(&wf_driver_root));
+
+    /* Pause a transfer after its moving announcement and before RESERVED
+     * adoption. No other outstanding work may mask this exclusion. */
+    atomic_store(&wf_drivers_moving, 1u);
+    CHECK(!wf_all_contexts_inactive(&wf_driver_root));
+    atomic_store(&wf_drivers_moving, 0u);
+    CHECK(wf_all_contexts_inactive(&wf_driver_root));
+
+    /* Startup publishes a table slot before the driver's count: that peer
+     * still prevents a report while it has not announced idleness. */
+    atomic_store(&wf_driver_count, 1u);
+    wf_quiescence_lock();
+    wf_driver_activate_locked(&assistant);
+    wf_quiescence_unlock();
+    CHECK(!wf_all_contexts_inactive(&wf_driver_root));
+    announce_idle(&assistant);
+    CHECK(wf_all_contexts_inactive(&wf_driver_root));
+    /* The displaced-disposition schedules below separately exclude active
+     * invocations and published ingress before their ordinary retirement. */
+    fixture_end();
+}
+
 static void *compute_thread(void *opaque) {
     wf_driver_self = &wf_driver_root;
     wf_driver_service = &wf_driver_root;
@@ -561,6 +788,8 @@ static void timer_migration(void) {
     CHECK(atomic_load(&wf_driver_stats[1].borrowed_terminals) == 0u);
     CHECK(atomic_load(&wf_driver_stats[1].stolen_contexts) == 0u);
     compute.group[1] = 0;
+    CHECK(child.roster == &wf_contexts);
+    wf_context_roster_remove(&child);
     fixture_end();
 }
 
@@ -670,6 +899,8 @@ static void adoption_and_early_wake(void) {
     CHECK(atomic_load(&context.wake_gate) == WF_WAKE_NONE);
     CHECK(wf_run_take(&wf_driver_root) == &context);
     CHECK(wf_run_take(&wf_driver_root) == NULL);
+    CHECK(context.roster == &wf_contexts && context.identity == 1u);
+    wf_context_roster_remove(&context);
     fixture_end();
 }
 
@@ -767,7 +998,9 @@ static void reassignment_races(void) {
 }
 
 static void displaced_dispositions(void) {
-    for (unsigned disposition = WF_HAND_BACK_WAIT; disposition <= WF_HAND_BACK_COMPLETE; ++disposition) {
+    for (unsigned schedule = 0u; schedule < 6u; ++schedule) {
+        unsigned registered = schedule / 3u;
+        unsigned disposition = WF_HAND_BACK_WAIT + schedule % 3u;
         handoff_fixture();
         handoff_map = wf_cmap_create_entries(8u, 8u, 64u);
         service_frame timer = {.kind = FRAME_HANDOFF_TIMER};
@@ -775,11 +1008,24 @@ static void displaced_dispositions(void) {
         uint64_t group[2] = {1u, 0u};
         size_t granted;
         wf_context *child = wf_pool_take(sizeof(*child), &granted);
-        memset(child, 0, sizeof(*child));
+        memset(child, 0, offsetof(wf_context, roster_next));
         child->pool_bytes = granted;
         child->root = child->resume = &compute;
         child->driver = &wf_driver_root;
         child->group = group;
+        if (registered) {
+            /* Give the displaced invocation a genuine earlier join wait;
+             * membership must survive its wake and the later handoff. */
+            compute.group[0] = 1u;
+            wf_context_current = child;
+            CHECK(wf__context_join_wait(compute.group, &compute,
+                "waits before a displaced return") == 1);
+            wf_context_commit_wake(child);
+            wf_group_finish(compute.group);
+            CHECK(wf_run_take(&wf_driver_root) == child);
+            CHECK(child->identity == 1u);
+            wf_context_current = NULL;
+        }
         atomic_store(&wf_context_live, 1u);
         wf_context_root.root = wf_context_root.resume = &timer;
         wf_completion_record *record = park_record(&wf_context_root, WF_COMPLETION_ROUTE_TIMER, 1u);
@@ -809,17 +1055,21 @@ static void displaced_dispositions(void) {
         wf_quiescence_lock();
         wf_driver_idle_locked(&wf_driver_root);
         wf_quiescence_unlock();
-        CHECK(!wf_contexts_stuck(&wf_driver_root));
+        CHECK(!wf_all_contexts_inactive(&wf_driver_root));
         atomic_store(&release_compute, 1u);
         CHECK(pthread_join(thread, NULL) == 0);
         CHECK(atomic_load(&wf_driver_root.ingress_count) == 1u);
         CHECK(atomic_load(&wf_driver_stats[0].ingress_commits) == 1u);
-        CHECK(!wf_contexts_stuck(&wf_driver_root));
+        CHECK((child->roster != NULL) == (int)registered);
+        CHECK(wf_context_root.roster == NULL);
+        CHECK(wf_contexts.head == (registered ? child : NULL));
+        CHECK(!wf_all_contexts_inactive(&wf_driver_root));
         CHECK(wf_driver_adopt_ingress(&wf_driver_root));
         CHECK(!wf_driver_adopt_ingress(&wf_driver_root));
         if (disposition == WF_HAND_BACK_COMPLETE) {
             CHECK(group[0] == 0u && atomic_load(&wf_context_live) == 0u);
             CHECK(atomic_load(&destroyed_child) == 1u);
+            CHECK(wf_contexts.head == NULL);
         } else {
             if (disposition == WF_HAND_BACK_WAIT) {
                 CHECK(wf_driver_root.parked == child);
@@ -827,6 +1077,13 @@ static void displaced_dispositions(void) {
                 wf_completion_record_complete(child->record);
             }
             CHECK(wf_run_take(&wf_driver_root) == child);
+            CHECK((child->roster != NULL) == (int)registered);
+            if (registered) {
+                CHECK(child->identity == 1u && wf_contexts.next_identity == 2u);
+                CHECK(strcmp(atomic_load(&child->wait_site),
+                    "waits before a displaced return") == 0);
+                wf_context_roster_remove(child);
+            }
             wf_pool_give(child, granted);
             atomic_store(&wf_context_live, 0u);
         }
@@ -834,7 +1091,7 @@ static void displaced_dispositions(void) {
         wf_quiescence_lock();
         wf_driver_idle_locked(&wf_driver_root);
         wf_quiescence_unlock();
-        CHECK(wf_contexts_stuck(&wf_driver_root));
+        CHECK(wf_all_contexts_inactive(&wf_driver_root));
         wf_cmap_destroy(handoff_map);
         handoff_map = NULL;
         handoff_fixture_end();
@@ -855,6 +1112,7 @@ static void root_ingress_quiescence(void) {
     wf_spin_unlock(&wf_driver_root.ingress_lock);
     wf_context_adopt(&wf_driver_root, &wf_context_root);
     CHECK(atomic_load(&wf_context_root_done));
+    CHECK(wf_context_root.roster == NULL && wf_contexts.head == NULL);
     CHECK(!wf_drivers_quiescent());
     atomic_fetch_add(&wf_drivers_changes, 1u);
     atomic_fetch_sub(&wf_driver_root.ingress_count, 1u);
@@ -916,7 +1174,7 @@ static void root_takeover_cleanup(void) {
     CHECK(pthread_create(&thread, NULL, launcher_main, &root) == 0);
     while (!atomic_load(&computing) || !atomic_load(&ran_timer)
         || !atomic_load(&wf_driver_root.idle)) wf_prim_yield();
-    CHECK(!wf_contexts_stuck(&wf_driver_root));
+    CHECK(!wf_all_contexts_inactive(&wf_driver_root));
     CHECK(!atomic_load(&destroyed_child) && !atomic_load(&destroyed_root));
     atomic_store(&release_compute, 1u);
     CHECK(pthread_join(thread, NULL) == 0);
@@ -940,12 +1198,20 @@ int main(void) {
     invocation_collections();
     wf_test_guard_phase("persistent idle scans and searcher claim ownership");
     idle_quiescence();
+    wf_test_guard_phase("wait-site stores, wake retention and live-context roster removal");
+    wait_sites_and_roster();
+    wf_test_guard_phase("first real join or guard registration, early wake and zero-unit guard");
+    lazy_wait_registration();
+    wf_test_guard_phase("registered completion unlinks before destroy and pool reuse reinitializes");
+    wait_finish_and_reuse();
     wf_test_guard_phase("startup publication wakes an obsolete unbounded park");
     startup_publication();
     wf_test_guard_phase("ready-queue steals have separate attribution");
     steal_attribution();
     wf_test_guard_phase("return versus borrow, excluded phases and stale epochs");
     ownership_races();
+    wf_test_guard_phase("inactive report excludes ready work, host waits, transfer and a nonidle peer");
+    inactivity_boundaries();
     wf_test_guard_phase("due timer runs on assisting driver while owner computes");
     timer_migration();
     wf_test_guard_phase("completion publication during borrowing");
