@@ -152,7 +152,8 @@ theorem Ineq.holds_of_sub {G : Nat → Int} {t s : Ineq} (h : (t.sub s).Holds G)
 
 theorem fdiv_ge_of_mul_le {y c k : Int} (hk : 0 < k) (h : y * k ≤ c) : y ≤ c.fdiv k := by
   have hk0 : 0 ≤ k := Int.le_of_lt hk
-  rw [Int.fdiv_eq_ediv _ hk0]
+  have e : c.fdiv k = c / k := by rw [Int.fdiv_eq_ediv]; simp [hk0]
+  rw [e]
   exact (Int.le_ediv_iff_mul_le hk).2 h
 
 theorem holds_of_map {G : Nat → Int} {k : Int} (hk : 0 < k) (g : Nat × Int → Nat × Int)
