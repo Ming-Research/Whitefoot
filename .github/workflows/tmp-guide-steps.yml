@@ -88,7 +88,8 @@ jobs:
               text = text.replace('OP-2', 'OP-3')
           first = 5 if case == 'wrong-exit-status' else 4
           check_status = 0 if case == 'rejected-program-accepted' else 1
-          help_line = 'exit 1' if case == 'help-fails' else 'echo usage: whitefootc'
+          # The real compiler prints its usage as a usage error and exits 1.
+          help_line = 'exit 1' if case == 'help-fails' else 'echo "whitefootc: usage: whitefootc [--check]" >&2; exit 1'
           (root / 'pkg' / 'rejection.txt').write_text(text)
           (root / 'pkg' / 'bin' / 'whitefootc').write_text(f'''#!/bin/bash
           here=$(cd "$(dirname "$0")" && pwd)

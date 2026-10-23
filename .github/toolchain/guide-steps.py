@@ -24,9 +24,12 @@ blocks (check-package-windows.sh).
       command: nothing the guide does not list comes along.
   guide-steps.py verify TOOLS
       Reads what install.sh recorded and fails unless every block ran, each
-      succeeded, the checksum block reported its archive `OK`, each program ran
-      to the exit status the guide states, and the rejected program was refused
-      with the text the guide shows.
+      succeeded, the checksum block reported its archive `OK`, the block that
+      runs `whitefootc --help` printed the usage, each program ran to the exit
+      status the guide states, and the rejected program was refused with the
+      text the guide shows. The compiler reports its usage as a usage error, so
+      the `--help` block's own exit status is not required; the item
+      wf-cli-version-flag replaces that command with `--version` in the guide.
 
 The container and the macOS sandbox hold no Rust, so the gate's documentation
 example test cannot run the package's compiler there and this reader stands in
@@ -153,6 +156,8 @@ def prepare(args):
             if name != check.group(1):
                 fail('the guide line %d checks %r, not the rejected program' % (line, check.group(1)))
             record.update(kind='reject', output=text)
+        elif 'whitefootc --help' in lines:
+            record.update(kind='usage')
         elif 'echo "$?"' in lines:
             _, name, _, code = next(runs, (None,) * 4)
             if name is None or ('whitefootc %s ' % name) not in body:
@@ -206,6 +211,9 @@ def verify(args):
                 problems.append('%s: the rejected program was accepted' % where)
             if output != block['output'].encode():
                 problems.append('%s: the rejection text differs from the guide\'s' % where)
+        elif kind == 'usage':
+            if b'usage: whitefootc' not in output:
+                problems.append('%s did not print the usage (status %d)' % (where, status))
         elif status != 0:
             problems.append('%s failed with status %d' % (where, status))
         elif kind == 'run':
