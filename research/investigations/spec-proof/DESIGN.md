@@ -556,6 +556,34 @@ expansion plus the links it may follow. The fix, with main's [SET-1]
 amendment merged in, took three more engineer turns and two more `proof.yml`
 runs, the first red on that program alone as expected.
 
+### The L0 lemmas
+
+`FactsSound.lean` gives the L0 relation state its meaning and proves each
+operation keeps it. A valuation gives Z 0 and a sum the sum of its sides; a
+state is satisfied when it is not contradictory and every stored bound and
+disequality holds. The closure is sound because each matrix step, the
+transitive one and the disequality strengthening alike, lowers an entry only
+to a value the valuation already bounds, so every entry stays a true bound and
+no diagonal entry turns negative; the proof needs neither the matrix's shape
+nor the closure's fixed point. Queries, kills and additions follow directly.
+
+The join needs a stronger premise than "the terms the taken input and the live
+list name lie in their types". A sum term names atoms that another input can
+name on their own, and the join then adds those atoms' implicit type bounds.
+With `p2 : u8` live and valued 0, a taken input holding `z - (p1 + p2) <=
+-1000` and another holding `p1 - p1 != 3`, the join keeps the disequality, its
+closure bounds `p1` by 255, and any valuation agreeing on `p2` and on `p1 +
+p2` gives `p1` the value 1000. Inferred from the definitions; the example was
+not run. The lemma therefore asks that the atoms of those terms lie in their
+types, which a valuation read off a running frame satisfies, and builds the
+new valuation atom by atom: the taken input's atoms keep their values and every
+other atom takes 0, a member of every fragment type. A second form needs no
+new valuation when every term already lies in its type.
+
+The module adds 622 lines of Lean and no coverage mark. It built in 1.9 s
+inside a 16.8 s build of the model, within the 25 s budget, after two
+`proof.yml` runs: the first failed in one lemma, the saturation step.
+
 ## Cost
 
 Precedents with measured sizes:
