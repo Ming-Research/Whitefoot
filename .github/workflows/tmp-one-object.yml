@@ -1,7 +1,7 @@
 # Temporary (one-object-core): the gate's four correctness groups on Linux for
 # the one-object atomic statement, which a draft pull request's gate skips,
-# and the new tests watched failing on the code they guard against.
-# Removed before the full check.
+# the new tests watched failing on the code they guard against, and main's
+# compiler on the two rebound-binding cases. Removed before the full check.
 name: tmp-one-object
 
 on:
@@ -130,3 +130,46 @@ jobs:
           echo "the clear case exits $clear_status; the range case's check exits $range_status"
           test "$clear_status" -eq 0
           test "$range_status" -eq 0
+
+  # Main's compiler on the two rebound-binding cases, to tell whether main
+  # already accepts the affine one: the job prints each verdict and fails
+  # only when main's compiler cannot be built.
+  main-probe:
+    name: main-probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo --version
+
+      - name: main's compiler on the rebound-binding cases
+        run: |
+          cp tests/conformance/cases/type11-neg-atomic-rebound-binder.wf "$RUNNER_TEMP/affine.wf"
+          cp tests/conformance/cases/type11-neg-range-atomic-rebound-binder.wf "$RUNNER_TEMP/range.wf"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git checkout --detach origin/main
+          git submodule update --init
+          git log -1 --format='main at %H'
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl tmp/main-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
+          set +e
+          compiler/target/gate/whitefootc --check "$RUNNER_TEMP/affine.wf"
+          echo "main's check of the affine case exits $?"
+          compiler/target/gate/whitefootc --check "$RUNNER_TEMP/range.wf"
+          echo "main's check of the range case exits $?"
+          exit 0
