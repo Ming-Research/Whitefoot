@@ -10,6 +10,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/checks-and-proofs/requires-entry-contract
 
 Summary: The changed decision substitutes a define into every clause before that clause's range terms are checked, so the range-term restriction holds independently of abbreviation spelling (a linear index admitted, a product of two parameters refused, in requires and ensures alike), instead of refusing a range term because it uses a define name.
+
 ## 2026-10-22 A manual gate run can add macOS, so a release is qualified once per release
 
 Nodes: compiler/verification
