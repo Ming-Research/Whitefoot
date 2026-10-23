@@ -144,7 +144,7 @@ jobs:
 
   remove-codegen:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     name: removal code under both libraries
     steps:
       - uses: actions/checkout@v4
@@ -160,31 +160,51 @@ jobs:
           rustup default stable
       - name: Build the merge base's library and this commit's
         run: bash research/experiments/hash-map-compare/arms.sh "$GITHUB_SHA" "" "$RUNNER_TEMP/out"
-      - name: Optimized code of the bench under each library
+      - name: Build the variants
+        # split: the removal tests the shrink condition itself and calls the
+        # shrink only on its rare side, the form an unlikely marker would
+        # annotate. pr420: this commit with Whitefoot#420's automatic branch
+        # weights merged in; pr420split: the same with the split library.
         run: |
           out="$RUNNER_TEMP/out"
-          for arm in base candidate; do
-            wfc="$out/arms/$arm/compiler/target/gate/whitefootc"
-            "$wfc" --emit-llvm research/experiments/hash-map-compare/bench.wf -o "$out/$arm.ll"
-            clang -O2 -falign-functions=64 -Wno-override-module -x ir -S -emit-llvm "$out/$arm.ll" -o "$out/$arm.opt.ll"
-            clang -O2 -falign-functions=64 -Wno-override-module -x ir -S "$out/$arm.ll" -o "$out/$arm.s"
-            "$wfc" research/experiments/hash-map-compare/bench.wf -o "$out/bench-$arm"
+          git config --global user.email ci@example.invalid
+          git config --global user.name ci
+          git fetch --no-tags origin +refs/heads/claude/cold-branch-weights:refs/remotes/origin/claude/cold-branch-weights
+          for arm in split pr420 pr420split; do
+            git worktree add --detach "$out/arms/$arm" "$GITHUB_SHA"
           done
-          python3 - "$out" <<'PY'
-          import re, sys
-          out = sys.argv[1]
-          for arm in ("base", "candidate"):
-              text = open(f"{out}/{arm}.opt.ll").read()
-              print(f"== {arm}")
-              for m in re.finditer(r"^define [^@]*@([^(]+)\(.*?^}", text, re.S | re.M):
-                  name, body = m.group(1), m.group(0)
-                  if not re.search(r"remove|migrate|shrink|rebuild|churn|put_one", name):
-                      continue
-                  calls = sorted(set(re.findall(r"call [^@]*@([A-Za-z0-9_.$]+)", body)))
-                  lines = sum(1 for l in body.splitlines() if l.startswith("  "))
-                  print(f"{name}: {lines} instructions; calls {calls}")
-          PY
-      - name: Images linked by hand, with LLVM's default inlining and with a raised threshold
+          for arm in pr420 pr420split; do
+            git -C "$out/arms/$arm" merge --no-edit origin/claude/cold-branch-weights || echo "$arm" >> "$out/failed.txt"
+          done
+          for arm in split pr420split; do
+            python3 - "$out/arms/$arm/lib/std/collections/hash_map/hash-map.wf" <<'EOF'
+          import sys
+          path = sys.argv[1]
+          text = open(path).read()
+          call = "          hash_map_shrink::<HashMapKey<K, E>, V, ceiling>(map: map, env: env);\n"
+          split = ("          let remaining = before - 1_u64;\n"
+                   "          let span = map^.cells.inner.len;\n"
+                   "          let due = hash_map_shrink_due(live: remaining, buckets: span);\n"
+                   "          if due {\n"
+                   "            hash_map_shrink::<HashMapKey<K, E>, V, ceiling>(map: map, env: env);\n"
+                   "          }\n")
+          due = ("fn hash_map_shrink_due(live: u64, buckets: u64) -> due: Bool pure {\n"
+                 "  if live == 0_u64 {\n    if buckets > 0_u64 {\n      return True();\n    }\n    return False();\n  }\n"
+                 "  let eighth = buckets / 8_u64;\n  if live < eighth {\n    return True();\n  }\n  return False();\n}\n\n")
+          anchor = "fn hash_map_remove<"
+          assert text.count(call) == 1 and text.count(anchor) == 1
+          text = text.replace(call, split).replace(anchor, due + anchor)
+          open(path, "w").write(text)
+          EOF
+            git -C "$out/arms/$arm" diff --stat
+          done
+          make -C "$out/arms/split/compiler" build
+          for arm in pr420 pr420split; do
+            grep -qx "$arm" "$out/failed.txt" 2>/dev/null || make -C "$out/arms/$arm/compiler" build || echo "$arm" >> "$out/failed.txt"
+          done
+          touch "$out/failed.txt"
+          echo "arms that did not build: $(tr '\n' ' ' < "$out/failed.txt")"
+      - name: Optimized code of the bench under each arm
         run: |
           out="$RUNNER_TEMP/out"
           root="$out/arms/candidate"
@@ -192,24 +212,59 @@ jobs:
             "$root" "$out/rt" "$out" > "$out/rt.mk"
           make -f "$out/rt.mk" objects
           objects=$(cat "$out/objects.txt")
-          build() {
-            clang -O2 -falign-functions=64 $3 -Wno-override-module -x ir -c "$out/$1.ll" -o "$out/$2.o"
-            clang -O2 "$out/$2.o" $objects -pthread -lm -o "$out/hand-$2"
-            clang -O2 -falign-functions=64 $3 -Wno-override-module -x ir -S -emit-llvm "$out/$1.ll" -o "$out/$2.hand.ll"
-            printf '%s: calls of hash_map_remove in the optimized module: ' "$2"
-            grep -c 'call .*hash_map_remove\$instance' "$out/$2.hand.ll" || true
-          }
-          build base base ""
-          build candidate candidate ""
-          build candidate inlined "-mllvm -inline-threshold=2000"
+          arms="base candidate split weighted"
+          for arm in pr420 pr420split; do
+            grep -qx "$arm" "$out/failed.txt" || arms="$arms $arm"
+          done
+          echo "$arms" > "$out/arms.txt"
+          for arm in $(echo "$arms" | sed 's/ weighted//'); do
+            "$out/arms/$arm/compiler/target/gate/whitefootc" --emit-llvm research/experiments/hash-map-compare/bench.wf -o "$out/$arm.ll"
+          done
+          # weighted: split with a 1:2000 branch weight on the branch whose
+          # side holds the shrink call, as an unlikely marker would lower.
+          python3 - "$out/split.ll" "$out/weighted.ll" <<'EOF'
+          import re, sys
+          lines = open(sys.argv[1]).read().split("\n")
+          start = next(i for i, l in enumerate(lines) if l.startswith("define") and "hash_map_remove$instance" in l)
+          end = next(i for i in range(start, len(lines)) if lines[i] == "}")
+          label, holder = None, None
+          for i in range(start, end):
+              m = re.match(r"^([A-Za-z0-9_.$-]+):", lines[i])
+              if m:
+                  label = m.group(1)
+              if "hash_map_shrink$instance" in lines[i] and "call" in lines[i]:
+                  holder = label
+          assert holder, "no shrink call in the removal"
+          hits = 0
+          for i in range(start, end):
+              m = re.match(r"^(\s*br i1 [^,]+, label %([^,]+), label %(\S+))$", lines[i])
+              if m and holder in (m.group(2), m.group(3)):
+                  weights = "i32 1, i32 2000" if m.group(2) == holder else "i32 2000, i32 1"
+                  lines[i] = m.group(1) + ", !prof !9999990"
+                  lines.append(f'!9999990 = !{{!"branch_weights", {weights}}}')
+                  print("weighted:", lines[i].strip(), "->", weights)
+                  hits += 1
+          assert hits == 1, hits
+          open(sys.argv[2], "w").write("\n".join(lines) + "\n")
+          EOF
+          for arm in $(cat "$out/arms.txt"); do
+            clang -O2 -falign-functions=64 -Wno-override-module -x ir -c "$out/$arm.ll" -o "$out/$arm.o"
+            clang -O2 "$out/$arm.o" $objects -pthread -lm -o "$out/hand-$arm"
+            clang -O2 -falign-functions=64 -Wno-override-module -x ir -S -emit-llvm "$out/$arm.ll" -o "$out/$arm.opt.ll"
+            printf '%s: calls of hash_map_remove %s, of hash_map_shrink %s, branch weights in the removal %s\n' "$arm" \
+              "$(grep -c 'call .*hash_map_remove\$instance' "$out/$arm.opt.ll")" \
+              "$(grep -c 'call .*hash_map_shrink\$instance' "$out/$arm.opt.ll")" \
+              "$(awk '/^define .*hash_map_remove\$instance/{p=1} p&&/!prof/{n++} p&&/^}/{p=0} END{print n+0}' "$out/$arm.ll")"
+            awk '/^define .*hash_map_(remove|shrink)\$instance/{p=1} p&&/!prof/{print "  " $0} p&&/^}/{p=0}' "$out/$arm.ll"
+          done
       - name: Remove-insert timing, alternating images
         run: |
           out="$RUNNER_TEMP/out"
-          for round in 1 2 3 4 5 6; do
-            for image in bench-base bench-candidate hand-base hand-candidate hand-inlined; do
+          for round in $(seq 1 10); do
+            for arm in $(cat "$out/arms.txt"); do
               for size in 1000 10000; do
-                printf 'ns %s %s ' "$image" "$size"
-                WF_DRIVERS=1 taskset -c 1 "$out/$image" 6 "$size" 5 0 | awk -F'\t' '{printf "%s ", $5}'
+                printf 'ns %s %s ' "$arm" "$size"
+                WF_DRIVERS=1 taskset -c 1 "$out/hand-$arm" 6 "$size" 5 0 | awk -F'\t' '{printf "%s ", $5}'
                 echo
               done
             done
@@ -218,8 +273,7 @@ jobs:
         with:
           name: remove-codegen
           path: |
-            ${{ runner.temp }}/out/*.opt.ll
-            ${{ runner.temp }}/out/*.s
+            ${{ runner.temp }}/out/*.ll
 
   design-tree:
     runs-on: ubuntu-24.04
