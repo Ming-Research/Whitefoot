@@ -154,9 +154,10 @@ jobs:
   # condition it decides, and compares those lists too: a condition only
   # the branch decides is a test the branch's instances make redundant. The
   # programs predate
-  # the base's reserved words `held`, `not` and `unchanged` and its prelude
-  # variant `Open`, so their copies rename each before either compiler
-  # reads them.
+  # the base's reserved words `held`, `not` and `unchanged`, its prelude
+  # variant `Open` and its prelude function `clear`, which Halo's text and
+  # lexer modules also declare, so their copies rename each before either
+  # compiler reads them.
   trial:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -211,8 +212,8 @@ jobs:
           # Names only: a string literal keeps its text, whose length a
           # fixed-size text constant states.
           find "$work" -type f \( -name '*.wf' -o -name '*.wfm' \) -print0 | xargs -0 perl -pi -e \
-            'BEGIN { %r = (held => "trial_held", not => "trial_not", unchanged => "trial_unchanged", Open => "TrialOpen") }
-             s{("(?:[^"\\]|\\.)*")|\b(held|not|unchanged|Open)\b}{defined $1 ? $1 : $r{$2}}ge'
+            'BEGIN { %r = (held => "trial_held", not => "trial_not", unchanged => "trial_unchanged", Open => "TrialOpen", clear => "trial_clear") }
+             s{("(?:[^"\\]|\\.)*")|\b(held|not|unchanged|Open|clear)\b}{defined $1 ? $1 : $r{$2}}ge'
           same_accepted=0
           same_rejected=0
           differ=0
