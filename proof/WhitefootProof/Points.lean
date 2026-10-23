@@ -1,3 +1,4 @@
+import WhitefootProof.Interpreter
 import WhitefootProof.Walk
 
 /-!
