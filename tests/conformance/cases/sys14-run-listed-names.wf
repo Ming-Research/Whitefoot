@@ -86,11 +86,6 @@ fn same_name(entries: &[u8], at: u64, count: u64, expected: &[u8]) -> result: Bo
     } else {
       return False();
     }
-    let expected_readable = index < wanted;
-    if expected_readable {
-    } else {
-      return False();
-    }
     let listed = entries^[position];
     let written = expected^[index];
     if listed != written {
