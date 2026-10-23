@@ -352,6 +352,29 @@ over a drain the migrations fall outside the 99th percentile, and the
 crossing removal alone is always slower than the base's, which never
 migrates.
 
+The ordinary removal path is measured slower, and the owner accepted that
+slowdown for this change. On the 14900K sample run (ten rounds, no floor
+given, so no verdict), remove-insert at a constant size, which never
+shrinks, was 1.6% to 8.5% slower than the base from 1,000 to 1,000,000 pairs,
+and the 10,000-pair drain p99 3.9% slower. The cause, read from optimized
+IR on a GitHub-hosted runner: the base's `hash_map_remove` has 75
+instructions and LLVM inlines it into the caller's loop; the shrink check
+and its call push it past LLVM's inline threshold, so every removal in the
+loop becomes a real call. A refuting check holds the attribution: with
+`-inline-threshold=2000` the candidate's remove-insert ratio is 0.998 at
+1,000 pairs and 0.995 at 10,000 (40 samples per arm, base 1.000, candidate
+1.040 and 1.045). Annotations on the source do not recover it: a 1:2000
+branch weight on the shrink branch, as an unlikely marker would lower,
+keeps the shrink out of line but leaves the removal at 81 instructions,
+still above the threshold (1.037, 1.044), because LLVM's inline cost counts
+instructions on rarely taken branches too; an inline hint on the removal
+moves the boundary one call out (1.020, 1.026); Whitefoot#420's automatic
+branch weights stop `hash_map_find` from being inlined into the removal
+(1.050, 1.056). The gap is how the compiler decides inlining, not this
+library, so the slowdown is recorded rather than worked around here; its
+real effect is judged by Firn's `SREM` and `SPOP` measurements, and the
+remove-insert cell is the witness for the compiler's inlining work.
+
 ## Owner decisions
 
 - Automatic shrinking after a successful removal, below one eighth, into
@@ -360,10 +383,13 @@ migrates.
   ceiling still does not rebuild (A).
 - One-shot migration first (A). The reopen measurement was ruled as a
   threshold-crossing or full-drain p99; a replacing card
-  (hash-shrink-reopen-measure, recommended A) moves it to Firn's `SPOP`
-  drain p99 against the fastest competitor, for the reason under
+  (hash-shrink-reopen-measure, A) moved it to Firn's `SPOP` drain p99
+  against the fastest competitor, for the reason under
   [Measurement](#measurement).
 - The 14900K measurement runs this comparison (A).
+- The ordinary removal's slowdown from crossing LLVM's inline threshold is
+  accepted for this change and recorded; inlining is studied as compiler
+  work (hash-shrink-cold-path, A).
 
 ## Found along the way
 
