@@ -6,19 +6,19 @@ fn assign_digits(input: &[u8]) -> result: Array<u8, 2> reads(input) contract {
 } {
   doc "Predicted RANGE-3 refusal at return, not compiled: skipping leading zeros makes the first stored digit nonzero, but the loop states only its count bound and carries no leading-digit invariant. The second input digit is nonzero, so the output is nonempty even when the first input digit is zero. This isolates the scan's missing induction fact without a field in a range guard, parsing, trimming, or helper calls; it does not show that the language cannot express that induction fact.";
   let digits = array_filled::<u8, 2>(value: 0_u8);
-  let held = 0_u64;
+  let stored = 0_u64;
   for (
     position in 0_u64..2_u64,
-    invariant held_bound: held <= position
+    invariant stored_bound: stored <= position
   ) {
     let digit = input^[position];
     let zero_digit = digit == 0_u8;
-    let nothing_held = held == 0_u64;
-    let skip = band(zero_digit, nothing_held);
+    let nothing_stored = stored == 0_u64;
+    let skip = band(zero_digit, nothing_stored);
     if skip {
     } else {
-      set digits[held] = digit;
-      set held = held + 1_u64;
+      set digits[stored] = digit;
+      set stored = stored + 1_u64;
     }
   }
   return digits;

@@ -52,7 +52,7 @@ fn decimal_assign(decimal: &Decimal, input: &[u8], first: u64, last: u64) -> (ne
   doc "Replaces the decimal by the digits of the significand text input[first..last), digits with at most one point as scan_significand read them. Leading zeros are not held; the point is the number of integer digits from the first nonzero one, or minus the number of zeros between the point and the first nonzero digit, and is returned as a sign and an unsigned magnitude so the explicit exponent can cancel it before any saturation. The stored point is zero until that combination.";
   set decimal^.count = 0_u64;
   set decimal^.truncated = False();
-  let held = 0_u64;
+  let stored = 0_u64;
   let index = first;
   let seen_point = False();
   let before = 0_u64;
@@ -60,14 +60,14 @@ fn decimal_assign(decimal: &Decimal, input: &[u8], first: u64, last: u64) -> (ne
   loop @text (
     invariant ahead: first <= index,
     invariant inside: index <= last,
-    invariant held_ceiling: held <= 800_u64,
+    invariant stored_ceiling: stored <= 800_u64,
     invariant before_seen: before <= index,
     invariant leading_seen: leading <= index,
     invariant forall small(k in 0_u64..decimal^.digits.len): decimal^.digits[k] <= 9_u8
   ) {
     if index < last {
     } else {
-      invariant held_done: held <= 800_u64;
+      invariant stored_done: stored <= 800_u64;
       break @text;
     }
     let byte = input^[index];
@@ -81,8 +81,8 @@ fn decimal_assign(decimal: &Decimal, input: &[u8], first: u64, last: u64) -> (ne
       if byte <= 57_u8 {
         let digit = byte - 48_u8;
         let zero_digit = digit == 0_u8;
-        let nothing_held = held == 0_u64;
-        let skip = band(zero_digit, nothing_held);
+        let nothing_stored = stored == 0_u64;
+        let skip = band(zero_digit, nothing_stored);
         if skip {
           if seen_point {
             set leading = leading + 1_u64;
@@ -92,9 +92,9 @@ fn decimal_assign(decimal: &Decimal, input: &[u8], first: u64, last: u64) -> (ne
           } else {
             set before = before + 1_u64;
           }
-          if held < 800_u64 {
-            set decimal^.digits[held] = digit;
-            set held = held + 1_u64;
+          if stored < 800_u64 {
+            set decimal^.digits[stored] = digit;
+            set stored = stored + 1_u64;
           } else if digit != 0_u8 {
             set decimal^.truncated = True();
           }
@@ -103,10 +103,10 @@ fn decimal_assign(decimal: &Decimal, input: &[u8], first: u64, last: u64) -> (ne
         continue @text;
       }
     }
-    invariant held_finished: held <= 800_u64;
+    invariant stored_finished: stored <= 800_u64;
     break @text;
   }
-  set decimal^.count = held;
+  set decimal^.count = stored;
   set decimal^.point = 0_i64;
   decimal_trim(decimal: decimal);
   if 0_u64 < before {

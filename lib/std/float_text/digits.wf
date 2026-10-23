@@ -102,8 +102,8 @@ fn digits_prefix(decimal: &Decimal, count: u64) -> result: DigitPrefix reads(dec
     invariant coefficient_below_scale: coefficient < scale
   ) {
     let digit = if position < decimal^.count {
-      let held = decimal^.digits[position];
-      give held;
+      let stored = decimal^.digits[position];
+      give stored;
     } else {
       give 0_u8;
     }
