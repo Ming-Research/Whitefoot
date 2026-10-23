@@ -6,7 +6,8 @@ fn wipe(map: &ConcurrentHashMap<u8>, key: &[u8]) -> result: unit reads(key), wri
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let store_map = map_new::<u8>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let key = &names[0_u64..1_u64];
   atomic t = &store {
     let slot = &t^[key];

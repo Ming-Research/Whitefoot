@@ -1665,6 +1665,7 @@ Body operations contribute the following access categories; target, operand, off
 | Reading a value from a place [TYPE-7, OP-15] | Read of the selected storage |
 | Dispatching a `match` on an enum place [OWN-13] | Read of the scrutinee storage, which holds the enum tag |
 | Beginning an atomic statement [SHARE-2] | Read of its handle place |
+| Selecting map entries by a key or a key set [OP-4, SHARE-1] | Read of the bytes the key names, or of the key set |
 | Committing a value assignment to a target live where [SET-1] evaluates it, or read out by an [OP-12] update | Write of the target storage |
 | Reinitializing a complete binding dead where [SET-1] evaluates the target and read out by no [OP-12] update | No target-storage access contribution |
 | Read-modify-write `set p = p +wrap x;` [SET-1, OP-2] | Read of p through the right-hand side and write of p at commit |

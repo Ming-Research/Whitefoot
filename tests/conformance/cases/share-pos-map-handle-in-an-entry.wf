@@ -4,8 +4,8 @@ fn read(outer: Shared<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>) -> resu
   let key = &names[0_u64..1_u64];
   let missing = &names[1_u64..2_u64];
   let inner = None<Shared<ConcurrentHashMap<u8>>>();
-  atomic e = &outer[key] {
-    match e^ {
+  atomic o = &outer {
+    match o^[key] {
       Some(value: handle) => {
         let kept = shared_share::<ConcurrentHashMap<u8>>(shared: handle);
         set inner = Some<Shared<ConcurrentHashMap<u8>>>(value: move kept);
@@ -64,14 +64,16 @@ fn read(outer: Shared<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>) -> resu
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let outer = shared_map_new::<Shared<ConcurrentHashMap<u8>>>(capacity: 1_u64);
+  let outer_map = map_new::<Shared<ConcurrentHashMap<u8>>>(capacity: 1_u64);
+  let outer = shared_new::<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>(value: move outer_map);
   let key = &names[0_u64..1_u64];
-  let made = shared_map_new::<u8>(capacity: 1_u64);
+  let made_map = map_new::<u8>(capacity: 1_u64);
+  let made = shared_new::<ConcurrentHashMap<u8>>(value: move made_map);
   atomic t = &made {
     set t^[key] = Some<u8>(value: 7_u8);
   }
-  atomic e = &outer[key] {
-    set e^ = Some<Shared<ConcurrentHashMap<u8>>>(value: move made);
+  atomic o = &outer {
+    set o^[key] = Some<Shared<ConcurrentHashMap<u8>>>(value: move made);
   }
   let a = shared_share::<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>(shared: &outer);
   let b = shared_share::<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>(shared: &outer);

@@ -1,12 +1,11 @@
 fn main() -> status: std::process::ExitStatus pure waits {
   let source = std::time::cancel_source();
   let watch = std::time::cancel_watch(source: &source);
-  let stop = std::time::cancel_state(watch: &watch);
   let yes = True();
   let ready = shared_new::<Bool>(value: yes);
   let correct = False();
-  atomic work = &ready, state = &stop when bor(work^, state^.fired) {
-    set correct = bnot(state^.fired);
+  atomic work = &ready when bor(work^, watch.fired) {
+    set correct = bnot(watch.fired);
   }
   std::time::close_cancel_watch(watch: move watch);
   std::time::close_cancel_source(source: move source);

@@ -148,13 +148,13 @@ fn run_flush(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   doc "FLUSHALL and FLUSHDB [ASYNC | SYNC], firn's one database being all of them: empties the keyspace in one atomic statement, which exchanges the keyspace's map whole for a fresh one and the queued expiries for none, and appends the command as the client sent it to the append-only file's pending bytes when the keyspace keeps them, also when the keyspace was already empty, as Redis logs both. Any other argument, or more than one, is a syntax error. The map and queue taken out are released at the end of the successful branch, after the statement and before the reply is sent, whichever option was given: unlike Redis's ASYNC, no other context frees them, but no other statement waits for their release either.";
   let known = flush_mode(input: input, args: args, from: 1_u64);
   if known {
-    let fresh = shared_map_new::<Entry>(capacity: keyspace_capacity);
+    let fresh = map_new::<Entry>(capacity: keyspace_capacity);
     let none_due = priority_queue_new::<Due, ceiling>();
-    atomic t = &store^.keys, f = &fresh, m = &store^.meta {
-      swap(first: t, second: f);
-      swap(first: &m^.due, second: &none_due);
+    atomic d = &store^.data {
+      swap(first: &d^.keys, second: &fresh);
+      swap(first: &d^.meta.due, second: &none_due);
       if store^.logging {
-        log_command(log: &m^.log, input: input, args: args);
+        log_command(log: &d^.meta.log, input: input, args: args);
       }
     }
   } else {
@@ -203,8 +203,8 @@ fn run_function(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
     return unit;
   }
   if store^.logging {
-    atomic m = &store^.meta {
-      log_command(log: &m^.log, input: input, args: args);
+    atomic d = &store^.data {
+      log_command(log: &d^.meta.log, input: input, args: args);
     }
   }
   reply_ok(client: client);

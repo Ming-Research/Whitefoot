@@ -1,20 +1,22 @@
 const names: Array<u8, 2> =[98_u8, 97_u8];
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u64>(capacity: 0_u64);
+  let store_map = map_new::<u64>(capacity: 0_u64);
+  let store = shared_new::<ConcurrentHashMap<u64>>(value: move store_map);
   let keys = key_set_new(capacity: 2_u64);
   let b = &names[0_u64..1_u64];
   let a = &names[1_u64..2_u64];
   let at_b = key_set_insert(keys: &keys, key: b);
   let at_a = key_set_insert(keys: &keys, key: a);
-  atomic es = &store[keys] {
+  atomic t = &store {
+    let es = &t^[keys];
     set es^[at_b] = Some<u64>(value: 19_u64);
     set es^[at_a] = Some<u64>(value: 23_u64);
   }
   let b_value = 0_u64;
   let a_value = 0_u64;
-  atomic slot = &store[b] {
-    match slot^ {
+  atomic t = &store {
+    match t^[b] {
       Some(value: observed) => {
         set b_value = observed^;
       }
@@ -25,8 +27,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   if b_value != 19_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  atomic slot = &store[a] {
-    match slot^ {
+  atomic t = &store {
+    match t^[a] {
       Some(value: observed) => {
         set a_value = observed^;
       }

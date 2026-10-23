@@ -104,6 +104,7 @@ void *wf__cancel_never(void);
 /* A retained never state maps to the no-watch host-wait sentinel. */
 void *wf__cancel_wait_state(void *state);
 void wf__cancel_fire_held(void *source);
+uint8_t wf__cancel_flag(const void *state);
 /* Start returns 3: retry context_wait on resume until it acquires the unit. */
 int wf__shared_start(void *object, void *operation);
 /* Non-null fireable states only; pending watched submissions return 2,

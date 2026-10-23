@@ -62,3 +62,9 @@ jobs:
         env:
           WHITEFOOT_CHECK_TIMEOUT: 2400
         run: make check-group GROUP="${{ matrix.stage }}"
+
+      # The group's log can be cut short; the grammar pins' own run prints
+      # every expected and found count on its own.
+      - name: grammar pins
+        if: always() && matrix.stage == 'unit'
+        run: perl .github/run-check.pl tmp/grammar cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib syntax::grammar::tests -- --test-threads=1

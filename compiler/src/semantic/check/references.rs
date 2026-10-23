@@ -1012,29 +1012,6 @@ impl<'unit> Checker<'_, 'unit> {
         )
     }
 
-    /// [SHARE-2] the borrow of a place without its last step, which the
-    /// caller has read as a map's key: `&m` for the target `&m[k]`.
-    pub(super) fn check_place_borrow_prefix(
-        &mut self,
-        context: FunctionContext<'_, '_>,
-        carrier: NodeId,
-        site: NodeId,
-        place_node: NodeId,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
-        loop_depth: usize,
-    ) -> Result<TypedExpression, CheckStop> {
-        self.check_place_borrow_through(
-            context,
-            carrier,
-            site,
-            place_node,
-            bindings,
-            loop_depth,
-            true,
-            None,
-            LexicalUseRole::PlaceBase,
-        )
-    }
 
     #[allow(clippy::too_many_arguments)]
     pub(super) fn check_place_borrow_through(

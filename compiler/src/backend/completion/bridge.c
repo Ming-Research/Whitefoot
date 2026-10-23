@@ -2417,6 +2417,15 @@ void wf__cancel_fire_held(void *opaque) {
     atomic_fetch_sub_explicit(&wf_drivers_notifying, 1u, memory_order_seq_cst);
 }
 
+/* [PRE-2] A watch's `fired`, read without holding the state: the atomic
+ * mirror that the held false-to-true transition publishes. The acquire pairs
+ * with that transition's release, so a reader that sees the flag set also
+ * sees every update completed before the firing [SHARE-3]. */
+uint8_t wf__cancel_flag(const void *state) {
+    const wf_cancel *source = state;
+    return atomic_load_explicit(&source->fired, memory_order_acquire) != 0u;
+}
+
 /* Wakes the context parked on a record this thread just published: at once
  * when it is this driver's, and otherwise, unless it is the running
  * context's own, by counting a publication every driver's next pass over its

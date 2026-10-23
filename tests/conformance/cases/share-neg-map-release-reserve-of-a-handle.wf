@@ -1,12 +1,11 @@
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  doc "A map state is not the shared handle the release takes.";
+  doc "The release takes the map itself, not the shared handle that holds it.";
   let std::process::Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory_read);
-  let store = shared_map_new::<u8>(capacity: 0_u64);
-  atomic t = &store {
-    let freed = std::process::release_map_reserve::<u8>(map: t, meter: &meter);
-  }
+  let store_map = map_new::<u8>(capacity: 0_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
+  let freed = std::process::release_map_reserve::<u8>(map: &store, meter: &meter);
   return std::process::exit_status(code: 0_u8);
 }

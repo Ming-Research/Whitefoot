@@ -14,17 +14,19 @@ fn replace_held(slots: &Entries<u8>, index: u64) -> result: unit reads(slots[ind
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let store_map = map_new::<u8>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let keys = key_set_new(capacity: 1_u64);
   let key = &name[0_u64..1_u64];
   let index = key_set_insert(keys: &keys, key: key);
-  atomic slots = &store[keys] {
+  atomic t = &store {
+    let slots = &t^[keys];
     set slots^[index] = Some<u8>(value: 7_u8);
     replace_held(slots: slots, index: index);
   }
   let byte = 0_u8;
-  atomic slot = &store[key] {
-    match slot^ {
+  atomic t = &store {
+    match t^[key] {
       Some(value: observed_state) => {
         set byte = observed_state^;
       }

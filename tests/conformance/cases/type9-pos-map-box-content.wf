@@ -1,0 +1,13 @@
+fn keep(cell: &Box<ConcurrentHashMap<u8>>) -> count: u64 reads(cell) {
+  return map_count::<u8>(map: &cell^.inner);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let keys = map_new::<u8>(capacity: 1_u64);
+  let cell = box_new::<ConcurrentHashMap<u8>>(value: move keys);
+  let count = keep(cell: &cell);
+  if count == 0_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

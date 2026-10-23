@@ -9,13 +9,13 @@ fn observe(left: &u64, right: &u64) -> result: Pair reads(left), reads(right) co
   return Pair(left: left^, right: right^);
 }
 
-fn sample(left: &Shared<u64>, right: &Shared<u64>, use_local: Bool) -> result: Pair reads(left), reads(right) waits {
+fn sample(pair: &Shared<Pair>, use_local: Bool) -> result: Pair reads(pair) waits {
   let local = 0_u64;
-  atomic current_left = &left^, current_right = &right^ {
-    let chosen = current_right;
+  atomic current = &pair^ {
+    let chosen = &current^.right;
     if use_local {
       set chosen = &local;
     }
-    return observe(left: current_left, right: chosen);
+    return observe(left: &current^.left, right: chosen);
   }
 }

@@ -1,16 +1,16 @@
-//! [SHARE-3] which entry bindings only read their entry. A statement whose
-//! guard and block write no path rooted at an entry binder may hold that
-//! entry beside others that only read it; every other one holds it alone. A
-//! binding classed as a reader whose entry is written would race with the
-//! readers beside it, so each way of writing through the binder is a case.
+//! [SHARE-3] which statements only read their state. A statement whose guard
+//! and block write no path rooted at its binding may hold a map entry it uses
+//! beside others that only read it; every other one holds it alone. A
+//! statement classed as a reader that writes the entry would race with the
+//! readers beside it, so each way of writing through the binding is a case.
 
 use crate::SemanticOutcome;
 
 use super::super::model::{CheckedFunction, CheckedStatement};
 use super::with_semantics;
 
-/// Whether each entry binding of the atomic statements in a block and the
-/// blocks it owns only reads, in source order.
+/// Whether each atomic statement in a block and the blocks it owns only
+/// reads its state, in source order.
 fn atomic_forms(statements: &[CheckedStatement], out: &mut Vec<bool>) {
     for statement in statements {
         match statement {
@@ -31,7 +31,7 @@ fn atomic_forms(statements: &[CheckedStatement], out: &mut Vec<bool>) {
     }
 }
 
-/// Whether the one entry binding of each named function only reads.
+/// Whether the one atomic statement of each named function only reads.
 fn reads_of(source: &str, names: &[&str]) -> Vec<bool> {
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -48,7 +48,7 @@ fn reads_of(source: &str, names: &[&str]) -> Vec<bool> {
                 let mut forms = Vec::new();
                 atomic_forms(function.body.as_deref().unwrap_or_default(), &mut forms);
                 let [reads] = forms.as_slice() else {
-                    panic!("{name} binds one entry: {forms:?}");
+                    panic!("{name} holds one object: {forms:?}");
                 };
                 *reads
             })
@@ -82,8 +82,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
 
-/// Every way a block writes through its binder makes the statement hold the
-/// entry alone.
+/// Every way a block writes the entry through its binding makes the
+/// statement hold the entry alone.
 #[test]
 fn a_statement_that_writes_through_its_binder_holds_its_entry_alone() {
     let source = format!(
@@ -91,16 +91,16 @@ fn a_statement_that_writes_through_its_binder_holds_its_entry_alone() {
         r#"
 fn replaces(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    set slot^ = Some<u8>(value: 1_u8);
+  atomic map = &store^ {
+    set map^[observed] = Some<u8>(value: 1_u8);
   }
   return unit;
 }
 
 fn writes_a_payload(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    match slot^ {
+  atomic map = &store^ {
+    match map^[observed] {
       Some(value: seen) => {
         set seen^ = 2_u8;
       }
@@ -113,8 +113,8 @@ fn writes_a_payload(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads
 
 fn calls_a_payload_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    match slot^ {
+  atomic map = &store^ {
+    match map^[observed] {
       Some(value: seen) => {
         bump(value: seen);
       }
@@ -127,17 +127,17 @@ fn calls_a_payload_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit
 
 fn calls_an_entry_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    clear(observed: slot);
+  atomic map = &store^ {
+    clear(observed: &map^[observed]);
   }
   return unit;
 }
 
 fn writes_on_one_branch(store: &Shared<ConcurrentHashMap<u8>>, flag: Bool) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
+  atomic map = &store^ {
     if flag {
-      set slot^ = None<u8>();
+      set map^[observed] = None<u8>();
     }
   }
   return unit;
@@ -145,9 +145,9 @@ fn writes_on_one_branch(store: &Shared<ConcurrentHashMap<u8>>, flag: Bool) -> re
 
 fn writes_in_a_loop(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
+  atomic map = &store^ {
     for (i in 0_u64..3_u64) {
-      match slot^ {
+      match map^[observed] {
         Some(value: seen) => {
           set seen^ = seen^ +wrap 1_u8;
         }
@@ -161,8 +161,8 @@ fn writes_in_a_loop(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads
 
 fn writes_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    match slot^ {
+  atomic map = &store^ {
+    match map^[observed] {
       Some(value: pair) => {
         set pair^.right = 3_u8;
       }
@@ -175,8 +175,8 @@ fn writes_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: unit reads
 
 fn writes_through_a_copy(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    let same = slot;
+  atomic map = &store^ {
+    let same = &map^[observed];
     set same^ = Some<u8>(value: 1_u8);
   }
   return unit;
@@ -184,8 +184,8 @@ fn writes_through_a_copy(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit 
 
 fn writes_through_a_copied_payload(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    match slot^ {
+  atomic map = &store^ {
+    match map^[observed] {
       Some(value: seen) => {
         let same = seen;
         set same^ = 2_u8;
@@ -229,8 +229,8 @@ fn a_statement_that_writes_only_other_places_reads_its_entry() {
         r#"
 fn copies_out(store: &Shared<ConcurrentHashMap<u8>>, out: &u8) -> result: unit reads(store), writes(out) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    match slot^ {
+  atomic map = &store^ {
+    match map^[observed] {
       Some(value: seen) => {
         set out^ = seen^;
       }
@@ -244,8 +244,8 @@ fn copies_out(store: &Shared<ConcurrentHashMap<u8>>, out: &u8) -> result: unit r
 fn calls_a_reader(store: &Shared<ConcurrentHashMap<u8>>) -> result: u8 reads(store) waits {
   let total = 0_u8;
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    match slot^ {
+  atomic map = &store^ {
+    match map^[observed] {
       Some(value: seen) => {
         set total = peek(value: seen);
       }
@@ -259,8 +259,8 @@ fn calls_a_reader(store: &Shared<ConcurrentHashMap<u8>>) -> result: u8 reads(sto
 fn reads_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: u8 reads(store) waits {
   let right = 0_u8;
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    match slot^ {
+  atomic map = &store^ {
+    match map^[observed] {
       Some(value: pair) => {
         set right = pair^.right;
       }

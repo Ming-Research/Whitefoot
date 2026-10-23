@@ -380,8 +380,6 @@ fn deadline_timer(deadline: Instant, source: std::time::CancelSource, disarm: st
 fn deadline_competition(clock: &Clock, ready: Bool) -> result: Bool writes(clock) waits {
   let timer_source = std::time::cancel_source();
   let timer_watch = std::time::cancel_watch(source: &timer_source);
-  let timeout = std::time::cancel_state(watch: &timer_watch);
-  std::time::close_cancel_watch(watch: move timer_watch);
   let disarm_source = std::time::cancel_source();
   let disarm_watch = std::time::cancel_watch(source: &disarm_source);
   let work = shared_new::<Bool>(value: ready);
@@ -394,9 +392,10 @@ fn deadline_competition(clock: &Clock, ready: Bool) -> result: Bool writes(clock
   let deadline = instant_after(instant: begin, nanoseconds: delay);
   let timer_elapsed = spawn deadline_timer(deadline: deadline, source: move timer_source, disarm: move disarm_watch);
   let saw_timeout = False();
-  atomic item = &work, timer = &timeout when bor(item^, timer^.fired) {
-    set saw_timeout = timer^.fired;
+  atomic item = &work when bor(item^, timer_watch.fired) {
+    set saw_timeout = timer_watch.fired;
   }
+  std::time::close_cancel_watch(watch: move timer_watch);
   std::time::cancel_fire(source: &disarm_source);
   std::time::close_cancel_source(source: move disarm_source);
   let joined = timer_elapsed;
@@ -428,26 +427,24 @@ fn coherent_states(clock: &Clock) -> result: Bool writes(clock) waits {
   let second_source = std::time::cancel_source();
   let first_watch = std::time::cancel_watch(source: &first_source);
   let second_watch = std::time::cancel_watch(source: &second_source);
-  let first_view = std::time::cancel_state(watch: &first_watch);
-  let second_view = std::time::cancel_state(watch: &second_watch);
-  std::time::close_cancel_watch(watch: move first_watch);
-  std::time::close_cancel_watch(watch: move second_watch);
   let initial = now(clock: clock);
   let next = instant_after(instant: initial, nanoseconds: 1_u64);
   let ordinary = shared_new::<Instant>(value: initial);
   let writer = shared_share::<Instant>(shared: &ordinary);
   spawn publish_states(state: move writer, stamp: next, first: move first_source, second: move second_source);
   let coherent = False();
-  atomic first_state = &first_view, second_state = &second_view, later_state = &ordinary when band(first_state^.fired, second_state^.fired) {
-    let before = first_state^.fired;
+  atomic later_state = &ordinary when band(first_watch.fired, second_watch.fired) {
+    let before = first_watch.fired;
     let stamp = later_state^;
-    let after = first_state^.fired;
+    let after = first_watch.fired;
     let stable = band(before, after);
     let published = instant_reached(deadline: next, instant: stamp);
     let no_later = instant_reached(deadline: stamp, instant: next);
     let exact = band(published, no_later);
     set coherent = band(stable, exact);
   }
+  std::time::close_cancel_watch(watch: move first_watch);
+  std::time::close_cancel_watch(watch: move second_watch);
   return coherent;
 }
 

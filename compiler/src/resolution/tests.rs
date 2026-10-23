@@ -3183,19 +3183,21 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[175].1, "paged_page_len");
     assert_eq!(first[186].1, "swap");
     assert_eq!(first[190].1, "shared_new");
-    assert_eq!(first[193].1, "shared_map_new");
-    assert_eq!(first[196].1, "shared_share");
-    assert_eq!(first[199].1, "shared_read");
-    assert_eq!(first[202].1, "shared_read_share");
+    assert_eq!(first[193].1, "shared_share");
+    assert_eq!(first[196].1, "shared_read");
+    assert_eq!(first[199].1, "shared_read_share");
     // Each frozen function contributes its function, T and value parameter:
     // three records each. Frozen adds four opaque records, and ScanStep adds
     // five enum records before these functions.
-    assert_eq!(first[205].1, "frozen_new");
+    assert_eq!(first[202].1, "frozen_new");
+    assert_eq!(first[203].1, "T");
+    assert_eq!(first[204].1, "value");
+    assert_eq!(first[205].1, "frozen_share");
     assert_eq!(first[206].1, "T");
-    assert_eq!(first[207].1, "value");
-    assert_eq!(first[208].1, "frozen_share");
-    assert_eq!(first[209].1, "T");
-    assert_eq!(first[210].1, "frozen");
+    assert_eq!(first[207].1, "frozen");
+    assert_eq!(first[208].1, "map_new");
+    assert_eq!(first[209].1, "V");
+    assert_eq!(first[210].1, "capacity");
     assert_eq!(first[211].1, "map_count");
     assert_eq!(first[214].1, "map_scan");
     assert_eq!(first[220].1, "map_scan_within");
