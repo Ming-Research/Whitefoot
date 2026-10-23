@@ -82,17 +82,14 @@ theorem eval_scaleCoeffs (G : Nat → Int) (k : Int) (xs : Coeffs) :
   by_cases hk : k = 0
   · subst hk; simp [scaleCoeffs, evalCoeffs]
   · have hk' : ¬(k == 0) = true := by simpa using hk
-    rw [scaleCoeffs, if_neg hk']
+    rw [scaleCoeffs, ite_eq_right hk']
     induction xs with
     | nil => simp [evalCoeffs]
     | cons p rest ih =>
       obtain ⟨x, a⟩ := p
       simp only [List.map_cons, evalCoeffs]
       rw [ih]
-      first
-        | (rw [Int.mul_add, Int.mul_assoc]; done)
-        | (simp only [Int.mul_add, Int.mul_assoc]; done)
-        | grind
+      rw [Int.mul_add, Int.mul_assoc]
 
 /-- Mapping each coefficient to its quotient by `k` scales the sum by `1/k`
 when `k` divides every coefficient. -/
@@ -106,9 +103,7 @@ theorem eval_map_mul (G : Nat → Int) (k : Int) (g : Nat × Int → Nat × Int)
     have ih' := ih (fun q hq => hg q (by simp [hq]))
     simp only [List.map_cons, evalCoeffs]
     rw [h1, Int.add_mul, ih']
-    first
-      | (rw [Int.mul_right_comm, h2]; done)
-      | (rw [← h2]; grind)
+    rw [Int.mul_right_comm, h2]
 
 /-! ## Forms and inequalities -/
 
@@ -157,15 +152,8 @@ theorem Ineq.holds_of_sub {G : Nat → Int} {t s : Ineq} (h : (t.sub s).Holds G)
 
 theorem fdiv_ge_of_mul_le {y c k : Int} (hk : 0 < k) (h : y * k ≤ c) : y ≤ c.fdiv k := by
   have hk0 : 0 ≤ k := Int.le_of_lt hk
-  first
-    | rw [Int.fdiv_eq_ediv _ hk0]
-    | rw [Int.fdiv_eq_ediv hk0]
-    | rw [Int.fdiv_eq_ediv_of_nonneg _ hk0]
-    | rw [Int.fdiv_eq_ediv_of_nonneg hk0]
-  first
-    | exact (Int.le_ediv_iff_mul_le hk).2 h
-    | exact Int.le_ediv_of_mul_le hk h
-    | grind
+  rw [Int.fdiv_eq_ediv _ hk0]
+  exact (Int.le_ediv_iff_mul_le hk).2 h
 
 theorem holds_of_map {G : Nat → Int} {k : Int} (hk : 0 < k) (g : Nat × Int → Nat × Int)
     (xs : Coeffs) (c : Int) (hg : ∀ p ∈ xs, (g p).1 = p.1 ∧ (g p).2 * k = p.2)
@@ -218,9 +206,7 @@ theorem View.le_hi {v : View} {G : Nat → Int} (x : Nat) (hx : G x ≤ (v.inter
     have h1 : evalCoeffs G r.xs ≤ r.c := hr
     rw [hxs'] at h1
     simp [evalCoeffs] at h1
-    first
-      | omega
-      | (rw [Int.min_def]; split <;> omega)
+    omega
   · exact hacc
 
 theorem View.lo_le {v : View} {G : Nat → Int} (x : Nat) (hx : (v.interval x).1 ≤ G x)
@@ -235,9 +221,7 @@ theorem View.lo_le {v : View} {G : Nat → Int} (x : Nat) (hx : (v.interval x).1
     have h1 : evalCoeffs G r.xs ≤ r.c := hr
     rw [hxs'] at h1
     simp [evalCoeffs] at h1
-    first
-      | omega
-      | (rw [Int.max_def]; split <;> omega)
+    omega
   · exact hacc
 
 /-- A left fold whose step adds at least `k * G(x)` for each term `(x, k)`
@@ -325,9 +309,7 @@ theorem fst_mem_zipIdx {α : Type} :
     ∀ (l : List α) (n : Nat) (p : α × Nat), p ∈ l.zipIdx n → p.1 ∈ l
   | [], _, _, h => by simp at h
   | a :: l, n, p, h => by
-    first
-      | rw [List.zipIdx_cons, List.mem_cons] at h
-      | simp only [List.zipIdx, List.mem_cons] at h
+    rw [List.zipIdx_cons, List.mem_cons] at h
     rcases h with rfl | h
     · simp
     · simp [fst_mem_zipIdx l (n + 1) p h]
