@@ -186,13 +186,13 @@ theorem transitive_sound {ν : TermVal} {T : Nat → Term} (n : Nat) {m : Matrix
   unfold transitive
   refine foldl_inv (Matrix.Sound ν T) _ _ _ hm (fun m k _ hm => ?_)
   refine foldl_inv (Matrix.Sound ν T) _ _ _ hm (fun m i _ hm => ?_)
-  try dsimp only
+  dsimp only
   split
   · exact hm
   · next dik hik =>
     have hik' := hm _ _ _ hik
     refine foldl_inv (Matrix.Sound ν T) _ _ _ hm (fun m j _ hm => ?_)
-    try dsimp only
+    dsimp only
     split
     · exact hm
     · next dkj hkj =>
@@ -229,10 +229,10 @@ theorem strengthen_sound {ν : TermVal} {T : Nat → Term} {idx : Term → Nat}
     rw [ha, hb] at this ⊢
     omega
   have hm0 : Matrix.Sound ν T m := hm
-  try dsimp only
+  dsimp only
   by_cases h1 : (m.get (idx d.a) (idx d.b) == some d.c) = true
   · rw [ite_eq_left h1]
-    try dsimp only
+    dsimp only
     have hm1 := step1 m hm0 (beq_iff_eq.mp h1)
     by_cases h2 : ((m.lower (idx d.a) (idx d.b) (d.c - 1)).get (idx d.b) (idx d.a) ==
         some (-d.c)) = true
@@ -241,7 +241,7 @@ theorem strengthen_sound {ν : TermVal} {T : Nat → Term} {idx : Term → Nat}
     · rw [ite_eq_right h2]
       exact hm1
   · rw [ite_eq_right h1]
-    try dsimp only
+    dsimp only
     by_cases h2 : (m.get (idx d.b) (idx d.a) == some (-d.c)) = true
     · rw [ite_eq_left h2]
       exact step2 _ hm0 (beq_iff_eq.mp h2)
@@ -282,7 +282,7 @@ theorem sat_of_matrix (U : Array Term) (m : Matrix) (ds : List Diseq) (ν : Term
   · next hany =>
     exfalso
     obtain ⟨i, -, hi⟩ := List.any_eq_true.mp hany
-    try dsimp only at hi
+    dsimp only at hi
     split at hi
     · next v hv =>
       have := hm i i v hv
@@ -455,7 +455,7 @@ theorem L0.kill_sat {s : L0} {dead : Nat → Bool} {ν ν' : TermVal} (hs : s.Sa
   obtain ⟨hc, hb, hd⟩ := hs
   unfold L0.kill
   rw [ite_eq_right (show ¬(s.contra = true) by simp [hc])]
-  try dsimp only
+  dsimp only
   refine ⟨hc, fun b hm => ?_, fun d hm => ?_⟩
   · obtain ⟨hm, hk⟩ := List.mem_filter.mp hm
     obtain ⟨ha, hb'⟩ := not_and_not hk
@@ -491,7 +491,7 @@ theorem foldl_max {a b : Term} : ∀ (rest : List L0) (init : Option Int) (c : I
   | s :: rest, init, c, h => by
     rw [List.foldl_cons] at h
     obtain ⟨⟨c1, h1, hc1⟩, hrest⟩ := foldl_max rest _ c h
-    try dsimp only at h1
+    dsimp only at h1
     cases init with
     | none => simp at h1
     | some c0 =>
