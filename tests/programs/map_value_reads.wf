@@ -10,19 +10,19 @@ fn main() -> status: std::process::ExitStatus pure waits {
     set t^[present_key] = Some<u64>(value: 17_u64);
   }
   let first = None<u64>();
-  let held = 0_u64;
+  let counted = 0_u64;
   atomic t = &map {
     let copied = t^[present_key];
     set first = copied;
-    set held = map_count::<u64>(map: t);
+    set counted = map_count::<u64>(map: t);
   }
-  if held != 1_u64 {
+  if counted != 1_u64 {
     return std::process::exit_status(code: 8_u8);
   }
   let second = None<u64>();
   atomic t = &map {
     set second = t^[present_key];
-    set held = map_count::<u64>(map: t);
+    set counted = map_count::<u64>(map: t);
   }
   match first {
     Some(value: found) => {
@@ -50,7 +50,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let updated = None<u64>();
   atomic t = &map {
     set updated = t^[present_key];
-    set held = map_count::<u64>(map: t);
+    set counted = map_count::<u64>(map: t);
   }
   match updated {
     Some(value: found) => {
@@ -65,7 +65,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let missing = Some<u64>(value: 99_u64);
   atomic t = &map {
     set missing = t^[absent_key];
-    set held = map_count::<u64>(map: t);
+    set counted = map_count::<u64>(map: t);
   }
   match missing {
     Some(value: unexpected) => {

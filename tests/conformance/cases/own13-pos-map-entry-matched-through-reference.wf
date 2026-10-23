@@ -8,8 +8,8 @@ struct Store {
 fn peek(map: &ConcurrentHashMap<Box<u64>>, key: &[u8]) -> value: u64 reads(map), reads(key) {
   doc "Matches the entry through the map reference: the Box payload binds as a reference and nothing is taken.";
   match map^[key] {
-    Some(value: held) => {
-      return held^.inner;
+    Some(value: kept) => {
+      return kept^.inner;
     }
     None() => {
       return 0_u64;
@@ -30,9 +30,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
   }
   atomic s = &shared {
     match s^.table[a] {
-      Some(value: held) => {
-        set held^.inner = held^.inner +wrap 1_u64;
-        set s^.total = held^.inner;
+      Some(value: kept) => {
+        set kept^.inner = kept^.inner +wrap 1_u64;
+        set s^.total = kept^.inner;
       }
       None() => {
       }

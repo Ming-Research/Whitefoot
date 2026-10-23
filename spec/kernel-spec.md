@@ -2298,7 +2298,7 @@ An implementation may report unavailable resources, trusted-computing-base failu
 
 ## 13. Execution overlap
 
-[CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] supply the authority and storage-interference vocabulary of [PAR-1], [PAR-2] and [WAIT-3]; waiting calls [WAIT-1] and decision-cell boundaries [SHARE-3] supply [PAR-1] and [PAR-2]'s shared-effect exclusions.
+[CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] supply the authority and storage-interference vocabulary of [PAR-1], [PAR-2] and [WAIT-3]; waiting calls [WAIT-1], decision-cell boundaries [SHARE-3] and cancellation-flag reads [PRE-2] supply [PAR-1] and [PAR-2]'s shared-effect exclusions.
 The kernel defines no thread construct: its one concurrency construct is the spawn [WAIT-3], whose context's footprint is its own arguments and, for a `let_stmt`, its binding. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
 A shared object [SHARE-1] adds no overlap permission.
 

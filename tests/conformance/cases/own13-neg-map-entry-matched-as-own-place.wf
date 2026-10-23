@@ -8,7 +8,7 @@ fn main() -> status: std::process::ExitStatus pure {
   set table[a] = Some<Box<u64>>(value: move first);
   let code = 0_u8;
   match table[a] {
-    Some(value: held) => {
+    Some(value: kept) => {
       set code = 1_u8;
     }
     None() => {

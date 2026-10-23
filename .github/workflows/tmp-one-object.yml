@@ -68,3 +68,67 @@ jobs:
       - name: grammar pins
         if: always() && matrix.stage == 'unit'
         run: perl .github/run-check.pl tmp/grammar cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib syntax::grammar::tests -- --test-threads=1
+
+  # Temporary diagnosis: thread backtraces of the programs that hang on one
+  # driver, taken while the test's child still runs.
+  hang:
+    name: hang
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo apt-get install -y gdb
+          rustup default stable
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Build the corpus tests
+        run: perl .github/run-check.pl tmp/hang-build cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run
+
+      - name: Backtraces of the hung programs
+        run: |
+          set +e +o pipefail
+          bin=$(ls -t compiler/target/gate/deps/corpus-* | grep -v '\.d$' | head -1)
+          for test in \
+            programs::parallel::conditional_metadata_keeps_only_held_commits_on_one_driver_and_on_four \
+            programs::parallel::guards_on_map_entries_wake_on_every_write_on_one_driver_and_on_four \
+            programs::network::firn_serves_every_client_over_one_keyspace \
+            programs::network::cancellation_ends_waits_without_losing_bytes_on_both_routes; do
+            echo "=== $test"
+            "$bin" --exact "$test" --test-threads=1 > "$RUNNER_TEMP/out.txt" 2>&1 &
+            harness=$!
+            dumped=0
+            for round in $(seq 1 28); do
+              sleep 2
+              for pid in $(pgrep -P "$harness"); do
+                comm=$(ps -o comm= -p "$pid" || true)
+                age=$(ps -o etimes= -p "$pid" | tr -d ' ' || true)
+                case "$comm" in clang*|ld*|cc*|"") continue ;; esac
+                if [ "${age:-0}" -ge 10 ]; then
+                  echo "--- $comm pid $pid running for ${age}s"
+                  sudo gdb -batch -p "$pid" -ex 'info threads' -ex 'thread apply all bt 30' 2>&1 | grep -v '^\[New LWP\|^warning:' | head -300
+                  dumped=1
+                fi
+              done
+              [ "$dumped" = 1 ] && break
+              kill -0 "$harness" 2>/dev/null || break
+            done
+            kill "$harness" 2>/dev/null || true
+            wait "$harness" 2>/dev/null || true
+            tail -c 3000 "$RUNNER_TEMP/out.txt"
+          done

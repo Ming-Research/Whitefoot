@@ -2669,6 +2669,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             CheckedExpression::NumericConversion { value, .. }
             | CheckedExpression::Reinterpret { value, .. }
             | CheckedExpression::BoxDeref { value, .. }
+            | CheckedExpression::CancelFlag { watch: value, .. }
             | CheckedExpression::ProjectValue { value, .. } => {
                 self.install_expression_call_requirements(check_context, value, requirements)?;
             }

@@ -755,7 +755,9 @@ impl IrBuilder<'_> {
         if let Some(last) = read.last().copied().max(eager) {
             self.take_units_through(region, last, &direct, true)?;
         }
+        self.guard_flags = Some(Vec::new());
         let holds = self.expression(guard)?;
+        let flags = self.guard_flags.take().unwrap_or_default();
         let proceed = self.new_block(&[])?.0;
         let watch = self.new_block(&[])?.0;
         self.terminate(IrTerminator::Match {
@@ -774,7 +776,10 @@ impl IrBuilder<'_> {
         })?;
         self.current = Some(watch);
         let bindings = [region.binding];
-        if region.units.len() == 1 && matches!(region.units[0].lock, Lock::Object) {
+        if flags.is_empty()
+            && region.units.len() == 1
+            && matches!(region.units[0].lock, Lock::Object)
+        {
             let test = self.wake_test(guard, region.binding, region.state, &bindings)?;
             self.define(
                 IrType::Unit,
@@ -810,6 +815,18 @@ impl IrBuilder<'_> {
                         )?;
                     }
                 }
+            }
+            // [PRE-2] a flag the guard read false wakes the statement when
+            // it is fired; the statement holds no cancellation state.
+            for (seen, object) in flags {
+                self.define(
+                    IrType::Unit,
+                    IrOperation::WatchCancel {
+                        record,
+                        object,
+                        seen,
+                    },
+                )?;
             }
             self.release_units(region, true)?;
             self.define(IrType::Unit, IrOperation::WatchPark { record })?;
@@ -1101,7 +1118,10 @@ fn expression_reach<'a>(expression: &'a CheckedExpression, reach: &mut Vec<Reach
         },
         CheckedExpression::NumericConversion { value, .. }
         | CheckedExpression::Reinterpret { value, .. }
-        | CheckedExpression::BoxDeref { value, .. } => expression_reach(value, reach),
+        | CheckedExpression::BoxDeref { value, .. }
+        // [PRE-2] the watch is read where its place is; the flag lives in a
+        // cancellation state the statement does not hold, so adds no reach.
+        | CheckedExpression::CancelFlag { watch: value, .. } => expression_reach(value, reach),
         CheckedExpression::ArrayMeasure { root, .. } => array_reach(root, reach),
         CheckedExpression::ArrayIndex { root, offset, .. } => {
             array_reach(root, reach);

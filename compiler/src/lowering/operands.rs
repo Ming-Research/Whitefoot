@@ -134,6 +134,7 @@ macro_rules! operation_operands {
             | IrOperation::SharedState { object: value, .. }
             | IrOperation::SharedRetain { object: value, .. }
             | IrOperation::SharedCountOut { object: value }
+            | IrOperation::CancelFlag { object: value }
             | IrOperation::SharedFree { object: value }
             | IrOperation::DecisionCell { object: value, .. }
             | IrOperation::SharedAcquire { object: value }
@@ -149,6 +150,7 @@ macro_rules! operation_operands {
             | IrOperation::KeySetNew { capacity: value }
             | IrOperation::KeySetBytes { set: value }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
+            IrOperation::WatchCancel { object, seen, .. } => vec![$value(object), $value(seen)],
             // A wake test reads its state, field addresses and captured
             // operands where the watch registers.
             IrOperation::SharedWatch { object, test }

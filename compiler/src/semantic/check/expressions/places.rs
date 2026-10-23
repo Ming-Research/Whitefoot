@@ -138,6 +138,9 @@ pub(in crate::semantic::check) enum PlaceMember {
         nominal: super::super::super::model::NominalId,
         ty: CheckedType,
     },
+    /// [PRE-2] a watch's `fired`: its state's flag, read in place. It selects
+    /// no storage of the watch, so it has no storage step.
+    CancelFlag,
 }
 
 impl PlaceMember {
@@ -145,11 +148,12 @@ impl PlaceMember {
         match self {
             Self::Field { ty, .. } | Self::Payload { ty, .. } | Self::BoxContent { ty, .. } => ty,
             Self::Measure(_) => CheckedType::Integer(IntegerType::U64),
+            Self::CancelFlag => CheckedType::Bool,
         }
     }
 
-    pub(in crate::semantic::check) fn storage_step(self) -> CheckedPlaceStep {
-        match self {
+    pub(in crate::semantic::check) fn storage_step(self) -> Result<CheckedPlaceStep, CheckStop> {
+        Ok(match self {
             Self::Field { index, .. } => CheckedPlaceStep::Field(index),
             Self::Payload {
                 nominal,
@@ -163,8 +167,21 @@ impl PlaceMember {
             },
             Self::Measure(measure) => CheckedPlaceStep::Measure(measure),
             Self::BoxContent { nominal, .. } => CheckedPlaceStep::BoxReferent(nominal),
-        }
+            Self::CancelFlag => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+        })
     }
+}
+
+/// [PRE-2] the use a written place makes of a watch's flag.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::semantic::check) enum CancellationFlagUse {
+    /// A place atom of an atomic statement's guard or block: the one
+    /// admitted read.
+    Read,
+    /// A `set` target: the flag is a readonly field [TYPE-2].
+    Written,
+    /// Any other use, as the diagnostic names it.
+    Refused(&'static str),
 }
 
 /// A typed place, before its read, measure, set or consume judgment.
@@ -188,6 +205,10 @@ pub(super) struct ElaboratedPlace {
     /// always the last written suffix and the place it is read over is the
     /// one this record otherwise describes.
     pub(super) measure: Option<super::super::super::model::CheckedMeasure>,
+    /// [PRE-2] whether the written path ends at a watch's `fired`: the
+    /// expression reads the state's flag through the watch this record
+    /// otherwise describes, and selects no storage below the watch.
+    pub(super) cancel_flag: bool,
     /// Whether the written path starts with `^` on a range reference
     /// [REF-4, TYPE-7]. [MSR-1] gives that run its own row, whose one cell is
     /// the range's element count. This record carries the element type, so
@@ -199,7 +220,7 @@ impl ElaboratedPlace {
     /// The compact field representation used by ordinary binding reads and
     /// writes. Addressed and measured places keep their richer formed path.
     pub(super) fn plain_fields(&self) -> Option<Vec<u32>> {
-        if self.measure.is_some() {
+        if self.measure.is_some() || self.cancel_flag {
             return None;
         }
         self.resolved
@@ -719,6 +740,7 @@ impl<'unit> Checker<'_, 'unit> {
             },
             resolved: ResolvedPlaceSet::one(ResolvedPlace::binding(local.binding)),
             measure: None,
+            cancel_flag: false,
             range_referent: false,
         })
     }
@@ -907,7 +929,7 @@ impl<'unit> Checker<'_, 'unit> {
             }
             let member = self
                 .types
-                .elaborate_place_member(check_context, suffix, place.ty)?;
+                .elaborate_place_member_in_place(check_context, suffix, place.ty)?;
             place.expression = match member {
                 PlaceMember::Measure(measure) => {
                     place.measure = Some(measure);
@@ -956,6 +978,26 @@ impl<'unit> Checker<'_, 'unit> {
                             ty,
                             proof_base,
                         },
+                    }
+                }
+                PlaceMember::CancelFlag => {
+                    // [PRE-2] a place atom of an atomic statement's guard or
+                    // block reads the flag of the watch this path names; the
+                    // read takes effect at its own point [SHARE-3].
+                    let written = self
+                        .types
+                        .declarations
+                        .tree
+                        .parent(suffix)?
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                    let flag_use = self.types.cancellation_flag_use(written)?;
+                    if flag_use != CancellationFlagUse::Read {
+                        return self.types.refuse_cancellation_flag(written, flag_use);
+                    }
+                    place.cancel_flag = true;
+                    CheckedExpression::CancelFlag {
+                        carrier: self.types.declarations.tree.path(carrier)?.clone(),
+                        watch: Box::new(place.expression),
                     }
                 }
                 PlaceMember::Field { nominal, index, ty } => {
@@ -1228,6 +1270,9 @@ impl<'unit> TypeContext<'unit> {
         let CheckedType::Nominal(nominal) = ty else {
             return Ok(None);
         };
+        if name == crate::library::CANCELLATION_FLAG && self.is_cancel_watch(nominal)? {
+            return Ok(Some(PlaceMember::CancelFlag));
+        }
         Ok(match &self.nominal(nominal)?.kind {
             CheckedNominalKind::Box { referent, .. } => Some(PlaceMember::BoxContent {
                 nominal,
@@ -1252,7 +1297,105 @@ impl<'unit> TypeContext<'unit> {
 
     /// Form one storage member. Access, move and write judgments consume this
     /// result; none of them resolves a field or a Box member independently.
+    /// A watch's flag is no storage member: only the place walk that reads it
+    /// in place forms one [PRE-2].
     pub(in crate::semantic::check) fn elaborate_place_member(
+        &self,
+        check_context: &CheckContext<'_>,
+        suffix: NodeId,
+        ty: CheckedType,
+    ) -> Result<PlaceMember, CheckStop> {
+        let member = self.elaborate_place_member_in_place(check_context, suffix, ty)?;
+        if let PlaceMember::CancelFlag = member {
+            let written = self
+                .declarations
+                .tree
+                .parent(suffix)?
+                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+            return match self.cancellation_flag_use(written)? {
+                // An admitted read through an element step: the flag is read
+                // in place only along field, payload and Box content steps.
+                CancellationFlagUse::Read => self
+                    .declarations
+                    .unsupported(UnsupportedSemanticFeature::CompositeValues, written),
+                refused => self.refuse_cancellation_flag(written, refused),
+            };
+        }
+        Ok(member)
+    }
+
+    /// [PRE-2] the use the `place` written at `place` makes of a watch's
+    /// flag, read from the place's syntactic position.
+    pub(in crate::semantic::check) fn cancellation_flag_use(
+        &self,
+        place: NodeId,
+    ) -> Result<CancellationFlagUse, CheckStop> {
+        let tree = &self.declarations.tree;
+        let parent = tree
+            .parent(place)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        match tree.production(parent)? {
+            Production::Atom if tree.has_fixed(parent, crate::FixedTerminal::Move)? => {
+                return Ok(CancellationFlagUse::Refused("a move"));
+            }
+            Production::Atom => {}
+            Production::SetStmt => return Ok(CancellationFlagUse::Written),
+            Production::BorrowExpr | Production::AtomicStmt => {
+                return Ok(CancellationFlagUse::Refused("a borrow"));
+            }
+            _ => return Ok(CancellationFlagUse::Refused("a use other than a read")),
+        }
+        let mut node = parent;
+        while let Some(next) = tree.parent(node)? {
+            match tree.production(next)? {
+                // A clause names terms, and no term names the flag [ENT-3].
+                Production::AffineFactor | Production::UsePremise => {
+                    return Ok(CancellationFlagUse::Refused("a term of a proof clause"));
+                }
+                Production::AtomicStmt => return Ok(CancellationFlagUse::Read),
+                _ => {}
+            }
+            node = next;
+        }
+        Ok(CancellationFlagUse::Refused(
+            "a read outside the guard and the block of an atomic statement",
+        ))
+    }
+
+    /// The hard error for a use of a watch's `fired` other than a place atom
+    /// of an atomic statement's guard or block, at the complete `place`: a
+    /// write is [TYPE-2]'s, the field being readonly, and any other use is
+    /// [PRE-2]'s, with a repair naming an atomic statement on a view of the
+    /// state [DIAG-1].
+    pub(in crate::semantic::check) fn refuse_cancellation_flag<ResultValue>(
+        &self,
+        place: NodeId,
+        refused: CancellationFlagUse,
+    ) -> Result<ResultValue, CheckStop> {
+        match refused {
+            CancellationFlagUse::Written => self.declarations.issue_node(
+                SemanticRule::Type2,
+                place,
+                SemanticIssueKind::ReadonlyWriteTarget {
+                    spelling: crate::library::CANCELLATION_FLAG.to_owned(),
+                    mechanical_fix: Checker::READONLY_WRITE_TARGET_FIX,
+                },
+            ),
+            CancellationFlagUse::Refused(use_kind) => self.declarations.issue_node(
+                SemanticRule::Pre2,
+                place,
+                SemanticIssueKind::CancellationFlagUse {
+                    use_kind,
+                    mechanical_fix: "read `fired` as a place in the guard or the block of an atomic statement, or hold a view of the state: `let state = std::time::cancel_state(watch: &watch);` then `atomic s = &state { ... s^.fired ... }`",
+                },
+            ),
+            CancellationFlagUse::Read => Err(SemanticCompilerFailure::InvalidResolution.into()),
+        }
+    }
+
+    /// [`Self::elaborate_place_member`], with a watch's flag formed as a
+    /// member for the place walk that reads it in place.
+    pub(in crate::semantic::check) fn elaborate_place_member_in_place(
         &self,
         check_context: &CheckContext<'_>,
         suffix: NodeId,
@@ -1366,7 +1509,9 @@ impl<'unit> TypeContext<'unit> {
             .reject_window_part(suffix, name, ty, false)?;
         let member = self.place_member(ty, name)?;
         match member {
-            Some(PlaceMember::Measure(_) | PlaceMember::Payload { .. }) => {}
+            Some(
+                PlaceMember::Measure(_) | PlaceMember::Payload { .. } | PlaceMember::CancelFlag,
+            ) => {}
             Some(PlaceMember::BoxContent { .. }) => {
                 if name != "inner" {
                     return self.declarations.issue_node(
@@ -2234,6 +2379,18 @@ impl<'unit> TypeContext<'unit> {
             let Some(member) = self.place_member(ty, &name)? else {
                 return Ok(());
             };
+            // [TYPE-2, PRE-2] a watch's `fired` is a readonly field of the
+            // host declaration.
+            if let PlaceMember::CancelFlag = member {
+                return self.declarations.issue_node(
+                    SemanticRule::Type2,
+                    target,
+                    SemanticIssueKind::ReadonlyWriteTarget {
+                        spelling: name,
+                        mechanical_fix: Checker::READONLY_WRITE_TARGET_FIX,
+                    },
+                );
+            }
             if let PlaceMember::BoxContent { nominal, .. } = member
                 && self.is_frozen_type(CheckedType::Nominal(nominal))?
             {

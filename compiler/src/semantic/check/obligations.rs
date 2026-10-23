@@ -598,6 +598,7 @@ impl Records<'_> {
             }
             CheckedExpression::Reinterpret { value, .. }
             | CheckedExpression::BoxDeref { value, .. }
+            | CheckedExpression::CancelFlag { watch: value, .. }
             | CheckedExpression::ProjectValue { value, .. } => self.expression(value),
             CheckedExpression::RangeMeasure { root, .. } => {
                 if let Some(formation) = root.formation.as_deref() {

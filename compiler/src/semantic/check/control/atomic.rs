@@ -211,8 +211,9 @@ impl Checker<'_, '_> {
             );
         // The paths below the state the guard and the block write, which
         // the lowering's lock units read (compiler/waiting-contexts/
-        // state-locks); a variant write without a resolved payload step
-        // writes the whole state.
+        // state-locks). Every write, a variant write included, is recorded
+        // at its path or a prefix of it, so a write of one map's entry
+        // reaches that map's unit alone.
         let held = |path: &CheckedStatePath| path.root == root;
         let mut writes = checked
             .effects
@@ -222,16 +223,6 @@ impl Checker<'_, '_> {
             .filter(|path| held(path))
             .map(|path| path.steps.clone())
             .collect::<Vec<_>>();
-        if checked
-            .effects
-            .variant_writes
-            .iter()
-            .chain(guard.iter().flat_map(|g| g.1.variant_writes.iter()))
-            .any(|written| *written == root)
-            && !writes.iter().any(Vec::is_empty)
-        {
-            writes.push(Vec::new());
-        }
         writes.sort();
         writes.dedup();
         target.reads = writes.is_empty();

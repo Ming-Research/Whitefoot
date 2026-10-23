@@ -102,6 +102,9 @@ pub enum SemanticRule {
     /// Atomic statements: the target's type, and a guard or block free of
     /// waiting calls, nested atomic statements and guard writes.
     Share2,
+    /// Host declarations: a watch's cancellation flag read anywhere but a
+    /// place atom of an atomic statement's guard or block.
+    Pre2,
     /// Typed snapshot resource-free owned closure.
     Snap1,
     /// Type invariants: their formation over a struct's own fields and the
@@ -309,6 +312,7 @@ impl SemanticRule {
             Self::Wait3 => "WAIT-3",
             Self::Share1 => "SHARE-1",
             Self::Share2 => "SHARE-2",
+            Self::Pre2 => "PRE-2",
             Self::Snap1 => "SNAP-1",
             Self::Call4 => "CALL-4",
             Self::Eff1 => "EFF-1",
@@ -406,7 +410,8 @@ impl SemanticRule {
             Self::Mod6 => Self::Wait3,
             Self::Wait3 => Self::Share1,
             Self::Share1 => Self::Share2,
-            Self::Share2 => Self::Snap1,
+            Self::Share2 => Self::Pre2,
+            Self::Pre2 => Self::Snap1,
             Self::Snap1 => Self::Ent2,
             Self::Ent2 => Self::Msr1,
             Self::Msr1 => Self::Msr3,
@@ -492,17 +497,18 @@ impl SemanticRule {
             Self::Wait3 => 57,
             Self::Share1 => 58,
             Self::Share2 => 59,
-            Self::Snap1 => 60,
-            Self::Ent2 => 61,
-            Self::Msr1 => 62,
-            Self::Msr3 => 63,
-            Self::Call6 => 64,
-            Self::Inv1 => 65,
-            Self::Prf1 => 66,
-            Self::Range1 => 67,
-            Self::Range3 => 68,
-            Self::Range4 => 69,
-            Self::Range5 => 70,
+            Self::Pre2 => 60,
+            Self::Snap1 => 61,
+            Self::Ent2 => 62,
+            Self::Msr1 => 63,
+            Self::Msr3 => 64,
+            Self::Call6 => 65,
+            Self::Inv1 => 66,
+            Self::Prf1 => 67,
+            Self::Range1 => 68,
+            Self::Range3 => 69,
+            Self::Range4 => 70,
+            Self::Range5 => 71,
         }
     }
 }
@@ -933,6 +939,14 @@ pub enum SemanticIssueKind {
     /// [SHARE-1] frozen content cannot be moved or consumed.
     FrozenContentConsume {
         /// Read or retain the content instead of consuming it.
+        mechanical_fix: &'static str,
+    },
+    /// [PRE-2] a watch's cancellation flag is read only as a place atom of
+    /// an atomic statement's guard or block; it is never borrowed or moved.
+    CancellationFlagUse {
+        /// The use the place makes: a borrow, a move or a read elsewhere.
+        use_kind: &'static str,
+        /// Repair naming an atomic statement on a view of the state.
         mechanical_fix: &'static str,
     },
     /// [TYPE-2] a readonly path cannot be written.

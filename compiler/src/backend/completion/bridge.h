@@ -105,6 +105,12 @@ void *wf__cancel_never(void);
 void *wf__cancel_wait_state(void *state);
 void wf__cancel_fire_held(void *source);
 uint8_t wf__cancel_flag(const void *state);
+/* [PRE-2] Joins a guard's watch to the flag watchers of the cancellation
+ * state whose flag the guard read, `seen` being the value it read: a flag
+ * read set has no change left to wait for.  One read clear is read again
+ * once the watch is linked, so a firing between the guard's read and this
+ * call wakes the watch here; the first firing wakes every flag watcher. */
+void wf__watch_cancel(void *watch, void *state, uint32_t seen);
 /* Start returns 3: retry context_wait on resume until it acquires the unit. */
 int wf__shared_start(void *object, void *operation);
 /* Non-null fireable states only; pending watched submissions return 2,

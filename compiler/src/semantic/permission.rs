@@ -261,6 +261,9 @@ pub(crate) enum Denial {
     WaitingCall { side: PairSide, call: NodePath },
     /// A call can observe or decide an independently ordered cell [SHARE-3].
     DecisionCell { side: PairSide, call: NodePath },
+    /// A statement that reads a cancellation flag [PRE-2], which has no
+    /// overlap permission with any statement [PAR-1].
+    CancellationFlag { side: PairSide, read: NodePath },
 }
 
 impl Denial {
@@ -272,7 +275,9 @@ impl Denial {
             | Self::UnresolvedFootprint { .. }
             | Self::UnclassifiedForm { .. } => 1,
             Self::SkippingExit { .. } => 2,
-            Self::WaitingCall { .. } | Self::DecisionCell { .. } => 3,
+            Self::WaitingCall { .. }
+            | Self::DecisionCell { .. }
+            | Self::CancellationFlag { .. } => 3,
         }
     }
 }
@@ -1063,6 +1068,12 @@ impl<'check> Program<'check> {
                             call: call.clone(),
                         });
                     }
+                    if let Some(read) = &footprint.cancel_flag {
+                        return PermissionVerdict::Denied(Denial::CancellationFlag {
+                            side,
+                            read: read.clone(),
+                        });
+                    }
                     if let Some(argument) = &footprint.unresolved {
                         return PermissionVerdict::Denied(Denial::UnresolvedFootprint {
                             side,
@@ -1848,6 +1859,9 @@ pub(super) struct Footprint {
     /// Independently ordered effects also close consumers that only inspect
     /// unresolved footprints; this witness gives the precise denial reason.
     pub(super) decision_cell: Option<NodePath>,
+    /// The first cancellation-flag read [PRE-2], which closes the footprint
+    /// as `decision_cell` does.
+    pub(super) cancel_flag: Option<NodePath>,
 }
 
 impl Footprint {
@@ -1855,6 +1869,9 @@ impl Footprint {
     fn absorb(&mut self, other: &Self) {
         if let Some(call) = &other.decision_cell {
             self.decision_cell.get_or_insert_with(|| call.clone());
+        }
+        if let Some(read) = &other.cancel_flag {
+            self.cancel_flag.get_or_insert_with(|| read.clone());
         }
         self.writes.extend(other.writes.iter().cloned());
         self.reads.extend(other.reads.iter().cloned());
@@ -2420,6 +2437,7 @@ fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
         | CheckedExpression::BooleanOperation { .. }
         | CheckedExpression::ValueEquality { .. }
         | CheckedExpression::BoxDeref { .. }
+        | CheckedExpression::CancelFlag { .. }
         | CheckedExpression::ConstructStruct { .. }
         | CheckedExpression::ConstructEnum { .. }
         | CheckedExpression::ProjectValue { .. } => None,
@@ -2578,6 +2596,13 @@ pub(super) fn collect_operand_reads(
         // is recorded by `collect_consumed_places`; counting the selected
         // load separately would only turn a complete footprint unresolved.
         CheckedExpression::BoxTake { .. } => {}
+        // [PAR-1, PRE-2] a statement that reads a cancellation flag has no
+        // overlap permission: the read is a shared effect with its own point.
+        // The watch's own read is walked below as this node's child.
+        CheckedExpression::CancelFlag { carrier, .. } => {
+            footprint.unresolved.get_or_insert(node.clone());
+            footprint.cancel_flag.get_or_insert_with(|| carrier.clone());
+        }
     }
     for child in expression_children(expression) {
         collect_operand_reads(places, child, node, footprint);

@@ -508,6 +508,9 @@ impl Input<'_, '_> {
             // [TYPE-9, WIN-3] an unbox consumes its owner, so the value it
             // produces is no longer a place any goal datum can name.
             | CheckedExpression::BoxTake { .. }
+            // [PRE-2, ENT-2] a watch's flag has no proof path: no Goal datum
+            // names it.
+            | CheckedExpression::CancelFlag { .. }
             | CheckedExpression::ProjectValue { .. }
             | CheckedExpression::UserCall { .. }
             | CheckedExpression::BufferMeasure { .. }

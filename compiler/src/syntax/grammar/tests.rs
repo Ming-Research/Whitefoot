@@ -249,7 +249,8 @@ fn complete_inventory_is_pinned() {
     // and requires-repeat entry, and `held (` to requires_clause's choice.
     // The new held_clause repeat contributes `, IDENT` and `) ;`: five
     // additional rows. All old pairs survive unchanged under projection.
-    assert_eq!(SELECT_ROWS.len(), 8_502);
+    // v0.164's one atomic target retires the target repeat and its 40 rows.
+    assert_eq!(SELECT_ROWS.len(), 8_462);
     let held = LookaheadPredicate::Terminal(TerminalPredicate::Fixed(FixedTerminal::Held));
     let old_rows = DECISIONS
         .iter()
@@ -665,14 +666,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 186 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 185 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 186);
+    assert_eq!(decisions, 185);
 }
 
 #[test]
@@ -775,6 +776,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 8_502);
+    assert_eq!(total_rows, 8_462);
     assert!(saw_atom_only);
 }

@@ -1523,6 +1523,8 @@ pub(crate) fn named_place(expression: &CheckedExpression) -> Option<NamedPlace> 
         | CheckedExpression::ReadStorage { .. }
         | CheckedExpression::BufferIndex { .. }
         | CheckedExpression::BoxDeref { .. }
+        // [PRE-2] a watch's flag has no proof path.
+        | CheckedExpression::CancelFlag { .. }
         | CheckedExpression::ConstructStruct { .. }
         | CheckedExpression::ConstructEnum { .. }
         | CheckedExpression::ProjectValue { .. } => None,

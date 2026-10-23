@@ -1362,7 +1362,13 @@ typedef struct wf_cancel {
     };
     uint8_t visible_fired;
     _Atomic unsigned fired;
+    /* [PRE-2] The watches of guards that read the flag false without
+     * holding the state, which the first firing wakes all at once: none of
+     * them takes this state, so none can pass a notification on as the
+     * watches of the state's own statements do. */
+    wf_watch_list flag_watchers;
 } wf_cancel;
+static void wf_cancel_wake_flag_watchers(wf_cancel *source);
 _Static_assert(offsetof(wf_cancel, visible_fired) == WF_SHARED_STATE_OFFSET,
                "CancelState.fired uses the ordinary shared-state address");
 /* A never watch and each of its views retain this private unfired unit.
@@ -2378,6 +2384,8 @@ void *wf__cancel_new(void) {
     wf_cancel *source = wf__shared_new(sizeof(*source) - WF_SHARED_STATE_OFFSET);
     source->visible_fired = 0u;
     atomic_init(&source->fired, 0u);
+    source->flag_watchers.count = 0u;
+    source->flag_watchers.links = NULL;
     return source;
 }
 
@@ -2400,6 +2408,7 @@ void wf__cancel_fire_held(void *opaque) {
     unsigned fired = atomic_exchange_explicit(&source->fired, 1u, memory_order_acq_rel);
     wf__shared_unlock(source, 1u);
     if (fired) return;
+    wf_cancel_wake_flag_watchers(source);
     atomic_fetch_add_explicit(&wf_drivers_notifying, 1u, memory_order_seq_cst);
     unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_seq_cst);
     for (unsigned index = 0; index < count; ++index) {
@@ -3617,6 +3626,35 @@ void wf__watch_written(wf_watch_list *list) {
 
 void wf__watch_unit(void *watch, wf_watch_list *list) {
     wf_watch_on((wf_watch *)watch, &list->count, &list->links, NULL, NULL);
+}
+
+/* [PRE-2] Wakes every guard that read the flag false, once the flag is set:
+ * a watch linked before this takes wf_watch_lock is woken here, and one
+ * linked after it reads the flag set in wf__watch_cancel. */
+static void wf_cancel_wake_flag_watchers(wf_cancel *source) {
+    wf_watch_chunk *dead = NULL;
+    wf_context *ready;
+    wf_spin_lock(&wf_watch_lock);
+    ready = wf_watch_wake_locked(&source->flag_watchers.links, &dead);
+    wf_spin_unlock(&wf_watch_lock);
+    wf_watch_give_back(dead);
+    wf_ready_all(ready);
+}
+
+void wf__watch_cancel(void *watch, void *state, uint32_t seen) {
+    wf_cancel *source = state;
+    wf_watch *own = watch;
+    if (seen != 0u) return;
+    wf_watch_on(own, &source->flag_watchers.count, &source->flag_watchers.links, NULL, NULL);
+    /* The link is in place under wf_watch_lock, which the firing takes after
+     * it sets the flag: a flag still clear here is woken by that firing. */
+    if (atomic_load_explicit(&source->fired, memory_order_acquire) != 0u) {
+        wf_watch_chunk *dead = NULL;
+        wf_spin_lock(&wf_watch_lock);
+        (void)wf_watch_wake_one_locked(own, &dead);
+        wf_spin_unlock(&wf_watch_lock);
+        wf_watch_give_back(dead);
+    }
 }
 
 int wf__watch_park(void *watch_frame, void *frame) {

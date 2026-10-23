@@ -89,6 +89,7 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::WatchBegin { record }
             | IrOperation::WatchObject { record, .. }
             | IrOperation::WatchTable { record, .. }
+            | IrOperation::WatchCancel { record, .. }
             | IrOperation::WatchPark { record } => *record,
             IrOperation::KeySetNew { .. } => {
                 scratch.push(*result);
@@ -1022,6 +1023,27 @@ impl FunctionEmitter<'_, '_> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
+    /// [PRE-2] reads a cancellation state's flag without holding the state.
+    pub(super) fn emit_cancel_flag(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        object: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if ty != IrType::Bool || !self.is_object_handle(object)? {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let prefix = labels("flag", result);
+        self.names(&["wf__cancel_flag"]);
+        writeln!(
+            self.output,
+            "  %{prefix}.byte = call i8 @wf__cancel_flag(ptr {})\n  {} = icmp ne i8 %{prefix}.byte, 0",
+            self.value_name(object),
+            self.value_name(result),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
     /// [SHARE-1] returns an object whose last handle was counted out, its
     /// state already moved out, to the runtime.
     pub(super) fn emit_shared_free(
@@ -1116,6 +1138,36 @@ impl FunctionEmitter<'_, '_> {
             self.value_name(object)
         );
         self.emit_unit_call(result, "wf__watch_object", &arguments)
+    }
+
+    /// [PRE-2] joins the watch `record` to the flag watchers of the
+    /// cancellation state `object` names, with the value its guard read.
+    pub(super) fn emit_watch_cancel(
+        &mut self,
+        result: IrValueId,
+        record: IrRecord,
+        object: IrValueId,
+        seen: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if record.kind() != IrRecordKind::Watch
+            || !self.is_object_handle(object)?
+            || self.value_type(seen) != Some(IrType::Bool)
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let prefix = labels("seen", result);
+        writeln!(
+            self.output,
+            "  %{prefix} = zext i1 {} to i32",
+            self.value_name(seen)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        let arguments = format!(
+            "ptr {}, ptr {}, i32 %{prefix}",
+            record_name(record),
+            self.value_name(object)
+        );
+        self.emit_unit_call(result, "wf__watch_cancel", &arguments)
     }
 
     /// Gives up this context's hold on the object; a statement that wrote no

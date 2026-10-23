@@ -1294,6 +1294,13 @@ pub enum IrOperation {
     SharedCountOut {
         object: IrValueId,
     },
+    /// [PRE-2] the cancellation flag of the state the shared object `object`
+    /// names, read without holding that object: the acquire read of the
+    /// flag's atomic mirror, which the held false-to-true transition
+    /// publishes. Defines a `Bool`.
+    CancelFlag {
+        object: IrValueId,
+    },
     /// [SHARE-1] returns the object `object` names, whose last handle was
     /// counted out and whose state was moved out, to the runtime. Defines
     /// `Unit`.
@@ -1492,6 +1499,15 @@ pub enum IrOperation {
     WatchTable {
         record: IrRecord,
         table: IrValueId,
+    },
+    /// [PRE-2] watches the cancellation state the shared object `object`
+    /// names for its firing, for a guard that read its flag: `seen` is the
+    /// `Bool` the guard read, and a flag read true has no change left to
+    /// wait for. Defines `Unit`.
+    WatchCancel {
+        record: IrRecord,
+        object: IrValueId,
+        seen: IrValueId,
     },
     /// With everything the statement held given up: waits until a watched
     /// unit has been written since the watch began, which may suspend the

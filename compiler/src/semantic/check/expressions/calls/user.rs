@@ -1610,6 +1610,20 @@ impl<'unit> TypeContext<'unit> {
         if let CheckedExpression::Constant(value) = &argument.expression {
             return Ok(GoalExpression::Datum(GoalDatum::Literal(value.clone())));
         }
+        // [PRE-2, ENT-2] a watch's flag has no proof path, so the actual is
+        // this argument's evaluated value and no datum names the flag.
+        if let CheckedExpression::CancelFlag { .. } = &argument.expression {
+            return Ok(GoalExpression::Datum(GoalDatum::EvaluatedValue {
+                function: caller,
+                occurrence: EvaluatedValueOccurrence::CallArgument {
+                    call: call.clone(),
+                    argument: ordinal,
+                },
+                captured_type: expected_type,
+                projections: Vec::new(),
+                ty: expected_type,
+            }));
+        }
 
         let place = self
             .declarations

@@ -186,7 +186,7 @@ fn lock_ledger_names_the_map_unit_that_takes_an_earlier_object_unit() {
     assert_eq!(lines.len(), 2, "one line per lock unit: {lines:?}");
     let conditional = lock_ledger_position(&source, "let observed");
     let entry = lock_ledger_position(&source, "set m^.table[key] = None<u8>();");
-    let mut uses = vec![conditional, entry.clone()];
+    let mut uses = [conditional, entry.clone()];
     uses.sort();
     let expected = format!(
         "LOCK lock_run  {}  targets(m^): Ledger  on every path; first use {}; taken with targets(m^.1) at {entry}",

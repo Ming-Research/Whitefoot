@@ -314,6 +314,11 @@ pub(crate) fn denied_detail<Source: LedgerSource>(
             statement_name(*side),
             source.spelling(call)?
         ),
+        Denial::CancellationFlag { side, read } => format!(
+            "{} reads the cancellation flag {}",
+            statement_name(*side),
+            source.spelling(read)?
+        ),
     };
     Ok(format!("condition {condition}: {reason}"))
 }

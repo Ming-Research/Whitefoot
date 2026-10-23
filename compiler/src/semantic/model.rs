@@ -2671,6 +2671,16 @@ pub(crate) enum CheckedExpression {
         referent: CheckedType,
         value: Box<CheckedExpression>,
     },
+    /// [PRE-2] a watch's `fired`: the flag of the cancellation state the
+    /// watch retains, read without holding that state. The read takes effect
+    /// at its own point [SHARE-3]; it is an evaluated value with no proof
+    /// path [ENT-2], and a statement that makes one has no overlap
+    /// permission [PAR-1, PAR-2].
+    CancelFlag {
+        carrier: NodePath,
+        /// The watch, read in place for its state's handle.
+        watch: Box<CheckedExpression>,
+    },
     /// A borrow of directly stored content, addressed by its complete typed
     /// field/subscript path [OWN-2, OWN-5, OP-4].
     BorrowAddressed {
@@ -2756,6 +2766,7 @@ impl CheckedExpression {
             | Self::BorrowRangeIndex { carrier, .. }
             | Self::ReadStorage { carrier, .. }
             | Self::BoxDeref { carrier, .. }
+            | Self::CancelFlag { carrier, .. }
             | Self::BoxTake { carrier, .. }
             | Self::BorrowAddressed { carrier, .. }
             | Self::BorrowSegment { carrier, .. }
@@ -2781,7 +2792,9 @@ impl CheckedExpression {
                 operand_type,
                 ..
             } => operation.result_type(*operand_type),
-            Self::BooleanOperation { .. } | Self::ValueEquality { .. } => CheckedType::Bool,
+            Self::BooleanOperation { .. }
+            | Self::ValueEquality { .. }
+            | Self::CancelFlag { .. } => CheckedType::Bool,
             Self::ArrayMeasure { .. } => CheckedType::Integer(IntegerType::U64),
             Self::ArrayIndex { element_type, .. } => *element_type,
             Self::BufferMeasure { .. }
@@ -3635,6 +3648,7 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         CheckedExpression::NumericConversion { value, .. }
         | CheckedExpression::Reinterpret { value, .. }
         | CheckedExpression::BoxDeref { value, .. }
+        | CheckedExpression::CancelFlag { watch: value, .. }
         | CheckedExpression::ProjectValue { value, .. } => vec![value.as_ref()],
         CheckedExpression::BoxTake { .. } => Vec::new(),
         CheckedExpression::ArrayIndex { offset, .. } => vec![offset.as_ref()],

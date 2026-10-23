@@ -905,6 +905,11 @@ impl Input<'_, '_> {
             CheckedExpression::DerefAddressed { binding, .. } => {
                 format!("{}^", self.binding_name(*binding))
             }
+            CheckedExpression::CancelFlag { watch, .. } => format!(
+                "{}.{}",
+                self.render_expression(watch),
+                crate::library::CANCELLATION_FLAG
+            ),
             CheckedExpression::BoxDeref { value, .. } => {
                 format!("{}.inner", self.render_expression(value))
             }

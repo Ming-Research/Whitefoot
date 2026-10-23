@@ -272,6 +272,17 @@ pub(crate) fn is_self_changing_host_handle(path: &[String], name: &str) -> bool 
         .any(|(module, handle)| single == module && name == *handle))
 }
 
+/// The member of a cancellation watch that reads its state's flag [PRE-2].
+/// The flag lives in the state, as a `Frozen` handle's `inner` lives in its
+/// object, so the watch's value holds only the state's handle [OP-9].
+pub(crate) const CANCELLATION_FLAG: &str = "fired";
+
+/// Reports whether the declaration `name` of the host module at `path` is
+/// the cancellation watch, whose `fired` member is its state's flag [PRE-2].
+pub(crate) fn is_cancel_watch(path: &[String], name: &str) -> bool {
+    matches!(path, [single] if single == "time" && name == "CancelWatch")
+}
+
 /// The standard library module a record belongs to and its role: the
 /// module's path below the library's root and whether the record is its
 /// interface [MOD-2].

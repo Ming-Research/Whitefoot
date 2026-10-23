@@ -94,6 +94,30 @@ impl TypeContext<'_> {
         })
     }
 
+    /// [PRE-2] whether `id` is the host cancellation watch, whose `fired`
+    /// member reads its state's flag in place.
+    pub(super) fn is_cancel_watch(
+        &self,
+        id: super::super::model::NominalId,
+    ) -> Result<bool, CheckStop> {
+        Ok(self
+            .host_opaque_template(id)?
+            .is_some_and(|host| crate::library::is_cancel_watch(host.module, host.name)))
+    }
+
+    /// [PRE-2] whether a nominal template is the host cancellation watch's.
+    pub(super) fn is_cancel_watch_template(
+        &self,
+        template: &super::NominalTemplate,
+    ) -> Result<bool, CheckStop> {
+        let Some((package, module)) = self.declarations.declaration_home(template.declaration)
+        else {
+            return Ok(false);
+        };
+        Ok(*package == crate::PackageKey::Standard
+            && crate::library::is_cancel_watch(module, template.name.as_str()))
+    }
+
     /// The host module, name and fieldlessness of an opaque nominal a host
     /// module declares [PRE-2], or `None` for any other opaque nominal.
     fn host_opaque_template(

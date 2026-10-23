@@ -949,6 +949,7 @@ impl Report for SemanticIssueKind {
             InvalidElementMove { mechanical_fix };
             MoveThroughReference { mechanical_fix };
             ReservedPseudoField { spelling, mechanical_fix };
+            CancellationFlagUse { use_kind, mechanical_fix };
             ReadonlyWriteTarget { spelling, mechanical_fix };
             FrozenForbiddenPart { part, mechanical_fix };
             SharedStateHoldsOwnHandle { part, handle, mechanical_fix };

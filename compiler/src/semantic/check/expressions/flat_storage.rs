@@ -677,7 +677,7 @@ impl<'unit> Checker<'_, 'unit> {
                             suffixes[suffixes.len() - 2],
                             element.ty,
                         )?;
-                        element.path.push(member.storage_step());
+                        element.path.push(member.storage_step()?);
                         element.ty = member.ty();
                     }
                 }
@@ -1740,7 +1740,7 @@ impl<'unit> Checker<'_, 'unit> {
                         bindings,
                     )?;
                 }
-                path.push(member.storage_step());
+                path.push(member.storage_step()?);
                 ty = member.ty();
                 continue;
             };

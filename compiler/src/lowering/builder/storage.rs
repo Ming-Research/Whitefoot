@@ -159,6 +159,7 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         CheckedExpression::NumericConversion { value, .. }
         | CheckedExpression::Reinterpret { value, .. }
         | CheckedExpression::BoxDeref { value, .. }
+        | CheckedExpression::CancelFlag { watch: value, .. }
         | CheckedExpression::ProjectValue { value, .. } => collect_expression(value, bindings),
         CheckedExpression::BoxTake {
             binding,

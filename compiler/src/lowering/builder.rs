@@ -828,6 +828,10 @@ struct IrBuilder<'program> {
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
+    /// [PRE-2] while a guard lowers: each cancellation flag it reads, as the
+    /// `Bool` read and the state's handle, for the watch a false guard
+    /// registers. A guard evaluates every operand, so each read dominates it.
+    guard_flags: Option<Vec<(IrValueId, IrValueId)>>,
 }
 
 #[derive(Clone)]
@@ -902,6 +906,7 @@ impl<'program> IrBuilder<'program> {
             places: None,
             indexed_block_families: Vec::new(),
             records: 0,
+            guard_flags: None,
         };
         let (entry, parameters) = builder.new_block(&[])?;
         if !parameters.is_empty() {
@@ -2351,6 +2356,41 @@ impl<'program> IrBuilder<'program> {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
                 self.define(referent, IrOperation::BoxDeref { nominal, value })
+            }
+            // [PRE-2] a watch holds one field, its state's handle; the flag
+            // lives in that state and is read without holding it [SHARE-3].
+            CheckedExpression::CancelFlag { watch, .. } => {
+                let CheckedType::Nominal(watch_nominal) = watch.ty() else {
+                    return Err(LoweringFailure::InvalidCheckedProgram);
+                };
+                let nominal = self.erased(watch_nominal)?;
+                let IrNominalKind::Struct { fields } = &self
+                    .nominals
+                    .get(nominal.index())
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                    .kind
+                else {
+                    return Err(LoweringFailure::InvalidCheckedProgram);
+                };
+                let [handle] = fields.as_slice() else {
+                    return Err(LoweringFailure::InvalidCheckedProgram);
+                };
+                let handle_type = handle.ty();
+                let aggregate = self.expression(watch)?;
+                let object = self.define(
+                    handle_type,
+                    IrOperation::ProjectStruct {
+                        aggregate,
+                        nominal,
+                        field: 0,
+                        consume_root: false,
+                    },
+                )?;
+                let flag = self.define(IrType::Bool, IrOperation::CancelFlag { object })?;
+                if let Some(flags) = &mut self.guard_flags {
+                    flags.push((flag, object));
+                }
+                Ok(flag)
             }
             // [TYPE-9, WIN-3] load the selected value before releasing any
             // enclosing cell or residual field of the consumed root.

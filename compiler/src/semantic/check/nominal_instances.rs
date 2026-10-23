@@ -914,13 +914,17 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     CheckedNominalKind::Opaque
                 }
-                DeclarationRole::Struct => CheckedNominalKind::Struct {
-                    fields: self.parse_struct_fields(
-                        check_context,
-                        template.node,
-                        &substitution,
-                    )?,
-                },
+                DeclarationRole::Struct => {
+                    let mut fields =
+                        self.parse_struct_fields(check_context, template.node, &substitution)?;
+                    // [PRE-2, OP-9] a watch's `fired` lives in its state, so
+                    // the watch's value holds only the state's handle; the
+                    // member is read in place [`PlaceMember::CancelFlag`].
+                    if self.types.is_cancel_watch_template(&template)? {
+                        fields.retain(|field| field.name != crate::library::CANCELLATION_FLAG);
+                    }
+                    CheckedNominalKind::Struct { fields }
+                }
                 DeclarationRole::Enum => CheckedNominalKind::Enum {
                     variants: self.parse_enum_variants(
                         check_context,

@@ -2915,6 +2915,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedCountOut { object } => {
                 self.emit_shared_count_out(result, ty, *object)
             }
+            IrOperation::CancelFlag { object } => self.emit_cancel_flag(result, ty, *object),
             IrOperation::SharedFree { object } => self.emit_shared_free(result, *object),
             IrOperation::SnapshotAtomicBegin => self.emit_snapshot_atomic(result, true),
             IrOperation::SnapshotAtomicEnd => self.emit_snapshot_atomic(result, false),
@@ -3023,6 +3024,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::WatchTable { record, table } => {
                 self.emit_watch_call(result, *record, Some(*table), "wf__watch_table")
             }
+            IrOperation::WatchCancel {
+                record,
+                object,
+                seen,
+            } => self.emit_watch_cancel(result, *record, *object, *seen),
             IrOperation::WatchPark { record } => self.emit_watch_park(result, *record),
             IrOperation::BoxTake { nominal, value } => {
                 self.emit_box_take(result, ty, *nominal, *value)

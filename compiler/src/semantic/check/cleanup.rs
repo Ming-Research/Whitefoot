@@ -162,6 +162,7 @@ impl<'unit> TypeContext<'unit> {
             CheckedExpression::NumericConversion { value, .. }
             | CheckedExpression::Reinterpret { value, .. }
             | CheckedExpression::BoxDeref { value, .. }
+            | CheckedExpression::CancelFlag { watch: value, .. }
             | CheckedExpression::ProjectValue { value, .. } => {
                 self.validate_expression_release_graphs(value)?;
             }

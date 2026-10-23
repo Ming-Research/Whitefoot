@@ -216,7 +216,7 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 47] = [
+    let declarations: [(&str, &str, &[&str]); 49] = [
         ("wf__frozen_new", "ptr", &["i64"]),
         ("wf__frozen_share", "void", &["ptr"]),
         ("wf__frozen_release", "i32", &["ptr"]),
@@ -228,6 +228,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__claim_killed", "i32", &["ptr"]),
         ("wf__shared_share", "void", &["ptr"]),
         ("wf__shared_release", "i32", &["ptr"]),
+        ("wf__cancel_flag", "i8", &["ptr"]),
         ("wf__shared_free", "void", &["ptr"]),
         ("wf__shared_acquire", "i32", &["ptr", "i32", "ptr"]),
         ("wf_snapshot_atomic_begin", "void", &[]),
@@ -298,6 +299,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__key_set_read_key", "i64", &["ptr", "i64", "ptr", "i64"]),
         ("wf__watch_begin", "void", &["ptr"]),
         ("wf__watch_object", "void", &["ptr", "ptr", "ptr"]),
+        ("wf__watch_cancel", "void", &["ptr", "ptr", "i32"]),
         ("wf__watch_table", "void", &["ptr", "ptr"]),
         ("wf__watch_park", "i32", &["ptr", "ptr"]),
     ];
