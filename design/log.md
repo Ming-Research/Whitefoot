@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-21 A column for a model with too few runs takes the larger of the row's largest class and its own runs
+
+Nodes: compiler/verification
+
+Summary: The time-budget decision said a model with fewer than 20 recorded runs has no column, while the budget table has carried a column for one Intel Xeon model since the owner added it, valued at the larger of the row's largest class budget and the model's own runs by the rule. The tree now says so: such a column exists only when the owner adds it and takes that value, because a few runs can show that a class needs more time but not that it needs less, instead of the model's own runs alone or the unmapped-model fallback alone. The recompute tool applies this value to every such column, so the tree states what the table and the tool already do; no budget value changes. The grounds are in the [time-budget investigation](../research/investigations/test-economy/time-budgets.md#xeon-platinum-8573c-column-candidate-compiler-budget-and-cached-baseline-compiler-2026-10-13), which also records the recompute of the Linux columns.
+
 ## 2026-10-22 An assignment evaluates its right-hand side before its target
 
 Nodes: language/ownership/reference-validity, compiler/checker-facts
