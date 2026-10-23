@@ -324,8 +324,8 @@ jobs:
           # ahead of LLVM would; coldsplitforced also outlines regions the
           # splitter's benefit model would keep.
           version=$(tr -d '[:space:]' < .github/llvm-major)
-          "/usr/bin/opt-$version" -passes=hot-cold-split -S "$out/weighted.ll" -o "$out/coldsplit.ll"
-          "/usr/bin/opt-$version" -passes=hot-cold-split -hotcoldsplit-threshold=-1 -S "$out/weighted.ll" -o "$out/coldsplitforced.ll"
+          "/usr/bin/opt-$version" -passes=hotcoldsplit -S "$out/weighted.ll" -o "$out/coldsplit.ll"
+          "/usr/bin/opt-$version" -passes=hotcoldsplit -hotcoldsplit-threshold=-1 -S "$out/weighted.ll" -o "$out/coldsplitforced.ll"
           for arm in coldsplit coldsplitforced; do
             echo "$arm outlined functions: $(grep -c '^define .*\.cold' "$out/$arm.ll")"
             grep '^define .*\.cold' "$out/$arm.ll" | cut -c1-200 || true
