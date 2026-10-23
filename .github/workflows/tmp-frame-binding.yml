@@ -32,7 +32,7 @@ jobs:
         run: |
           python3 - <<'EOF'
           import json, subprocess, sys, os, tempfile
-          wanted = lambda i: "frame-binding" in i or "frame-premise" in i or i == "fn4-pos-reads-only-host-binding"
+          wanted = lambda i: "frame-binding" in i or "frame-premise" in i or i in ("fn4-pos-reads-only-host-binding", "fn4-neg-nonframe-result-binding")
           failed = 0
           for line in open("tests/conformance/manifest.jsonl"):
               if not line.startswith("{"):
