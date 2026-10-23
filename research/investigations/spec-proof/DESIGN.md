@@ -640,6 +640,16 @@ must be rejected citing [FORM-7]. Every case the checker accepts is run from
 have the frame's names in its order, so the interpreter and the walk agree on
 every position and scope.
 
+With the changes the comparison still agrees with every case: the 39
+`accept` and 46 `run` cases in the fragment are accepted, the run cases
+reach their expected status, and the 86 `reject` cases whose rule is covered
+are rejected. No program was found that the union of call datum images lets
+through once [FN-9] reads normalized sides, so that change shows in no case;
+it brings the model to the compiler's join and lets the join's soundness be
+proved input by input. The point check made the conformance run take 5.1 s
+against 0.9 s on the main line's run of the same day, within its 10 s budget;
+the build took 15.9 s against 16.7 s.
+
 ## Cost
 
 Precedents with measured sizes:
