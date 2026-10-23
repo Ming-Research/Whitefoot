@@ -215,6 +215,19 @@ Everything runs in CI; nothing was run on the author's machine.
   borrow probes leave the scan stable, and a searcher claim is retired only by
   its owner), and updated displaced-ingress, shutdown and polling cases that
   read the sequences instead of the old count.
+- Each test was also run alone against a variant of `bridge.c` that breaks
+  one condition it protects, built by a temporary workflow (removed with the
+  branch). Every variant built and then failed one of that test's own checks,
+  none a compile error. `fair_yield_boundaries` rejects a 64-pass check that
+  ignores a pending host wait or ingress, and a fairness suspension that arms
+  the wake gate again; `solitary_sleep_reap` rejects the first of these;
+  `invocation_collections` rejects a stuck check that does not validate its
+  first collection, a collection that accepts an odd slot, and shutdown
+  quiescence that ignores the invocation slots; `idle_quiescence` rejects a
+  run-queue take that leaves its driver logically idle, a refused borrow
+  probe that counts as a state change, and an end of search that retires a
+  wake claim the driver never held; `root_ingress_quiescence` rejects a
+  displaced return that sends no final notification.
 - `contexts.rs` runs `lone_timer_writer.wf`, a sleeping reader beside one busy
   writer on one driver, on the ring and adapter routes. The deadline monitor
   can rescue the old runtime, so this is end-to-end coverage only; the

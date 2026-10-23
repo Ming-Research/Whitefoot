@@ -60,21 +60,26 @@ jobs:
             programs::contexts:: programs::parallel:: --nocapture
 
   # Each mutation breaks one condition of the change in the runtime source and
-  # builds the driver-service test from it. The test must build and then fail
-  # on one of its own checks, not on a compile error.
+  # builds the driver-service test from it, running only the named test
+  # function. The test must build and then fail on one of its own checks, not
+  # on a compile error.
   mutation:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        mutation:
-          - pending-host-work
-          - single-collect
-          - fair-through-gate
-          - no-final-notification
-          - quiescence-ignores-slots
-          - collect-ignores-odd
+        include:
+          - {mutation: pending-host-work, test: fair_yield_boundaries}
+          - {mutation: pending-host-work, test: solitary_sleep_reap}
+          - {mutation: fair-through-gate, test: fair_yield_boundaries}
+          - {mutation: single-collect, test: invocation_collections}
+          - {mutation: collect-ignores-odd, test: invocation_collections}
+          - {mutation: quiescence-ignores-slots, test: invocation_collections}
+          - {mutation: run-take-no-activate, test: idle_quiescence}
+          - {mutation: failed-probe-churn, test: idle_quiescence}
+          - {mutation: searcher-claim-any, test: idle_quiescence}
+          - {mutation: no-final-notification, test: root_ingress_quiescence}
     steps:
       - uses: actions/checkout@v4
       - name: Install the host toolchain
@@ -85,6 +90,8 @@ jobs:
           sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
           sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
       - name: Apply the mutation
+        env:
+          TARGET: ${{ matrix.test }}
         run: |
           f=compiler/src/backend/completion/bridge.c
           case "${{ matrix.mutation }}" in
@@ -106,7 +113,19 @@ jobs:
             collect-ignores-odd)
               # A collection accepts a slot that is inside an invocation.
               perl -0777 -pi -e 's/\n        if \(sequence\[i\] & 1u\) return 0;//g or die "the odd rejection is gone\n"' "$f" ;;
+            run-take-no-activate)
+              # Taking a context from an idle driver leaves it logically idle.
+              perl -0777 -pi -e 's/    wf_driver_activate\(driver\);\n    wf_spin_lock\(&driver->run_lock\);/    (void)wf_driver_activate;\n    wf_spin_lock(&driver->run_lock);/ or die "the activation is gone\n"' "$f" ;;
+            failed-probe-churn)
+              # A refused borrow probe counts as a driver-state change.
+              perl -0777 -pi -e 's/(        if \(!wf_driver_try_borrow\(victim, &outside\)\) \{\n)/$1            atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);\n/ or die "the borrow probe is gone\n"' "$f" ;;
+            searcher-claim-any)
+              # Ending a search retires a wake claim the driver never held.
+              perl -0777 -pi -e 's/    if \(!atomic_load_explicit\(&driver->searcher, memory_order_seq_cst\)\) return;\n    wf_quiescence_lock\(\);/    wf_quiescence_lock();/ or die "the early return is gone\n"; s/if \(claimed\) atomic_store_explicit\(&wf_drivers_searching/atomic_store_explicit(&wf_drivers_searching/ or die "the claim test is gone\n"' "$f" ;;
           esac
+          # Run only the named test function: the others stay referenced so
+          # the unused-function warning does not hide the mutated build.
+          perl -0777 -pi -e 'my ($head, $tail) = split(/(?=int main\(void\) \{)/, $_, 2); $tail =~ /^    \Q$ENV{TARGET}\E\(\);$/m or die "no such test\n"; $tail =~ s/^    ([a-z][a-z_]*)\(\);$/my $n = $1; ($n eq $ENV{TARGET} || $n =~ m{^wf_}) ? "    $n();" : "    (void)$n;"/gme; $_ = $head . $tail;' compiler/src/backend/completion/driver_service_test.c
           git diff --stat
           git diff -U1
       - name: The driver-service test must build and then fail one of its own checks
