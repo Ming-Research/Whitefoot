@@ -186,13 +186,11 @@ theorem transitive_sound {ν : TermVal} {T : Nat → Term} (n : Nat) {m : Matrix
   unfold transitive
   refine foldl_inv (Matrix.Sound ν T) _ _ _ hm (fun m k _ hm => ?_)
   refine foldl_inv (Matrix.Sound ν T) _ _ _ hm (fun m i _ hm => ?_)
-  dsimp only
   split
   · exact hm
   · next dik hik =>
     have hik' := hm _ _ _ hik
     refine foldl_inv (Matrix.Sound ν T) _ _ _ hm (fun m j _ hm => ?_)
-    dsimp only
     split
     · exact hm
     · next dkj hkj =>
@@ -282,7 +280,6 @@ theorem sat_of_matrix (U : Array Term) (m : Matrix) (ds : List Diseq) (ν : Term
   · next hany =>
     exfalso
     obtain ⟨i, -, hi⟩ := List.any_eq_true.mp hany
-    dsimp only at hi
     split at hi
     · next v hv =>
       have := hm i i v hv
@@ -491,7 +488,6 @@ theorem foldl_max {a b : Term} : ∀ (rest : List L0) (init : Option Int) (c : I
   | s :: rest, init, c, h => by
     rw [List.foldl_cons] at h
     obtain ⟨⟨c1, h1, hc1⟩, hrest⟩ := foldl_max rest _ c h
-    dsimp only at h1
     cases init with
     | none => simp at h1
     | some c0 =>
