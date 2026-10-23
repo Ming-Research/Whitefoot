@@ -1332,12 +1332,12 @@ Ruling on the row. The owner ruled that the Firn row is judged by `E`, the
 #431 merge commit with this change applied against the main before #431: 0.974
 (0.968–0.984), every one of the 15 rounds at most 0.998, so the row is met. The
 row asks that the change remove what #431 added, and `E` measures exactly that;
-`D` also contains the work of the merges after #431, which this change does not
-touch. The 7.8% by which this branch stays above the pre-#431 main on Firn
-(`D` = 1.078) is accepted as the work of those merges, and attributing the
-10.6% of `F` to them is a separate item (`firn-check-post431-merges`). The ruling changes no code and no
-measurement; the other two readings left open above (the merges' own work, or
-an interaction with #431's mechanism) remain untested here.
+`D` also contains what the merges after #431 add on top of the fixed tree
+(`F`). The 7.8% by which this branch stays above the pre-#431 main on Firn
+(`D` = 1.078) is accepted as it stands, and finding where the 10.6% of `F`
+comes from is a separate item (`firn-check-post431-merges`). The ruling changes
+no code and no measurement: whether that excess is the merges' own work or an
+interaction with #431's mechanism remains untested here.
 
 ### Reviews
 
