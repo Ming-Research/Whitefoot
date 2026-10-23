@@ -35,6 +35,18 @@ entry:
   ret void
 }
 
+declare void @wf__body_host_copy_name_bytes(ptr, ptr, ptr, i64, i64)
+
+define void @wf_std.text.host_copy_name_bytes(ptr %result, ptr %value, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %destination.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %destination.len, ptr %view.len, align 8
+  call void @wf__body_host_copy_name_bytes(ptr %result, ptr %value, ptr %view, i64 %start, i64 %end)
+  ret void
+}
+
 declare void @wf__body_error_copy_description(ptr, ptr, ptr, i64, i64)
 
 define void @wf_std.io.error_copy_description(ptr %result, ptr %error, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end) align 64 {

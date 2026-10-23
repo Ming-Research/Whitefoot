@@ -18,6 +18,19 @@ int64_t wf__windows_registry_bytes(void);
 
 /* Native name bytes in one component, shared by call storage and host leaves. */
 #define WF_WINDOWS_COMPONENT_MAX_BYTES 510u
+/* Name bytes in one component [PRE-2]: the WTF-8 spelling of its at most 255
+ * UTF-16 code units, each of which takes at most three bytes. */
+#define WF_WINDOWS_NAME_MAX_BYTES 765u
+
+/* Writes the WTF-8 spelling of UTF-16 code units given low byte first, their
+ * name bytes [PRE-2], and returns its length; with a NULL destination it only
+ * measures. A scalar is UTF-8, and a surrogate not part of a pair is the three
+ * bytes the UTF-8 encoding form gives its value. */
+size_t wf__windows_wtf8_write(
+    const unsigned char *native,
+    size_t units,
+    unsigned char *destination
+);
 
 /* The open flag selecting host-path lookup [PRE-2]: the path is a complete,
  * NUL-terminated UTF-16 path in the Win32 dialect rather than a name below
