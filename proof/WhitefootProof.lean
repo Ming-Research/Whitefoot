@@ -11,5 +11,6 @@ import WhitefootProof.AffineSound
 import WhitefootProof.Checker
 import WhitefootProof.Walk
 import WhitefootProof.Points
+import WhitefootProof.Typing
 import WhitefootProof.Safety
 import WhitefootProof.Simulation
