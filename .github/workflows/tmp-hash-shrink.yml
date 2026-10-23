@@ -164,18 +164,18 @@ jobs:
         # split: the removal tests the shrink condition itself and calls the
         # shrink only on its rare side, the form an unlikely marker would
         # annotate. pr420: this commit with Whitefoot#420's automatic branch
-        # weights merged in; pr420split: the same with the split library.
+        # weights merged in; pr420base: the same with the merge base's library.
         run: |
           out="$RUNNER_TEMP/out"
           git config --global user.email ci@example.invalid
           git config --global user.name ci
           git fetch --no-tags origin +refs/heads/claude/cold-branch-weights:refs/remotes/origin/claude/cold-branch-weights
-          for arm in split pr420 pr420split; do
+          for arm in split pr420 pr420base; do
             git worktree add --detach "$out/arms/$arm" "$GITHUB_SHA"
           done
           # Whitefoot#420 predates the integer match terminator; its successor
           # list gets that terminator's targets and default, nothing else.
-          for arm in pr420 pr420split; do
+          for arm in pr420 pr420base; do
             git -C "$out/arms/$arm" merge --no-edit origin/claude/cold-branch-weights || echo "$arm" >> "$out/failed.txt"
             python3 - "$out/arms/$arm/compiler/src/backend/emitter/branch_weights.rs" <<'EOF' || echo "$arm" >> "$out/failed.txt"
           import sys
@@ -191,7 +191,9 @@ jobs:
           open(path, "w").write(text.replace(old, new))
           EOF
           done
-          for arm in split pr420split; do
+          rm -r "$out/arms/pr420base/lib/std/collections/hash_map"
+          cp -r "$out/arms/base/lib/std/collections/hash_map" "$out/arms/pr420base/lib/std/collections/"
+          for arm in split; do
             python3 - "$out/arms/$arm/lib/std/collections/hash_map/hash-map.wf" <<'EOF'
           import sys
           path = sys.argv[1]
@@ -214,7 +216,7 @@ jobs:
             git -C "$out/arms/$arm" diff --stat
           done
           make -C "$out/arms/split/compiler" build
-          for arm in pr420 pr420split; do
+          for arm in pr420 pr420base; do
             grep -qx "$arm" "$out/failed.txt" 2>/dev/null || make -C "$out/arms/$arm/compiler" build || echo "$arm" >> "$out/failed.txt"
           done
           touch "$out/failed.txt"
@@ -228,7 +230,7 @@ jobs:
           make -f "$out/rt.mk" objects
           objects=$(cat "$out/objects.txt")
           arms="base candidate split weighted"
-          for arm in pr420 pr420split; do
+          for arm in pr420base pr420; do
             grep -qx "$arm" "$out/failed.txt" || arms="$arms $arm"
           done
           echo "$arms" > "$out/arms.txt"
@@ -296,16 +298,54 @@ jobs:
           print("weighted:", " ".join(l.strip() for l in lines[close - 3:close + 1]), "->", text)
           open(sys.argv[2], "w").write("\n".join(lines) + "\n")
           EOF
+          # hinted: an inline hint on the removal's definitions, as an inline
+          # marker on hash_map_remove would lower; on candidate and weighted.
+          for pair in candidate:hinted weighted:weightedhinted; do
+            python3 - "$out/${pair%%:*}.ll" "$out/${pair##*:}.ll" <<'EOF'
+          import sys
+          lines = open(sys.argv[1]).read().split("\n")
+          hits = 0
+          for i, line in enumerate(lines):
+              if line.startswith("define") and "hash_map_remove$instance" in line and line.endswith(" {"):
+                  lines[i] = line[:-2] + " inlinehint {"
+                  hits += 1
+          assert hits >= 1, hits
+          print(sys.argv[2], "hinted definitions:", hits)
+          open(sys.argv[2], "w").write("\n".join(lines) + "\n")
+          EOF
+          done
+          sed -i 's/weighted/weighted hinted weightedhinted inlined/' "$out/arms.txt"
+          cat "$out/arms.txt"
           for arm in $(cat "$out/arms.txt"); do
-            clang -O2 -falign-functions=64 -Wno-override-module -x ir -c "$out/$arm.ll" -o "$out/$arm.o"
+            source=$arm; extra=""
+            if [ "$arm" = inlined ]; then source=candidate; extra="-mllvm -inline-threshold=2000"; fi
+            clang -O2 -falign-functions=64 $extra -Wno-override-module -x ir -c "$out/$source.ll" -o "$out/$arm.o"
             clang -O2 "$out/$arm.o" $objects -pthread -lm -o "$out/hand-$arm"
-            clang -O2 -falign-functions=64 -Wno-override-module -x ir -S -emit-llvm "$out/$arm.ll" -o "$out/$arm.opt.ll"
+            clang -O2 -falign-functions=64 $extra -Wno-override-module -x ir -S -emit-llvm "$out/$source.ll" -o "$out/$arm.opt.ll"
             printf '%s: calls of hash_map_remove %s, of hash_map_shrink %s, branch weights in the removal %s\n' "$arm" \
               "$(grep -c 'call .*hash_map_remove\$instance' "$out/$arm.opt.ll")" \
               "$(grep -c 'call .*hash_map_shrink\$instance' "$out/$arm.opt.ll")" \
-              "$(awk '/^define .*hash_map_remove\$instance/{p=1} p&&/!prof/{n++} p&&/^}/{p=0} END{print n+0}' "$out/$arm.ll")"
-            awk '/^define .*hash_map_(remove|shrink)\$instance/{p=1} p&&/!prof/{print "  " $0} p&&/^}/{p=0}' "$out/$arm.ll"
+              "$(awk '/^define .*hash_map_remove\$instance/{p=1} p&&/!prof/{n++} p&&/^}/{p=0} END{print n+0}' "$out/$source.ll")"
           done
+      - name: Sizes of the removal path in each optimized module
+        run: |
+          out="$RUNNER_TEMP/out"
+          python3 - "$out" $(cat "$out/arms.txt") <<'EOF'
+          import re, sys
+          out, arms = sys.argv[1], sys.argv[2:]
+          for arm in arms:
+              text = open(f"{out}/{arm}.opt.ll").read()
+              parts = []
+              for m in re.finditer(r'^define [^@]*@("?[^(]+"?)\(.*?^}', text, re.S | re.M):
+                  name = m.group(1).strip('"')
+                  short = name.split("$")[0].split(".")[-1]
+                  if short not in ("wf_remove_one", "wf_churn_sample", "hash_map_remove", "hash_map_shrink", "hash_map_find"):
+                      continue
+                  count = sum(1 for l in m.group(0).splitlines() if l.startswith("  "))
+                  calls = sorted({c.split("$")[0].split(".")[-1] for c in re.findall(r'call [^@]*@"?([A-Za-z0-9_.$]+)', m.group(0)) if not c.startswith("llvm")})
+                  parts.append(f"{short}={count} calls {calls}")
+              print(arm + ": " + "; ".join(parts))
+          EOF
       - name: Remove-insert timing, alternating images
         run: |
           out="$RUNNER_TEMP/out"
