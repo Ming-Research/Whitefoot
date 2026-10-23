@@ -1,5 +1,5 @@
 # Temporary (board item enum-route-check-cost); remove before the branch is ready.
-# After the fourth merge of origin/main into the branch (main changed
+# After the sixth merge of origin/main into the branch (main changed
 # semantic/entailment and semantic/range_judgment, files this change also edits):
 # a build of every test target of the merged tree, the change's own test module,
 # then the whole unit suite, and the design tree's lint and readiness checks

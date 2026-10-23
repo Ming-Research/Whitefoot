@@ -1,14 +1,17 @@
 # Temporary (board item enum-route-check-cost); remove before the branch is ready.
-# Times, on the compiler tree of the head that merges (after the fourth merge of
+# Times, on the compiler tree of the head that merges (after the sixth merge of
 # origin/main), the three workloads of the acceptance rows in one run: Halo's
 # pkg::vm and pkg::test checks and Firn's whole-program check. Compiler CPU
 # (user + system), interleaved rounds, plus one work-counter run per compiler.
 # Compilers: the pre-regression compiler of the acceptance row (base) and a twin
 # of it for the noise; the merge of #431 (c431, whose first parent is base, so
-# base plus #431 only; not for pkg::test); main at the merge base without the
+# base plus #431 only; not for pkg::test); the same with this branch's compiler/
+# change applied (c431fix: `git diff main branch -- compiler` applied to c431;
+# absent when it does not apply or build); main at the merge base without the
 # fix (main); and this branch (branch). The columns, the per-round segment
-# ratios (a = c431/base, b = main/c431, c = branch/main, N = c * a) and the
-# decision rules are written in the study record before the run. The
+# ratios (a = c431/base, b = main/c431, c = branch/main, N = c * a, and
+# E = c431fix/base, G = c431fix/c431, F = branch/c431fix) and the decision rules
+# are written in the study record before the run. The
 # pre-regression compiler cannot check Firn's adapted source, because main gave
 # `Inputs` fields (`host_paths`, `process_id`) after it, so for Firn base, twin
 # and c431 check a copy of the adapted source with the bindings of the fields
@@ -42,7 +45,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
-  MAIN_REVISION: 48b94ccfc3c32642b81e573a72ef1fb619884952
+  MAIN_REVISION: a675796009e47283fd20018ac74fffe9eece699e
   C431_REVISION: af7665be6
   WHITEFOOT_CHECK_TIMEOUT: 1800
 
@@ -66,7 +69,7 @@ jobs:
             rounds: 5
             main_rounds: 5
             adapt_max: 300
-            adapt_run: '39725157249'
+            adapt_run: '39732958986'
             adapt_artifact: tmp-final-timing-0
             strip: 'false'
           # pkg::test: the baseline is the compiler of the earlier run; main
@@ -80,7 +83,7 @@ jobs:
             rounds: 3
             main_rounds: 1
             adapt_max: 100
-            adapt_run: '39725157249'
+            adapt_run: '39732958986'
             adapt_artifact: tmp-final-timing-1
             strip: 'false'
           # Firn whole program, at the revision the 10-13 measurement used.
@@ -93,7 +96,7 @@ jobs:
             rounds: 5
             main_rounds: 5
             adapt_max: 400
-            adapt_run: '39725157249'
+            adapt_run: '39732958986'
             adapt_artifact: tmp-final-timing-2
             strip: 'true'
     steps:
@@ -106,11 +109,24 @@ jobs:
           rustup default stable
           if [ -n "${{ matrix.base }}" ]; then git worktree add --detach "$RUNNER_TEMP/base" "${{ matrix.base }}"; fi
           if [ "${{ matrix.c431 }}" = true ]; then git worktree add --detach "$RUNNER_TEMP/c431" "$C431_REVISION"; fi
+          if [ "${{ matrix.c431 }}" = true ]; then git worktree add --detach "$RUNNER_TEMP/c431fix" "$C431_REVISION"; fi
           git worktree add --detach "$RUNNER_TEMP/main" "$MAIN_REVISION"
           git clone --quiet "https://github.com/Ming-Research/${{ matrix.repo }}.git" "$RUNNER_TEMP/halo"
           git -C "$RUNNER_TEMP/halo" checkout --quiet --detach "${{ matrix.rev }}"
           git -C "$RUNNER_TEMP/halo" submodule update --init --quiet
           { printf 'base=%s\nc431=%s\nmain=%s\nbranch=%s\nsource=%s\n' "$([ -d "$RUNNER_TEMP/base" ] && git -C "$RUNNER_TEMP/base" rev-parse HEAD)" "$([ -d "$RUNNER_TEMP/c431" ] && git -C "$RUNNER_TEMP/c431" rev-parse HEAD)" "$(git -C "$RUNNER_TEMP/main" rev-parse HEAD)" "$(git rev-parse HEAD)" "${{ matrix.rev }}"; lscpu | grep 'Model name'; } | tee "$RUNNER_TEMP/out/identity.txt"
+      - name: Apply this branch's compiler change to the #431 merge commit
+        if: matrix.c431 == 'true'
+        run: |
+          git diff --binary "$MAIN_REVISION" HEAD -- compiler > "$RUNNER_TEMP/out/pr-compiler.patch"
+          wc -l "$RUNNER_TEMP/out/pr-compiler.patch"
+          if git -C "$RUNNER_TEMP/c431fix" apply --3way --whitespace=nowarn "$RUNNER_TEMP/out/pr-compiler.patch"; then
+            echo "applied" | tee "$RUNNER_TEMP/out/c431fix-status.txt"
+          else
+            echo "the patch does not apply" | tee "$RUNNER_TEMP/out/c431fix-status.txt"
+            git -C "$RUNNER_TEMP/c431fix" reset --hard --quiet
+            git worktree remove --force "$RUNNER_TEMP/c431fix"
+          fi
       - name: Build the merged compiler
         run: |
           perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
@@ -276,7 +292,22 @@ jobs:
             [ -d "$tree" ] || continue
             perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline
+            df -h / | tail -1
           done
+      - name: Build the #431 merge commit with this branch's change
+        id: c431fix
+        continue-on-error: true
+        if: steps.adapt.outputs.accepted == 'true' && matrix.c431 == 'true'
+        run: |
+          [ -d "$RUNNER_TEMP/c431fix" ] || { echo "no c431fix tree"; exit 1; }
+          tree="$RUNNER_TEMP/c431fix"
+          if perl .github/run-check.pl thc-fetch cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml" && perl .github/run-check.pl compiler/build cargo build --manifest-path "$tree/compiler/Cargo.toml" --profile gate --bin whitefootc --locked --offline; then
+            echo "applied and built" | tee "$RUNNER_TEMP/out/c431fix-status.txt"
+            df -h / | tail -1
+          else
+            echo "applied but the build failed" | tee "$RUNNER_TEMP/out/c431fix-status.txt"
+            exit 1
+          fi
       - name: Source without the Inputs bindings the baseline lacks, and the baseline compiler's check of it
         if: steps.adapt.outputs.accepted == 'true' && matrix.strip == 'true'
         env:
@@ -324,6 +355,8 @@ jobs:
           if has_base: bins['base'] = temp / 'base/compiler/target/gate/whitefootc'
           bins['twin'] = temp / (ref + '/compiler/target/gate/whitefootc')
           if (temp / 'c431').is_dir(): bins['c431'] = temp / 'c431/compiler/target/gate/whitefootc'
+          fixed_bin = temp / 'c431fix/compiler/target/gate/whitefootc'
+          if fixed_bin.exists(): bins['c431fix'] = fixed_bin
           bins['main'] = temp / 'main/compiler/target/gate/whitefootc'
           bins['branch'] = ws / 'compiler/target/gate/whitefootc'
           cmd = os.environ['ARGS'].split()
@@ -333,7 +366,7 @@ jobs:
               timing = out / (tag + '-' + label + '.time'); e = dict(env)
               if counters: e['WHITEFOOT_CHECK_WORK'] = str(out / (tag + '-' + which + '-work.tsv'))
               r = subprocess.run(['perl', str(ws / '.github/run-check.pl'), 'thc-' + label, '/usr/bin/time', '-q', '-f', '%e\t%U\t%S', '-o', str(timing), str(bins[which]), *cmd],
-                                 cwd=temp / ('halo0' if which in ('base', 'twin', 'c431') and (temp / 'halo0').is_dir() else 'halo'), env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                                 cwd=temp / ('halo0' if which in ('base', 'twin', 'c431', 'c431fix') and (temp / 'halo0').is_dir() else 'halo'), env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
               (out / (tag + '-' + label + '.log')).write_text(r.stdout)
               wall, user, sys_ = map(float, timing.read_text().split()[-3:])
               return r.returncode, user + sys_
@@ -373,6 +406,7 @@ jobs:
                   return r
               def cell(r): return f"{statistics.median(r):.3f} ({min(r):.3f}-{max(r):.3f}) {' '.join(f'{x:.3f}' for x in r)}"
               rounds_all = [p for p in paired.values() if all(w in p for w in ('base', 'c431', 'main', 'branch'))]
+              has_fix = 'c431fix' in bins
               a_ = [p['c431'] / p['base'] for p in rounds_all]; b_ = [p['main'] / p['c431'] for p in rounds_all]
               c_ = [p['branch'] / p['main'] for p in rounds_all]; d_ = [p['branch'] / p['base'] for p in rounds_all]
               n_ = [x * y for x, y in zip(c_, a_)]
@@ -380,7 +414,15 @@ jobs:
                         '| Ratio | what it is | median (min-max) per round |', '|---|---|---|',
                         f"| a = c431/base | #431 itself | {cell(a_)} |", f"| b = main/c431 | merges since #431 | {cell(b_)} |",
                         f"| c = branch/main | this change | {cell(c_)} |", f"| D = branch/base | the acceptance row's ratio | {cell(d_)} |",
-                        f"| N = c*a | branch against main without #431's cost | {cell(n_)} |"]
+                        f"| N = c*a | branch against main without #431's cost (not used) | {cell(n_)} |"]
+              if has_fix:
+                  e_ = [p['c431fix'] / p['base'] for p in rounds_all]; g_ = [p['c431fix'] / p['c431'] for p in rounds_all]
+                  f_ = [p['branch'] / p['c431fix'] for p in rounds_all]
+                  lines += [f"| E = c431fix/base | this change on the #431 tree, against base | {cell(e_)} |",
+                            f"| G = c431fix/c431 | this change's effect on the #431 tree | {cell(g_)} |",
+                            f"| F = branch/c431fix | what the merges since #431 add on top of the fixed tree | {cell(f_)} |"]
+              else:
+                  lines += ['', 'c431fix is absent: ' + (temp / 'out/c431fix-status.txt').read_text().strip()]
           summary = '\n'.join(lines) + '\n'; print(summary)
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(summary)
           PY

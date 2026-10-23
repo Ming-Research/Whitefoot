@@ -1053,6 +1053,64 @@ seven `compiler/` files that differ between `48b94ccfc` and the head apply onto
 `af7665be6` with `git apply --3way` into a scratch index, with no conflict. That
 the result compiles and what it measures are not known.
 
+### Direct column: this change applied to the #431 merge commit
+
+Written before the measurement. The previous run could not answer whether this
+change removes #431's cost from Firn, because the answer it offered, `N` = `c` ×
+`a`, holds only if #431's relative cost is the same on the later main as at
+`af7665be6`, and the check written for that (P2) failed on `closure:count`: the
+counters cannot tell closures added by the merges since #431 from #431's own work
+amplified on the later main. `N` is not used. The architect approved one more
+measurement that does not rest on the premise.
+
+The new column, `c431fix`, is the compiler of `af7665be6` with the `compiler/`
+part of this pull request's change applied: `git diff <main> <head> -- compiler`
+(seven files, 1,978 lines of diff) applied with `git apply --3way` to a worktree
+of `af7665be6`. It applies without conflict (checked with a scratch index; it is
+not built there). The change is not edited to make it build: if the patch does
+not apply or the result does not build, the column is absent, the cause is
+recorded (`c431fix-status.txt` in the run's artifact) and the question goes back
+to the architect with the numbers already in hand.
+
+The sixth merge of main (`a67579600`, 47 commits after `48b94ccfc`) changes the
+head again, so the run is on that head, with `main` the merge base
+`a67579600`. One interleaved run, five rounds, compiler user+sys CPU, no check
+cache, one work-counter run per compiler, on the same adapted sources as the
+previous run (its adaptation diffs applied first, then the compiler's own
+mechanical fixes). Columns `base`, `twin`, `c431`, `c431fix`, `main`, `branch`
+for Firn and `pkg::vm`; `pkg::test` as before (`base`, `twin`, `main` once,
+`branch`). Per round, medians with min–max:
+
+- `E` = `c431fix`/`base`: this change on the #431 tree, same source, no other
+  merge of main. Whether the change returns Firn to the pre-#431 time.
+- `G` = `c431fix`/`c431`: the change's effect on the #431 tree.
+- `F` = `branch`/`c431fix`: what the merges since #431 add on top of the fixed
+  tree.
+- `a`, `b`, `c`, `D`, `N` as before, reported for continuity; `N` is not used.
+
+Decision rules, fixed now (the architect's answer):
+
+1. Firn `D` ≤ 1.03: the row's own criterion is met; `E` is reported and nothing
+   else is needed. `pkg::vm` keeps `D` ≤ 1.03 and `pkg::test` `D` ≤ 1.5 (their
+   acceptance rows use this run's figures).
+2. Firn `D` > 1.03 and `E` ≤ 1.03: this change removes #431's cost on the tree
+   where #431 landed, and the excess of `D` comes from the merges since. The
+   criterion of the row is the owner's: a card goes to the owner on this item,
+   blocking the acceptance row, carrying `E`, `D`, `G`, `F` and `b`, with at least
+   three options.
+3. Firn `D` > 1.03 and `E` > 1.03: this change still leaves cost on Firn. The
+   work counters of `c431fix` against `base` (closure count and closure rows
+   first, which were above `base` in the earlier runs) are profiled before
+   anything else.
+4. The patch does not apply or build: this change is not edited to make it build;
+   the card to the owner carries the numbers already in hand, including the
+   refuted P2 and that the counters do not separate the two readings.
+
+The run is repeated only if a twin median lies outside its own min–max range or
+an exit code is not 0. `E` is read by its median; a margin smaller than the
+twin's range is reported with that range. The counters of `c431fix` are reported
+whatever they are.
+
 ### Reviews
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
