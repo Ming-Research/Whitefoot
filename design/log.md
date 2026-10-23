@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/waiting-contexts, compiler/incremental-compilation
 
 Summary: A deadlock report enumerates an intrusive roster under one lock, registering the root once and each child at its first actual guard or join park and removing it before reclamation, because at all-stuck every live context is such a waiter while registering every child at spawn cost 8.4% on one driver's concurrent spawns; a guard registers under its watch lock with the roster lock nested inside. The pre-registered one-percent comparison rejected no spawn panel, five of eight being inconclusive against the twin's spread, so the global roster stays provisional. Diagnostic fields occupy a cold tail initialized at first registration, and every all-stuck decision calls one inactive predicate. Cache keys still exclude host display paths, and emitted wait-site positions are templates whose display path is bound from the current invocation on reuse, so a different spelling of the same graph reuses its build while its reports name the paths this invocation wrote.
+## 2026-10-23 An implementation that leaves a place unwritten discharges an interface's frame equality
+
+Nodes: language/contracts, compiler/generic-validation-scope
+
+Summary: A supplied actual may now satisfy each formal `ensures` by its frame or by its stronger own `ensures`: an equality between the exit and entry values of one integer place, or of one measure of a place, is discharged when the actual's declared row writes nothing overlapping that place, so Halo's reads-only host function binds its interface unchanged. Aliasing between the framed place and another parameter's write is left to each call, whose contract-read footprint already separates the framed place (kernel specification FN-4, EFF-5). The compiler decision records how the frame query identifies the exit and entry datums in an isolated zero-premise query and retains the actual and unwritten place as its authority. Refused: implementations declaring wider rows than their bodies, stubs performing a dummy write, a binding-time requirement of a formal access covering the framed place, and discharging frame equalities only for actuals that write nothing.
 
 ## 2026-10-20 A guard written as a helper call filters wakes through a callback
 

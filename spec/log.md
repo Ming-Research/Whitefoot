@@ -22,6 +22,12 @@ archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
 file added by a change that edits no rule. The earlier procedure archived the
 outgoing version with every amendment; git holds the rest of the history.
 
+## 2026-10-23 an implementation that leaves a place unwritten discharges an interface's equality between that place's exit and entry values
+
+Rules: changed FN-1, FN-4
+
+Summary: FN-4 states that an actual's row may be a proper subset of the formal's or `pure`, and that a formal `ensures` is discharged by frame when its normalized comparison is an equality with equal displacements between the exit and entry values of one fragment-integer place P, or of one measure of P, rooted at a reference parameter, and no `writes` path in the actual's declared row overlaps P under the structural and literal separations of OWN-7 and WIN-2 with no assumed inequalities between parameter positions. A write through another parameter needs no binding condition, because the formal relation places P in every call's contract-read footprint, which EFF-5 separates from that argument's writes. Every other formal `ensures` still follows only from the actual's own `ensures`, and a frame discharge supplies no premise to another relation's query. FN-1 says the selected actual satisfies its own boundary rather than supplying the proof of the formal's templates. Selection ground: Halo's host interface promises an unchanged stack length for a member that may write the stack, and a host function that only reads the stack could satisfy it neither by its row (rows are exact under EFF-2) nor by its own `ensures` (`entry()` is admitted only on a written parameter); the owner chose this direction, a narrower row discharging the frame promise, on the board card raised for the same gap in Firn's script host.
+
 ## 2026-10-22 a `define` name in a range clause is expanded before its range terms are checked
 
 Rules: changed RANGE-1
