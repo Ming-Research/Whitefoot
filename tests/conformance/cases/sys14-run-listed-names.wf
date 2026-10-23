@@ -199,18 +199,6 @@ fn list_folder(factory: &HandleFactory, folder: &DirectoryRead) -> result: u8 re
             set status = 22_u8;
             break @records;
           }
-          let ordered = name_at <= name_end;
-          let inside = name_end <= 4096_u64;
-          if ordered {
-          } else {
-            set status = 22_u8;
-            break @records;
-          }
-          if inside {
-          } else {
-            set status = 22_u8;
-            break @records;
-          }
           let names = &entries[0_u64..4096_u64];
           let is_plain = same_name(entries: names, at: name_at, count: name_count, expected: &plain_name[0_u64..5_u64]);
           let is_accented = same_name(entries: names, at: name_at, count: name_count, expected: &accented_name[0_u64..2_u64]);
