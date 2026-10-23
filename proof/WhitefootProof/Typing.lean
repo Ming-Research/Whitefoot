@@ -51,10 +51,9 @@ theorem reject_bind {α β : Type} {r m : String} (g : α → Judge β) :
 
 theorem ite_reject {α : Type} {c : Prop} {_ : Decidable c} {r m : String} {x : Judge α} {b : α}
     (h : (if c then rejectBy r m else x) = .ok b) : ¬c ∧ x = .ok b := by
-  by_cases hc : c
-  · rw [ite_cond_eq_true _ _ (eq_true hc)] at h
-    exact absurd h reject_ne
-  · rw [ite_cond_eq_false _ _ (eq_false hc)] at h
+  split at h
+  · exact absurd h reject_ne
+  · rename_i hc
     exact ⟨hc, h⟩
 
 theorem discard_ok {ε α : Type} {x : Except ε α} {u : Unit} (h : Functor.discard x = .ok u) :
