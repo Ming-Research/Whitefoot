@@ -33,9 +33,12 @@ permissions:
 
 # As in io-hosts.yml: pushes to one branch share a group, and the opening or
 # reopening of a pull request, the event of marking one ready and a manual run
-# each have a group of their own.
+# each have a group of their own. Each main commit gets its own group, as in
+# gate.yml: a shared main group would cancel the run of every merge but the
+# last of a quick succession, and the cancelled commit would show red on the
+# main line.
 concurrency:
-  group: sanitizers-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
+  group: sanitizers-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 env:
