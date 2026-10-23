@@ -10,6 +10,17 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/downstream-releases
 
 Summary: A decision is added: the acceptance of a bundled release installs the Linux and macOS archives with the commands of their section of the getting started guide and builds and runs the guide's programs with the installed compiler, as the Windows decision already does for the Windows archive, instead of extracting the archive by the acceptance's own command. Only the download (replaced by a copy of the candidate) and, on macOS, `xcode-select --install` (the hosted image already holds the Command Line Tools) differ from what a reader runs. The guide's `apt-get` line becomes the only source of the Linux libraries the toolchain links against, so a library the guide forgets to list is missing in the clean container, apart from those that the check's own `python3` and `strace`, installed first, bring with them.
+## 2026-10-22 The kernel owns clearing a window while keeping its storage
+
+Nodes: language/data-model/kernel-minimality
+
+Summary: A program that reuses one byte buffer per batch could not empty it without one boundary operation per element or a transfer of every element into another window, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. The kernel therefore owns `clear` over every droppable element type: it runs each element's derived release, sets the length to zero and keeps the storage, capacity, ring origin and pages, so an element type that needs no release is reset independently of length. Clearing leaves the list of operations that begin as source libraries, and clearing as a source library over `take_back` is recorded as rejected.
+
+## 2026-10-21 A column for a model with too few runs takes the larger of the row's largest class and its own runs
+
+Nodes: compiler/verification
+
+Summary: The time-budget decision said a model with fewer than 20 recorded runs has no column, while the budget table has carried a column for one Intel Xeon model since the owner added it, valued at the larger of the row's largest class budget and the model's own runs by the rule. The tree now says so: such a column exists only when the owner adds it and takes that value, because a few runs can show that a class needs more time but not that it needs less, instead of the model's own runs alone or the unmapped-model fallback alone. The recompute tool applies this value to every such column, so the tree states what the table and the tool already do; no budget value changes. The grounds are in the [time-budget investigation](../research/investigations/test-economy/time-budgets.md#xeon-platinum-8573c-column-candidate-compiler-budget-and-cached-baseline-compiler-2026-10-13), which also records the recompute of the Linux columns.
 
 ## 2026-10-22 An assignment evaluates its right-hand side before its target
 

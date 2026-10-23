@@ -3676,7 +3676,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 /// same place and [WIN-3] releases the affine value the target held.
 #[test]
 fn a_referent_replacement_still_kills_its_own_branch_measure_image() {
-    let source = br#"fn clear(values: &Slots<u8, 16>) -> result: unit writes(values) {
+    let source = br#"fn wipe(values: &Slots<u8, 16>) -> result: unit writes(values) {
   let empty = slots_new::<u8, 16>();
   set values^ = move empty;
   return unit;
@@ -3686,7 +3686,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u8, 16>();
   place_back(window: &values, value: 7_u8);
   invariant before: values.len >= 1_u64;
-  clear(values: &values);
+  wipe(values: &values);
   invariant stale: values.len >= 1_u64;
   return std::process::exit_status(code: 0_u8);
 }
@@ -3816,7 +3816,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     assert_fn9_rejects(descriptor_write);
 
-    let whole_replacement = br#"fn clear(window: &Ring<u64, 4>) -> result: unit writes(window) {
+    let whole_replacement = br#"fn wipe(window: &Ring<u64, 4>) -> result: unit writes(window) {
   let empty = ring_new::<u64, 4>();
   set window^ = move empty;
   return unit;
@@ -3827,7 +3827,7 @@ fn replace_after_take(window: &Ring<u64, 4>) -> taken: u64 writes(window) contra
   ensures window^.len + 1_u64 == entry(window)^.len;
 } {
   let taken = take_back(window: window);
-  clear(window: window);
+  wipe(window: window);
   return taken;
 }
 
@@ -3837,7 +3837,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     assert_fn9_rejects(whole_replacement);
 
-    let joined_write = br#"fn clear(window: &Ring<u64, 4>) -> result: unit writes(window) {
+    let joined_write = br#"fn wipe(window: &Ring<u64, 4>) -> result: unit writes(window) {
   let empty = ring_new::<u64, 4>();
   set window^ = move empty;
   return unit;
@@ -3853,7 +3853,7 @@ fn maybe_replace(first: &Ring<u64, 4>, second: &Ring<u64, 4>, choose: Bool) -> t
   } else {
     give second;
   }
-  clear(window: selected);
+  wipe(window: selected);
   return taken;
 }
 

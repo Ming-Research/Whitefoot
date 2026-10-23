@@ -10,6 +10,12 @@ whether `Rules:` names every changed rule. Older entries also carry an
 `Owner-approved:` line, a field since retired. Earlier versions are the
 released archives beside this file; git holds the rest of the history.
 
+## 2026-10-22 v0.164: `clear` empties a window and keeps its storage
+
+Rules: changed OP-10, OP-13, PRE-1
+
+Summary: A program that reuses one window, such as a byte buffer emptied after every batch, could not set its length to zero without one `take_back` per element or a transfer of every element into another window, and the read-only length leaves a library no other way, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. PRE-1 adds the record `clear<W, T: drop>`, and OP-10 makes it the eleventh window operation over `Slots`, `Ring` and `Paged`: it runs each element's derived release in ascending logical order, sets the length to zero, keeps the storage, capacity, ring origin and pages, allocates nothing, visits no element when the element release is empty, refuses a linear element type at every call, and ends every element, range and page reference into the window while a reference to the window itself stays valid. OP-13 names `clear` as a bump allocator's reset. The element bound was chosen on the status board: every droppable element type, instead of a reset restricted to elements that need no release.
+
 ## 2026-10-22 v0.163: a `set` evaluates its right-hand side before its target
 
 Rules: changed SET-1, OP-12, OWN-1, LIV-1, PAR-2, EFF-5

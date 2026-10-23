@@ -1,4 +1,4 @@
-# Kernel Specification v0.163
+# Kernel Specification v0.164
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -1249,8 +1249,8 @@ The [STOR-6] rule separately governs allocator and address-index representabilit
 The language defines no numeric frame limit, and target-layout and resource failure are not program execution.
 
 [OP-10] The window operations.
-The ten operations are `place_back`, `take_back`, `insert_at`, `remove_at`, `append`, `split_off`, `grow`, `grow_paged`, `place_front`, and `take_front`; their signatures, rows and contracts are the [PRE-1] records and are declared there alone, and this rule states which part of the window each one moves and what that costs.
-A compiler-owned window type parameter, written W in this rule and W or X in a [PRE-1] record, admits `Slots<T, n>`, `Slots<T>`, `Ring<T, n>`, and `Ring<T>` for `place_back`, `take_back`, `insert_at`, `remove_at`, `append`, and `split_off`, and additionally `Paged<T>` for `place_back` and `take_back`; its element type is that shape's own element type; it is supplied by the operand and never written, and no source declaration can write such a parameter.
+The eleven operations are `place_back`, `take_back`, `insert_at`, `remove_at`, `append`, `split_off`, `grow`, `grow_paged`, `place_front`, `take_front`, and `clear`; their signatures, rows and contracts are the [PRE-1] records and are declared there alone, and this rule states which part of the window each one moves and what that costs.
+A compiler-owned window type parameter, written W in this rule and W or X in a [PRE-1] record, admits `Slots<T, n>`, `Slots<T>`, `Ring<T, n>`, and `Ring<T>` for `place_back`, `take_back`, `insert_at`, `remove_at`, `append`, `split_off`, and `clear`, and additionally `Paged<T>` for `place_back`, `take_back`, and `clear`; its element type is that shape's own element type; it is supplied by the operand and never written, and no source declaration can write such a parameter.
 A window operation, `swap` [OP-11], and `free_empty` [OP-14] therefore write no type arguments at a call: every type parameter of those rows is supplied by an operand.
 The construction functions [OP-13] write theirs explicitly at every call, as [FN-2] requires of every other generic callee.
 An operand whose shape is outside the operation's admitted set — `place_front` or `take_front` on a `Slots`, or any other operand outside the admitted arguments stated here — is a hard error citing OP-10 at the complete `call`, with a repair [DIAG-1].
@@ -1262,9 +1262,13 @@ Each of those two is a content write of `r.filled`, so a surviving slot referenc
 `grow_paged` is defined on `Box<Paged<T>>` alone and gives its pages the allocated lengths of [OP-13] at the new capacity. Positive growth from the shared empty header [STOR-1] allocates its first cell and pages. Growth that exceeds page 0's allocated length while that length is below B replaces page 0 with a larger block and copies its initialized elements; all such replacements together copy at most B - 1 elements over the owner's growth. Each replacement is a relocation that retains their values. Growth whose new capacity fits page 0's allocated length retains every existing page and element address. Growth with page 0 already allocated for B elements retains every existing page and element address and allocates only additional pages, together with any replacement of the cell that holds the directory. Its allocation sizes follow [OP-9, STOR-6].
 Both growth operations retain their whole-cell rows [PRE-1], with reference validity governed by [REF-2], parallel permission by [PAR-1], and fact survival by [ENT-5].
 `place_front` and `take_front` admit `Ring<T, n>` and `Ring<T>` alone and shift every logical index of `r`, so every reference into `r` becomes invalid [REF-2].
+`clear` ends the lifetime of every element of `r.filled`, running each element's compiler-derived release action in ascending logical index order by [PROV-6]'s walk, and then sets `r.len` to zero. Its record's `T: drop` bound is judged against the window's element type at every call [PROV-6], so a window of a linear element type is refused whatever its length.
+`clear` retains the window's storage, its `cap`, a `Ring`'s `head` and a `Paged`'s allocated pages, and allocates nothing [STOR-8]; a later placement fills slots that hold nothing [WIN-1].
+Its element work is [PROV-6]'s executable release graph over the old window: for an element type whose release action is empty that graph has no element edge, so `clear` visits no element and its cost is independent of `len` and `cap`; for an element type whose release action is non-empty it visits each of the old `len` elements once, so its cost grows with that count and with the elements' own release work.
 Writing one element is not a window operation: it is the ordinary assignment `set r[k] = x;` [SET-1], whose old value takes [WIN-3]'s disposition.
 A reference into a window is formed under a bound and stays valid while that bound holds: `&r[i]` under `i < r.len`, and `&r[lo..hi]` under `hi <= r.len` [REF-4]; a page reference requires its captured initialized extent [REF-4] to remain filled.
 `place_back`'s `ensures` carries these bounds across the call, while `take_back`'s and `remove_at`'s do not, so such references die there.
+`clear` ends every reference into `r` formed before the call, whatever bound it was formed under: each element, range and page reference, an empty range included, becomes invalid there [REF-2], and no later placement makes it valid again. A reference to `r` itself names the window, not an element, and stays valid [REF-2].
 A ring position is a logical index and the wrap is the storage's business [WIN-1].
 
 [OP-11] `swap`.
@@ -1300,7 +1304,7 @@ Its element total, the sum of the lengths, is a runtime sum that no term states;
 `slots_from_array` consumes a full array into a full window, and `slots_into_array` consumes a window whose `len` equals its `cap`.
 `paged_page_len<T>()` is the pure [PRE-1] record returning the page length B of `Paged<T>`. B is the largest power of two whose product with `stride_ceiling(T)` [OP-9] is at most 4096, or 1 when `stride_ceiling(T)` exceeds 4096; it depends on T alone and is the same on every qualified target. Its only published fact is its declared postcondition, so B supplies no source acceptance fact.
 A `Paged<T>` of positive capacity allocates `ceil(cap / B)` pages. Page 0's allocated length is the least power of two at least `cap` when `cap < B`, and B when `cap >= B`; each later page has allocated length B. The logical capacity remains the requested count, and the element coordinates remain [WIN-1]'s page-and-offset map.
-A pool is a `Slots` plus indices used as handles, and a bump allocator is the same storage used with `place_back` [OP-10] as allocation and a library reset.
+A pool is a `Slots` plus indices used as handles, and a bump allocator is the same storage used with `place_back` [OP-10] as allocation and `clear` [OP-10] as its reset.
 A stale index that is still in bounds names the current occupant of that slot, which is a logic error and not a memory error, and a program that must detect it keeps a generation number as data.
 
 [OP-14] `free_empty`.
@@ -2708,6 +2712,10 @@ fn take_front<W, T>(window: &W) -> value: T writes(window) contract {
   ensures window^.cap == entry(window)^.cap;
   ensures window^.head >= 0_u64;
   ensures window^.head <= window^.cap;
+};
+fn clear<W, T: drop>(window: &W) -> result: unit writes(window.filled), writes(window.len) contract {
+  ensures window^.len == 0_u64;
+  ensures window^.cap == entry(window)^.cap;
 };
 fn swap<T>(first: &T, second: &T) -> result: unit writes(first), writes(second);
 fn shared_new<T>(value: T) -> result: Shared<T> pure;
