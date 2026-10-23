@@ -5,6 +5,7 @@ import WhitefootProof.Parser
 import WhitefootProof.Interpreter
 import WhitefootProof.Static
 import WhitefootProof.Facts
+import WhitefootProof.FactsSound
 import WhitefootProof.Affine
 import WhitefootProof.Checker
 import WhitefootProof.Walk
