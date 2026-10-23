@@ -166,13 +166,10 @@ jobs:
           b = s.index('static int wf_contexts_stuck_locked(void)')
           body = s[a:b]
           body = body.replace('return 0;', '{ fprintf(stderr, "[stuck] false at bridge.c:%d\\n", __LINE__); return 0; }')
-          old = """    return wf_invocations_unchanged(sequence)
-        && atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst) == before;"""
+          old = '    return wf_invocations_unchanged(sequence)\n        && atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst) == before;'
           assert old in body
-          body = body.replace(old, """    int unchanged = wf_invocations_unchanged(sequence);
-    int same = atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst) == before;
-    fprintf(stderr, "[stuck] unchanged=%d changes_same=%d\\n", unchanged, same);
-    return unchanged && same;""")
+          new = '    int unchanged = wf_invocations_unchanged(sequence);\n    int same = atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst) == before;\n    fprintf(stderr, "[stuck] unchanged=%d changes_same=%d\\n", unchanged, same);\n    return unchanged && same;'
+          body = body.replace(old, new)
           s = s[:a] + body + s[b:]
           c = s.index('static int wf_invocations_collect(')
           d = s.index('}\n', c)
