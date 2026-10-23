@@ -2000,7 +2000,9 @@ impl<'unit> DeclarationInventory<'unit> {
     /// `i < r.len` across the call and `insert_at` only changes a slot's
     /// occupant, so neither ends it; the rest move a boundary down, move a
     /// run between two windows, shift every logical index, or remake the
-    /// block whole. Any other callee whose row writes a window's `last` or
+    /// block whole; `clear` ends every element's lifetime, so every reference
+    /// into its window dies, an empty range included [OP-10]. Any other
+    /// callee whose row writes a window's `last` or
     /// `filled` may take elements back through it as `take_back` and
     /// `remove_at` do, and no `ensures` is read here to show that it does
     /// not, so its call ends the bound as well. Every reference into such a
@@ -2013,7 +2015,7 @@ impl<'unit> DeclarationInventory<'unit> {
         entries: &[SubstitutedEntry],
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
-        const BOUND_ENDING_ROWS: [&str; 8] = [
+        const BOUND_ENDING_ROWS: [&str; 9] = [
             "take_back",
             "remove_at",
             "append",
@@ -2022,6 +2024,7 @@ impl<'unit> DeclarationInventory<'unit> {
             "take_front",
             "grow",
             "grow_paged",
+            "clear",
         ];
         let prelude = self.tree.is_prelude_node(signature.node)?;
         let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());

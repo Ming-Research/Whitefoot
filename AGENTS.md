@@ -102,24 +102,29 @@ read.
 
 - The active specification `spec/kernel-spec.md` is editable on a work branch;
   released `spec/kernel-spec-vN.md` archives are immutable, and
-  `compiler/build.rs` derives the active identity from its bytes. A branch's
-  amendment lands as one change:
-  1. Archive once per branch: with the local `main` current, copy the base's
-     active bytes to the archive named by their title token, for a base
-     titled `# Kernel Specification v0.69`
-     `git show "$(git merge-base main HEAD)":spec/kernel-spec.md > spec/kernel-spec-v0.69.md`.
-  2. Retitle the active file to the next version, `v0.70`, or `v1.0` for a
-     major revision.
-  3. Edit the rules under the bullets below.
-  4. If `main` advanced the version meanwhile, merging it conflicts on the
-     title: keep main's text, reapply this branch's rule changes, archive
-     main's active bytes under main's version and retitle to the next one.
-  5. In the same change, add the `spec/log.md` entry naming every rule
-     added, changed or retired.
+  `compiler/build.rs` derives the active identity from its bytes. The file
+  carries no version and an amendment adds no archive, so two branches never
+  write the same line to claim a version. A branch's amendment lands as one
+  change:
+  1. Edit the rules under the bullets below.
+  2. In the same change, add the `spec/log.md` entry at the top, headed
+     `## <date> <title>` with no version, naming every rule added, changed or
+     retired. Existing entries stay as written, and merging `main` keeps both
+     branches' entries (`spec/log.md` merges with git's union driver), the
+     branch's first.
 
-  `make static` verifies the archive and title, and `make design-ready`
-  requires that entry. A spec/compiler discrepancy is a technical
-  defect; implementation convenience never selects language behavior.
+  An entry's version is derived from its place in the log:
+  `sh .github/spec-version.sh` prints the active version and `--list` every
+  entry's, counting up from the nearest entry below that names one (an entry
+  names a version only to start a major version such as `v1.0`). Cite a new
+  amendment by its date and title until it merges and by its version after.
+  A milestone is archived by a separate change that edits no rule and adds
+  `spec/kernel-spec-<version>.md`, a copy of the active file.
+
+  `make static` verifies the title, the log's entries and the archives, and
+  `make design-ready` requires the new entry. A spec/compiler discrepancy is
+  a technical defect; implementation convenience never selects language
+  behavior.
 - State each normative fact once; use rule-ID cross-references elsewhere.
   Rule IDs have one definition and bracketed references resolve. Express
   conditions as total positive rules or table data, without exception clauses.
@@ -224,8 +229,10 @@ build time apart from test and program execution.
   any other push, a draft pull request's included, skips their checks, and
   the event of marking a pull request ready skips them when its head already
   has a successful manual run of the same workflow. `gate.yml` runs the groups
-  on Linux only while macOS is off (wf-gate-no-macos); its job `Gate on both
-  platforms` passes only when every group is green on Linux for the revision,
+  on Linux only while macOS is off (wf-gate-no-macos), and on macOS as well in
+  a manual run started with `-f macos=true`, which a compiler release requires
+  of its commit; its job `Gate on both platforms` passes only when every group
+  is green on each platform the run was asked for, for the revision,
   and its job `No temporary workflow` fails while a `tmp-` workflow file
   exists in the checked head, and while it fails the correctness groups and
   `Gate on both platforms` do not run. The success of `Gate on both platforms`
@@ -265,7 +272,9 @@ build time apart from test and program execution.
   `firn-check-time.yml` (Firn's check on the 14900K runner) on request, which
   are experiments and never a gate.
 - Compiler releases: `compiler-release.yml`, dispatched when a downstream
-  project needs a main commit, publishes that commit's compiler as release
+  project needs a main commit that has a successful gate run with macOS jobs
+  (started by `gh workflow run gate.yml --ref <branch whose tip is the commit>
+  -f macos=true`), publishes that commit's compiler as release
   `wf-<12 hex digits>`, with `bundle_toolchain` as
   `wf-<12 hex digits>-bundled`, which carries clang and lld, or an unmerged
   commit's as experiment release `wf-exp-<12 hex digits>`, and

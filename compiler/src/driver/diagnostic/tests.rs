@@ -422,12 +422,13 @@ fn a_canonical_rejection_quotes_the_trivia_and_marks_the_line_it_ends_in() {
   source:     let a = 1_i32;
   marker: ^^^^
   expected: "\n  "
-  found: "\n    ""#
+  found: "\n    "
+  mechanical_fix: make the change below to reach the canonical layout; it gives the bytes FORM-2 requires between two terminals [FORM-2]: line 1 between `{` and `let`: write "\n  " instead of "\n    ""#
     );
     // JSON carries the same escaped spelling the text form quotes.
     assert_eq!(
         failure.render(DiagnosticFormat::Json),
-        r#"{"rule":"FORM-2","kind":"NonCanonicalTrivia","category":"Source","stage":"CanonicalSource","at":{"file":"indent.wf","line":2,"column":1},"bytes":{"start":52,"end":57},"source":"    let a = 1_i32;","detail":{"expected":"\\n  ","found":"\\n    "}}"#
+        r#"{"rule":"FORM-2","kind":"NonCanonicalTrivia","category":"Source","stage":"CanonicalSource","at":{"file":"indent.wf","line":2,"column":1},"bytes":{"start":52,"end":57},"source":"    let a = 1_i32;","detail":{"expected":"\\n  ","found":"\\n    ","mechanical_fix":"make the change below to reach the canonical layout; it gives the bytes FORM-2 requires between two terminals [FORM-2]: line 1 between `{` and `let`: write \"\\n  \" instead of \"\\n    \""}}"#
     );
 }
 

@@ -2815,6 +2815,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 source,
                 index,
             } => self.emit_run_transfer(result, ty, *destination, *source, *index),
+            IrOperation::RunClear { run } => self.emit_run_clear(result, ty, *run),
             IrOperation::WindowBlockNew {
                 nominal,
                 capacity,

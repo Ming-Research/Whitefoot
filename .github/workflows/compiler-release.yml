@@ -12,9 +12,21 @@
 # downstream wants to try, such as a performance experiment, gets an
 # experiment release, `wf-exp-` and the commit's first 12 hex digits, of any
 # commit whose own gate run passed on both platforms (a draft pull request's
-# push starts no gate; dispatch gate.yml on the branch to qualify its tip):
+# push starts no gate; qualify its tip with the manual gate run described
+# below), made by:
 #
 #   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true
+#
+# The gate runs on Linux alone, so a commit is qualified on both platforms by a
+# manual gate run that asks for macOS too (wf-release-macos-gate,
+# compiler/verification), started on a branch whose tip is the commit, before
+# the release is dispatched:
+#
+#   gh workflow run gate.yml -R Ming-Research/Whitefoot --ref <branch> -f macos=true
+#
+# `--ref main` qualifies main's tip; for an older main commit, first push a
+# branch at it (`git push origin <hash>:refs/heads/<branch>`). The run works
+# only for a commit whose gate.yml has the `macos` input.
 #
 # Add `-f bundle_toolchain=true` to opt into a qualified clang/lld package.
 # Its tag gains `-bundled`, and its platform archives are named
@@ -89,11 +101,11 @@ on:
   workflow_dispatch:
     inputs:
       commit:
-        description: A commit on main whose gate passed; empty takes main's tip
+        description: A commit on main whose gate passed on both platforms; empty takes main's tip
         type: string
         default: ""
       experiment:
-        description: Release an unmerged commit whose gate passed, as wf-exp-<hash>
+        description: Release an unmerged commit whose gate passed on both platforms, as wf-exp-<hash>
         type: boolean
         default: false
       bundle_toolchain:
@@ -189,7 +201,9 @@ jobs:
             publish=false
           fi
           tag="$prefix${commit:0:12}"
-          spec=$(git show "$commit:spec/kernel-spec.md" | sed -n '1s/^# Kernel Specification //p')
+          # The specification names no version; the commit's change log gives
+          # it (.github/spec-version.sh).
+          spec=$(git show "$commit:spec/log.md" | sh .github/spec-version.sh - || true)
           # The LLVM major the commit's gate built its Linux jobs with, which its
           # Linux compiler is built with (compiler/downstream-releases): the
           # commit's .github/llvm-major, else the major its gate.yml named
@@ -211,7 +225,7 @@ jobs:
             tag="$tag-bundled"
           fi
           if [ -z "$spec" ]; then
-            echo "::error::spec/kernel-spec.md at $commit names no version"
+            echo "::error::spec/log.md at $commit gives no specification version"
             exit 1
           fi
           if git diff --quiet "$commit^" "$commit" -- .github/workflows; then
@@ -223,7 +237,8 @@ jobs:
             echo "dry run: $commit changes workflow files, so a dispatch would refuse it"
           fi
           # A successful gate run qualifies the revision when its matrix
-          # included macOS; a run that skipped its checks has no such job.
+          # included macOS, which only a manual run started with the `macos`
+          # input has; a run that skipped its checks has no such job.
           gate_run=
           for run in $(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$commit&status=success&per_page=100" --jq '.workflow_runs[].id'); do
             macos=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
@@ -235,10 +250,10 @@ jobs:
           done
           if [ -z "$gate_run" ]; then
             if [ "$publish" = true ]; then
-              echo "::error::no gate run qualified $commit on both platforms; dispatch gate.yml on its branch or choose another commit"
+              echo "::error::no gate run qualified $commit on both platforms; the gate runs on Linux alone unless asked for macOS, so run \`gh workflow run gate.yml --ref <a branch whose tip is $commit> -f macos=true\` (the commit must contain the macos input), release once that run is green, or choose another commit"
               exit 1
             fi
-            echo "dry run: no gate run has qualified $commit on both platforms yet"
+            echo "dry run: no gate run has qualified $commit on both platforms yet; run gate.yml on a branch whose tip is the commit with -f macos=true"
             gate_run=none
           fi
           build=true

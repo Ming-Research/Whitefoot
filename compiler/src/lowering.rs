@@ -355,7 +355,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 }
 
 /// The [PRE-1] records whose bodies the compiler itself emits: the
-/// construction functions [OP-13], the nine window operations [OP-10],
+/// construction functions [OP-13], the eleven window operations [OP-10],
 /// `swap` [OP-11], `free_empty` [OP-14], the mutable/read-only shared-handle rows
 /// `shared_new`, `shared_share`, `shared_close`, `shared_read`, `shared_read_share`,
 /// `frozen_new` and `frozen_share`,
@@ -368,7 +368,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 45] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 46] = [
     // [OP-13] construction and storage conversion functions.
     "box_new",
     "array_filled",
@@ -383,7 +383,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 45] = [
     "box_ring_new",
     "slots_from_array",
     "slots_into_array",
-    // [OP-10] the nine window operations.
+    // [OP-10] the window operations other than `grow_paged`, listed above.
     "place_back",
     "take_back",
     "insert_at",
@@ -393,6 +393,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 45] = [
     "grow",
     "place_front",
     "take_front",
+    "clear",
     // [OP-11] `swap` and [OP-14] `free_empty`.
     "swap",
     "free_empty",
