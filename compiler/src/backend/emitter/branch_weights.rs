@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use super::dispatch;
 use crate::{
     IrBlockId, IrEnumType, IrFunction, IrInstruction, IrOperation, IrProgram, IrTerminator, IrType,
 };
@@ -61,18 +62,9 @@ impl BranchWeights {
                 _ => None,
             })
             .collect();
-        let successors: Vec<Vec<_>> = function
-            .blocks()
-            .iter()
-            .map(|block| match block.terminator() {
-                IrTerminator::Jump { target, .. } => vec![target.index()],
-                IrTerminator::Match { targets, .. } => targets
-                    .iter()
-                    .map(|target| target.block().index())
-                    .collect(),
-                IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
-            })
-            .collect();
+        // The dispatch planner's edge list, so a new terminator kind cannot
+        // reach one analysis and miss the other.
+        let successors: Vec<Vec<_>> = function.blocks().iter().map(dispatch::successors).collect();
         let mut predecessors = vec![Vec::new(); successors.len()];
         for (from, targets) in successors.iter().enumerate() {
             for &to in targets {

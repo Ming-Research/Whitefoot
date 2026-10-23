@@ -141,7 +141,7 @@ pub(super) struct DispatchLoop {
     pub(super) invariants: Vec<IrValueId>,
 }
 
-fn successors(block: &IrBlock) -> Vec<usize> {
+pub(super) fn successors(block: &IrBlock) -> Vec<usize> {
     match block.terminator() {
         IrTerminator::Jump { target, .. } => vec![target.index()],
         IrTerminator::Match { targets, .. } => targets
