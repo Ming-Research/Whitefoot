@@ -1,0 +1,18 @@
+interface Host {
+  fn call(stack: &Box<Slots<u64>>) -> outcome: unit writes(stack) contract {
+    ensures stack^.inner.len == entry(stack)^.inner.len;
+  };
+}
+
+fn replace(actual_stack: &Box<Slots<u64>>) -> replaced: unit writes(actual_stack) {
+  set actual_stack^ = box_slots_new::<u64>(capacity: 0_u64);
+  return unit;
+}
+
+binding ReplacingHost : Host {
+  call = replace;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

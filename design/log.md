@@ -5,6 +5,38 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 A name below a directory is the same bytes on every host, and a listing leaves out `.` and `..`
+
+Nodes: language/system-interface, language/system-interface/directory-enumeration
+
+Summary: A program that names `config.txt` to `open_file`, or skips the one-byte `.` among listed names, worked on POSIX and failed on Windows, where the runtime took and gave UTF-16 code units; `tests/programs/wfgrep.wf` opened `.` and `..` of every directory there and reported them unreadable. The root gains a decision: a name below a directory, taken by a single-name operation or given by a listing, is name bytes, a POSIX host's bytes and on Windows the WTF-8 encoding of the UTF-16 code units, with a function copying a host string into them, so a text name is its UTF-8 on both hosts and no host name is lost, with the native code units, an encoding chosen per call and UTF-8 only refused. The enumeration node's decision that self and parent entries are reported unfiltered is replaced: a listing leaves them out and a successful batch over a nonempty window holds an entry, since a name given with a root never denotes them and the extra host call is the one a caller makes anyway to reach the end; the host operation makes that call before it completes, so the waiting frame suspends once and both reads run where the operation runs; the old decision, an empty successful batch and a second read submitted from the finish are refused.
+
+## 2026-10-22 A deadlock report names where every waiting context waits
+
+Nodes: compiler/waiting-contexts, compiler/incremental-compilation
+
+Summary: A deadlock report enumerates an intrusive roster under one lock, registering the root once and each child at its first actual guard or join park and removing it before reclamation, because at all-stuck every live context is such a waiter while registering every child at spawn cost 8.4% on one driver's concurrent spawns; a guard registers under its watch lock with the roster lock nested inside. The pre-registered one-percent comparison rejected no spawn panel, five of eight being inconclusive against the twin's spread, so the global roster stays provisional. Diagnostic fields occupy a cold tail initialized at first registration, and every all-stuck decision calls one inactive predicate. Cache keys still exclude host display paths, and emitted wait-site positions are templates whose display path is bound from the current invocation on reuse, so a different spelling of the same graph reuses its build while its reports name the paths this invocation wrote.
+
+## 2026-10-23 The Linux and macOS packages are qualified by the getting started guide's own commands
+
+Nodes: compiler/downstream-releases
+
+Summary: A decision is added: the acceptance of a bundled release installs the Linux and macOS archives with the commands of their section of the getting started guide and builds and runs the guide's programs with the installed compiler, as the Windows decision already does for the Windows archive, instead of extracting the archive by the acceptance's own command. Only the download (replaced by a copy of the candidate) and, on macOS, `xcode-select --install` (the hosted image already holds the Command Line Tools) differ from what a reader runs. The guide's `apt-get` line becomes the only source of the Linux libraries the toolchain links against that the stock image does not already hold, so a library the guide forgets to list is missing in the clean container, except `libstdc++6`, `zlib1g` and `liblzma5`, which the stock image holds before the line runs.
+
+## 2026-10-13 A window reference survives a call when its formation bounds are re-proved after it
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: when a reference into a window crosses a call, re-prove its formation bounds from the facts after the call and keep it when they hold? (Ming-Research/Whitefoot#440, head 61c635f54)" (translated).
+
+Summary: The reference-validity decision adds one sentence. Where the specification lets a window reference survive, its formation bounds reuse the existing retained-question record but are judged after the call's invalidation and postcondition publication, destructured results included, and the reference is kept when they are proved, because the specification keeps a reference valid while its bounds hold, instead of invalidating every window reference at any call that writes the window's length, end or filled part. A write to a prefix of the reference's path, a moved Ring start, and `take_back`, `remove_at` and `clear`, whose specified guarantees exclude those bounds, still invalidate it independently.
+
+## 2026-10-23 An implementation that leaves a place unwritten discharges an interface's frame equality
+
+Nodes: language/contracts, compiler/generic-validation-scope
+
+Summary: A supplied actual may now satisfy each formal `ensures` by its frame or by its stronger own `ensures`: an equality between the exit and entry values of one integer place, or of one measure of a place, is discharged when the actual's declared row writes nothing overlapping that place, so Halo's reads-only host function binds its interface unchanged. Aliasing between the framed place and another parameter's write is left to each call, whose contract-read footprint already separates the framed place (kernel specification FN-4, EFF-5). The compiler decision records how the frame query identifies the exit and entry datums in an isolated zero-premise query and retains the actual and unwritten place as its authority. Refused: implementations declaring wider rows than their bodies, stubs performing a dummy write, a binding-time requirement of a formal access covering the framed place, and discharging frame equalities only for actuals that write nothing.
+
 ## 2026-10-20 A guard written as a helper call filters wakes through a callback
 
 Nodes: compiler/waiting-contexts/state-locks

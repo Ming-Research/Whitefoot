@@ -1065,8 +1065,6 @@ pub(crate) struct CheckedTarget {
     /// Source presentation for the non-normative lowering lock ledger.
     pub(crate) ledger_name: String,
     pub(crate) ledger_state: String,
-    /// The target binder's exact one-based `path:line:column` location.
-    pub(crate) ledger_site: String,
     pub(crate) binding: BindingId,
     pub(crate) handle: Box<CheckedExpression>,
     /// [SHARE-1] whether the handle place keeps the object live until the
@@ -3348,11 +3346,12 @@ pub(crate) struct CheckedContextAwait {
     pub(crate) before: Option<u32>,
 }
 
-/// One [OWN-7] separation question the checker could not settle by syntax.
+/// One position question the checker could not settle by syntax.
 ///
 /// A mandatory call-effect pair [EFF-5], a write's preservation of a later
 /// reference use [REF-2] or two handle places of one atomic statement
-/// [SHARE-2] requires the positions to be proved distinct.
+/// [SHARE-2] requires separation [OWN-7]. A window selection additionally
+/// requires its captured bound to survive a call [OP-10].
 /// The checker holds the actual argument spellings and the live
 /// reference state, so it owns the comparison; what it cannot do is discharge
 /// the index or range goal, which is the fixed [ENT-6] families' work under
@@ -3361,13 +3360,13 @@ pub(crate) struct CheckedContextAwait {
 /// at the reference use.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedCallSeparation {
-    /// The call, set commit or atomic statement whose pre-write proof context
-    /// answers the query.
+    /// The call, set commit or atomic statement whose proof context answers
+    /// the query: after call transfer for WindowBound, before the write otherwise.
     pub(crate) site: NodePath,
     /// The rule whose separation this is, when no reference use names one.
     pub(crate) occasion: CheckedSeparationOccasion,
-    /// A demanded REF-2 use; the separation is still proved at `site`, before
-    /// the invalidating write, and diagnosed at this later use.
+    /// A demanded REF-2 use; preservation is proved at `site` in its occasion
+    /// context and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
     /// HOLD-1 uses the same position families, retaining its call diagnostic.
     pub(crate) held_use: Option<CheckedHeldProtectionUse>,
@@ -3390,6 +3389,9 @@ pub(crate) struct CheckedCallSeparation {
 /// Which judgment asks a [`CheckedCallSeparation`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedSeparationOccasion {
+    /// A captured window-selection bound [OP-10], judged after this call's
+    /// kills and published exit relations rather than in its entry state.
+    WindowBound,
     /// Two entries of one call's substituted row [EFF-5].
     Call,
     /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
@@ -3429,6 +3431,7 @@ pub(crate) enum CheckedCallSeparationPositions {
     IndexOutsideRange(super::places::CapturedValue, super::places::CapturedRange),
     /// [WIN-2] a range beside the window's `next` or `free`, which the
     /// separation needs proved to end at or below `r.len`, or empty.
+    /// WindowBound instead requires the endpoint bound even when empty.
     RangeWithinLength(super::places::CapturedRange),
 }
 
@@ -3575,7 +3578,12 @@ pub(crate) struct CheckedProgramData {
     /// and expression carriers, rendered as one-based `path:line:column`.
     /// Lowering uses these only to present its non-normative lock ledger;
     /// they retain no lock timing, permission or acceptance judgment.
-    pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, String>,
+    pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, crate::SourceDescription>,
+    /// Exact target-binder locations, kept out of the analyzed function body.
+    pub(crate) target_ledger_sources: std::collections::HashMap<NodePath, crate::SourceDescription>,
+    /// Presentation-only descriptions of guard waits and planned context joins.
+    /// Source coordinates are resolved while the canonical tree is retained.
+    pub(crate) wait_report_sources: std::collections::HashMap<NodePath, crate::SourceDescription>,
 }
 
 impl CheckedProgramData {
@@ -3599,7 +3607,20 @@ pub(crate) struct CheckedContractQuery {
     pub(crate) site: NodePath,
     pub(crate) premises: Vec<NodePath>,
     pub(crate) goal: NodePath,
+    /// [FN-4] authority for identifying this frame equality's entry and
+    /// exit datums in a zero-premise query. Other queries keep them distinct.
+    pub(crate) frame: Option<CheckedContractFrame>,
     pub(crate) proof: super::entailment::FunctionEntailment,
+}
+
+/// The actual row leaves this place unwritten; each call's contract-read
+/// footprint separates it from other arguments' writes [EFF-5]. This is
+/// binding evidence, not an actual FN-9 summary or a runtime snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedContractFrame {
+    pub(crate) actual: FunctionId,
+    /// Root and index bindings are parameter ordinals of the actual.
+    pub(crate) unwritten: super::places::ResolvedPlace,
 }
 
 /// The authoritative contract surface of one bound call [FN-5].
