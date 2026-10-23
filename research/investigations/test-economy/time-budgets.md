@@ -1244,9 +1244,12 @@ on EPYC 7763 (1 run) and on the Xeon (1), `check/runtime` on EPYC 7763 (1), the
 classes (5, 1, 1 and 4 runs). The replay above gave 3 jobs of 850 (0.4%) for a
 table recomputed daily; this table was two days old and the share is of the same
 order, so the rule is not at fault; the table was recomputed once and not
-again. After the recompute below, none of the 3,899
-exceeds its budget, which follows from the runs being in the window the budgets
-come from and does not show that the table will stay current.
+again. After the recompute below, each of the 3,899 was compared with its new
+budget and none exceeds it. That was checked one by one with a throwaway script
+on the samples, not deduced from the runs lying in the window: a class with more
+than 50 runs here, such as EPYC 7763 with 78 `compiler/test-corpus` runs, has
+older runs outside the 50-run window that the maximum does not cover. It does
+not show that the table will stay current.
 
 **New budgets.** The tool's output on the combined samples, rows kept as before
 (`--keep` for the three unit-group rows, which no run exceeds); 34 of the 80
@@ -1292,8 +1295,14 @@ its class.
 | `compiler/corpus-tsan-programs` | epyc-9v45 | 36 | 214.4 | 252.8 | 475 | 280 |
 | `compiler/corpus-tsan-programs` | xeon-8573c | 8 | 294.3 | 331.6 | 475 | 405 |
 
-To recompute again, the commands under "Recomputing the Linux budgets" apply
-with `--since` set to the end of the last sample.
+To recompute again, the commands under "Recomputing the Linux budgets" apply,
+with one change: the samples of this recompute and the earlier one are scratch
+files and are not kept, so `--since` must reach back far enough for every class
+to have its 50 newest runs again. The classes with the fewest runs here are the
+Xeon's and the `programs` sanitizer rows; `collect` prints the oldest run it
+keeps, and the listing holds at most 1,000 runs per query, so collect in parts
+with `--until`. With a shorter window, a class with fewer than 20 runs keeps its
+value, and the Xeon column takes the row's largest class value.
 
 ### Gate at ready, not at each draft push
 

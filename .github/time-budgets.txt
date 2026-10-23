@@ -37,8 +37,8 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 # .github/recompute-time-budgets.py. With fewer, the value is the larger of the
 # row's largest recomputed class value and, where a run on this CPU was found,
 # that run's time by the rule above (one compute-regression run for the compute
-# rows; no run for the others). Only performance-baseline-compiler rises above
-# the largest class. Evidence:
+# rows, 13 and 8 runs for the two sanitizer programs rows, none for the others).
+# Only performance-baseline-compiler rises above the largest class. Evidence:
 # research/investigations/test-economy/time-budgets.md.
 # performance-candidate-compiler is 145 s for every Linux class, set by the
 # owner on 2026-10-13 (it was 130 s).
