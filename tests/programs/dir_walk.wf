@@ -46,8 +46,8 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
 
 fn stored_byte(records: &Slots<u8, 8192>, index: u64) -> result: u8 reads(records) {
   doc "Reads one record byte, delivering zero for a position the record table does not hold.";
-  let held = records^.len;
-  let inside = index < held;
+  let observed = records^.len;
+  let inside = index < observed;
   if inside {
     let value = records^[index];
     return value;
@@ -237,40 +237,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           } else {
             break @stored_entry;
           }
-          let addressable = name_end <= entries_room;
-          if addressable {
-          } else {
-            break @stored_entry;
-          }
           set at = name_end;
-          let dotted = 0_u8;
-          let single = name_count == 1_u64;
-          if single {
-            let first_readable = name_at < entries_room;
-            if first_readable {
-              let first = entries[name_at];
-              if first == 46_u8 {
-                set dotted = 1_u8;
-              }
-            }
-          }
-          let paired = name_count == 2_u64;
-          if paired {
-            let second_at = name_at +wrap 1_u64;
-            let first_readable = name_at < entries_room;
-            let second_readable = second_at < entries_room;
-            if first_readable {
-              if second_readable {
-                let first = entries[name_at];
-                let second = entries[second_at];
-                if first == 46_u8 {
-                  if second == 46_u8 {
-                    set dotted = 1_u8;
-                  }
-                }
-              }
-            }
-          }
           let separated = prefix_length > 0_u64;
           let separated_length = prefix_length +wrap 1_u64;
           let child_length = if separated {
@@ -279,106 +246,99 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
             give name_count;
           }
           let fits = child_length <= 126_u64;
-          let usable = dotted == 0_u8;
-          if usable {
-            if fits {
-              let cursor = 0_u64;
-              loop @prefix_copy {
-                let done = cursor >= prefix_length;
-                if done {
-                  break @prefix_copy;
-                }
-                let readable = cursor < prefix_room;
-                if readable {
-                } else {
-                  break @prefix_copy;
-                }
-                let writable = cursor < child_room;
-                if writable {
-                } else {
-                  break @prefix_copy;
-                }
-                let byte = prefix^[cursor];
-                set child[cursor] = byte;
+          if fits {
+            let cursor = 0_u64;
+            loop @prefix_copy {
+              let done = cursor >= prefix_length;
+              if done {
+                break @prefix_copy;
+              }
+              let readable = cursor < prefix_room;
+              if readable {
+              } else {
+                break @prefix_copy;
+              }
+              let writable = cursor < child_room;
+              if writable {
+              } else {
+                break @prefix_copy;
+              }
+              let byte = prefix^[cursor];
+              set child[cursor] = byte;
+              set cursor = cursor +wrap 1_u64;
+            }
+            if separated {
+              let separator_fits = cursor < child_room;
+              if separator_fits {
+                set child[cursor] = 47_u8;
                 set cursor = cursor +wrap 1_u64;
               }
-              if separated {
-                let separator_fits = cursor < child_room;
-                if separator_fits {
-                  set child[cursor] = 47_u8;
-                  set cursor = cursor +wrap 1_u64;
-                }
+            }
+            let taken = 0_u64;
+            loop @name_copy {
+              let done = taken >= name_count;
+              if done {
+                break @name_copy;
               }
-              let taken = 0_u64;
-              loop @name_copy {
-                let done = taken >= name_count;
-                if done {
-                  break @name_copy;
-                }
-                let source_at = name_at +wrap taken;
-                let readable = source_at < entries_room;
-                if readable {
-                } else {
-                  break @name_copy;
-                }
-                let writable = cursor < child_room;
-                if writable {
-                } else {
-                  break @name_copy;
-                }
-                let byte = entries[source_at];
-                set child[cursor] = byte;
-                set cursor = cursor +wrap 1_u64;
-                set taken = taken +wrap 1_u64;
+              let source_at = name_at +wrap taken;
+              let readable = source_at < entries_room;
+              if readable {
+              } else {
+                break @name_copy;
               }
-              let room_left = total < 64_u64;
-              if room_left {
-                let stored = imin(cursor, 126_u64);
-                let byte_length = cvt::<u64, u8>(stored);
-                let start = records^.len;
-                let record_fits = start <= 8064_u64;
-                if record_fits {
-                  for @record (
-                    slot in 0_u64..128_u64,
-                    invariant filled: records^.len == start + slot,
-                    invariant fits: start <= 8064_u64
-                  ) {
-                    let byte = 0_u8;
-                    let heading = slot < 2_u64;
-                    if heading {
-                      if slot == 0_u64 {
-                        set byte = kind;
-                      } else {
-                        set byte = byte_length;
-                      }
+              let writable = cursor < child_room;
+              if writable {
+              } else {
+                break @name_copy;
+              }
+              let byte = entries[source_at];
+              set child[cursor] = byte;
+              set cursor = cursor +wrap 1_u64;
+              set taken = taken +wrap 1_u64;
+            }
+            let room_left = total < 64_u64;
+            if room_left {
+              let stored = imin(cursor, 126_u64);
+              let byte_length = cvt::<u64, u8>(stored);
+              let start = records^.len;
+              let record_fits = start <= 8064_u64;
+              if record_fits {
+                for @record (
+                  slot in 0_u64..128_u64,
+                  invariant filled: records^.len == start + slot,
+                  invariant fits: start <= 8064_u64
+                ) {
+                  let byte = 0_u8;
+                  let heading = slot < 2_u64;
+                  if heading {
+                    if slot == 0_u64 {
+                      set byte = kind;
                     } else {
-                      let body_at = slot -wrap 2_u64;
-                      let inside = body_at < stored;
-                      if inside {
-                        let room_now = child.len;
-                        let readable = body_at < room_now;
-                        if readable {
-                          set byte = child[body_at];
-                        }
-                      }
+                      set byte = byte_length;
                     }
-                    place_back(window: records, value: byte);
+                  } else {
+                    let body_at = slot -wrap 2_u64;
+                    let inside = body_at < stored;
+                    if inside {
+                      set byte = child[body_at];
+                    }
                   }
+                  place_back(window: records, value: byte);
                 }
-                set total = total +wrap 1_u64;
               }
-              let descending = kind == 2_u8;
-              if descending {
-                let name_view = &entries[0_u64..4096_u64];
-                match open_directory_from_factory(factory: factory, root: dir, name: name_view, start: name_at, end: name_end) {
-                  Ok(value: opened) => {
-                    let deeper = depth +wrap 1_u64;
-                    let child_view = &child[0_u64..256_u64];
-                    set total = walk(factory: factory, dir: &opened, prefix: child_view, prefix_length: cursor, records: records, used: total, depth: deeper);
-                    close_directory(factory: factory, directory: move opened);
-                  }
-                  Err(error: problem) => {
-                  }
+              set total = total +wrap 1_u64;
+            }
+            let descending = kind == 2_u8;
+            if descending {
+              let name_view = &entries[0_u64..4096_u64];
+              match open_directory_from_factory(factory: factory, root: dir, name: name_view, start: name_at, end: name_end) {
+                Ok(value: opened) => {
+                  let deeper = depth +wrap 1_u64;
+                  let child_view = &child[0_u64..256_u64];
+                  set total = walk(factory: factory, dir: &opened, prefix: child_view, prefix_length: cursor, records: records, used: total, depth: deeper);
+                  close_directory(factory: factory, directory: move opened);
+                }
+                Err(error: problem) => {
                 }
               }
             }
@@ -460,14 +420,11 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     }
     let swap_room = order.len;
     let best_readable = best < swap_room;
-    let selected_writable = selected < swap_room;
     if best_readable {
-      if selected_writable {
-        let standing = order[selected];
-        let winner = order[best];
-        set order[best] = standing;
-        set order[selected] = winner;
-      }
+      let standing = order[selected];
+      let winner = order[best];
+      set order[best] = standing;
+      set order[selected] = winner;
     }
     set selected = selected +wrap 1_u64;
   }
@@ -511,7 +468,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);

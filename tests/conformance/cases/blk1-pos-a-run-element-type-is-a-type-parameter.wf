@@ -14,8 +14,8 @@ fn main() -> status: ExitStatus pure {
   doc "A shape's element type is any nameable type, an unbounded type parameter included, which FN-2 resolves at every concrete instance; neither placement inherits a flat-element restriction.";
   let payload = Some<u8>(value: 5_u8);
   let run = only::<Option<u8>>(value: payload);
-  let held = run.len;
-  if held == 1_u64 {
+  let observed = run.len;
+  if observed == 1_u64 {
   } else {
     return exit_status(code: 1_u8);
   }

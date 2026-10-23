@@ -84,7 +84,10 @@ impl Reasoning<'_, '_, '_> {
         state: &mut ProofFlowState,
     ) {
         if !matches!(captured.capture, CaptureId::Source(_))
-            || !matches!(captured.term, CapturedTerm::Binding(_))
+            || !matches!(
+                captured.term,
+                CapturedTerm::Binding(_) | CapturedTerm::Place(_)
+            )
         {
             return;
         }
@@ -183,6 +186,28 @@ impl Judging<'_, '_, '_> {
         } else {
             self.input.range_length_readings(&goal.root)
         };
+        let lost_header = if disposition == CallGoalDisposition::Unproved
+            && !written.lost_headers.is_empty()
+        {
+            let mut vocabulary = self.vocabulary.explanation_copy();
+            let mut explanation = Reasoning {
+                input: self.input,
+                vocabulary: &mut vocabulary,
+            };
+            let target = explanation.affine_goal_ordering_target(&goal.root, context.affine);
+            let mut state = written.clone();
+            state.facts = context.facts.clone();
+            state.affine = context.affine.clone();
+            explanation.explain_lost_header(
+                &state,
+                &[ProofGoal::Signed {
+                    expression: &goal.root,
+                    affine: target.as_ref(),
+                }],
+            )
+        } else {
+            None
+        };
         self.output.call_goals.push(CallGoalOutcome {
             node_path: node_path.clone(),
             callee,
@@ -197,6 +222,7 @@ impl Judging<'_, '_, '_> {
             derivation,
             written_before: written.written_before(disposition == CallGoalDisposition::Discharged),
             range_lengths,
+            lost_header,
         });
         (disposition, derivation)
     }
@@ -210,11 +236,32 @@ impl Judging<'_, '_, '_> {
     /// pair is discharged here by the fixed [ENT-6] families under [MSR-4]'s
     /// disposition, and a discharged pair is recorded on the current edge so
     /// that later dominated [OWN-7] questions can read it. A set reaches this
-    /// judgment after RHS effects, using target captures evaluated before it.
+    /// judgment after RHS effects, with its target evaluated in the state
+    /// they left [SET-1].
     pub(super) fn judge_call_separations(
         &mut self,
         site: &crate::NodePath,
         state: &mut ProofFlowState,
+    ) -> bool {
+        self.judge_event_preservations(site, state, false)
+    }
+
+    /// [OP-10] ask the captured selection bound in the call's exit state,
+    /// after its ordinary kills and exit postconditions. Later guards may
+    /// not restore a reference that this event invalidates [REF-2].
+    pub(super) fn judge_window_bounds(
+        &mut self,
+        site: &crate::NodePath,
+        state: &mut ProofFlowState,
+    ) {
+        self.judge_event_preservations(site, state, true);
+    }
+
+    fn judge_event_preservations(
+        &mut self,
+        site: &crate::NodePath,
+        state: &mut ProofFlowState,
+        post_call: bool,
     ) -> bool {
         let pending: Vec<_> = self
             .input
@@ -223,7 +270,15 @@ impl Judging<'_, '_, '_> {
             .iter()
             .enumerate()
             .filter(|(query, _)| !self.output.judged_separations.contains(query))
-            .filter(|(_, separation)| separation.site.components().starts_with(site.components()))
+            .filter(|(_, separation)| {
+                if post_call {
+                    separation.occasion == CheckedSeparationOccasion::WindowBound
+                        && separation.site == *site
+                } else {
+                    separation.occasion != CheckedSeparationOccasion::WindowBound
+                        && separation.site.components().starts_with(site.components())
+                }
+            })
             .map(|(query, separation)| (query, separation.clone()))
             .collect();
         let mut all_discharged = true;
@@ -242,7 +297,7 @@ impl Judging<'_, '_, '_> {
             };
             // A preservation query is a later reference-use obligation. It
             // does not make this event unreachable or suppress its effects.
-            all_discharged &= discharged || separation.reference_use.is_some();
+            all_discharged &= discharged || separation.reference_use.is_some() || separation.held_use.is_some();
         }
         all_discharged
     }
@@ -309,8 +364,11 @@ impl Judging<'_, '_, '_> {
                     .prove_index_outside_range(index, range, state),
                 CheckedCallSeparationPositions::RangeWithinLength(range) => {
                     separation.window.as_ref().and_then(|window| {
-                        self.reasoning()
-                            .range_within_length_proof(window, range, state)
+                        if separation.occasion == CheckedSeparationOccasion::WindowBound {
+                            self.reasoning().range_bound_proof(window, range, state)
+                        } else {
+                            self.reasoning().range_within_length_proof(window, range, state)
+                        }
                     })
                 }
             };
@@ -344,10 +402,11 @@ impl Judging<'_, '_, '_> {
                 .add_root(DerivationRootKind::BoundsObligation(ordinal), root);
         }
         self.output.obligations.push(ObligationOutcome {
-            node_path: match (&separation.reference_use, &separation.occasion) {
-                (Some(use_site), _) => use_site.site.clone(),
-                (None, CheckedSeparationOccasion::AtomicTargets(target)) => target.clone(),
-                (None, _) => separation.site.clone(),
+            node_path: match (&separation.reference_use, &separation.held_use, &separation.occasion) {
+                (Some(use_site), _, _) => use_site.site.clone(),
+                (None, Some(held_use), _) => held_use.site.clone(),
+                (None, None, CheckedSeparationOccasion::AtomicTargets(target)) => target.clone(),
+                (None, None, _) => separation.site.clone(),
             },
             family: match (&separation.reference_use, &separation.occasion) {
                 (Some(_), _) => ObligationFamily::ReferencePreservation(
@@ -361,6 +420,9 @@ impl Judging<'_, '_, '_> {
                         u32::try_from(query).expect("atomic-target separation queries exceed u32"),
                     )
                 }
+                (None, CheckedSeparationOccasion::WindowBound) => {
+                    unreachable!("window bounds always belong to a reference use")
+                }
                 (None, CheckedSeparationOccasion::Call) => ObligationFamily::CallSeparation(
                     u32::try_from(query).expect("call-separation queries exceed u32"),
                 ),
@@ -372,6 +434,16 @@ impl Judging<'_, '_, '_> {
             refuted: false,
             contradictory: proof.is_some_and(|proof| proof.route == Some(ProofRoute::Contradiction)),
             residual: (!discharged).then(|| match separation.positions.first() {
+                Some(CheckedCallSeparationPositions::Live(_))
+                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
+                        "{} requires its captured index below {}.len after the call",
+                        separation.left_spelling, separation.right_spelling
+                    ),
+                Some(CheckedCallSeparationPositions::RangeWithinLength(_))
+                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
+                        "{} requires its captured end at or below {}.len after the call",
+                        separation.left_spelling, separation.right_spelling
+                    ),
                 Some(CheckedCallSeparationPositions::Indices(..)) => format!(
                     "{} and {} require their captured indices to be distinct",
                     separation.left_spelling, separation.right_spelling
@@ -403,6 +475,8 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
             killed_by: Vec::new(),
+            lost_header: None,
+            selected_return: None,
         });
         discharged
     }
@@ -562,6 +636,8 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by: Vec::new(),
+            lost_header: None,
+            selected_return: None,
         });
     }
 
@@ -809,7 +885,7 @@ impl Analyzer<'_, '_> {
                         .is_none_or(|_| contract_parents.as_ref().is_some());
                 let postconditions = self
                     .input
-                    .available_call_postconditions(*function, formal_contract.as_deref());
+                    .available_call_postconditions(call, *function, formal_contract.as_deref());
                 let prepared_call = (|| {
                     let mut parents = actual_parents?;
                     if !reached
@@ -1373,6 +1449,12 @@ impl Analyzer<'_, '_> {
                 CheckedPlaceStep::Field(field) => {
                     base.path.push(PlaceStep::Field(*field));
                 }
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    base.path.push(PlaceStep::Payload {
+                        variant: *variant,
+                        field: *field,
+                    });
+                }
                 CheckedPlaceStep::BoxReferent(_) => {
                     base.path.push(PlaceStep::Deref);
                 }
@@ -1463,6 +1545,12 @@ impl Analyzer<'_, '_> {
         for step in &place.path {
             match step {
                 CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    base.path.push(PlaceStep::Payload {
+                        variant: *variant,
+                        field: *field,
+                    });
+                }
                 CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
                 CheckedPlaceStep::Measure(measure) => base.path.push(PlaceStep::Measure(*measure)),
                 CheckedPlaceStep::Subscript(subscript) => {
@@ -1545,16 +1633,71 @@ impl Analyzer<'_, '_> {
         node_path: crate::NodePath,
         states: &ProofFlowState,
     ) {
+        self.judge_index_measure_over(
+            base,
+            measured,
+            array_length,
+            measure,
+            offset,
+            IndexTerms::default(),
+            node_path,
+            states,
+        );
+    }
+
+    /// [OP-4] one bounds obligation, with `terms` replacing the offset's and
+    /// the length's ordinary terms where the place the subscript occurs in
+    /// denotes another state than the current one [FN-9, MSR-3].
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn judge_index_measure_over(
+        &mut self,
+        base: ResolvedPlace,
+        measured: MeasuredKind,
+        array_length: Option<CheckedConst>,
+        measure: CheckedMeasure,
+        offset: &CheckedExpression,
+        terms: IndexTerms,
+        node_path: crate::NodePath,
+        states: &ProofFlowState,
+    ) {
         // [OP-4] the obligation is against `len_of(p)` in logical coordinates
         // [MSR-1], never against `cap_of(p)`.
-        let length_term =
+        let length_term = terms.length.unwrap_or_else(|| {
             self.reasoning()
-                .place_measure_term(measure, base.clone(), measured, array_length);
-        let offset_term = self.reasoning().read_operand(offset);
-        let affine_offset = self
-            .input
-            .direct_goal_expression(offset)
-            .and_then(|offset| self.reasoning().affine_goal_value(&offset, &states.affine));
+                .place_measure_term(measure, base.clone(), measured, array_length)
+        });
+        let (offset_term, affine_offset, fixed_array_affine) = match terms.offset {
+            Some(term) => {
+                let affine = self.vocabulary.measure_atom(term, &states.affine);
+                let fixed = match array_length {
+                    Some(CheckedConst::Value(length)) => {
+                        i128::from(length).checked_sub(1).and_then(|last| {
+                            AffineInequality::from_forms(
+                                &affine,
+                                &AffineForm::constant(last),
+                                &mut AffineCheckState::new(),
+                            )
+                            .ok()
+                        })
+                    }
+                    Some(CheckedConst::Parameter(_) | CheckedConst::Derived(_)) | None => None,
+                };
+                (Some(term), Some(affine), fixed)
+            }
+            None => {
+                let offset_term = self.reasoning().read_operand(offset);
+                let affine_offset = self
+                    .input
+                    .direct_goal_expression(offset)
+                    .and_then(|offset| self.reasoning().affine_goal_value(&offset, &states.affine));
+                let fixed_array_affine = self.reasoning().affine_fixed_array_index_target(
+                    offset,
+                    array_length,
+                    &states.affine,
+                );
+                (offset_term, affine_offset, fixed_array_affine)
+            }
+        };
         // [MSR-4] the subscript submits its own normalized target to the one
         // disposition, so steps 4 and 5 range over the measure's own affine
         // atom instead of being reachable only through the L0-right bridge.
@@ -1563,15 +1706,14 @@ impl Analyzer<'_, '_> {
             let mut check = AffineCheckState::new();
             AffineInequality::from_bounded_forms(offset, &length, -1, &mut check).ok()
         });
-        let fixed_array_affine =
-            self.reasoning()
-                .affine_fixed_array_index_target(offset, array_length, &states.affine);
-        let rendered_residual = format!(
-            "{} < {}.{}",
-            self.input.render_expression(offset),
-            self.input.render_place(&base),
-            measure.spelling()
-        );
+        let rendered_residual = terms.residual.unwrap_or_else(|| {
+            format!(
+                "{} < {}.{}",
+                self.input.render_expression(offset),
+                self.input.render_place(&base),
+                measure.spelling()
+            )
+        });
         let request = BoundsRequest {
             left: offset_term,
             right: length_term,
@@ -1654,6 +1796,14 @@ impl Analyzer<'_, '_> {
                 _ => Vec::new(),
             }
         };
+        // A failed optional transport is not a theorem. Put its frozen
+        // output relation on a private affine copy only after the ordinary
+        // judgment failed, and retain no proof from this explanatory query.
+        let lost_header = if discharged || refuted {
+            None
+        } else {
+            self.reasoning().explain_lost_header(states, &[goal()])
+        };
         let ordinal = u32::try_from(self.output.obligations.len())
             .expect("ENT obligation-root ordinal exceeds the u32 identity space");
         if let Some(root) = derivation {
@@ -1681,6 +1831,8 @@ impl Analyzer<'_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by,
+            lost_header,
+            selected_return: None,
         });
     }
 
@@ -1912,6 +2064,8 @@ impl Analyzer<'_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by: Vec::new(),
+            lost_header: None,
+            selected_return: None,
         });
     }
 
@@ -2000,4 +2154,17 @@ pub(super) fn set_target_place(target: &CheckedSetTarget) -> Option<ResolvedPlac
 /// subscript by its captured offset [REF-1].
 fn judged_place(root: &CheckedContainerRoot) -> ResolvedPlace {
     root.proof_place()
+}
+
+/// [FN-9, MSR-3] the terms a postcondition place's subscript is judged over
+/// in place of the current offset and base length: the function-entry value
+/// of a formal offset, and the entry length of a base the place reads at
+/// function entry. `None` keeps the ordinary current term. `residual`
+/// replaces the bound as the subscript's own spelling renders it, for a place
+/// whose operands denote another state than the body's spelling of them does.
+#[derive(Clone, Default)]
+pub(super) struct IndexTerms {
+    pub(super) offset: Option<TermId>,
+    pub(super) length: Option<TermId>,
+    pub(super) residual: Option<String>,
 }

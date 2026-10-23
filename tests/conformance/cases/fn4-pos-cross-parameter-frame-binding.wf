@@ -1,0 +1,37 @@
+struct Pair {
+  left: u64;
+  right: u64;
+}
+
+interface Touch {
+  fn touch(pair: &Pair, other: &u64) -> result: unit writes(pair.left), writes(other) contract {
+    ensures pair^.right == entry(pair)^.right;
+  };
+}
+
+fn update(actual_pair: &Pair, actual_other: &u64) -> updated: unit writes(actual_other) {
+  set actual_other^ = 1_u64;
+  return unit;
+}
+
+binding OtherTouch : Touch {
+  touch = update;
+}
+
+fn exercise<interface Touch>(target: &Pair, counter: &u64) -> saved: u64 writes(target), writes(counter) contract {
+  ensures saved == entry(target)^.right;
+} {
+  Touch::touch(pair: target, other: counter);
+  return target^.right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let initial = Pair(left: 0_u64, right: 9_u64);
+  let count = 0_u64;
+  let saved = exercise::<OtherTouch>(target: &initial, counter: &count);
+  let rest = 9_u64 - saved;
+  if count != 1_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias marker = pkg::data::marker;
+
+struct Holder {
+  value: u32;
+  other: u32;
+}
+
+fn main() -> status: ExitStatus pure {
+  let holder = Holder(value: 0_u32, other: 0_u32);
+  set holder.value = marker;
+  set holder.other = 1_u32;
+  let wanted = marker;
+  return exit_status(code: 0_u8);
+}

@@ -20,7 +20,7 @@ fn relay(owner: Owner) -> result: Owner pure {
   return move owner;
 }
 
-fn clear(owner: &Owner) -> result: unit writes(owner) {
+fn wipe(owner: &Owner) -> result: unit writes(owner) {
   set owner^ = make_empty();
   return unit;
 }
@@ -57,7 +57,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let empty = make_empty();
   swap(first: &abandoned, second: &empty);
   swap(first: &empty, second: &empty);
-  clear(owner: &empty);
+  wipe(owner: &empty);
   abandon(owner: move abandoned);
   let consumed_left = box_slots_new::<u8>(capacity: 1_u64);
   place_back(window: &consumed_left.inner, value: 11_u8);

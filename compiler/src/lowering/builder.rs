@@ -28,9 +28,9 @@ use crate::semantic::CheckedSetTarget;
 use crate::semantic::permission::PermissionSite;
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedDrop, CheckedEffectStep, CheckedExpression,
-    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedParameter,
-    CheckedProgramData, CheckedProjectedDrop, CheckedShared, CheckedStatement, CheckedValue,
-    FunctionPermissions, MeasureCell, MeasuredKind,
+    CheckedMatchArm, CheckedMatchSelection, CheckedMatchType, CheckedMeasure, CheckedMode,
+    CheckedNominalKind, CheckedParameter, CheckedProgramData, CheckedProjectedDrop, CheckedShared,
+    CheckedStatement, CheckedValue, FunctionPermissions, MeasureCell, MeasuredKind,
 };
 
 use super::*;
@@ -167,11 +167,25 @@ pub(crate) fn lower_checked_from(
         .variants
         .iter()
         .map(|variant| {
-            checked.data.functions[variant.source.0 as usize]
-                .symbol
-                .clone()
+            let function = &checked.data.functions[variant.source.0 as usize];
+            if function.body.is_none() && function.symbol == "std.snapshot.capture_export" {
+                let map = function
+                    .parameters
+                    .get(1)
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                let IrType::Nominal(id) = lower_type(types, map.ty)? else {
+                    return Err(LoweringFailure::InvalidCheckedProgram);
+                };
+                Ok(format!(
+                    "{}.typed.{}",
+                    function.symbol,
+                    nominals[id.index()].link_name()
+                ))
+            } else {
+                Ok(function.symbol.clone())
+            }
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, LoweringFailure>>()?;
     let mut functions = physical
         .variants
         .iter()
@@ -185,9 +199,12 @@ pub(crate) fn lower_checked_from(
                 nominals: &nominals,
                 elements: &elements,
                 constants: &constants,
+                checked_functions: &checked.data.functions,
                 function_results: &function_results,
                 synthesis: &synthesis,
                 lock_ledger_sources: &checked.data.lock_ledger_sources,
+                target_ledger_sources: &checked.data.target_ledger_sources,
+                wait_report_sources: &checked.data.wait_report_sources,
             };
             lower_function(
                 function,
@@ -250,10 +267,14 @@ struct LoweringContext<'program> {
     nominals: &'program [IrNominal],
     elements: &'program [IrType],
     constants: &'program [IrGlobalConstant],
+    /// Checked source bodies used to derive guard consequences through calls.
+    checked_functions: &'program [crate::semantic::CheckedFunction],
     /// Every physical function's declared IR result, indexed by its IR ordinal.
     function_results: &'program [IrType],
     synthesis: &'program SynthesisCell,
-    lock_ledger_sources: &'program HashMap<NodePath, String>,
+    lock_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    target_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    wait_report_sources: &'program HashMap<NodePath, crate::SourceDescription>,
 }
 
 fn lower_scalar_constant(value: &CheckedValue) -> Result<IrConstant, LoweringFailure> {
@@ -451,6 +472,21 @@ fn lower_function<'program>(
     permissions: Option<&'program FunctionPermissions>,
     overlap: OverlapLowering,
 ) -> Result<IrFunction, LoweringFailure> {
+    // Held calls share their caller's native executor preparation and deferred
+    // activation. Keep both their ordinary forwarding bodies and atomic owners
+    // on that executor, including conditional calls and nested counted loops.
+    // The checked inventory includes calls through function-kind formals; this
+    // chooses a sequential actualization without changing PAR permission.
+    let overlap = if overlap == OverlapLowering::On
+        && (!function.held_parameters.is_empty() || !function.held_calls.is_empty())
+    {
+        context.synthesis.borrow_mut().note_narrowing(format!(
+            "PAR actualization  {symbol}  narrowed: held contracts retain the caller's native executor"
+        ));
+        OverlapLowering::Off
+    } else {
+        overlap
+    };
     // One of the compiler-owned [PRE-1] records: declared body-less exactly
     // like a host function, but with no trusted-base object behind it, so the
     // compiler emits the body here. Only a program that called the row
@@ -722,6 +758,7 @@ struct IrBuilder<'program> {
     nominals: &'program [IrNominal],
     elements: &'program [IrType],
     constants: &'program [IrGlobalConstant],
+    checked_functions: &'program [crate::semantic::CheckedFunction],
     bindings: HashMap<BindingId, IrValueId>,
     parameters: Vec<(IrValueId, IrType)>,
     readonly_reference_parameters: Vec<IrValueId>,
@@ -784,8 +821,10 @@ struct IrBuilder<'program> {
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
     /// Source citations and developer lines recorded by atomic lowering.
-    lock_ledger_sources: &'program HashMap<NodePath, String>,
-    lock_ledger: Vec<String>,
+    lock_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    target_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    wait_report_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    lock_ledger: Vec<crate::SourceDescription>,
     /// Atomic entry roots whose completed statements permit concurrent readers.
     readonly_atomic_roots: std::collections::HashSet<BindingId>,
     /// Executing split contexts, including enclosing chunks' permissions.
@@ -827,9 +866,12 @@ impl<'program> IrBuilder<'program> {
             nominals,
             elements,
             constants,
+            checked_functions,
             function_results,
             synthesis,
             lock_ledger_sources,
+            target_ledger_sources,
+            wait_report_sources,
         } = context;
         let mut builder = Self {
             target,
@@ -838,6 +880,7 @@ impl<'program> IrBuilder<'program> {
             nominals,
             elements,
             constants,
+            checked_functions,
             bindings: HashMap::new(),
             parameters: Vec::new(),
             readonly_reference_parameters: Vec::new(),
@@ -865,6 +908,8 @@ impl<'program> IrBuilder<'program> {
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
             lock_ledger_sources,
+            target_ledger_sources,
+            wait_report_sources,
             lock_ledger: Vec::new(),
             readonly_atomic_roots: std::collections::HashSet::new(),
             capture_write_contexts: Vec::new(),
@@ -896,9 +941,12 @@ impl<'program> IrBuilder<'program> {
             nominals: self.nominals,
             elements: self.elements,
             constants: self.constants,
+            checked_functions: self.checked_functions,
             function_results: self.function_results,
             synthesis: self.synthesis,
             lock_ledger_sources: self.lock_ledger_sources,
+            target_ledger_sources: self.target_ledger_sources,
+            wait_report_sources: self.wait_report_sources,
         }
     }
 
@@ -1135,7 +1183,7 @@ impl<'program> IrBuilder<'program> {
                     }
                 });
                 if let Some(line) = conflict {
-                    self.synthesis.borrow_mut().note_storage_conflict(line);
+                    self.synthesis.borrow_mut().note_narrowing(line);
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 let Some(value) = value else {
@@ -1476,7 +1524,9 @@ impl<'program> IrBuilder<'program> {
                 // checked fact to semantic flow. They have no runtime value,
                 // effect, branch, or instruction.
                 CheckedStatement::Proof(_) => {}
-                CheckedStatement::Return { value, drops, .. } => {
+                CheckedStatement::Return {
+                    node_path, value, drops,
+                } => {
                     if let CheckedExpression::UserCall {
                         tail_transfer: true,
                         arguments,
@@ -1494,7 +1544,7 @@ impl<'program> IrBuilder<'program> {
                         // A self transfer replaces this activation, which is
                         // an exit [WAIT-3, SHARE-2].
                         self.leave_atomics(0)?;
-                        self.join_contexts()?;
+                        self.join_contexts(node_path)?;
                         self.terminate(IrTerminator::Jump {
                             target,
                             arguments,
@@ -1507,7 +1557,7 @@ impl<'program> IrBuilder<'program> {
                     // The objects are unlocked before the join, so a context
                     // this activation waits for can reach them [SHARE-2].
                     self.leave_atomics(0)?;
-                    self.join_contexts()?;
+                    self.join_contexts(node_path)?;
                     self.terminate(IrTerminator::Return { value, drops })?;
                 }
                 CheckedStatement::Give { value, drops, .. } => {
@@ -1618,7 +1668,7 @@ impl<'program> IrBuilder<'program> {
                 )?,
                 CheckedStatement::Match {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     continues,
                     ..
@@ -1626,7 +1676,7 @@ impl<'program> IrBuilder<'program> {
                     if !self.lower_conditional_call(statement)? {
                         self.lower_match(
                             scrutinee,
-                            *enum_type,
+                            *match_type,
                             arms,
                             *continues,
                             None,
@@ -1640,7 +1690,7 @@ impl<'program> IrBuilder<'program> {
                     result_mode,
                     result_range_element,
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     continues,
                     ..
@@ -1678,7 +1728,7 @@ impl<'program> IrBuilder<'program> {
                     };
                     self.lower_match(
                         scrutinee,
-                        *enum_type,
+                        *match_type,
                         arms,
                         *continues,
                         Some((*binding, result)),
@@ -1693,7 +1743,7 @@ impl<'program> IrBuilder<'program> {
         // [WAIT-3] a context no later statement of its block used is joined
         // at the block's end, before the block's releases and its successor.
         if self.current.is_some() {
-            self.await_contexts_before(outer_pending, usize::MAX)?;
+            self.await_contexts_at_block_end(outer_pending)?;
         }
         self.pending_contexts.truncate(outer_pending);
         Ok(())
@@ -1703,7 +1753,7 @@ impl<'program> IrBuilder<'program> {
     fn lower_match(
         &mut self,
         scrutinee: &CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: &[CheckedMatchArm],
         continues: bool,
         value_binding: Option<(BindingId, IrType)>,
@@ -1726,7 +1776,7 @@ impl<'program> IrBuilder<'program> {
         self.lower_match_from_value(
             scrutinee,
             borrowed_address,
-            enum_type,
+            match_type,
             arms,
             continues,
             value_binding,
@@ -1740,7 +1790,7 @@ impl<'program> IrBuilder<'program> {
         &mut self,
         scrutinee: IrValueId,
         borrowed_address: Option<IrValueId>,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: &[CheckedMatchArm],
         continues: bool,
         value_binding: Option<(BindingId, IrType)>,
@@ -1771,18 +1821,46 @@ impl<'program> IrBuilder<'program> {
         for _ in arms {
             arm_blocks.push(self.new_block(&[])?.0);
         }
-        self.terminate(IrTerminator::Match {
-            scrutinee,
-            enum_type: crate::lowering::lower_enum_type(self.erasure, enum_type)?,
-            targets: arms
-                .iter()
-                .zip(&arm_blocks)
-                .map(|(arm, block)| IrMatchTarget {
-                    tag: arm.tag,
-                    block: *block,
-                })
-                .collect(),
-        })?;
+        let terminator = match match_type {
+            CheckedMatchType::Enum(enum_type) => IrTerminator::Match {
+                scrutinee,
+                enum_type: crate::lowering::lower_enum_type(self.erasure, enum_type)?,
+                targets: arms
+                    .iter()
+                    .zip(&arm_blocks)
+                    .map(|(arm, block)| {
+                        let CheckedMatchSelection::Variant(tag) = arm.selection else {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        };
+                        Ok(IrMatchTarget { tag, block: *block })
+                    })
+                    .collect::<Result<_, _>>()?,
+            },
+            CheckedMatchType::Integer(_) => {
+                let mut targets = Vec::with_capacity(arms.len());
+                let mut default = None;
+                for (arm, block) in arms.iter().zip(&arm_blocks) {
+                    match arm.selection {
+                        CheckedMatchSelection::Integer(value) => {
+                            targets.push(IrIntegerMatchTarget {
+                                value,
+                                block: *block,
+                            });
+                        }
+                        CheckedMatchSelection::Else => default = Some(*block),
+                        CheckedMatchSelection::Variant(_) => {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        }
+                    }
+                }
+                IrTerminator::IntegerMatch {
+                    scrutinee,
+                    targets,
+                    default,
+                }
+            }
+        };
+        self.terminate(terminator)?;
         for (arm, block) in arms.iter().zip(arm_blocks) {
             self.current = Some(block);
             self.bindings = base_bindings.clone();
@@ -1791,7 +1869,7 @@ impl<'program> IrBuilder<'program> {
             // fields it names: the match is the point at which the scrutinee
             // ceases to exist.
             if !arm.covered.is_empty() {
-                let CheckedEnumType::Nominal(nominal) = enum_type else {
+                let CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) = match_type else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
                 let nominal = self.erased(nominal)?;
@@ -1806,7 +1884,10 @@ impl<'program> IrBuilder<'program> {
                         IrOperation::ProjectVariant {
                             aggregate: scrutinee,
                             nominal,
-                            variant: arm.tag,
+                            variant: match arm.selection {
+                                CheckedMatchSelection::Variant(tag) => tag,
+                                _ => return Err(LoweringFailure::InvalidCheckedProgram),
+                            },
                             field: *field,
                         },
                     )?;
@@ -1815,7 +1896,7 @@ impl<'program> IrBuilder<'program> {
                 self.append_drops(releases)?;
             }
             for binder in &arm.binders {
-                let CheckedEnumType::Nominal(nominal) = enum_type else {
+                let CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) = match_type else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
                 let nominal = self.erased(nominal)?;
@@ -1826,7 +1907,10 @@ impl<'program> IrBuilder<'program> {
                         IrOperation::ProjectVariant {
                             aggregate: scrutinee,
                             nominal,
-                            variant: arm.tag,
+                            variant: match arm.selection {
+                                CheckedMatchSelection::Variant(tag) => tag,
+                                _ => return Err(LoweringFailure::InvalidCheckedProgram),
+                            },
                             field: binder.field,
                         },
                     )?
@@ -1840,7 +1924,10 @@ impl<'program> IrBuilder<'program> {
                             address,
                             projection: IrPlaceStep::EnumVariant {
                                 nominal,
-                                variant: arm.tag,
+                                variant: match arm.selection {
+                                    CheckedMatchSelection::Variant(tag) => tag,
+                                    _ => return Err(LoweringFailure::InvalidCheckedProgram),
+                                },
                                 field: binder.field,
                             },
                         },
@@ -2014,6 +2101,7 @@ impl<'program> IrBuilder<'program> {
                     },
                 )?;
                 self.source_calls.push(IrSourceCall {
+                    origin: call.clone(),
                     result,
                     arguments: source_arguments,
                     returned_borrow_argument: result_borrow.as_ref().map(|borrow| borrow.argument),
@@ -2543,8 +2631,8 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// [SET-1] the one-target commit: the right-hand side is
-    /// evaluated once and completely, then the one target is written by the
-    /// same commit a target list uses.
+    /// evaluated once and completely, then the one target is evaluated and
+    /// written by the same commit a target list uses.
     ///
     /// [WIN-3] assigning over an owned place releases the old value, so the
     /// displaced owner is read at the commit and released after the write.
@@ -2556,8 +2644,11 @@ impl<'program> IrBuilder<'program> {
         value: &CheckedExpression,
         displaces_live_value: bool,
     ) -> Result<(), LoweringFailure> {
-        let target = self.prepare_target(target, displaces_live_value)?;
+        // [SET-1] the right-hand side is evaluated first, and the target is
+        // then resolved in the state it left, so no address, bound, or slot
+        // computed for the target is carried across the right-hand side.
         let value = self.expression(value)?;
+        let target = self.prepare_target(target, displaces_live_value)?;
         let displaced = self.displaced_releases(&target)?;
         self.write_target(&target, value)?;
         self.append_drops(displaced)

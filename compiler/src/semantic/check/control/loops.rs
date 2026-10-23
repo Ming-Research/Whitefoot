@@ -89,7 +89,7 @@ struct LoopReferenceEquation {
 /// [`BodyChecker::record_backedge_supersedes`] reads.
 struct LoopReferenceHeader {
     equations: Vec<LoopReferenceEquation>,
-    spelled: HashSet<(CaptureId, BindingId)>,
+    spelled: HashSet<(CaptureId, crate::semantic::places::CapturedTerm)>,
     call_values: HashSet<BindingId>,
 }
 
@@ -120,6 +120,18 @@ impl<'unit> Checker<'_, 'unit> {
         rebound: &HashSet<DeclarationId>,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
     ) -> Result<LoopReferenceHeader, CheckStop> {
+        if let Some(killed) = self.body.loop_invalidated_refinements.get(&id) {
+            for local in bindings.values_mut() {
+                for witness in &mut local.refinement_witnesses {
+                    if killed
+                        .iter()
+                        .any(|recorded| recorded.same_occurrence(witness))
+                    {
+                        witness.valid = false;
+                    }
+                }
+            }
+        }
         let mut declarations = bindings.keys().copied().collect::<Vec<_>>();
         declarations.sort_by_key(|declaration| declaration.index());
         let mut equations = Vec::new();
@@ -181,13 +193,15 @@ impl<'unit> Checker<'_, 'unit> {
         {
             for path in &mut reference.paths {
                 for binding in &superseded {
-                    path.supersede_binding(*binding);
+                    path.supersede_term(*binding);
                 }
                 spelled.extend(path.spelled_indices());
             }
         }
         for local in bindings.values_mut() {
-            if superseded.contains(&local.binding) {
+            if superseded.contains(&crate::semantic::places::CapturedTerm::Binding(
+                local.binding,
+            )) {
                 local.call_value = false;
             }
         }
@@ -438,7 +452,7 @@ impl<'unit> Checker<'_, 'unit> {
             SemanticIssueKind::InvalidReferenceUse {
                 binder: self.types.declarations.declaration_spelling(declaration)?,
                 event: event.phrase(),
-                mechanical_fix: super::super::references::REF2_FORM_AGAIN,
+                mechanical_fix: super::super::references::REF2_FORM_AGAIN.to_owned(),
             },
         )
     }
@@ -591,6 +605,7 @@ impl<'unit> Checker<'_, 'unit> {
                     read_only_state: false,
                     reference: None,
                     refinement_witnesses: Vec::new(),
+                    handle_watch: None,
                     call_value: false,
                 },
             )
@@ -707,6 +722,17 @@ impl<'unit> Checker<'_, 'unit> {
             &header_bindings,
             &body_bindings,
         )?;
+        let mut backedges = checked
+            .loop_transfers
+            .iter()
+            .filter(|edge| edge.target == id && edge.is_continue)
+            .map(|edge| &edge.bindings)
+            .collect::<Vec<_>>();
+        if checked.can_continue {
+            backedges.push(&body_bindings);
+        }
+        self.body
+            .record_loop_refinement_backedges(id, &header_bindings, &backedges)?;
         if checked.can_continue
             && header_keys.iter().any(|key| {
                 !Checker::loop_binding_agrees(header_bindings.get(key), body_bindings.get(key))
@@ -718,15 +744,6 @@ impl<'unit> Checker<'_, 'unit> {
                 .unsupported(UnsupportedSemanticFeature::OwnershipJoin, node);
         }
 
-        let mut backedges = checked
-            .loop_transfers
-            .iter()
-            .filter(|edge| edge.target == id && edge.is_continue)
-            .map(|edge| &edge.bindings)
-            .collect::<Vec<_>>();
-        if checked.can_continue {
-            backedges.push(&body_bindings);
-        }
         for edge in &backedges {
             self.types.declarations.judge_backedge_liveness(
                 node,
@@ -878,7 +895,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
@@ -895,7 +912,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
@@ -1051,6 +1068,17 @@ impl<'unit> Checker<'_, 'unit> {
             &header_bindings,
             &body_bindings,
         )?;
+        let mut backedges = checked
+            .loop_transfers
+            .iter()
+            .filter(|edge| edge.target == id && edge.is_continue)
+            .map(|edge| &edge.bindings)
+            .collect::<Vec<_>>();
+        if checked.can_continue {
+            backedges.push(&body_bindings);
+        }
+        self.body
+            .record_loop_refinement_backedges(id, &header_bindings, &backedges)?;
         if checked.can_continue
             && base_keys.iter().any(|key| {
                 !Checker::loop_binding_agrees(header_bindings.get(key), body_bindings.get(key))
@@ -1062,15 +1090,6 @@ impl<'unit> Checker<'_, 'unit> {
                 .unsupported(UnsupportedSemanticFeature::OwnershipJoin, node);
         }
 
-        let mut backedges = checked
-            .loop_transfers
-            .iter()
-            .filter(|edge| edge.target == id && edge.is_continue)
-            .map(|edge| &edge.bindings)
-            .collect::<Vec<_>>();
-        if checked.can_continue {
-            backedges.push(&body_bindings);
-        }
         for edge in &backedges {
             self.types.declarations.judge_backedge_liveness(
                 node,
@@ -1163,6 +1182,10 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl LoopTransferState {
+    pub(super) fn forget_refinement_occurrence(&mut self, origin: &crate::NodePath) {
+        Checker::forget_refinement_occurrence(&mut self.bindings, origin);
+    }
+
     /// [REF-2] the scope of the local variables a break edge leaves ends
     /// there, so a reference whose path starts at one of them is invalid on
     /// this edge.
@@ -1172,6 +1195,49 @@ impl LoopTransferState {
 }
 
 impl BodyChecker {
+    /// [ENT-3.S15] header truth is the intersection of the preheader and
+    /// every executable normal or continue backedge, including a continue
+    /// transferred through a nested loop. Only loss of an enclosing match
+    /// occurrence changes this finite summary; an inner rematch is distinct.
+    fn record_loop_refinement_backedges(
+        &mut self,
+        id: CheckedLoopId,
+        header: &HashMap<DeclarationId, LocalBinding>,
+        backedges: &[&HashMap<DeclarationId, LocalBinding>],
+    ) -> Result<(), CheckStop> {
+        let killed = self.loop_invalidated_refinements.entry(id).or_default();
+        let mut changed = false;
+        for (declaration, local) in header {
+            for witness in &local.refinement_witnesses {
+                if !witness.valid
+                    || killed
+                        .iter()
+                        .any(|recorded| recorded.same_occurrence(witness))
+                {
+                    continue;
+                }
+                let survives = backedges.iter().all(|edge| {
+                    edge.get(declaration).is_some_and(|local| {
+                        local
+                            .refinement_witnesses
+                            .iter()
+                            .any(|candidate| candidate.same_occurrence(witness) && candidate.valid)
+                    })
+                });
+                if !survives {
+                    let mut invalidated = witness.clone();
+                    invalidated.valid = false;
+                    killed.push(invalidated);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            return Err(CheckStop::ReferenceSummaryChanged);
+        }
+        Ok(())
+    }
+
     /// [REF-1] records the binding of each index capture a header reference
     /// spelled at the header and holds superseded on the backedge, and
     /// [EFF-1] each parameter holding its call value at the header and not on
@@ -1183,7 +1249,7 @@ impl BodyChecker {
     fn record_backedge_supersedes(
         &mut self,
         id: CheckedLoopId,
-        spelled: &HashSet<(CaptureId, BindingId)>,
+        spelled: &HashSet<(CaptureId, crate::semantic::places::CapturedTerm)>,
         call_values: &HashSet<BindingId>,
         header_keys: &[DeclarationId],
         backedge: &HashMap<DeclarationId, LocalBinding>,
@@ -1196,7 +1262,9 @@ impl BodyChecker {
                 continue;
             };
             if !local.call_value && call_values.contains(&local.binding) {
-                grown |= recorded.insert(local.binding);
+                grown |= recorded.insert(crate::semantic::places::CapturedTerm::Binding(
+                    local.binding,
+                ));
             }
             let Some(reference) = local.reference.as_ref() else {
                 continue;

@@ -14,7 +14,7 @@ alias close_directory_source = std::fs::close_directory_source;
 alias close_read = std::fs::close_read;
 alias directory_next = std::fs::directory_next;
 alias exit_status = std::process::exit_status;
-alias host_copy_bytes = std::text::host_copy_bytes;
+alias host_copy_name_bytes = std::text::host_copy_name_bytes;
 alias open_directory = std::fs::open_directory;
 alias open_directory_source = std::fs::open_directory_source;
 alias open_file = std::fs::open_file;
@@ -199,10 +199,10 @@ fn zeroed_bytes(count: u64) -> made: Box<Slots<u8>> pure contract {
 }
 
 fn widen_window(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell) {
-  doc "Raises one byte window's capacity and length to total and zero-fills the new slots, keeping the bytes it already holds, within the 2^30-byte line ceiling. A line longer than the read window is held whole, because both the matcher and the published record need the complete line, so the only bound on a line is this ceiling and never the initial window. The fill is what lets a range reference cover the new slots [OP-10, REF-4].";
+  doc "Raises one byte window's capacity and length to a total above its capacity and zero-fills the new slots, keeping the bytes it already holds, within the 2^30-byte line ceiling. A line longer than the read window is held whole, because both the matcher and the published record need the complete line, so the only bound on a line is this ceiling and never the initial window. The fill is what lets a range reference cover the new slots [OP-10, REF-4].";
   let capacity = cell^.inner.cap;
   let bounded = total <= 1073741824_u64;
-  let larger = total >= capacity;
+  let larger = total > capacity;
   if bounded {
     if larger {
       grow(cell: cell, capacity: total);
@@ -218,12 +218,7 @@ fn widen_window(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell)
     if done {
       break @fill;
     }
-    let room = cell^.inner.len < cell^.inner.cap;
-    if room {
-      place_back(window: &cell^.inner, value: 0_u8);
-    } else {
-      return False();
-    }
+    place_back(window: &cell^.inner, value: 0_u8);
   }
   return True();
 }
@@ -291,22 +286,17 @@ fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> 
 } {
   doc "Appends as much of one static message as the destination still holds. The destination's capacity is a written operand rather than a measure the row writes, so the published bound is a fact about a value this caller supplied [MSR-3].";
   let spare = destination^.len;
-  let admitted = filled <= spare;
   let length = text^.len;
-  if admitted {
-    for @append (at in filled..spare) {
-      let taken = at -wrap filled;
-      let done = taken >= length;
-      if done {
-        return at;
-      }
-      let byte = text^[taken];
-      set destination^[at] = byte;
+  for @append (at in filled..spare) {
+    let taken = at -wrap filled;
+    let done = taken >= length;
+    if done {
+      return at;
     }
-    return spare;
-  } else {
-    return filled;
+    let byte = text^[taken];
+    set destination^[at] = byte;
   }
+  return spare;
 }
 
 fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) -> result: u64 reads(source), writes(destination) {
@@ -700,11 +690,6 @@ fn publish_oversized(factory: &HandleFactory, out: &OutputStream, path: &[u8], p
     return 6_u8;
   }
   let numbered = filled +wrap 1_u64;
-  let numbered_fits = numbered <= scratch_room;
-  if numbered_fits {
-  } else {
-    return 6_u8;
-  }
   match publish_all(factory: factory, output: out, source: scratch, length: numbered) {
     Ok(value: published) => {
     }
@@ -1092,48 +1077,8 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           } else {
             break @stored_entry;
           }
-          let ordered = name_at <= name_end;
-          if ordered {
-          } else {
-            break @stored_entry;
-          }
-          let addressable = name_end <= entries_room;
-          if addressable {
-          } else {
-            break @stored_entry;
-          }
           set at = name_end;
-          let dotted = 0_u8;
-          let single = name_count == 1_u64;
-          if single {
-            let first_readable = name_at < entries_room;
-            if first_readable {
-              let first = entries^[name_at];
-              if first == 46_u8 {
-                set dotted = 1_u8;
-              }
-            }
-          }
-          let paired = name_count == 2_u64;
-          if paired {
-            let second_at = name_at +wrap 1_u64;
-            let first_readable = name_at < entries_room;
-            let second_readable = second_at < entries_room;
-            if first_readable {
-              if second_readable {
-                let first = entries^[name_at];
-                let second = entries^[second_at];
-                if first == 46_u8 {
-                  if second == 46_u8 {
-                    set dotted = 1_u8;
-                  }
-                }
-              }
-            }
-          }
-          let not_dotted = dotted == 0_u8;
-          let component_fits = name_count <= 1023_u64;
-          let usable = band(not_dotted, component_fits);
+          let usable = name_count <= 1023_u64;
           if usable {
             let kept = keep_entry(records: &records_cell, starts: &starts_cell, entries: entries, kind: kind, length_low: name_length_low, length_high: name_length_high, name_at: name_at, name_count: name_count);
             if kept {
@@ -1172,22 +1117,12 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     if done {
       break @sort;
     }
-    let selected_readable = selected < order_room;
-    if selected_readable {
-    } else {
-      break @sort;
-    }
     let best = selected;
     let probe = selected +wrap 1_u64;
     loop @scan {
       let scan_room = order^.len;
       let scanned = probe >= stored;
       if scanned {
-        break @scan;
-      }
-      let probe_readable = probe < scan_room;
-      if probe_readable {
-      } else {
         break @scan;
       }
       let best_readable = best < scan_room;
@@ -1209,9 +1144,9 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
     }
     let best_readable = best < order_room;
     if best_readable {
-      let held = order^[selected];
+      let observed = order^[selected];
       let winner = order^[best];
-      set order^[best] = held;
+      set order^[best] = observed;
       set order^[selected] = winner;
     }
     set selected = selected +wrap 1_u64;
@@ -1219,16 +1154,10 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
   let visited = 0_u64;
   loop @process {
     let names_room = names^.len;
-    let order_room = order^.len;
     let child_room = child^.len;
     let prefix_room = prefix^.len;
     let done = visited >= stored;
     if done {
-      break @process;
-    }
-    let readable = visited < order_room;
-    if readable {
-    } else {
       break @process;
     }
     let base = order^[visited];
@@ -1292,11 +1221,6 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
       }
       let prefix_readable = cursor < prefix_room;
       if prefix_readable {
-      } else {
-        break @prefix_copy;
-      }
-      let writable = cursor < child_room;
-      if writable {
       } else {
         break @prefix_copy;
       }
@@ -1543,7 +1467,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     match arg_get(args: args, position: 1_u64) {
       Ok(value: text) => {
         let pattern_room = pattern^.len;
-        match host_copy_bytes(value: &text, destination: pattern, start: 0_u64, end: pattern_room) {
+        match host_copy_name_bytes(value: &text, destination: pattern, start: 0_u64, end: pattern_room) {
           Ok(value: copied) => {
             set pattern_length = copied;
           }
@@ -1559,7 +1483,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     match arg_get(args: args, position: 2_u64) {
       Ok(value: text) => {
         let name_room = root_name^.len;
-        match host_copy_bytes(value: &text, destination: root_name, start: 0_u64, end: name_room) {
+        match host_copy_name_bytes(value: &text, destination: root_name, start: 0_u64, end: name_room) {
           Ok(value: copied) => {
             set root_length = copied;
           }
@@ -1599,38 +1523,10 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     }
     return exit_status(code: 2_u8);
   }
-  let root_name_room = root_name^.len;
-  let root_length_fits = root_length <= root_name_room;
-  if root_length_fits {
-  } else {
-    let length = 0_u64;
-    let report_room = report^.len;
-    let view = &reason_root_too_long[0_u64..29_u64];
-    set length = append_slice(destination: report, capacity: report_room, filled: length, text: view);
-    match publish_all(factory: files, output: err, source: report, length: length) {
-      Ok(value: published) => {
-      }
-      Err(error: problem) => {
-      }
-    }
-    return exit_status(code: 2_u8);
-  }
   let copied = 0_u64;
   loop @root_copy_out {
-    let name_room = root_name^.len;
-    let root_room = root_path^.len;
     let done = copied >= root_length;
     if done {
-      break @root_copy_out;
-    }
-    let readable = copied < name_room;
-    if readable {
-    } else {
-      break @root_copy_out;
-    }
-    let writable = copied < root_room;
-    if writable {
-    } else {
       break @root_copy_out;
     }
     let byte = root_name^[copied];
@@ -1762,7 +1658,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);

@@ -64,9 +64,11 @@ impl IrBuilder<'_> {
             "remove_at" => self.row_remove_at(),
             "append" => self.row_append(),
             "split_off" => self.row_split_off(),
+            "clear" => self.row_clear(),
             "swap" => self.row_swap(),
             "free_empty" => self.row_free_empty(),
             "shared_new" => self.row_shared_new(),
+            "shared_close" => self.row_shared_close(),
             "decision_cell_new" => self.row_decision_cell_new(),
             "decision_cell_read" => self.row_decision_cell(None),
             "claim_written" => self.row_decision_cell(Some(1)),
@@ -183,6 +185,80 @@ impl IrBuilder<'_> {
         )?;
         self.store_addressed(state, value, referent)?;
         self.return_value(object)
+    }
+
+    /// `shared_close<T>(shared: Shared<T>) -> Option<T>`: counts the handle
+    /// out of its object, and the last handle moves the state out and returns
+    /// the object to the runtime [SHARE-1]. No statement holds the object
+    /// then: a close is a waiting call, which no atomic block contains, and
+    /// a statement that holds an object keeps a handle to it.
+    fn row_shared_close(&mut self) -> Result<(), LoweringFailure> {
+        let [shared] = self.row_parameters()?;
+        let IrType::Nominal(nominal) = self.value_type(shared)? else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrType::Nominal(option) = self.result else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let IrNominalKind::Shared {
+            state,
+            shape: IrShared::Object,
+        } = self
+            .nominals
+            .get(nominal.index())
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?
+            .kind
+        else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let referent = IrAddressed::of(state).ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        let last = self.define(IrType::Bool, IrOperation::SharedCountOut { object: shared })?;
+        let (taken, _) = self.new_block(&[])?;
+        let (left, _) = self.new_block(&[])?;
+        self.terminate(IrTerminator::Match {
+            scrutinee: last,
+            enum_type: IrEnumType::Bool,
+            targets: vec![
+                IrMatchTarget {
+                    tag: 1,
+                    block: taken,
+                },
+                IrMatchTarget {
+                    tag: 0,
+                    block: left,
+                },
+            ],
+        })?;
+        self.current = Some(taken);
+        let address = self.define(
+            IrType::Address(referent),
+            IrOperation::SharedState {
+                nominal,
+                object: shared,
+            },
+        )?;
+        let value = self.load_storage_value(address)?;
+        self.define(IrType::Unit, IrOperation::SharedFree { object: shared })?;
+        // [PRE-1] `Option`'s variants are `None` and then `Some`.
+        let some = self.define(
+            self.result,
+            IrOperation::ConstructEnum {
+                nominal: option,
+                variant: 1,
+                fields: vec![value],
+            },
+        )?;
+        self.return_value(some)?;
+        self.current = Some(left);
+        let none = self.define(
+            self.result,
+            IrOperation::ConstructEnum {
+                nominal: option,
+                variant: 0,
+                fields: Vec::new(),
+            },
+        )?;
+        self.return_value(none)
     }
 
     fn row_decision_cell_new(&mut self) -> Result<(), LoweringFailure> {
@@ -705,6 +781,18 @@ impl IrBuilder<'_> {
             },
         )?;
         self.return_value(transferred)
+    }
+
+    /// `clear(window)`: every element's release in logical order, then
+    /// `window.len` becomes zero; storage, `cap`, a Ring's `head` and a
+    /// Paged's pages are kept [OP-10]. The release work is the element type's
+    /// own, selected by the backend from the one release classification
+    /// [PROV-6], so one operation serves every droppable element type.
+    fn row_clear(&mut self) -> Result<(), LoweringFailure> {
+        let [window] = self.row_parameters()?;
+        self.window_parameter(window)?;
+        let cleared = self.define(IrType::Unit, IrOperation::RunClear { run: window })?;
+        self.return_value(cleared)
     }
 
     // ---- [OP-11] and [OP-14] -------------------------------------------

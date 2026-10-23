@@ -52,7 +52,8 @@ fn a_run_is_viewable_and_a_copy_view_dies_at_its_last_use() {
 
     let output = compile_and_run(&llvm);
     assert_eq!(output.status.code(), Some(0));
-    assert!(output.stdout.is_empty());
+    // The two-element reference's length and the drained one's [REF-4, MSR-1].
+    assert_eq!(output.stdout, [2, 0]);
     assert!(output.stderr.is_empty());
 }
 
@@ -109,7 +110,11 @@ fn a_bump_extent_hands_out_runs_and_refuses_the_one_it_cannot_hold() {
 
     let output = compile_and_run(&llvm);
     assert_eq!(output.status.code(), Some(0));
-    assert!(output.stdout.is_empty());
+    // The first run's length and the window's length after the fill, the second
+    // run's length, the length the 1024-slot take leaves, the opening free
+    // slots as two bytes (256), the free slots before the second carve (248)
+    // and the free slots a 1024-slot take would exceed (244) [MSR-1].
+    assert_eq!(output.stdout, [8, 8, 4, 12, 0, 1, 248, 244]);
     assert!(output.stderr.is_empty());
 }
 
@@ -138,7 +143,9 @@ fn the_fixed_run_library_proves_and_runs() {
 
     let output = compile_and_run(&llvm);
     assert_eq!(output.status.code(), Some(0));
-    assert!(output.stdout.is_empty());
+    // The lengths `vacant`, `vacant` at Option, `filled`, `take_at` and `rebase`
+    // leave, one byte each [MSR-1].
+    assert_eq!(output.stdout, [4, 4, 4, 2, 3]);
     assert!(output.stderr.is_empty());
 }
 

@@ -1,12 +1,69 @@
 //! The context runtime's part of [WAIT-2]'s progress promise: while every
 //! context keeps reaching a wait, a context whose wait has ended proceeds, and
-//! a program that can take no further step is stopped with a report. Each
-//! program here stopped, or ran on without end, on the runtime before the
-//! change that makes it pass, on the route or driver count it names
-//! (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.4).
-//! The last case is a bound spawn's result crossing its join [WAIT-3].
+//! a program that can take no further step is stopped with a report. Cases
+//! identify the prior failure they distinguish or the additional coverage
+//! they provide; the original progress witnesses are recorded in
+//! `research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.4.
+//! Bound-spawn cases also check their results, joins at block end [WAIT-3]
+//! and the source sites carried by a runtime stop.
 
 use super::support::{build_program, compile_program, compile_sources};
+
+/// Identities are assigned on the first actual guard/join park, so child
+/// numbering can follow either driver's schedule. Source descriptions remain
+/// exact, every identity is distinct, and the root retains identity zero.
+fn assert_report_waits(report: &str, expected: &[(Option<u64>, &str)]) {
+    let waits: Vec<_> = report
+        .lines()
+        .filter_map(|line| line.strip_prefix("  context "))
+        .map(|line| {
+            let (identity, site) = line.split_once(' ').expect("identity and wait site");
+            (
+                identity.parse::<u64>().expect("numeric context identity"),
+                site,
+            )
+        })
+        .collect();
+    assert_eq!(waits.len(), expected.len(), "{report}");
+    let identities: std::collections::BTreeSet<_> =
+        waits.iter().map(|(identity, _)| *identity).collect();
+    assert_eq!(identities.len(), waits.len(), "duplicate identity: {report}");
+    for (identity, site) in expected {
+        assert!(
+            waits.iter().any(|(actual_identity, actual_site)| {
+                actual_site == site
+                    && identity.map_or(*actual_identity != 0, |id| id == *actual_identity)
+            }),
+            "missing context {identity:?} at {site:?}: {report}"
+        );
+    }
+}
+
+#[test]
+fn wait_report_checks_accept_child_order_and_detect_wrong_reports() {
+    let expected = [
+        (Some(0), "waits at the root"),
+        (None, "waits at A"),
+        (None, "waits at B"),
+    ];
+    for report in [
+        "  context 0 waits at the root\n  context 1 waits at A\n  context 2 waits at B\n",
+        "  context 2 waits at A\n  context 0 waits at the root\n  context 1 waits at B\n",
+    ] {
+        assert_report_waits(report, &expected);
+    }
+    for report in [
+        "  context 0 waits at the root\n  context 1 waits at A\n",
+        "  context 0 waits at the root\n  context 1 waits at A\n  context 1 waits at B\n",
+        "  context 0 waits at the root\n  context 1 waits at A\n  context 2 waits at C\n",
+        "  context 3 waits at the root\n  context 1 waits at A\n  context 2 waits at B\n",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| assert_report_waits(report, &expected)).is_err(),
+            "accepted an incorrect report: {report}"
+        );
+    }
+}
 
 /// The routes and driver counts a program runs under: the kernel ring on
 /// one driver and on four, and the shared file adapter, where one driver
@@ -53,6 +110,24 @@ fn a_context_polling_an_object_lets_the_producer_run_on_one_driver() {
                 "drivers {drivers}, round {round}: {output:?}"
             );
         }
+    }
+}
+
+/// With one driver, each timer park leaves exactly one runnable context.
+/// The writer's atomic boundaries must return to service even with an empty
+/// ready queue so the repeated sleeps can expire and the reader can stop it.
+/// The monitor can rescue the old runtime, so this is end-to-end coverage;
+/// `driver_service_test.c` isolates the empty-queue service obligation
+/// without a monitor and rejects the old threshold check deterministically.
+#[test]
+fn a_periodic_sleeping_reader_progresses_beside_one_busy_writer() {
+    let program = build_program(&compile_program("lone_timer_writer.wf"));
+    for settings in [
+        &[("WF_DRIVERS", "1")][..],
+        &[("WF_DRIVERS", "1"), ("WF_IO_NO_NATIVE_RING", "1")][..],
+    ] {
+        let output = program.run_with_settings(None, settings);
+        assert_eq!(output.status.code(), Some(0), "{settings:?}: {output:?}");
     }
 }
 
@@ -144,7 +219,141 @@ fn a_program_that_can_take_no_step_stops_with_a_report_on_every_driver_count() {
                 report.contains("every context waits for a guard or for another context"),
                 "{name}, drivers {drivers}: {report}"
             );
+            let expected = if name == "guard_cycle.wf" {
+                &[
+                    (None, "waits for the guard of the atomic statement at guard_cycle.wf:7:3"),
+                    (None, "waits for the guard of the atomic statement at guard_cycle.wf:14:3"),
+                    (Some(0), "waits at guard_cycle.wf:27:3 to join contexts (implicit join before leaving this activation; spawn sites in this activation: context spawned at guard_cycle.wf:25:3, context spawned at guard_cycle.wf:26:3)"),
+                ][..]
+            } else {
+                &[
+                    (None, "waits for the guard of the atomic statement at own_guard.wf:2:3"),
+                    (Some(0), "waits at own_guard.wf:15:3 to join contexts (implicit join before leaving this activation; spawn sites in this activation: context spawned at own_guard.wf:14:3)"),
+                ][..]
+            };
+            assert_report_waits(&report, expected);
         }
+    }
+}
+
+/// The first producer fills eight slots and parks on its ninth put. Its
+/// named spawn joins at the end of the loop iteration, so the consumer
+/// after the loop cannot start. Both sides of that wait must be reported.
+#[test]
+fn a_deadlock_report_names_the_guard_and_the_implicit_loop_join() {
+    let program = build_program(&compile_program("deadlock_loop_join.wf"));
+    for drivers in ["1", "4"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_ne!(
+            output.status.code(),
+            Some(0),
+            "drivers {drivers}: {output:?}"
+        );
+        let report = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            report.lines().any(|line| line == "whitefoot completion: every context waits for a guard or for another context, and no host operation is outstanding"),
+            "drivers {drivers}: {report}"
+        );
+        assert_report_waits(
+            &report,
+            &[
+                (None, "waits for the guard of the atomic statement at deadlock_loop_join.wf:3:5"),
+                (Some(0), "waits at deadlock_loop_join.wf:25:3 to join the context spawned at deadlock_loop_join.wf:24:5 (implicit join at the end of this loop iteration)"),
+            ],
+        );
+    }
+}
+
+const WAITING_RESULT: &str = "fn wait_for_value(cell: Shared<u64>) -> result: u8 pure waits {
+  atomic value = &cell when value^ != 0_u64 {
+    set value^ = 2_u64;
+  }
+  return 0_u8;
+}
+
+";
+
+/// These joins have different source causes: a later statement names the
+/// binding, or an ordinary conditional block ends without naming it. The
+/// condition reads a parameter because [OP-5] refuses a condition the checker
+/// decides.
+#[test]
+fn a_deadlock_report_distinguishes_binding_use_from_ordinary_block_end() {
+    let cases = [
+        (
+            "deadlock_binding_use.wf",
+            "fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u64>(value: 0_u64);
+  let handle = shared_share::<u64>(shared: &cell);
+  let pending = spawn wait_for_value(cell: move handle);
+  let code = pending;
+  return std::process::exit_status(code: code);
+}
+",
+            "waits at deadlock_binding_use.wf:12:3 to join the context spawned at deadlock_binding_use.wf:11:3 (explicit use of the binding)",
+        ),
+        (
+            "deadlock_block_end.wf",
+            "fn run(go: u64) -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u64>(value: 0_u64);
+  if go == 0_u64 {
+    let handle = shared_share::<u64>(shared: &cell);
+    let pending = spawn wait_for_value(cell: move handle);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  return run(go: 0_u64);
+}
+",
+            "waits at deadlock_block_end.wf:13:3 to join the context spawned at deadlock_block_end.wf:12:5 (implicit join at the end of this block)",
+        ),
+    ];
+    for (name, main, expected_join) in cases {
+        let source = format!("{WAITING_RESULT}{main}");
+        let program = build_program(&compile_sources(&[(name, source.as_bytes())]));
+        for drivers in ["1", "4"] {
+            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+            assert_ne!(
+                output.status.code(),
+                Some(0),
+                "{name}, drivers {drivers}: {output:?}"
+            );
+            let report = String::from_utf8_lossy(&output.stderr);
+            let expected_guard =
+                format!("waits for the guard of the atomic statement at {name}:2:3");
+            assert_report_waits(
+                &report,
+                &[(None, expected_guard.as_str()), (Some(0), expected_join)],
+            );
+        }
+    }
+}
+
+/// Immediate named joins and repeated batches release contexts for reuse;
+/// the sums detect a lost, repeated or prematurely completed child. Passing on
+/// a runtime without a roster as well, it is the deadlock-sites cost fixture
+/// kept runnable; the roster's own invariants are checked by the C runtime
+/// fixtures.
+#[test]
+fn named_and_unnamed_context_batches_finish_and_reuse_their_storage() {
+    let program = build_program(&compile_program("context_starts.wf"));
+    for drivers in ["1", "4"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
+    }
+}
+
+/// Sixteen contexts pass one startup guard and independently start and join
+/// tiny children. Each publishes only its final sum and completion count. Like
+/// the fixture above, it is the concurrent cost fixture kept runnable.
+#[test]
+fn concurrent_context_starts_preserve_every_workers_sum_and_completion() {
+    let program = build_program(&compile_program("context_starts_concurrent.wf"));
+    for drivers in ["1", "4"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
     }
 }
 
@@ -158,7 +367,7 @@ fn close(handles: &std::io::HandleFactory, directory: std::fs::DirectoryRead) ->
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let back = spawn keep(directory: move cwd);
@@ -174,6 +383,22 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 #[test]
 fn a_bound_spawn_moves_its_host_handle_on_after_the_join() {
     let program = build_program(&compile_sources(&[("handle_result.wf", HANDLE_RESULT)]));
+    for drivers in ["1", "4"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "drivers {drivers}: {output:?}"
+        );
+    }
+}
+
+/// A bound spawn unused in its loop body joins at the body's end [WAIT-3].
+/// Joining before the next statement waits for the guarded context before
+/// the starter makes its guard true, so the runtime reports a deadlock.
+#[test]
+fn an_unused_bound_spawn_joins_after_the_statement_that_enables_its_guard() {
+    let program = build_program(&compile_program("bound_context_block_end.wf"));
     for drivers in ["1", "4"] {
         let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
         assert_eq!(

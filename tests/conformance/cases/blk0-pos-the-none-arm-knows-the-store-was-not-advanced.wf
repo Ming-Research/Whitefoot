@@ -1,16 +1,25 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn main() -> status: ExitStatus pure {
-  doc "The other arm of the same branch. On the arm on which no window operation ran, the run the writer holds is exactly the run it held before the branch: nothing was published there and the measures already established stand, so the placement that follows discharges its own free-slots requirement from them.";
-  let run = slots_new::<u8, 4>();
-  let full = run.len == run.cap;
+fn place_unless_full(window: &Slots<u8, 4>) -> result: u8 writes(window) {
+  doc "On the arm on which no window operation ran, the run is exactly the run it was before the branch: nothing was published there and the measures already established stand, so the placement that follows discharges its own free-slots requirement from them and the not-full test.";
+  let full = window^.len == window^.cap;
   if full {
-    return exit_status(code: 1_u8);
+    return 1_u8;
   }
-  place_back(window: &run, value: 3_u8);
-  let held = run.len;
-  if held == 1_u64 {
+  place_back(window: window, value: 3_u8);
+  return 0_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The other arm of the same branch. The helper's run is unknown to it, so its full test selects at run time; the caller observes that the arm placed one element.";
+  let run = slots_new::<u8, 4>();
+  let refused = place_unless_full(window: &run);
+  if refused != 0_u8 {
+    return exit_status(code: refused);
+  }
+  let observed = run.len;
+  if observed == 1_u64 {
   } else {
     return exit_status(code: 2_u8);
   }

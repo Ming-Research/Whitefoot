@@ -1065,11 +1065,13 @@ pub(crate) struct CheckedTarget {
     /// Source presentation for the non-normative lowering lock ledger.
     pub(crate) ledger_name: String,
     pub(crate) ledger_state: String,
-    /// The target binder's exact one-based `path:line:column` location.
-    pub(crate) ledger_site: String,
     pub(crate) binding: BindingId,
     pub(crate) handle: Box<CheckedExpression>,
-    pub(crate) borrowed: bool,
+    /// [SHARE-1] whether the handle place keeps the object live until the
+    /// statement completes, because neither its guard nor its block may
+    /// write, move or release that place and no other context reaches it,
+    /// so the statement counts no handle of its own.
+    pub(crate) kept_by_place: bool,
     pub(crate) state: CheckedType,
     pub(crate) kind: CheckedTargetKind,
     pub(crate) referent: CheckedType,
@@ -1743,6 +1745,10 @@ pub(crate) struct CheckedRangeRoot {
     /// The same type carried directly for expression typing, which is
     /// context-free and cannot dereference the program-owned element table.
     pub(crate) element_type: CheckedType,
+    /// The [ENT-2] proof base where `binding` is a range alias: the
+    /// source variable its places are identified through. `None` identifies
+    /// them through `binding`.
+    pub(crate) proof_base: Option<super::places::ResolvedPlace>,
 }
 
 impl CheckedRangeRoot {
@@ -1776,7 +1782,11 @@ impl CheckedRangeRoot {
                 });
                 place
             }
-            _ => super::places::ResolvedPlace::binding(self.binding),
+            _ => proof_place_below(
+                self.proof_base.as_ref(),
+                super::places::PlaceRoot::Binding(self.binding),
+                Vec::new(),
+            ),
         }
     }
 }
@@ -1962,6 +1972,7 @@ impl CheckedRangeElementPlace {
             .chain(self.path.iter().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&index.offset),
                 CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. }
                 | CheckedPlaceStep::BoxReferent(_)
                 | CheckedPlaceStep::Measure(_) => None,
             }))
@@ -1976,6 +1987,7 @@ impl CheckedRangeElementPlace {
             .chain(self.path.iter_mut().filter_map(|step| match step {
                 CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
                 CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. }
                 | CheckedPlaceStep::BoxReferent(_)
                 | CheckedPlaceStep::Measure(_) => None,
             }))
@@ -2081,11 +2093,17 @@ pub(crate) struct CheckedContainerRoot {
 }
 
 /// One step below a storage place's root [REF-1]: a field selection, one
-/// `Box.inner` selection [TYPE-9], or one [OP-4] subscript together with
-/// the obligation that subscript owes.
+/// enum payload selection [GRAM-5], `Box.inner` selection [TYPE-9], or
+/// one [OP-4] subscript together with the obligation that subscript owes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedPlaceStep {
     Field(u32),
+    /// One selected enum payload field [GRAM-5, REF-1].
+    Payload {
+        nominal: NominalId,
+        variant: u32,
+        field: u32,
+    },
     /// A declared readonly descriptor field [TYPE-2, OP-15, MSR-2].
     Measure(CheckedMeasure),
     /// One `Box.inner` selection [TYPE-9]. It is an ordinary path step
@@ -2142,6 +2160,7 @@ impl CheckedContainerRoot {
     pub(crate) fn offsets(&self) -> impl Iterator<Item = &CheckedExpression> {
         self.path.iter().filter_map(|step| match step {
             CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::Payload { .. }
             | CheckedPlaceStep::BoxReferent(_)
             | CheckedPlaceStep::Measure(_) => None,
             CheckedPlaceStep::Subscript(index) => Some(&index.offset),
@@ -2151,6 +2170,7 @@ impl CheckedContainerRoot {
     pub(crate) fn offsets_mut(&mut self) -> impl Iterator<Item = &mut CheckedExpression> {
         self.path.iter_mut().filter_map(|step| match step {
             CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::Payload { .. }
             | CheckedPlaceStep::BoxReferent(_)
             | CheckedPlaceStep::Measure(_) => None,
             CheckedPlaceStep::Subscript(index) => Some(&mut index.offset),
@@ -2227,6 +2247,7 @@ fn subscript_offsets(
     path.iter().filter_map(|step| match step {
         CheckedPlaceStep::Subscript(index) => Some((&index.offset, index.captured)),
         CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::Payload { .. }
         | CheckedPlaceStep::BoxReferent(_)
         | CheckedPlaceStep::Measure(_) => None,
     })
@@ -2239,12 +2260,12 @@ fn subscript_offsets(
 /// value here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SubscriptedTerm {
-    /// Every offset is a captured literal, const or binding [REF-1], so the
-    /// place has the term identity the entailment fragment interns.
+    /// Every offset is a captured literal, const or tracked place [REF-1],
+    /// so the place has the identity the entailment fragment interns.
     Represented,
-    /// An offset is a tracked place with projections, which ENT-2 admits but
-    /// no captured value names. This is a compiler capability limit, reported
-    /// as unsupported, not a language rejection [DIAG-1].
+    /// An admitted tracked offset has no captured representation. This is a
+    /// compiler capability limit, reported as unsupported, not a language
+    /// rejection [DIAG-1].
     Unrepresented,
 }
 
@@ -2295,6 +2316,24 @@ fn selects_readonly_fragment_field(
                 Some(field) => field.ty,
                 None => return false,
             },
+            CheckedPlaceStep::Payload { variant, field, .. } => {
+                let CheckedType::Nominal(nominal) = ty else {
+                    return false;
+                };
+                let Some(CheckedNominalKind::Enum { variants }) = nominals
+                    .get(nominal.0 as usize)
+                    .map(|nominal| &nominal.kind)
+                else {
+                    return false;
+                };
+                let Some(field) = variants
+                    .get(*variant as usize)
+                    .and_then(|variant| variant.fields.get(*field as usize))
+                else {
+                    return false;
+                };
+                field.ty
+            }
             CheckedPlaceStep::BoxReferent(nominal) => {
                 match nominals
                     .get(nominal.0 as usize)
@@ -2317,8 +2356,8 @@ fn selects_readonly_fragment_field(
 }
 
 /// Whether one checked offset reads an [ENT-2] clause (a) tracked place:
-/// a binding, possibly below field selections, `^` suffixes and `Box`
-/// content, with no subscript.
+/// a binding, possibly below field selections, enum-payload selections, `^`
+/// suffixes and `Box` content, with no subscript.
 fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
     match offset {
         CheckedExpression::Binding {
@@ -2332,6 +2371,21 @@ fn is_tracked_place_read(offset: &CheckedExpression) -> bool {
         | CheckedExpression::DerefAddressed { .. } => true,
         CheckedExpression::BoxDeref { value, .. }
         | CheckedExpression::ProjectValue { value, .. } => is_tracked_place_read(value),
+        // [ENT-2] clause (a) admits enum-payload suffixes; a payload read is
+        // checked as storage below its root, with no subscript or measure.
+        CheckedExpression::ReadStorage { root, .. } => {
+            root.path
+                .iter()
+                .any(|step| matches!(step, CheckedPlaceStep::Payload { .. }))
+                && root.path.iter().all(|step| {
+                    matches!(
+                        step,
+                        CheckedPlaceStep::Field(_)
+                            | CheckedPlaceStep::Payload { .. }
+                            | CheckedPlaceStep::BoxReferent(_)
+                    )
+                })
+        }
         _ => false,
     }
 }
@@ -2346,6 +2400,10 @@ impl CheckedPlaceStep {
     pub(crate) fn goal_projection(&self) -> super::goal::GoalProjection {
         match self {
             Self::Field(field) => super::goal::GoalProjection::Field(*field),
+            Self::Payload { variant, field, .. } => super::goal::GoalProjection::Payload {
+                variant: *variant,
+                field: *field,
+            },
             Self::Measure(measure) => super::goal::GoalProjection::Measure(*measure),
             Self::BoxReferent(_) => super::goal::GoalProjection::Deref,
             Self::Subscript(index) => {
@@ -2357,6 +2415,10 @@ impl CheckedPlaceStep {
     pub(crate) fn place_step(&self) -> super::places::PlaceStep {
         match self {
             Self::Field(field) => super::places::PlaceStep::Field(*field),
+            Self::Payload { variant, field, .. } => super::places::PlaceStep::Payload {
+                variant: *variant,
+                field: *field,
+            },
             Self::Measure(measure) => super::places::PlaceStep::Measure(*measure),
             Self::BoxReferent(_) => super::places::PlaceStep::Deref,
             Self::Subscript(index) => super::places::PlaceStep::Index(index.captured),
@@ -2769,11 +2831,24 @@ pub(crate) struct CheckedMatchBinder {
     pub(crate) ty: CheckedType,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedMatchType {
+    Enum(CheckedEnumType),
+    Integer(CheckedType),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedMatchSelection {
+    Variant(u32),
+    Integer(i128),
+    Else,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedMatchArm {
     pub(crate) node_path: NodePath,
     pub(crate) label: String,
-    pub(crate) tag: u32,
+    pub(crate) selection: CheckedMatchSelection,
     pub(crate) binders: Vec<CheckedMatchBinder>,
     /// [GRAM-10, WIN-3, STOR-3] in an own-place match, the release of each
     /// payload field a final `..` covers, taken on entry to the arm: one
@@ -2947,15 +3022,22 @@ pub(crate) enum CheckedStatement {
         drops: Vec<CheckedDrop>,
     },
     Match {
+        /// [OP-5] the complete source condition of an `if_stmt` or an
+        /// `else if` link, whose redundancy is judged; an enum `match` has
+        /// none.
+        condition: Option<NodePath>,
         /// The complete written `match` or `if`, including a chained `else if`.
         node_path: NodePath,
         scrutinee: CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: Vec<CheckedMatchArm>,
         continues: bool,
     },
     ValueMatchLet {
         node_path: NodePath,
+        /// [OP-5] the complete source condition of a `value_if`; a
+        /// `value_match` has none.
+        condition: Option<NodePath>,
         kind: ValueInitializerKind,
         binding: BindingId,
         result_type: CheckedType,
@@ -2971,7 +3053,7 @@ pub(crate) enum CheckedStatement {
         /// parameter does; no other result mode carries one.
         result_range_element: Option<CheckedElement>,
         scrutinee: CheckedExpression,
-        enum_type: CheckedEnumType,
+        match_type: CheckedMatchType,
         arms: Vec<CheckedMatchArm>,
         continues: bool,
     },
@@ -3131,6 +3213,15 @@ pub(crate) enum CheckedEffectStep {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedHeldCall {
+    pub(crate) site: NodePath,
+    pub(crate) requirement: NodePath,
+    /// None denotes the enclosing callable's symbolic caller statement.
+    pub(crate) atomic: Option<NodePath>,
+    pub(crate) protected: Vec<super::places::ResolvedPlace>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedFunction {
     /// A function-kind hypothesis belongs to symbolic template checking.
     /// The ordinary view and lowering contain none.
@@ -3167,6 +3258,9 @@ pub(crate) struct CheckedFunction {
     pub(crate) declared_state_reads: Vec<CheckedStatePath>,
     /// Callable-boundary predicates in `requires_clause` source order.
     pub(crate) requirements: Vec<super::goal::CheckedRequirement>,
+    /// [HOLD-1] normalized callable requirement and accepted call judgments.
+    pub(crate) held_parameters: Vec<u32>,
+    pub(crate) held_calls: Vec<CheckedHeldCall>,
     /// [ENT-2, FN-8] the clause (b) places each requirement forms, index-
     /// aligned with `requirements`: its own, and those of every definition
     /// whose expansion it is the first requirement to reach. Each is formed
@@ -3252,11 +3346,12 @@ pub(crate) struct CheckedContextAwait {
     pub(crate) before: Option<u32>,
 }
 
-/// One [OWN-7] separation question the checker could not settle by syntax.
+/// One position question the checker could not settle by syntax.
 ///
 /// A mandatory call-effect pair [EFF-5], a write's preservation of a later
 /// reference use [REF-2] or two handle places of one atomic statement
-/// [SHARE-2] requires the positions to be proved distinct.
+/// [SHARE-2] requires separation [OWN-7]. A window selection additionally
+/// requires its captured bound to survive a call [OP-10].
 /// The checker holds the actual argument spellings and the live
 /// reference state, so it owns the comparison; what it cannot do is discharge
 /// the index or range goal, which is the fixed [ENT-6] families' work under
@@ -3265,14 +3360,16 @@ pub(crate) struct CheckedContextAwait {
 /// at the reference use.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedCallSeparation {
-    /// The call, set commit or atomic statement whose pre-write proof context
-    /// answers the query.
+    /// The call, set commit or atomic statement whose proof context answers
+    /// the query: after call transfer for WindowBound, before the write otherwise.
     pub(crate) site: NodePath,
     /// The rule whose separation this is, when no reference use names one.
     pub(crate) occasion: CheckedSeparationOccasion,
-    /// A demanded REF-2 use; the separation is still proved at `site`, before
-    /// the invalidating write, and diagnosed at this later use.
+    /// A demanded REF-2 use; preservation is proved at `site` in its occasion
+    /// context and diagnosed at this later use.
     pub(crate) reference_use: Option<CheckedReferencePreservationUse>,
+    /// HOLD-1 uses the same position families, retaining its call diagnostic.
+    pub(crate) held_use: Option<CheckedHeldProtectionUse>,
     pub(crate) positions: Vec<CheckedCallSeparationPositions>,
     /// Erased index expressions instantiated in this call's entry state.
     /// Their captures serve only this separation, never runtime evaluation.
@@ -3292,6 +3389,9 @@ pub(crate) struct CheckedCallSeparation {
 /// Which judgment asks a [`CheckedCallSeparation`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedSeparationOccasion {
+    /// A captured window-selection bound [OP-10], judged after this call's
+    /// kills and published exit relations rather than in its entry state.
+    WindowBound,
     /// Two entries of one call's substituted row [EFF-5].
     Call,
     /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
@@ -3310,6 +3410,12 @@ pub(crate) struct CheckedReferencePreservationUse {
     pub(crate) event: &'static str,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedHeldProtectionUse {
+    pub(crate) site: NodePath,
+    pub(crate) requirement: NodePath,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedCallSeparationPositions {
     Indices(super::places::CapturedValue, super::places::CapturedValue),
@@ -3325,6 +3431,7 @@ pub(crate) enum CheckedCallSeparationPositions {
     IndexOutsideRange(super::places::CapturedValue, super::places::CapturedRange),
     /// [WIN-2] a range beside the window's `next` or `free`, which the
     /// separation needs proved to end at or below `r.len`, or empty.
+    /// WindowBound instead requires the endpoint bound even when empty.
     RangeWithinLength(super::places::CapturedRange),
 }
 
@@ -3341,9 +3448,8 @@ impl CheckedCallSeparationPositions {
     /// is never proved, and a pair with no other candidate is one no named
     /// position separates [EFF-5, OWN-7].
     pub(crate) fn names_its_values(self) -> bool {
-        let named = |value: super::places::CapturedValue| {
-            value != super::places::CapturedValue::unknown()
-        };
+        let named =
+            |value: super::places::CapturedValue| value != super::places::CapturedValue::unknown();
         let named_range =
             |range: super::places::CapturedRange| named(range.start) && named(range.end);
         match self {
@@ -3472,7 +3578,12 @@ pub(crate) struct CheckedProgramData {
     /// and expression carriers, rendered as one-based `path:line:column`.
     /// Lowering uses these only to present its non-normative lock ledger;
     /// they retain no lock timing, permission or acceptance judgment.
-    pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, String>,
+    pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, crate::SourceDescription>,
+    /// Exact target-binder locations, kept out of the analyzed function body.
+    pub(crate) target_ledger_sources: std::collections::HashMap<NodePath, crate::SourceDescription>,
+    /// Presentation-only descriptions of guard waits and planned context joins.
+    /// Source coordinates are resolved while the canonical tree is retained.
+    pub(crate) wait_report_sources: std::collections::HashMap<NodePath, crate::SourceDescription>,
 }
 
 impl CheckedProgramData {
@@ -3496,13 +3607,27 @@ pub(crate) struct CheckedContractQuery {
     pub(crate) site: NodePath,
     pub(crate) premises: Vec<NodePath>,
     pub(crate) goal: NodePath,
+    /// [FN-4] authority for identifying this frame equality's entry and
+    /// exit datums in a zero-premise query. Other queries keep them distinct.
+    pub(crate) frame: Option<CheckedContractFrame>,
     pub(crate) proof: super::entailment::FunctionEntailment,
+}
+
+/// The actual row leaves this place unwritten; each call's contract-read
+/// footprint separates it from other arguments' writes [EFF-5]. This is
+/// binding evidence, not an actual FN-9 summary or a runtime snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedContractFrame {
+    pub(crate) actual: FunctionId,
+    /// Root and index bindings are parameter ordinals of the actual.
+    pub(crate) unwritten: super::places::ResolvedPlace,
 }
 
 /// The authoritative contract surface of one bound call [FN-5].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedCallContract {
     pub(crate) requirements: Vec<super::goal::CheckedRequirement>,
+    pub(crate) held_parameters: Vec<u32>,
     /// One accepted formal-requires => actual-requires implication for every
     /// actual requirement, in that declaration's source order.
     pub(crate) requirement_queries: Vec<ContractQueryId>,
@@ -3654,13 +3779,13 @@ impl FunctionMentions {
                 }
                 CheckedStatement::Match {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     ..
                 }
                 | CheckedStatement::ValueMatchLet {
                     scrutinee,
-                    enum_type,
+                    match_type,
                     arms,
                     ..
                 } => {
@@ -3673,8 +3798,12 @@ impl FunctionMentions {
                         self.types.push(*result_type);
                         self.elements.extend(result_range_element.iter().copied());
                     }
-                    if let CheckedEnumType::Nominal(nominal) = enum_type {
-                        self.types.push(CheckedType::Nominal(*nominal));
+                    match match_type {
+                        CheckedMatchType::Enum(CheckedEnumType::Nominal(nominal)) => {
+                            self.types.push(CheckedType::Nominal(*nominal));
+                        }
+                        CheckedMatchType::Integer(ty) => self.types.push(*ty),
+                        CheckedMatchType::Enum(CheckedEnumType::Bool) => {}
                     }
                     self.expression(scrutinee);
                     for arm in arms {
@@ -3715,6 +3844,12 @@ impl FunctionMentions {
                     ..
                 } => {
                     self.types.extend(targets.iter().map(|t| t.state));
+                    // A key-set target builds an Entries descriptor when it
+                    // acquires the map, even if only erased proofs name it.
+                    self.types.extend(targets.iter().filter_map(|target| {
+                        matches!(target.kind, CheckedTargetKind::MapSet(_))
+                            .then_some(target.referent)
+                    }));
                     for key in targets
                         .iter()
                         .flat_map(crate::semantic::CheckedTarget::expressions)
@@ -3826,6 +3961,9 @@ impl FunctionMentions {
         for step in steps {
             match step {
                 CheckedPlaceStep::Field(_) | CheckedPlaceStep::Measure(_) => {}
+                CheckedPlaceStep::Payload { nominal, .. } => {
+                    self.types.push(CheckedType::Nominal(*nominal));
+                }
                 CheckedPlaceStep::BoxReferent(nominal) => {
                     self.types.push(CheckedType::Nominal(*nominal));
                 }

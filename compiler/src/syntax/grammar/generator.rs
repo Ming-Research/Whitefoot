@@ -126,6 +126,10 @@ const ENUM_ORDER: &[&str] = &[
     "package_decl",
     // v0.142 [GRAM-5, RANGE-1]: the variant relation `e is V`, `e is not V`.
     "range_variant",
+    // v0.144 [DIAG-1]: the diagnostic-only graph segment start.
+    "graph_segment",
+    // v0.145 [GRAM-2, HOLD-1]: a callable's held requirement.
+    "held_clause",
 ];
 
 /// v0.33 deliberately replaces the old pseudo-statement contract grammar.
@@ -200,11 +204,11 @@ pub fn generate(path: &str, specification: &str) -> String {
     grammar.assign_decisions(&historical_decisions);
     let grammar = grammar;
 
-    let starts = [index["program"], index["graph_file"]];
+    let starts = [index["program"], index["graph_file"], index["graph_segment"]];
     let first = model::first_sets(&grammar);
     let follow = model::follow_sets(&grammar, &first, &starts);
     let decisions = build_decisions(&grammar, &first, &follow, &index);
-    emit(path, &grammar, &raw, &names, &decisions)
+    emit(path, &grammar, &raw, &names, &decisions, &first)
 }
 
 /// Which production a node belongs to; roots run in definition order and node
@@ -333,6 +337,18 @@ fn repeats_construct(grammar: &Grammar, node: &model::Node, targets: &[usize]) -
     )
 }
 
+/// The prefix-word position that names no atom: `SELECT_ATOMS.get` finds
+/// nothing at this index because the table never reaches it.
+const ABSENT_ATOM: u16 = u16::MAX;
+
+/// The position of `token` in the shared atom table, appended when new.
+fn intern(atoms: &mut Vec<Tok>, atom_index: &mut BTreeMap<Tok, usize>, token: Tok) -> usize {
+    *atom_index.entry(token).or_insert_with(|| {
+        atoms.push(token);
+        atoms.len() - 1
+    })
+}
+
 fn atom_text(token: Tok) -> String {
     let provenance = match token.prov {
         Some(node) => format!("Some(GrammarNodeId::new({node}))"),
@@ -400,6 +416,7 @@ fn emit(
     raw: &[ebnf::RawProduction],
     names: &[String],
     decisions: &[DecisionRecord],
+    first: &First,
 ) -> String {
     let mut children_arena: Vec<usize> = Vec::new();
     let mut terminal_arena: Vec<Pred> = Vec::new();
@@ -521,14 +538,8 @@ fn emit(
     for (index, decision) in decisions.iter().enumerate() {
         let mut buckets: BTreeMap<Pred, Vec<usize>> = BTreeMap::new();
         for (offset, row) in decision.rows.iter().enumerate() {
-            let mut resolve = |token: Tok| -> usize {
-                *atom_index.entry(token).or_insert_with(|| {
-                    atoms.push(token);
-                    atoms.len() - 1
-                })
-            };
-            let first = resolve(row.first);
-            let second = resolve(row.second);
+            let first = intern(&mut atoms, &mut atom_index, row.first);
+            let second = intern(&mut atoms, &mut atom_index, row.second);
             rows.push(format!("SelectRow::new({}, {first}, {second})", row.arm));
             buckets
                 .entry(row.first.pred)
@@ -550,6 +561,42 @@ fn emit(
         ));
         start += decision.rows.len();
     }
+
+    // Diagnostic continuations use the actual parser task stack. These
+    // unpadded words let it concatenate nullable suffixes without importing
+    // another caller's FOLLOW set or enumerating runtime derivations. A word
+    // names its positions in the shared atom table, as a row does, and a
+    // position the word lacks is ABSENT_ATOM.
+    let mut prefixes: Vec<[u16; 2]> = Vec::new();
+    for (name, sets) in [
+        ("NODE_PREFIX_RANGES", &first.node),
+        ("TAIL_PREFIX_RANGES", &first.tail),
+    ] {
+        let mut ranges = Vec::new();
+        for set in sets {
+            ranges.push((prefixes.len(), set.len()));
+            for word in set {
+                let mut position = |index: usize| -> u16 {
+                    word.get(index).map_or(ABSENT_ATOM, |token| {
+                        let atom = intern(&mut atoms, &mut atom_index, *token);
+                        u16::try_from(atom).expect("atom indexes fit a prefix word")
+                    })
+                };
+                prefixes.push([position(0), position(1)]);
+            }
+        }
+        static_table(&mut out, name, "[usize; 2]", &ranges, |(start, len)| {
+            format!("[{start}, {len}]")
+        });
+    }
+    assert!(
+        atoms.len() < usize::from(ABSENT_ATOM),
+        "the atom table must leave the absent index free"
+    );
+    static_table(&mut out, "GRAMMAR_PREFIXES", "[u16; 2]", &prefixes, |word| {
+        format!("[{}, {}]", word[0], word[1])
+    });
+
     table(&mut out, "DECISIONS", "Decision", &records, |row| {
         row.clone()
     });

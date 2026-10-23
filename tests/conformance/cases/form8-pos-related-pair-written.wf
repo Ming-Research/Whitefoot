@@ -14,8 +14,8 @@ fn main() -> status: ExitStatus pure {
   doc "The caller forms both references, passes them, and reads the owned result; no region argument and no type application is written at the call because there is none to write.";
   let a = Cell(value: 40_i32);
   let b = Cell(value: 2_i32);
-  let held = pass(source: &a, other: &b);
-  if held == 40_i32 {
+  let observed = pass(source: &a, other: &b);
+  if observed == 40_i32 {
   } else {
     return exit_status(code: 1_u8);
   }

@@ -151,12 +151,12 @@ fn an_enum_payload_step_below_an_unrouted_result_is_no_datum() {
 }
 
 struct Slot {
-  held: Held;
+  observed: Held;
   serial: u64;
 }
 
 fn pass_slot(slot: Slot) -> result: Slot pure contract {
-  ensures result.held.Full.count == 3_u64;
+  ensures result.observed.Full.count == 3_u64;
 } {
   return move slot;
 }
@@ -187,14 +187,14 @@ fn hold<T>(item: T) -> result: Holder<T> pure contract {
   ensures result.serial == 0_u64;
   ensures result.item.count == 0_u64;
 } {
-  let held = Holder<T>(item: move item, serial: 0_u64);
-  return move held;
+  let observed = Holder<T>(item: move item, serial: 0_u64);
+  return move observed;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let counter = Counter(count: 0_u64);
-  let held = hold::<Counter>(item: counter);
-  let code = cvt.wrap::<u64, u8>(held.serial);
+  let observed = hold::<Counter>(item: counter);
+  let code = cvt.wrap::<u64, u8>(observed.serial);
   return std::process::exit_status(code: code);
 }
 "#;
@@ -704,7 +704,9 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         none_route,
         SemanticRule::Fn9,
-        SemanticIssueKind::invalid_postcondition_selector(),
+        SemanticIssueKind::InvalidPostconditionFields {
+            required_fields: Vec::new(),
+        },
     );
 
     let unproved = br#"fn find(limit: u64) -> result: Option<u64> pure contract {

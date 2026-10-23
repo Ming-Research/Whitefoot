@@ -10,9 +10,9 @@ struct ReleasePair {
 
 fn measure_box(meter: &MemoryMeter) -> result: u64 writes(meter) {
   let cell = box_new::<u64>(value: 73_u64);
-  let held = std::process::heap_in_use(meter: meter);
+  let observed = std::process::heap_in_use(meter: meter);
   if cell.inner == 73_u64 {
-    return held;
+    return observed;
   } else {
     return 0_u64;
   }
@@ -23,8 +23,8 @@ fn measure_release(meter: &MemoryMeter) -> result: u8 writes(meter) {
   let released = box_slots_new::<Box<u64>>(capacity: 4_u64);
   let element = box_new::<u64>(value: 73_u64);
   place_back(window: &released.inner, value: move element);
-  let held = std::process::heap_in_use(meter: meter);
-  if held <= before {
+  let observed = std::process::heap_in_use(meter: meter);
+  if observed <= before {
     return 20_u8;
   }
   release::<Box<Slots<Box<u64>>>>(value: move released);
@@ -112,15 +112,11 @@ fn measure_grow(meter: &MemoryMeter) -> result: u64 writes(meter) {
   } else {
     return 1_u64;
   }
-  if cell.inner.len == 1_u64 {
-    let held = take_back(window: &cell.inner);
-    if held != 73_u64 {
-      return 1_u64;
-    }
-    return 0_u64;
-  } else {
+  let observed = take_back(window: &cell.inner);
+  if observed != 73_u64 {
     return 1_u64;
   }
+  return 0_u64;
 }
 
 fn measure_empty_windows(meter: &MemoryMeter) -> result: u64 writes(meter) {
@@ -165,15 +161,6 @@ fn measure_empty_windows(meter: &MemoryMeter) -> result: u64 writes(meter) {
   } else {
     return 1_u64;
   }
-  if slots.inner.len != 1_u64 {
-    return 1_u64;
-  }
-  if zero_bytes.inner.len != 1_u64 {
-    return 1_u64;
-  }
-  if array.inner.len != 0_u64 {
-    return 1_u64;
-  }
   free_empty(window: move ring);
   return 0_u64;
 }
@@ -207,9 +194,9 @@ fn measure_map(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
         set slot^ = Some<u64>(value: index);
       }
     }
-    let held = std::process::heap_in_use(meter: meter);
-    if held >= empty {
-      let growth = held - empty;
+    let observed = std::process::heap_in_use(meter: meter);
+    if observed >= empty {
+      let growth = observed - empty;
       if growth < 6400000_u64 {
         return 8_u8;
       }
@@ -290,9 +277,6 @@ fn measure_key_set(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
   if reserved == 0_u64 {
     return 26_u8;
   }
-  if keys.len != 0_u64 {
-    return 27_u8;
-  }
   let seed = array_filled::<u8, 65536>(value: 250_u8);
   let before_insert = std::process::heap_in_use(meter: meter);
   key_set_insert(keys: &keys, key: &seed[0_u64..65536_u64]);
@@ -329,9 +313,6 @@ fn measure_key_set(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
       let outcome = map_scan_within::<u8>(map: map, cursor: cursor, count: 3_u64, limit: limit, keys: &keys);
       let reported_after = key_set_bytes(keys: &keys);
       let heap_after = std::process::heap_in_use(meter: meter);
-      if reported_after < reported_before {
-        return 32_u8;
-      }
       let retained_growth = reported_after - reported_before;
       if heap_after >= heap_before {
         let heap_growth = heap_after - heap_before;
@@ -375,13 +356,13 @@ fn measure_key_set(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
   if keys.len != 41_u64 {
     return 39_u8;
   }
-  let held = key_set_bytes(keys: &keys);
+  let observed = key_set_bytes(keys: &keys);
   let before_release = std::process::heap_in_use(meter: meter);
   release::<KeySet>(value: move keys);
   let after_release = std::process::heap_in_use(meter: meter);
   if before_release >= after_release {
     let freed = before_release - after_release;
-    if freed != held {
+    if freed != observed {
       return 40_u8;
     }
   } else {

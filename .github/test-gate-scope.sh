@@ -1,6 +1,7 @@
 #!/bin/sh
-# Feed .github/gate-scope.sh the events gate.yml and io-hosts.yml receive,
-# with a stand-in `gh` that answers from fixtures, and check each decision.
+# Feed .github/gate-scope.sh the events gate.yml, io-hosts.yml and
+# sanitizers.yml receive, with a stand-in `gh` that answers from fixtures, and
+# check each decision.
 # A stand-in that fails marks the events that must decide without a query. The
 # stand-in reads its arguments as gh does: only --paginate returns every page
 # of a list, and fields given with -f reach a list only under --method GET, so
@@ -35,6 +36,13 @@ for arg in "$@"; do
 done
 case "$path" in
     */actions/runs/*) printf '%s\n' "$FAKE_RUN_CREATED" ;;
+    */actions/workflows/*/runs)
+        if [ "$method" != GET ]; then
+            echo "gh: fields without --method GET are sent as a body: $*" >&2
+            exit 2
+        fi
+        printf '%s\n' "$FAKE_MANUAL_RUN"
+        ;;
     */pulls/[0-9]*) printf '%s\n' "$FAKE_TIP" ;;
     */pulls)
         if [ "$method" != GET ]; then
@@ -64,17 +72,21 @@ late_draft='{"number":14,"draft":true,"created_at":"2026-10-12T10:00:06Z"}'
 late_ready='{"number":15,"draft":false,"created_at":"2026-10-12T10:00:06Z"}'
 run_time=$run_created
 
-# A pull request's head, and the tip the stand-in reports for its branch.
+# A pull request's head, the tip the stand-in reports for its branch, and the
+# successful manual run it reports for the head (none by default).
 head_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 head_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 tip=$head_a
+manual_run=
+workflow=gate.yml
 
 # scope EVENT REF EVENT-JSON PULLS [refuse-queries]
 scope() {
     printf '%s\n' "$3" > "$work/event.json"
     : > "$FAKE_GH_LOG"
     : > "$FAKE_GH_ARGV"
-    FAKE_PULLS=$4 FAKE_RUN_CREATED=$run_time FAKE_TIP=$tip FAKE_GH_FAIL=${5:-} \
+    FAKE_PULLS=$4 FAKE_RUN_CREATED=$run_time FAKE_TIP=$tip FAKE_MANUAL_RUN=$manual_run \
+        FAKE_GH_FAIL=${5:-} GITHUB_WORKFLOW_REF=org/repo/.github/workflows/$workflow@$2 \
         GITHUB_EVENT_NAME=$1 GITHUB_REF=$2 GITHUB_REF_NAME=${2#refs/*/} \
         GITHUB_EVENT_PATH=$work/event.json GITHUB_REPOSITORY=org/repo \
         GITHUB_REPOSITORY_OWNER=org GITHUB_RUN_ID=7 PATH="$work/bin:$PATH" \
@@ -91,11 +103,11 @@ fail() {
     exit 1
 }
 
-# expect NAME RUN BOTH [REASON-FRAGMENT] -- after a scope call that succeeded
+# expect NAME RUN [REASON-FRAGMENT] -- after a scope call that succeeded
 expect() {
     grep -qx "run=$2" "$work/out" || fail "$1: expected run=$2"
-    grep -qx "both=$3" "$work/out" || fail "$1: expected both=$3"
-    [ -z "${4:-}" ] || grep -q "^reason=.*$4" "$work/out" || fail "$1: expected a reason naming '$4'"
+    [ "$(grep -c '' "$work/out")" = 2 ] || fail "$1: expected only run= and reason= lines"
+    [ -z "${3:-}" ] || grep -q "^reason=.*$3" "$work/out" || fail "$1: expected a reason naming '$3'"
 }
 
 decides() {
@@ -123,41 +135,63 @@ opened_ready=$(pr_event opened false)
 reopened_draft=$(pr_event reopened true)
 reopened_ready=$(pr_event reopened false)
 opened_from_fork=$(pr_event opened false fork/repo)
-ready='{"action":"ready_for_review","pull_request":{"number":5,"draft":false}}'
+ready=$(pr_event ready_for_review false)
 synchronize='{"action":"synchronize","pull_request":{"number":5,"draft":true}}'
 
-# Main, tags, manual runs, the event of marking ready and a fork's opening
-# decide without a query.
+# Main, tags, manual runs, a draft's opening or reopening and a fork's
+# opening decide without a query.
 decides 'push to main' push refs/heads/main '{}' '[]' refuse
-expect 'push to main' true true 'push to main'
+expect 'push to main' true 'push to main'
 decides 'push of a tag' push refs/tags/v1 '{}' '[]' refuse
-expect 'push of a tag' false false 'not a branch'
+expect 'push of a tag' false 'not a branch'
 decides 'manual run' workflow_dispatch refs/heads/feature/x "$dispatch" '[]' refuse
-expect 'manual run' true true 'manual run'
-decides 'marked ready' pull_request refs/pull/5/merge "$ready" '[]' refuse
-expect 'marked ready' true true 'marked ready'
+expect 'manual run' true 'manual run'
 tip=$head_b
 decides 'ready opened from a fork' pull_request refs/pull/5/merge "$opened_from_fork" '[]' refuse
-expect 'ready opened from a fork' true true 'opened, ready'
+expect 'ready opened from a fork' true 'opened, ready'
+decides 'draft opened' pull_request refs/pull/5/merge "$opened_draft" '[]' refuse
+expect 'draft opened' false 'opened as a draft'
+decides 'draft reopened' pull_request refs/pull/5/merge "$reopened_draft" '[]' refuse
+expect 'draft reopened' false 'reopened as a draft'
 tip=$head_a
 
-# The opening of a pull request of this repository asks for the pull
+# Marking a pull request ready asks for a successful manual run of the same
+# workflow at the head, and skips only when there is one. The question names
+# the workflow the run belongs to, the head, and the manual event.
+decides 'marked ready, nothing run by hand' pull_request refs/pull/5/merge "$ready" '[]'
+expect 'marked ready, nothing run by hand' true 'pull request 5 marked ready'
+grep -q 'repos/org/repo/actions/workflows/gate.yml/runs' "$FAKE_GH_LOG" || fail 'marked ready: the gate workflow was not queried'
+for line in GET head_sha=$head_a event=workflow_dispatch status=success; do
+    grep -qxF -- "$line" "$FAKE_GH_ARGV" || fail "marked ready: the query lacks '$line'"
+done
+manual_run=4242
+decides 'marked ready, run by hand' pull_request refs/pull/5/merge "$ready" '[]'
+expect 'marked ready, run by hand' false "head aaaaaaaaaaaa has the successful manual run 4242"
+workflow=io-hosts.yml
+decides 'io-hosts marked ready, run by hand' pull_request refs/pull/5/merge "$ready" '[]'
+expect 'io-hosts marked ready, run by hand' false 'successful manual run 4242'
+grep -q 'repos/org/repo/actions/workflows/io-hosts.yml/runs' "$FAKE_GH_LOG" || fail 'io-hosts marked ready: the io-hosts workflow was not queried'
+workflow=gate.yml
+manual_run='not a run'
+refuses 'unreadable manual run' pull_request refs/pull/5/merge "$ready" '[]'
+grep -q 'unexpected manual run of gate.yml' "$work/err" || fail 'unreadable manual run: wrong refusal'
+manual_run=4242
+refuses 'failed manual run query' pull_request refs/pull/5/merge "$ready" '[]' refuse
+manual_run=
+
+# The opening of a ready pull request of this repository asks for the pull
 # request's current head and runs while it is the head the run was for; a
 # reopening runs without asking, as a push while it was closed was skipped.
-decides 'draft opened' pull_request refs/pull/5/merge "$opened_draft" '[]'
-expect 'draft opened' true false 'opened as a draft'
-grep -q 'repos/org/repo/pulls/5' "$FAKE_GH_LOG" || fail 'draft opened: the pull request was not queried'
 decides 'ready opened' pull_request refs/pull/5/merge "$opened_ready" '[]'
-expect 'ready opened' true true 'opened, ready'
-decides 'draft reopened' pull_request refs/pull/5/merge "$reopened_draft" '[]' refuse
-expect 'draft reopened' true false 'reopened as a draft'
+expect 'ready opened' true 'opened, ready'
+grep -q 'repos/org/repo/pulls/5' "$FAKE_GH_LOG" || fail 'ready opened: the pull request was not queried'
 decides 'ready reopened' pull_request refs/pull/5/merge "$reopened_ready" '[]' refuse
-expect 'ready reopened' true true 'reopened, ready'
+expect 'ready reopened' true 'reopened, ready'
 tip=$head_b
 decides 'ready opened, branch moved' pull_request refs/pull/5/merge "$opened_ready" '[]'
-expect 'ready opened, branch moved' false false 'opened at aaaaaaaaaaaa, its branch has moved to bbbbbbbbbbbb, whose push run checks it'
-decides 'draft reopened, branch moved' pull_request refs/pull/5/merge "$reopened_draft" '[]' refuse
-expect 'draft reopened, branch moved' true false 'reopened as a draft'
+expect 'ready opened, branch moved' false 'opened at aaaaaaaaaaaa, its branch has moved to bbbbbbbbbbbb, whose push run checks it'
+decides 'draft opened, branch moved' pull_request refs/pull/5/merge "$opened_draft" '[]' refuse
+expect 'draft opened, branch moved' false 'opened as a draft'
 tip=null
 refuses 'unreadable head' pull_request refs/pull/5/merge "$opened_ready" '[]'
 grep -q 'unexpected head of pull request 5' "$work/err" || fail 'unreadable head: wrong refusal'
@@ -170,30 +204,30 @@ grep -q 'unsupported event: schedule' "$work/err" || fail 'unhandled event: wron
 
 # A push to any other branch asks GitHub for the branch's open pull requests.
 decides 'no pull request' push refs/heads/feature/topic '{}' '[]'
-expect 'no pull request' false false 'has no open pull request'
+expect 'no pull request' false 'has no open pull request'
 grep -q 'repos/org/repo/actions/runs/7' "$FAKE_GH_LOG" || fail 'no pull request: the run was not queried'
 for line in GET --paginate repos/org/repo/pulls state=open per_page=100 head=org:feature/topic; do
     grep -qxF -- "$line" "$FAKE_GH_ARGV" || fail "no pull request: the branch query lacks '$line'"
 done
 decides 'earlier draft' push refs/heads/claude/topic '{}' "[$early_draft]"
-expect 'earlier draft' true false 'draft pull request 11'
+expect 'earlier draft' false 'draft pull request 11'
 decides 'earlier ready' push refs/heads/claude/topic '{}' "[$early_ready]"
-expect 'earlier ready' true true 'ready pull request 12'
+expect 'earlier ready' true 'ready pull request 12'
 decides 'draft and ready' push refs/heads/claude/topic '{}' "[$early_draft,$early_ready]"
-expect 'draft and ready' true true 'ready pull request 12'
+expect 'draft and ready' true 'ready pull request 12'
 decides 'same second' push refs/heads/claude/topic '{}' "[$same_draft]"
-expect 'same second' true false 'draft pull request 13'
+expect 'same second' false 'draft pull request 13'
 decides 'opened after the push' push refs/heads/claude/topic '{}' "[$late_ready]"
-expect 'opened after the push' false false 'pull request 15 was opened'
+expect 'opened after the push' false 'pull request 15 was opened'
 decides 'earlier draft, later ready' push refs/heads/claude/topic '{}' "[$early_draft,$late_ready]"
-expect 'earlier draft, later ready' true false 'draft pull request 11'
+expect 'earlier draft, later ready' false 'draft pull request 11'
 decides 'second page' push refs/heads/claude/topic '{}' "[$late_draft][$early_ready]"
-expect 'second page' true true 'ready pull request 12'
+expect 'second page' true 'ready pull request 12'
 
 # A branch name made of query separators still travels as the one field.
 odd='claude/a&b#c+d%e'
 decides 'branch name with separators' push "refs/heads/$odd" '{}' "[$early_ready]"
-expect 'branch name with separators' true true 'ready pull request 12'
+expect 'branch name with separators' true 'ready pull request 12'
 grep -qxF -- "head=org:$odd" "$FAKE_GH_ARGV" || fail 'branch name with separators: not sent as one field'
 if grep -q 'pulls?' "$FAKE_GH_ARGV"; then
     fail 'branch name with separators: the query was written into the URL'

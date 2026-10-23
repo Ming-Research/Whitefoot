@@ -6,7 +6,7 @@
 //! expression.  Task 0060 consumes these values to prove selected exits; H1
 //! stops explicitly before that proof.
 
-use crate::{BuiltinPreludeId, DeclarationId, NodePath, SourceOrigin};
+use crate::{DeclarationId, NodePath, ResolvedTarget, SourceOrigin};
 
 use super::goal::GoalProjection;
 use super::model::{
@@ -25,12 +25,11 @@ pub(crate) struct CheckedPostconditionSelector {
     /// [CALL-4]. A declaration that writes one result has ordinal zero, the
     /// route writes no ordinal binder, and every clause names it.
     pub(crate) ordinal: u32,
-    pub(crate) variant: Option<BuiltinPreludeId>,
+    pub(crate) variant: Option<ResolvedTarget>,
     pub(crate) field: Option<PostconditionFieldIdentity>,
     /// The variant field a routed clause restricts its ordinal to [FN-9]:
-    /// `Ok`'s or `Some`'s value for a written route, any variant field
-    /// whose type is a struct with type invariants for a route a type
-    /// invariant generates [TYPE-11]. `None` for an unrouted clause.
+    /// one declared field for a written route or a generated type-invariant
+    /// route [TYPE-11]. `None` for an unrouted clause.
     pub(crate) route: Option<PayloadRoute>,
     /// [TYPE-11] whether a type invariant generated this clause, rather than
     /// a writer. A generated routed clause that no exit selects holds
@@ -73,7 +72,7 @@ pub(crate) struct CheckedRoutedRequirement {
 }
 
 impl CheckedPostconditionSelector {
-    /// Whether this clause is routed: written with a success route, or
+    /// Whether this clause is routed: written with a variant-field route, or
     /// generated over a variant field [FN-9, TYPE-11].
     pub(crate) const fn is_routed(&self) -> bool {
         self.variant.is_some() || self.route.is_some()
@@ -86,11 +85,11 @@ impl CheckedPostconditionSelector {
     }
 }
 
-/// Exact PRE-1 field identity and written origin of `Ok(value: result)`.
+/// Declared field position within the resolved variant and its written origin.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PostconditionFieldIdentity {
-    pub(crate) declaration: BuiltinPreludeId,
+    pub(crate) index: u32,
     pub(crate) origin: SourceOrigin,
 }
 
@@ -101,6 +100,34 @@ pub(crate) struct RelationTemplate {
     pub(crate) operation: CheckedIntegerOperation,
     pub(crate) operands: [RelationTerm; 2],
     pub(crate) normalized: NormalizedRelation,
+}
+
+/// Expanded clause syntax retained only for rejection rendering, before
+/// relation admission folds arithmetic into displacement constants.
+#[derive(Clone, Debug)]
+pub(crate) enum PostconditionClause {
+    Datum(RelationDatum),
+    Literal {
+        value: CheckedValue,
+        spelling: Option<String>,
+    },
+    NamedConst {
+        declaration: DeclarationId,
+        projections: Vec<GoalProjection>,
+        spelling: String,
+    },
+    Operation {
+        row: super::goal::GoalOperation,
+        arguments: Vec<Self>,
+    },
+}
+
+/// Diagnostic source occurrences for returned expressions and constructor fields.
+#[derive(Clone, Debug)]
+pub(crate) struct PostconditionSource {
+    pub(crate) spelling: String,
+    pub(crate) literal: bool,
+    pub(crate) fields: Vec<Self>,
 }
 
 /// One FN-9 side: a datum displaced by a mathematical integer constant,
@@ -368,4 +395,30 @@ pub(crate) struct CheckedPostcondition {
     pub(crate) const_substitutions: Vec<(DeclarationId, u64)>,
     pub(crate) relation: RelationTemplate,
     pub(crate) selected_returns: Vec<SelectedPostconditionReturn>,
+    /// The [ENT-2] clause (b) places the clause forms, each owing its
+    /// subscripts' [OP-4] obligations at every selected return [FN-9].
+    pub(crate) places: Vec<PostconditionFormedPlace>,
+}
+
+/// One [ENT-2] clause (b) place a postcondition forms at each of its
+/// selected returns [FN-9].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PostconditionFormedPlace {
+    pub(crate) expression: super::model::CheckedExpression,
+    /// Which state each base the place indexes is read in [MSR-3].
+    pub(crate) denotation: PlaceDenotation,
+}
+
+/// [MSR-3, FN-9] the state the bases of one postcondition place denote.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PlaceDenotation {
+    /// The state the return reads: the exit state of a reference parameter
+    /// the row writes, a named const, or a range.
+    Return,
+    /// The one state of a parameter that has no exit state: a by-value
+    /// parameter, or a reference the row only reads.
+    Entry,
+    /// The entry state `entry(parameter)` names, of a reference parameter
+    /// the row writes.
+    EntryImage,
 }

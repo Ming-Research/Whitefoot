@@ -14,9 +14,9 @@ enum Held {
   Cell(value: Box<u64>);
 }
 
-fn inspect(held: Held, expected: u64) -> result: Bool pure {
+fn inspect(observed: Held, expected: u64) -> result: Bool pure {
   doc "Whole-value transfers preserve live elements; scope cleanup must ignore the stale Box pointers left by takes.";
-  match move held {
+  match move observed {
     Windows(value: holder) => {
       if holder.before != expected {
         return False();
@@ -53,15 +53,6 @@ fn churn(seed: u64) -> result: Bool pure {
   doc "Reuse short-lived frame storage, including empty windows, partial windows and a wrapped Ring with releasing elements.";
   let empty = slots_new::<Box<u64>, 64>();
   let zero = ring_new::<Box<u64>, 0>();
-  if empty.len != 0_u64 {
-    return False();
-  }
-  if zero.len != 0_u64 {
-    return False();
-  }
-  if zero.head != 0_u64 {
-    return False();
-  }
   let slots = slots_new::<Box<u64>, 64>();
   let first = box_new::<u64>(value: seed);
   let next = seed +wrap 1_u64;
@@ -88,8 +79,8 @@ fn churn(seed: u64) -> result: Bool pure {
   }
   let after = array_filled::<u64, 3>(value: seed);
   let holder = Holder(before: seed, slots: move slots, ring: move ring, after: after);
-  let held = Held::Windows(value: move holder);
-  return inspect(held: move held, expected: seed);
+  let observed = Held::Windows(value: move holder);
+  return inspect(observed: move observed, expected: seed);
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {

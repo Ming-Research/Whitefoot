@@ -1,0 +1,6 @@
+fn sample(value: &u64, out: &u64) -> result: unit reads(value), writes(out) contract {
+  requires held(value);
+} {
+  set out^ = value^;
+  return unit;
+}

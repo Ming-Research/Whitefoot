@@ -341,27 +341,38 @@ fn dotted_call_spelling_uses_bounded_form3_override() {
 
 #[test]
 fn nested_call_in_atom_only_argument_uses_gram9_override() {
-    let source = b"fn main() -> result: unit pure { outer(inner()); }";
-    let inputs = [SourceInput::new("nested.wf", source)];
-    let bundle = bundle(&inputs);
-    let LexOutcome::Complete(lexed) = lex(&bundle, LEX_LIMITS) else {
-        panic!("test source must lex");
-    };
-    let TerminalOutcome::Complete(classified) = classify_terminals(
-        &lexed,
-        ACTIVE_KERNEL_SPEC_HASH,
-        TerminalLimits { max_tokens: 32 },
-    ) else {
-        panic!("test source must classify");
-    };
-    let outcome = parse(classified, PARSE_LIMITS);
-    let ParseOutcome::SourceIssue(issue) = outcome else {
-        panic!("nested call must be rejected: {outcome:?}");
-    };
-    assert_eq!(issue.rule(), SyntaxRule::Gram9);
-    let start = usize::try_from(issue.coordinate().start().value()).unwrap_or(usize::MAX);
-    let end = usize::try_from(issue.coordinate().end().value()).unwrap_or(usize::MAX);
-    assert_eq!(&source[start..end], b"inner(");
+    for (source, forbidden_start) in [
+        (
+            b"fn main() -> result: unit pure { outer(inner()); }".as_slice(),
+            b"inner(".as_slice(),
+        ),
+        (
+            b"fn main() -> result: unit pure { outer(std::process::exit_status(code: 0_u8)); }"
+                .as_slice(),
+            b"std::".as_slice(),
+        ),
+    ] {
+        let inputs = [SourceInput::new("nested.wf", source)];
+        let bundle = bundle(&inputs);
+        let LexOutcome::Complete(lexed) = lex(&bundle, LEX_LIMITS) else {
+            panic!("test source must lex");
+        };
+        let TerminalOutcome::Complete(classified) = classify_terminals(
+            &lexed,
+            ACTIVE_KERNEL_SPEC_HASH,
+            TerminalLimits { max_tokens: 64 },
+        ) else {
+            panic!("test source must classify");
+        };
+        let outcome = parse(classified, PARSE_LIMITS);
+        let ParseOutcome::SourceIssue(issue) = outcome else {
+            panic!("nested call must be rejected: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SyntaxRule::Gram9);
+        let start = usize::try_from(issue.coordinate().start().value()).unwrap_or(usize::MAX);
+        let end = usize::try_from(issue.coordinate().end().value()).unwrap_or(usize::MAX);
+        assert_eq!(&source[start..end], forbidden_start);
+    }
 }
 
 #[test]
@@ -621,7 +632,7 @@ fn sufficient_limits_produce_identical_derivation_metrics() {
 }
 
 #[test]
-fn complete_fixture_reaches_every_normative_production_kind() {
+fn complete_and_diagnostic_fixtures_reach_every_normative_production_kind() {
     let source = br#"
 program no_heap;
 alias Imported = pkg::library::Imported;
@@ -634,7 +645,7 @@ o: Box<u8>; p: Slots<u8, 4>; public readonly q: Ring<u8, 2 * n>;
 r: pkg::library::Imported; s: library::nested::Pair<u8>;
 }
 enum Choice<T: copy> { doc "choice"; None(); Some(public value: T); }
-nodrop struct Lease { doc "lease"; slot: u8; invariant held(lease): lease.slot <= 4_u8; }
+nodrop struct Lease { doc "lease"; slot: u8; invariant observed(lease): lease.slot <= 4_u8; }
 nodrop enum Ticket { doc "ticket"; Open(value: u8); }
 interface Behavior<T: drop> {
 doc "interface";
@@ -664,6 +675,7 @@ define pre = 0_i32 +wrap 1_i32;
 define post = 0_i32 +wrap 1_i32;
 requires pre;
 requires pre /defined post;
+requires held(shared, part);
 requires forall ordered(k in 0_u64..2_u64, m in k..4_u64) when k < m, run[k] != 0_i32, run[m] is not None: run[k] <= run[m], 0_u64 <= k, run[k] is Some;
 ensures when Some(value: routed): routed;
 ensures 2_i32 * routed + 1_i32 <= post - 1_i32;
@@ -750,16 +762,46 @@ fn main() -> result: unit pure {}
     ) else {
         panic!("graph fixture must classify");
     };
+    // [GRAM-2, DIAG-1] gives graph diagnostics a separate entry, which is
+    // never a subtree of either complete-record start production.
+    let segment_outcome = super::parse_graph_segment(graph_classified.clone(), PARSE_LIMITS);
+    let ParseOutcome::Complete(segment_parsed) = segment_outcome else {
+        panic!("graph diagnostic fixture must parse: {segment_outcome:?}");
+    };
+    assert!(matches!(
+        segment_parsed.tree.elements.last(),
+        Some(DerivationElement::Production {
+            production: Production::GraphSegment,
+            ..
+        })
+    ));
     let graph_outcome = super::parse_graph(graph_classified, PARSE_LIMITS);
     let ParseOutcome::Complete(graph_parsed) = graph_outcome else {
         panic!("graph fixture must parse: {graph_outcome:?}");
     };
+    assert!(
+        !parsed
+            .tree
+            .elements
+            .iter()
+            .chain(graph_parsed.tree.elements.iter())
+            .any(|element| {
+                matches!(
+                    element,
+                    DerivationElement::Production {
+                        production: Production::GraphSegment,
+                        ..
+                    }
+                )
+            })
+    );
     for production in productions() {
         let present = parsed
             .tree
             .elements
             .iter()
             .chain(graph_parsed.tree.elements.iter())
+            .chain(segment_parsed.tree.elements.iter())
             .any(|element| {
                 matches!(
                     element,
@@ -768,7 +810,7 @@ fn main() -> result: unit pure {}
             });
         assert!(present, "fixture omitted {production:?}");
     }
-    assert_eq!(productions().len(), 101);
+    assert_eq!(productions().len(), 103);
     assert_eq!(
         parsed
             .tree
@@ -809,7 +851,7 @@ const RETIRED_TRAPS_EFFECT_ROW: &[u8] = b"fn probe() -> result: unit traps {\n  
 const FREED_SPELLINGS_AS_IDENTIFIERS: &[u8] =
     b"fn external(blocks: unit) -> result: unit pure {\n  return blocks;\n}\n";
 
-const RETIRED_CLAIM_STATEMENT: &[u8] = b"fn probe() -> result: unit pure {\n  let flag = True();\n  claim held: flag because \"retired\";\n  return unit;\n}\n";
+const RETIRED_CLAIM_STATEMENT: &[u8] = b"fn probe() -> result: unit pure {\n  let flag = True();\n  claim observed: flag because \"retired\";\n  return unit;\n}\n";
 
 const RETIRED_SPELLINGS_AS_IDENTIFIERS: &[u8] = b"fn probe(claim: i32, because: i32, deny_claims: i32, traps: i32, trap: i32) -> result: i32 pure {\n  let total = claim +wrap because;\n  let staged = total +wrap deny_claims;\n  let finished = staged +wrap traps;\n  return finished +wrap trap;\n}\n";
 
@@ -820,6 +862,29 @@ const BODY_CHECK_STATEMENT: &[u8] =
     b"fn probe() -> result: unit pure {\n  let flag = True();\n  check flag;\n  return unit;\n}\n";
 
 const UNIFIED_CONTRACT: &[u8] = b"fn probe(value: i32) -> result: i32 pure contract {\n  define admitted = value == value;\n  requires admitted;\n  ensures result == value;\n} {\n  return value;\n}\n";
+
+#[test]
+fn held_requirements_parse_in_declarations_and_function_formals() {
+    for source in [
+        b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value);\n} {\n  return value^;\n}\n".as_slice(),
+        b"fn observe(left: &u64, right: &u64) -> result: u64 reads(left), reads(right) contract {\n  requires held(left, right);\n} {\n  return left^;\n}\n".as_slice(),
+        b"interface Observation {\n  fn observe(value: &u64) -> result: u64 reads(value) contract {\n    requires held(value);\n  };\n}\n".as_slice(),
+    ] {
+        let outcome = parse_active("held.wf", source);
+        assert!(matches!(outcome, ParseOutcome::Complete(_)), "{outcome:?}");
+    }
+}
+
+#[test]
+fn a_held_group_requires_a_nonempty_comma_separated_parameter_list() {
+    for source in [
+        b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held();\n} {\n  return value^;\n}\n".as_slice(),
+        b"fn observe(value: &u64) -> result: u64 reads(value) contract {\n  requires held(value,);\n} {\n  return value^;\n}\n".as_slice(),
+    ] {
+        let outcome = parse_active("held.wf", source);
+        assert!(matches!(outcome, ParseOutcome::SourceIssue(_)), "{outcome:?}");
+    }
+}
 
 const COUNTED_RANGE_STATEMENT: &[u8] = b"fn probe(lower: u64, upper: u64) -> result: unit pure {\n  for @range (\n    index in lower..upper,\n    invariant limit: index + 1_u64 * (1_u64) <= upper\n  ) {\n    break @range;\n  }\n  return unit;\n}\n";
 
@@ -1212,7 +1277,7 @@ fn loop_headers_reject_a_trailing_comma_at_the_closing_delimiter() {
 }
 
 /// Returns the exact source bytes a grammar rejection selected.
-fn issue_bytes(source: &'static [u8], issue: super::SyntaxIssue) -> &'static [u8] {
+fn issue_bytes(source: &[u8], issue: super::SyntaxIssue) -> &[u8] {
     let start = usize::try_from(issue.coordinate().start().value()).unwrap_or(usize::MAX);
     let end = usize::try_from(issue.coordinate().end().value()).unwrap_or(usize::MAX);
     &source[start..end]
@@ -1254,11 +1319,275 @@ fn declaration_and_parameter_optionals_report_their_complete_expected_sets() {
     );
 }
 
+/// The alias repair [MOD-5] a qualified path written where a value stands
+/// carries for `pkg::qualified_source::marker`.
+const QUALIFIED_MARKER_FIX: &str = "a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `marker` here, add `alias marker = pkg::qualified_source::marker;` to this record's alias header and write `marker` in place of `pkg::qualified_source::marker` [MOD-4]; a const of this record's own module is written `marker` with no alias";
+
+/// The rule, the cited bytes and the repair one rejected source selects.
+fn qualified_value_issue(
+    name: &'static str,
+    source: &'static [u8],
+) -> (SyntaxRule, &'static [u8], Option<String>) {
+    let outcome = parse_active(name, source);
+    let ParseOutcome::SourceIssue(issue) = outcome else {
+        panic!("{name}: a qualified path in a value position must reject: {outcome:?}");
+    };
+    let repair = issue.mechanical_fix().and_then(|fix| fix.sentence(source));
+    (issue.rule(), issue_bytes(source, issue), repair)
+}
+
+/// [DIAG-1, MOD-5] A qualified path that no `(` or `::` continues, written
+/// where an `expr` or `affine_factor` stands, is cited at the complete path
+/// with the alias that names it, expecting only the call continuation.
+///
+/// Before this rule the derivation failed after the path: at the next
+/// statement's keyword under FORM-3 when the path ended a `let` or `set` and a
+/// keyword followed, and at the `;` or operator under GRAM-5 otherwise, so a
+/// writer read a call expected one line below the constant. The cases cover
+/// both frontiers the failure can stop at — the `callee_path` continuation
+/// (a keyword or operator follows) and the call's targs continuation once a
+/// `; IDENT` or `; }` lookahead completed the callee — and both value
+/// productions.
+#[test]
+fn qualified_const_in_a_value_position_cites_mod5_at_the_path() {
+    for (name, source) in [
+        (
+            "set-before-set.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let holder = Holder(value: 0_u32, other: 0_u32);\n  set holder.value = pkg::qualified_source::marker;\n  set holder.other = 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice(),
+        ),
+        (
+            "let-before-let.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = pkg::qualified_source::marker;\n  let other = 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "let-before-call.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = pkg::qualified_source::marker;\n  record(value: wanted);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "let-before-close.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = pkg::qualified_source::marker;\n}\n",
+        ),
+        (
+            "return-value.wf",
+            b"fn main() -> result: u32 pure {\n  return pkg::qualified_source::marker;\n}\n",
+        ),
+        (
+            "if-condition.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  if pkg::qualified_source::marker == 1_u32 {\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "left-operand.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let sum = pkg::qualified_source::marker + 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "requirement-operand.wf",
+            b"fn bounded(value: u32) -> result: u32 pure contract {\n  requires value < pkg::qualified_source::marker;\n} {\n  return value;\n}\n",
+        ),
+    ] {
+        let (rule, cited, repair) = qualified_value_issue(name, source);
+        assert_eq!(rule, SyntaxRule::Mod5, "{name}");
+        assert_eq!(cited, b"pkg::qualified_source::marker", "{name}");
+        assert_eq!(repair.as_deref(), Some(QUALIFIED_MARKER_FIX), "{name}");
+    }
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = pkg::qualified_source::marker;\n  let other = 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice();
+    let ParseOutcome::SourceIssue(issue) = parse_active("expected.wf", source) else {
+        panic!("a qualified path in a value position must reject");
+    };
+    let expected: Vec<_> = issue.expected().iter().collect();
+    assert_eq!(
+        expected,
+        [
+            crate::syntax::grammar::LookaheadPredicate::Terminal(TerminalPredicate::Fixed(
+                FixedTerminal::ColonColon
+            )),
+            crate::syntax::grammar::LookaheadPredicate::Terminal(TerminalPredicate::Fixed(
+                FixedTerminal::LeftParen
+            )),
+        ],
+        "a qualified path continues only as a call"
+    );
+}
+
+/// [MOD-4, MOD-5] An alias path begins at `pkg`, `std` or a bound package
+/// name, never at a module alias, and the grammar cannot tell the two roots
+/// apart, so an IDENT-rooted path's repair also says how to spell its root.
+#[test]
+fn an_ident_rooted_qualified_const_repair_spells_its_root() {
+    let (rule, cited, repair) = qualified_value_issue(
+        "ident-root.wf",
+        b"fn main() -> status: std::process::ExitStatus pure {\n  let wanted = data::origin;\n  let other = 1_u32;\n  return std::process::exit_status(code: 0_u8);\n}\n",
+    );
+    assert_eq!(rule, SyntaxRule::Mod5);
+    assert_eq!(cited, b"data::origin");
+    assert_eq!(
+        repair.as_deref(),
+        Some(
+            "a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `origin` here, add `alias origin = data::origin;` to this record's alias header and write `origin` in place of `data::origin` [MOD-4], spelling `data` as the complete module path it stands for when it is a module alias, since an alias path begins at `pkg`, `std` or a bound package name; a const of this record's own module is written `origin` with no alias"
+        )
+    );
+}
+
+/// [DIAG-1, GRAM-9] In an atom-only position the qualified path is a
+/// forbidden call start and keeps GRAM-9 at its first two tokens, but its
+/// repair is the alias, not the `let` that would bind the same refused path.
+///
+/// The positional argument and the two infix operands reach the atom only
+/// after one token of lookahead, the `(` or the operator, so row 2 reads the
+/// tokens that begin at the boundary; before, it read the `(` or operator
+/// itself and FORM-3 cited `pkg` as a reserved word in an IDENT slot.
+#[test]
+fn qualified_const_in_an_atom_position_keeps_gram9_with_the_alias_repair() {
+    for (name, source) in [
+        (
+            "named-argument.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let x = take(value: pkg::qualified_source::marker);\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice(),
+        ),
+        (
+            "positional-argument.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let x = imin(pkg::qualified_source::marker, 1_u32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "construct-field.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let holder = Holder(value: pkg::qualified_source::marker, other: 0_u32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "right-operand.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let sum = 1_u32 + pkg::qualified_source::marker;\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+        (
+            "compared-operand.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  if count == pkg::qualified_source::marker {\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+    ] {
+        let (rule, cited, repair) = qualified_value_issue(name, source);
+        assert_eq!(rule, SyntaxRule::Gram9, "{name}");
+        assert_eq!(cited, b"pkg::", "{name}");
+        assert_eq!(repair.as_deref(), Some(QUALIFIED_MARKER_FIX), "{name}");
+    }
+}
+
+/// A qualified path that a call's `(` or `::` continues is a call: a nested
+/// one keeps GRAM-9's binding repair, and a type application that never
+/// reaches its `(` keeps GRAM-5 at the missing parenthesis [DIAG-1].
+#[test]
+fn a_qualified_call_is_not_a_qualified_const() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let x = take(value: pkg::qualified_source::f(x: 1_u32));\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice();
+    let ParseOutcome::SourceIssue(issue) = parse_active("nested-qualified-call.wf", source) else {
+        panic!("a nested qualified call must reject");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram9);
+    assert_eq!(issue_bytes(source, issue), b"pkg::");
+    assert_eq!(
+        issue
+            .mechanical_fix()
+            .and_then(|fix| fix.sentence(source))
+            .as_deref(),
+        Some(
+            "a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`"
+        )
+    );
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let x = pkg::qualified_source::make::<u8>;\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice();
+    let ParseOutcome::SourceIssue(issue) = parse_active("applied-without-call.wf", source) else {
+        panic!("a type application without its call must reject");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram5);
+    assert_eq!(issue_bytes(source, issue), b";");
+    assert!(issue.mechanical_fix().is_none());
+}
+
+/// [DIAG-1] row 2 reads the atom that begins after an infix operator, so a
+/// construction written as the right operand is GRAM-9's forbidden construct
+/// start, where the frontier's own lookahead, the operator, matched no row.
+#[test]
+fn a_construction_after_an_infix_operator_is_a_forbidden_atom() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let sum = 1_u32 + Holder(value: 1_u32);\n  return std::process::exit_status(code: 0_u8);\n}\n".as_slice();
+    let ParseOutcome::SourceIssue(issue) = parse_active("construct-operand.wf", source) else {
+        panic!("a construction as an infix operand must reject");
+    };
+    assert_eq!(issue.rule(), SyntaxRule::Gram9);
+    assert_eq!(issue_bytes(source, issue), b"Holder(");
+}
+
+#[test]
+fn type_frontiers_use_only_the_actual_calling_context() {
+    use FixedTerminal::{
+        Comma, Equal, Pure, Reads, RightAngle, RightBracket, RightParen, Semicolon, Writes,
+    };
+    use crate::syntax::grammar::LookaheadPredicate;
+
+    let cases: &[(&[u8], &[FixedTerminal])] = &[
+        (
+            b"fn main(inputs: std::process::Inputs) -> result: u32 {",
+            &[Pure, Reads, Writes],
+        ),
+        (b"fn main(value: u64 {", &[RightParen, Comma]),
+        (b"const value: u64 {", &[Equal]),
+        (b"struct Cell { value: u64 {", &[Semicolon]),
+        (b"fn main(value: &[u64 {", &[RightBracket]),
+        (b"fn main() -> (first: u64 {", &[Comma]),
+        (
+            b"fn main() -> (first: u64, second: u64 {",
+            &[RightParen, Comma],
+        ),
+        (b"fn main() -> result: Array<u64 {", &[Comma, RightAngle]),
+    ];
+    for (source, expected) in cases {
+        let outcome = parse_active("type-context.wf", source);
+        let ParseOutcome::SourceIssue(issue) = outcome else {
+            panic!("a type followed by an opening brace must reject: {outcome:?}");
+        };
+        assert_eq!(issue_bytes(source, issue), b"{", "{source:?}");
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|terminal| LookaheadPredicate::Terminal(TerminalPredicate::Fixed(*terminal)))
+            .collect();
+        assert_eq!(
+            issue.expected().iter().collect::<Vec<_>>(),
+            expected,
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn nullable_type_arguments_keep_their_own_prefix_and_the_real_outer_continuation() {
+    use crate::syntax::grammar::LookaheadPredicate;
+
+    // TYPEID's optional targs may enter with `<` or exit into the effect row.
+    // The qualified spelling additionally crosses type_path's nullable
+    // repetition and a production return before reaching that same suffix.
+    for source in [
+        b"fn main() -> result: Value {".as_slice(),
+        b"fn main() -> result: pkg::Value {".as_slice(),
+        b"fn main() -> result: pkg::nested::Value {".as_slice(),
+    ] {
+        let outcome = parse_active("nullable-context.wf", source);
+        let ParseOutcome::SourceIssue(issue) = outcome else {
+            panic!("the missing effect row must reject: {outcome:?}");
+        };
+        assert_eq!(issue_bytes(source, issue), b"{");
+        let expected: Vec<_> = [
+            FixedTerminal::LeftAngle,
+            FixedTerminal::Pure,
+            FixedTerminal::Reads,
+            FixedTerminal::Writes,
+        ]
+        .into_iter()
+        .map(|terminal| LookaheadPredicate::Terminal(TerminalPredicate::Fixed(terminal)))
+        .collect();
+        assert_eq!(
+            issue.expected().iter().collect::<Vec<_>>(),
+            expected,
+            "{source:?}"
+        );
+    }
+}
+
 #[test]
 fn bare_bool_range_guard_rejects_with_the_is_true_repair() {
     // [GRAM-5, RANGE-1] a guard requires one relation, so
     // a Bool datum written alone stops at its `:`.
-    let source = b"fn inspect(nodes: &[Bool]) -> result: unit pure contract {\n  requires forall held(k in 0_u64..nodes^.len) when nodes^[k]: k == k;\n} {\n  return unit;\n}\n".as_slice();
+    let source = b"fn inspect(nodes: &[Bool]) -> result: unit pure contract {\n  requires forall observed(k in 0_u64..nodes^.len) when nodes^[k]: k == k;\n} {\n  return unit;\n}\n".as_slice();
     let outcome = parse_active("bare-guard.wf", source);
     let ParseOutcome::SourceIssue(issue) = outcome else {
         panic!("a lone expression as a guard must reject: {outcome:?}");
@@ -1286,4 +1615,50 @@ fn unchanged_suffixes_parse_for_semantic_admission() {
 "#;
     let outcome = parse_active("unchanged.wf", source);
     assert!(matches!(outcome, ParseOutcome::Complete(_)), "{outcome:?}");
+}
+
+#[path = "repair_tests.rs"]
+mod repair_hints;
+
+#[test]
+fn integer_match_arm_forms_are_grammar_alternatives() {
+    let source = b"fn probe(value: i8) -> result: i8 pure {\n  match value {\n    -128_i8 => {\n      return 0_i8;\n    }\n    named => {\n      return 1_i8;\n    }\n    else => {\n      return 2_i8;\n    }\n  }\n}\n";
+    let ParseOutcome::Complete(parsed) = parse_active("integer-match.wf", source) else {
+        panic!("integer literals, named constants and else must parse as arm forms");
+    };
+    let limits = crate::CompilerLimits::default();
+    let FinalizeOutcome::Complete(finalized) = finalize(parsed, limits.finalizer) else {
+        panic!("integer arm derivation must finalize");
+    };
+    let crate::CanonicalOutcome::Complete(syntax) =
+        crate::audit_canonical(*finalized, limits.canonical)
+    else {
+        panic!("integer arm fixture must use canonical formatting");
+    };
+    let view = crate::syntax::views::SyntaxView::new(&syntax).unwrap();
+    let arms = view.descendants_with(view.root(), Production::Arm).unwrap();
+    use crate::syntax::views::MatchArmHeader;
+    assert!(matches!(
+        view.match_arm_header(arms[0]).unwrap(),
+        MatchArmHeader::Literal(_)
+    ));
+    assert!(matches!(
+        view.match_arm_header(arms[1]).unwrap(),
+        MatchArmHeader::Constant(_)
+    ));
+    assert_eq!(
+        view.match_arm_header(arms[2]).unwrap(),
+        MatchArmHeader::Else
+    );
+}
+
+#[test]
+fn integer_match_rejects_range_and_comma_grouped_value_headers_at_the_grammar() {
+    for source in [
+        b"fn probe(value: u8) -> result: unit pure { match value { 1_u8..=5_u8 => {} else => {} } }".as_slice(),
+        b"fn probe(value: u8) -> result: unit pure { match value { 1_u8, 2_u8 => {} else => {} } }".as_slice(),
+    ] {
+        let outcome = parse_active("integer-pattern.wf", source);
+        assert!(matches!(outcome, ParseOutcome::SourceIssue(_)), "{outcome:?}");
+    }
 }
