@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/waiting-contexts, compiler/incremental-compilation
 
 Summary: A deadlock report enumerates an intrusive roster under one lock, registering the root once and each child at its first actual guard or join park and removing it before reclamation, because at all-stuck every live context is such a waiter while registering every child at spawn cost 8.4% on one driver's concurrent spawns; a guard registers under its watch lock with the roster lock nested inside. The pre-registered one-percent comparison rejected no spawn panel, five of eight being inconclusive against the twin's spread, so the global roster stays provisional. Diagnostic fields occupy a cold tail initialized at first registration, and every all-stuck decision calls one inactive predicate. Cache keys still exclude host display paths, and emitted wait-site positions are templates whose display path is bound from the current invocation on reuse, so a different spelling of the same graph reuses its build while its reports name the paths this invocation wrote.
+## 2026-10-22 Definitions are substituted into every clause before its range terms are checked
+
+Nodes: language/checks-and-proofs/requires-entry-contract
+
+Summary: The changed decision substitutes a define into every clause before that clause's range terms are checked, so the range-term restriction holds independently of abbreviation spelling (a linear index admitted, a product of two parameters refused, in requires and ensures alike), instead of refusing a range term because it uses a define name.
 
 ## 2026-10-22 A manual gate run can add macOS, so a release is qualified once per release
 
