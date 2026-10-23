@@ -236,9 +236,9 @@ requests resizing when sparse. That is useful prior art for latency, not a
 drop-in algorithm for owning open-addressed buckets.
 
 Choose one-shot for the first library implementation because it preserves
-the one-backing consumer interface and grow path. Reject it if whole-drain
-or threshold-crossing contention violates the registered latency comparison;
-then return to the owner with an incremental design, not a hidden Firn rebuild
+the one-backing consumer interface and grow path. Reject it if the hold
+fails the reopen criterion under [Measurement](#measurement), Firn's `SPOP`
+drain p99 against the fastest competitor; then return to the owner with an incremental design, not a hidden Firn rebuild
 or a relaxed acceptance condition.
 
 ## Safety, proof and cursor obligations
