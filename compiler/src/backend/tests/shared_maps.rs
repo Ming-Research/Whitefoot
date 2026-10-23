@@ -1,42 +1,64 @@
-//! Shared-map emission and atomic target-group lock-ledger reporting.
+//! Shared-map emission and the lock-unit ledger of an atomic statement.
 //! Deliberately damaged lowering must make the amendment-S witnesses fail.
 //! These checks qualify the conformance observations independently of the
 //! emitted instruction sequences they damage.
 
 use super::{compile, compile_and_run, compile_link_and_run};
 
-/// Keep every ledger witness on the ordinary source-to-emission path used by
-/// the dispatch ledger. The entry is used on every path; only the body's
-/// placement of the metadata read changes between witnesses.
+/// The state of every ledger witness has a map field and a field of its own,
+/// `meta`. The statement takes a unit for the map and one for the rest of the
+/// state, in field order, each at its first use together with every earlier
+/// unit [SHARE-3]. `m^.0`, `m^.1` name the map unit by its field index, and
+/// `m^` the unit of the rest. The map's entry is used on every path, at the
+/// end of the block; only the body's placement of the `meta` reads changes
+/// between witnesses.
 const LOCK_LEDGER_SOURCE: &str = r#"const ledger_names: Array<u8, 1> =[97_u8];
 
 struct Meta {
   count: u64;
 }
 
-fn lock_run(keys: Shared<ConcurrentHashMap<u8>>, meta: Shared<STATE>, kept: Bool) -> result: unit pure waits {
+struct Ledger {
+FIELDS
+}
+
+fn lock_run(state: Shared<Ledger>, kept: Bool) -> result: unit pure waits {
   let key = &ledger_names[0_u64..1_u64];
-  atomic slot = &keys[key], m = &metaGUARD {
+  atomic m = &stateGUARD {
 BODY
-    set slot^ = None<u8>();
+    set m^.table[key] = None<u8>();
   }
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let keys = shared_map_new::<u8>(capacity: 1_u64);
-  let initial = INITIAL;
-  let meta = shared_new::<STATE>(value: initial);
+  let table = map_new::<u8>(capacity: 1_u64);
+  let meta = Meta(count: 1_u64);
+  let initial = CONSTRUCT;
+  let state = shared_new::<Ledger>(value: move initial);
   let kept = True();
-  lock_run(keys: move keys, meta: move meta, kept: kept);
+  lock_run(state: move state, kept: kept);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
 
-fn lock_ledger_source(state: &str, initial: &str, guard: &str, body: &str) -> String {
+/// The map first in field order: a statement that uses only the map takes no
+/// other unit, and a use of `meta` takes the map with it.
+const MAP_FIRST: (&str, &str) = (
+    "  table: ConcurrentHashMap<u8>;\n  meta: Meta;",
+    "Ledger(table: move table, meta: meta)",
+);
+
+/// `meta` first in field order: a use of the map takes `meta` with it.
+const META_FIRST: (&str, &str) = (
+    "  meta: Meta;\n  table: ConcurrentHashMap<u8>;",
+    "Ledger(meta: meta, table: move table)",
+);
+
+fn lock_ledger_source(layout: (&str, &str), guard: &str, body: &str) -> String {
     LOCK_LEDGER_SOURCE
-        .replace("STATE", state)
-        .replace("INITIAL", initial)
+        .replace("FIELDS", layout.0)
+        .replace("CONSTRUCT", layout.1)
         .replace("GUARD", guard)
         .replace("BODY", body)
 }
@@ -62,10 +84,11 @@ fn lock_ledger_lines(module: &str) -> Vec<&str> {
         .collect()
 }
 
-fn metadata_lock_line(source: &str, state: &str, timing: &str, first_use: &str) -> String {
+/// The ledger line of the unit of the state's own part, `m^`.
+fn object_lock_line(source: &str, timing: &str, first_use: &str) -> String {
     format!(
-        "LOCK lock_run  {}  targets(m): {state}  {timing}; first use {}",
-        lock_ledger_position(source, "atomic slot"),
+        "LOCK lock_run  {}  targets(m^): Ledger  {timing}; first use {}",
+        lock_ledger_position(source, "atomic m"),
         lock_ledger_position(source, first_use),
     )
 }
@@ -75,10 +98,9 @@ fn metadata_lock_line(source: &str, state: &str, timing: &str, first_use: &str) 
 #[test]
 fn lock_ledger_escapes_control_characters_in_host_display_paths() {
     let source = lock_ledger_source(
-        "Meta",
-        "Meta(count: 1_u64)",
+        MAP_FIRST,
         "",
-        "    let observed = m^.count;\n    set m^.count = observed;",
+        "    let observed = m^.meta.count;\n    set m^.meta.count = observed;",
     );
     let inputs = [crate::SourceInput::from_host_path(
         "test.wf",
@@ -91,8 +113,8 @@ fn lock_ledger_escapes_control_characters_in_host_display_paths() {
             .into_string()
     });
     let lines = lock_ledger_lines(&module);
-    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
-    let expected = metadata_lock_line(&source, "Meta", "on every path", "let observed")
+    assert_eq!(lines.len(), 2, "one line per lock unit: {lines:?}");
+    let expected = object_lock_line(&source, "on every path", "let observed")
         .replace("test.wf", r"host\nledger_tail\r\t\u{1}\\test.wf");
     let comment = format!("{}{expected}", crate::LOCK_LEDGER_PREFIX);
     assert_eq!(
@@ -101,7 +123,7 @@ fn lock_ledger_escapes_control_characters_in_host_display_paths() {
             .filter(|line| *line == comment.as_str())
             .count(),
         1,
-        "the escaped metadata path stays on one lock comment: {lines:?}"
+        "the escaped object path stays on one lock comment: {lines:?}"
     );
     assert!(
         !module.lines().any(|line| line.starts_with("ledger_tail")),
@@ -110,173 +132,137 @@ fn lock_ledger_escapes_control_characters_in_host_display_paths() {
 }
 
 /// An unconditional first read must not be described as conditional merely
-/// because the emitter checks the lazy group's taken word.
+/// because the emitter checks the lazy unit's taken word.
 #[test]
 fn lock_ledger_reports_a_metadata_read_on_every_path() {
     let source = lock_ledger_source(
-        "Meta",
-        "Meta(count: 1_u64)",
+        MAP_FIRST,
         "",
-        "    let observed = m^.count;\n    set m^.count = observed;\n    if kept {\n      set slot^ = Some<u8>(value: 1_u8);\n    }",
+        "    let observed = m^.meta.count;\n    set m^.meta.count = observed;\n    if kept {\n      set m^.table[key] = Some<u8>(value: 1_u8);\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
-    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
-    let expected = metadata_lock_line(&source, "Meta", "on every path", "let observed");
+    assert_eq!(lines.len(), 2, "one line per lock unit: {lines:?}");
+    let expected = object_lock_line(&source, "on every path", "let observed");
     assert!(
         lines.contains(&expected.as_str()),
-        "an unconditional read takes Meta on every path: {lines:?}"
+        "an unconditional read takes the state's own unit on every path: {lines:?}"
     );
 }
 
-/// The metadata group is reached only through the true successor of `kept`.
-/// A report that promotes that use to every path must fail this assertion.
+/// The state's own unit follows the map's in field order and is reached only
+/// through the true successor of `kept`: the map's entry at the end of the
+/// block does not take it. A report that promotes that use to every path must
+/// fail this assertion.
 #[test]
 fn lock_ledger_reports_a_metadata_read_on_some_paths() {
     let source = lock_ledger_source(
-        "Meta",
-        "Meta(count: 1_u64)",
+        MAP_FIRST,
         "",
-        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+        "    if kept {\n      let observed = m^.meta.count;\n      set m^.meta.count = observed;\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
-    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
-    let expected = metadata_lock_line(&source, "Meta", "on some paths", "let observed");
+    assert_eq!(lines.len(), 2, "one line per lock unit: {lines:?}");
+    let expected = object_lock_line(&source, "on some paths", "let observed");
     assert!(
         lines.contains(&expected.as_str()),
-        "the false successor never uses Meta: {lines:?}"
+        "the false successor never uses the state's own unit: {lines:?}"
     );
 }
 
-/// Primitive states precede the entry's nominal map state. The conditional
-/// primitive read does not postpone its lock: acquiring the entry takes both.
+/// Units are taken in field order. The conditional read of the earlier unit,
+/// `meta`, does not postpone its lock: the map's entry at the end of the
+/// block takes it too, and the ledger names the map unit that does.
 #[test]
-fn lock_ledger_names_the_entry_that_takes_an_earlier_primitive_group() {
+fn lock_ledger_names_the_map_unit_that_takes_an_earlier_object_unit() {
     let source = lock_ledger_source(
-        "u64",
-        "1_u64",
+        META_FIRST,
         "",
-        "    if kept {\n      let observed = m^;\n      set m^ = observed;\n    }",
+        "    if kept {\n      let observed = m^.meta.count;\n      set m^.meta.count = observed;\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
-    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
-    let entry = lock_ledger_position(&source, "slot =");
+    assert_eq!(lines.len(), 2, "one line per lock unit: {lines:?}");
+    let conditional = lock_ledger_position(&source, "let observed");
+    let entry = lock_ledger_position(&source, "set m^.table[key] = None<u8>();");
+    let mut uses = vec![conditional, entry.clone()];
+    uses.sort();
     let expected = format!(
-        "{}; taken with targets(slot) at {entry}",
-        metadata_lock_line(&source, "u64", "before the guard", "slot ="),
+        "LOCK lock_run  {}  targets(m^): Ledger  on every path; first use {}; taken with targets(m^.1) at {entry}",
+        lock_ledger_position(&source, "atomic m"),
+        uses.join(" | "),
     );
     assert!(
         lines.contains(&expected.as_str()),
-        "the entry takes u64 before the guard and reports why: {lines:?}"
+        "the entry takes the earlier unit on the path that skips the read, and the report names it: {lines:?}"
     );
 }
 
-/// The guard's read requires the metadata state before the guard, even though
-/// the block itself uses it only under a condition.
+/// The guard's read requires the state's own unit before the guard, even
+/// though the block itself uses it only under a condition.
 #[test]
 fn lock_ledger_reports_a_guard_read_before_the_guard() {
     let source = lock_ledger_source(
-        "Meta",
-        "Meta(count: 1_u64)",
-        " when m^.count != 0_u64",
-        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+        MAP_FIRST,
+        " when m^.meta.count != 0_u64",
+        "    if kept {\n      let observed = m^.meta.count;\n      set m^.meta.count = observed;\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
-    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
-    let expected = metadata_lock_line(&source, "Meta", "before the guard", "m^.count !=");
+    assert_eq!(lines.len(), 2, "one line per lock unit: {lines:?}");
+    let expected = object_lock_line(&source, "before the guard", "m^.meta.count !=");
     assert!(
         lines.contains(&expected.as_str()),
-        "a guard read takes Meta before testing the guard: {lines:?}"
+        "a guard read takes the unit before testing the guard: {lines:?}"
     );
 }
 
-/// A guard over a local value reads no target. Its watch fallback takes all
-/// groups before the guard; the true guard fact makes a repeated body test
-/// redundant under OP-5, so the metadata read runs directly.
+/// A guard over a local value reads no part of the state. Its watch fallback
+/// takes all units before the guard; the true guard fact makes a repeated body
+/// test redundant under OP-5, so the read of `meta` runs directly.
 #[test]
 fn lock_ledger_reports_all_groups_before_a_guard_that_reads_no_target() {
     let source = lock_ledger_source(
-        "Meta",
-        "Meta(count: 1_u64)",
+        MAP_FIRST,
         " when kept",
-        "    let observed = m^.count;\n    set m^.count = observed;",
+        "    let observed = m^.meta.count;\n    set m^.meta.count = observed;",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
-    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
-    let expected = metadata_lock_line(&source, "Meta", "before the guard", "atomic slot");
+    assert_eq!(lines.len(), 2, "one line per lock unit: {lines:?}");
+    let expected = object_lock_line(&source, "before the guard", "atomic m");
     assert!(
         lines.contains(&expected.as_str()),
-        "a guard that reads no target takes Meta before testing the guard: {lines:?}"
+        "a guard that reads no part of the state takes every unit before testing the guard: {lines:?}"
     );
 }
 
-/// Both emitted successors acquire Meta. This catches a report that treats
-/// all acquisitions within source `if` statements as only some paths.
+/// Both emitted successors acquire the state's own unit. This catches a
+/// report that treats all acquisitions within source `if` statements as only
+/// some paths.
 #[test]
 fn lock_ledger_reports_a_metadata_read_in_both_branches_on_every_path() {
     let source = lock_ledger_source(
-        "Meta",
-        "Meta(count: 1_u64)",
+        MAP_FIRST,
         "",
-        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    } else {\n      let other = m^.count;\n      set m^.count = other;\n    }",
+        "    if kept {\n      let observed = m^.meta.count;\n      set m^.meta.count = observed;\n    } else {\n      let other = m^.meta.count;\n      set m^.meta.count = other;\n    }",
     );
     let module = compile(source.as_bytes());
     let lines = lock_ledger_lines(&module);
-    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
-    let metadata = lines
+    assert_eq!(lines.len(), 2, "one line per lock unit: {lines:?}");
+    let object = lines
         .iter()
-        .find(|line| line.contains("targets(m): Meta"))
-        .expect("the metadata group is reported");
-    assert!(metadata.contains("  on every path; first use "), "{metadata}");
+        .find(|line| line.contains("targets(m^): Ledger"))
+        .expect("the state's own unit is reported");
+    assert!(object.contains("  on every path; first use "), "{object}");
     assert!(
-        metadata.contains(&lock_ledger_position(&source, "let observed")),
-        "{metadata}"
-    );
-    assert!(
-        metadata.contains(&lock_ledger_position(&source, "let other")),
-        "{metadata}"
-    );
-}
-
-/// An unconditional use of a later source state also takes an earlier state
-/// whose own use is conditional. The ledger must name the actual trigger.
-#[test]
-fn lock_ledger_names_a_later_lazy_group_that_takes_an_earlier_group() {
-    let source = lock_ledger_source(
-        "Meta",
-        "Meta(count: 1_u64)",
-        "",
-        "    let observed_tail = z^.count;\n    set z^.count = observed_tail;\n    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
-    )
-    .replace(
-        "struct Meta {\n  count: u64;\n}",
-        "struct Meta {\n  count: u64;\n}\n\nstruct Zeta {\n  count: u64;\n}",
-    )
-    .replace("kept: Bool)", "tail: Shared<Zeta>, kept: Bool)")
-    .replace("m = &meta", "m = &meta, z = &tail")
-    .replace(
-        "  let kept = True();",
-        "  let initial_tail = Zeta(count: 1_u64);\n  let tail = shared_new::<Zeta>(value: initial_tail);\n  let kept = True();",
-    )
-    .replace(
-        "meta: move meta, kept: kept",
-        "meta: move meta, tail: move tail, kept: kept",
-    );
-    let module = compile(source.as_bytes());
-    let lines = lock_ledger_lines(&module);
-    assert_eq!(lines.len(), 3, "one line per target group: {lines:?}");
-    let trigger = lock_ledger_position(&source, "let observed_tail");
-    let expected = format!(
-        "{}; taken with targets(z) at {trigger}",
-        metadata_lock_line(&source, "Meta", "on every path", "let observed_tail"),
+        object.contains(&lock_ledger_position(&source, "let observed")),
+        "{object}"
     );
     assert!(
-        lines.contains(&expected.as_str()),
-        "Zeta's unconditional use takes Meta too: {lines:?}"
+        object.contains(&lock_ledger_position(&source, "let other")),
+        "{object}"
     );
 }
 
@@ -289,8 +275,9 @@ fn witness(name: &str) -> Vec<u8> {
     .expect("read the normative witness")
 }
 
-/// Compiles a whole-target witness, turns its write selections into read
-/// selections, and requires the damaged program to leave its exit code.
+/// Compiles a witness whose statement holds a map whole, turns its write
+/// selections into read selections, and requires the damaged program to leave
+/// its exit code.
 /// Each witness is its own test so the harness runs them in parallel.
 fn assert_detects_read_selection_in_write_position(name: &str, expected: i32) {
     let llvm = compile(&witness(name));
@@ -392,9 +379,16 @@ struct NeighborBytes {
   third: u8;
 }
 
+struct Stores {
+  store: ConcurrentHashMap<NeighborBytes>;
+  fresh: ConcurrentHashMap<NeighborBytes>;
+}
+
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<NeighborBytes>(capacity: 2_u64);
-  let fresh = shared_map_new::<NeighborBytes>(capacity: 2_u64);
+  let store_map = map_new::<NeighborBytes>(capacity: 2_u64);
+  let fresh_map = map_new::<NeighborBytes>(capacity: 2_u64);
+  let maps = Stores(store: move store_map, fresh: move fresh_map);
+  let state = shared_new::<Stores>(value: move maps);
   let first = &tag_names[0_u64..1_u64];
   let second = &tag_names[1_u64..2_u64];
   let value = NeighborBytes(first: 129_u8, second: 193_u8, third: 251_u8);
@@ -403,13 +397,13 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let bounded_keys = key_set_new(capacity: 0_u64);
   let bounded_count = 0_u64;
   let bounded_failed = False();
-  atomic t = &store {
-    set t^[first] = Some<NeighborBytes>(value: value);
-    set t^[second] = Some<NeighborBytes>(value: value);
-    set initial = map_count::<NeighborBytes>(map: t);
-    set t^[first] = None<NeighborBytes>();
-    set remaining = map_count::<NeighborBytes>(map: t);
-    let bounded = map_scan_within::<NeighborBytes>(map: t, cursor: 0_u64, count: 2_u64, limit: 0_u64, keys: &bounded_keys);
+  atomic t = &state {
+    set t^.store[first] = Some<NeighborBytes>(value: value);
+    set t^.store[second] = Some<NeighborBytes>(value: value);
+    set initial = map_count::<NeighborBytes>(map: &t^.store);
+    set t^.store[first] = None<NeighborBytes>();
+    set remaining = map_count::<NeighborBytes>(map: &t^.store);
+    let bounded = map_scan_within::<NeighborBytes>(map: &t^.store, cursor: 0_u64, count: 2_u64, limit: 0_u64, keys: &bounded_keys);
     let required = 0_u64;
     match bounded {
       Next(next: end) => {
@@ -420,7 +414,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
       }
     }
     if required > 0_u64 {
-      let admitted = map_scan_within::<NeighborBytes>(map: t, cursor: 0_u64, count: 2_u64, limit: required, keys: &bounded_keys);
+      let admitted = map_scan_within::<NeighborBytes>(map: &t^.store, cursor: 0_u64, count: 2_u64, limit: required, keys: &bounded_keys);
       match admitted {
         Next(next: end) => {
           if end != 0_u64 {
@@ -448,24 +442,24 @@ fn main() -> status: std::process::ExitStatus pure waits {
   if bounded_count != 1_u64 {
     return std::process::exit_status(code: 7_u8);
   }
-  atomic slot = &store[second] {
-    set slot^ = Some<NeighborBytes>(value: value);
+  atomic t = &state {
+    set t^.store[second] = Some<NeighborBytes>(value: value);
   }
   let keys = key_set_new(capacity: 2_u64);
   let cursor = 0_u64;
-  atomic t = &store {
-    set cursor = map_scan::<NeighborBytes>(map: t, cursor: 0_u64, count: 2_u64, keys: &keys);
+  atomic t = &state {
+    set cursor = map_scan::<NeighborBytes>(map: &t^.store, cursor: 0_u64, count: 2_u64, keys: &keys);
   }
   if keys.len != 1_u64 {
     return std::process::exit_status(code: 3_u8);
   }
   let moved = 0_u64;
   let cleared = 1_u64;
-  atomic t = &store, f = &fresh {
-    swap(first: t, second: f);
-    set moved = map_count::<NeighborBytes>(map: f);
-    map_clear::<NeighborBytes>(map: f);
-    set cleared = map_count::<NeighborBytes>(map: f);
+  atomic t = &state {
+    swap(first: &t^.store, second: &t^.fresh);
+    set moved = map_count::<NeighborBytes>(map: &t^.fresh);
+    map_clear::<NeighborBytes>(map: &t^.fresh);
+    set cleared = map_count::<NeighborBytes>(map: &t^.fresh);
   }
   if moved != 1_u64 {
     return std::process::exit_status(code: 4_u8);
@@ -484,7 +478,6 @@ fn main() -> status: std::process::ExitStatus pure waits {
         ("wf__keyed_table_clear", "call void"),
         ("wf__keyed_table_swap", "call void"),
         ("wf__table_hold_release", "call void"),
-        ("wf__atomic_group_release", "call void"),
     ] {
         let calls: Vec<_> = llvm.lines().filter(|line| {
             line.contains(&format!("{opcode} @{symbol}("))

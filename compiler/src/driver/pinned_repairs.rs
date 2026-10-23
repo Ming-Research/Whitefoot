@@ -3176,7 +3176,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "SHARE-2",
         sentences: &[
             "]: AtomicTargetNotShared\n",
-            "\n  mechanical_fix: name a place of type `Shared<T>` or `SharedRead<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`\n",
+            "\n  mechanical_fix: name a place of type `Shared<T>` or `SharedRead<T>`: create the object with `shared_new` and give each context its own handle made with `shared_share`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
   let plain = shared_new::<u8>(value: 0_u8);
@@ -3241,7 +3241,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
         rule: "SHARE-2",
         sentences: &[
             "]: WaitInsideAtomic\n",
-            "\n  mechanical_fix: name both handles as targets of one statement, `atomic outer = &first, inner = &second { … }`, or end the outer statement before starting the inner one\n",
+            "\n  mechanical_fix: end the outer statement before starting the inner one, or keep both parts in the state of one shared object and update them in one statement\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
   let first = shared_new::<u8>(value: 0_u8);
@@ -3255,11 +3255,16 @@ fn main() -> status: std::process::ExitStatus pure waits {
   }
   return std::process::exit_status(code: 0_u8);
 }
-"#, br#"fn main() -> status: std::process::ExitStatus pure waits {
-  let first = shared_new::<u8>(value: 0_u8);
-  let second = shared_new::<u8>(value: 0_u8);
-  atomic outer = &first, inner = &second {
-    set inner^ = outer^;
+"#, br#"struct Pair {
+  outer: u8;
+  inner: u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let start = Pair(outer: 0_u8, inner: 0_u8);
+  let state = shared_new::<Pair>(value: start);
+  atomic both = &state {
+    set both^.inner = both^.outer;
   }
   return std::process::exit_status(code: 0_u8);
 }
