@@ -10,6 +10,12 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/checker-facts
 
 Summary: Per-branch ensures for own enums established route states wherever evidence arose, so programs writing no such ensures paid for snapshots, closures and joins of states nothing read; constructing one variant stored a context for every field of the other variants, and the Halo VM test host's check grew from about 2 s to about 630 s. The checker now collects, alongside binding types, which values a later match, error propagation, routed ensures or nested routed requirement reads, and omits conditional-state computations with no reachable reader; a read value keeps every version and every source through copies, assignments and `give`, and a routed call still establishes the root that diagnostics require. Establishing states at every evidence site regardless of readers is rejected because the omitted work feeds no proof and no required diagnostic root. Interleaved hosted-runner timings, recorded in the "Validation and outstanding evidence" section of research/investigations/enum-route-check-cost/DESIGN.md: Halo VM module 1.025x and Firn 0.978x against the revision before per-branch ensures, Halo VM test host 1.005x against wf-d837678c6905.
+## 2026-10-22 The kernel owns clearing a window while keeping its storage
+
+Nodes: language/data-model/kernel-minimality
+
+Summary: A program that reuses one byte buffer per batch could not empty it without one boundary operation per element or a transfer of every element into another window, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. The kernel therefore owns `clear` over every droppable element type: it runs each element's derived release, sets the length to zero and keeps the storage, capacity, ring origin and pages, so an element type that needs no release is reset independently of length. Clearing leaves the list of operations that begin as source libraries, and clearing as a source library over `take_back` is recorded as rejected.
+
 ## 2026-10-21 A column for a model with too few runs takes the larger of the row's largest class and its own runs
 
 Nodes: compiler/verification
