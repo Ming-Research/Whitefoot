@@ -1161,13 +1161,20 @@ Against the decision rules written above:
 
 - `pkg::vm`: `D` 0.585 is at most 1.03, rule 1, met. `pkg::test`: `D` 1.005 is at
   most 1.5, met.
-- Firn: `D` 1.029 is at most 1.03, so by rule 1 the row's own criterion is met and
-  no card is needed. It is met by 0.001, which is smaller than this run's noise:
-  the twin's range is 0.977–1.030, the `D` range is 1.007–1.188, the mean of the
-  five per-round `D` is 1.070, and the earlier Firn runs on neighbouring trees
-  measured 1.067 (merge base `1fbd6623d`), 1.082 (merge base `48b94ccfc`) and
-  1.027 (merge base `7b11c52fb`). The median meets the criterion in this run;
-  five pairs do not show that it would in the next.
+- Firn: `D` 1.029 is at most 1.03, so rule 1 as written says the row's own
+  criterion is met and no card is needed. It is met by 0.001, which is smaller
+  than this run's noise: the twin's range is 0.977–1.030, the `D` range is
+  1.007–1.188, the mean of the five per-round `D` is 1.070, and the earlier Firn
+  runs on neighbouring trees measured 1.067 (merge base `1fbd6623d`), 1.082 (merge
+  base `48b94ccfc`) and 1.027 (merge base `7b11c52fb`). The median meets the
+  criterion in this run; five pairs do not show that it would in the next. The
+  review of this record (finding F1 of its fourth round) adds that all five
+  per-round `D` exceed 1 (1.007 to 1.188), which by the noise standard of the
+  engineering rules is a slowdown against `base` of any size, and that a pass of
+  this kind would also have been reported had the true ratio been 1.07. Whether
+  the row counts as met, or goes to the owner as rule 2 describes, is put to the
+  architect; this record states the figures and the rule as written, and `E`,
+  which does not depend on the later merges, below.
 - `E` is at most 1.03 in both workloads: Firn 1.013 (0.961–1.036), `pkg::vm`
   0.990 (0.989–0.992). On the tree where #431 landed, with the same source and no
   other merge of main, this change returns Firn and `pkg::vm` to the pre-#431
@@ -1180,15 +1187,24 @@ Against the decision rules written above:
   −5.5%, `function:intern_calls` −3.9%, `join:join` +2.8%, `join:pairs_evaluated`
   +1.4%. `pkg::vm`: `closure:count` +0.5%, `closure:rows_sum` +0.2%,
   `snapshot:rows_sum` −0.5%, `join:join` +13.5% (25,170 to 28,568, against 290,038
-  with #431). So the closure surplus that the branch keeps over `base` (Firn
-  +13.8% closures and +7.0% rows, `pkg::vm` +13.4% and +14.0%) is not left by this
-  change: it is absent on the #431 tree and present in `main` (249,382 closures
-  in Firn) as the work of the merges since. This is the reading the earlier
-  counters could not separate.
+  with #431). So on the #431 tree this change leaves no closure surplus: the
+  closures and rows that #431 added are gone (Firn 163,984 closures against
+  165,907 before #431). The surplus that the branch keeps over `base` on the later
+  main (Firn +13.8% closures and +7.0% rows, `pkg::vm` +13.4% and +14.0%; `main`
+  has 249,382 closures in Firn) is therefore not work that this change leaves on
+  the tree where #431 landed. `c431fix` contains none of the later merges, so it
+  tests only the first of the two readings left open by the earlier counters
+  (closures that the merges since #431 add themselves). The second (closures
+  that #431's work multiplied on the later main and that this change does not
+  remove) is not tested: separating them needs a column "main with #431
+  reverted", which cannot be built (see the section above), so the surplus on the
+  later main is not attributed to either.
 
-What the figures do not show: where in the merges since #431 the excess of `F`
-(1.068, range 0.993–1.147) comes from. `b` was 1.080 on the previous head and is
-1.048 on this one, so the excess moves with main; this item does not attribute it.
+What the figures do not show: what produces the excess of `F` (1.068, range
+0.993–1.147) on the later main, whether the merges' own work or an interaction
+with #431's mechanism that this change does not remove. `b` was 1.080 on the
+previous head and is 1.048 on this one, so the excess moves with main; this item
+does not attribute it.
 
 ### Reviews
 
