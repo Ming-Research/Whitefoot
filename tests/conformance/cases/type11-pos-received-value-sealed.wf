@@ -20,7 +20,7 @@ fn moved_field(holder: Holder) -> result: u64 pure {
   return got;
 }
 
-fn given(flag: bool) -> result: u64 pure {
+fn given(flag: Bool) -> result: u64 pure {
   let stack = if flag {
     give fresh(first: 1_u64);
   } else {

@@ -2027,24 +2027,29 @@ impl Analyzer<'_, '_> {
         }
     }
 
+    /// [TYPE-11.S7] once the statement that gave `binding` its value has run
+    /// its kills, the instance of each affine invariant of the struct the
+    /// binding holds. A reference binding receives no value of the struct:
+    /// its place names the referent, which the statement did not give one.
+    pub(super) fn seal_binding(&mut self, binding: BindingId, state: &mut ProofFlowState) {
+        if self.input.places.is_reference(binding) {
+            return;
+        }
+        self.seal_received(&ResolvedPlace::binding(binding), &[], state);
+    }
+
     /// [TYPE-11.S7] once the kills `kills` of the statement that gave the
     /// place `spelled` names a value have run, the instance of each affine
     /// invariant of its struct there: a binding, a binder or a commit's
     /// target holds the value it received, which a debt it took [TYPE-11.S3]
-    /// is the only thing that can keep unsealed. A reference binding receives
-    /// no value of the struct.
-    pub(super) fn seal_received(
+    /// is the only thing that can keep unsealed.
+    fn seal_received(
         &mut self,
         spelled: &ResolvedPlace,
         kills: &[KillEvent],
         state: &mut ProofFlowState,
     ) {
         if !self.input.sealing {
-            return;
-        }
-        if let (PlaceRoot::Binding(binding), []) = (spelled.root, spelled.path.as_slice())
-            && self.input.places.is_reference(binding)
-        {
             return;
         }
         let members = self.input.resolve_sealed(spelled);
