@@ -1,7 +1,7 @@
 # Temporary workflow for spec-proof-theorems: probes of a call datum whose
 # captured image reaches a join from the branch that made the call. Each
-# program runs through the Lean model (parse, check, run) and through the
-# compiler (compile, run). Removed before the full check.
+# program runs through the Lean model (parse, check, run). Removed before the
+# full check.
 name: tmp-spec-proof-theorems
 
 on:
@@ -109,36 +109,10 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$RUNNER_TEMP/elan-init.sh"
           sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      # Probe.lean lies outside the package, so it runs from `proof/`, where
+      # elan finds the pinned toolchain and `lake env` the built modules.
       - name: Run the model on the probes
-        continue-on-error: true
         working-directory: proof
         run: |
           perl ../.github/run-check.pl tmp-proof-build lake build
-          cd "$RUNNER_TEMP/probes"
-          lake --dir "$GITHUB_WORKSPACE/proof" env lean --run Probe.lean leak.wf plain.wf control.wf
-      - name: Install the host toolchain
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          rustup default stable
-      - name: Build the compiler
-        run: perl .github/run-check.pl tmp-probe-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --bin whitefootc
-      - name: Run the compiler on the probes
-        run: |
-          cd "$RUNNER_TEMP/probes"
-          for probe in leak plain control; do
-            set +e
-            "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" -o "$probe" "$probe.wf" > "$probe.out" 2>&1
-            compiled=$?
-            ran=none
-            if [ "$compiled" -eq 0 ]; then
-              "./$probe"
-              ran=$?
-            fi
-            set -e
-            echo "COMPILER $probe: compile status $compiled, run status $ran"
-            head -c 2000 "$probe.out"
-          done
+          lake env lean --run "$RUNNER_TEMP/probes/Probe.lean" "$RUNNER_TEMP/probes/leak.wf" "$RUNNER_TEMP/probes/plain.wf" "$RUNNER_TEMP/probes/control.wf"
