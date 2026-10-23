@@ -1,0 +1,16 @@
+fn remaining(source: &[u64], i: u64) -> result: u64 reads(source) contract {
+  define start = i + 2_u64;
+  define stop = i + 3_u64;
+  requires start < source^.len;
+  requires forall small(k in start..stop): source^[k] <= 7_u64;
+} {
+  doc "The expanded interval covers element i + 2, not the element i + 1 the body reads, so no entry fact bounds the read value.";
+  let at = i + 1_u64;
+  let x = source^[at];
+  let left = 7_u64 - x;
+  return left;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

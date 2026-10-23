@@ -1,0 +1,14 @@
+fn fill(source: &[u64], i: u64) -> result: unit writes(source) contract {
+  define next = i + 1_u64;
+  requires next < source^.len;
+  ensures forall observed(k in 0_u64..1_u64): source^[next] <= 7_u64;
+} {
+  doc "The postcondition expands next before forming its element index.";
+  let at = i + 1_u64;
+  set source^[at] = 3_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
