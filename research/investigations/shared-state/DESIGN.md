@@ -962,3 +962,91 @@ lexical ordering: it failed with the required 2-before-10 assertion, and the
 correct implementation was restored. The old compiler's contradictory
 results above were observed before changing it; the new cases retain those
 distinguishing observations.
+
+## One object per statement
+
+Specification v0.164 replaces the independent targets above (board item
+`one-object-statement`). The independent-targets design kept a statement
+sound with facts only the runtime had: two handles of one state type may name
+one object, so the checker compared the paths of every two targets whose
+state types unify as paths from one root, and lowering sorted objects by
+identity and merged duplicate holds. Under one object a statement names one
+handle place and binds a reference to the object's whole state. State that
+changes together is one state, its parts reached by ordinary paths from one
+root and told apart by OWN-7 as the parts of any value are, and two objects
+are never held together, so neither comparison nor merge remains.
+
+### What the specification changes
+
+- GRAM-4 and SHARE-2: one target, `atomic s = &h when g { ... }`; entry and
+  key-set targets, possibly equal handles, unified-type roots and the lock
+  order across objects are retired with their uses in REF-1, OWN-7, EFF-2,
+  HOLD-1, FN-1, TYPE-11, RANGE-2 and RANGE-3.
+- SHARE-3 states the equivalence the lowering relies on: an implementation
+  may hold less of the state, or hold it together with other statements, only
+  where every outcome equals exclusive access to the whole state, and a part
+  that a fact of the statement's checking names counts as accessed.
+- SHARE-1, TYPE-9 and PRE-1: a `ConcurrentHashMap<V>` is an ordinary affine
+  value made by `map_new`; `shared_map_new` is retired; `m[k]` and `&m[ks]`
+  select entries on any map place; `release_map_reserve` takes the map.
+- PRE-2: a watch's `fired` reads the cancellation flag without holding the
+  state, only as a place atom of a guard or block; each read takes effect at
+  its own point before the statement's point and names no fact.
+
+### Lock units
+
+The lowering divides the state into units: one per map reached from the root
+through struct fields only, and one object unit for every other part, maps
+inside arrays, `Option`s, `Box`es and other maps' entries included. Units are
+ordered by field path and taken at first use together with every earlier
+unit, guard units before the guard, so no two statements take two units in
+opposite orders. A map unit is an entry lock when every reach of that map in
+the guard and block is `s^.m[k]` with one key binding declared outside the
+statement and not written by it; any other reach takes the map whole. An
+invariant on the state type or a proof step in the block takes every unit
+whole, since the fact names parts the block may not reach (SHARE-3).
+
+Field order is now a writer's lever: a state declares its map fields first
+so that statements on different keys run their blocks side by side and meet
+only at the other fields. A statement that selects entries by a key set takes
+its map whole, where a key-set target took only the set's entries; finer units
+for that case belong to the lock-unit work (`one-object-lock-units`).
+
+### A map as a value
+
+A statement waiting on a map unit keeps the map's address, so a write or a
+`swap` of a value holding maps exchanges the maps' contents rather than their
+addresses. A map that a context writes outside any statement takes a local
+hold when it is first written; `shared_new` and the map's release settle it.
+The design tree had refused a local map whose access rules differed by
+position and whose hidden hold had to be settled at publication; access is
+now one rule in every position (an ordinary path and OP-4), and the hold is
+settled at those two points only.
+
+### Conformance transitions
+
+Cases whose rule v0.164 retires are removed: two targets whose handle places
+may overlap or are proved apart, an index step on a target or a handle place
+reached through another target, state types of two targets compared by
+unification, one object held once through two handles, locks over several
+objects in one order, entry-target keys read when the statement begins, and
+alias partitions of two targets of one invariant-bearing type (one target's
+leaving edges stay pinned by the `type11-neg-atomic-*` cases). The TYPE-9 map
+placement cases reverse their verdicts and are replaced by positive cases
+under new ids. Every other case that used several targets, entry or key-set
+targets or `shared_map_new` is rewritten for one object with its verdict
+kept: two objects a statement held together become two fields of one state,
+and an entry target becomes a subscript or a borrow inside the block.
+
+### Firn under one object
+
+A keyspace holds `data: Shared<Data>`, `Data` being the keys' map followed by
+the metadata, and keeps `server` as its own object. A statement that held a
+key's entry and the metadata as two targets now holds `data` and reaches
+`d^.keys[key]` and `d^.meta` by paths; the flush makes an empty map before
+the statement, swaps it with `d^.keys` inside and releases the old entries
+after it. No helper's parameter type changed: helpers still take
+`&Option<Entry>`, `&Entries<Entry>` and `&Meta`, now formed from the state's
+paths. Two costs of the rewrite: every statement spells the state path where
+a target binder stood, and the multi-key commands (`DEL`, `MSET`, `MGET` and
+the other key-set statements) take the keys' map whole.
