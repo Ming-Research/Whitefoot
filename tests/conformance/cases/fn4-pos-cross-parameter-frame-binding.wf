@@ -29,8 +29,6 @@ fn main() -> status: std::process::ExitStatus pure {
   let initial = Pair(left: 0_u64, right: 9_u64);
   let count = 0_u64;
   let saved = exercise::<OtherTouch>(target: &initial, counter: &count);
-  // OP-2 admits this subtraction only through saved == 9, which the
-  // caller learns from the formal ensures the frame discharged.
   let rest = 9_u64 - saved;
   if count != 1_u64 {
     return std::process::exit_status(code: 2_u8);
