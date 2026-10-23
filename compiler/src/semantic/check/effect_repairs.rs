@@ -269,9 +269,7 @@ impl Checker<'_, '_> {
             // nor an instruction to insert it is published without validation.
             let (expected_row, mechanical_fix) = if validated {
                 let expected = self.types.render_effect_row(&suggested, signature)?;
-                let mut fix = format!(
-                    "declare the row as `{expected}`, which covers every access the body makes and no other"
-                );
+                let mut fix = super::repairs::effect_row_repair(&expected);
                 for companion in companions {
                     fix.push_str("; ");
                     fix.push_str(&companion);
