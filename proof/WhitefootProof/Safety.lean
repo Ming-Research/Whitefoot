@@ -344,7 +344,381 @@ theorem walkList_cons_ok {env : Env} {st : State} {blk : Pos} {i : Nat} {s : Stm
         obtain ⟨rfl, rfl⟩ := run_pure_ok h5
         exact Or.inr ⟨st', g4, orest, hm, hwl, rfl⟩
 
+theorem run_fail_ok {α : Type} {rule msg : String} {g g' : Gen} {a : α}
+    (h : (fail rule msg : M α).run g = .ok (a, g')) : False := by
+  cases h
+
+theorem run_freshId_ok {g g' : Gen} {n : Nat} (h : freshId.run g = .ok (n, g')) :
+    n = g.next ∧ g' = { g with next := g.next + 1 } := by
+  cases h
+  exact ⟨rfl, rfl⟩
+
+/-- A check that rejects when its condition holds, followed by the rest: a
+successful run passed the check and ran the rest from the same generator. -/
+theorem run_ite_fail_ok {α : Type} {c : Prop} [Decidable c] {rule msg : String}
+    {K : PUnit → M α} {g g' : Gen} {a : α}
+    (h : (if c then (fail rule msg >>= fun u => K u) else K PUnit.unit).run g = .ok (a, g')) :
+    ¬c ∧ (K PUnit.unit).run g = .ok (a, g') := by
+  by_cases hc : c
+  · rw [if_pos hc] at h
+    obtain ⟨_, _, hf, _⟩ := run_bind_ok h
+    exact (run_fail_ok hf).elim
+  · rw [if_neg hc] at h
+    exact ⟨hc, h⟩
+
+theorem bool_of_not_not {b : Bool} (h : ¬((!b) = true)) : b = true := by
+  cases b
+  · exact absurd rfl h
+  · rfl
+
+/-- The state a statement's right-hand side leaves for what follows: a call of
+a program function publishes its callee's postconditions, any other
+right-hand side leaves the state as it is. -/
+def Published (env : Env) (st : State) (r : Rhs) (g : Gen) (st1 : State) (g1 : Gen) : Prop :=
+  (r.call = none ∧ st1 = st ∧ g1 = g) ∨
+    ∃ f args, r.call = some (f, args) ∧
+      (publish env st f args none none id).run g = .ok (st1, g1)
+
+/-! ## Taking apart one statement's walk
+
+Each lemma reads a successful run of `walkStmt` for one kind of statement back
+into the runs it is made of. A `loop` is taken apart once its head is a
+function of its own. -/
+
+theorem walkStmt_let_ok {env : Env} {st : State} {pos : Pos} {x : String} {e : Expr}
+    {g g' : Gen} {env' : Env} {o : Out}
+    (h : (walkStmt env st pos (.let_ x e)).run g = .ok ((env', o), g')) :
+    ∃ r g1 st', (evalRhs env st e).run g = .ok (r, g1) ∧
+      (bindLet env st { name := x, id := g1.next, ty := r.val.ty } r).run
+        { g1 with next := g1.next + 1 } = .ok (st', g') ∧
+      env' = { env with vars := { name := x, id := g1.next, ty := r.val.ty } :: env.vars } ∧
+      o = { normal := [st'] } := by
+  rw [walkStmt] at h
+  obtain ⟨r, g1, hr, h1⟩ := run_bind_ok h
+  obtain ⟨n, g2, hn, h2⟩ := run_bind_ok h1
+  obtain ⟨rfl, rfl⟩ := run_freshId_ok hn
+  obtain ⟨st', g3, hb, h3⟩ := run_bind_ok h2
+  obtain ⟨h4, rfl⟩ := run_pure_ok h3
+  exact ⟨r, g1, st', hr, hb, congrArg Prod.fst h4, congrArg Prod.snd h4⟩
+
+theorem walkStmt_setVar_ok {env : Env} {st : State} {pos : Pos} {x : String} {e : Expr}
+    {g g' : Gen} {env' : Env} {o : Out}
+    (h : (walkStmt env st pos (.set (.var x) e)).run g = .ok ((env', o), g')) :
+    ∃ v r g1 st', env.var? x = some v ∧ (evalRhs env st e).run g = .ok (r, g1) ∧
+      (setVar env st v r).run g1 = .ok (st', g') ∧ env' = env ∧ o = { normal := [st'] } := by
+  rw [walkStmt] at h
+  cases hv : env.var? x with
+  | none =>
+    rw [hv] at h
+    exact (run_fail_ok h).elim
+  | some v =>
+    rw [hv] at h
+    obtain ⟨r, g1, hr, h1⟩ := run_bind_ok h
+    obtain ⟨st', g2, hs, h2⟩ := run_bind_ok h1
+    obtain ⟨h3, rfl⟩ := run_pure_ok h2
+    exact ⟨v, r, g1, st', (by first | exact hv | rfl), hr, hs, congrArg Prod.fst h3,
+      congrArg Prod.snd h3⟩
+
+theorem walkStmt_setIndex_ok {env : Env} {st : State} {pos : Pos} {b : String} {off : Atom}
+    {e : Expr} {g g' : Gen} {env' : Env} {o : Out}
+    (h : (walkStmt env st pos (.set (.index b off) e)).run g = .ok ((env', o), g')) :
+    ∃ v r g1 st1 g2 val, env.var? b = some v ∧ (evalRhs env st e).run g = .ok (r, g1) ∧
+      Published env st r g1 st1 g2 ∧ (evalAtom env st1 (.index b off)).run g2 = .ok (val, g') ∧
+      env' = env ∧ o = { normal := [st1.write v.id] } := by
+  rw [walkStmt] at h
+  cases hv : env.var? b with
+  | none =>
+    rw [hv] at h
+    exact (run_fail_ok h).elim
+  | some v =>
+    rw [hv] at h
+    obtain ⟨r, g1, hr, h1⟩ := run_bind_ok h
+    cases hc : r.call with
+    | none =>
+      rw [hc] at h1
+      obtain ⟨st1, g2, hp, h2⟩ := run_bind_ok h1
+      obtain ⟨hst, hg⟩ := run_pure_ok hp
+      obtain ⟨val, g3, hval, h3⟩ := run_bind_ok h2
+      obtain ⟨h4, rfl⟩ := run_pure_ok h3
+      exact ⟨v, r, g1, st1, g2, val, (by first | exact hv | rfl), hr, Or.inl ⟨hc, hst, hg⟩,
+        hval, congrArg Prod.fst h4, congrArg Prod.snd h4⟩
+    | some fa =>
+      obtain ⟨f, args⟩ := fa
+      rw [hc] at h1
+      obtain ⟨st1, g2, hp, h2⟩ := run_bind_ok h1
+      obtain ⟨val, g3, hval, h3⟩ := run_bind_ok h2
+      obtain ⟨h4, rfl⟩ := run_pure_ok h3
+      exact ⟨v, r, g1, st1, g2, val, (by first | exact hv | rfl), hr,
+        Or.inr ⟨f, args, hc, hp⟩, hval, congrArg Prod.fst h4, congrArg Prod.snd h4⟩
+
+theorem walkStmt_call_ok {env : Env} {st : State} {pos : Pos} {e : Expr} {g g' : Gen}
+    {env' : Env} {o : Out} (h : (walkStmt env st pos (.call e)).run g = .ok ((env', o), g')) :
+    ∃ r g1 st1, (evalRhs env st e).run g = .ok (r, g1) ∧ Published env st r g1 st1 g' ∧
+      env' = env ∧ o = { normal := [st1] } := by
+  rw [walkStmt] at h
+  obtain ⟨r, g1, hr, h1⟩ := run_bind_ok h
+  cases hc : r.call with
+  | none =>
+    rw [hc] at h1
+    obtain ⟨st1, g2, hp, h2⟩ := run_bind_ok h1
+    obtain ⟨hst, hg⟩ := run_pure_ok hp
+    obtain ⟨h3, rfl⟩ := run_pure_ok h2
+    exact ⟨r, g1, st1, hr, Or.inl ⟨hc, hst, hg⟩, congrArg Prod.fst h3, congrArg Prod.snd h3⟩
+  | some fa =>
+    obtain ⟨f, args⟩ := fa
+    rw [hc] at h1
+    obtain ⟨st1, g2, hp, h2⟩ := run_bind_ok h1
+    obtain ⟨h3, rfl⟩ := run_pure_ok h2
+    exact ⟨r, g1, st1, hr, Or.inr ⟨f, args, hc, hp⟩, congrArg Prod.fst h3,
+      congrArg Prod.snd h3⟩
+
+theorem walkStmt_ret_ok {env : Env} {st : State} {pos : Pos} {e : Expr} {g g' : Gen}
+    {env' : Env} {o : Out} (h : (walkStmt env st pos (.ret e)).run g = .ok ((env', o), g')) :
+    ∃ r g1 st1 g2, (evalRhs env st e).run g = .ok (r, g1) ∧ Published env st r g1 st1 g2 ∧
+      (checkReturn env st1 r.val).run g2 = .ok ((), g') ∧ env' = env ∧ o = {} := by
+  rw [walkStmt] at h
+  obtain ⟨r, g1, hr, h1⟩ := run_bind_ok h
+  cases hc : r.call with
+  | none =>
+    rw [hc] at h1
+    obtain ⟨st1, g2, hp, h2⟩ := run_bind_ok h1
+    obtain ⟨hst, hg⟩ := run_pure_ok hp
+    obtain ⟨⟨⟩, g3, hcr, h3⟩ := run_bind_ok h2
+    obtain ⟨h4, rfl⟩ := run_pure_ok h3
+    exact ⟨r, g1, st1, g2, hr, Or.inl ⟨hc, hst, hg⟩, hcr, congrArg Prod.fst h4,
+      congrArg Prod.snd h4⟩
+  | some fa =>
+    obtain ⟨f, args⟩ := fa
+    rw [hc] at h1
+    obtain ⟨st1, g2, hp, h2⟩ := run_bind_ok h1
+    obtain ⟨⟨⟩, g3, hcr, h3⟩ := run_bind_ok h2
+    obtain ⟨h4, rfl⟩ := run_pure_ok h3
+    exact ⟨r, g1, st1, g2, hr, Or.inr ⟨f, args, hc, hp⟩, hcr, congrArg Prod.fst h4,
+      congrArg Prod.snd h4⟩
+
+theorem walkStmt_brk_ok {env : Env} {st : State} {pos : Pos} {label : Option String}
+    {g g' : Gen} {env' : Env} {o : Out}
+    (h : (walkStmt env st pos (.brk label)).run g = .ok ((env', o), g')) :
+    ∃ l, target env.loops label = some l ∧ env' = env ∧ o = { breaks := [(l.id, st)] } ∧
+      g' = g := by
+  rw [walkStmt] at h
+  cases ht : target env.loops label with
+  | none =>
+    rw [ht] at h
+    exact (run_fail_ok h).elim
+  | some l =>
+    rw [ht] at h
+    obtain ⟨h1, rfl⟩ := run_pure_ok h
+    exact ⟨l, (by first | exact ht | rfl), congrArg Prod.fst h1, congrArg Prod.snd h1, rfl⟩
+
+theorem walkStmt_cont_ok {env : Env} {st : State} {pos : Pos} {label : Option String}
+    {g g' : Gen} {env' : Env} {o : Out}
+    (h : (walkStmt env st pos (.cont label)).run g = .ok ((env', o), g')) :
+    ∃ l, target env.loops label = some l ∧ env' = env ∧ o = { conts := [(l.id, st)] } ∧
+      g' = g := by
+  rw [walkStmt] at h
+  cases ht : target env.loops label with
+  | none =>
+    rw [ht] at h
+    exact (run_fail_ok h).elim
+  | some l =>
+    rw [ht] at h
+    obtain ⟨h1, rfl⟩ := run_pure_ok h
+    exact ⟨l, (by first | exact ht | rfl), congrArg Prod.fst h1, congrArg Prod.snd h1, rfl⟩
+
+theorem walkStmt_invariant_ok {env : Env} {st : State} {pos : Pos} {n : String} {rel : Relation}
+    {g g' : Gen} {env' : Env} {o : Out}
+    (h : (walkStmt env st pos (.invariant n rel)).run g = .ok ((env', o), g')) :
+    relHolds env g st rel = true ∧ env' = env ∧ o = { normal := [establishRel env st rel] } ∧
+      g' = g := by
+  rw [walkStmt] at h
+  obtain ⟨g0, g1, hget, h1⟩ := run_bind_ok h
+  obtain ⟨rfl, rfl⟩ := run_get_ok hget
+  obtain ⟨hc, h2⟩ := run_ite_fail_ok h1
+  obtain ⟨h3, rfl⟩ := run_pure_ok h2
+  exact ⟨bool_of_not_not hc, congrArg Prod.fst h3, congrArg Prod.snd h3, rfl⟩
+
 end Checker
+
+namespace Static
+
+/-! ## Taking apart a run of the static judgment
+
+The statement judgment runs in `Judge`, an exception monad. The simulation
+needs from it what each statement's right-hand side, target and relations
+passed, and that the blocks a statement holds passed too. -/
+
+theorem bind_ok {α β : Type} {x : Judge α} {f : α → Judge β} {b : β}
+    (h : (x >>= f) = .ok b) : ∃ a, x = .ok a ∧ f a = .ok b := by
+  cases x with
+  | error e => cases h
+  | ok a => exact ⟨a, rfl, h⟩
+
+theorem reject_ok {α : Type} {rule msg : String} {a : α}
+    (h : (rejectBy rule msg : Judge α) = .ok a) : False := by
+  cases h
+
+/-- A check that rejects when its condition holds, followed by the rest. -/
+theorem ite_reject_ok {α : Type} {c : Prop} [Decidable c] {rule msg : String}
+    {K : PUnit → Judge α} {a : α}
+    (h : (if c then (rejectBy rule msg >>= fun u => K u) else K PUnit.unit) = .ok a) :
+    ¬c ∧ K PUnit.unit = .ok a := by
+  by_cases hc : c
+  · rw [if_pos hc] at h
+    obtain ⟨_, hr, _⟩ := bind_ok h
+    exact (reject_ok hr).elim
+  · rw [if_neg hc] at h
+    exact ⟨hc, h⟩
+
+theorem stmts_cons_ok {p : Program} {f : FnDecl} {c : Ctx} {live : Bool} {s : Stmt}
+    {rest : List Stmt} {fl : Flow} (h : stmts p f c live (s :: rest) = .ok fl) :
+    live = true ∧
+      ∃ c' fs fr, stmt p f c s = .ok (c', fs) ∧ stmts p f c' fs.normal rest = .ok fr := by
+  rw [stmts] at h
+  obtain ⟨hl, h1⟩ := ite_reject_ok h
+  obtain ⟨⟨c', fs⟩, hs, h2⟩ := bind_ok h1
+  obtain ⟨fr, hr, _⟩ := bind_ok h2
+  exact ⟨Checker.bool_of_not_not hl, c', fs, fr, hs, hr⟩
+
+theorem stmt_let_ok {p : Program} {f : FnDecl} {c : Ctx} {x : String} {e : Expr}
+    {r : Ctx × Flow} (h : stmt p f c (.let_ x e) = .ok r) : ∃ t, exprTy p c.scope e = .ok t := by
+  rw [stmt] at h
+  obtain ⟨_, _, h1⟩ := bind_ok h
+  obtain ⟨t, ht, _⟩ := bind_ok h1
+  exact ⟨t, ht⟩
+
+theorem stmt_setVar_ok {p : Program} {f : FnDecl} {c : Ctx} {x : String} {e : Expr}
+    {r : Ctx × Flow} (h : stmt p f c (.set (.var x) e) = .ok r) :
+    ∃ t, exprTy p c.scope e = .ok t := by
+  rw [stmt] at h
+  obtain ⟨_, h1⟩ := ite_reject_ok h
+  obtain ⟨_, _, h2⟩ := bind_ok h1
+  obtain ⟨t, ht, _⟩ := bind_ok h2
+  exact ⟨t, ht⟩
+
+theorem stmt_setIndex_ok {p : Program} {f : FnDecl} {c : Ctx} {b : String} {off : Atom}
+    {e : Expr} {r : Ctx × Flow} (h : stmt p f c (.set (.index b off) e) = .ok r) :
+    (∃ t, atomTy c.scope (.index b off) = .ok t) ∧ ∃ t, exprTy p c.scope e = .ok t := by
+  rw [stmt] at h
+  obtain ⟨_, h1⟩ := ite_reject_ok h
+  obtain ⟨ta, hta, h2⟩ := bind_ok h1
+  obtain ⟨t, ht, _⟩ := bind_ok h2
+  exact ⟨⟨ta, hta⟩, t, ht⟩
+
+/-- An expression statement that is not a call is rejected. -/
+theorem stmt_call_other {p : Program} {f : FnDecl} {c : Ctx} {e : Expr} {r : Ctx × Flow}
+    (h : stmt p f c (.call e) = .ok r)
+    (he : ∀ callee targs args, e = .call callee targs args → False) : False := by
+  rw [stmt] at h
+  all_goals first
+    | exact he
+    | exact reject_ok h
+    | obtain ⟨_, hr, _⟩ := bind_ok h; exact reject_ok hr
+
+theorem stmt_call_ok {p : Program} {f : FnDecl} {c : Ctx} {e : Expr} {r : Ctx × Flow}
+    (h : stmt p f c (.call e) = .ok r) : ∃ t, exprTy p c.scope e = .ok t := by
+  cases e with
+  | call callee targs args =>
+    rw [stmt] at h
+    obtain ⟨_, hd, _⟩ := bind_ok h
+    cases ht : exprTy p c.scope (.call callee targs args) with
+    | error err =>
+      rw [ht] at hd
+      cases hd
+    | ok t => exact ⟨t, rfl⟩
+  | atom a => exact (stmt_call_other h fun _ _ _ he => by cases he).elim
+  | infix l o r' => exact (stmt_call_other h fun _ _ _ he => by cases he).elim
+  | op o args => exact (stmt_call_other h fun _ _ _ he => by cases he).elim
+  | bool b => exact (stmt_call_other h fun _ _ _ he => by cases he).elim
+
+theorem stmt_ret_ok {p : Program} {f : FnDecl} {c : Ctx} {e : Expr} {r : Ctx × Flow}
+    (h : stmt p f c (.ret e) = .ok r) : ∃ t, exprTy p c.scope e = .ok t := by
+  rw [stmt] at h
+  obtain ⟨t, ht, _⟩ := bind_ok h
+  exact ⟨t, ht⟩
+
+theorem stmt_if_ok {p : Program} {f : FnDecl} {c : Ctx} {cond : Expr} {thn els : List Stmt}
+    {he : Bool} {r : Ctx × Flow} (h : stmt p f c (.if_ cond thn els he) = .ok r) :
+    (∃ t, exprTy p c.scope cond = .ok t) ∧ (∃ fl, stmts p f c true thn = .ok fl) ∧
+      ∃ fl, stmts p f c true els = .ok fl := by
+  rw [stmt] at h
+  obtain ⟨tc, htc, h1⟩ := bind_ok h
+  obtain ⟨_, h2⟩ := ite_reject_ok h1
+  obtain ⟨a, ha, h3⟩ := bind_ok h2
+  obtain ⟨b, hb, _⟩ := bind_ok h3
+  exact ⟨⟨tc, htc⟩, ⟨a, ha⟩, b, hb⟩
+
+theorem stmt_invariant_ok {p : Program} {f : FnDecl} {c : Ctx} {n : String} {rel : Relation}
+    {r : Ctx × Flow} (h : stmt p f c (.invariant n rel) = .ok r) :
+    invariantOk c.scope rel = .ok () := by
+  rw [stmt] at h
+  obtain ⟨_, h1⟩ := ite_reject_ok h
+  obtain ⟨⟨⟩, hi, _⟩ := bind_ok h1
+  exact hi
+
+end Static
+
+/-! ## The snapshot the walk recorded at a point -/
+
+theorem lookup_of_mem_nodup {β : Type} :
+    ∀ {T : List (Pos × β)} {q : Pos} {b : β}, (q, b) ∈ T → (T.map (·.1)).Nodup →
+      T.lookup q = some b
+  | [], _, _, hm, _ => by cases hm
+  | (q', b') :: T, q, b, hm, hnd => by
+    have hnd' : List.Pairwise (fun a c => a ≠ c) (q' :: T.map (·.1)) := hnd
+    cases hnd' with
+    | cons h1 h2 =>
+      cases hm with
+      | head => simp only [List.lookup, beq_self_eq_true]
+      | tail _ hm' =>
+        cases hq : q == q' with
+        | true =>
+          exact absurd (beq_iff_eq.mp hq).symm (h1 q (List.mem_map.mpr ⟨(q, b), hm', rfl⟩))
+        | false =>
+          simp only [List.lookup, hq]
+          exact lookup_of_mem_nodup hm' h2
+
+/-- The first entry a name selects in a list keyed by it. -/
+theorem lookup_map_of_find? {α β : Type} {key : α → String} {val : α → β} {n : String} :
+    ∀ {l : List α} {a : α}, l.find? (fun x => key x == n) = some a →
+      (l.map fun x => (key x, val x)).lookup n = some (val a)
+  | [], _, hf => by cases hf
+  | x :: xs, a, hf => by
+    cases hx : key x == n with
+    | true =>
+      have hn : (n == key x) = true := beq_iff_eq.mpr (beq_iff_eq.mp hx).symm
+      have h1 : (x :: xs).find? (fun x => key x == n) = some x := by
+        simp only [List.find?, hx]
+      rw [h1] at hf
+      cases hf
+      simp only [List.map, List.lookup, hn]
+    | false =>
+      have h1 : (x :: xs).find? (fun x => key x == n) = xs.find? (fun x => key x == n) := by
+        simp only [List.find?, hx]
+      rw [h1] at hf
+      have hn : (n == key x) = false := by
+        cases hn' : n == key x with
+        | false => rfl
+        | true =>
+          rw [beq_iff_eq.mpr (beq_iff_eq.mp hn').symm] at hx
+          cases hx
+      simp only [List.map, List.lookup, hn]
+      exact lookup_map_of_find? hf
+
+/-- In a function the program names by its name, a position recorded once in
+the function's table reads back the snapshot recorded there. -/
+theorem Program.factsAt_eq {p : Program} {fn : FnDecl} {pos : Pos} {snap : Snapshot}
+    (hfn : p.fn? fn.name = some fn) (hm : (pos, snap) ∈ p.points fn)
+    (hnd : ((p.points fn).map (·.1)).Nodup) : p.factsAt (fn.name, pos) = snap := by
+  have h1 : p.pointTable.lookup fn.name = some (p.points fn) := lookup_map_of_find? hfn
+  have h2 : (p.points fn).lookup pos = some snap := lookup_of_mem_nodup hm hnd
+  have h3 : p.snapshot? (fn.name, pos) = some snap := by
+    show (p.pointTable.lookup fn.name).bind (fun t => t.lookup pos) = some snap
+    rw [h1]
+    exact h2
+  unfold Program.factsAt
+  rw [h3]
+  all_goals rfl
 
 /-! ## What the simulation carries
 
