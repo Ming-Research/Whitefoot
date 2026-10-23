@@ -18,9 +18,15 @@ rejection, so a case the parser wrongly puts outside the fragment, or a
 listed case missing from the manifest, is a disagreement too; a case newly in
 the fragment is added to the list. A few programs the cases do not run are
 run here with their outcomes, and a few programs no case exercises are
-checked here with their expected judgments. Each disagreement is printed, and the check
-fails while one remains: either the model is not faithful or the case shows a
-defect of the rules.
+checked here with their expected judgments, one of them a tree the parser
+could not produce. Each disagreement is printed, and the check fails while one
+remains: either the model is not faithful or the case shows a defect of the
+rules.
+
+Every case the checker accepts is also run from `main`, and at each point the
+run reaches the checker's walk must have recorded a snapshot whose bindings
+have the running frame's names, in its order: the interpreter and the walk
+then agree on every statement's position and scope.
 -/
 
 open Whitefoot
@@ -87,8 +93,66 @@ fn main() -> status: std::process::ExitStatus pure {
   let r = f(x: 1_u8);
   return std::process::exit_status(code: r);
 }
-", some "OP-5")
+", some "OP-5"),
+  -- The postcondition names the result only in `r - r`, which cancels: its
+  -- normalized relation terms carry no result datum, so it is rejected
+  -- [FN-9]. Accepted, the published disequality of the call datum with
+  -- itself would hold on every input, survive the join, and give `y0` the
+  -- bound 254 on the else path too, where `y0 + 1_u8` overflows.
+  ("a postcondition whose result cancels", "fn g(v: u8) -> r: u8 pure contract {
+  ensures r - r + v != v + 1_u8;
+} {
+  return v;
+}
+fn main() -> status: std::process::ExitStatus pure {
+  let a = array_filled::<u8, 1>(value: 255_u8);
+  let y = a[0_u64];
+  let y0 = y;
+  if y < 255_u8 {
+    set y = y + 1_u8;
+    let w = g(v: y);
+    set y = w;
+  }
+  let z = y0 + 1_u8;
+  return std::process::exit_status(code: z);
+}
+", some "FN-9")
 ]
+
+/-- Trees the parser cannot produce, each with the rule the checker must
+reject it citing. -/
+def builtExamples : List (String × Program × String) := [
+  -- `300_u8` lies outside `u8` [FORM-7]; the parser stops at its spelling.
+  ("a literal outside its type", {
+    aliases := [],
+    fns := [{
+      name := "main", params := [], result := "status",
+      resultTy := .named ["std", "process", "ExitStatus"],
+      contract := false, requires := [], ensures := [],
+      body := [.ret (.call ["std", "process", "exit_status"] [] [("code", .int .u8 300)])] }] },
+    "FORM-7")
+]
+
+/-- Run a program from `main` for at most `steps` steps and check every point
+it reaches: the walk recorded a snapshot there, and the snapshot's bindings
+are the frame's, by name and in order. Returns the first point that fails. -/
+def checkPoints (p : Program) (steps : Nat) : Option String := Id.run do
+  let table := p.pointTable
+  let some c0 := p.start | return none
+  let mut c := c0
+  for _ in [0:steps] do
+    if let some ((fn, pos), (env, _)) := c.point? then
+      match snapshotIn table (fn, pos) with
+      | none => return some s!"no snapshot at {fn} {pos}"
+      | some snap =>
+        let walked := snap.vars.map (·.name)
+        let running := env.map (·.1)
+        if walked != running then
+          return some s!"at {fn} {pos} the walk has {walked} in scope and the frame {running}"
+    match step p c with
+    | .next c' => c := c'
+    | _ => return none
+  return none
 
 def describe : Outcome → String
   | .done (.status c) => s!"done with exit status {c}"
@@ -161,7 +225,10 @@ def main (args : List String) : IO UInt32 := do
           c := { c with compared := c.compared + 1, checked := c.checked + 1 }
         if rj.rule != cited then
           IO.println s!"{id}: the checker rejects it citing {rj.rule} ({rj.msg}); the case cites {cited}"
-      | _, .ok _ => c := { c with accepted := c.accepted + 1 }
+      | _, .ok _ =>
+        c := { c with accepted := c.accepted + 1 }
+        if let some msg := checkPoints p budget then
+          problems := problems.push s!"{id} ({kind}): {msg}"
       | _, .error rj =>
         problems := problems.push s!"{id} ({kind}): the checker rejects it citing {rj.rule}: {rj.msg}"
       if kind == "run" then
@@ -198,6 +265,12 @@ def main (args : List String) : IO UInt32 := do
           | some rule => s!"a rejection citing {rule}"
           | none => "acceptance"
         problems := problems.push s!"example {name}: the checker gives {label got}, expected {label rule}"
+  for (name, p, rule) in builtExamples do
+    match p.check with
+    | .ok _ => problems := problems.push s!"example {name}: the checker accepts it, expected a rejection citing {rule}"
+    | .error rj =>
+      if rj.rule != rule then
+        problems := problems.push s!"example {name}: the checker rejects it citing {rj.rule}, expected {rule}"
   for (kind, c) in counts do
     IO.println (c.line kind)
   IO.println "outside the fragment, by the first construct met:"

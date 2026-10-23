@@ -73,6 +73,7 @@ mod programs {
     mod traversal;
     #[cfg(unix)]
     mod wfgrep;
+    mod wfgrep_hosts;
     #[cfg(unix)]
     mod wide_scan;
 }

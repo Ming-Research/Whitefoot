@@ -238,34 +238,6 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
             break @stored_entry;
           }
           set at = name_end;
-          let dotted = 0_u8;
-          let single = name_count == 1_u64;
-          if single {
-            let first_readable = name_at < entries_room;
-            if first_readable {
-              let first = entries[name_at];
-              if first == 46_u8 {
-                set dotted = 1_u8;
-              }
-            }
-          }
-          let paired = name_count == 2_u64;
-          if paired {
-            let second_at = name_at +wrap 1_u64;
-            let first_readable = name_at < entries_room;
-            let second_readable = second_at < entries_room;
-            if first_readable {
-              if second_readable {
-                let first = entries[name_at];
-                let second = entries[second_at];
-                if first == 46_u8 {
-                  if second == 46_u8 {
-                    set dotted = 1_u8;
-                  }
-                }
-              }
-            }
-          }
           let separated = prefix_length > 0_u64;
           let separated_length = prefix_length +wrap 1_u64;
           let child_length = if separated {
@@ -274,102 +246,99 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
             give name_count;
           }
           let fits = child_length <= 126_u64;
-          let usable = dotted == 0_u8;
-          if usable {
-            if fits {
-              let cursor = 0_u64;
-              loop @prefix_copy {
-                let done = cursor >= prefix_length;
-                if done {
-                  break @prefix_copy;
-                }
-                let readable = cursor < prefix_room;
-                if readable {
-                } else {
-                  break @prefix_copy;
-                }
-                let writable = cursor < child_room;
-                if writable {
-                } else {
-                  break @prefix_copy;
-                }
-                let byte = prefix^[cursor];
-                set child[cursor] = byte;
+          if fits {
+            let cursor = 0_u64;
+            loop @prefix_copy {
+              let done = cursor >= prefix_length;
+              if done {
+                break @prefix_copy;
+              }
+              let readable = cursor < prefix_room;
+              if readable {
+              } else {
+                break @prefix_copy;
+              }
+              let writable = cursor < child_room;
+              if writable {
+              } else {
+                break @prefix_copy;
+              }
+              let byte = prefix^[cursor];
+              set child[cursor] = byte;
+              set cursor = cursor +wrap 1_u64;
+            }
+            if separated {
+              let separator_fits = cursor < child_room;
+              if separator_fits {
+                set child[cursor] = 47_u8;
                 set cursor = cursor +wrap 1_u64;
               }
-              if separated {
-                let separator_fits = cursor < child_room;
-                if separator_fits {
-                  set child[cursor] = 47_u8;
-                  set cursor = cursor +wrap 1_u64;
-                }
+            }
+            let taken = 0_u64;
+            loop @name_copy {
+              let done = taken >= name_count;
+              if done {
+                break @name_copy;
               }
-              let taken = 0_u64;
-              loop @name_copy {
-                let done = taken >= name_count;
-                if done {
-                  break @name_copy;
-                }
-                let source_at = name_at +wrap taken;
-                let readable = source_at < entries_room;
-                if readable {
-                } else {
-                  break @name_copy;
-                }
-                let writable = cursor < child_room;
-                if writable {
-                } else {
-                  break @name_copy;
-                }
-                let byte = entries[source_at];
-                set child[cursor] = byte;
-                set cursor = cursor +wrap 1_u64;
-                set taken = taken +wrap 1_u64;
+              let source_at = name_at +wrap taken;
+              let readable = source_at < entries_room;
+              if readable {
+              } else {
+                break @name_copy;
               }
-              let room_left = total < 64_u64;
-              if room_left {
-                let stored = imin(cursor, 126_u64);
-                let byte_length = cvt::<u64, u8>(stored);
-                let start = records^.len;
-                let record_fits = start <= 8064_u64;
-                if record_fits {
-                  for @record (
-                    slot in 0_u64..128_u64,
-                    invariant filled: records^.len == start + slot,
-                    invariant fits: start <= 8064_u64
-                  ) {
-                    let byte = 0_u8;
-                    let heading = slot < 2_u64;
-                    if heading {
-                      if slot == 0_u64 {
-                        set byte = kind;
-                      } else {
-                        set byte = byte_length;
-                      }
+              let writable = cursor < child_room;
+              if writable {
+              } else {
+                break @name_copy;
+              }
+              let byte = entries[source_at];
+              set child[cursor] = byte;
+              set cursor = cursor +wrap 1_u64;
+              set taken = taken +wrap 1_u64;
+            }
+            let room_left = total < 64_u64;
+            if room_left {
+              let stored = imin(cursor, 126_u64);
+              let byte_length = cvt::<u64, u8>(stored);
+              let start = records^.len;
+              let record_fits = start <= 8064_u64;
+              if record_fits {
+                for @record (
+                  slot in 0_u64..128_u64,
+                  invariant filled: records^.len == start + slot,
+                  invariant fits: start <= 8064_u64
+                ) {
+                  let byte = 0_u8;
+                  let heading = slot < 2_u64;
+                  if heading {
+                    if slot == 0_u64 {
+                      set byte = kind;
                     } else {
-                      let body_at = slot -wrap 2_u64;
-                      let inside = body_at < stored;
-                      if inside {
-                        set byte = child[body_at];
-                      }
+                      set byte = byte_length;
                     }
-                    place_back(window: records, value: byte);
+                  } else {
+                    let body_at = slot -wrap 2_u64;
+                    let inside = body_at < stored;
+                    if inside {
+                      set byte = child[body_at];
+                    }
                   }
+                  place_back(window: records, value: byte);
                 }
-                set total = total +wrap 1_u64;
               }
-              let descending = kind == 2_u8;
-              if descending {
-                let name_view = &entries[0_u64..4096_u64];
-                match open_directory_from_factory(factory: factory, root: dir, name: name_view, start: name_at, end: name_end) {
-                  Ok(value: opened) => {
-                    let deeper = depth +wrap 1_u64;
-                    let child_view = &child[0_u64..256_u64];
-                    set total = walk(factory: factory, dir: &opened, prefix: child_view, prefix_length: cursor, records: records, used: total, depth: deeper);
-                    close_directory(factory: factory, directory: move opened);
-                  }
-                  Err(error: problem) => {
-                  }
+              set total = total +wrap 1_u64;
+            }
+            let descending = kind == 2_u8;
+            if descending {
+              let name_view = &entries[0_u64..4096_u64];
+              match open_directory_from_factory(factory: factory, root: dir, name: name_view, start: name_at, end: name_end) {
+                Ok(value: opened) => {
+                  let deeper = depth +wrap 1_u64;
+                  let child_view = &child[0_u64..256_u64];
+                  set total = walk(factory: factory, dir: &opened, prefix: child_view, prefix_length: cursor, records: records, used: total, depth: deeper);
+                  close_directory(factory: factory, directory: move opened);
+                }
+                Err(error: problem) => {
                 }
               }
             }

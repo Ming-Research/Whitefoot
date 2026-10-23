@@ -412,6 +412,9 @@ jobs:
       # programs::host_paths opens host paths in the Win32 dialect and from
       # UTF-8 and UTF-16 byte windows; the conformance adapter is POSIX-only,
       # so this is the Windows evidence for the host-path opens.
+      # programs::wfgrep_hosts searches a two-level tree and must publish the
+      # lines it publishes on Linux, and conformance::file_replacement also
+      # runs the listing case, whose names are the same bytes as on POSIX.
       - name: Construct and run shared Windows program cases
         timeout-minutes: 8
         env:
@@ -420,7 +423,7 @@ jobs:
           RUST_MIN_STACK: 8388608
         run: |
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
-            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: programs::driver_count:: programs::host_paths:: conformance::file_replacement:: native_windows::
+            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: programs::driver_count:: programs::host_paths:: programs::wfgrep_hosts:: conformance::file_replacement:: native_windows::
 
       # The driver itself on this target: the module names the MinGW triple,
       # and an ordinary link, a cached ThinLTO link of function fragments (the

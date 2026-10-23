@@ -32,7 +32,7 @@ fn relative_paths_cross_the_cli_and_required_iocp_boundary() {
 }
 
 #[test]
-fn complete_utf16_argument_bytes_select_the_native_components() {
+fn argument_name_bytes_select_the_native_components() {
     let program = build_cli_program("windows/component_open.wf", false);
     let directory = fixture_directory();
     directory.write_nested("\u{4241}", b"W");

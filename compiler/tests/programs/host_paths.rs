@@ -14,16 +14,10 @@ use super::support::{CompiledProgram, build_program, compile_program, fixture_di
 use super::support::{close_path, reopen_path};
 use crate::support::run_command;
 
-/// A Windows component name is native UTF-16 code units, so the Windows
-/// copies of the two programs spell their names in them; the rest is shared.
-#[cfg(unix)]
+/// A component name is the same name bytes on every host [PRE-2], so one
+/// copy of each program serves POSIX and Windows.
 const PATHS_PROGRAM: &str = "host_paths.wf";
-#[cfg(unix)]
 const BYTES_PROGRAM: &str = "host_path_bytes.wf";
-#[cfg(windows)]
-const PATHS_PROGRAM: &str = "windows/host_paths.wf";
-#[cfg(windows)]
-const BYTES_PROGRAM: &str = "windows/host_path_bytes.wf";
 /// The credit total is the descriptor limit less 64 on a POSIX host and a
 /// fixed number on Windows, so only the POSIX run can set it.
 #[cfg(unix)]
