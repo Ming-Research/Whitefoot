@@ -199,9 +199,10 @@ run() {
 # works in: it leaves first, rejected and checked there beside the installed
 # package, and guide-steps.py reads what each command printed. On Linux the
 # guide's apt-get line installs the libraries the bundled toolchain links
-# against; python3 and strace, already here, are no part of the guide. The
-# commands run under strace, or on macOS inside the denial sandbox, so that no
-# host clang can answer for the bundled one.
+# against that the stock image lacks (the image holds libstdc++6, zlib1g and
+# liblzma5 already); python3 and strace, already here, are no part of the
+# guide. The commands run under strace, or on macOS inside the denial sandbox,
+# so that no host clang can answer for the bundled one.
 ( cd "$work/installed here" && run guide-install bash "$work/tools/install.sh" )
 python3 -I "$helpers/guide-steps.py" verify "$work/tools"
 cp -R "$work/tools" "$logs/guide-steps"

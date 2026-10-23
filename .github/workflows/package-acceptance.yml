@@ -183,10 +183,11 @@ jobs:
           test -f docs/guide/getting-started.md
           mkdir -p "$RUNNER_TEMP/package-$MODE/logs"
           status=0
-          # The libraries the bundled clang/lld link against (XML, ICU, LZMA,
-          # zlib, C++, the C development files) are installed by the guide's own
-          # apt-get line inside check-package.sh, from the stock image; they
-          # supply no host compiler. strace and Python inspect execution and
+          # The libraries the bundled clang/lld link against and the stock image
+          # lacks (XML, ICU, the C development files) are installed by the
+          # guide's own apt-get line inside check-package.sh; the C++, zlib and
+          # LZMA runtime libraries are in the stock image before it runs. None
+          # supplies a host compiler. strace and Python inspect execution and
           # inventory. The candidate directory holds the archive and the
           # release's SHA256SUMS the guide's download would fetch. No
           # repository checkout, host compiler or /usr/lib/llvm tree is mounted.
