@@ -8,3 +8,4 @@ import WhitefootProof.Facts
 import WhitefootProof.Affine
 import WhitefootProof.Checker
 import WhitefootProof.Walk
+import WhitefootProof.Points
