@@ -1683,10 +1683,12 @@ struct wf_driver {
     wf_context *run_head;
     wf_context *run_tail;
     _Atomic unsigned run_count;
-    /* Set while this driver is parked or polling with nothing to run, until
-     * wf_run_take hands it work, and when a driver that made work ready woke
-     * it to look for some. */
+    /* Set when this driver parks with nothing to run, and kept through its
+     * later empty polls and waits until it is activated: by wf_run_take
+     * before it dequeues, by wf_drivers_wake_one when picked to search, or by
+     * wf_driver_acquire_reserved. */
     _Atomic unsigned idle;
+    /* Set when a driver that made work ready woke this one to look for some. */
     _Atomic unsigned searcher;
     wf_context *parked;
     /* Next parked record to inspect in a bounded borrowed pass. Updated by
@@ -1881,8 +1883,8 @@ static _Atomic unsigned wf_drivers_notifying;
  * the count its last pass over its parked contexts saw. */
 static _Atomic uint64_t wf_context_foreign_publications;
 
-/* Drivers logically idle, parked or polling with nothing to run (a driver
- * stays idle across empty polls until wf_run_take hands it work), and whether
+/* Drivers logically idle (parked with nothing to run, and kept so through
+ * later empty polls until activated; see the driver's idle flag), and whether
  * one has been woken to look for work and has not looked yet: while one has,
  * no other is woken. */
 static _Atomic unsigned wf_drivers_idle;
