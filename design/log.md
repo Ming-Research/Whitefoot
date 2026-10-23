@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/diagnostic-repairs, compiler/formatting-command
 
 Summary: A FORM-2 rejection reported one differing gap per compile, so a writer fixing a file with several layout faults spent a round on each; in a writer trial three of fifteen programs spent four to five rounds that way. The rejection still reports only the first gap, as the specification fixes for the canonical stage, and its repair now lists every differing gap of the rejected source, the first twenty with the line, the terminals around the gap and the bytes to write instead of the bytes found, and the count of the rest. The list comes from a walk over the rejected source's terminals that compares each gap with the one canonical-gap function the renderer emits from, so it cannot disagree with rendering; the walk has a work ceiling of its own, and reaching it leaves the rejection without a list. The formatting request's reason is restated: a writer without it applies the listed changes by hand.
+## 2026-10-21 A column for a model with too few runs takes the larger of the row's largest class and its own runs
+
+Nodes: compiler/verification
+
+Summary: The time-budget decision said a model with fewer than 20 recorded runs has no column, while the budget table has carried a column for one Intel Xeon model since the owner added it, valued at the larger of the row's largest class budget and the model's own runs by the rule. The tree now says so: such a column exists only when the owner adds it and takes that value, because a few runs can show that a class needs more time but not that it needs less, instead of the model's own runs alone or the unmapped-model fallback alone. The recompute tool applies this value to every such column, so the tree states what the table and the tool already do; no budget value changes. The grounds are in the [time-budget investigation](../research/investigations/test-economy/time-budgets.md#xeon-platinum-8573c-column-candidate-compiler-budget-and-cached-baseline-compiler-2026-10-13), which also records the recompute of the Linux columns.
 
 ## 2026-10-22 An assignment evaluates its right-hand side before its target
 
