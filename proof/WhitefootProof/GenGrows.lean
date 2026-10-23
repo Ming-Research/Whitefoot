@@ -130,7 +130,7 @@ theorem OnlyGrows.of_lift {α : Type} (j : Judge α) : OnlyGrows (StateT.lift j 
       cases h
       exact Gen.Grows.refl _⟩
 
-theorem OnlyGrows.of_modify {f : Gen → Gen} (hf : ∀ g, g.Grows (f g)) :
+theorem OnlyGrows.of_modify {f : Gen → Gen} (hf : ∀ g : Gen, g.Grows (f g)) :
     OnlyGrows (modify f : M PUnit) :=
   ⟨fun g _ _ h => by
     cases h
@@ -169,6 +169,7 @@ and the functions this module has already proved to only grow the generator.
 Goals it cannot close, such as the interval of a delta atom, are left. -/
 syntax "grows" : tactic
 
+set_option hygiene false in
 macro_rules
   | `(tactic| grows) => `(tactic| repeat' (first
       | assumption
@@ -517,6 +518,7 @@ theorem disj_if {pos q : Pos} (h : InBlock (pos ++ [0]) 0 q) (h' : InBlock (pos 
 disjunctions the walk accumulates. -/
 syntax "region_incl" : tactic
 
+set_option hygiene false in
 macro_rules
   | `(tactic| region_incl) => `(tactic| first
       | exact False.elim
@@ -530,6 +532,7 @@ macro_rules
 disjoint. -/
 syntax "region_sep" : tactic
 
+set_option hygiene false in
 macro_rules
   | `(tactic| region_sep) => `(tactic| first
       | exact disj_false
@@ -539,6 +542,7 @@ macro_rules
       | exact disj_if
       | (refine fun h => Or.elim h ?_ ?_ <;> region_sep))
 
+set_option hygiene false in
 macro "region_close" : tactic => `(tactic| first
   | (intro _ h; refine Gen.Records.mono (fun q => ?_) h; region_incl)
   | (intro q; region_sep))
@@ -550,6 +554,7 @@ its snapshots, the walk's own snapshot, a part that only grows the generator,
 or the end. Leaves the disjointness of positions and the final inclusion. -/
 syntax "spec_step" : tactic
 
+set_option hygiene false in
 macro_rules
   | `(tactic| spec_step) => `(tactic| first
       | exact Spec.of_fail _ _
