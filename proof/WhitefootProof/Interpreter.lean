@@ -6,9 +6,11 @@ import WhitefootProof.Syntax
 A small-step machine over the syntax tree. A configuration is a stack of call
 frames; each frame holds its function, its bindings in scope, the entry values
 of its parameters, a continuation of statement lists, block scopes and loop
-markers, and where its result goes in its caller. `step` takes one statement or
-one administrative move (leaving a block, repeating a loop body, returning);
-`run` takes at most a given number of steps.
+markers, and where its result goes in its caller. Each statement list in the
+continuation carries the position of its first statement (`Pos`), so a frame
+about to run a statement names it. `step` takes one statement or one
+administrative move (leaving a block, repeating a loop body, returning); `run`
+takes at most a given number of steps.
 
 The machine stops in one of four ways:
 
@@ -243,12 +245,12 @@ def allHold (env : Env) : List Relation → Eval Bool
 
 /-- What follows a statement in its frame. -/
 inductive Kont where
-  /-- The rest of a block. -/
-  | stmts (ss : List Stmt)
+  /-- The rest of a block: `ss` starts at index `i` of the block at `blk`. -/
+  | stmts (blk : Pos) (i : Nat) (ss : List Stmt)
   /-- The end of a block: the bindings it declared leave scope. -/
   | scope (depth : Nat)
-  /-- The end of a loop body: the body runs again. -/
-  | loop (label : Option String) (body : List Stmt) (depth : Nat)
+  /-- The end of a loop body, the block at `blk`: the body runs again. -/
+  | loop (label : Option String) (blk : Pos) (body : List Stmt) (depth : Nat)
   deriving Repr
 
 /-- Where a callee's result goes in its caller. -/
@@ -259,8 +261,8 @@ inductive Dest where
   | assign (t : Target)
   /-- An expression statement discards it. -/
   | discard
-  /-- An `if` tests it and enters the block it selects. -/
-  | test (thn els : List Stmt)
+  /-- An `if` at `pos` tests it and enters the block it selects. -/
+  | test (pos : Pos) (thn els : List Stmt)
   /-- A `return` returns it from the caller. -/
   | ret
   /-- It is the entry's result, which ends the run. -/
@@ -314,7 +316,7 @@ def enter (p : Program) (g : FnDecl) (args : List (String × Value)) (dest : Des
   let env := args.reverse
   Step.ofEval (allHold env g.requires) fun ok =>
     if !ok then .halt (.stuck .requires) else
-    .next { frames := { fn := g, env, entry := env, kont := [.stmts g.body], dest } :: callers }
+    .next { frames := { fn := g, env, entry := env, kont := [.stmts [] 0 g.body], dest } :: callers }
 
 /-- Evaluate a statement's right-hand side or an `if` condition. A call of a
 function of the program enters it, sending its result to `dest`; any other
@@ -367,13 +369,14 @@ def commitTo (f : Frame) (t : Target) (v : Value) : Eval Frame :=
 -- spec OP-5 f72d932bf4fcbb17
 -- spec GRAM-6 fa3c95e89a631bdd
 -- spec GRAM-6 b50dca70cef91d5c
-/-- An `if` whose `Bool` condition has the value `v` enters the block it
-selects; an absent `else` block is empty, so a false condition goes on to the
-next statement. -/
-def branch (f : Frame) (v : Value) (thn els : List Stmt) : Eval Frame :=
+/-- An `if` at `pos` whose `Bool` condition has the value `v` enters the block
+it selects; an absent `else` block is empty, so a false condition goes on to
+the next statement. -/
+def branch (f : Frame) (v : Value) (pos : Pos) (thn els : List Stmt) : Eval Frame :=
   match v with
   | .bool b =>
-    let kont : List Kont := .stmts (if b then thn else els) :: .scope f.env.length :: f.kont
+    let kont : List Kont :=
+      .stmts (pos ++ [if b then 0 else 1]) 0 (if b then thn else els) :: .scope f.env.length :: f.kont
     .ok { f with kont }
   | _ => ill "an if condition that is not a Bool"
 
@@ -402,18 +405,18 @@ def doReturn (p : Program) (v : Value) : List Frame → Step
       | .assign t, g :: rest =>
         Step.ofEval (commitTo g t v) fun g => .next { frames := g :: rest }
       | .discard, g :: rest => .next { frames := g :: rest }
-      | .test thn els, g :: rest =>
-        Step.ofEval (branch g v thn els) fun g => .next { frames := g :: rest }
+      | .test pos thn els, g :: rest =>
+        Step.ofEval (branch g v pos thn els) fun g => .next { frames := g :: rest }
       | _, [] => .halt (.illFormed "a return with no caller")
 
 /-- The continuation after the loop a `break` or `continue` resolves to: the
 innermost loop, or the one with its label. Returns the loop's marker and what
 follows it. -/
 def findLoop (label : Option String) :
-    List Kont → Option (Option String × List Stmt × Nat × List Kont)
+    List Kont → Option (Option String × Pos × List Stmt × Nat × List Kont)
   | [] => none
-  | .loop l body d :: rest =>
-    if label.isNone || label == l then some (l, body, d, rest) else findLoop label rest
+  | .loop l blk body d :: rest =>
+    if label.isNone || label == l then some (l, blk, body, d, rest) else findLoop label rest
   | _ :: rest => findLoop label rest
 
 -- spec FN-1 8ceb7eb381b298a6
@@ -434,41 +437,42 @@ def stepSet (p : Program) (f : Frame) (callers : List Frame) (t : Target) (e : E
   evalRhs p f callers e (.assign t) k fun v =>
     Step.ofEval (commitTo { f with kont := k } t v) fun g => .next { frames := g :: callers }
 
-/-- `if c { … } else { … }` evaluates its condition, which may call a
+/-- `if c { … } else { … }` at `pos` evaluates its condition, which may call a
 function of the program [GRAM-5], and enters the block the value selects. -/
-def stepIf (p : Program) (f : Frame) (callers : List Frame) (c : Expr) (thn els : List Stmt)
-    (k : List Kont) : Step :=
-  evalRhs p f callers c (.test thn els) k fun v =>
-    Step.ofEval (branch { f with kont := k } v thn els) fun g => .next { frames := g :: callers }
+def stepIf (p : Program) (f : Frame) (callers : List Frame) (pos : Pos) (c : Expr)
+    (thn els : List Stmt) (k : List Kont) : Step :=
+  evalRhs p f callers c (.test pos thn els) k fun v =>
+    Step.ofEval (branch { f with kont := k } v pos thn els) fun g => .next { frames := g :: callers }
 
-/-- One statement of the running frame, followed by `k`. -/
-def stepStmt (p : Program) (f : Frame) (callers : List Frame) (s : Stmt) (k : List Kont) :
-    Step :=
+/-- One statement of the running frame, at `pos`, followed by `k`. -/
+def stepStmt (p : Program) (f : Frame) (callers : List Frame) (pos : Pos) (s : Stmt)
+    (k : List Kont) : Step :=
   match s with
   | .let_ x e => stepLet p f callers x e k
   | .set t e => stepSet p f callers t e k
   | .call e => evalRhs p f callers e .discard k fun _ =>
       .next { frames := { f with kont := k } :: callers }
   | .ret e => evalRhs p f callers e .ret k fun v => doReturn p v (f :: callers)
-  | .if_ c thn els _ => stepIf p f callers c thn els k
-  | .loop label _ body => stepLoop f callers label body k
+  | .if_ c thn els _ => stepIf p f callers pos c thn els k
+  | .loop label _ body => stepLoop f callers pos label body k
   | .brk label => stepBreak f callers label k
   | .cont label => stepContinue f callers label k
   | .invariant _ _ => .next { frames := { f with kont := k } :: callers }
 where
   -- spec FN-1 e4a2e0019ae50357
   -- spec FN-1 5e402322980da8ac
-  /-- `loop { … }` enters its body; the end of the body enters it again. -/
-  stepLoop (f : Frame) (callers : List Frame) (label : Option String) (body : List Stmt)
-      (k : List Kont) : Step :=
-    let kont : List Kont := .stmts body :: .loop label body f.env.length :: k
+  /-- `loop { … }` at `pos` enters its body; the end of the body enters it
+  again. -/
+  stepLoop (f : Frame) (callers : List Frame) (pos : Pos) (label : Option String)
+      (body : List Stmt) (k : List Kont) : Step :=
+    let kont : List Kont := .stmts (pos ++ [0]) 0 body :: .loop label (pos ++ [0]) body f.env.length :: k
     .next { frames := { f with kont } :: callers }
   -- spec FN-1 a3703e88ae515ee0
   -- spec FN-1 1d8e64f64176a68a
   /-- `break` leaves its loop for the statement after it. -/
   stepBreak (f : Frame) (callers : List Frame) (label : Option String) (k : List Kont) : Step :=
     match findLoop label k with
-    | some (_, _, d, rest) =>
+    | some (_, _, _, d, rest) =>
       .next { frames := { f with env := f.env.restore d, kont := rest } :: callers }
     | none => .halt (.illFormed "a break outside its loop")
   -- spec FN-1 05ca73acf9655ecd
@@ -476,8 +480,8 @@ where
   stepContinue (f : Frame) (callers : List Frame) (label : Option String) (k : List Kont) :
       Step :=
     match findLoop label k with
-    | some (l, body, d, rest) =>
-      let kont : List Kont := .stmts body :: .loop l body d :: rest
+    | some (l, blk, body, d, rest) =>
+      let kont : List Kont := .stmts blk 0 body :: .loop l blk body d :: rest
       .next { frames := { f with env := f.env.restore d, kont } :: callers }
     | none => .halt (.illFormed "a continue outside its loop")
 
@@ -494,12 +498,12 @@ def step (p : Program) (c : Config) : Step :=
   | f :: callers =>
     match f.kont with
     | [] => .halt (.illFormed "a function body falls through")
-    | .stmts [] :: k => .next { frames := { f with kont := k } :: callers }
+    | .stmts _ _ [] :: k => .next { frames := { f with kont := k } :: callers }
     | .scope d :: k => .next { frames := { f with env := f.env.restore d, kont := k } :: callers }
-    | .loop l body d :: k =>
-      let kont : List Kont := .stmts body :: .loop l body d :: k
+    | .loop l blk body d :: k =>
+      let kont : List Kont := .stmts blk 0 body :: .loop l blk body d :: k
       .next { frames := { f with env := f.env.restore d, kont } :: callers }
-    | .stmts (s :: ss) :: k => stepStmt p f callers s (.stmts ss :: k)
+    | .stmts blk i (s :: ss) :: k => stepStmt p f callers (blk ++ [i]) s (.stmts blk (i + 1) ss :: k)
 
 /-- At most `n` steps from a configuration. -/
 def runFrom (p : Program) : Nat → Config → Outcome

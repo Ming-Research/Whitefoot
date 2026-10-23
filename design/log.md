@@ -10,6 +10,61 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/data-model/hash-map-storage
 
 Summary: Two decisions are added and two changed. A successful removal now releases every bucket when no pair remains, and otherwise rebuilds the map once eight times the remaining pairs is below its bucket count, into the least power of two that is at least eight buckets and four per remaining pair, because Firn's `SPOP` walked a mostly empty backing while holding the set ([hash-shrink study](../research/investigations/hash-shrink/DESIGN.md#hysteresis-and-amortized-work)); the shrink is the same one-shot occupancy-only migration as growth, reopened when Firn's `SPOP` popping a large set empty has a 99th percentile repeatably above the fastest competitor's, since the library's removal percentiles cannot see a migration. The ceiling decision no longer promises that a map created at its ceiling never allocates again: removal may shrink it and insertion then grows it, while an insertion at the ceiling still does not rebuild. The scan decision now names shrinking among the changes a pass survives, since a shrink halves the bucket count and so merges home intervals of the hash space the cursor already addresses. Refused: an explicit shrink operation alone, which leaves every caller that omits it sparse; keeping the never-allocates-again promise for maps reserved to their ceiling; incremental migration with two live backings, which needs dual-backing rules in every operation and a scan over both.
+## 2026-10-14 An enum's route states are computed only for values a later reader demands
+
+Nodes: compiler/checker-facts
+
+Summary: Per-branch ensures for own enums established route states wherever evidence arose, so programs writing no such ensures paid for snapshots, closures and joins of states nothing read; constructing one variant stored a context for every field of the other variants, and the Halo VM test host's check grew from about 2 s to about 630 s. The checker now collects, alongside binding types, which values a later match, error propagation, routed ensures or nested routed requirement reads, and omits conditional-state computations with no reachable reader; a read value keeps every version and every source through copies, assignments and `give`, and a routed call still establishes the root that diagnostics require. Establishing states at every evidence site regardless of readers is rejected because the omitted work feeds no proof and no required diagnostic root. Interleaved hosted-runner timings, recorded in the "Validation and outstanding evidence" section of research/investigations/enum-route-check-cost/DESIGN.md: Halo VM module 1.025x and Firn 0.978x against the revision before per-branch ensures, Halo VM test host 1.005x against wf-d837678c6905.
+
+## 2026-10-23 A name below a directory is the same bytes on every host, and a listing leaves out `.` and `..`
+
+Nodes: language/system-interface, language/system-interface/directory-enumeration
+
+Summary: A program that names `config.txt` to `open_file`, or skips the one-byte `.` among listed names, worked on POSIX and failed on Windows, where the runtime took and gave UTF-16 code units; `tests/programs/wfgrep.wf` opened `.` and `..` of every directory there and reported them unreadable. The root gains a decision: a name below a directory, taken by a single-name operation or given by a listing, is name bytes, a POSIX host's bytes and on Windows the WTF-8 encoding of the UTF-16 code units, with a function copying a host string into them, so a text name is its UTF-8 on both hosts and no host name is lost, with the native code units, an encoding chosen per call and UTF-8 only refused. The enumeration node's decision that self and parent entries are reported unfiltered is replaced: a listing leaves them out and a successful batch over a nonempty window holds an entry, since a name given with a root never denotes them and the extra host call is the one a caller makes anyway to reach the end; the host operation makes that call before it completes, so the waiting frame suspends once and both reads run where the operation runs; the old decision, an empty successful batch and a second read submitted from the finish are refused.
+
+## 2026-10-22 A deadlock report names where every waiting context waits
+
+Nodes: compiler/waiting-contexts, compiler/incremental-compilation
+
+Summary: A deadlock report enumerates an intrusive roster under one lock, registering the root once and each child at its first actual guard or join park and removing it before reclamation, because at all-stuck every live context is such a waiter while registering every child at spawn cost 8.4% on one driver's concurrent spawns; a guard registers under its watch lock with the roster lock nested inside. The pre-registered one-percent comparison rejected no spawn panel, five of eight being inconclusive against the twin's spread, so the global roster stays provisional. Diagnostic fields occupy a cold tail initialized at first registration, and every all-stuck decision calls one inactive predicate. Cache keys still exclude host display paths, and emitted wait-site positions are templates whose display path is bound from the current invocation on reuse, so a different spelling of the same graph reuses its build while its reports name the paths this invocation wrote.
+
+## 2026-10-23 The Linux and macOS packages are qualified by the getting started guide's own commands
+
+Nodes: compiler/downstream-releases
+
+Summary: A decision is added: the acceptance of a bundled release installs the Linux and macOS archives with the commands of their section of the getting started guide and builds and runs the guide's programs with the installed compiler, as the Windows decision already does for the Windows archive, instead of extracting the archive by the acceptance's own command. Only the download (replaced by a copy of the candidate) and, on macOS, `xcode-select --install` (the hosted image already holds the Command Line Tools) differ from what a reader runs. The guide's `apt-get` line becomes the only source of the Linux libraries the toolchain links against that the stock image does not already hold, so a library the guide forgets to list is missing in the clean container, except `libstdc++6`, `zlib1g` and `liblzma5`, which the stock image holds before the line runs.
+
+## 2026-10-13 A window reference survives a call when its formation bounds are re-proved after it
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: when a reference into a window crosses a call, re-prove its formation bounds from the facts after the call and keep it when they hold? (Ming-Research/Whitefoot#440, head 61c635f54)" (translated).
+
+Summary: The reference-validity decision adds one sentence. Where the specification lets a window reference survive, its formation bounds reuse the existing retained-question record but are judged after the call's invalidation and postcondition publication, destructured results included, and the reference is kept when they are proved, because the specification keeps a reference valid while its bounds hold, instead of invalidating every window reference at any call that writes the window's length, end or filled part. A write to a prefix of the reference's path, a moved Ring start, and `take_back`, `remove_at` and `clear`, whose specified guarantees exclude those bounds, still invalidate it independently.
+
+## 2026-10-23 An implementation that leaves a place unwritten discharges an interface's frame equality
+
+Nodes: language/contracts, compiler/generic-validation-scope
+
+Summary: A supplied actual may now satisfy each formal `ensures` by its frame or by its stronger own `ensures`: an equality between the exit and entry values of one integer place, or of one measure of a place, is discharged when the actual's declared row writes nothing overlapping that place, so Halo's reads-only host function binds its interface unchanged. Aliasing between the framed place and another parameter's write is left to each call, whose contract-read footprint already separates the framed place (kernel specification FN-4, EFF-5). The compiler decision records how the frame query identifies the exit and entry datums in an isolated zero-premise query and retains the actual and unwritten place as its authority. Refused: implementations declaring wider rows than their bodies, stubs performing a dummy write, a binding-time requirement of a formal access covering the framed place, and discharging frame equalities only for actuals that write nothing.
+
+## 2026-10-20 A guard written as a helper call filters wakes through a callback
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Summary: A wait guard written as a call to a helper function, such as `atomic m = &meta when reply_covered(...)`, gave the wake derivation no atom, so each write to the object could wake a waiter whose guard was still false, which woke, reacquired, found it false and parked again; a counted program test measured eight such wakes for a helper guard and none for the same comparison written inline (`tests/programs/helper_guard_false_wakes.wf`). When the atom derivation yields no test for a guard containing a helper call, the guard now compiles to a read-only, nonwaiting, nonlocking, nonallocating, nonrecursive function over the written object's state and the values captured at registration, kept with its captures in the waiter's frame and called by the writer under the hold it already has; a guard the audit cannot cover, or one reading another target, still contributes true, and atom tests are still preferred. A helper whose body is a single `return` of an expression over its parameters is also expanded into atom tests, which the earlier derivation dropped as an unknown call. The existing rejection of the releaser running each waiter's guard is narrowed to every guard, and a rejection of field-read footprints is added, because a write flag names the whole object. The cost of the callbacks against the wakes they remove is unmeasured and reopens the decision.
+
+## 2026-10-22 Definitions are substituted into every clause before its range terms are checked
+
+Nodes: language/checks-and-proofs/requires-entry-contract
+
+Summary: The changed decision substitutes a define into every clause before that clause's range terms are checked, so the range-term restriction holds independently of abbreviation spelling (a linear index admitted, a product of two parameters refused, in requires and ensures alike), instead of refusing a range term because it uses a define name.
+
+## 2026-10-22 A manual gate run can add macOS, so a release is qualified once per release
+
+Nodes: compiler/verification
+
+Summary: With the gate on Linux alone, no downstream release could be made, because the release workflow requires a successful gate run with macOS jobs on the released commit and no gate run had any. The gate's manual trigger now takes a `macos` input that runs every group on macOS as well as Linux, and the final job requires every group green on each platform the run was asked for; every other trigger still runs Linux alone. A release is qualified by one such run started on the commit before the release is dispatched, so the macOS queue is entered once per release and not once per pull request, and a fault only macOS shows, such as an unused import that clippy reports on macOS alone, reaches the main line and surfaces when a release is qualified. Linux alone for every other run stays provisional, reopened when the hosted macOS runners no longer hold merges back. Refused: a release from a gate run without macOS jobs, macOS on every push to the main line, a release workflow that runs the macOS groups itself, and a daily scheduled macOS run of the main line in addition.
 
 ## 2026-10-22 A layout rejection lists every differing gap of its source in its repair
 

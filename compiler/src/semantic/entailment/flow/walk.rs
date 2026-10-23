@@ -271,6 +271,29 @@ impl Analyzer<'_, '_> {
         expression: &CheckedExpression,
         state: &mut ProofFlowState,
     ) -> ExpressionJudgment {
+        let judgment = self.expression_effects_before_result(expression, state);
+        self.judge_expression_window_bounds(expression, state);
+        judgment
+    }
+
+    fn judge_expression_window_bounds(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &mut ProofFlowState,
+    ) {
+        if let CheckedExpression::UserCall { call, .. } = expression {
+            self.judging().judge_window_bounds(call, state);
+        }
+    }
+
+    /// A direct result destination publishes its S12 relations after its
+    /// own commit. Its window bounds must see those relations too, before
+    /// any subsequent source statement can add facts.
+    fn expression_effects_before_result(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &mut ProofFlowState,
+    ) -> ExpressionJudgment {
         let mut judgment = self.judge_expression(expression, state);
         let mut events = Vec::new();
         self.input.collect_expression_kills(expression, &mut events);
@@ -325,13 +348,27 @@ impl Analyzer<'_, '_> {
             Vec::new()
         };
         let destination = set_target_place(target);
-        let mut result = self.capture_result(node_path, value, state);
+        let retain_result = match target {
+            CheckedSetTarget::Place(place) if place.fields.is_empty() => {
+                self.input.needs_result(place.binding, value.ty())
+            }
+            _ => self.input.eager_result(value.ty()),
+        };
+        let mut result = if retain_result {
+            self.capture_result(node_path, value, state)
+        } else {
+            Vec::new()
+        };
         let affine_value = self
             .reasoning()
             .affine_expression_form(value, &mut state.affine);
-        let judgment = self.expression_effects(value, state);
-        self.reasoning()
-            .finish_result(value, &judgment, &mut result, state);
+        let judgment = self.expression_effects_before_result(value, state);
+        if retain_result || judgment.prepared_call.is_some() {
+            // DIAG-2 retains every established S12 root, even for an unread
+            // result. Its conditional state need not survive this statement.
+            self.reasoning()
+                .finish_result(value, &judgment, &mut result, state);
+        }
         let ExpressionJudgment {
             prepared_call: prepared,
             reached: value_reached,
@@ -557,6 +594,7 @@ impl Analyzer<'_, '_> {
             }
         }
         if commit_reached
+            && retain_result
             && !result.is_empty()
             && let CheckedSetTarget::Place(place) = target
             && place.fields.is_empty()
@@ -564,6 +602,7 @@ impl Analyzer<'_, '_> {
         {
             state.results.insert(place.binding, result);
         }
+        self.judge_expression_window_bounds(value, state);
     }
 
     pub(super) fn walk_statement(
@@ -627,11 +666,18 @@ impl Analyzer<'_, '_> {
                 let constructed = self
                     .reasoning()
                     .mint_construct_placements(node_path, value, state);
-                let mut result = self.capture_result(node_path, value, state);
-                let judgment = self.expression_effects(value, state);
-                self.reasoning()
-                    .finish_result(value, &judgment, &mut result, state);
-                if !result.is_empty() {
+                let retain_result = self.input.needs_result(*binding, value.ty());
+                let mut result = if retain_result {
+                    self.capture_result(node_path, value, state)
+                } else {
+                    Vec::new()
+                };
+                let judgment = self.expression_effects_before_result(value, state);
+                if retain_result || judgment.prepared_call.is_some() {
+                    self.reasoning()
+                        .finish_result(value, &judgment, &mut result, state);
+                }
+                if retain_result && !result.is_empty() {
                     state.results.insert(*binding, result);
                 }
                 self.declare(*binding);
@@ -766,6 +812,7 @@ impl Analyzer<'_, '_> {
                         );
                     }
                 }
+                self.judge_expression_window_bounds(value, state);
                 true
             }
             // [GRAM-4, CALL-4] `let (a, b) = f(...);`. The call is judged once;
@@ -784,7 +831,7 @@ impl Analyzer<'_, '_> {
                 let taken = self
                     .reasoning()
                     .mint_destructuring_placements(node_path, bindings, value, state);
-                let judgment = self.expression_effects(value, state);
+                let judgment = self.expression_effects_before_result(value, state);
                 let mut destinations = Vec::with_capacity(bindings.len());
                 for (binding, ty, _) in bindings {
                     self.declare(*binding);
@@ -830,6 +877,7 @@ impl Analyzer<'_, '_> {
                         state,
                     );
                 }
+                self.judge_expression_window_bounds(value, state);
                 true
             }
             CheckedStatement::PropagateLet {
@@ -1231,7 +1279,13 @@ impl Analyzer<'_, '_> {
                 };
                 let mut results = returned
                     .iter()
-                    .map(|value| self.capture_result(node_path, value, state))
+                    .map(|value| {
+                        if self.input.needs_return_result(value.ty()) {
+                            self.capture_result(node_path, value, state)
+                        } else {
+                            Vec::new()
+                        }
+                    })
                     .collect::<Vec<_>>();
 
                 let affine_result = self
@@ -1263,7 +1317,12 @@ impl Analyzer<'_, '_> {
                 if !matches!(value, CheckedExpression::UserCall { .. }) {
                     self.input.collect_expression_kills(value, &mut events);
                 }
-                for result in &mut results {
+                for (returned, result) in returned.iter().zip(&mut results) {
+                    if !self.input.needs_return_result(returned.ty())
+                        && judgment.prepared_call.is_none()
+                    {
+                        continue;
+                    }
                     // Every ordinal sees the complete return expression's
                     // effects. A clause selects only its own Result context.
                     self.reasoning()
@@ -1297,10 +1356,21 @@ impl Analyzer<'_, '_> {
                     .last()
                     .is_some_and(|frame| value_carrier(frame.result_mode, frame.result_type, value))
                     .then(|| self.reasoning().mint_value_carrier(node_path, value, state));
-                let mut result = self.capture_result(node_path, value, state);
+                let retain_result = self
+                    .frames
+                    .gives
+                    .last()
+                    .is_none_or(|frame| self.input.needs_result(frame.binding, value.ty()));
+                let mut result = if retain_result {
+                    self.capture_result(node_path, value, state)
+                } else {
+                    Vec::new()
+                };
                 let judgment = self.expression_effects(value, state);
-                self.reasoning()
-                    .finish_result(value, &judgment, &mut result, state);
+                if retain_result || judgment.prepared_call.is_some() {
+                    self.reasoning()
+                        .finish_result(value, &judgment, &mut result, state);
+                }
                 // [TYPE-11] a give to a value initializer around an atomic
                 // block leaves the block.
                 if self
@@ -1350,7 +1420,7 @@ impl Analyzer<'_, '_> {
                         ProofFlowState::default()
                     });
                     let mut exit = state.clone();
-                    if !result.is_empty() {
+                    if retain_result && !result.is_empty() {
                         exit.results.insert(binding, result);
                     }
                     self.exit_scopes_to(&mut exit, scope_depth);

@@ -199,9 +199,12 @@ pub(crate) fn lower_checked_from(
                 nominals: &nominals,
                 elements: &elements,
                 constants: &constants,
+                checked_functions: &checked.data.functions,
                 function_results: &function_results,
                 synthesis: &synthesis,
                 lock_ledger_sources: &checked.data.lock_ledger_sources,
+                target_ledger_sources: &checked.data.target_ledger_sources,
+                wait_report_sources: &checked.data.wait_report_sources,
             };
             lower_function(
                 function,
@@ -264,10 +267,14 @@ struct LoweringContext<'program> {
     nominals: &'program [IrNominal],
     elements: &'program [IrType],
     constants: &'program [IrGlobalConstant],
+    /// Checked source bodies used to derive guard consequences through calls.
+    checked_functions: &'program [crate::semantic::CheckedFunction],
     /// Every physical function's declared IR result, indexed by its IR ordinal.
     function_results: &'program [IrType],
     synthesis: &'program SynthesisCell,
-    lock_ledger_sources: &'program HashMap<NodePath, String>,
+    lock_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    target_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    wait_report_sources: &'program HashMap<NodePath, crate::SourceDescription>,
 }
 
 fn lower_scalar_constant(value: &CheckedValue) -> Result<IrConstant, LoweringFailure> {
@@ -751,6 +758,7 @@ struct IrBuilder<'program> {
     nominals: &'program [IrNominal],
     elements: &'program [IrType],
     constants: &'program [IrGlobalConstant],
+    checked_functions: &'program [crate::semantic::CheckedFunction],
     bindings: HashMap<BindingId, IrValueId>,
     parameters: Vec<(IrValueId, IrType)>,
     readonly_reference_parameters: Vec<IrValueId>,
@@ -813,8 +821,10 @@ struct IrBuilder<'program> {
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
     /// Source citations and developer lines recorded by atomic lowering.
-    lock_ledger_sources: &'program HashMap<NodePath, String>,
-    lock_ledger: Vec<String>,
+    lock_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    target_ledger_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    wait_report_sources: &'program HashMap<NodePath, crate::SourceDescription>,
+    lock_ledger: Vec<crate::SourceDescription>,
     /// Atomic entry roots whose completed statements permit concurrent readers.
     readonly_atomic_roots: std::collections::HashSet<BindingId>,
     /// Executing split contexts, including enclosing chunks' permissions.
@@ -856,9 +866,12 @@ impl<'program> IrBuilder<'program> {
             nominals,
             elements,
             constants,
+            checked_functions,
             function_results,
             synthesis,
             lock_ledger_sources,
+            target_ledger_sources,
+            wait_report_sources,
         } = context;
         let mut builder = Self {
             target,
@@ -867,6 +880,7 @@ impl<'program> IrBuilder<'program> {
             nominals,
             elements,
             constants,
+            checked_functions,
             bindings: HashMap::new(),
             parameters: Vec::new(),
             readonly_reference_parameters: Vec::new(),
@@ -894,6 +908,8 @@ impl<'program> IrBuilder<'program> {
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
             lock_ledger_sources,
+            target_ledger_sources,
+            wait_report_sources,
             lock_ledger: Vec::new(),
             readonly_atomic_roots: std::collections::HashSet::new(),
             capture_write_contexts: Vec::new(),
@@ -925,9 +941,12 @@ impl<'program> IrBuilder<'program> {
             nominals: self.nominals,
             elements: self.elements,
             constants: self.constants,
+            checked_functions: self.checked_functions,
             function_results: self.function_results,
             synthesis: self.synthesis,
             lock_ledger_sources: self.lock_ledger_sources,
+            target_ledger_sources: self.target_ledger_sources,
+            wait_report_sources: self.wait_report_sources,
         }
     }
 
@@ -1505,7 +1524,9 @@ impl<'program> IrBuilder<'program> {
                 // checked fact to semantic flow. They have no runtime value,
                 // effect, branch, or instruction.
                 CheckedStatement::Proof(_) => {}
-                CheckedStatement::Return { value, drops, .. } => {
+                CheckedStatement::Return {
+                    node_path, value, drops,
+                } => {
                     if let CheckedExpression::UserCall {
                         tail_transfer: true,
                         arguments,
@@ -1523,7 +1544,7 @@ impl<'program> IrBuilder<'program> {
                         // A self transfer replaces this activation, which is
                         // an exit [WAIT-3, SHARE-2].
                         self.leave_atomics(0)?;
-                        self.join_contexts()?;
+                        self.join_contexts(node_path)?;
                         self.terminate(IrTerminator::Jump {
                             target,
                             arguments,
@@ -1536,7 +1557,7 @@ impl<'program> IrBuilder<'program> {
                     // The objects are unlocked before the join, so a context
                     // this activation waits for can reach them [SHARE-2].
                     self.leave_atomics(0)?;
-                    self.join_contexts()?;
+                    self.join_contexts(node_path)?;
                     self.terminate(IrTerminator::Return { value, drops })?;
                 }
                 CheckedStatement::Give { value, drops, .. } => {

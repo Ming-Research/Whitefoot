@@ -238,6 +238,7 @@ uint64_t wf__body_args_count(const wf_value *args);
 void wf__body_arg_get(wf_value_result *result, const wf_value *args, uint64_t position);
 uint64_t wf__body_host_bytes_len(const wf_value *value);
 void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value, wf_view *destination, uint64_t start, uint64_t end);
+void wf__body_host_copy_name_bytes(wf_copy_result *result, const wf_value *value, wf_view *destination, uint64_t start, uint64_t end);
 /* DescriptionError has CopyError's layout: tag 0 carries required, tag 1
  * denotes an unavailable description. Result shares wf_copy_result's layout. */
 void wf__body_error_copy_description(wf_copy_result *result, const wf_io_error *error, wf_view *destination, uint64_t start, uint64_t end);

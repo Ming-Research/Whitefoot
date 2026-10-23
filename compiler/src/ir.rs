@@ -875,12 +875,18 @@ pub enum IrWorkEstimate {
 /// `values[0]` is the address of the target's state; every other value is a
 /// scalar's address in that state or an operand the registration captures,
 /// which atoms name by position. `program` combines the atoms in postfix
-/// order. A guard that implies nothing checkable has no test.
+/// order. A callback instead receives the state and captured scalar values
+/// in `values[1..]`, with no atom program. A guard that implies nothing
+/// checkable by either representation has no test.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IrWakeTest {
     pub(crate) values: Vec<IrValueId>,
     pub(crate) atoms: Vec<IrWakeAtom>,
     pub(crate) program: Vec<IrWakeCode>,
+    /// An ordinary, nonwaiting Bool function whose first argument is the
+    /// current state address and whose remaining arguments are captured
+    /// scalars. Mutually exclusive with the atom program.
+    pub(crate) callback: Option<u32>,
 }
 
 /// One comparison of a wake test: the scalar at `field`'s address against
@@ -940,7 +946,10 @@ pub enum IrOperation {
     /// [WAIT-3] waits until every context this activation started has
     /// finished. It stands before every exit of an activation that starts
     /// one. Defines `Unit`.
-    ContextJoin,
+    ContextJoin {
+        /// Static presentation only; never a scheduling input.
+        site: crate::SourceDescription,
+    },
     /// [WAIT-3] starts `function`, a synthesized wrapper taking exactly
     /// `arguments` by value and returning the spawned call's result, in a
     /// context of its own whose result the starting activation keeps. Defines
@@ -955,6 +964,8 @@ pub enum IrOperation {
     /// the block, and otherwise at the block's end.
     ContextAwait {
         start: IrValueId,
+        /// Static presentation only; never a scheduling input.
+        site: crate::SourceDescription,
     },
     Integer {
         operation: IrIntegerOperation,
@@ -1334,6 +1345,8 @@ pub enum IrOperation {
     SharedWatch {
         object: IrValueId,
         test: Option<IrWakeTest>,
+        /// Static description of the atomic statement whose guard waits.
+        site: crate::SourceDescription,
     },
     /// [SHARE-3] gives up this context's hold, after a statement that may
     /// have written the object when `wrote`, and otherwise after one whose
@@ -1566,6 +1579,8 @@ pub enum IrOperation {
     /// frame. Defines `Unit`.
     WatchPark {
         record: IrRecord,
+        /// Static description of the atomic statement whose guard waits.
+        site: crate::SourceDescription,
     },
     /// The first-element pointer used only by a synthesized split capture of
     /// a `Box<Array<T>>`. The source Box value remains the allocation-base
@@ -2111,7 +2126,7 @@ pub struct IrFunction {
     /// acquire invented source use or provenance records.
     pub(crate) source_calls: Vec<IrSourceCall>,
     /// Developer-only atomic acquisition lines, recorded during lowering.
-    pub(crate) lock_ledger: Vec<String>,
+    pub(crate) lock_ledger: Vec<crate::SourceDescription>,
     pub(crate) result: IrType,
     pub(crate) values: Vec<IrType>,
     pub(crate) blocks: Vec<IrBlock>,
