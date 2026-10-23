@@ -1,0 +1,50 @@
+# Temporary paired timing of `cargo clippy --all-targets` before and after the
+# disallowed-methods rule (coord-wfbl-10-06). Removed before the branch is ready.
+name: tmp clippy ab
+
+on:
+  push:
+    branches: [coord-wfbl-10-06-main-red]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain
+        run: |
+          rustup default stable
+          rustup component add clippy
+          cargo --version
+          grep -m 1 -P 'model name\t:' /proc/cpuinfo
+
+      - name: Check out the tree before the rule (dc2bd2f33) beside this one
+        run: |
+          git worktree add ../base dc2bd2f33
+          test ! -e ../base/compiler/clippy.toml
+          test -e compiler/clippy.toml
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo fetch --locked --manifest-path ../base/compiler/Cargo.toml
+
+      - name: Interleaved pairs, base twin as the control
+        run: |
+          for round in 1 2 3; do
+            for variant in base pr base2; do
+              if [ "$variant" = pr ]; then manifest=compiler/Cargo.toml; else manifest=../base/compiler/Cargo.toml; fi
+              target=$(mktemp -d)
+              CARGO_TARGET_DIR="$target" perl .github/run-check.pl "ab-$variant-$round" \
+                cargo clippy --manifest-path "$manifest" --all-targets --locked --offline -- -D warnings
+              rm -rf "$target"
+            done
+          done 2>&1 | grep -E '^(== (START|END)|real|user|sys)' 
