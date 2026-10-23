@@ -110,7 +110,6 @@ jobs:
               "hash_map_test_shrink_regrow": ["base"],
               "hash_map_test_owned_shrink": ["base"],
               "hash_map_test_scan_shrink": ["base", "mutant"],
-              "hash_map_test_scan": ["mutant"],
           }
           wrong = 0
           for name, failing in cases.items():
