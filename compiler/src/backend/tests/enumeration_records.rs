@@ -505,9 +505,11 @@ fn the_self_and_parent_entries_are_left_out() {
 }
 
 /// A host batch holding only `.` and `..` is not a successful batch with no
-/// entry: the runtime asks the host again and returns the next batch's
-/// entries, or `ListEnd` when the host has none (PRE-2: a successful batch
-/// over a nonempty window holds an entry).
+/// entry: the file engine reads again within the same operation and returns
+/// the next batch's entries, or `ListEnd` when the host has none (PRE-2: a
+/// successful batch over a nonempty window holds an entry). The library's
+/// decoder aborts on a nonempty batch with no entry, so an engine that did
+/// not read again fails here.
 #[test]
 fn a_batch_of_only_self_and_parent_entries_asks_the_host_again() {
     let only_dots = [ScriptedEntry::kinded(b'.', 1, 4), ScriptedEntry::kinded(b'.', 2, 4)];

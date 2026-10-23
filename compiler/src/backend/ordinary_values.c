@@ -2585,77 +2585,71 @@ int wf__body_directory_next_start(wf_list_result *result, wf_value *source,
 /* A host batch's native records are rewritten in place into the portable
  * records [PRE-2], which are never longer: one kind byte, the name's byte
  * count as a little-endian u16, and the name bytes. `.` and `..` are left
- * out; when they were all the host gave, the host is asked again, so a
- * successful batch over a nonempty window holds an entry. */
+ * out. The engine reads a batch holding only them again within the same
+ * operation, so a nonempty batch here holds an entry and a successful batch
+ * over a nonempty window is never empty. */
 void wf__body_directory_next_finish(wf_list_result *result, wf_value *source,
                                     wf_view *destination, uint64_t start, uint64_t end,
                                     wf_host_operation *operation) {
     int64_t amount;
     int error;
-    uint64_t cursor, written, entries;
+    uint64_t cursor = 0, written = 0, entries = 0;
     unsigned char *window = wf_window(destination, start);
-    for (;;) {
-        wf__completion_file_join(&operation->record, &amount, &error);
-        memset(result, 0, sizeof(*result));
-        result->next = start;
-        if (amount < 0) {
-            result->result.tag = 1;
-            result->result.err.error.tag = 1;
-            wf_error(&result->result.err.error.error, error, 2);
-        } else if (amount == 0 && end != start) {
-            result->result.tag = 1;
-        }
-        if (amount <= 0) return;
-        if ((uint64_t)amount > end - start) abort();
-        cursor = 0;
-        written = 0;
-        entries = 0;
-        while (cursor < (uint64_t)amount) {
-            uint16_t extent;
-            uint64_t named, index;
-            unsigned kind, portable;
-            unsigned char *entry = window + cursor;
-            if ((uint64_t)amount - cursor < WF_DIRENT_NAME) abort();
-            memcpy(&extent, entry + WF_DIRENT_RECORD, sizeof(extent));
-            if (extent <= WF_DIRENT_NAME || extent > (uint64_t)amount - cursor) abort();
-            kind = entry[WF_DIRENT_KIND];
-#if defined(WF_DIRENT_NAME_LENGTH)
-            {
-                uint16_t length;
-                memcpy(&length, entry + WF_DIRENT_NAME_LENGTH, sizeof(length));
-                named = length;
-            }
-#else
-            for (named = 0; named < extent - WF_DIRENT_NAME; named++)
-                if (entry[WF_DIRENT_NAME + named] == 0) break;
-            if (named == extent - WF_DIRENT_NAME) abort();
-#endif
-            if (named == 0 || named > WF_NAME_BYTES ||
-                named > extent - WF_DIRENT_NAME || named + 3 > end - start - written)
-                abort();
-            for (index = 0; index < named; index++) {
-                unsigned char byte = entry[WF_DIRENT_NAME + index];
-#if defined(_WIN32)
-                if (byte == '\\') abort();
-#endif
-                if (byte == 0 || byte == '/') abort();
-            }
-            cursor += extent;
-            if (wf_name_is_dots(entry + WF_DIRENT_NAME, named)) continue;
-            portable = kind == 0 ? 0 : kind == WF_DIRENT_REGULAR ? 1 :
-                kind == WF_DIRENT_DIRECTORY ? 2 : kind == WF_DIRENT_SYMLINK ? 3 : 4;
-            window[written] = (unsigned char)portable;
-            window[written + 1] = (unsigned char)named;
-            window[written + 2] = (unsigned char)(named >> 8);
-            memmove(window + written + 3, entry + WF_DIRENT_NAME, (size_t)named);
-            written += named + 3;
-            entries++;
-        }
-        if (entries != 0) break;
-        operation->position = 0;
-        wf__completion_directory_next_submit(wf_descriptor(source), window, end - start,
-                                             &operation->position, &operation->record);
+    (void)source;
+    wf__completion_file_join(&operation->record, &amount, &error);
+    memset(result, 0, sizeof(*result));
+    result->next = start;
+    if (amount < 0) {
+        result->result.tag = 1;
+        result->result.err.error.tag = 1;
+        wf_error(&result->result.err.error.error, error, 2);
+    } else if (amount == 0 && end != start) {
+        result->result.tag = 1;
     }
+    if (amount <= 0) return;
+    if ((uint64_t)amount > end - start) abort();
+    while (cursor < (uint64_t)amount) {
+        uint16_t extent;
+        uint64_t named, index;
+        unsigned kind, portable;
+        unsigned char *entry = window + cursor;
+        if ((uint64_t)amount - cursor < WF_DIRENT_NAME) abort();
+        memcpy(&extent, entry + WF_DIRENT_RECORD, sizeof(extent));
+        if (extent <= WF_DIRENT_NAME || extent > (uint64_t)amount - cursor) abort();
+        kind = entry[WF_DIRENT_KIND];
+#if defined(WF_DIRENT_NAME_LENGTH)
+        {
+            uint16_t length;
+            memcpy(&length, entry + WF_DIRENT_NAME_LENGTH, sizeof(length));
+            named = length;
+        }
+#else
+        for (named = 0; named < extent - WF_DIRENT_NAME; named++)
+            if (entry[WF_DIRENT_NAME + named] == 0) break;
+        if (named == extent - WF_DIRENT_NAME) abort();
+#endif
+        if (named == 0 || named > WF_NAME_BYTES ||
+            named > extent - WF_DIRENT_NAME || named + 3 > end - start - written)
+            abort();
+        for (index = 0; index < named; index++) {
+            unsigned char byte = entry[WF_DIRENT_NAME + index];
+#if defined(_WIN32)
+            if (byte == '\\') abort();
+#endif
+            if (byte == 0 || byte == '/') abort();
+        }
+        cursor += extent;
+        if (wf_name_is_dots(entry + WF_DIRENT_NAME, named)) continue;
+        portable = kind == 0 ? 0 : kind == WF_DIRENT_REGULAR ? 1 :
+            kind == WF_DIRENT_DIRECTORY ? 2 : kind == WF_DIRENT_SYMLINK ? 3 : 4;
+        window[written] = (unsigned char)portable;
+        window[written + 1] = (unsigned char)named;
+        window[written + 2] = (unsigned char)(named >> 8);
+        memmove(window + written + 3, entry + WF_DIRENT_NAME, (size_t)named);
+        written += named + 3;
+        entries++;
+    }
+    if (entries == 0) abort();
     result->next = start + written;
     result->entries = entries;
 }

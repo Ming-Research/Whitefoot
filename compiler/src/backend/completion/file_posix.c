@@ -21,6 +21,7 @@
 #include "file_adapter.h"
 #include "file_posix.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -28,6 +29,8 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -575,6 +578,45 @@ void wf_file_thread_interrupt(uintptr_t thread) {
     (void)pthread_kill((pthread_t)thread, SIGURG);
 }
 
+#if defined(WF_FILE_HAS_DIRECTORY_NEXT)
+/* Whether a directory batch holds only the self and parent entries, which the
+ * ordinary library leaves out of a listing [PRE-2]. The execution below reads
+ * such a batch again inside the same operation, so the operation completes
+ * once, under its own deadline, with an entry or with the end. A record that
+ * does not parse answers no, and the library's decoder refuses it. */
+static int wf_file_directory_only_dots(const unsigned char *batch, size_t length) {
+    const size_t name = offsetof(struct dirent, d_name);
+    size_t cursor = 0;
+    while (cursor < length) {
+        const unsigned char *entry = batch + cursor;
+        uint16_t extent;
+        size_t room, named;
+        if (length - cursor < name) return 0;
+        memcpy(&extent, entry + offsetof(struct dirent, d_reclen), sizeof(extent));
+        if (extent <= name || extent > length - cursor) return 0;
+        room = extent - name;
+#if defined(__APPLE__)
+        {
+            uint16_t stated;
+            memcpy(&stated, entry + offsetof(struct dirent, d_namlen), sizeof(stated));
+            named = stated;
+        }
+        if (named > room) return 0;
+#else
+        for (named = 0; named < room && entry[name + named] != 0; named++) {
+        }
+        if (named == room) return 0;
+#endif
+        if (named == 0 || named > 2 || entry[name] != '.'
+            || (named == 2 && entry[name + 1] != '.')) {
+            return 0;
+        }
+        cursor += extent;
+    }
+    return 1;
+}
+#endif
+
 wf_file_result wf_file_execute_direct(wf_file_request *request) {
     wf_file_result result;
     if (!wf_file_request_valid(request)) {
@@ -588,6 +630,22 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
         int readiness_error;
         result = wf_file_execute_once(request);
         if (result.head.value >= 0 || result.head.error_code == 0) {
+#if defined(WF_FILE_HAS_DIRECTORY_NEXT)
+            if (request->kind == WF_FILE_DIRECTORY_NEXT && result.head.value > 0
+                && wf_file_directory_only_dots(
+                       (const unsigned char *)request->operation.directory_next.buffer,
+                       (size_t)result.head.value)) {
+                /* A deadline that fired between the two reads ends the
+                 * operation with nothing transferred, as an interrupted read
+                 * does. */
+                if (wf_file_running_cancelled()) {
+                    result.head.value = -1;
+                    result.head.error_code = wf_file_cancelled_error();
+                    return result;
+                }
+                continue;
+            }
+#endif
             return result;
         }
         switch (request->kind) {

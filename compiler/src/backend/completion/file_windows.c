@@ -733,6 +733,32 @@ static wf_file_result wf_file_windows_socket_shutdown(
 }
 
 #if defined(WF_FILE_HAS_DIRECTORY_NEXT)
+/* Whether a batch of the runtime's raw directory records (extent and name
+ * length as little-endian u16s, a kind byte, the WTF-8 name) holds only the
+ * self and parent entries, which the ordinary library leaves out of a listing
+ * [PRE-2]. A record that does not parse answers no, and the library's
+ * decoder refuses it. */
+static int wf_file_windows_directory_only_dots(const unsigned char *batch, size_t length) {
+    size_t cursor = 0;
+    while (cursor < length) {
+        const unsigned char *entry = batch + cursor;
+        size_t extent, named;
+        if (length - cursor < 5u) return 0;
+        extent = (size_t)entry[0] | ((size_t)entry[1] << 8);
+        named = (size_t)entry[2] | ((size_t)entry[3] << 8);
+        if (extent <= 5u || extent > length - cursor || named > extent - 5u) return 0;
+        if (named == 0 || named > 2 || entry[5] != '.'
+            || (named == 2 && entry[6] != '.')) {
+            return 0;
+        }
+        cursor += extent;
+    }
+    return 1;
+}
+
+/* A batch holding only the self and parent entries is read again inside the
+ * same operation, so the operation completes once, under its own deadline,
+ * with an entry or with the end. */
 static wf_file_result wf_file_windows_directory_next(
     const wf_file_request *request
 ) {
@@ -743,16 +769,29 @@ static wf_file_result wf_file_windows_directory_next(
         result.head.value = 0;
         return result;
     }
-    result.head.value = wf__windows_directory_batch(
-        request->operation.directory_next.descriptor,
-        request->operation.directory_next.buffer,
-        (uint64_t)request->operation.directory_next.count,
-        request->operation.directory_next.position
-    );
-    if (result.head.value < 0) {
-        result.head.error_code = *wf__windows_error_location();
+    for (;;) {
+        result.head.value = wf__windows_directory_batch(
+            request->operation.directory_next.descriptor,
+            request->operation.directory_next.buffer,
+            (uint64_t)request->operation.directory_next.count,
+            request->operation.directory_next.position
+        );
+        if (result.head.value < 0) {
+            result.head.error_code = *wf__windows_error_location();
+            return result;
+        }
+        if (result.head.value == 0
+            || !wf_file_windows_directory_only_dots(
+                   (const unsigned char *)request->operation.directory_next.buffer,
+                   (size_t)result.head.value)) {
+            return result;
+        }
+        if (wf_file_running_cancelled()) {
+            result.head.value = -1;
+            result.head.error_code = wf_file_cancelled_error();
+            return result;
+        }
     }
-    return result;
 }
 #endif
 
