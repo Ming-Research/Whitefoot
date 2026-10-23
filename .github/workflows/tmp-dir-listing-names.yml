@@ -42,8 +42,8 @@ jobs:
         run: make check-group GROUP=static
       - name: Design and specification readiness
         run: make design-ready
-      - name: Decoder records
-        run: perl .github/run-check.pl tmp-enumeration cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib enumeration_records
+      - name: Compiler unit tests, the decoder records among them
+        run: perl .github/run-check.pl tmp-unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib
       - name: Programs that list and name entries
         run: |
           perl .github/run-check.pl tmp-programs cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus -- programs::traversal:: programs::wfgrep:: programs::wfgrep_hosts:: programs::host_paths:: programs::file_replacement::
