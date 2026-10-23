@@ -98,7 +98,8 @@ jobs:
 
       # A checker that judges a rebound binding's leaving edge as before: the
       # affine rebound-binding case must be accepted, and the pinned repair
-      # test must fail at the pair that rebinds its binding.
+      # test must fail at the pair that rebinds its binding because that pair
+      # is accepted or loses its repair, not for another rule.
       - name: rebound-binding rule switched off
         run: |
           sed -i 's/^            if let Some(rebound) = &rebound {$/            if let Some(rebound) = rebound.as_ref().filter(|_| false) {/' compiler/src/semantic/entailment/flow/walk.rs
@@ -114,4 +115,4 @@ jobs:
           echo "the affine case's check exits $case_status; the pinned repair test exits $repairs_status"
           test "$case_status" -eq 0
           test "$repairs_status" -ne 0
-          grep -n 'atomic-block-rebinds-its-binding.wf' "$RUNNER_TEMP/repairs.log"
+          grep -nE 'atomic-block-rebinds-its-binding.wf: (the rejection no longer carries this repair|LlvmModule)' "$RUNNER_TEMP/repairs.log"

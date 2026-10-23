@@ -3688,7 +3688,7 @@ fn update(state: Shared<Ordered>) -> result: u64 pure waits {
 
 fn main() -> status: std::process::ExitStatus pure waits {
   let initial = Ordered(low: 0_u64, high: 1_u64);
-  let state = shared_new::<Ordered>(value: move initial);
+  let state = shared_new::<Ordered>(value: initial);
   let top = update(state: move state);
   let code = cvt.wrap::<u64, u8>(top);
   return std::process::exit_status(code: code);
@@ -3718,7 +3718,7 @@ fn update(state: Shared<Ordered>) -> result: u64 pure waits {
 
 fn main() -> status: std::process::ExitStatus pure waits {
   let initial = Ordered(low: 0_u64, high: 1_u64);
-  let state = shared_new::<Ordered>(value: move initial);
+  let state = shared_new::<Ordered>(value: initial);
   let top = update(state: move state);
   let code = cvt.wrap::<u64, u8>(top);
   return std::process::exit_status(code: code);
