@@ -144,11 +144,8 @@ pub(super) enum InvalidationEvent {
     /// reference's bound was formed under [OP-10, REF-4].
     ///
     /// This is not [EFF-5]'s prefix rule: `take_back` writes `r.len`, which
-    /// is no prefix of `r[i]`, and yet [OP-10] states that such a reference
-    /// dies there, because the bound `i < r.len` its formation established no
-    /// longer holds. `place_back`'s `ensures` carries that bound across the
-    /// call and `insert_at`'s occupant change leaves the slot itself, so
-    /// neither is one of these events.
+    /// is no prefix of `r[i]`. OP-10 explicitly invalidates selections at
+    /// take_back, remove_at and clear, independently of any surviving bound.
     WindowBoundaryMoved,
 }
 
@@ -891,14 +888,11 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(())
     }
 
-    /// [OP-10, REF-2] every reference into one window becomes invalid.
-    ///
-    /// A reference into a window is formed under a bound and stays valid
-    /// while that bound holds: `&r[i]` under `i < r.len` and `&r[lo..hi]`
-    /// under `hi <= r.len` [REF-4]. The operations that move the boundary
-    /// down, move a run between two windows, shift every logical index, or
-    /// remake the block whole end that bound, and the references formed under
-    /// it die with it.
+    /// [OP-10, REF-2] invalidate a window's selections at take_back,
+    /// remove_at, clear or an origin shift, independently of any numeric
+    /// bound.
+    /// Other boundary calls use `preserve_window_references` to retain their
+    /// post-call proof query.
     pub(super) fn invalidate_window_references(
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         window: &ResolvedPlace,
@@ -910,7 +904,7 @@ impl<'unit> Checker<'_, 'unit> {
             .flat_map(|local| local.reference.iter_mut())
         {
             // The subject is a reference *into* the window, formed under a
-            // bound the operation ends: `&r[i]` under `i < r.len` and
+            // selection bound: `&r[i]` under `i < r.len` and
             // `&r[lo..hi]` under `hi <= r.len` [REF-4]. A reference to the
             // window itself names the window whatever its boundary is, and a
             // callee that received one and moved that boundary still holds
@@ -2642,6 +2636,82 @@ impl<'unit> DeclarationInventory<'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
+    /// [OP-10] outside its explicit removal and origin-shift invalidations,
+    /// a window boundary write preserves a selected place exactly when its
+    /// captured formation bound holds after the call. As with
+    /// structural preservation, only a later use demands this question;
+    /// copies and loop joins carry it through the existing validity lattice.
+    pub(super) fn preserve_window_references(
+        &self,
+        site: &crate::NodePath,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        window: &ResolvedPlace,
+    ) -> Result<(), CheckStop> {
+        use super::super::model::{
+            CheckedCallSeparationPositions, CheckedReferencePreservationUse,
+            CheckedSeparationOccasion,
+        };
+
+        let mut pending = Vec::new();
+        for (declaration, local) in bindings.iter_mut() {
+            let Some(reference) = &mut local.reference else {
+                continue;
+            };
+            if !reference.is_valid() {
+                continue;
+            }
+            for path in &reference.paths {
+                if !window.may_be_prefix_of(&UnprovedSeparations, path, false) {
+                    continue;
+                }
+                let position = match path.path.get(window.path.len()) {
+                    Some(PlaceStep::Index(index)) => CheckedCallSeparationPositions::Live(*index),
+                    Some(PlaceStep::Range(range)) => {
+                        CheckedCallSeparationPositions::RangeWithinLength(*range)
+                    }
+                    Some(PlaceStep::Measure(_)) => continue,
+                    // Page extents and descendant covers do not supply a
+                    // captured endpoint here. Keep their prior conservative
+                    // invalidation instead of proving another bound for them.
+                    _ => {
+                        reference.invalidate(InvalidationEvent::WindowBoundaryMoved);
+                        break;
+                    }
+                };
+                let mut selected_window = path.clone();
+                selected_window.path.truncate(window.path.len());
+                pending.push((*declaration, path.clone(), selected_window, position));
+            }
+        }
+        for (declaration, path, window, position) in pending {
+            let query = CheckedCallSeparation {
+                site: site.clone(),
+                occasion: CheckedSeparationOccasion::WindowBound,
+                reference_use: Some(CheckedReferencePreservationUse {
+                    site: site.clone(),
+                    binder: String::new(),
+                    event: "a call left the reference's captured window bound unproved",
+                }),
+                held_use: None,
+                positions: vec![position],
+                contract_indices: Vec::new(),
+                left_spelling: self.render_resolved_place(&path, bindings)?,
+                right_spelling: self.render_resolved_place(&window, bindings)?,
+                window: Some(window),
+                one_argument: false,
+            };
+            if let Some(reference) = bindings
+                .get_mut(&declaration)
+                .and_then(|local| local.reference.as_mut())
+                && reference.is_valid()
+                && !reference.preservations.contains(&query)
+            {
+                reference.preservations.push(query);
+            }
+        }
+        Ok(())
+    }
+
     /// [REF-1] the path set a spelled place root names, read through every
     /// reference variable in the chain.
     ///
