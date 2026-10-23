@@ -8,12 +8,14 @@
 //! construction functions [OP-13] are explicitly excluded and keep [FN-2]'s
 //! written argument list.
 //!
-//! Each of the eleven rows here fixes every type parameter from one designated
+//! Each of the twelve rows here fixes every type parameter from one designated
 //! value parameter's selected type. The window rows take the shape from the
 //! `&W` operand and the element type from that same shape, because [OP-10]
 //! says the parameter's "element type is that shape's own element type"; a
 //! `value` argument never selects the instance and is checked against the
-//! element type the shape already fixed.
+//! element type the shape already fixed. A bound a row writes on such a
+//! parameter, `clear`'s `T: drop`, is judged against the operand-supplied
+//! argument exactly as [PROV-6] judges a written one.
 
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
@@ -93,7 +95,7 @@ const WINDOW_AND_ELEMENT: &[OperandParameter] = &[
     },
 ];
 
-/// The eleven rows [OP-10], [OP-11] and [OP-14] name. Every other [PRE-1]
+/// The twelve rows [OP-10], [OP-11] and [OP-14] name. Every other [PRE-1]
 /// row, the nine construction functions [OP-13] included, writes its
 /// arguments explicitly under [FN-2].
 const OPERAND_ROWS: &[OperandRow] = &[
@@ -185,6 +187,14 @@ const OPERAND_ROWS: &[OperandRow] = &[
         admitted: AdmittedShapes::Ring,
         parameters: WINDOW_AND_ELEMENT,
     },
+    // `clear<W, T: drop>(window: &W)`: every shape `take_back` admits
+    // [OP-10]; the element type's `drop` bound is judged at the call.
+    OperandRow {
+        name: "clear",
+        rule: SemanticRule::Op10,
+        admitted: AdmittedShapes::BackWindow,
+        parameters: WINDOW_AND_ELEMENT,
+    },
     OperandRow {
         name: "swap",
         rule: SemanticRule::Op11,
@@ -206,7 +216,7 @@ const OPERAND_ROWS: &[OperandRow] = &[
 ];
 
 impl<'unit> DeclarationInventory<'unit> {
-    /// Whether this template is one of the eleven rows whose type parameters
+    /// Whether this template is one of the twelve rows whose type parameters
     /// an operand supplies [OP-10, OP-11, OP-14].
     ///
     /// The spelling decides it because [TYPE-6] gives the whole closed unit
@@ -418,6 +428,18 @@ impl<'unit> TypeContext<'unit> {
             let Some(value) = self.project_operand_type(source.projection, operand)? else {
                 return self.declarations.refuse_operand(row, call);
             };
+            // [PROV-6] "an instantiation whose argument's class does not
+            // satisfy the written bound is a hard error citing PROV-6 at that
+            // instantiation's `call`": an operand-supplied argument is judged
+            // as a written one is, whatever the window's runtime length.
+            if let super::GenericParameter::Type {
+                declaration,
+                bound: super::GenericBound::Class(required),
+            } = parameter
+            {
+                let spelling = self.declarations.declaration_spelling(*declaration)?;
+                self.check_linearity_bound(check_context, &spelling, *required, value, call)?;
+            }
             bindings_out.push((parameter.key(), GenericArgument::Type(value)));
         }
         Ok(GenericSubstitution::from_bindings(bindings_out)?)
