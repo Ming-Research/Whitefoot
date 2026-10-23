@@ -266,10 +266,19 @@ theorem joinImage_onlyGrows {t : IntTy} {fs : List Form} : OnlyGrows (joinImage 
   all_goals
     refine Int.le_trans (foldl_le_init _ (fun acc x => ?_) _ _)
       (Int.le_trans ?_ (init_le_foldl _ (fun acc x => ?_) _ _))
+  -- The delta atom's interval: the least lower and the greatest upper end of
+  -- the inputs' constant intervals, each nonempty since the delta atoms' terms
+  -- add a least and a greatest product to its two ends.
   all_goals first
     | (rcases x with ⟨_, _, _⟩; exact Int.min_le_left _ _)
     | (rcases x with ⟨_, _, _⟩; exact Int.le_max_left _ _)
-    | skip
+    | (refine Fact.foldl_inv (fun acc : Form × Int × Int => acc.2.1 ≤ acc.2.2) _ _ _
+          (Int.le_refl _) ?_
+       intro acc xa _ hacc
+       dsimp only at hacc ⊢
+       split
+       · exact Int.add_le_add hacc (Int.le_trans (Int.min_le_left _ _) (Int.le_max_left _ _))
+       · exact hacc)
 
 macro_rules
   | `(tactic| grows_lemma) => `(tactic| exact joinImage_onlyGrows)
