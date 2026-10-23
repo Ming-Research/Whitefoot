@@ -12,6 +12,7 @@ Nodes: compiler/checker-facts
 Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: when a reference into a window crosses a call, re-prove its formation bounds from the facts after the call and keep it when they hold? (Ming-Research/Whitefoot#440, head 61c635f54)" (translated).
 
 Summary: The reference-validity decision adds one sentence. Where the specification lets a window reference survive, its formation bounds reuse the existing retained-question record but are judged after the call's invalidation and postcondition publication, destructured results included, and the reference is kept when they are proved, because the specification keeps a reference valid while its bounds hold, instead of invalidating every window reference at any call that writes the window's length, end or filled part. A write to a prefix of the reference's path, a moved Ring start, and `take_back`, `remove_at` and `clear`, whose specified guarantees exclude those bounds, still invalidate it independently.
+
 ## 2026-10-22 Definitions are substituted into every clause before its range terms are checked
 
 Nodes: language/checks-and-proofs/requires-entry-contract
