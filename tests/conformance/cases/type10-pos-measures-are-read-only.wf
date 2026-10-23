@@ -1,6 +1,16 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
+fn observe(before: u64, after: u64, capacity: u64, spare: u64, origin: u64) -> result: unit pure contract {
+  requires before == 0_u64;
+  requires after == 1_u64;
+  requires capacity == 4_u64;
+  requires spare == 3_u64;
+  requires origin == 0_u64;
+} {
+  return unit;
+}
+
 fn main() -> status: ExitStatus pure {
   doc "TYPE-10: len, cap and head are read-only pseudo-fields of a measured place; free slots is the ordinary expression cap - len. A program reads the measures like fields, and only window and construction operations change them.";
   let r = ring_new::<u64, 4>();
@@ -10,25 +20,6 @@ fn main() -> status: ExitStatus pure {
   let capacity = r.cap;
   let spare = r.cap - r.len;
   let origin = r.head;
-  if before == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  if after == 1_u64 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
-  if capacity == 4_u64 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
-  if spare == 3_u64 {
-  } else {
-    return exit_status(code: 4_u8);
-  }
-  if origin == 0_u64 {
-  } else {
-    return exit_status(code: 5_u8);
-  }
+  let done = observe(before: before, after: after, capacity: capacity, spare: spare, origin: origin);
   return exit_status(code: 0_u8);
 }

@@ -1,0 +1,176 @@
+//! Source presentation for runtime waits; no acceptance or scheduling consumer.
+
+use std::collections::HashMap;
+
+use crate::semantic::model::{BindingId, CheckedFunction, CheckedStatement, FunctionId};
+use crate::{NodePath, Production, SourceDescription};
+
+use super::DeclarationInventory;
+
+impl DeclarationInventory<'_> {
+    pub(super) fn wait_report_sources(
+        &self,
+        functions: &[CheckedFunction],
+        executable: &[FunctionId],
+    ) -> HashMap<NodePath, SourceDescription> {
+        let mut sources = HashMap::new();
+        for id in executable {
+            let function = &functions[id.0 as usize];
+            let mut blocks = vec![function.body.as_deref().unwrap_or_default()];
+            while let Some(block) = blocks.pop() {
+                for (index, statement) in block.iter().enumerate() {
+                    match statement {
+                        CheckedStatement::Atomic {
+                            node_path, body, ..
+                        } => {
+                            if let Some(site) = self.wait_site(node_path) {
+                                let mut description = SourceDescription::literal(
+                                    "waits for the guard of the atomic statement at ",
+                                );
+                                description.append(&site);
+                                sources.insert(node_path.clone(), description);
+                            }
+                            blocks.push(body);
+                        }
+                        CheckedStatement::Loop { body, .. }
+                        | CheckedStatement::CountedRange { body, .. } => blocks.push(body),
+                        CheckedStatement::Match { arms, .. }
+                        | CheckedStatement::ValueMatchLet { arms, .. } => {
+                            blocks.extend(arms.iter().map(|arm| arm.body.as_slice()));
+                        }
+                        CheckedStatement::Return { node_path, .. } => {
+                            if let Some(site) = self.wait_site(node_path) {
+                                sources.insert(node_path.clone(), site);
+                            }
+                        }
+                        CheckedStatement::PropagateLet { context, .. } => {
+                            if let Some(site) = self.wait_site(&context.node_path) {
+                                sources.insert(context.node_path.clone(), site);
+                            }
+                        }
+                        CheckedStatement::Let {
+                            node_path, binding, ..
+                        } => {
+                            let Some(plan) = function
+                                .waiting
+                                .context_awaits
+                                .iter()
+                                .find(|plan| &plan.statement == node_path)
+                            else {
+                                continue;
+                            };
+                            let Some(spawn) = self.wait_site(node_path) else {
+                                continue;
+                            };
+                            let Some((site, loop_body)) =
+                                self.bound_join_site(node_path, plan.before)
+                            else {
+                                continue;
+                            };
+                            let uses_binding = plan.before.is_some_and(|offset| {
+                                block
+                                    .get(index + offset as usize)
+                                    .is_some_and(|later| names_binding(later, *binding))
+                            });
+                            let kind = match plan.before {
+                                Some(_) if uses_binding => "explicit use of the binding",
+                                Some(_) => "implicit join before leaving this block",
+                                None if loop_body => {
+                                    "implicit join at the end of this loop iteration"
+                                }
+                                None => "implicit join at the end of this block",
+                            };
+                            let mut description = SourceDescription::literal("waits at ");
+                            description.append(&site);
+                            description.push_text(" to join the context spawned at ");
+                            description.append(&spawn);
+                            description.push_text(format!(" ({kind})"));
+                            sources.insert(node_path.clone(), description);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for start in &function.waiting.context_starts {
+                if !sources.contains_key(start)
+                    && !function
+                        .waiting
+                        .context_awaits
+                        .iter()
+                        .any(|plan| &plan.statement == start)
+                    && let Some(site) = self.wait_site(start)
+                {
+                    let mut description = SourceDescription::literal("context spawned at ");
+                    description.append(&site);
+                    sources.insert(start.clone(), description);
+                }
+            }
+        }
+        sources
+    }
+
+    fn wait_site(&self, path: &NodePath) -> Option<SourceDescription> {
+        let node = self.tree.node_with_path(path)?;
+        Some(self.lock_ledger_site(self.tree.coordinate(node).ok()?))
+    }
+
+    fn bound_join_site(
+        &self,
+        spawn: &NodePath,
+        before: Option<u32>,
+    ) -> Option<(SourceDescription, bool)> {
+        let mut statement = self.tree.node_with_path(spawn)?;
+        while self.tree.production(statement).ok()? != Production::Stmt {
+            statement = self.tree.parent(statement).ok()??;
+        }
+        let owner = self.tree.parent(statement).ok()??;
+        let coordinate = if let Some(offset) = before {
+            let statements = self.tree.children_with(owner, Production::Stmt).ok()?;
+            let index = statements.iter().position(|node| *node == statement)?;
+            self.tree
+                .coordinate(*statements.get(index + offset as usize)?)
+                .ok()?
+        } else {
+            self.tree.closing_brace_coordinate(owner).ok()?
+        };
+        let loop_body = matches!(
+            self.tree.production(owner).ok()?,
+            Production::LoopStmt | Production::ForStmt
+        );
+        Some((self.lock_ledger_site(coordinate), loop_body))
+    }
+}
+
+/// Distinguish a written use from a leaving edge after the existing plan has
+/// selected the join; this answer never places or removes a join.
+fn names_binding(statement: &CheckedStatement, binding: BindingId) -> bool {
+    use crate::semantic::permission::{expression_names, leaf_names};
+    let block = |body: &[CheckedStatement]| body.iter().any(|item| names_binding(item, binding));
+    match statement {
+        CheckedStatement::Match { scrutinee, arms, .. }
+        | CheckedStatement::ValueMatchLet { scrutinee, arms, .. } => {
+            expression_names(scrutinee, binding) || arms.iter().any(|arm| block(&arm.body))
+        }
+        CheckedStatement::Loop { body, .. } => block(body),
+        CheckedStatement::CountedRange {
+            lower, upper, body, ..
+        } => {
+            expression_names(lower, binding)
+                || expression_names(upper, binding)
+                || block(body)
+        }
+        CheckedStatement::Atomic {
+            targets, guard, body, ..
+        } => {
+            targets
+                .iter()
+                .flat_map(crate::semantic::CheckedTarget::expressions)
+                .any(|value| expression_names(value, binding))
+                || guard
+                    .as_deref()
+                    .is_some_and(|value| expression_names(value, binding))
+                || block(body)
+        }
+        _ => leaf_names(statement, binding),
+    }
+}

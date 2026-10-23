@@ -2,13 +2,11 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "-wrap underflow round-trips [OP-1]: wrapping i32::MAX + 1 yields i32::MIN, and i32::MIN -wrap 1 returns i32::MAX; ordinary equality control maps a mismatch to a nonzero status.";
+  doc "-wrap underflow round-trips [OP-1]: wrapping i32::MAX + 1 yields i32::MIN, and i32::MIN -wrap 1 returns i32::MAX; that result less 2147483605 is the exit status 42.";
   let hi = 2147483647_i32;
   let lo = hi +wrap 1_i32;
   let back = lo -wrap 1_i32;
-  if back == hi {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = back - 2147483605_i32;
+  let status_code = cvt::<i32, u8>(code);
+  return exit_status(code: status_code);
 }

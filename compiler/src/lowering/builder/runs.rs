@@ -8,9 +8,9 @@
 //! or a compile-time constant and every subscript is one address
 //! computation.
 //!
-//! The nine window operations [OP-10], `swap` [OP-11] and `free_empty`
-//! [OP-14] are ordinary [PRE-1] records and reach lowering as ordinary
-//! calls; their bodies are synthesized in `windows.rs`.
+//! The window operations [OP-10], `swap` [OP-11] and `free_empty` [OP-14]
+//! are ordinary [PRE-1] records and reach lowering as ordinary calls; their
+//! bodies are synthesized in `prelude.rs`.
 
 use crate::IrMeasure;
 use crate::semantic::{
@@ -116,6 +116,31 @@ impl IrBuilder<'_> {
             value = match step {
                 CheckedPlaceStep::Field(field) => {
                     self.project_struct_path(value, &[*field], false)?
+                }
+                CheckedPlaceStep::Payload {
+                    nominal,
+                    variant,
+                    field,
+                } => {
+                    let nominal = self.erased(*nominal)?;
+                    let IrNominalKind::Enum { variants } = &self.nominals[nominal.index()].kind
+                    else {
+                        return Err(LoweringFailure::InvalidCheckedProgram);
+                    };
+                    let ty = variants
+                        .get(*variant as usize)
+                        .and_then(|variant| variant.fields.get(*field as usize))
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                        .ty;
+                    self.define(
+                        ty,
+                        IrOperation::ProjectVariant {
+                            aggregate: value,
+                            nominal,
+                            variant: *variant,
+                            field: *field,
+                        },
+                    )?
                 }
                 // Box-referent places are promoted by storage planning and
                 // lowered through their owner slot's address. Reaching this

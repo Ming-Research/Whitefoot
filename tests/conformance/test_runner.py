@@ -187,6 +187,75 @@ class ManifestValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsupported expectation requires"):
                 runner.validate_manifest([case], [], directory, cases)
 
+    def diagnostic(self, start=1, end=2):
+        return {"rule": "GRAM-3", "source_ordinal": 0,
+                "byte_start": start, "byte_end": end,
+                "expected": ["pure", "reads", "writes"]}
+
+    def test_ordered_diagnostic_schema_rejects_missing_and_extra_evidence(self):
+        diagnostic = self.diagnostic()
+        self.assertEqual(runner.diagnostic_errors("sample", [diagnostic], ["GRAM-3"]), [])
+        for malformed in ([], "GRAM-3", ["GRAM-3"], [{}],
+                          [{**diagnostic, "ignored": 1}],
+                          [{**diagnostic, "rule": "TYPE-6"}],
+                          [{**diagnostic, "byte_start": -1}],
+                          [{**diagnostic, "byte_end": 0}],
+                          [{**diagnostic, "expected": []}],
+                          [{**diagnostic, "expected": ["pure", "pure"]}]):
+            with self.subTest(malformed=malformed):
+                self.assertTrue(runner.diagnostic_errors("sample", malformed, ["GRAM-3"]))
+        self.assertTrue(runner.diagnostic_errors(
+            "sample", [self.diagnostic(3, 4), diagnostic], ["GRAM-3"]))
+
+    def test_manifest_admits_diagnostics_but_rejects_a_second_expectation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            cases = self.make_repository(directory)
+            (cases / "sample.wf").write_text("")
+            case = self.case()
+            case["rules"] = ["GRAM-3"]
+            case["expect"] = {"kind": "reject", "diagnostics": [self.diagnostic()]}
+            runner.validate_manifest([case], [], directory, cases)
+            case["expect"]["rule"] = "GRAM-3"
+            with self.assertRaisesRegex(ValueError, "exactly one of rule, diagnostics"):
+                runner.validate_manifest([case], [], directory, cases)
+
+    def test_reject_span_is_a_checked_byte_interval(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            cases = self.make_repository(directory)
+            (cases / "sample.wf").write_bytes(b"abc")
+            case = self.case()
+            for span in ({"start": 0, "end": 3}, {"start": 3, "end": 3}):
+                case["expect"] = {"kind": "reject", "rule": "PROG-2", "span": span}
+                runner.validate_manifest([case], [], directory, cases)
+            for span in (
+                None, {}, {"start": 0}, {"start": 2, "end": 1},
+                {"start": -1, "end": 1}, {"start": True, "end": 1},
+                {"start": 0, "end": "1"}, {"start": 0, "end": 4},
+                {"start": 0, "end": 1, "file": "sample.wf"},
+            ):
+                with self.subTest(span=span):
+                    case["expect"] = {"kind": "reject", "rule": "PROG-2", "span": span}
+                    with self.assertRaisesRegex(ValueError, "span"):
+                        runner.validate_manifest([case], [], directory, cases)
+
+    def test_span_is_reject_only_and_single_source_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            cases = self.make_repository(directory)
+            (cases / "sample.wf").write_bytes(b"abc")
+            case = self.case()
+            case["expect"] = {"kind": "accept", "span": {"start": 0, "end": 1}}
+            with self.assertRaisesRegex(ValueError, "expectation fields"):
+                runner.validate_manifest([case], [], directory, cases)
+            (cases / "sample.wf").unlink()
+            (cases / "sample").mkdir()
+            (cases / "sample" / "modules.wfg").write_text("pkg: [];\n")
+            case["expect"] = {"kind": "reject", "rule": "PROG-2", "span": {"start": 0, "end": 1}}
+            with self.assertRaisesRegex(ValueError, "single .wf source"):
+                runner.validate_manifest([case], [], directory, cases)
+
 
 class ArrangementTests(unittest.TestCase):
     """The invocation arrangement a run case needs (fixtures, argv, stdin,
@@ -220,11 +289,13 @@ class ArrangementTests(unittest.TestCase):
         self.validate(
             self.case(
                 {
-                    "argv": ["77f0", ""],
+                    "argv": ["77f0", "", {"initial": "62"}],
                     "stdin": "0a",
                     "files": [
                         {"path": "61ff", "bytes": ""},
                         {"path": "62", "directory": True},
+                        {"path": "63", "link": "62"},
+                        {"path": "64", "bytes": {"initial": "63"}},
                     ],
                     "redirect": {"stdout": "combined", "stderr": "combined"},
                 }
@@ -247,6 +318,20 @@ class ArrangementTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly one of bytes, directory"):
             self.validate(self.case({"files": [{"path": "61", "bytes": "", "directory": True}]}))
 
+    def test_fixture_is_not_both_a_link_and_a_file(self):
+        with self.assertRaisesRegex(ValueError, "exactly one of bytes, directory, link"):
+            self.validate(self.case({"files": [{"path": "61", "bytes": "", "link": "62"}]}))
+
+    def test_link_target_is_nonempty_hex(self):
+        with self.assertRaisesRegex(ValueError, "link must not be empty"):
+            self.validate(self.case({"files": [{"path": "61", "link": ""}]}))
+
+    def test_initial_relative_bytes_have_only_the_initial_member(self):
+        with self.assertRaisesRegex(ValueError, "argv\\[1\\] must be a hex byte string or an object"):
+            self.validate(self.case({"argv": ["61", {"initial": "62", "extra": "63"}]}))
+        with self.assertRaisesRegex(ValueError, "bytes.initial must be a lowercase"):
+            self.validate(self.case({"files": [{"path": "61", "bytes": {"initial": "6"}}]}))
+
     def test_duplicate_fixture_paths_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "duplicate fixture paths"):
             self.validate(
@@ -262,6 +347,48 @@ class ArrangementTests(unittest.TestCase):
 
 
 class VerdictMatchingTests(unittest.TestCase):
+    def test_diagnostics_match_exact_count_order_coordinates_and_expected_set(self):
+        first = {"rule": "GRAM-3", "source_ordinal": 0,
+                 "byte_start": 10, "byte_end": 11,
+                 "expected": ["pure", "reads", "writes"]}
+        second = {"rule": "FORM-1", "source_ordinal": 0,
+                  "byte_start": 30, "byte_end": 31}
+        expect = {"kind": "reject", "diagnostics": [first, second]}
+        self.assertTrue(runner.matches(("reject", [first, second]), expect))
+        for reached in ([first], [first, second, second], [second, first],
+                        [{**first, "byte_start": 9}, second],
+                        [{**first, "expected": ["pure", "reads", "writes", ";"]}, second]):
+            with self.subTest(reached=reached):
+                self.assertFalse(runner.matches(("reject", reached), expect))
+        legacy = {"kind": "reject", "rule": "GRAM-3"}
+        self.assertTrue(runner.matches(("reject", [first]), legacy))
+        self.assertFalse(runner.matches(("reject", [first, second]), legacy))
+
+    def test_reject_span_requires_the_matching_rule_and_complete_interval(self):
+        span = {"start": 12, "end": 40}
+        expect = {"kind": "reject", "rule": "PROV-6", "span": span}
+        self.assertTrue(runner.matches(("reject", "PROV-6", span), expect))
+        for verdict in (
+            ("reject", "PROV-6"), ("reject", "PROV-6", None),
+            ("reject", "PROV-6", {"start": 20, "end": 26}),
+            ("reject", "TYPE-5", span), ("accept",),
+        ):
+            with self.subTest(verdict=verdict):
+                self.assertFalse(runner.matches(verdict, expect))
+        self.assertTrue(runner.matches(("reject", "PROV-6"), {"kind": "reject", "rule": "PROV-6"}))
+
+    def test_reject_span_matches_the_single_diagnostic_coordinate_in_the_one_source(self):
+        span = {"start": 12, "end": 40}
+        expect = {"kind": "reject", "rule": "PROV-6", "span": span}
+        diagnostic = {"rule": "PROV-6", "source_ordinal": 0, "byte_start": 12, "byte_end": 40}
+        self.assertTrue(runner.matches(("reject", [diagnostic]), expect))
+        for reached in (
+            [{**diagnostic, "source_ordinal": 1}], [{**diagnostic, "byte_end": 41}],
+            [{**diagnostic, "rule": "TYPE-5"}], [diagnostic, diagnostic],
+        ):
+            with self.subTest(reached=reached):
+                self.assertFalse(runner.matches(("reject", reached), expect))
+
     def test_unsupported_verdict_matches_an_unsupported_expectation(self):
         expect = {"kind": "unsupported", "why": "target qualification"}
 

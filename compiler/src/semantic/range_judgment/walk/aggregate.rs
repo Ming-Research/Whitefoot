@@ -153,7 +153,9 @@ mod tests {
             let need = functions[function.0 as usize];
             let borrowed = walker.eval(&mut state, &arguments[0]);
             let required = &need.range_facts.requirements[0];
-            let frame = walker.frame(&mut state, required, &|_| Some(borrowed.clone()));
+            let frame = walker.frame(&mut state, required, &|_| Some(borrowed.clone()), &|_| {
+                Vec::new()
+            });
             let version = |frame: &Frame| match frame.places.values().next().unwrap() {
                 PlaceView::Run { version, .. } => *version,
                 other => panic!("expected a run: {other:?}"),

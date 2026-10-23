@@ -49,7 +49,7 @@
 // Retired with [LIV-2]: `box_referent_read_out_rejects_a_later_reborrow_at_its_use` asserted a reborrow at a spent read-out target; the successor is [REF-2]'s use of an invalidated reference.
 // Retired with [LIV-2]: `direct_field_index_reads_and_scalar_commits_use_the_terminal_type` paired the multi-target commit with an [OP-4] bound; the successor is [GRAM-4]'s one place per `set_stmt`, and [OP-4]'s subscript obligation keeps its own coverage in `tests/arrays.rs`.
 // Retired with [LIV-2]: `proved_dynamic_indices_separate_one_commit_targets` separated two targets of one commit; the successor is [GRAM-4]'s one place per `set_stmt` and `swap` [OP-11] for a two-place exchange, with [OWN-7]'s index-step separation now answered at a call by [EFF-5].
-// Retired with [OWN-5]: `a_rhs_cannot_mutate_an_index_captured_by_dynamic_commit_targets` asserted a loan conflict between a commit's captured indices and its right-hand side; the successor is [SET-1]'s target evaluation before the right-hand side, with [REF-2] deciding the reference half.
+// Retired with [OWN-5]: `a_rhs_cannot_mutate_an_index_captured_by_dynamic_commit_targets` asserted a loan conflict between a commit's captured indices and its right-hand side; the successor is [SET-1]'s target evaluation after the right-hand side, with [REF-2] deciding the reference half.
 // Retired with [LIV-2]: `repeated_affine_element_read_out_keeps_type2_diagnostic_priority` ordered two diagnostics of one multi-target commit; the successor is [WIN-3], which owns the element move-out on its own.
 // Retired with [SET-2]: `affine_nested_fields_are_exchanged_or_read_out_once` had `replace` and the multi-target commit as its subject; the successor is [WIN-3]'s commit disposition.
 // Retired with [VIEW-2]: `exclusive_inline_view_retains_bounds_and_owner_loan` had the exclusive inline view and its owner loan as its subject; the successor is [REF-4]'s range reference with [REF-2] validity.
@@ -411,4 +411,102 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(releases.contains(&ordinary));
         assert!(releases.iter().any(Vec::is_empty));
     });
+}
+
+/// [OWN-1, WIN-3] permits taking the affine payload and killing its own
+/// enum root. Until active-variant residual release is implemented, that
+/// specified form is a compiler capability stop, never an element-move rule.
+#[test]
+fn owned_enum_payload_consume_reports_the_unimplemented_release_path() {
+    super::assert_unsupported(
+        br#"fn main() -> status: std::process::ExitStatus pure {
+  let value = box_new::<u64>(value: 7_u64);
+  let cell = Some<Box<u64>>(value: move value);
+  match &cell {
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Some(..) => {
+      let extracted = move cell.Some.value;
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}
+"#,
+        crate::UnsupportedSemanticFeature::CompositeValues,
+    );
+}
+
+/// The same missing enum release path applies when the selected affine
+/// value is Box content below its payload, not only the payload field itself.
+#[test]
+fn owned_enum_payload_box_content_consume_reports_the_same_capability() {
+    super::assert_unsupported(
+        br#"fn main() -> status: std::process::ExitStatus pure {
+  let inner = box_new::<u64>(value: 7_u64);
+  let outer = box_new::<Box<u64>>(value: move inner);
+  let cell = Some<Box<Box<u64>>>(value: move outer);
+  match &cell {
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Some(..) => {
+      let extracted = move cell.Some.value.inner;
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}
+"#,
+        crate::UnsupportedSemanticFeature::CompositeValues,
+    );
+}
+
+/// A written reference step still owns its [OWN-1] source rejection before
+/// the unsupported own-root enum cleanup path can be considered.
+#[test]
+fn referenced_enum_payload_consume_remains_an_own1_source_rejection() {
+    assert_rule_kind(
+        br#"fn take_referenced(cell: &Option<Box<u64>>) -> result: unit reads(cell) {
+  match &cell^ {
+    None() => {
+      return unit;
+    }
+    Some(..) => {
+      let extracted = move cell^.Some.value;
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        SemanticRule::Own1,
+        |kind| matches!(kind, SemanticIssueKind::MoveThroughReference { .. }),
+    );
+}
+
+/// [TYPE-9]'s runtime-capacity placement refusal precedes the missing enum
+/// consume implementation: a Box's raw Slots content is not an owned value.
+#[test]
+fn runtime_box_content_below_an_enum_payload_remains_a_type9_rejection() {
+    assert_rule_kind(
+        br#"fn main() -> status: std::process::ExitStatus pure {
+  let values = box_slots_new::<u64>(capacity: 4_u64);
+  let cell = Some<Box<Slots<u64>>>(value: move values);
+  match &cell {
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Some(..) => {
+      let extracted = move cell.Some.value.inner;
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+}
+"#,
+        SemanticRule::Type9,
+        |kind| matches!(kind, SemanticIssueKind::InvalidRestrictedTypePlacement { .. }),
+    );
 }

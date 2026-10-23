@@ -9,16 +9,11 @@ struct Window {
 const frame: Window = Window(width: 3_u64, height: 2_u64);
 
 fn main() -> status: ExitStatus pure {
-  doc "CONST-2 struct-typed consts: a source struct whose every field type is const-eligible is itself const-eligible. The cvalue takes the construction form naming its exact struct and writing every declared field in declared order, and the const is laid out as one read-only static aggregate in the nominal's ordinary representation. It is read via its field suffixes exactly as subscript reads, so a copy-scalar selection copies out.";
+  doc "CONST-2 struct-typed consts: a source struct whose every field type is const-eligible is itself const-eligible. The cvalue takes the construction form naming its exact struct and writing every declared field in declared order, and the const is laid out as one read-only static aggregate in the nominal's ordinary representation. It is read via its field suffixes exactly as subscript reads, so a copy-scalar selection copies out; the exit status is ten times the width plus the height.";
   let width = frame.width;
-  if width == 3_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let height = frame.height;
-  if height == 2_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let tens = width * 10_u64;
+  let combined = tens + height;
+  let code = cvt::<u64, u8>(combined);
+  return exit_status(code: code);
 }

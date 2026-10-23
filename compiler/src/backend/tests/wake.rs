@@ -4,7 +4,7 @@
 //! which a guard's reservation can refuse
 //! (compiler/waiting-contexts/state-locks).
 
-use super::{compile, emitted_function};
+use super::{compile, emit_lowered, emitted_function};
 
 fn guarded(guard: &str, block: &str) -> String {
     format!(
@@ -38,15 +38,30 @@ fn call_line<'body>(body: &'body str, entry: &str) -> &'body str {
     line
 }
 
+/// The watch's test precedes its static wait-site descriptor.
+fn watch_test<'body>(llvm: &str, watch: &'body str) -> &'body str {
+    let (arguments, site) = watch
+        .rsplit_once(", ptr ")
+        .unwrap_or_else(|| panic!("the watch passes its site last: {watch}"));
+    let site = site.trim_end_matches(')');
+    assert!(site.starts_with("@.wf_wait."), "{watch}");
+    assert!(
+        llvm.lines().any(|line| line.starts_with(&format!("{site} = "))
+            && line.contains("unnamed_addr constant [")),
+        "the descriptor is read-only module data: {llvm}"
+    );
+    arguments
+        .rsplit_once(", ptr ")
+        .unwrap_or_else(|| panic!("the watch passes its test before the site: {watch}"))
+        .1
+}
+
 #[test]
 fn a_kept_comparison_is_registered_as_its_bytes() {
     let llvm = compile(guarded("g^.stop == 3_u64", "set g^.turn = seen;").as_bytes());
     let main = emitted_function(&llvm, "main");
     let watch = call_line(main, "wf__shared_watch");
-    let Some((_, test)) = watch.rsplit_once(", ptr ") else {
-        panic!("the watch passes its test last: {watch}");
-    };
-    let test = test.trim_end_matches(')');
+    let test = watch_test(&llvm, watch);
     assert!(test.starts_with("%wf.wake.v"), "{watch}");
     assert!(
         main.contains(&format!("{test} = alloca [104 x i8], align 8")),
@@ -73,12 +88,272 @@ fn a_kept_comparison_is_registered_as_its_bytes() {
 }
 
 #[test]
+fn helper_and_forwarded_guards_emit_the_inline_comparison_bytes() {
+    const HELPERS: &str = r#"fn covered(gate: &Gate, target: u64) -> ready: Bool reads(gate.stop) {
+  return gate^.stop >= target;
+}
+
+fn forwarded(limit: u64, state: &Gate) -> ready: Bool reads(state.stop) {
+  return covered(gate: state, target: limit);
+}
+
+"#;
+    for guard in [
+        "g^.stop >= 3_u64",
+        "covered(gate: g, target: 3_u64)",
+        "forwarded(limit: 3_u64, state: g)",
+    ] {
+        let source = guarded(guard, "set g^.turn = seen;")
+            .replace("fn main()", &format!("{HELPERS}fn main()"));
+        let llvm = compile(source.as_bytes());
+        let main = emitted_function(&llvm, "main");
+        let watch = call_line(main, "wf__shared_watch");
+        assert!(
+            watch.contains(", ptr %wf.wake.v"),
+            "{guard}: {watch}"
+        );
+        assert!(main.contains(&header(&[1])), "{guard}: {main}");
+        assert!(
+            main.contains(&atom_tail(8, 0, GREATER_EQUAL)),
+            "{guard}: {main}"
+        );
+        let stores_target = main
+            .lines()
+            .filter_map(|line| {
+                let (name, expression) = line.trim().split_once(" = ")?;
+                (expression == "select i1 true, i64 3, i64 3").then_some(name)
+            })
+            .any(|name| main.contains(&format!("store i64 {name}, ptr")));
+        assert!(
+            stores_target,
+            "{guard}: the captured target must be the same value as the inline operand: {main}"
+        );
+        assert_eq!(
+            main.matches("store [8 x i8]").count(),
+            2,
+            "{guard}: exactly one header and one comparison atom: {main}"
+        );
+    }
+}
+
+#[test]
+fn a_multi_statement_nested_guard_registers_the_callback_and_callers_sequence() {
+    let source = br#"struct Progress {
+  written: u64;
+  unrelated: u64;
+  failure: Option<u64>;
+  stopping: Bool;
+}
+
+fn reply_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.written), reads(progress.failure) {
+  let covered = progress^.written >= sequence;
+  if covered {
+    return True();
+  }
+  match progress^.failure {
+    None() => {
+      return False();
+    }
+    Some(..) => {
+      return True();
+    }
+  }
+}
+
+fn rebuilding_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.stopping), reads(progress.written), reads(progress.failure) {
+  let stopping = progress^.stopping;
+  if stopping {
+    return True();
+  }
+  return reply_ready(progress: progress, sequence: sequence);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let clear = None<u64>();
+  let no = False();
+  let initial = Progress(written: 0_u64, unrelated: 0_u64, failure: clear, stopping: no);
+  let state = shared_new::<Progress>(value: initial);
+  let sequence = 19_u64;
+  atomic progress = &state when rebuilding_ready(progress: progress, sequence: sequence) {
+    set progress^.unrelated = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = compile(source);
+    let main = emitted_function(&llvm, "main");
+    let watch = call_line(main, "wf__shared_watch");
+    let test = watch_test(&llvm, watch);
+    assert!(test.starts_with("%wf.wake.v"), "{watch}");
+    assert!(
+        main.contains(&format!("{test} = alloca [24 x i8], align 8")),
+        "the callback descriptor has its own 24-byte ABI: {main}"
+    );
+    assert!(
+        main.contains("store [8 x i8] [i8 255, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0]")
+            && main.contains(&format!("ptr {test}, i64 0")),
+        "callback discriminator: {main}"
+    );
+
+    let adapter_symbol = main
+        .lines()
+        .find_map(|line| {
+            let (_, rest) = line.split_once("store ptr @")?;
+            let (symbol, _) = rest.split_once(", ptr ")?;
+            symbol.ends_with(".wake_filter").then_some(symbol)
+        })
+        .expect("registration stores a pointer to the generated C ABI adapter");
+    let thunk_symbol = adapter_symbol
+        .strip_suffix(".wake_filter")
+        .expect("adapter suffix");
+    let adapter = emitted_function(
+        &llvm,
+        adapter_symbol.strip_prefix("wf_").expect("source symbol"),
+    );
+    assert!(
+        adapter.lines().next().is_some_and(|line| {
+            line.contains("i32 ") && line.contains("(ptr ") && line.matches("ptr ").count() == 2
+        }),
+        "C ABI takes state and captures and returns i32: {adapter}"
+    );
+    assert!(
+        adapter.contains("load i64"),
+        "the adapter loads its captured sequence: {adapter}"
+    );
+    assert!(
+        adapter.contains(&format!("@{thunk_symbol}(")),
+        "the adapter invokes the ordinary guard thunk: {adapter}"
+    );
+    assert!(
+        adapter.contains("zext i1") && adapter.contains("ret i32"),
+        "the Bool answer crosses the runtime ABI explicitly: {adapter}"
+    );
+
+    let thunk = emitted_function(&llvm, thunk_symbol.strip_prefix("wf_").expect("thunk symbol"));
+    assert!(
+        thunk.contains("@wf_rebuilding_ready("),
+        "the full guard is called: {thunk}"
+    );
+    let rebuilding = emitted_function(&llvm, "rebuilding_ready");
+    assert!(
+        rebuilding.contains("@wf_reply_ready("),
+        "nested helper call: {rebuilding}"
+    );
+    let reply = emitted_function(&llvm, "reply_ready");
+    assert!(
+        reply.contains("icmp uge i64") && (reply.contains("br i1") || reply.contains("switch i1")),
+        "the real helper keeps its comparison and branches: {reply}"
+    );
+
+    let capture_value = main
+        .lines()
+        .find_map(|line| {
+            let (name, expression) = line.trim().split_once(" = ")?;
+            (expression == "select i1 true, i64 19, i64 19").then_some(name)
+        })
+        .expect("the caller defines sequence 19");
+    let capture_place = main
+        .lines()
+        .find_map(|line| {
+            let (name, expression) = line.trim().split_once(" = ")?;
+            (expression == format!("getelementptr inbounds i8, ptr {test}.captures, i64 0"))
+                .then_some(name)
+        })
+        .expect("the callback has a slot for the captured sequence");
+    assert!(
+        main.contains(&format!("store i64 {capture_value}, ptr {capture_place}, align 8")),
+        "the callback captures the waiter's actual sequence: {main}"
+    );
+    assert!(
+        main.contains(&format!("ptr {test}, i64 8"))
+            && main.contains(&format!("ptr {test}, i64 16"))
+            && main.contains(&format!("store ptr {test}.captures, ptr")),
+        "function and capture pointers occupy ABI offsets 8 and 16: {main}"
+    );
+    assert_eq!(
+        main.matches("store [8 x i8]").count(),
+        1,
+        "the callback has only its header, no comparison atoms: {main}"
+    );
+}
+
+#[test]
+fn a_callback_over_an_overlapping_helper_calls_the_sequential_clone() {
+    // `overlapped_ready` has two pure sibling calls, which an overlap build
+    // offers to the scheduler. A writer running the guard under its hold must
+    // not enter the scheduler, so the adapter calls the guard thunk's
+    // sequential clone, which reaches the helper's sequential clone.
+    let source = br#"struct Progress {
+  written: u64;
+  unrelated: u64;
+}
+
+fn weight(value: u64) -> result: u64 pure {
+  return value +wrap 1_u64;
+}
+
+fn overlapped_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.written) {
+  let current = progress^.written;
+  let left = weight(value: current);
+  let right = weight(value: sequence);
+  return left >= right;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = Progress(written: 0_u64, unrelated: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  let sequence = 19_u64;
+  atomic progress = &state when overlapped_ready(progress: progress, sequence: sequence) {
+    set progress^.unrelated = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = emit_lowered(source, crate::OverlapLowering::On);
+    assert!(
+        emitted_function(&llvm, "overlapped_ready").contains("@wf__par_"),
+        "the helper offers its first call to the scheduler: {llvm}"
+    );
+    let main = emitted_function(&llvm, "main");
+    let adapter_symbol = main
+        .lines()
+        .find_map(|line| {
+            let (_, rest) = line.split_once("store ptr @")?;
+            let (symbol, _) = rest.split_once(", ptr ")?;
+            symbol.ends_with(".wake_filter").then_some(symbol)
+        })
+        .expect("registration stores a pointer to the generated C ABI adapter");
+    let thunk_symbol = adapter_symbol
+        .strip_suffix(".wake_filter")
+        .expect("adapter suffix");
+    let thunk = thunk_symbol.strip_prefix("wf_").expect("source symbol");
+    let adapter = emitted_function(
+        &llvm,
+        adapter_symbol.strip_prefix("wf_").expect("source symbol"),
+    );
+    let clone = format!("@wf__par_seq_{thunk}(");
+    assert!(
+        adapter.contains(&clone),
+        "the adapter calls the clone: {adapter}"
+    );
+    assert!(
+        !adapter.contains(&format!("@{thunk_symbol}(")),
+        "the adapter never calls the overlapping original: {adapter}"
+    );
+    assert!(
+        llvm.lines()
+            .any(|line| line.starts_with("define") && line.contains(&clone)),
+        "the clone is defined: {llvm}"
+    );
+}
+
+#[test]
 fn a_guard_with_no_kept_part_registers_no_test() {
     // The guard reads only a local, which no write changes.
     let llvm = compile(guarded("seen == 3_u64", "set g^.turn = seen;").as_bytes());
     let main = emitted_function(&llvm, "main");
     let watch = call_line(main, "wf__shared_watch");
-    assert!(watch.ends_with(", ptr null)"), "{watch}");
+    assert_eq!(watch_test(&llvm, watch), "null", "{watch}");
     assert!(!main.contains("%wf.wake.v"), "{main}");
 }
 

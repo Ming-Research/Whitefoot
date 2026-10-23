@@ -421,7 +421,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut probe = bindings.clone();
         let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
         self.check_place_offset(offset_node, &offset)?;
-        let Some(captured) = Checker::captured_of(offset_node, &offset.expression) else {
+        let Some(captured) = self.captured_of(offset_node, &offset.expression) else {
             return self
                 .types
                 .declarations
@@ -1091,7 +1091,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         place.push_subscript(
             self.body.note_capture(
-                Checker::captured_of(offset_node, &offset.expression)
+                self.captured_of(offset_node, &offset.expression)
                     .unwrap_or(CapturedValue::unknown()),
                 bindings,
             ),
@@ -1247,7 +1247,7 @@ impl<'unit> Checker<'_, 'unit> {
         // rejection cite.
         let obligation = self.types.declarations.tree.path(suffix)?.clone();
         let captured = self.body.note_capture(
-            Checker::captured_of(offset_node, &offset.expression)
+            self.captured_of(offset_node, &offset.expression)
                 .unwrap_or(CapturedValue::unknown()),
             bindings,
         );
@@ -1499,7 +1499,7 @@ impl<'unit> Checker<'_, 'unit> {
         self.types
             .check_mutation_target_class(check_context, node, selected_type)?;
         let offset_place = self.body.note_capture(
-            Checker::captured_of(offset_node, &offset.expression)
+            self.captured_of(offset_node, &offset.expression)
                 .unwrap_or(CapturedValue::unknown()),
             bindings,
         );
@@ -1612,6 +1612,10 @@ impl<'unit> Checker<'_, 'unit> {
             SemanticIssueKind::InvalidSetTarget {
                 root_class: "a reference whose declared row does not write this path".to_owned(),
                 required_classes: super::SET1_WRITABLE_ROOTS,
+                mechanical_fix: self
+                    .rewritten_index_repair(context, node, place, bindings, None)
+                    .ok()
+                    .flatten(),
             },
         )
     }
@@ -1665,6 +1669,58 @@ impl<'unit> Checker<'_, 'unit> {
                 let member = self
                     .types
                     .elaborate_place_member(check_context, suffix, ty)?;
+                if let super::places::PlaceMember::Payload { variant, .. } = member {
+                    // This resolver knows the selected type but not its root.
+                    // Reuse ordinary borrow formation for the strictly shorter
+                    // written prefix; its captures keep the source identities,
+                    // and only the original path is emitted or contributes effects.
+                    let place = self
+                        .types
+                        .declarations
+                        .tree
+                        .parent(suffix)?
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                    let written = self
+                        .types
+                        .declarations
+                        .tree
+                        .children_with(place, Production::Psuffix)?;
+                    let position = written
+                        .iter()
+                        .position(|node| *node == suffix)
+                        .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                    let prefix = self.check_place_borrow_through(
+                        context,
+                        place,
+                        place,
+                        place,
+                        bindings,
+                        loop_depth,
+                        false,
+                        Some(&written[..position]),
+                        LexicalUseRole::PlaceBase,
+                    )?;
+                    let reference = prefix
+                        .reference
+                        .as_ref()
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let named = super::super::super::places::named_place(&prefix.expression)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let mut written = ResolvedPlace {
+                        root: named.root,
+                        path: named.steps,
+                        atomic_aliases: Vec::new(),
+                    };
+                    written.path.extend(named.suffix);
+                    self.require_payload_variant(
+                        suffix,
+                        variant,
+                        &prefix.expression,
+                        &written,
+                        &reference.paths,
+                        bindings,
+                    )?;
+                }
                 path.push(member.storage_step());
                 ty = member.ty();
                 continue;
@@ -1761,7 +1817,7 @@ impl<'unit> Checker<'_, 'unit> {
                 Some(CapturedValue::unknown())
             } else {
                 self.check_place_offset(offset_node, &offset)?;
-                let captured = Checker::captured_of(offset_node, &offset.expression);
+                let captured = self.captured_of(offset_node, &offset.expression);
                 if require_named_offsets && captured.is_none() {
                     return self
                         .types
@@ -1811,9 +1867,10 @@ impl<'unit> Checker<'_, 'unit> {
     /// whatever the program did between the two places' formation. The term
     /// beside it is how the entailment fragment reads that value, classified
     /// over the checked operand and never over its spelling: a literal or
-    /// named integer const is its mathematical value, a binding read is that
-    /// binding, and a const generic is fixed at instantiation [FN-2].
+    /// named integer const is its mathematical value, a tracked place uses
+    /// its proof path, and a const generic is fixed at instantiation [FN-2].
     pub(in crate::semantic::check) fn captured_of(
+        &self,
         occurrence: NodeId,
         offset: &CheckedExpression,
     ) -> Option<CapturedValue> {
@@ -1838,7 +1895,17 @@ impl<'unit> Checker<'_, 'unit> {
                 consume_root: false,
                 ..
             } => Some(CapturedValue::new(capture, CapturedTerm::Binding(*binding))),
-            _ => None,
+            _ => {
+                let place = super::super::super::places::tracked_offset_place(offset)?;
+                let id = self.types.captured_places.intern(place.clone());
+                let term = match place.root {
+                    PlaceRoot::Binding(binding) if place.path.is_empty() => {
+                        CapturedTerm::Binding(binding)
+                    }
+                    _ => CapturedTerm::Place(id),
+                };
+                Some(CapturedValue::new(capture, term))
+            }
         }
     }
 
@@ -1860,8 +1927,25 @@ impl<'unit> Checker<'_, 'unit> {
             u32::try_from(occurrence.index())
                 .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
         );
-        let term = Checker::captured_of(occurrence, endpoint)
-            .map_or(CapturedTerm::Opaque, |captured| captured.term);
+        let term = match endpoint {
+            CheckedExpression::Binding {
+                binding,
+                consume_root: false,
+                ..
+            } => CapturedTerm::Binding(*binding),
+            CheckedExpression::Constant(super::super::super::model::CheckedValue::Integer {
+                bits,
+                ..
+            })
+            | CheckedExpression::NamedConstant {
+                value: super::super::super::model::CheckedValue::Integer { bits, .. },
+                ..
+            } => CapturedTerm::Literal(*bits),
+            CheckedExpression::Constant(
+                super::super::super::model::CheckedValue::ConstGeneric { declaration, .. },
+            ) => CapturedTerm::Const(*declaration),
+            _ => CapturedTerm::Opaque,
+        };
         Ok(CapturedValue::new(capture, term))
     }
 
@@ -2128,8 +2212,8 @@ impl<'unit> Checker<'_, 'unit> {
                         pages = false;
                     }
                 }
-                crate::syntax::views::PlaceSuffix::Member(_) => {
-                    if range {
+                crate::syntax::views::PlaceSuffix::Member(member) => {
+                    if member.variant.is_some() || range {
                         return Ok(None);
                     }
                     let name = self
@@ -2576,6 +2660,7 @@ fn field_prefix(path: &[CheckedPlaceStep]) -> Option<Vec<u32>> {
         .map(|step| match step {
             CheckedPlaceStep::Field(field) => Some(*field),
             CheckedPlaceStep::BoxReferent(_)
+            | CheckedPlaceStep::Payload { .. }
             | CheckedPlaceStep::Subscript(_)
             | CheckedPlaceStep::Measure(_) => None,
         })
@@ -2711,6 +2796,12 @@ impl<'unit> DeclarationInventory<'unit> {
     ) -> Result<ExplicitContainerPath, CheckStop> {
         match expression {
             CheckedExpression::Binding { binding, .. } => Ok((*binding, Vec::new(), None)),
+            CheckedExpression::ReadStorage { root, .. } => Ok((
+                root.binding()
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                root.path.clone(),
+                root.proof_base.clone(),
+            )),
             CheckedExpression::DerefAddressed { binding, proof, .. } => {
                 Ok((*binding, Vec::new(), proof.clone()))
             }

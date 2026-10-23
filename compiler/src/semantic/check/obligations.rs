@@ -75,6 +75,9 @@ fn obligation_records(
                 target.clone(),
                 ObligationFamily::AtomicTargetSeparation(query),
             ),
+            (None, CheckedSeparationOccasion::WindowBound) => {
+                unreachable!("window bounds always belong to a reference use")
+            }
             (None, CheckedSeparationOccasion::Call) => (
                 SemanticRule::Eff5,
                 separation.site.clone(),
@@ -158,6 +161,19 @@ impl Records<'_> {
             site,
             subject,
         });
+    }
+
+    /// [OP-5] every source `if` condition is judged for redundancy after
+    /// its own evaluation's obligations, so a function is accepted only when
+    /// the walk answers each one undecided.
+    fn condition(&mut self, condition: Option<&NodePath>) {
+        if let Some(site) = condition {
+            self.push(
+                SemanticRule::Op5,
+                site.clone(),
+                ObligationSubject::Condition,
+            );
+        }
     }
 
     fn source(
@@ -263,9 +279,13 @@ impl Records<'_> {
                 );
             }
             CheckedStatement::Match {
-                scrutinee, arms, ..
+                condition,
+                scrutinee,
+                arms,
+                ..
             } => {
                 self.expression(scrutinee);
+                self.condition(condition.as_ref());
                 for arm in arms {
                     self.branches.push(arm.label.clone());
                     self.statements(&arm.body);
@@ -273,9 +293,13 @@ impl Records<'_> {
                 }
             }
             CheckedStatement::ValueMatchLet {
-                scrutinee, arms, ..
+                condition,
+                scrutinee,
+                arms,
+                ..
             } => {
                 self.expression(scrutinee);
+                self.condition(condition.as_ref());
                 self.gives += 1;
                 for arm in arms {
                     self.branches.push(arm.label.clone());
@@ -643,6 +667,7 @@ impl Records<'_> {
                     );
                 }
                 CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. }
                 | CheckedPlaceStep::BoxReferent(_)
                 | CheckedPlaceStep::Measure(_) => {}
             }

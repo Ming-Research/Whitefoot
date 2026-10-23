@@ -21,6 +21,10 @@ use crate::{CanonicalSyntaxUnit, NodePath, SyntaxCoordinate};
 
 pub use engine::resolve;
 
+#[cfg(test)]
+pub(crate) use catalog::MODE_WORDS;
+pub(crate) use catalog::{OPERATION_FAMILIES, reserved_name};
+
 pub use kernel::{
     CELL_NOMINAL, CELL_NOMINAL_ID, CONTAINER_NOMINAL_CLASS, CONTAINER_NOMINAL_CLASSES,
     CONTAINER_NOMINALS, ContainerNominal, ContainerNominalId, ContainerShape, container_nominal,
@@ -385,6 +389,8 @@ pub enum LexicalUseRole {
     Const,
     /// U13: constant-value identifier.
     ConstValue,
+    /// [GRAM-12] an integer arm IDENT, admitting a named const alone.
+    IntegerMatchValue,
     /// U14: place base.
     PlaceBase,
     /// U15: identifier callee.
@@ -962,6 +968,8 @@ pub enum ResolutionRule {
     Gram2,
     /// Match-binder freshness.
     Gram10,
+    /// Integer arm constant lookup.
+    Gram12,
     /// Type or place lookup.
     Type5,
     /// Namespace collision, constructor, or label lookup.
@@ -1013,6 +1021,7 @@ impl ResolutionRule {
             Self::Form5 => "FORM-5",
             Self::Gram2 => "GRAM-2",
             Self::Gram10 => "GRAM-10",
+            Self::Gram12 => "GRAM-12",
             Self::Type5 => "TYPE-5",
             Self::Type6 => "TYPE-6",
             Self::Set1 => "SET-1",
@@ -1132,6 +1141,11 @@ pub enum ResolutionIssueKind {
         class: ReservedNameClass,
         /// Ordinal inside that reserved set.
         inventory_ordinal: u16,
+        /// The rename that frees the declaration: what the reserved set
+        /// takes the spelling for, and a spelling no declaration of the unit
+        /// uses [FORM-3, OP-1]. Every reserved spelling has one; the
+        /// reserved-name wording tests hold that.
+        mechanical_fix: Option<String>,
     },
     /// GRAM-10 freshness failed before the binder became a declaration.
     MatchBinderFreshness {
@@ -1228,6 +1242,9 @@ pub enum ResolutionIssueKind {
         module: String,
         /// Use role.
         role: LexicalUseRole,
+        /// Accessible inventory names in this role, or the declaration needed
+        /// when this module has none.
+        mechanical_fix: String,
     },
     /// A reference from another module names a private declaration [MOD-5].
     PrivateDeclaration {

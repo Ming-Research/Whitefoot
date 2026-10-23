@@ -286,7 +286,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Wait1,
                 node,
                 SemanticIssueKind::WaitingCallOutsideWaitingFunction {
-                    callee: signature.name.clone(),
+                    callee: self.types.render_called_function(signature, node)?,
                     context: "a function that does not wait",
                     mechanical_fix: WAIT1_DECLARE_THE_CALLER_WAITING,
                 },
@@ -336,7 +336,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Gram11,
                 node,
-                Checker::invalid_named_arguments(signature),
+                self.invalid_named_arguments(signature, node)?,
             );
         }
         let mut arguments = Vec::with_capacity(fields.len());
@@ -360,7 +360,7 @@ impl<'unit> Checker<'_, 'unit> {
                 return self.types.declarations.issue_node(
                     SemanticRule::Gram11,
                     field,
-                    Checker::invalid_named_arguments(signature),
+                    self.invalid_named_arguments(signature, node)?,
                 );
             }
             let atom = self
@@ -485,7 +485,7 @@ impl<'unit> Checker<'_, 'unit> {
                             }
                             super::super::super::references::ReferenceValidity::Valid => "",
                         },
-                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN,
+                        mechanical_fix: super::super::super::references::REF2_FORM_AGAIN.to_owned(),
                     },
                 );
             }
@@ -522,10 +522,14 @@ impl<'unit> Checker<'_, 'unit> {
             argument_atoms.push(atom);
 
             actual_paths.push(paths);
+            if let Ok(spelling) = self.types.declarations.tree.source_spelling(atom) {
+                self.types.source_spellings.insert(atom, spelling);
+            }
             actual_captures.push(
                 self.body.note_capture(
-                    Checker::captured_of(atom, &argument.expression)
-                        .unwrap_or_else(CapturedValue::unknown),
+                    self.captured_of(atom, &argument.expression)
+                        .unwrap_or_else(CapturedValue::unknown)
+                        .with_source(atom),
                     bindings,
                 ),
             );
@@ -549,7 +553,6 @@ impl<'unit> Checker<'_, 'unit> {
         // [STOR-8] a unit carrying the no-heap declaration cannot call an
         // allocating prelude row; [OP-11] refuses a `swap` over a copy place.
         self.types
-            .declarations
             .reject_allocating_call_under_no_heap(node, signature)?;
         self.types
             .reject_swap_over_copy(check_context, node, signature)?;
@@ -618,6 +621,56 @@ impl<'unit> Checker<'_, 'unit> {
                         )?);
                     }
                     ContractReadStep::Captured(step) => suffix.push(*step),
+                    ContractReadStep::FormalPath(place) => {
+                        suffix.extend(self.types.captured_places.formal(*place));
+                    }
+                    ContractReadStep::Projected(projection) => {
+                        let (ordinal, place, ty, page) = match projection {
+                            GoalProjection::FormalPlaceSubscript { ordinal, place, ty } => {
+                                (*ordinal, *place, *ty, false)
+                            }
+                            GoalProjection::FormalPlacePage { ordinal, place, ty } => {
+                                (*ordinal, *place, *ty, true)
+                            }
+                            _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+                        };
+                        let mut projections = crate::semantic::goal::formal_offset_projections(
+                            place,
+                            &self.types.captured_places,
+                        )
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        if signature.parameters[ordinal as usize].mode.is_reference() {
+                            projections.insert(0, GoalProjection::Deref);
+                        }
+                        let template = GoalExpression::Datum(GoalDatum::Parameter {
+                            ordinal,
+                            projections,
+                            ty,
+                        });
+                        let goal = self.instantiate_goal_expression(
+                            check_context,
+                            &template,
+                            signature,
+                            &signature.region_parameters,
+                            &goal_arguments,
+                        )?;
+                        let captured = CapturedValue::new(
+                            CaptureId::ContractRead {
+                                call: node,
+                                position: contract_position,
+                            },
+                            CapturedTerm::Opaque,
+                        );
+                        contract_position = contract_position
+                            .checked_add(1)
+                            .ok_or(SemanticCompilerFailure::CounterOverflow)?;
+                        suffix.push(if page {
+                            PlaceStep::Page(captured)
+                        } else {
+                            PlaceStep::Index(captured)
+                        });
+                        contract_indices.push((captured, goal));
+                    }
                     ContractReadStep::Computed(term, definitions) => {
                         let mut pending = Vec::new();
                         let goal = range_term_goal(
@@ -694,15 +747,17 @@ impl<'unit> Checker<'_, 'unit> {
             bindings,
         )?;
         self.types
-            .declarations
-            .invalidate_window_operation_references(signature, &substituted, bindings)?;
+            .invalidate_window_operation_references(node, signature, &substituted, bindings)?;
         self.project_call_effects(
+            FunctionContext {
+                check_context,
+                function,
+            },
             node,
-            function,
             &substituted,
             bindings,
             &mut effects,
-            formal.is_none().then_some(signature.parameters.as_slice()),
+            (signature, formal.is_none()),
         )?;
         if formal.is_none() && self.body.repair_calls.is_some() {
             let call = self.effect_repair_call(
@@ -891,7 +946,9 @@ impl<'unit> Checker<'_, 'unit> {
         let Some([first]) = actual_paths.first().map(Vec::as_slice) else {
             return Ok(None);
         };
-        if *first != target {
+        // Both are resolved before any effect of the call, so equal offset
+        // terms denote one value.
+        if first.clone().term_identity() != target.clone().term_identity() {
             return Ok(None);
         }
         for entry in entries {
@@ -1181,14 +1238,15 @@ impl<'unit> Checker<'_, 'unit> {
     /// atomic statement's binder contributes its path for that statement,
     /// which removes it [SHARE-3].
     fn project_call_effects(
-        &self,
+        &mut self,
+        context: FunctionContext<'_, '_>,
         node: NodeId,
-        caller: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &HashMap<DeclarationId, LocalBinding>,
         effects: &mut EffectSet,
-        retained_reference_parameters: Option<&[ParameterSignature]>,
+        (signature, retain_reference_parameters): (&FunctionSignature, bool),
     ) -> Result<(), CheckStop> {
+        let caller = context.function;
         for entry in entries {
             for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
                 if !caller
@@ -1199,8 +1257,20 @@ impl<'unit> Checker<'_, 'unit> {
                 {
                     continue;
                 }
-                if retained_reference_parameters
-                    .is_some_and(|parameters| parameters[entry.argument].mode != CheckedMode::Own)
+                if entry.write && self.body.rewritten_index_repair.is_none() {
+                    self.body.rewritten_index_repair = self
+                        .rewritten_index_repair(
+                            context,
+                            node,
+                            &entry.place,
+                            bindings,
+                            Some(signature),
+                        )
+                        .ok()
+                        .flatten();
+                }
+                if retain_reference_parameters
+                    && signature.parameters[entry.argument].mode != CheckedMode::Own
                 {
                     if !self.types.effect_repairs.is_capture() {
                         if entry.write {
@@ -1907,28 +1977,23 @@ impl<'unit> TypeContext<'unit> {
     }
 }
 
-impl<'unit> DeclarationInventory<'unit> {
-    /// [OP-10] the calls that end the bound a reference into a window was
-    /// formed under.
-    ///
-    /// Of the window operations, `place_back`'s `ensures` carries
-    /// `i < r.len` across the call and `insert_at` only changes a slot's
-    /// occupant, so neither ends it; the rest move a boundary down, move a
-    /// run between two windows, shift every logical index, or remake the
-    /// block whole. Any other callee whose row writes a window's `last` or
-    /// `filled` may take elements back through it as `take_back` and
-    /// `remove_at` do, and no `ensures` is read here to show that it does
-    /// not, so its call ends the bound as well. Every reference into such a
-    /// window dies [REF-2, REF-4].
+impl<'unit> TypeContext<'unit> {
+    /// [OP-10] retain each potentially affected selection's formation bound
+    /// as a post-call preservation query where OP-10 permits survival.
+    /// Canonical take_back/remove_at, `clear`, Ring origin shifts and
+    /// ordinary prefix writes retain their unconditional invalidations
+    /// [REF-2]; `clear` ends every element's lifetime, so every reference
+    /// into its window dies, an empty range included [OP-10].
     /// Only written entries identify an operated window: a by-value
     /// argument contributes a read, which ends no reference's bound [EFF-5].
     fn invalidate_window_operation_references(
         &self,
+        node: NodeId,
         signature: &FunctionSignature,
         entries: &[SubstitutedEntry],
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
-        const BOUND_ENDING_ROWS: [&str; 8] = [
+        const BOUND_CHANGING_ROWS: [&str; 9] = [
             "take_back",
             "remove_at",
             "append",
@@ -1937,16 +2002,18 @@ impl<'unit> DeclarationInventory<'unit> {
             "take_front",
             "grow",
             "grow_paged",
+            "clear",
         ];
-        let prelude = self.tree.is_prelude_node(signature.node)?;
-        let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());
+        let prelude = self.declarations.tree.is_prelude_node(signature.node)?;
+        let site = self.declarations.tree.path(node)?;
+        let window_operation = prelude && BOUND_CHANGING_ROWS.contains(&signature.name.as_str());
         for entry in entries {
             if !entry.write {
                 continue;
             }
             // A row entry names a part or a measure word of the window --
             // `writes(window.filled)`, `writes(window.len)` -- and the window
-            // whose bound the call ends is the place below that step.
+            // whose bound the call may change is the place below that step.
             let cut = entry
                 .place
                 .path
@@ -1968,10 +2035,23 @@ impl<'unit> DeclarationInventory<'unit> {
             };
             let shifts_origin =
                 prelude && matches!(signature.name.as_str(), "place_front" | "take_front");
-            Checker::invalidate_window_references(bindings, &window, shifts_origin);
+            // OP-10 explicitly invalidates selections at these removal
+            // operations, even if other facts prove their old bound. A source
+            // helper is judged by its own row and published postconditions.
+            let removes_selection = prelude
+                && matches!(
+                    signature.name.as_str(),
+                    "take_back" | "remove_at" | "clear"
+                );
+            if shifts_origin || removes_selection {
+                Checker::invalidate_window_references(bindings, &window, shifts_origin);
+            } else {
+                self.preserve_window_references(site, bindings, &window)?;
+            }
         }
         Ok(())
     }
+
     /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
     /// call an allocating prelude row.
     ///
@@ -1984,18 +2064,23 @@ impl<'unit> DeclarationInventory<'unit> {
         node: NodeId,
         signature: &FunctionSignature,
     ) -> Result<(), CheckStop> {
-        if !self.no_heap || !HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str()) {
+        if !self.declarations.no_heap
+            || !HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str())
+        {
             return Ok(());
         }
-        self.issue_node(
+        self.declarations.issue_node(
             SemanticRule::Stor8,
             node,
             SemanticIssueKind::HeapTypeUnderNoHeap {
-                spelling: signature.name.clone(),
+                spelling: self.render_called_function(signature, node)?,
                 mechanical_fix: super::super::super::types::STOR8_NO_HEAP,
             },
         )
     }
+}
+
+impl<'unit> DeclarationInventory<'unit> {
     /// An indexed actual has an ephemeral image rather than a rereadable
     /// place image. All path steps are in the one suffix list [GRAM-5].
     fn call_goal_place_contains_subscript(&self, place: NodeId) -> Result<bool, CheckStop> {

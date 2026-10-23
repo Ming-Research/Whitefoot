@@ -202,6 +202,7 @@ pub(crate) const ZERO: TermId = TermId(0);
 /// constant length term), so any derivation hopping through a later term's
 /// implicit bounds factors through Z, and no other fact mentions an
 /// unregistered term.
+#[derive(Clone)]
 pub(crate) struct TermTable {
     terms: Vec<TermKind>,
     sums: Vec<TermId>,

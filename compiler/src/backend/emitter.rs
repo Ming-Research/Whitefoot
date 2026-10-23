@@ -37,13 +37,16 @@ mod snapshot;
 mod storage_alias;
 mod union_enums;
 mod value_equality;
+mod wait_sites;
 mod wake;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::abi::{FunctionAbi, ParameterAbi, ResultAbi};
-use super::emission::{DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature};
+use super::emission::{
+    DeferredPart, FunctionBody, Linkage, Module, Parameter, References, Signature,
+};
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, IncomingSnapshots, is_stored_aggregate};
 use crate::target::{
@@ -85,6 +88,8 @@ pub enum BackendFailure {
     SnapshotTargetUnsupported,
     CounterOverflow,
     TextEmission,
+    /// The selected native toolchain or its required probe environment failed.
+    Toolchain,
 }
 
 impl From<std::fmt::Error> for BackendFailure {
@@ -105,6 +110,15 @@ pub struct LlvmModule {
 }
 
 impl LlvmModule {
+    pub(crate) fn rebind_sources(
+        &mut self,
+        inputs: &[crate::SourceInput<'_>],
+        modules: Option<&[crate::ModuleRecord]>,
+    ) -> Option<()> {
+        self.model.rebind_sources(inputs, modules)?;
+        self.text = self.model.render();
+        Some(())
+    }
     /// Consumes the module and returns its complete textual LLVM.
     #[must_use]
     pub fn into_string(self) -> String {
@@ -122,6 +136,11 @@ impl LlvmModule {
         }
         self.text = self.model.render();
         Ok(())
+    }
+
+    /// Renders the text again after a change to the model.
+    pub(crate) fn rerender(&mut self) {
+        self.text = self.model.render();
     }
 
     pub(crate) fn encode(&self) -> Vec<u8> {
@@ -282,6 +301,7 @@ fn emit_module(
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
 ) -> Result<LlvmModule, BackendFailure> {
+    crate::toolchain::prepare_toolchain().map_err(|_| BackendFailure::Toolchain)?;
     if snapshot::required(program) && target.triple() != "x86_64-unknown-linux-gnu" {
         return Err(BackendFailure::SnapshotTargetUnsupported);
     }
@@ -420,6 +440,7 @@ fn emit_module(
             );
         }
     }
+    functions.append(wake::callbacks(program, &clones)?);
     let has_matches = program.functions().iter().any(|function| {
         function
             .blocks()
@@ -451,6 +472,7 @@ fn emit_module(
     text.text("\n");
     emit_nominal_declarations(&mut text, program, target)?;
     constants::emit_global_constants(&mut text, program)?;
+    wait_sites::emit_wait_sites(&mut text, program);
     // An allocation this host refuses is the heap twin of an exhausted stack,
     // and it gets the same treatment: one record naming the resource class,
     // written once, before a defined abort. The bytes carry no `rule_id`, no
@@ -691,7 +713,13 @@ fn emit_module(
     {
         text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
     }
-    text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    text.attribute_group(
+        0,
+        format!(
+            "{} uwtable",
+            target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
+        ),
+    );
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     // Emit source acquisition decisions once, independently of backend clones
@@ -699,7 +727,7 @@ fn emit_module(
     // survive the module path used by both bundle and graph builds.
     for function in program.functions() {
         for line in &function.lock_ledger {
-            emit_ledger_comment(&mut text, LOCK_LEDGER_PREFIX, line);
+            text.source_comment(LOCK_LEDGER_PREFIX, line.clone());
         }
     }
     if text.has_conflict() {
@@ -1111,21 +1139,6 @@ pub const DISPATCH_LEDGER_PREFIX: &str = "; dispatch: ";
 /// Atomic lowering's developer ledger, printed by `whitefootc --lock-ledger`.
 pub const LOCK_LEDGER_PREFIX: &str = "; lock: ";
 
-/// Keep host display paths inside one LLVM comment and leave escapes
-/// unambiguous for the developer channel that reads the comment back.
-fn emit_ledger_comment(module: &mut Module, prefix: &str, line: &str) {
-    let mut comment = String::from(prefix);
-    for character in line.chars() {
-        if character == '\\' || character.is_control() {
-            comment.extend(character.escape_default());
-        } else {
-            comment.push(character);
-        }
-    }
-    comment.push('\n');
-    module.text(comment);
-}
-
 /// The internal symbol a register-returned definition's destination-form
 /// body is emitted under, beside the public entry that keeps `symbol`.
 ///
@@ -1290,7 +1303,7 @@ impl FunctionFramePlan {
                             None,
                         )?;
                     }
-                    IrOperation::ContextAwait { start } => {
+                    IrOperation::ContextAwait { start, .. } => {
                         let IrInstruction::Define { ty, .. } = instruction else {
                             continue;
                         };
@@ -2041,12 +2054,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn emit(mut self) -> Result<Module, BackendFailure> {
-        if let Some(module) = snapshot::definition(
-            self.program,
-            self.target,
-            self.function,
-            self.intrinsics,
-        )? {
+        if let Some(module) =
+            snapshot::definition(self.program, self.target, self.function, self.intrinsics)?
+        {
             return Ok(module);
         }
         let declaration = self.function.blocks().is_empty();
@@ -2667,8 +2677,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 function,
                 arguments,
             } => self.emit_context_start(result, *function, arguments, true),
-            IrOperation::ContextAwait { start } => self.emit_context_await(result, ty, *start),
-            IrOperation::ContextJoin => self.emit_context_join(result),
+            IrOperation::ContextAwait { start, .. } => self.emit_context_await(result, ty, *start),
+            IrOperation::ContextJoin { .. } => self.emit_context_join(result),
             IrOperation::LoopSplit {
                 splitter,
                 chunk,
@@ -2802,6 +2812,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 source,
                 index,
             } => self.emit_run_transfer(result, ty, *destination, *source, *index),
+            IrOperation::RunClear { run } => self.emit_run_clear(result, ty, *run),
             IrOperation::WindowBlockNew {
                 nominal,
                 capacity,
@@ -2899,13 +2910,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedRetain { nominal, object } => {
                 self.emit_shared_retain(result, ty, *nominal, *object)
             }
+            IrOperation::SharedCountOut { object } => {
+                self.emit_shared_count_out(result, ty, *object)
+            }
+            IrOperation::SharedFree { object } => self.emit_shared_free(result, *object),
             IrOperation::SnapshotAtomicBegin => self.emit_snapshot_atomic(result, true),
             IrOperation::SnapshotAtomicEnd => self.emit_snapshot_atomic(result, false),
             IrOperation::SharedAcquire { object } => {
                 self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire", "")
             }
             IrOperation::SharedTake { object } => self.emit_shared_take(result, *object),
-            IrOperation::SharedWatch { object, test } => {
+            IrOperation::SharedWatch { object, test, .. } => {
                 self.emit_shared_watch(result, *object, test.as_ref())
             }
             IrOperation::SharedUnlock { object, wrote } => {
@@ -3039,7 +3054,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::WatchTable { record, table } => {
                 self.emit_watch_call(result, *record, Some(*table), "wf__watch_table")
             }
-            IrOperation::WatchPark { record } => self.emit_watch_park(result, *record),
+            IrOperation::WatchPark { record, .. } => self.emit_watch_park(result, *record),
             IrOperation::BoxTake { nominal, value } => {
                 self.emit_box_take(result, ty, *nominal, *value)
             }
@@ -3187,6 +3202,52 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     )
                 }
                 .map_err(|_| BackendFailure::TextEmission)
+            }
+            IrTerminator::IntegerMatch {
+                scrutinee,
+                targets,
+                default,
+            } => {
+                self.materialize_operands([*scrutinee])?;
+                let Some(IrType::Integer { width, signed }) = self.value_type(*scrutinee) else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                if !matches!(width, 8 | 16 | 32 | 64) {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                let default_label = default.map_or_else(|| invalid_tag_label(block), block_label);
+                writeln!(
+                    self.output,
+                    "  switch i{width} {}, label %{default_label} [",
+                    self.value_name(*scrutinee)
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                let mut seen = BTreeSet::new();
+                let (min, max) = if signed {
+                    (-(1_i128 << (width - 1)), (1_i128 << (width - 1)) - 1)
+                } else {
+                    (0, (1_i128 << width) - 1)
+                };
+                for target in targets {
+                    if target.value() < min || target.value() > max || !seen.insert(target.value())
+                    {
+                        return Err(BackendFailure::InvalidIr);
+                    }
+                    writeln!(
+                        self.output,
+                        "    i{width} {}, label %{}",
+                        target.value(),
+                        block_label(target.block())
+                    )
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                }
+                writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
+                if default.is_none() {
+                    // ERR-2 establishes complete type-domain coverage.
+                    self.output.open_block(default_label);
+                    writeln!(self.output, "  unreachable")?;
+                }
+                Ok(())
             }
             IrTerminator::Match {
                 scrutinee,
@@ -3338,23 +3399,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if actual != Some(drop.ty()) {
             return Err(BackendFailure::InvalidIr);
         }
+        if !type_requires_cleanup(self.program, drop.ty())? {
+            return Ok(None);
+        }
         let reads_content = match drop.ty() {
-            IrType::Range { .. } | IrType::Run { .. } => false,
-            IrType::Array { .. } | IrType::Window { .. } => {
-                type_requires_cleanup(self.program, drop.ty())?
-            }
-            // [SHARE-1] a key set's release reads its store's pointer.
-            IrType::Buffer { .. } | IrType::KeySet => true,
+            // The shared classification above already established release
+            // work; the remaining distinction is how checked drops are split.
+            IrType::Array { .. }
+            | IrType::Window { .. }
+            | IrType::Buffer { .. }
+            | IrType::KeySet => true,
             IrType::Nominal(nominal) if !self.nominal(nominal)?.is_tag_only_enum() => {
                 match self.nominal(nominal)?.kind() {
                     // The checker supplied separate component records. The
                     // struct node must not recursively release them again.
                     IrNominalKind::Struct { .. } => false,
-                    IrNominalKind::Opaque => false,
-                    IrNominalKind::Shared { .. } => true,
-                    IrNominalKind::Enum { .. } | IrNominalKind::Box { .. } => {
-                        type_requires_cleanup(self.program, drop.ty())?
-                    }
+                    IrNominalKind::Enum { .. }
+                    | IrNominalKind::Box { .. }
+                    | IrNominalKind::Shared { .. } => true,
+                    IrNominalKind::Opaque => return Err(BackendFailure::InvalidIr),
                 }
             }
             _ => return Err(BackendFailure::InvalidIr),

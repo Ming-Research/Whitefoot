@@ -1,0 +1,20 @@
+interface Host {
+  fn call(stack: &Box<Slots<u64>>) -> outcome: unit writes(stack) contract {
+    ensures stack^.inner.len == entry(stack)^.inner.len;
+  };
+}
+
+fn update(actual_stack: &Box<Slots<u64>>) -> updated: unit writes(actual_stack.inner) {
+  if 0_u64 < actual_stack^.inner.len {
+    set actual_stack^.inner[0_u64] = 1_u64;
+  }
+  return unit;
+}
+
+binding UpdatingHost : Host {
+  call = update;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

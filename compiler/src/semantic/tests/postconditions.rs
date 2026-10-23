@@ -56,6 +56,30 @@ pub(super) fn assert_fn9_refuted(source: &[u8]) {
 }
 
 #[test]
+fn page_length_requirements_and_page_count_postconditions_keep_their_judgments() {
+    assert_complete(
+        br#"fn page_width(p: &Paged<u64>, k: u64) -> r: u64 pure contract {
+  requires k < p^.pages.len;
+  requires 0_u64 <= p^.pages[k].len;
+  ensures r <= p^.pages.len;
+} {
+  return 0_u64;
+}
+"#,
+    );
+    super::assert_unsupported(
+        br#"fn page_width(p: &Paged<u64>) -> r: u64 pure contract {
+  requires 0_u64 < p^.pages.len;
+  ensures r <= p^.pages[0_u64].len;
+} {
+  return 0_u64;
+}
+"#,
+        crate::UnsupportedSemanticFeature::PageLengthPostcondition,
+    );
+}
+
+#[test]
 fn direct_range_measure_returns_prove_only_the_matching_postcondition() {
     assert_complete(
         br#"fn count(part: &[u8]) -> result: u64 reads(part) contract {
@@ -983,10 +1007,12 @@ fn counted_append_proves_the_admitted_result_and_refutes_only_the_blinded_invali
     // Both runs reach the function as [REF-4] range references, whose one
     // measure `len` is the [OP-15] member of the referent; the callee's row
     // carries the write permission the retiring `&uniq MutSlice<u8>` marker
-    // used to carry [REF-1, EFF-1].
+    // used to carry [REF-1, EFF-1]. The fill is not required to be within
+    // the capacity, so the admission test is a run-time choice rather than a
+    // condition the requirements decide [OP-5], and a fill past the capacity
+    // reports the capacity: each of the three exits is proved.
     let source = br#"fn append_bytes(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> result: u64 reads(text), writes(destination) contract {
   requires capacity == destination^.len;
-  requires filled <= capacity;
   ensures result <= capacity;
 } {
   let spare = destination^.len;
@@ -1004,7 +1030,7 @@ fn counted_append_proves_the_admitted_result_and_refutes_only_the_blinded_invali
     }
     return spare;
   } else {
-    return filled;
+    return spare;
   }
 }
 
@@ -1514,6 +1540,10 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// The branch establishes `observed == expected` as an ordinary fact beside
+/// the call's S12 candidate for the same relation, which dies when the owner
+/// moves. A test of the comparison alone is decided by that candidate [OP-5],
+/// so the branch also requires the caller's confirmation.
 #[test]
 fn an_ordinary_fallback_survives_when_a_neighboring_s12_candidate_dies() {
     let source = br#"fn observe(value: i32) -> result: i32 pure contract {
@@ -1532,11 +1562,13 @@ fn guard(left: i32, right: i32) -> result: unit pure contract {
   return unit;
 }
 
-fn caller() -> result: unit pure {
+fn caller(confirmed: Bool) -> result: unit pure {
   let owner = box_new::<i32>(value: 1_i32);
   let expected = owner.inner;
   let observed = observe(value: owner.inner);
-  if observed == expected {
+  let same = observed == expected;
+  let agreed = band(same, confirmed);
+  if agreed {
     sink(owner: move owner);
     guard(left: observed, right: expected);
   } else {
@@ -3644,7 +3676,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 /// same place and [WIN-3] releases the affine value the target held.
 #[test]
 fn a_referent_replacement_still_kills_its_own_branch_measure_image() {
-    let source = br#"fn clear(values: &Slots<u8, 16>) -> result: unit writes(values) {
+    let source = br#"fn wipe(values: &Slots<u8, 16>) -> result: unit writes(values) {
   let empty = slots_new::<u8, 16>();
   set values^ = move empty;
   return unit;
@@ -3654,7 +3686,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u8, 16>();
   place_back(window: &values, value: 7_u8);
   invariant before: values.len >= 1_u64;
-  clear(values: &values);
+  wipe(values: &values);
   invariant stale: values.len >= 1_u64;
   return std::process::exit_status(code: 0_u8);
 }
@@ -3784,7 +3816,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     assert_fn9_rejects(descriptor_write);
 
-    let whole_replacement = br#"fn clear(window: &Ring<u64, 4>) -> result: unit writes(window) {
+    let whole_replacement = br#"fn wipe(window: &Ring<u64, 4>) -> result: unit writes(window) {
   let empty = ring_new::<u64, 4>();
   set window^ = move empty;
   return unit;
@@ -3795,7 +3827,7 @@ fn replace_after_take(window: &Ring<u64, 4>) -> taken: u64 writes(window) contra
   ensures window^.len + 1_u64 == entry(window)^.len;
 } {
   let taken = take_back(window: window);
-  clear(window: window);
+  wipe(window: window);
   return taken;
 }
 
@@ -3805,7 +3837,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     assert_fn9_rejects(whole_replacement);
 
-    let joined_write = br#"fn clear(window: &Ring<u64, 4>) -> result: unit writes(window) {
+    let joined_write = br#"fn wipe(window: &Ring<u64, 4>) -> result: unit writes(window) {
   let empty = ring_new::<u64, 4>();
   set window^ = move empty;
   return unit;
@@ -3821,7 +3853,7 @@ fn maybe_replace(first: &Ring<u64, 4>, second: &Ring<u64, 4>, choose: Bool) -> t
   } else {
     give second;
   }
-  clear(window: selected);
+  wipe(window: selected);
   return taken;
 }
 

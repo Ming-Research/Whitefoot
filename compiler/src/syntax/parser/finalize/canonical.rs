@@ -1,3 +1,4 @@
+mod differences;
 mod format;
 mod render;
 
@@ -6,7 +7,7 @@ use crate::{ByteOffset, ClassifiedBundle, SourceId};
 
 use crate::syntax::parser::{DerivationElement, SyntaxCoordinate};
 
-use self::format::{GapStyle, attachment, build_gap_styles, bytes_match, gap_matches};
+use self::format::{attachment, build_gap_styles, bytes_match, gap_after, gap_matches};
 pub use self::render::render_canonical;
 use super::outcome::{
     CanonicalCompilerFailure, CanonicalIssue, CanonicalLimit, CanonicalLimits, CanonicalLocation,
@@ -228,6 +229,8 @@ fn mismatch_issue(
             location: CanonicalLocation::SourceBytes(coordinate),
             expected,
             found,
+            differences: Vec::new(),
+            difference_count: 0,
         });
     };
     if terminal_top_item(topology, left)? != terminal_top_item(topology, right)? {
@@ -235,6 +238,8 @@ fn mismatch_issue(
             location: CanonicalLocation::SourceBytes(coordinate),
             expected,
             found,
+            differences: Vec::new(),
+            difference_count: 0,
         });
     }
     let owner = lowest_common_ancestor(topology, left, right, work)?;
@@ -243,6 +248,8 @@ fn mismatch_issue(
         location: CanonicalLocation::SourceNode(path, coordinate),
         expected,
         found,
+        differences: Vec::new(),
+        difference_count: 0,
     })
 }
 
@@ -395,39 +402,10 @@ fn audit(
             )? {
                 return Err(CanonicalCompilerFailure::TerminalBindingDisagreement.into());
             }
-            let next = ordinal.checked_add(1);
-            let (gap_end, right_attachment, right_terminal, style, depth) =
-                if next.is_some_and(|value| value < end) {
-                    let next_ordinal = next.ok_or(CanonicalCompilerFailure::CounterOverflow)?;
-                    let (right_token, right_predicate) = terminal_element(finalized, next_ordinal)?;
-                    let right_attachment =
-                        attachment(&finalized.topology, next_ordinal, right_predicate)?;
-                    let owner = finalized
-                        .topology
-                        .terminals
-                        .get(next_ordinal)
-                        .and_then(|record| record.owner)
-                        .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
-                    let depth = finalized
-                        .topology
-                        .node(owner)
-                        .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?
-                        .terminal_depth(
-                            u64::try_from(next_ordinal)
-                                .map_err(|_| CanonicalCompilerFailure::CounterOverflow)?,
-                        );
-                    (
-                        right_token.id().start().value(),
-                        Some(right_attachment),
-                        Some(next_ordinal),
-                        *gaps
-                            .get(next_ordinal)
-                            .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?,
-                        depth,
-                    )
-                } else {
-                    (file.byte_len(), None, None, GapStyle::Break, 0)
-                };
+            let after = gap_after(finalized, &gaps, ordinal, end)?;
+            let gap_end = after.right_start.unwrap_or_else(|| file.byte_len());
+            let (right_attachment, right_terminal, style, depth) =
+                (after.right, after.next, after.style, after.depth);
             let gap_start = token_id.end().value();
             let actual_start = usize::try_from(gap_start)
                 .map_err(|_| CanonicalCompilerFailure::CounterOverflow)?;
@@ -478,7 +456,20 @@ pub fn audit_canonical(finalized: FinalizedBundle, limits: CanonicalLimits) -> C
     let mut work = AuditWork::new(limits.max_work);
     match audit(&finalized, limits, &mut work) {
         Ok(None) => CanonicalOutcome::Complete(CanonicalSyntaxUnit { finalized }),
-        Ok(Some(issue)) => CanonicalOutcome::SourceIssue(issue),
+        Ok(Some(mut issue)) => {
+            // The list is a repair, not part of the judgment: a ceiling the
+            // walk reaches leaves the rejection as it is, without a list.
+            let source = issue.location.coordinate().source();
+            match differences::list(&finalized, limits, source) {
+                Ok((listed, total)) => {
+                    issue.differences = listed;
+                    issue.difference_count = total;
+                }
+                Err(Stop::Resource(_)) => {}
+                Err(Stop::Compiler(failure)) => return CanonicalOutcome::CompilerFailure(failure),
+            }
+            CanonicalOutcome::SourceIssue(issue)
+        }
         Err(Stop::Resource(failure)) => CanonicalOutcome::ResourceFailure(failure),
         Err(Stop::Compiler(failure)) => CanonicalOutcome::CompilerFailure(failure),
     }

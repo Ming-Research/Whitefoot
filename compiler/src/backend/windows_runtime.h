@@ -18,6 +18,28 @@ int64_t wf__windows_registry_bytes(void);
 
 /* Native name bytes in one component, shared by call storage and host leaves. */
 #define WF_WINDOWS_COMPONENT_MAX_BYTES 510u
+/* Name bytes in one component [PRE-2]: the WTF-8 spelling of its at most 255
+ * UTF-16 code units, each of which takes at most three bytes. */
+#define WF_WINDOWS_NAME_MAX_BYTES 765u
+
+/* Writes the WTF-8 spelling of UTF-16 code units given low byte first, their
+ * name bytes [PRE-2], and returns its length; with a NULL destination it only
+ * measures. A scalar is UTF-8, and a surrogate not part of a pair is the three
+ * bytes the UTF-8 encoding form gives its value. */
+size_t wf__windows_wtf8_write(
+    const unsigned char *native,
+    size_t units,
+    unsigned char *destination
+);
+
+/* The open flag selecting host-path lookup [PRE-2]: the path is a complete,
+ * NUL-terminated UTF-16 path in the Win32 dialect rather than a name below
+ * the root, and the lookup follows every reparse point it reaches. A name's
+ * no-follow flag is 1 and plain lookup 0. */
+#define WF_WINDOWS_HOST_PATH 2
+/* A host path holds fewer UTF-16 code units than this [PRE-2]: the longest
+ * name an NT lookup's UNICODE_STRING carries. */
+#define WF_WINDOWS_HOST_PATH_MAX_UNITS 32767u
 
 #define WF_WINDOWS_DESCRIPTOR_CLASS_ANY 0u
 #define WF_WINDOWS_DESCRIPTOR_CLASS_READ_FILE 1u
@@ -171,6 +193,13 @@ int wf__windows_error_from_socket(int error_code);
 
 int *wf__windows_error_location(void);
 int wf__windows_open_cwd(const void *unused_path, int flags, ...);
+/* A second descriptor on the directory object `descriptor` names, registered
+ * as a directory root: the write half of a host-path directory [PRE-2].
+ * Returns -1 with the host's refusal in `wf__windows_error_location`. */
+int wf__windows_duplicate_directory(int descriptor);
+/* Closes a descriptor this runtime produced that never reached a program,
+ * forgetting its registry row first. */
+void wf__windows_discard_descriptor(int descriptor);
 int wf__windows_stdout_descriptor(void);
 int wf__windows_stderr_descriptor(void);
 int wf__windows_stdin_descriptor(void);

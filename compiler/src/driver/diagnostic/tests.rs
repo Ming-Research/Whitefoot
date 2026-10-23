@@ -5,8 +5,11 @@
 //! pin the shape around them: the summary line, the marked source line,
 //! related positions, escaping, and the complete JSON object.
 
-use super::{DiagnosticFormat, render_driver_failure};
+use super::{DiagnosticFormat, Value, render_driver_failure, write_text};
 use crate::{CompilationFailure, CompilerLimits, SourceInput, check};
+
+mod match_sites;
+mod postconditions;
 
 /// The failure one source-only compilation must stop with.
 fn stop(name: &str, source: &[u8]) -> CompilationFailure {
@@ -19,6 +22,79 @@ fn assert_no_internal_identity(rendered: &str) {
     for identity in ["SourceId", "NodePath", "ByteOffset", "SyntaxCoordinate"] {
         assert!(!rendered.contains(identity), "{identity} in {rendered}");
     }
+}
+
+/// A string-list reader uses quoted items, not comma splitting: the source
+/// text decoder reads each item and leaves its following delimiter intact.
+fn read_string_list(rendered: &str) -> Vec<String> {
+    let mut rest = rendered.strip_prefix('[').expect("a list opens with a bracket");
+    let mut items = Vec::new();
+    while rest != "]" {
+        let quoted = crate::syntax::text::quoted_text(
+            rest.as_bytes(),
+            crate::syntax::text::STRING_QUOTE,
+        )
+        .expect("every string item is quoted and escaped");
+        items.push(
+            quoted
+                .items
+                .iter()
+                .map(|item| item.scalar().expect("a string contains Unicode scalars"))
+                .collect(),
+        );
+        rest = &rest[quoted.suffix_start..];
+        if rest != "]" {
+            rest = rest.strip_prefix(", ").expect("items have a delimiter");
+            assert_ne!(rest, "]", "a list has no trailing delimiter");
+        }
+    }
+    items
+}
+
+#[test]
+fn string_list_items_round_trip_delimiters_and_escapes() {
+    let items = [
+        "writes(stats.count), reads(stats.total)",
+        "quoted \"name\"\\path\n\t\r\u{e9}",
+        "",
+    ];
+    let value = Value::List(
+        items
+            .iter()
+            .map(|item| Value::Text((*item).to_owned()))
+            .collect(),
+    );
+    let mut rendered = String::new();
+    write_text(&mut rendered, &value);
+    assert_eq!(
+        rendered,
+        r#"["writes(stats.count), reads(stats.total)", "quoted \"name\"\\path\n\t\r\u{e9}", ""]"#
+    );
+    assert_eq!(read_string_list(&rendered), items);
+}
+
+#[test]
+fn quoting_string_list_items_preserves_other_value_shapes() {
+    let value = Value::List(vec![
+        Value::Text("IDENT".to_owned()),
+        Value::Exact(b"pkg".to_vec()),
+        Value::Number(3),
+        Value::Fields(vec![("name", Value::Text("bare".to_owned()))]),
+        Value::Variant("Premise", vec![("use_index", Value::Number(0))]),
+        Value::List(vec![Value::Text("nested".to_owned())]),
+    ]);
+    let mut rendered = String::new();
+    write_text(&mut rendered, &value);
+    assert_eq!(
+        rendered,
+        r#"["IDENT", "pkg", 3, {name: bare}, Premise {use_index: 0}, ["nested"]]"#
+    );
+    rendered.clear();
+    write_text(&mut rendered, &Value::List(Vec::new()));
+    assert_eq!(rendered, "[]");
+    rendered.clear();
+    write_text(&mut rendered, &Value::Text("unquoted prose".to_owned()));
+    assert_eq!(rendered, "unquoted prose");
 }
 
 const BOUNDS: &[u8] =
@@ -150,9 +226,9 @@ fn main() -> status: std::process::ExitStatus pure {
   marker:              {}
   concrete_callee: drop_spaces
   requires_clause: caller.wf:2:3 \"requires out^.len >= src^.len;\"
-  instantiated_goal: buffer[0..5].len >= text[0..6].len
+  instantiated_goal: buffer[0_u64..5_u64].len >= text[0_u64..6_u64].len
   disposition: Refuted
-  mechanical_fix: `buffer[0..5].len >= text[0..6].len` is false for the values that reach this call, so no fact can establish it here: pass arguments that satisfy it, or change the statements or requirements that fix those values",
+  mechanical_fix: `buffer[0_u64..5_u64].len >= text[0_u64..6_u64].len` is false for the values that reach this call, so no fact can establish it here: pass arguments that satisfy it, or change the statements or requirements that fix those values",
         "^".repeat(65)
     );
     assert_eq!(failure.to_string(), expected);
@@ -199,7 +275,7 @@ fn a_supplied_requirement_is_quoted_from_its_declaring_record() {
 "#;
     let detail = stop("walk.wf", host).detail();
     assert!(
-        detail.contains("requires_clause: std/fs/module.wfm:70:3 \"requires end <= name^.len;\"\n"),
+        detail.contains("requires_clause: std/fs/module.wfm:99:3 \"requires end <= name^.len;\"\n"),
         "{detail}"
     );
 }
@@ -232,13 +308,14 @@ fn main() -> status: std::process::ExitStatus pure {
   postcondition: ensures.wf:2:3 "ensures result == value;"
   conjunct: 0
   selector: ensures.wf:1:42 "result: i32"
-  relation: 0 = value
+  relation: 0_i32 = value
+  clause: 0_i32 == value
   disposition: Unproved
   mechanical_fix: the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"#
     );
     assert_eq!(
         failure.render(DiagnosticFormat::Json),
-        r#"{"rule":"FN-9","kind":"UndischargedPostcondition","category":"Source","stage":"Semantics","at":{"file":"ensures.wf","line":5,"column":5},"bytes":{"start":118,"end":131},"source":"    return 0_i32;","detail":{"concrete_function":"unproved","postcondition":{"at":{"file":"ensures.wf","line":2,"column":3},"bytes":{"start":71,"end":95},"text":"ensures result == value;"},"conjunct":0,"selector":{"at":{"file":"ensures.wf","line":1,"column":42},"bytes":{"start":41,"end":52},"text":"result: i32"},"relation":"0 = value","disposition":"Unproved","mechanical_fix":"the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"}}"#
+        r#"{"rule":"FN-9","kind":"UndischargedPostcondition","category":"Source","stage":"Semantics","at":{"file":"ensures.wf","line":5,"column":5},"bytes":{"start":118,"end":131},"source":"    return 0_i32;","detail":{"concrete_function":"unproved","postcondition":{"at":{"file":"ensures.wf","line":2,"column":3},"bytes":{"start":71,"end":95},"text":"ensures result == value;"},"conjunct":0,"selector":{"at":{"file":"ensures.wf","line":1,"column":42},"bytes":{"start":41,"end":52},"text":"result: i32"},"relation":"0_i32 = value","clause":"0_i32 == value","disposition":"Unproved","mechanical_fix":"the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"}}"#
     );
 }
 
@@ -323,13 +400,14 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_grammar_rejection_quotes_the_expected_terminals_and_the_token_it_found() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let a = 42;\n  return std::process::exit_status(code: 0_u8);\n}\n";
-    // A fixed terminal is quoted as its spelling; a token class is named.
+    // Fixed terminals and token classes are both quoted list items. Exact
+    // terminal spellings already carry their quotes and gain no second pair.
     assert_eq!(
         stop("suffix.wf", source).to_string(),
         r#"suffix.wf:2:11: error[FORM-5]: UnexpectedToken
   source:   let a = 42;
   marker:           ^^
-  expected: [IDENT, TYPEID, "pkg", "std", "&", "entry", "move", "if", "propagate", "match", literal, "musttail", "spawn", OPNAME]
+  expected: ["IDENT", "TYPEID", "pkg", "std", "&", "entry", "move", "if", "propagate", "match", "literal", "musttail", "spawn", "OPNAME"]
   found: "42""#
     );
 }
@@ -344,12 +422,13 @@ fn a_canonical_rejection_quotes_the_trivia_and_marks_the_line_it_ends_in() {
   source:     let a = 1_i32;
   marker: ^^^^
   expected: "\n  "
-  found: "\n    ""#
+  found: "\n    "
+  mechanical_fix: make the change below to reach the canonical layout; it gives the bytes FORM-2 requires between two terminals [FORM-2]: line 1 between `{` and `let`: write "\n  " instead of "\n    ""#
     );
     // JSON carries the same escaped spelling the text form quotes.
     assert_eq!(
         failure.render(DiagnosticFormat::Json),
-        r#"{"rule":"FORM-2","kind":"NonCanonicalTrivia","category":"Source","stage":"CanonicalSource","at":{"file":"indent.wf","line":2,"column":1},"bytes":{"start":52,"end":57},"source":"    let a = 1_i32;","detail":{"expected":"\\n  ","found":"\\n    "}}"#
+        r#"{"rule":"FORM-2","kind":"NonCanonicalTrivia","category":"Source","stage":"CanonicalSource","at":{"file":"indent.wf","line":2,"column":1},"bytes":{"start":52,"end":57},"source":"    let a = 1_i32;","detail":{"expected":"\\n  ","found":"\\n    ","mechanical_fix":"make the change below to reach the canonical layout; it gives the bytes FORM-2 requires between two terminals [FORM-2]: line 1 between `{` and `let`: write \"\\n  \" instead of \"\\n    \""}}"#
     );
 }
 
@@ -458,13 +537,13 @@ fn a_declaration_origin_quotes_its_declaration() {
 #[test]
 fn a_capability_stop_names_its_stage_and_never_cites_a_rule() {
     let failure = stop(
-        "arms.wf",
-        b"enum Flag {\n  A();\n  B();\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  let flag = Flag::A();\n  match flag {\n    A() => {\n    }\n    A() => {\n    }\n    B() => {\n    }\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        "layout.wf",
+        b"struct Node {\n  next: Node;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
     );
     let rendered = failure.to_string();
     assert!(
         rendered.starts_with(
-            "arms.wf:11:5: unsupported capability in Semantics: DuplicateMatchArm\n  source:     A() => {\n"
+            "layout.wf:1:1: unsupported capability in Semantics: RecursiveNominalLayout\n  source: struct Node {\n"
         ),
         "{rendered}"
     );
@@ -472,7 +551,7 @@ fn a_capability_stop_names_its_stage_and_never_cites_a_rule() {
     assert_no_internal_identity(&rendered);
     assert!(
         failure.render(DiagnosticFormat::Json).starts_with(
-            r#"{"kind":"DuplicateMatchArm","category":"Unsupported","stage":"Semantics","at":"#
+            r#"{"kind":"RecursiveNominalLayout","category":"Unsupported","stage":"Semantics","at":"#
         ),
         "{}",
         failure.render(DiagnosticFormat::Json)
@@ -491,6 +570,98 @@ fn a_compiler_facing_stop_keeps_its_payload_under_its_category_and_stage() {
         failure.render(DiagnosticFormat::Json),
         r#"{"kind":"EmptySourceSequence","category":"Invocation","stage":"SourceEnvelope","detail":{"payload":"EmptySourceSequence"}}"#
     );
+}
+
+#[test]
+fn a_page_length_postcondition_names_the_unsupported_construct() {
+    let source = br#"fn page_width(p: &Paged<u64>, k: u64) -> r: u64 pure contract {
+  requires k < p^.pages.len;
+  ensures r <= p^.pages[k].len;
+} {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = stop("page-width.wf", source);
+    let rendered = failure.to_string();
+    assert!(
+        rendered.starts_with(
+            "page-width.wf:3:3: unsupported capability in Semantics: PageLengthPostcondition\n"
+        ),
+        "{rendered}"
+    );
+    assert!(
+        rendered.ends_with(
+            "\n  reason: not yet supported: a page's length in a postcondition"
+        ),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("NoSelectedNormalExit"), "{rendered}");
+    assert_eq!(failure.rule_id(), None);
+    assert!(
+        failure
+            .render(DiagnosticFormat::Json)
+            .contains(r#""category":"Unsupported""#)
+    );
+}
+
+#[test]
+fn a_weaker_existing_requirement_does_not_supply_the_missing_bound() {
+    let failure = stop(
+        "weaker-bound.wf",
+        br#"const first_index: u64 = 0_u64;
+
+fn inspect(rows: &[Slots<u8, 4>]) -> result: unit pure contract {
+  requires rows^[0_u64].len == 0_u64;
+  requires first_index <= rows^.len;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("OP-4"));
+    assert!(
+        rendered.contains("mechanical_fix: add `requires 0_u64 < rows^.len;`"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("move the existing"), "{rendered}");
+}
+
+#[test]
+fn an_implicit_type_invariant_is_not_a_requirement_the_writer_can_move() {
+    let failure = stop(
+        "implicit-bound.wf",
+        br#"struct Rows {
+  cells: Slots<Slots<u8, 4>, 2>;
+  invariant nonempty(r): 0_u64 < r.cells.len;
+}
+
+fn inspect(rows: &Rows) -> result: unit pure contract {
+  requires rows^.cells[0_u64].len == 0_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("OP-4"));
+    assert!(
+        rendered.contains("mechanical_fix: add `requires 0_u64 < rows^.cells.len;`"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("move the existing"), "{rendered}");
 }
 
 #[test]
@@ -524,7 +695,7 @@ fn invalid_float_literals_render_the_repair_in_text_and_json() {
             "fn value() -> result: f64 pure {{\n  return {literal};\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n",
         );
         let failure = stop("float.wf", source.as_bytes());
-        assert_eq!(failure.rule_id(), Some("FORM-7"));
+        assert_eq!(failure.rule_id(), Some("FORM-7"), "{failure}");
         let text = failure.render(DiagnosticFormat::Text);
         assert!(
             text.contains(&format!("\n  mechanical_fix: {repair}")),
@@ -544,4 +715,380 @@ fn invalid_float_literals_render_the_repair_in_text_and_json() {
             assert!(!json.contains("canonical_spelling"), "{json}");
         }
     }
+}
+
+#[test]
+fn normalized_postcondition_relations_keep_legal_literal_suffixes() {
+    for ty in ["i64", "u64"] {
+        let (parameter, bound) = if ty == "i64" {
+            ("", "0_i64")
+        } else {
+            (", limit: u64", "limit")
+        };
+        let source = format!("struct Word {{\n  value: {ty};\n}}\n\nfn below(w: Word{parameter}) -> result: {ty} pure contract {{\n  ensures result < {bound};\n}} {{\n  return w.value;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n");
+        let failure = stop("typed-relation.wf", source.as_bytes());
+        let rendered = failure.to_string();
+        assert_eq!(failure.rule_id(), Some("FN-9"), "{rendered}");
+        assert!(
+            rendered.contains(&format!("\n  relation: w.value - {bound} <= -1_i64\n")),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn unproved_goal_spells_a_match_payload_place_by_variant_and_field_name() {
+    let source = br#"enum Shape {
+  Circle(radius: u64);
+}
+
+fn need(radius: &u64, limit: u64) -> result: unit reads(radius) contract {
+  requires radius^ < limit;
+} {
+  let observed = radius^;
+  return unit;
+}
+
+fn probe(shapes: &Array<Shape, 1>, limit: u64) -> result: unit reads(shapes) {
+  match &shapes^[0_u64] {
+    Circle(radius: chosen) => {
+      need(radius: chosen, limit: limit);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = stop("proof-place-spelling.wf", source);
+    let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("FN-8"), "{rendered}");
+    assert!(
+        rendered.contains("\n  instantiated_goal: shapes^[0_u64].Circle.radius < limit\n"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
+}
+
+#[test]
+fn indexed_atomic_call_goal_names_the_written_payload_alias() {
+    let source = br#"const key: Array<u8, 2> =[107_u8, 49_u8];
+
+struct Word {
+  value: u64;
+}
+
+fn need(value: &u64, limit: u64) -> result: unit reads(value) contract {
+  requires value^ < limit;
+} {
+  let observed = value^;
+  return unit;
+}
+
+fn probe(store: &Shared<ConcurrentHashMap<Word>>, limit: u64) -> result: unit reads(store) waits {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
+    match slot^ {
+      Some(value: word) => {
+        need(value: &word^.value, limit: limit);
+      }
+      None() => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = stop("atomic-place-spelling.wf", source);
+    let rendered = failure.to_string();
+    assert_eq!(failure.rule_id(), Some("FN-8"), "{rendered}");
+    assert!(
+        rendered.contains("\n  instantiated_goal: word^.value < limit\n"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
+    assert!(!rendered.contains("slot^[?]"), "{rendered}");
+}
+
+#[test]
+fn entry_measures_keep_reference_boundaries_before_box_content() {
+    for (parameter_type, measure) in [
+        ("&Box<Slots<u8>>", "part^.inner.len"),
+        ("&[Box<u64>]", "part^.len"),
+        ("&Run<Box<u64>>", "part^.len"),
+    ] {
+        let source = format!(
+            "fn size(part: {parameter_type}) -> result: u64 pure contract {{\n  ensures result <= {measure};\n}} {{\n  return 1_u64;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        let failure = stop("boxed-entry-measure.wf", source.as_bytes());
+        let rendered = failure.to_string();
+        assert_eq!(failure.rule_id(), Some("FN-9"), "{rendered}");
+        let entry_measure = measure.replace("part^", "entry(part)^");
+        assert!(
+            rendered.contains(&format!("\n  relation: 0_u64 - {entry_measure} <= -1_i64\n")),
+            "{rendered}"
+        );
+        assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
+    }
+}
+
+#[test]
+fn segment_rejections_render_in_source_order_in_text_and_json() {
+    let source = b"fn first(a: u64) -> r: u64 {\n  return a;\n}\n\nfn second(a: u64) -> r: u64 pure {\n  let x = [a, a];\n  return a;\n}\n";
+    let failure = stop("segments.wf", source);
+    let diagnostics = failure.diagnostics().collect::<Vec<_>>();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0].location().expect("first location").line(), 1);
+    assert_eq!(diagnostics[1].location().expect("second location").line(), 6);
+    assert_eq!(
+        failure
+            .render(DiagnosticFormat::Text)
+            .matches(": error[")
+            .count(),
+        2
+    );
+    let json = failure.render(DiagnosticFormat::Json);
+    let lines = json.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("\"line\":1,"), "{}", lines[0]);
+    assert!(lines[1].contains("\"line\":6,"), "{}", lines[1]);
+    assert!(
+        diagnostics[1]
+            .source_coordinate()
+            .expect("coordinate")
+            .start()
+            .value()
+            > 50
+    );
+}
+
+#[test]
+fn a_later_lexical_rejection_does_not_hide_an_earlier_grammar_rejection() {
+    let failure = stop("mixed.wf", b"fn first() -> r: unit {\n  return unit;\n}\n\nfn second() -> r: unit pure {\n  // forbidden\n}\n");
+    let stages = failure
+        .diagnostics()
+        .map(CompilationFailure::stage)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stages,
+        vec![
+            crate::CompilationStage::Parsing,
+            crate::CompilationStage::Lexing
+        ]
+    );
+    assert_eq!(
+        failure.diagnostics().nth(1).expect("second defect").rule_id(),
+        Some("FORM-4")
+    );
+}
+
+#[test]
+fn missing_closing_brace_stops_at_its_segment_boundary() {
+    let first = "fn first() -> r: unit pure {\n  return unit;\n";
+    let source = format!("{first}fn second() -> r: unit pure {{\n  return unit;\n}}\n");
+    let failure = stop("missing-brace.wf", source.as_bytes());
+    assert_eq!(failure.diagnostics().count(), 1);
+    let coordinate = failure.source_coordinate().expect("segment boundary");
+    assert_eq!(coordinate.start().value(), first.len() as u64);
+    assert_eq!(coordinate.end(), coordinate.start());
+}
+
+#[test]
+fn segmented_graph_reports_rows_but_keeps_whole_graph_ordering() {
+    let limits = CompilerLimits::default();
+    let failure = crate::form_module_graph(
+        SourceInput::new("modules.wfg", b"pkg [];\nentry run pkg;\n"),
+        limits,
+    )
+    .expect_err("two malformed graph rows");
+    assert_eq!(failure.diagnostics().count(), 2);
+    let failure = crate::form_module_graph(
+        SourceInput::new("modules.wfg", b"entry run = pkg;\npkg: [];\n"),
+        limits,
+    )
+    .expect_err("individually valid rows retain graph ordering");
+    assert_eq!(failure.diagnostics().count(), 1);
+    assert_eq!(failure.stage(), crate::CompilationStage::Parsing);
+}
+
+#[test]
+fn segments_preserve_source_ordinals_and_gate_canonical_form() {
+    let failure = check(
+        &[
+            SourceInput::new("first.wf", b"fn first() -> r: unit {\n  return unit;\n}\n"),
+            SourceInput::new(
+                "second.wf",
+                b"fn second() -> r: unit pure {\n  // forbidden\n}\n",
+            ),
+        ],
+        CompilerLimits::default(),
+    )
+    .expect_err("both source segments reject");
+    let coordinates = failure
+        .diagnostics()
+        .map(|diagnostic| {
+            diagnostic.source_coordinate().expect("coordinate").source().ordinal()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(coordinates, vec![0, 1]);
+    let failure = stop("canonical.wf", b"fn first() -> r: unit pure {\n   return unit;\n}\n\nfn second() -> r: unit {\n  return unit;\n}\n");
+    assert_eq!(failure.diagnostics().count(), 1);
+    assert_eq!(failure.stage(), crate::CompilationStage::Parsing);
+}
+
+#[test]
+fn graph_segments_allow_trivia_prefix_and_multiple_rows_but_not_empty_graphs() {
+    let limits = CompilerLimits::default();
+    let source = SourceInput::new("modules.wfg", b"\npkg: []; other: [];\n");
+    let bundle = crate::SourceBundle::with_limits(&[source], limits.source).expect("bundle");
+    super::super::segments::check(&bundle, limits, true).expect("graph segments derive");
+    super::super::derive_syntax(&bundle, limits, true, false).expect("whole graph derives");
+    for bytes in [b"".as_slice(), b"\n", b"package dependency = \"../dependency\";\n"] {
+        let bundle = crate::SourceBundle::with_limits(
+            &[SourceInput::new("modules.wfg", bytes)],
+            limits.source,
+        )
+        .expect("bundle");
+        super::super::segments::check(&bundle, limits, true).expect("graph segments derive");
+        assert!(super::super::derive_syntax(&bundle, limits, true, false).is_err());
+    }
+}
+
+#[test]
+fn all_segment_rejections_survive_recorded_outcome_round_trip() {
+    let source = b"fn first() -> r: unit {\n  return unit;\n}\n\nfn second() -> r: unit {\n  return unit;\n}\n";
+    let records = [SourceInput::new("recorded.wf", source)];
+    let failure = check(&records, CompilerLimits::default()).expect_err("two invalid headers");
+    let outcome = super::super::outcome_of(Err(failure), &records).expect("source verdict");
+    let crate::CheckOutcome::Rejected {
+        failure,
+        tasks,
+        diagnostics,
+        complete,
+        ..
+    } = &outcome else {
+        panic!("source rejection");
+    };
+    assert_eq!(failure.matches(": error[").count(), 2);
+    assert_eq!(tasks.len(), 2);
+    assert!(
+        tasks
+            .iter()
+            .all(|task| task.failure().matches(": error[").count() == 1)
+    );
+    assert!(!complete);
+    assert_eq!(diagnostics.len(), 2);
+    for diagnostic in diagnostics {
+        assert_eq!(diagnostic.rule(), "GRAM-3");
+        assert_eq!(
+            diagnostic.expected().expect("grammar expectation"),
+            &["pure".to_owned(), "reads".to_owned(), "writes".to_owned()]
+        );
+        let coordinate = diagnostic.source_coordinate().expect("original coordinate");
+        assert_eq!(coordinate.source().ordinal(), 0);
+        assert_eq!(source[coordinate.start().value() as usize], b'{');
+        assert_eq!(coordinate.end().value(), coordinate.start().value() + 1);
+    }
+    let reading = b"exact recorded input";
+    let bytes = super::super::encode_outcome(&outcome, reading);
+    assert_eq!(
+        super::super::decode_outcome(&bytes, reading),
+        Some(outcome.clone())
+    );
+    let mut missing = outcome;
+    if let crate::CheckOutcome::Rejected { diagnostics, .. } = &mut missing {
+        diagnostics.clear();
+    }
+    let bytes = super::super::encode_outcome(&missing, reading);
+    assert_eq!(super::super::decode_outcome(&bytes, reading), None);
+}
+
+#[test]
+fn lexical_priority_is_retained_inside_each_segment() {
+    let failure = stop("priority.wf", b"fn first() -> r: unit {\n  // forbidden\n}\n\nfn second() -> r: unit {\n  return unit;\n}\n");
+    let stages = failure
+        .diagnostics()
+        .map(CompilationFailure::stage)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stages,
+        vec![
+            crate::CompilationStage::Lexing,
+            crate::CompilationStage::Parsing
+        ]
+    );
+}
+
+#[test]
+fn syntax_impact_tasks_do_not_assign_an_unparsed_function() {
+    for (source, expected_count) in [
+        (
+            b"fn first() -> r: unit pure {\n  return unit;\nfn second() -> r: unit pure {\n  return unit;\n}\n".as_slice(),
+            1,
+        ),
+        (
+            b"fn first() -> r: unit {\n  return unit;\n}\nfn second() -> r: unit {\n  return unit;\n}\n",
+            2,
+        ),
+    ] {
+        let records = [SourceInput::new("impact.wf", source)];
+        let failure = check(&records, CompilerLimits::default()).expect_err("syntax defects");
+        assert_eq!(failure.diagnostics().count(), expected_count);
+        let outcome = super::super::outcome_of(Err(failure), &records).expect("source verdict");
+        let crate::CheckOutcome::Rejected { tasks, .. } = outcome else {
+            panic!("source rejection");
+        };
+        assert_eq!(tasks.len(), expected_count);
+        assert!(tasks.iter().all(|task| task.function().is_none()));
+    }
+}
+
+#[test]
+fn duplicate_integer_arm_diagnostic_names_the_value_earlier_arm_and_repair() {
+    let failure = stop(
+        "integer-arms.wf",
+        include_bytes!("../../../../tests/conformance/cases/gram12-neg-duplicate-const-value.wf"),
+    );
+    let rendered = failure.to_string();
+    assert!(
+        rendered.contains("error[GRAM-12]: DuplicateIntegerMatchValue"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("earlier:"), "{rendered}");
+    assert!(
+        rendered.contains("mechanical_fix: remove the later arm"),
+        "{rendered}"
+    );
+    assert_no_internal_identity(&rendered);
+    let json = failure.render(DiagnosticFormat::Json);
+    assert!(json.contains("\"rule\":\"GRAM-12\""), "{json}");
+    assert!(json.contains("\"earlier\":{\"at\":"), "{json}");
+}
+
+#[test]
+fn integer_match_coverage_diagnostic_carries_full_domain_and_repair() {
+    let failure = stop(
+        "coverage.wf",
+        include_bytes!("../../../../tests/conformance/cases/err2-neg-integer-missing-else.wf"),
+    );
+    let rendered = failure.to_string();
+    assert!(
+        rendered.contains("error[ERR-2]: InvalidIntegerMatchCoverage"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("all 256 mathematical values"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("add one final `else => { ... }` arm"),
+        "{rendered}"
+    );
+    assert_no_internal_identity(&rendered);
 }

@@ -72,10 +72,10 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
         {
             records.insert(record.index(), *record);
         }
-        if let IrOperation::SharedWatch { test: Some(_), .. }
-        | IrOperation::WatchObject { test: Some(_), .. } = operation
+        if let IrOperation::SharedWatch { test: Some(test), .. }
+        | IrOperation::WatchObject { test: Some(test), .. } = operation
         {
-            tests.push(*result);
+            tests.push((*result, test));
         }
         let record = match operation {
             IrOperation::TableLockEntry { record, .. }
@@ -98,7 +98,7 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::WatchBegin { record }
             | IrOperation::WatchObject { record, .. }
             | IrOperation::WatchTable { record, .. }
-            | IrOperation::WatchPark { record } => *record,
+            | IrOperation::WatchPark { record, .. } => *record,
             IrOperation::KeySetNew { .. } => {
                 scratch.push(*result);
                 continue;
@@ -142,8 +142,18 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             key_set_scratch_name(result)
         ));
     }
-    for result in tests {
-        prelude.push_str(&super::wake::wake_test_storage(result));
+    for (result, test) in tests {
+        prelude.push_str(&super::wake::wake_test_storage(
+            result,
+            test.callback.is_some(),
+        ));
+        if test.callback.is_some() {
+            prelude.push_str(&format!(
+                "  {}.captures = alloca [{} x i64], align 8\n",
+                super::wake::wake_test_name(result),
+                test.values.len().saturating_sub(1).max(1),
+            ));
+        }
     }
     prelude
 }
@@ -924,13 +934,14 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         let prefix = labels("park", result);
+        let site = self.wait_site_operand(result);
         self.names(&["wf__watch_park", "llvm.coro.save"]);
         writeln!(
             self.output,
             "  br label %{prefix}.try\n\
              {prefix}.try:\n  \
              %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
-             %{prefix}.parked = call i32 @wf__watch_park(ptr {}, ptr {HANDLE})\n  \
+             %{prefix}.parked = call i32 @wf__watch_park(ptr {}, ptr {HANDLE}, ptr {site})\n  \
              %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
              {prefix}.suspend:",
@@ -1185,6 +1196,62 @@ impl FunctionEmitter<'_, '_> {
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
 
+    /// [SHARE-1] `shared_close`'s count: the runtime counts one handle out
+    /// with an acquire-release decrement and says whether it was the last.
+    pub(super) fn emit_shared_count_out(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        object: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if ty != IrType::Bool || !self.is_object_handle(object)? {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let prefix = labels("close", result);
+        self.names(&["wf__shared_release"]);
+        writeln!(
+            self.output,
+            "  %{prefix}.count = call i32 @wf__shared_release(ptr {})\n  {} = icmp ne i32 %{prefix}.count, 0",
+            self.value_name(object),
+            self.value_name(result),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// [SHARE-1] returns an object whose last handle was counted out, its
+    /// state already moved out, to the runtime.
+    pub(super) fn emit_shared_free(
+        &mut self,
+        result: IrValueId,
+        object: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if !self.is_object_handle(object)? {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.names(&["wf__shared_free"]);
+        writeln!(
+            self.output,
+            "  call void @wf__shared_free(ptr {})",
+            self.value_name(object)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+    }
+
+    /// Whether `object` is a handle to a shared object, not to a table.
+    fn is_object_handle(&self, object: IrValueId) -> Result<bool, BackendFailure> {
+        let Some(IrType::Nominal(nominal)) = self.value_type(object) else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            self.nominal(nominal)?.kind(),
+            IrNominalKind::Shared {
+                shape: IrShared::Object,
+                ..
+            }
+        ))
+    }
+
     /// Takes the object for a statement already holding an entry of one of
     /// its state's tables, where the frame never suspends.
     pub(super) fn emit_shared_take(
@@ -1217,12 +1284,13 @@ impl FunctionEmitter<'_, '_> {
         test: Option<&IrWakeTest>,
     ) -> Result<(), BackendFailure> {
         let test = self.emit_wake_test(result, test)?;
+        let site = self.wait_site_operand(result);
         self.emit_shared_wait(
             result,
             object,
             "wf__shared_watch",
             "watch",
-            &format!(", {test}"),
+            &format!(", {test}, ptr {site}"),
         )
     }
 
