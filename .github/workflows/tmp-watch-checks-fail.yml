@@ -1,0 +1,72 @@
+# Temporary (spec-proof-model-points): watch each new check of the
+# conformance harness fail once on a model broken for the condition it
+# protects. Removed before the full check.
+name: tmp-watch-checks-fail
+
+on:
+  push:
+    branches: [spec-proof-model-points]
+
+jobs:
+  broken:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: literal range unchecked
+            file: proof/WhitefootProof/Static.lean
+            from: 'if decide (t.Mem v) then'
+            to: 'if true || decide (t.Mem v) then'
+            expect: 'example a literal outside its type: the checker accepts it'
+          - name: no snapshot inside a block
+            file: proof/WhitefootProof/Walk.lean
+            from: 'points := g.points ++ [(pos, snap)]'
+            to: 'points := if blk.isEmpty then g.points ++ [(pos, snap)] else g.points'
+            expect: 'no snapshot at'
+          - name: snapshot missing its newest binding
+            file: proof/WhitefootProof/Walk.lean
+            from: 'vars := env.vars,'
+            to: 'vars := env.vars.drop 1,'
+            expect: 'in scope and the frame'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned Lean toolchain
+        working-directory: proof
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$RUNNER_TEMP/elan-init.sh"
+          sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # The substitution must change exactly one line, or the job fails.
+      - name: Break the model
+        env:
+          FILE: ${{ matrix.file }}
+          FROM: ${{ matrix.from }}
+          TO: ${{ matrix.to }}
+        run: |
+          n=$(grep -cF -- "$FROM" "$FILE")
+          test "$n" = 1
+          perl -i -pe 'BEGIN { $f = $ENV{FROM}; $t = $ENV{TO} } s/\Q$f\E/$t/' "$FILE"
+          grep -F -- "$TO" "$FILE"
+
+      - name: Build
+        working-directory: proof
+        run: perl ../.github/run-check.pl proof-build lake build
+
+      # The broken model must make the comparison fail with the expected
+      # disagreement.
+      - name: Comparison fails on the condition
+        working-directory: proof
+        env:
+          EXPECT: ${{ matrix.expect }}
+        run: |
+          status=0
+          perl ../.github/run-check.pl proof-conformance lake exe conformance > "$RUNNER_TEMP/out.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/out.txt"
+          echo "exit status $status"
+          test "$status" != 0
+          grep -F -- "$EXPECT" "$RUNNER_TEMP/out.txt"

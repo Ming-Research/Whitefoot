@@ -335,7 +335,9 @@ count is in [the second slice](#the-second-slice-syntax-tree-parser-and-interpre
 It is built in slices, each a pull request through the same check: the
 check itself with the value part of [OP-2] (the first, with this record); the
 fragment's syntax, parser and interpreter, compared with the run cases; the
-checker, compared with the accepted and rejected cases; the proofs.
+checker, compared with the accepted and rejected cases; the model's defects
+the proofs need fixed and the points of a run the theorems are stated over
+([below](#model-defects-and-the-points-of-a-run)); the proofs.
 
 Prior criterion for the approach, written before the first slice is
 measured. Each slice records its model and proof lines and the turns and CI
@@ -372,7 +374,7 @@ Four choices shape the tree and the machine for the proofs that follow.
 
 | Choice | Selected | Alternatives | Why |
 |---|---|---|---|
-| Tree | one plain inductive per syntactic class, statements nested as `List Stmt`, names as strings, no source positions | a tree carrying source spans; a control-flow graph; de Bruijn indices | the theorems reason by structural induction over statements, as the rules state them; [TYPE-6] forbids shadowing, so a name denotes one binding in scope and indices would add renaming lemmas without removing a case; source spans serve diagnostics, which no theorem mentions, and a statement's place in a run is its path through the nesting ([the fourth slice](#model-defects-and-the-points-of-a-run)) |
+| Tree | one plain inductive per syntactic class, statements nested as `List Stmt`, names as strings, no source positions | a tree carrying source spans; a control-flow graph; de Bruijn indices | the theorems reason by structural induction over statements, as the rules state them; [TYPE-6] forbids shadowing, so a name denotes one binding in scope and indices would add renaming lemmas without removing a case; source spans serve diagnostics, which no theorem mentions, and a statement's place in a run is its path through the nesting ([Model defects and the points of a run](#model-defects-and-the-points-of-a-run)) |
 | Semantics | a small-step machine: call frames, each a continuation of statement lists, block scopes and loop markers | a big-step evaluator with fuel; a step relation with no executable function | `facts_hold` quantifies over reachable points, which is the reflexive-transitive closure of `step`; a big-step evaluator would need a second, separate reachability relation; an executable `step` is what the conformance cases run |
 | Outcomes | `done`, `stuck` in the five meaningless states, `illFormed`, `outOfSteps` | folding type and name failures into `stuck` | a type mismatch or an unresolved name is excluded by typing and resolution, judgments the checker decides without facts; keeping it apart lets `accepted_never_stuck` say exactly that no proof obligation is left undischarged; the fragment reaches no binding without a value, since every `let` has its value and `move` is outside it, so that state waits for a later fragment |
 | Contracts | read over the mathematical integers [FN-8] at the call and at the return | erased, as the specification erases them | a false requirement or postcondition is a state the rules give no meaning; the machine must reach it as `stuck` for the theorem to exclude it |
@@ -522,7 +524,8 @@ choose one, the prior criterion's count:
    division, only when every non-contradictory input holds it, as the
    compiler does; read literally with [ENT-2]'s type bounds on every term,
    the union would let a datum minted on one branch bound a binding on the
-   other. Found by the [fourth slice](#model-defects-and-the-points-of-a-run).
+   other. Found while fixing the model before the proofs
+   ([Model defects and the points of a run](#model-defects-and-the-points-of-a-run)).
 
 Seven places, below the prior criterion's ten.
 
@@ -649,6 +652,18 @@ it brings the model to the compiler's join and lets the join's soundness be
 proved input by input. The point check made the conformance run take 5.1 s
 against 0.9 s on the main line's run of the same day, within its 10 s budget;
 the build took 15.9 s against 16.7 s.
+
+The slice adds 210 lines of Lean to the model and removes 80, 79 of the added
+lines in the new `Points.lean`, and adds 78 lines to the conformance harness
+and removes 5. It took two engineer turns and four `proof.yml` runs to its
+review: the run that watched the comparison fail on the program above, one
+that failed to compile for a missing import, and two green. The review found
+two defects: the out-of-range literal check and the point check had not been
+watched failing, and this section's place among the slices and its counts
+were missing. A temporary workflow then ran the harness three times on
+deliberately broken models, one per condition: the literal check removed, the
+walk recording no snapshot inside a block, and each snapshot dropping its
+newest binding; each run failed on the condition it targets.
 
 ## Cost
 
