@@ -1,0 +1,68 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nocopy struct Tally {
+  count: u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-10: clear admits Slots, Ring and Paged of constant and runtime capacity. A wrapped Ring keeps its window origin, a Paged keeps its capacity and refills across its page boundaries, an affine scalar-only element with empty release is admitted, and boxed elements are released.";
+  let r = ring_new::<u64, 4>();
+  place_back(window: &r, value: 1_u64);
+  place_back(window: &r, value: 2_u64);
+  place_back(window: &r, value: 3_u64);
+  let first = take_front(window: &r);
+  let second = take_front(window: &r);
+  place_back(window: &r, value: 4_u64);
+  place_back(window: &r, value: 5_u64);
+  let origin = r.head;
+  clear(window: &r);
+  invariant ring_empty: r.len == 0_u64;
+  invariant ring_origin: r.head == origin;
+  place_back(window: &r, value: 6_u64);
+  if r[0_u64] != 6_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let boxed_ring = box_ring_new::<Box<u8>>(capacity: 2_u64);
+  let item = box_new::<u8>(value: 7_u8);
+  place_back(window: &boxed_ring.inner, value: move item);
+  clear(window: &boxed_ring.inner);
+  invariant boxed_ring_empty: boxed_ring.inner.len == 0_u64;
+  let tallies = slots_new::<Tally, 2>();
+  let tally = Tally(count: 1_u64);
+  place_back(window: &tallies, value: move tally);
+  clear(window: &tallies);
+  invariant tallies_empty: tallies.len == 0_u64;
+  let p = box_paged_new::<Box<u64>>(capacity: 1025_u64);
+  for (
+    i in 0_u64..1025_u64,
+    invariant filled: p.inner.len == i
+  ) {
+    let cell = box_new::<u64>(value: i);
+    place_back(window: &p.inner, value: move cell);
+  }
+  clear(window: &p.inner);
+  invariant paged_empty: p.inner.len == 0_u64;
+  invariant paged_retained: p.inner.cap == 1025_u64;
+  if p.inner.pages.len != 0_u64 {
+    return exit_status(code: 3_u8);
+  }
+  for (
+    i in 0_u64..1025_u64,
+    invariant refilled: p.inner.len == i
+  ) {
+    let cell = box_new::<u64>(value: i);
+    place_back(window: &p.inner, value: move cell);
+  }
+  invariant refilled_all: p.inner.len == 1025_u64;
+  if p.inner[1024_u64].inner != 1024_u64 {
+    return exit_status(code: 4_u8);
+  }
+  if first != 1_u64 {
+    return exit_status(code: 5_u8);
+  }
+  if second != 2_u64 {
+    return exit_status(code: 6_u8);
+  }
+  return exit_status(code: 0_u8);
+}

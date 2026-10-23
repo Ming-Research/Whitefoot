@@ -7,7 +7,7 @@ specification change and the implementation. Nothing in it has been compiled
 or run; every verdict below is derived from the rules stated here and the
 active specification (v0.150), not observed.
 
-As built in specification v0.164: range type invariants stay out of sealing
+As built in specification v0.165: range type invariants stay out of sealing
 and keep their function-boundary sites [TYPE-11], so T8 and T13 apply to
 affine invariants only, and the range walk takes the affine instances that
 body entry establishes as path conditions [RANGE-2], as it took the
