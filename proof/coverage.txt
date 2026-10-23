@@ -216,7 +216,7 @@ outside FN-1 3ca7190dbfa2a95b result lists: outside the first phase
 outside FN-1 970516b319e4a27c effect rows: a later phase
 outside FN-1 9133f68ff8b54ac6 interface evolution, which no one program's acceptance reads
 outside FN-1 d400489f19fc2e7e generics: outside the first phase
-outside FN-1 9737ca5413d07eb6 interfaces: outside the first phase
+outside FN-1 b061b4b8c4ea7e74 interfaces: outside the first phase
 outside FN-1 22c0a14ec34fd988 modules: the fragment has one module, where every function is visible
 outside FN-1 2d9057aa327e6135 result counts: the fragment's grammar writes one result
 outside FN-1 87a82b7f0ee8b03f references: a later phase
