@@ -194,6 +194,7 @@ fn coro_end_void_supported(toolchain: &Toolchain, directory: &Path) -> io::Resul
          define void @probe() {\n  \
          call void @llvm.coro.end(ptr null, i1 false, token none)\n  ret void\n}\n",
     )?;
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let accepted = toolchain
         .command()
         .args([
@@ -226,6 +227,7 @@ fn preserve_none_supported(toolchain: &Toolchain, directory: &Path) -> io::Resul
          define preserve_nonecc i64 @p(i64 %a) {\n  \
          %r = musttail call preserve_nonecc i64 @q(i64 %a)\n  ret i64 %r\n}\n",
     )?;
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let accepted = toolchain
         .command()
         .args(["-x", "ir", "-c", "-o"])
@@ -251,6 +253,7 @@ fn no_capture_supported(toolchain: &Toolchain, directory: &Path) -> io::Result<b
         &probe,
         format!("define void @p(ptr {NEW} %v) {{\n  ret void\n}}\n"),
     )?;
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let accepted = toolchain
         .command()
         .args(["-x", "ir", "-c", "-o"])
@@ -275,6 +278,7 @@ fn darwin_stack_probe_helper_supported(toolchain: &Toolchain, directory: &Path) 
          call void @consume(ptr %frame)\n  ret void\n}\n\n\
          attributes #0 = { \"probe-stack\"=\"__chkstk_darwin\" }\n",
     )?;
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let accepted = toolchain
         .command()
         .args(["-x", "ir", "-O2", "-c", "-o"])
@@ -310,6 +314,7 @@ mod tests {
         )
     }
 
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     fn verify(directory: &Path, name: &str, module: &str) -> io::Result<Output> {
         let input = directory.join(format!("{name}.ll"));
         fs::write(&input, module).expect("write verification module");
@@ -389,6 +394,7 @@ mod tests {
              ret i64 %result\n}\n",
         )
         .expect("write tail-call verification module");
+        #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
         let tail = Command::new(clang_executable())
             .args(["-x", "ir", "-c", "-o"])
             .arg(directory.0.join("tail.o"))

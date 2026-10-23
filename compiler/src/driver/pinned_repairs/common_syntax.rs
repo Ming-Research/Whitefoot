@@ -752,4 +752,187 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    RepairPair {
+        // [GRAM-3] a Rust array type in a type argument: the writer's
+        // `Box<[u8; 256]>` is `Box<Array<u8, 256>>`.
+        name: "syntax-rust-array-type-box.wf",
+        rejected: br#"struct Holder {
+  data: Box<[u8; 256]>;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-3",
+        sentences: &[
+            "\n  mechanical_fix: there is no `[T; N]` type: a constant-capacity array is written `Array<T, N>`, so `[u8; 256]` is `Array<u8, 256>` and `Box<[u8; 256]>` is `Box<Array<u8, 256>>`; omit the capacity for a runtime-capacity array held in a `Box`, as in `Box<Array<u8>>`, and write a parameter's type `&[u8]` for a reference to a run of any length [GRAM-3, TYPE-9]\n",
+        ],
+        repaired: &[br#"struct Holder {
+  data: Box<Array<u8, 256>>;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        // [GRAM-2] `&[u8; 4]` opens an admitted `&[T]` and then meets the
+        // `;` of a Rust array type; the run reference and the array nominal
+        // both fit the writer's meaning.
+        name: "syntax-rust-array-type-reference.wf",
+        rejected: br#"fn total(data: &[u8; 4]) -> sum: u64 pure {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GRAM-2",
+        sentences: &[
+            "\n  mechanical_fix: there is no `[T; N]` type: a constant-capacity array is written `Array<T, N>`, so `[u8; 256]` is `Array<u8, 256>` and `Box<[u8; 256]>` is `Box<Array<u8, 256>>`; omit the capacity for a runtime-capacity array held in a `Box`, as in `Box<Array<u8>>`, and write a parameter's type `&[u8]` for a reference to a run of any length [GRAM-3, TYPE-9]\n",
+        ],
+        repaired: &[
+            br#"fn total(data: &[u8]) -> sum: u64 pure {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn total(data: &Array<u8, 4>) -> sum: u64 pure {
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        // [GIVE-1] `give if` is refused as a lexical-looking FORM-3 fault;
+        // the repair names the two forms that deliver from a conditional.
+        name: "syntax-give-conditional.wf",
+        rejected: br#"fn pick(flag: Bool, other: Bool) -> result: u64 pure {
+  let value = if flag {
+    give if other { 1_u64 } else { 2_u64 };
+  } else {
+    give 0_u64;
+  }
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-3",
+        sentences: &[
+            "\n  mechanical_fix: `give` takes an expression, and `if` and `match` are not expressions: a conditional value is only a `let` initializer [GRAM-4, GRAM-7, GIVE-1]; to deliver from branches, write the `if` or `match` here as a statement whose every branch ends in its own `give`, as in `if c { give a; } else { give b; }`, or bind the conditional first with `let x = if c { give a; } else { give b; }` (no `;` after its closing `}`) and write `give x;`\n",
+        ],
+        repaired: &[
+            br#"fn pick(flag: Bool, other: Bool) -> result: u64 pure {
+  let value = if flag {
+    if other {
+      give 1_u64;
+    } else {
+      give 2_u64;
+    }
+  } else {
+    give 0_u64;
+  }
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn pick(flag: Bool, other: Bool) -> result: u64 pure {
+  let value = if flag {
+    let inner = if other {
+      give 1_u64;
+    } else {
+      give 2_u64;
+    }
+    give inner;
+  } else {
+    give 0_u64;
+  }
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        // [GIVE-1] a conditional where `return` takes its operand has no
+        // statement form to offer; the repair binds it with `let` first.
+        name: "syntax-return-conditional.wf",
+        rejected: br#"fn pick(flag: Bool) -> result: u64 pure {
+  return if flag { 1_u64 } else { 2_u64 };
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-3",
+        sentences: &[
+            "\n  mechanical_fix: an `if` or `match` is not an expression: a conditional value is only a `let` initializer [GRAM-4, GRAM-7, GIVE-1]; bind it first, as in `let x = if c { give a; } else { give b; }` (no `;` after its closing `}`), and write `x` where the conditional stood\n",
+        ],
+        repaired: &[br#"fn pick(flag: Bool) -> result: u64 pure {
+  let value = if flag {
+    give 1_u64;
+  } else {
+    give 2_u64;
+  }
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        // [FORM-2] four independent layout faults: the rejection names the
+        // first, and the repair lists all four, whose making is the canonical
+        // source.
+        name: "layout-four-differences.wf",
+        rejected: br#"fn helper() -> result: u64 pure {
+  return 1_u64;
+}
+
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a =  1_u64;
+  let b = a +wrap
+    2_u64;
+
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-2",
+        sentences: &[
+            "\n  mechanical_fix: make all 4 changes below to reach the canonical layout, then compile again; each gives the bytes FORM-2 requires between two terminals [FORM-2]: line 3 between `}` and `fn`: write \"\\n\\n\" instead of \"\\n\\n\\n\"; line 7 between `=` and `1_u64`: write \" \" instead of \"  \"; line 8 between `+wrap` and `2_u64`: write \" \" instead of \"\\n    \"; line 9 between `;` and `return`: write \"\\n  \" instead of \"\\n\\n  \"\n",
+        ],
+        repaired: &[br#"fn helper() -> result: u64 pure {
+  return 1_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = 1_u64;
+  let b = a +wrap 2_u64;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
 ];

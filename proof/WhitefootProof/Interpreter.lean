@@ -175,7 +175,7 @@ def evalInfix (op : InfixOp) : Value → Value → Eval Value
   | _, _ => ill "an infix operation on operands it does not take"
 
 -- spec OP-2 b5dc1d3d54f9afb7
--- spec OP-2 b2f9211f8c7d02cf
+-- spec OP-2 299be1f06a798026
 -- spec OP-2 1276e30b81cfa6c8
 /-- A table operation called by name. Negation and absolute value take one
 operand of a signed type; `band`, `bor`, `bxor` and `bnot` take `Bool`s. -/
@@ -187,10 +187,7 @@ def evalOp : TableOp → List Value → Eval Value
       match u.exactForm t x with
       | some r => .ok (.int t r)
       | none => stuck .domain
-    | .wrap =>
-      match u.wrapForm t x with
-      | some r => .ok (.int t r)
-      | none => ill "a wrap form the rules give no result"
+    | .wrap => .ok (.int t (u.wrapForm t x))
     | .defined => .ok (.bool (u.defined t x))
   | .band, [.bool a, .bool b] => .ok (.bool (a && b))
   | .bor, [.bool a, .bool b] => .ok (.bool (a || b))
@@ -258,10 +255,8 @@ inductive Kont where
 inductive Dest where
   /-- A `let` binds it. -/
   | bind (x : String)
-  /-- A `set` writes it to a whole binding. -/
-  | assign (x : String)
-  /-- A `set` writes it to an element whose offset the target evaluated. -/
-  | assignAt (x : String) (offset : Nat)
+  /-- A `set` evaluates its target where the call returned and writes it. -/
+  | assign (t : Target)
   /-- An expression statement discards it. -/
   | discard
   /-- An `if` tests it and enters the block it selects. -/
@@ -335,7 +330,7 @@ def evalRhs (p : Program) (f : Frame) (callers : List Frame) (e : Expr) (dest : 
     | _ => Step.ofEval (evalExpr p f.env e) fin
   | _ => Step.ofEval (evalExpr p f.env e) fin
 
--- spec SET-1 88d43b4983637822
+-- spec SET-1 72c2009013d2a7d5
 -- spec SET-1 072b9a0395f8c983
 /-- Write a value into a frame's binding or one element of it; the value has
 the type of what it replaces [TYPE-5]. -/
@@ -347,6 +342,24 @@ def write (f : Frame) (x : String) (offset : Option Nat) (v : Value) : Eval Fram
       if t == t' then pure (.array t (es.set i w)) else ill "an element set of another type"
     | some _, _, _ => ill "an element set of a value that is not an array element"
   return { f with env := (← f.env.put x new) }
+
+-- spec SET-1 9078a8b4731faae7
+-- spec SET-1 aa4513a8bf22a571
+-- spec SET-1 b779b9e494f1bcf3
+-- spec OP-4 84dd7d280b494166
+/-- Evaluate a `set` target in the frame the right-hand side left, its base
+before its subscript offset, and store the right-hand side's value there.
+Nothing evaluated for the target comes from before the right-hand side. -/
+def commitTo (f : Frame) (t : Target) (v : Value) : Eval Frame :=
+  match t with
+  | .var x => do
+    let _ ← f.env.get x
+    write f x none v
+  | .index x off => do
+    let _ ← evalAtom f.env (.index x off)
+    match ← evalAtom f.env off with
+    | .int _ i => write f x (some i.toNat) v
+    | _ => ill "a subscript offset is not a u64"
 
 -- spec FN-1 1b8bfc7d20670172
 -- spec OP-5 af38c43524906cf8
@@ -386,10 +399,8 @@ def doReturn (p : Program) (v : Value) : List Frame → Step
       | .exit, _ => .done v
       | .ret, _ => doReturn p v callers
       | .bind x, g :: rest => .next { frames := { g with env := (x, v) :: g.env } :: rest }
-      | .assign x, g :: rest =>
-        Step.ofEval (write g x none v) fun g => .next { frames := g :: rest }
-      | .assignAt x i, g :: rest =>
-        Step.ofEval (write g x (some i) v) fun g => .next { frames := g :: rest }
+      | .assign t, g :: rest =>
+        Step.ofEval (commitTo g t v) fun g => .next { frames := g :: rest }
       | .discard, g :: rest => .next { frames := g :: rest }
       | .test thn els, g :: rest =>
         Step.ofEval (branch g v thn els) fun g => .next { frames := g :: rest }
@@ -412,28 +423,16 @@ def stepLet (p : Program) (f : Frame) (callers : List Frame) (x : String) (e : E
   evalRhs p f callers e (.bind x) k fun v =>
     .next { frames := { f with env := (x, v) :: f.env, kont := k } :: callers }
 
--- spec SET-1 bc13c6f37f130a8b
--- spec SET-1 aa4513a8bf22a571
--- spec SET-1 b09526b422e10fb4
--- spec SET-1 296476a9dbac8acd
+-- spec SET-1 f55db29e2a4479b2
 -- spec SET-1 117df770313c404b
--- spec OP-4 84dd7d280b494166
-/-- `set p = e;` evaluates the target place, its subscript offset included,
-then the right-hand side, then writes once. -/
+-- spec SET-1 5c5515ce82d9cf5d
+/-- `set p = e;` evaluates the right-hand side from the statement's entry
+state, as `let` does, then evaluates the target in the state it left and
+writes once: with an integer value it means `let t = e; set p = t;`. -/
 def stepSet (p : Program) (f : Frame) (callers : List Frame) (t : Target) (e : Expr)
     (k : List Kont) : Step :=
-  let commit (x : String) (offset : Option Nat) (v : Value) : Step :=
-    Step.ofEval (write { f with kont := k } x offset v) fun g => .next { frames := g :: callers }
-  match t with
-  | .var x =>
-    Step.ofEval (f.env.get x) fun _ =>
-      evalRhs p f callers e (.assign x) k (commit x none)
-  | .index x off =>
-    Step.ofEval (evalAtom f.env (.index x off)) fun _ =>
-      Step.ofEval (evalAtom f.env off) fun i =>
-        match i with
-        | .int _ i => evalRhs p f callers e (.assignAt x i.toNat) k (commit x (some i.toNat))
-        | _ => .halt (.illFormed "a subscript offset is not a u64")
+  evalRhs p f callers e (.assign t) k fun v =>
+    Step.ofEval (commitTo { f with kont := k } t v) fun g => .next { frames := g :: callers }
 
 /-- `if c { … } else { … }` evaluates its condition, which may call a
 function of the program [GRAM-5], and enters the block the value selects. -/

@@ -905,12 +905,10 @@ impl<'unit> Checker<'_, 'unit> {
         shifts_origin: bool,
     ) {
         HandleWatch::observe(bindings, window);
-        for reference in bindings.values_mut().flat_map(|local| {
-            local
-                .reference
-                .iter_mut()
-                .chain(local.commit_target.iter_mut())
-        }) {
+        for reference in bindings
+            .values_mut()
+            .flat_map(|local| local.reference.iter_mut())
+        {
             // The subject is a reference *into* the window, formed under a
             // bound the operation ends: `&r[i]` under `i < r.len` and
             // `&r[lo..hi]` under `hi <= r.len` [REF-4]. A reference to the
@@ -939,12 +937,10 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         leaving: &[BindingId],
     ) {
-        for reference in bindings.values_mut().flat_map(|local| {
-            local
-                .reference
-                .iter_mut()
-                .chain(local.commit_target.iter_mut())
-        }) {
+        for reference in bindings
+            .values_mut()
+            .flat_map(|local| local.reference.iter_mut())
+        {
             if reference
                 .paths
                 .iter()
@@ -2757,7 +2753,7 @@ impl<'unit> TypeContext<'unit> {
     ) {
         let superseded = bindings
             .values()
-            .flat_map(|local| local.reference.iter().chain(&local.commit_target))
+            .flat_map(|local| local.reference.iter())
             .flat_map(|reference| reference.paths.iter().chain(&reference.anchors))
             .flat_map(ResolvedPlace::spelled_indices)
             .filter_map(|(_, term)| {
@@ -2796,12 +2792,10 @@ impl<'unit> TypeContext<'unit> {
                 overwritten.then_some(term)
             })
             .collect::<Vec<_>>();
-        for reference in bindings.values_mut().flat_map(|local| {
-            local
-                .reference
-                .iter_mut()
-                .chain(local.commit_target.iter_mut())
-        }) {
+        for reference in bindings
+            .values_mut()
+            .flat_map(|local| local.reference.iter_mut())
+        {
             for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
                 for term in &superseded {
                     if let CapturedTerm::Binding(binding) = term {
@@ -2874,17 +2868,7 @@ impl<'unit> TypeContext<'unit> {
                     witness.valid = false;
                 }
             }
-            for (commit_target, reference) in local
-                .reference
-                .iter_mut()
-                .map(|reference| (false, reference))
-                .chain(
-                    local
-                        .commit_target
-                        .iter_mut()
-                        .map(|reference| (true, reference)),
-                )
-            {
+            for reference in local.reference.iter_mut() {
                 if primitive_write || !reference.is_valid() {
                     continue;
                 }
@@ -2902,14 +2886,7 @@ impl<'unit> TypeContext<'unit> {
                     if let Some((site, (positions, window))) =
                         site.zip(Checker::separable_by_position(written, path))
                     {
-                        preserved.push((
-                            *declaration,
-                            commit_target,
-                            site,
-                            positions,
-                            window,
-                            path.clone(),
-                        ));
+                        preserved.push((*declaration, site, positions, window, path.clone()));
                     } else {
                         invalidated = true;
                         break;
@@ -2920,7 +2897,7 @@ impl<'unit> TypeContext<'unit> {
                 }
             }
         }
-        for (declaration, commit_target, site, positions, window, path) in preserved {
+        for (declaration, site, positions, window, path) in preserved {
             let query = CheckedCallSeparation {
                 site: site.clone(),
                 occasion: super::super::model::CheckedSeparationOccasion::Call,
@@ -2937,13 +2914,10 @@ impl<'unit> TypeContext<'unit> {
                 right_spelling: self.render_resolved_place(&path, bindings)?,
                 one_argument: false,
             };
-            let Some(reference) = bindings.get_mut(&declaration).and_then(|local| {
-                if commit_target {
-                    local.commit_target.as_mut()
-                } else {
-                    local.reference.as_mut()
-                }
-            }) else {
+            let Some(reference) = bindings
+                .get_mut(&declaration)
+                .and_then(|local| local.reference.as_mut())
+            else {
                 continue;
             };
             if !reference.preservations.contains(&query) {
@@ -3020,7 +2994,6 @@ mod tests {
                     loop_depth: 0,
                     compiler_updated: false,
                     reference: None,
-                    commit_target: None,
                     refinement_witnesses: Vec::new(),
                     handle_watch: None,
                     call_value: true,
@@ -3125,7 +3098,6 @@ mod tests {
                     path,
                 },
             )),
-            commit_target: None,
             refinement_witnesses: Vec::new(),
             handle_watch: None,
             call_value: false,
@@ -3281,13 +3253,12 @@ mod tests {
         );
     }
 
-    /// [REF-1, ENT-5] a `set` target's selected payload storage, held while
-    /// its right-hand side is checked, captures its projected offset like a
-    /// reference does: a write of the offset's support ends that offset's
-    /// spelling there too. A holder-only replacement and a write of another
+    /// [REF-1, ENT-5] a reference to selected payload storage captures its
+    /// projected offset: a write of the offset's support ends that offset's
+    /// spelling there. A holder-only replacement and a write of another
     /// field leave it current.
     #[test]
-    fn a_support_write_supersedes_a_projected_offset_in_a_set_payload_target() {
+    fn a_support_write_supersedes_a_projected_offset_in_a_payload_reference() {
         use crate::semantic::places::{CaptureId, CapturedTerm, CapturedValue};
         crate::resolution::with_each_declaration_role(|resolved| {
             let declarations = DeclarationInventory {
@@ -3298,7 +3269,7 @@ mod tests {
                 tree: TreeView::new(resolved.syntax()).unwrap(),
             };
             let types = TypeContext::new(&declarations);
-            // `set t[s.k].Some.value = ...`: t is BindingId(0), s BindingId(1).
+            // `let r = &t[s.k].Some.value;`: t is BindingId(0), s BindingId(1).
             let field = |ordinal: u32| {
                 let mut place = ResolvedPlace::binding(BindingId(1));
                 place.path.push(PlaceStep::Field(ordinal));
@@ -3326,8 +3297,7 @@ mod tests {
                         live: true,
                         loop_depth: 0,
                         compiler_updated: false,
-                        reference: None,
-                        commit_target: Some(ReferenceInfo::formed_paths(
+                        reference: Some(ReferenceInfo::formed_paths(
                             ReferenceKind::Single,
                             vec![target.clone()],
                         )),
@@ -3339,7 +3309,7 @@ mod tests {
                 )])
             };
             let offset_term = |bindings: &HashMap<DeclarationId, LocalBinding>| {
-                let target = bindings[&declaration].commit_target.as_ref().unwrap();
+                let target = bindings[&declaration].reference.as_ref().unwrap();
                 assert!(target.is_valid(), "superseding writes no referent storage");
                 let [PlaceStep::Index(value), PlaceStep::Payload { .. }] =
                     target.paths[0].path.as_slice()

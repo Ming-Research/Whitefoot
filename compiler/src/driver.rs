@@ -3027,8 +3027,8 @@ pub enum FormatGrammar {
 /// fails; lexical and grammar failures use the ordinary compiler diagnostics.
 ///
 /// This is the shared entry point for tools that need canonical bytes,
-/// including formatting requests and diagnostic repairs. It neither writes
-/// files nor treats the rendered bytes as a semantic acceptance verdict.
+/// including formatting requests. It neither writes files nor treats the
+/// rendered bytes as a semantic acceptance verdict.
 pub fn canonical_format(
     inputs: &[SourceInput<'_>],
     grammar: FormatGrammar,

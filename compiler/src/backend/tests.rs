@@ -31,6 +31,7 @@ mod floating;
 mod frames;
 mod frozen;
 mod generics;
+mod heap_alignment;
 mod heap_programs;
 mod indexed_reductions;
 mod integer_absolute;
@@ -475,6 +476,7 @@ fn append_runtime_units_with_library_defines(
             "completion/snapshot_export.c" | "completion/fork_capsule.c"
         ) {
             let object = directory.join(name).with_extension("o");
+            #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
             let output = Command::new(crate::clang_executable())
                 .args(HOST_OPTIMIZATION_ARGUMENTS)
                 .args(crate::RESTRICTED_CHILD_COMPILE_ARGUMENTS)
@@ -522,6 +524,7 @@ fn append_runtime_units_with_library_defines(
             library.arg(format!("-D{define}"));
         }
         let object = directory.join("ordinary_values.o");
+        #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
         let reached = library
             .arg(directory.join("ordinary_values.c"))
             .arg("-o")
@@ -667,6 +670,7 @@ fn build_linked_executable_inner(
             staged_units.extend(names.into_iter().map(|name| directory.join(name)));
         }
     }
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let compile = command
         .args(HOST_OPTIMIZATION_ARGUMENTS)
         .args(HOST_LINK_LIBRARIES)
@@ -759,6 +763,7 @@ fn compile_link_and_run_with(
 
 /// Returns the module as the host optimizer leaves it at the shipped level.
 fn host_optimized_module(llvm: &str) -> String {
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let mut child = Command::new(crate::clang_executable())
         .arg("-x")
         .arg("ir")

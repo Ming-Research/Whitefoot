@@ -1,0 +1,31 @@
+struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn replace_row(row: &Pair) -> result: unit writes(row) {
+  doc "A whole-element write includes both fields and their descendants.";
+  let replacement = Pair(f: 9_u64, g: 1_u64);
+  set row^ = replacement;
+  return unit;
+}
+
+fn need_small(rows: &[Pair]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..rows^.len): rows^[k].f <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &[Pair]) -> result: unit writes(rows) contract {
+  requires forall held_f(k in 0_u64..rows^.len): rows^[k].f <= 7_u64;
+  requires 1_u64 <= rows^.len;
+} {
+  doc "RANGE-2 forgets rows[0].f when the call writes the whole row; need_small is rejected by RANGE-3 at its call.";
+  replace_row(row: &rows^[0_u64]);
+  need_small(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1596,7 +1596,7 @@ fn chunk_summary_instances_preserve_window_abi_and_avoid_allocation() {
 }
 
 #[test]
-fn a_projected_window_target_is_formed_once_before_rhs() {
+fn a_projected_window_target_is_formed_once_after_rhs() {
     let source = br#"struct Columns {
   left: Box<Array<u16>>;
   right: Box<Array<u16>>;
@@ -1638,8 +1638,8 @@ fn main() -> status: std::process::ExitStatus pure {
     // are in `update`'s destination-form body (compiler/src/backend/abi.rs).
     let update = emitted_body(&llvm, "update");
     // The length read projects the field once for the explicit control. The
-    // target captures the complete element address once before the RHS, and
-    // the store uses that address without rereading its parent [SET-1].
+    // target forms the complete element address once after the RHS, and the
+    // store uses that address without rereading its parent [SET-1].
     //
     // STOR-1 places the descriptor in the one heap object. Capture therefore
     // loads the Box pointer from its field slot, then forms an address into
@@ -1664,7 +1664,10 @@ fn main() -> status: std::process::ExitStatus pure {
         .next_back()
         .expect("captured pointer definition")
         .trim();
-    assert!(guard < captured && captured < rhs && rhs < store);
+    assert!(guard < rhs && rhs < captured && captured < store);
+    // Only the length read projects the field before the RHS; the target's
+    // projection is formed after it.
+    assert_eq!(update[..rhs].matches(&columns).count(), 1);
     // Bounded copies of Columns load both Box fields too. Count reads of
     // the captured field address, whose result the target chain below uses;
     // the two Columns GEPs above still forbid reevaluating that projection.
@@ -1685,29 +1688,29 @@ fn main() -> status: std::process::ExitStatus pure {
         1,
         "the target's Box pointer is loaded once: {update}"
     );
-    let address = update[captured..rhs]
+    let address = update[captured..store]
         .lines()
         .find_map(|line| {
             line.trim()
                 .strip_suffix(&format!(" = getelementptr i8, ptr {pointer}, i64 0"))
         })
-        .expect("the captured pointer forms the array address before the RHS");
+        .expect("the captured pointer forms the array address after the RHS");
     let element_projection = format!(
         " = getelementptr inbounds {{ i64, [0 x i16] }}, ptr {address}, i64 0, i32 1, i64 "
     );
     assert_eq!(update.matches(&element_projection).count(), 1);
-    let element = update[captured..rhs]
+    let element = update[captured..store]
         .lines()
         .find(|line| line.contains(&element_projection))
         .and_then(|line| line.trim().split_once(" = ").map(|(result, _)| result))
-        .expect("the element address uses the captured array address before the RHS");
-    let target = update[captured..rhs]
+        .expect("the element address uses the captured array address after the RHS");
+    let target = update[captured..store]
         .lines()
         .find_map(|line| {
             line.trim()
                 .strip_suffix(&format!(" = getelementptr i8, ptr {element}, i64 0"))
         })
-        .expect("the complete typed target is captured before the RHS");
+        .expect("the complete typed target is formed after the RHS");
     assert_eq!(update.matches("store i16").count(), 1);
     assert!(
         update[store..]
@@ -1719,8 +1722,6 @@ fn main() -> status: std::process::ExitStatus pure {
             .unwrap()
             .ends_with(&format!("ptr {target}"))
     );
-    assert!(!update[rhs..store].contains("load ptr, ptr "));
-    assert!(!update[rhs..store].contains(&columns));
     assert!(!update.contains("call void @wf_trap"));
 
     let output = compile_and_run(&llvm);
@@ -2452,5 +2453,140 @@ fn constant_measure_pointers_survive_parallel_and_waiting_consumers() {
             );
         }
         assert!(!body.contains("!alias.scope") && !body.contains("!noalias"));
+    }
+}
+
+/// [OP-10] `clear` over an element type whose release action is empty is the
+/// length test and one zero store: no element walk, element access, call,
+/// copy or allocation, so its work is independent of `len` and `cap` in every
+/// admitted shape. The store sits behind the `len == 0` branch, so the shared
+/// empty header [STOR-1] is never written.
+#[test]
+fn clear_of_empty_release_elements_stores_only_the_length() {
+    for (construct, window) in [
+        ("box_slots_new::<u8>(capacity: 4_u64)", "&w.inner"),
+        ("box_ring_new::<u8>(capacity: 4_u64)", "&w.inner"),
+        ("box_paged_new::<u8>(capacity: 4_u64)", "&w.inner"),
+        ("slots_new::<u8, 4>()", "&w"),
+        ("ring_new::<u8, 4>()", "&w"),
+    ] {
+        let source = format!(
+            "fn main() -> status: std::process::ExitStatus pure {{\n  let w = {construct};\n  place_back(window: {window}, value: 1_u8);\n  clear(window: {window});\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        let module = compile(source.as_bytes());
+        let body = emitted_prelude_row(&module, "clear");
+        let lines = body.lines().map(str::trim).collect::<Vec<_>>();
+        assert!(
+            lines.iter().all(|line| !line.contains(" = phi ")
+                && !line.starts_with("call ")
+                && !line.contains("@llvm.mem")
+                && !line.contains("@wf__heap")),
+            "{construct}: {body}"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with("store "))
+                .count(),
+            1,
+            "{construct}: {body}"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains(" = load "))
+                .count(),
+            1,
+            "{construct}: only the length is read: {body}"
+        );
+        let test = lines
+            .iter()
+            .position(|line| line.contains(" = icmp eq i64 ") && line.ends_with(", 0"))
+            .expect("clear tests the old length");
+        let branch = lines[test + 1];
+        let (done, commit) = branch
+            .split_once(", label %")
+            .and_then(|(_, rest)| rest.split_once(", label %"))
+            .expect("the length test branches");
+        assert!(done.starts_with("run.clear.done."), "{body}");
+        assert!(commit.starts_with("run.clear.commit."), "{body}");
+        let commit = lines
+            .iter()
+            .position(|line| *line == format!("{commit}:"))
+            .expect("commit block");
+        let done = lines
+            .iter()
+            .position(|line| *line == format!("{done}:"))
+            .expect("done block");
+        let store = lines
+            .iter()
+            .position(|line| line.starts_with("store "))
+            .unwrap();
+        assert!(
+            commit < store && store < done && lines[store].starts_with("store i64 0, ptr "),
+            "only the commit block, reached for a nonempty window, stores zero to the length: {body}"
+        );
+    }
+}
+
+/// [OP-10, PROV-6] `clear` over an element type whose release action is
+/// non-empty walks the old window once, releasing each element, and stores
+/// zero to the length after the walk; the backing is not freed and nothing is
+/// allocated. A Ring reads its origin and wraps each logical index; a Paged
+/// reaches each element through its page directory.
+#[test]
+fn clear_of_releasing_elements_walks_the_old_window_and_keeps_the_backing() {
+    for (construct, wraps) in [
+        ("box_slots_new::<Box<u8>>(capacity: 4_u64)", false),
+        ("box_ring_new::<Box<u8>>(capacity: 4_u64)", true),
+        ("box_paged_new::<Box<u8>>(capacity: 4_u64)", false),
+    ] {
+        let source = format!(
+            "fn main() -> status: std::process::ExitStatus pure {{\n  let w = {construct};\n  let cell = box_new::<u8>(value: 1_u8);\n  place_back(window: &w.inner, value: move cell);\n  clear(window: &w.inner);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        let module = compile(source.as_bytes());
+        let body = emitted_prelude_row(&module, "clear");
+        let lines = body.lines().map(str::trim).collect::<Vec<_>>();
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains(" = phi i64 "))
+                .count(),
+            1,
+            "{construct}: one walk over the old length: {body}"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("call void @wf__heap_give("))
+                .count(),
+            1,
+            "{construct}: the element's Box is the one release; the backing is kept: {body}"
+        );
+        assert!(!body.contains("@wf__heap_take"), "{construct}: {body}");
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with("store "))
+                .count(),
+            1,
+            "{construct}: {body}"
+        );
+        let release = lines
+            .iter()
+            .position(|line| line.contains("call void @wf__heap_give("))
+            .unwrap();
+        let store = lines
+            .iter()
+            .position(|line| line.starts_with("store i64 0, ptr "))
+            .expect("clear stores zero to the length");
+        assert!(release < store, "release precedes the length store: {body}");
+        assert_eq!(
+            lines
+                .iter()
+                .any(|line| line.contains(" = select i1 ") && line.contains(", i64 ")),
+            wraps,
+            "{construct}: only a Ring wraps its logical index: {body}"
+        );
     }
 }

@@ -10,6 +10,53 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/waiting-contexts, compiler/incremental-compilation
 
 Summary: A deadlock report enumerates an intrusive roster under one lock, registering the root once and each child at its first actual guard or join park and removing it before reclamation, because at all-stuck every live context is such a waiter while registering every child at spawn cost 8.4% on one driver's concurrent spawns; a guard registers under its watch lock with the roster lock nested inside. The pre-registered one-percent comparison rejected no spawn panel, five of eight being inconclusive against the twin's spread, so the global roster stays provisional. Diagnostic fields occupy a cold tail initialized at first registration, and every all-stuck decision calls one inactive predicate. Cache keys still exclude host display paths, and emitted wait-site positions are templates whose display path is bound from the current invocation on reuse, so a different spelling of the same graph reuses its build while its reports name the paths this invocation wrote.
+## 2026-10-22 A layout rejection lists every differing gap of its source in its repair
+
+Nodes: compiler/diagnostic-repairs, compiler/formatting-command
+
+Summary: A FORM-2 rejection reported one differing gap per compile, so a writer fixing a file with several layout faults spent a round on each; in a writer trial three of fifteen programs spent four to five rounds that way. The rejection still reports only the first gap, as the specification fixes for the canonical stage, and its repair now lists every differing gap of the rejected source, the first twenty with the line, the terminals around the gap and the bytes to write instead of the bytes found, and the count of the rest. The list comes from a walk over the rejected source's terminals that compares each gap with the one canonical-gap function the renderer emits from, so it cannot disagree with rendering; the walk has a work ceiling of its own, and reaching it leaves the rejection without a list. The formatting request's reason is restated: a writer without it applies the listed changes by hand.
+
+## 2026-10-22 The specification carries no version and an amendment adds no archive
+
+Nodes: compiler/build-inputs
+
+Summary: Open amendments of the specification kept merging main to renumber the title line, re-archive the outgoing version and retitle their change log entry each time another amendment merged first: 112 of 307 merges of main over 62 amendments in two weeks, measured in the [version-churn investigation](../research/investigations/spec-version-churn/README.md#measurement). The version was a counter every branch took at the same three places while its order was fixed only at the merge, and nothing read it, since the compiler's identity of the specification is the SHA-256 of its bytes. The first line of the specification is now `# Kernel Specification`, an amendment adds one entry at the top of the change log and no archive, and an entry's version is derived from its place in the log, so an entry directly above v0.9 is v0.10. The build-inputs node now records that decision. Refused: renumbering by script, assigning the number by a commit to main after the merge, a date or time in the title line or in archive names, naming an amendment by the date and title of its entry, and one amendment in flight at a time.
+
+## 2026-10-22 The kernel owns clearing a window while keeping its storage
+
+Nodes: language/data-model/kernel-minimality
+
+Summary: A program that reuses one byte buffer per batch could not empty it without one boundary operation per element or a transfer of every element into another window, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. The kernel therefore owns `clear` over every droppable element type: it runs each element's derived release, sets the length to zero and keeps the storage, capacity, ring origin and pages, so an element type that needs no release is reset independently of length. Clearing leaves the list of operations that begin as source libraries, and clearing as a source library over `take_back` is recorded as rejected.
+
+## 2026-10-21 A column for a model with too few runs takes the larger of the row's largest class and its own runs
+
+Nodes: compiler/verification
+
+Summary: The time-budget decision said a model with fewer than 20 recorded runs has no column, while the budget table has carried a column for one Intel Xeon model since the owner added it, valued at the larger of the row's largest class budget and the model's own runs by the rule. The tree now says so: such a column exists only when the owner adds it and takes that value, because a few runs can show that a class needs more time but not that it needs less, instead of the model's own runs alone or the unmapped-model fallback alone. The recompute tool applies this value to every such column, so the tree states what the table and the tool already do; no budget value changes. The grounds are in the [time-budget investigation](../research/investigations/test-economy/time-budgets.md#xeon-platinum-8573c-column-candidate-compiler-budget-and-cached-baseline-compiler-2026-10-13), which also records the recompute of the Linux columns.
+
+## 2026-10-22 An assignment evaluates its right-hand side before its target
+
+Nodes: language/ownership/reference-validity, compiler/checker-facts
+
+Summary: A decision is added: `set p = e;` evaluates `e` first and then evaluates the target in the state `e` left, so, other than an atomic in-place update, it means exactly binding `e` and assigning the binding; the atomic update keeps the place it reads out because its first argument reads the target's offsets, which the call's pairwise effect comparison keeps its function from writing. Two accepted programs showed that a target evaluated first can go stale across its right-hand side, a double free after `remove_at` shifted the target's slot and a store into the block `grow` released ([incidental finding 6](../research/investigations/spec-proof/DESIGN.md#incidental-findings)). The checker's fact node now says an assignment target's captures read the state the right-hand side left. Refused: holding the target's storage under reference validity across the right-hand side, the atomic update's prefix condition for every assignment, and reading subscripts first while locating the place afterwards.
+
+## 2026-10-22 Heap storage holds elements aligned up to 16 bytes with the ordinary allocator
+
+Nodes: compiler/storage-representation
+
+Summary: The target records state 16 bytes, not 8, as the alignment of the heap blocks the runtime hands out, so `std::process::MemoryMeter` and the other 16-aligned opaque host handles can be stored in a Box cell, Slots, Ring, Paged and the HashMap built on Slots instead of failing in target qualification. Nothing else in the runtime changes: the allocator of each supported host returns 16-byte-aligned blocks, which `heap.c` asserts through `_Alignof(max_align_t)` wherever C's fundamental alignment is 16 and, on Apple, where `max_align_t` is 8 bytes on arm64 although libmalloc returns 16, through the 64-bit pointer alone, the alignment tests observing the returned pointers. Shared objects and shared-map entries already qualified through their pool blocks (state at offset 64, 16-byte entry grain), and a `Frozen` payload cannot hold a host handle [SHARE-1]. [OP-9] admits no stored type above 16, so an aligned system allocation up to 4096 bytes, with an original pointer stored beside each pool object, a 32-byte frozen header and a 4096-byte shared empty header, and the variant that derives the original address from the element type's static alignment, were refused as ranges nothing reaches that every `Frozen` and `Shared` object would pay for. A stored type aligned above 16 bytes reopens the decision.
+
+## 2026-10-22 A continuing kill event's overlap at the loop head is judged without facts
+
+Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention
+
+Summary: ENT-5 did not say in which state the loop head judges whether a continuing kill event may kill a pre-loop fact, and judging index separation needs facts that on a later iteration come from the head being formed. The new decision states the judgment the checker already makes: index, range and page steps at one position always overlap there, field and payload steps and window parts separate as usual, and liveness proved before the loop holds at the event; a lost fact is kept by a header invariant. Compiler probes on main's compiler (this item's temporary workflow) show a body write of `a[1]` or of `a[j]` with `j` unchanged removing `a[2] == 0` from the head and a loop with no element write keeping it. Refused: separation by pre-loop facts, which is unsound when the body changes the offset; separation by facts no continuing event writes, a second implicit pass the invariant already covers; separation by literal offsets only.
+
+## 2026-10-21 A call's range write footprint is bounded by its first captured range, and capability limits are judged per obligation
+
+Nodes: compiler/range-judgment
+
+Summary: Two decisions are added. Provisionally, when a call's argument is a formed range, its write footprint is bounded by the first captured range and the full path frame is kept only as diagnostic provenance, because that separates range overlap from read identity without adding equalities to the accepting query, instead of versioning storage by full path, whose correspondence to the fixed derivation rules is unsettled; some same-range sibling-field proofs report an implementation limit until a program needs that precision, and a requirement whose reads lost their provenance at a join, a `give`, an aggregate copy or an aggregate or routed result, or whose formal selector identities are not remapped, keeps the ordinary verdict even where RANGE-2 and OWN-7 admit the program, a known exception to the rule that a limit of the checker is never reported as the program's error and not a rule of the language. A capability limit is judged per failed obligation from its conclusion, quantifier bounds, guards and read domains, instead of replacing every conclusion of a function with an unresolved write, and the counterfactual queries that explain a precision loss serve diagnostics only and never acceptance.
 
 ## 2026-10-22 A name written with a reserved spelling is refused with what reserves it and a fresh spelling
 
