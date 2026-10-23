@@ -757,8 +757,8 @@ static int wf_file_windows_directory_only_dots(const unsigned char *batch, size_
 }
 
 /* A batch holding only the self and parent entries is read again inside the
- * same operation, so the operation completes once, under its own deadline,
- * with an entry or with the end. */
+ * same operation, so the operation completes once, with an entry or with the
+ * end, and its waiting frame suspends once. */
 static wf_file_result wf_file_windows_directory_next(
     const wf_file_request *request
 ) {
@@ -784,11 +784,6 @@ static wf_file_result wf_file_windows_directory_next(
             || !wf_file_windows_directory_only_dots(
                    (const unsigned char *)request->operation.directory_next.buffer,
                    (size_t)result.head.value)) {
-            return result;
-        }
-        if (wf_file_running_cancelled()) {
-            result.head.value = -1;
-            result.head.error_code = wf_file_cancelled_error();
             return result;
         }
     }

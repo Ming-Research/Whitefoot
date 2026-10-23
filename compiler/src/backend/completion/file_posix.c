@@ -582,8 +582,9 @@ void wf_file_thread_interrupt(uintptr_t thread) {
 /* Whether a directory batch holds only the self and parent entries, which the
  * ordinary library leaves out of a listing [PRE-2]. The execution below reads
  * such a batch again inside the same operation, so the operation completes
- * once, under its own deadline, with an entry or with the end. A record that
- * does not parse answers no, and the library's decoder refuses it. */
+ * once, with an entry or with the end, and its waiting frame suspends once. A
+ * record that does not parse answers no, and the library's decoder refuses
+ * it. */
 static int wf_file_directory_only_dots(const unsigned char *batch, size_t length) {
     const size_t name = offsetof(struct dirent, d_name);
     size_t cursor = 0;
@@ -635,14 +636,6 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
                 && wf_file_directory_only_dots(
                        (const unsigned char *)request->operation.directory_next.buffer,
                        (size_t)result.head.value)) {
-                /* A deadline that fired between the two reads ends the
-                 * operation with nothing transferred, as an interrupted read
-                 * does. */
-                if (wf_file_running_cancelled()) {
-                    result.head.value = -1;
-                    result.head.error_code = wf_file_cancelled_error();
-                    return result;
-                }
                 continue;
             }
 #endif
