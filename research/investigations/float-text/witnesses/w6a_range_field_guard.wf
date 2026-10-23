@@ -1,0 +1,13 @@
+struct Decimal {
+  doc "One digit and its count, retaining the field shape of the decimal leading-digit contract.";
+  digits: Array<u8, 1>;
+  count: u64;
+}
+
+fn set_first(decimal: &Decimal) -> result: unit writes(decimal.digits) contract {
+  ensures forall leading(k in 0_u64..1_u64) when 0_u64 < decimal^.count: 1_u8 <= decimal^.digits[k];
+} {
+  doc "Sets the sole digit to one. Predicted refusal: RANGE-1 at decimal^.count in the guard, because an ordinary integer field is not a range term. This minimal witness has not been checked; the corresponding guard in the decimal implementation was refused by CI. Check this source with whitefootc --check; it has no executable entry.";
+  set decimal^.digits[0_u64] = 1_u8;
+  return unit;
+}

@@ -1,0 +1,219 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const sample_1: Array<u8, 11> =[49_u8, 50_u8, 51_u8, 46_u8, 52_u8, 53_u8, 48_u8, 48_u8, 120_u8, 121_u8, 122_u8];
+
+const sample_2: Array<u8, 2> =[120_u8, 49_u8];
+
+const sample_3: Array<u8, 26> =[48_u8, 46_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 48_u8, 49_u8];
+
+const sample_4: Array<u8, 25> =[49_u8, 56_u8, 52_u8, 52_u8, 54_u8, 55_u8, 52_u8, 52_u8, 48_u8, 55_u8, 51_u8, 55_u8, 48_u8, 57_u8, 53_u8, 53_u8, 49_u8, 54_u8, 49_u8, 53_u8, 57_u8, 57_u8, 57_u8, 46_u8, 53_u8];
+
+const sample_5: Array<u8, 5> =[49_u8, 46_u8, 50_u8, 46_u8, 51_u8];
+
+const sample_6: Array<u8, 2> =[46_u8, 53_u8];
+
+const sample_7: Array<u8, 20> =[57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8, 57_u8];
+
+const sample_8: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
+
+fn scan(input: &[u8], start: u64) -> (mantissa: u64, dropped: u64, fraction: u64, next: u64) reads(input) contract {
+  requires start <= input^.len;
+} {
+  doc "Reads digits with at most one point from start: a digit joins the mantissa while another cannot overflow it, and is otherwise counted as dropped; fraction counts the digits kept after the point; next is the first byte not consumed.";
+  let length = input^.len;
+  let index = start;
+  let mantissa = 0_u64;
+  let dropped = 0_u64;
+  let fraction = 0_u64;
+  let seen_point = False();
+  loop @text (
+    invariant ahead: start <= index,
+    invariant inside: index <= length,
+    invariant fraction_seen: fraction <= index,
+    invariant dropped_seen: dropped <= index
+  ) {
+    if index < length {
+    } else {
+      break @text;
+    }
+    let byte = input^[index];
+    let following = index + 1_u64;
+    if 48_u8 <= byte {
+      if byte <= 57_u8 {
+        let digit = byte - 48_u8;
+        let wide = cvt::<u8, u64>(digit);
+        if mantissa < 1844674407370955161_u64 {
+          let scaled = mantissa * 10_u64;
+          set mantissa = scaled + wide;
+          if seen_point {
+            set fraction = fraction + 1_u64;
+          }
+        } else {
+          set dropped = dropped + 1_u64;
+        }
+        set index = following;
+        continue @text;
+      }
+    }
+    if byte == 46_u8 {
+      if seen_point {
+        break @text;
+      }
+      set seen_point = True();
+      set index = following;
+      continue @text;
+    }
+    break @text;
+  }
+  return mantissa, dropped, fraction, index;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Scans eight samples and compares all four results of each with a model written outside the compiler.";
+  let input_1 = &sample_1[0_u64..11_u64];
+  let (mantissa_1, dropped_1, fraction_1, next_1) = scan(input: input_1, start: 0_u64);
+  if mantissa_1 == 1234500_u64 {
+  } else {
+    return exit_status(code: 11_u8);
+  }
+  if dropped_1 == 0_u64 {
+  } else {
+    return exit_status(code: 12_u8);
+  }
+  if fraction_1 == 4_u64 {
+  } else {
+    return exit_status(code: 13_u8);
+  }
+  if next_1 == 8_u64 {
+  } else {
+    return exit_status(code: 14_u8);
+  }
+  let input_2 = &sample_2[0_u64..2_u64];
+  let (mantissa_2, dropped_2, fraction_2, next_2) = scan(input: input_2, start: 1_u64);
+  if mantissa_2 == 1_u64 {
+  } else {
+    return exit_status(code: 21_u8);
+  }
+  if dropped_2 == 0_u64 {
+  } else {
+    return exit_status(code: 22_u8);
+  }
+  if fraction_2 == 0_u64 {
+  } else {
+    return exit_status(code: 23_u8);
+  }
+  if next_2 == 2_u64 {
+  } else {
+    return exit_status(code: 24_u8);
+  }
+  let input_3 = &sample_3[0_u64..26_u64];
+  let (mantissa_3, dropped_3, fraction_3, next_3) = scan(input: input_3, start: 0_u64);
+  if mantissa_3 == 1_u64 {
+  } else {
+    return exit_status(code: 31_u8);
+  }
+  if dropped_3 == 0_u64 {
+  } else {
+    return exit_status(code: 32_u8);
+  }
+  if fraction_3 == 24_u64 {
+  } else {
+    return exit_status(code: 33_u8);
+  }
+  if next_3 == 26_u64 {
+  } else {
+    return exit_status(code: 34_u8);
+  }
+  let input_4 = &sample_4[0_u64..25_u64];
+  let (mantissa_4, dropped_4, fraction_4, next_4) = scan(input: input_4, start: 0_u64);
+  if mantissa_4 == 1844674407370955161_u64 {
+  } else {
+    return exit_status(code: 41_u8);
+  }
+  if dropped_4 == 5_u64 {
+  } else {
+    return exit_status(code: 42_u8);
+  }
+  if fraction_4 == 0_u64 {
+  } else {
+    return exit_status(code: 43_u8);
+  }
+  if next_4 == 25_u64 {
+  } else {
+    return exit_status(code: 44_u8);
+  }
+  let input_5 = &sample_5[0_u64..5_u64];
+  let (mantissa_5, dropped_5, fraction_5, next_5) = scan(input: input_5, start: 0_u64);
+  if mantissa_5 == 12_u64 {
+  } else {
+    return exit_status(code: 51_u8);
+  }
+  if dropped_5 == 0_u64 {
+  } else {
+    return exit_status(code: 52_u8);
+  }
+  if fraction_5 == 1_u64 {
+  } else {
+    return exit_status(code: 53_u8);
+  }
+  if next_5 == 3_u64 {
+  } else {
+    return exit_status(code: 54_u8);
+  }
+  let input_6 = &sample_6[0_u64..2_u64];
+  let (mantissa_6, dropped_6, fraction_6, next_6) = scan(input: input_6, start: 0_u64);
+  if mantissa_6 == 5_u64 {
+  } else {
+    return exit_status(code: 61_u8);
+  }
+  if dropped_6 == 0_u64 {
+  } else {
+    return exit_status(code: 62_u8);
+  }
+  if fraction_6 == 1_u64 {
+  } else {
+    return exit_status(code: 63_u8);
+  }
+  if next_6 == 2_u64 {
+  } else {
+    return exit_status(code: 64_u8);
+  }
+  let input_7 = &sample_7[0_u64..20_u64];
+  let (mantissa_7, dropped_7, fraction_7, next_7) = scan(input: input_7, start: 0_u64);
+  if mantissa_7 == 9999999999999999999_u64 {
+  } else {
+    return exit_status(code: 71_u8);
+  }
+  if dropped_7 == 1_u64 {
+  } else {
+    return exit_status(code: 72_u8);
+  }
+  if fraction_7 == 0_u64 {
+  } else {
+    return exit_status(code: 73_u8);
+  }
+  if next_7 == 20_u64 {
+  } else {
+    return exit_status(code: 74_u8);
+  }
+  let input_8 = &sample_8[0_u64..3_u64];
+  let (mantissa_8, dropped_8, fraction_8, next_8) = scan(input: input_8, start: 3_u64);
+  if mantissa_8 == 0_u64 {
+  } else {
+    return exit_status(code: 81_u8);
+  }
+  if dropped_8 == 0_u64 {
+  } else {
+    return exit_status(code: 82_u8);
+  }
+  if fraction_8 == 0_u64 {
+  } else {
+    return exit_status(code: 83_u8);
+  }
+  if next_8 == 3_u64 {
+  } else {
+    return exit_status(code: 84_u8);
+  }
+  return exit_status(code: 0_u8);
+}

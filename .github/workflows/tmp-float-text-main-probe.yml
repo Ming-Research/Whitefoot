@@ -1,0 +1,77 @@
+# TEMPORARY (float-text-stage1-own): check this branch's float-text module
+# with main's compiler, to list which of the branch's checker changes main
+# still lacks. Remove before the branch is ready.
+name: tmp-float-text-main-probe
+
+on:
+  push:
+    branches: [claude/float-text]
+    paths:
+      - .github/workflows/tmp-float-text-main-probe.yml
+      - lib/std/float_text/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      WHITEFOOT_CHECK_TIMEOUT: 900
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/checkout@v4
+        with:
+          path: branch
+          sparse-checkout: lib/std/float_text
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Add the branch's float_text module to main's standard library
+        run: |
+          cp -r branch/lib/std/float_text lib/std/float_text
+          rm -rf branch
+          printf 'pkg::float_text: [];\n' >> lib/std/modules.wfg
+          python3 - <<'EOF'
+          import pathlib
+          p = pathlib.Path("compiler/src/library.rs")
+          s = p.read_text()
+          files = ["module.wfm", "decimal.wf", "digits.wf", "read.wf", "write.wf"]
+          records = "".join(
+              f'    (\n        "std/float_text/{f}",\n        include_str!("../../lib/std/float_text/{f}"),\n    ),\n'
+              for f in files)
+          anchor = '        include_str!("../../lib/std/collections/ordered_map/ordered-map.wf"),\n    ),\n'
+          assert s.count(anchor) == 1
+          s = s.replace(anchor, anchor + records)
+          anchor = '    ("collections::ordered_map", &[]),\n'
+          assert s.count(anchor) == 1
+          s = s.replace(anchor, anchor + '    ("float_text", &[]),\n')
+          p.write_text(s)
+          EOF
+          git diff --stat
+
+      - name: Build whitefootc
+        run: perl .github/run-check.pl compiler/build cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+
+      - name: Check the float_text module with main's checker
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/probe"
+          mkdir -p "$out/probe"
+          printf 'pkg::probe: [std::float_text];\n' > "$out/modules.wfg"
+          printf '\n' > "$out/probe/module.wfm"
+          set +e
+          compiler/target/gate/whitefootc --graph "$out/modules.wfg" \
+            --check-module std::float_text --report --diagnostic-format json \
+            > "$out/report.jsonl" 2> "$out/driver.jsonl"
+          status=$?
+          set -e
+          echo "Module check exit status: $status"
+          echo '== report'
+          [ -s "$out/report.jsonl" ] && jq -s . "$out/report.jsonl"
+          echo '== driver diagnostics'
+          cat "$out/driver.jsonl"
+          exit 0

@@ -46,6 +46,10 @@ cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
 
 label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  macos  windows
 
+# Temporary float-text-check.yml; initial budgets await its first CI sample.
+compiler/float-text-build        190    -      -
+compiler/float-text-module       60     -      -
+
 # gate.yml, static group
 check/static                    85         80         80         85          125    -
 repository-invariants           30         30         25         30          30     -

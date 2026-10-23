@@ -11,3 +11,4 @@ pkg::collections::slab: [];
 pkg::collections::hash_map: [];
 pkg::collections::priority_queue: [];
 pkg::collections::ordered_map: [];
+pkg::float_text: [];

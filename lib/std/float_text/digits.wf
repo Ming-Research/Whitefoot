@@ -1,0 +1,351 @@
+struct DigitPrefix {
+  coefficient: u64;
+  scale: u64;
+  invariant positive_scale(prefix): 1_u64 <= prefix.scale;
+  invariant scale_ceiling(prefix): prefix.scale <= 100000000000000000_u64;
+  invariant coefficient_below_scale(prefix): prefix.coefficient < prefix.scale;
+}
+
+fn decimal_from_u64(value: u64) -> result: Decimal pure contract {
+  requires 1_u64 <= value;
+  requires value <= 100000000000000000_u64;
+  ensures 1_u64 <= result.count;
+  ensures result.count <= 18_u64;
+  ensures 1_i64 <= result.point;
+  ensures result.point <= 18_i64;
+  ensures forall leading(k in 0_u64..1_u64): 1_u8 <= result.digits[k];
+} {
+  doc "Builds the exact decimal integer, extracting least significant digits into a temporary and then reversing them. Eighteen positions hold every admitted input, including a rounded seventeen-digit coefficient that carries into its eighteenth position.";
+  let reversed = array_filled::<u8, 18>(value: 0_u8);
+  let rest = value;
+  let length = 1_u64;
+  for (
+    position in 0_u64..18_u64,
+    invariant length_floor: 1_u64 <= length,
+    invariant length_ceiling: length <= 18_u64,
+    invariant forall small(k in 0_u64..reversed.len): reversed[k] <= 9_u8
+  ) {
+    if rest != 0_u64 {
+      let digit = rest % 10_u64;
+      set reversed[position] = cvt::<u64, u8>(digit);
+      set rest = rest / 10_u64;
+      set length = position + 1_u64;
+    }
+  }
+  let decimal = decimal_new();
+  for (
+    position in 0_u64..length,
+    invariant forall reversed_small(k in 0_u64..reversed.len): reversed[k] <= 9_u8,
+    invariant forall small(k in 0_u64..decimal.digits.len): decimal.digits[k] <= 9_u8
+  ) {
+    let last = length - 1_u64;
+    let from_end = last - position;
+    let digit = reversed[from_end];
+    invariant digit_small: digit <= 9_u8 {
+      use reversed_small(from_end);
+    }
+    set decimal.digits[position] = digit;
+  }
+  set decimal.count = length;
+  set decimal.point = cvt::<u64, i64>(length);
+  return move decimal;
+}
+
+fn digits_binary_decimal(mantissa: u64, exponent: i64) -> result: Decimal pure contract {
+  requires 1_u64 <= mantissa;
+  requires mantissa <= 36028797018963966_u64;
+  requires -1076_i64 <= exponent;
+  requires exponent <= 971_i64;
+  ensures -341_i64 <= result.point;
+  ensures result.point <= 360_i64;
+} {
+  doc "Expands mantissa times two to exponent exactly. At most eighteen shifts of at most sixty bits suffice. Each shift changes the decimal point by at most nineteen, and the 800-digit store exceeds the longest expansion of a binary64 value or one of its two rounding midpoints.";
+  let decimal = decimal_from_u64(value: mantissa);
+  let remaining = exponent;
+  for (
+    step in 0_u64..18_u64,
+    invariant remaining_floor: -1080_i64 + 60_i64 * step <= remaining,
+    invariant remaining_ceiling: remaining <= 1080_i64 - 60_i64 * step,
+    invariant point_floor: 1_i64 - 19_i64 * step <= decimal.point,
+    invariant point_ceiling: decimal.point <= 18_i64 + 19_i64 * step,
+    invariant positive_count: 1_u64 <= decimal.count,
+    invariant forall nonzero(k in 0_u64..1_u64): 1_u8 <= decimal.digits[k]
+  ) {
+    if remaining < 0_i64 {
+      let magnitude = 0_i64 - remaining;
+      let amount = imin(magnitude, 60_i64);
+      let shift = cvt::<i64, u32>(amount);
+      decimal_right(decimal: &decimal, shift: shift);
+      set remaining = remaining + amount;
+    } else if 0_i64 < remaining {
+      let amount = imin(remaining, 60_i64);
+      let shift = cvt::<i64, u32>(amount);
+      decimal_left(decimal: &decimal, shift: shift);
+      set remaining = remaining - amount;
+    }
+  }
+  invariant exhausted: remaining == 0_i64;
+  return move decimal;
+}
+
+fn digits_prefix(decimal: &Decimal, count: u64) -> result: DigitPrefix reads(decimal) contract {
+  requires 1_u64 <= count;
+  requires count <= 17_u64;
+} {
+  doc "Returns the first count digits as an integer, padding exact terminating expansions with zeros, and the corresponding power of ten. The Horner recurrence keeps the coefficient below that power.";
+  let coefficient = 0_u64;
+  let scale = 1_u64;
+  for (
+    position in 0_u64..count,
+    invariant positive_scale: 1_u64 <= scale,
+    invariant scale_ceiling: scale <= 100000000000000000_u64,
+    invariant coefficient_below_scale: coefficient < scale
+  ) {
+    let digit = if position < decimal^.count {
+      let stored = decimal^.digits[position];
+      give stored;
+    } else {
+      give 0_u8;
+    }
+    let wide = cvt::<u8, u64>(digit);
+    let shifted = coefficient * 10_u64;
+    set coefficient = shifted + wide;
+    set scale = scale * 10_u64;
+  }
+  return DigitPrefix(coefficient: coefficient, scale: scale);
+}
+
+fn digits_round_up(decimal: &Decimal, count: u64, coefficient: u64) -> result: Bool reads(decimal) contract {
+  requires 1_u64 <= count;
+  requires count <= 17_u64;
+} {
+  doc "Rounds the omitted tail to nearest, breaking an exact half by the parity of the kept coefficient. A nonzero discarded digit means the tail is strictly above a half.";
+  if decimal^.count <= count {
+    return False();
+  }
+  let first = decimal^.digits[count];
+  if 5_u8 < first {
+    return True();
+  }
+  if first < 5_u8 {
+    return False();
+  }
+  let after = count + 1_u64;
+  for (position in after..decimal^.count) {
+    if decimal^.digits[position] != 0_u8 {
+      return True();
+    }
+  }
+  if decimal^.truncated {
+    return True();
+  }
+  let parity = coefficient % 2_u64;
+  return parity != 0_u64;
+}
+
+fn digits_candidate(negative: Bool, coefficient: u64, scale: u64, count: u64, point: i64) -> result: FloatDigits pure contract {
+  requires 1_u64 <= count;
+  requires count <= 17_u64;
+  requires 1_u64 <= scale;
+  requires scale <= 100000000000000000_u64;
+  requires coefficient <= scale;
+  requires -341_i64 <= point;
+  requires point <= 360_i64;
+} {
+  doc "Normalizes the one possible carry from rounding and preserves the requested significant-digit count.";
+  let signed_count = cvt::<u64, i64>(count);
+  let exponent = point - signed_count;
+  if coefficient == scale {
+    let reduced = coefficient / 10_u64;
+    let advanced = exponent + 1_i64;
+    return FloatDigits(negative: negative, digits: reduced, count: count, exponent: advanced);
+  }
+  return FloatDigits(negative: negative, digits: coefficient, count: count, exponent: exponent);
+}
+
+fn digits_compare(candidate: FloatDigits, bound: &Decimal) -> result: i64 reads(bound) {
+  doc "Compares a positive candidate with a normalized exact decimal boundary. Missing digits denote zeros. The result is negative, zero or positive in the same order as candidate minus boundary.";
+  if candidate.digits == 0_u64 {
+    return -1_i64;
+  }
+  let decimal = decimal_from_u64(value: candidate.digits);
+  let signed_count = cvt::<u64, i64>(candidate.count);
+  let point = candidate.exponent + signed_count;
+  if point < bound^.point {
+    return -1_i64;
+  }
+  if bound^.point < point {
+    return 1_i64;
+  }
+  for (position in 0_u64..800_u64) {
+    let left = if position < decimal.count {
+      give decimal.digits[position];
+    } else {
+      give 0_u8;
+    }
+    let right = if position < bound^.count {
+      give bound^.digits[position];
+    } else {
+      give 0_u8;
+    }
+    if left < right {
+      return -1_i64;
+    }
+    if right < left {
+      return 1_i64;
+    }
+  }
+  return 0_i64;
+}
+
+fn digits_inside(candidate: FloatDigits, lower: &Decimal, upper: &Decimal, inclusive: Bool) -> result: Bool reads(lower), reads(upper) {
+  doc "A binary64 rounding interval includes both endpoints exactly when the significand is even. This also handles the asymmetric lower half interval at a normal power of two.";
+  let low_order = digits_compare(candidate: candidate, bound: lower);
+  let high_order = digits_compare(candidate: candidate, bound: upper);
+  if inclusive {
+    let above = 0_i64 <= low_order;
+    let below = high_order <= 0_i64;
+    return band(above, below);
+  }
+  let above = 0_i64 < low_order;
+  let below = high_order < 0_i64;
+  return band(above, below);
+}
+
+fn f64_significant(value: f64, count: u64) -> digits: Result<FloatDigits, NonFinite> pure contract {
+  requires 1_u64 <= count;
+  requires count <= 17_u64;
+} {
+  doc "Decodes binary64 without floating arithmetic, expands its magnitude exactly, and rounds its decimal tail to nearest with ties to even.";
+  let bits = reinterpret::<f64, u64>(value);
+  let sign = ishr(bits, 63_u32);
+  let negative = sign != 0_u64;
+  let fraction = iand(bits, 4503599627370495_u64);
+  let shifted = ishr(bits, 52_u32);
+  let biased = iand(shifted, 2047_u64);
+  if biased == 2047_u64 {
+    if fraction == 0_u64 {
+      let nonfinite = NonFinite::Infinite(negative: negative);
+      return Err<FloatDigits, NonFinite>(error: nonfinite);
+    }
+    let nonfinite = NonFinite::NotANumber(negative: negative);
+    return Err<FloatDigits, NonFinite>(error: nonfinite);
+  }
+  if biased == 0_u64 {
+    if fraction == 0_u64 {
+      let zero = FloatDigits(negative: negative, digits: 0_u64, count: 1_u64, exponent: 0_i64);
+      return Ok<FloatDigits, NonFinite>(value: zero);
+    }
+  }
+  let mantissa = if biased == 0_u64 {
+    give fraction;
+  } else {
+    let with_hidden = fraction + 4503599627370496_u64;
+    give with_hidden;
+  }
+  let exponent = if biased == 0_u64 {
+    give -1074_i64;
+  } else {
+    let signed = cvt::<u64, i64>(biased);
+    let unbiased = signed - 1075_i64;
+    give unbiased;
+  }
+  let decimal = digits_binary_decimal(mantissa: mantissa, exponent: exponent);
+  let prefix = digits_prefix(decimal: &decimal, count: count);
+  let upward = digits_round_up(decimal: &decimal, count: count, coefficient: prefix.coefficient);
+  let coefficient = if upward {
+    let next = prefix.coefficient + 1_u64;
+    give next;
+  } else {
+    give prefix.coefficient;
+  }
+  let selected = digits_candidate(negative: negative, coefficient: coefficient, scale: prefix.scale, count: count, point: decimal.point);
+  return Ok<FloatDigits, NonFinite>(value: selected);
+}
+
+fn f64_shortest(value: f64) -> digits: Result<FloatDigits, NonFinite> pure {
+  doc "Searches exact decimal prefixes from one through sixteen digits against the exact two midpoint boundaries. The two adjacent grid points are the only possible nearest candidates. If both qualify, the exact tail selects the nearer one and an exact half selects the even coefficient. The seventeen-digit rounding is always sufficient for binary64 and is the final ordinary candidate.";
+  let bits = reinterpret::<f64, u64>(value);
+  let sign = ishr(bits, 63_u32);
+  let negative = sign != 0_u64;
+  let fraction = iand(bits, 4503599627370495_u64);
+  let shifted = ishr(bits, 52_u32);
+  let biased = iand(shifted, 2047_u64);
+  if biased == 2047_u64 {
+    if fraction == 0_u64 {
+      let nonfinite = NonFinite::Infinite(negative: negative);
+      return Err<FloatDigits, NonFinite>(error: nonfinite);
+    }
+    let nonfinite = NonFinite::NotANumber(negative: negative);
+    return Err<FloatDigits, NonFinite>(error: nonfinite);
+  }
+  if biased == 0_u64 {
+    if fraction == 0_u64 {
+      let zero = FloatDigits(negative: negative, digits: 0_u64, count: 1_u64, exponent: 0_i64);
+      return Ok<FloatDigits, NonFinite>(value: zero);
+    }
+  }
+  let mantissa = if biased == 0_u64 {
+    give fraction;
+  } else {
+    let with_hidden = fraction + 4503599627370496_u64;
+    give with_hidden;
+  }
+  let exponent = if biased == 0_u64 {
+    give -1074_i64;
+  } else {
+    let signed = cvt::<u64, i64>(biased);
+    let unbiased = signed - 1075_i64;
+    give unbiased;
+  }
+  let decimal = digits_binary_decimal(mantissa: mantissa, exponent: exponent);
+  let fourfold = mantissa * 4_u64;
+  let lower_mantissa = if mantissa == 4503599627370496_u64 {
+    if -1074_i64 < exponent {
+      let midpoint = fourfold - 1_u64;
+      give midpoint;
+    } else {
+      let midpoint = fourfold - 2_u64;
+      give midpoint;
+    }
+  } else {
+    let midpoint = fourfold - 2_u64;
+    give midpoint;
+  }
+  let upper_mantissa = fourfold + 2_u64;
+  let boundary_exponent = exponent - 2_i64;
+  let lower = digits_binary_decimal(mantissa: lower_mantissa, exponent: boundary_exponent);
+  let upper = digits_binary_decimal(mantissa: upper_mantissa, exponent: boundary_exponent);
+  let parity = mantissa % 2_u64;
+  let inclusive = parity == 0_u64;
+  for (count in 1_u64..17_u64) {
+    let prefix = digits_prefix(decimal: &decimal, count: count);
+    let below = digits_candidate(negative: negative, coefficient: prefix.coefficient, scale: prefix.scale, count: count, point: decimal.point);
+    let incremented = prefix.coefficient + 1_u64;
+    let above = digits_candidate(negative: negative, coefficient: incremented, scale: prefix.scale, count: count, point: decimal.point);
+    let below_inside = digits_inside(candidate: below, lower: &lower, upper: &upper, inclusive: inclusive);
+    let above_inside = digits_inside(candidate: above, lower: &lower, upper: &upper, inclusive: inclusive);
+    if below_inside {
+      if above_inside {
+        let upward = digits_round_up(decimal: &decimal, count: count, coefficient: prefix.coefficient);
+        if upward {
+          return Ok<FloatDigits, NonFinite>(value: above);
+        }
+      }
+      return Ok<FloatDigits, NonFinite>(value: below);
+    }
+    if above_inside {
+      return Ok<FloatDigits, NonFinite>(value: above);
+    }
+  }
+  let prefix = digits_prefix(decimal: &decimal, count: 17_u64);
+  let upward = digits_round_up(decimal: &decimal, count: 17_u64, coefficient: prefix.coefficient);
+  let coefficient = if upward {
+    let next = prefix.coefficient + 1_u64;
+    give next;
+  } else {
+    give prefix.coefficient;
+  }
+  let selected = digits_candidate(negative: negative, coefficient: coefficient, scale: prefix.scale, count: 17_u64, point: decimal.point);
+  return Ok<FloatDigits, NonFinite>(value: selected);
+}

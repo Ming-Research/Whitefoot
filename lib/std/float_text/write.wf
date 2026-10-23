@@ -1,0 +1,245 @@
+fn publish_text(text: &[u8], total: u64, destination: &[u8], start: u64, end: u64) -> next: Result<u64, WriteError> reads(text), writes(destination) contract {
+  requires total <= text^.len;
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: after): start <= after;
+  ensures when Ok(value: after): after <= end;
+} {
+  doc "Copies the first total bytes of text into destination from start when the window destination[start..end) holds them, and otherwise reports the length they need. The window is a range reference, so its length is end minus start and every subscript is below the length the single test establishes.";
+  let window = &destination^[start..end];
+  let room = window^.len;
+  if total <= room {
+    for (index in 0_u64..total) {
+      let byte = text^[index];
+      set window^[index] = byte;
+    }
+    let after = start + total;
+    return Ok<u64, WriteError>(value: after);
+  }
+  let failure = WriteError::WriteTooSmall(required: total);
+  return Err<u64, WriteError>(error: failure);
+}
+
+fn i64_write(value: i64, destination: &[u8], start: u64, end: u64) -> next: Result<u64, WriteError> writes(destination) contract {
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: after): start <= after;
+  ensures when Ok(value: after): after <= end;
+} {
+  doc "Builds the digits of the magnitude least significant first, lays the text out from the left in a staging array with its sign, and publishes it. The magnitude is the two's complement negation of the value's bits, which is exact for every negative value including the smallest.";
+  let bits = cvt.wrap::<i64, u64>(value);
+  let magnitude = if value < 0_i64 {
+    give 0_u64 -wrap bits;
+  } else {
+    give bits;
+  }
+  let sign = if value < 0_i64 {
+    give 1_u64;
+  } else {
+    give 0_u64;
+  }
+  let reversed = array_filled::<u8, 20>(value: 48_u8);
+  let first_digit = magnitude % 10_u64;
+  let first_code = first_digit + 48_u64;
+  let first_byte = cvt::<u64, u8>(first_code);
+  set reversed[0_u64] = first_byte;
+  let rest = magnitude / 10_u64;
+  let length = 1_u64;
+  for (
+    step in 1_u64..20_u64,
+    invariant positive: 1_u64 <= length,
+    invariant bounded: length <= 20_u64
+  ) {
+    if rest != 0_u64 {
+      let low = rest % 10_u64;
+      let code = low + 48_u64;
+      let byte = cvt::<u64, u8>(code);
+      set reversed[step] = byte;
+      set rest = rest / 10_u64;
+      set length = step + 1_u64;
+    }
+  }
+  let staged = array_filled::<u8, 32>(value: 0_u8);
+  if value < 0_i64 {
+    set staged[0_u64] = 45_u8;
+  }
+  let top = length - 1_u64;
+  for (index in 0_u64..length) {
+    let from_end = top - index;
+    let byte = reversed[from_end];
+    let slot = sign + index;
+    set staged[slot] = byte;
+  }
+  let total = length + sign;
+  return publish_text(text: &staged[0_u64..32_u64], total: total, destination: destination, start: start, end: end);
+}
+
+fn digits_write(digits: FloatDigits, precision: u64, destination: &[u8], start: u64, end: u64) -> next: Result<u64, WriteError> writes(destination) contract {
+  requires 1_u64 <= precision;
+  requires precision <= 17_u64;
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: after): start <= after;
+  ensures when Ok(value: after): after <= end;
+} {
+  doc "Lays the text out in a sparse template whose cells have fixed positions (sign, integer digits, point, fraction digits, exponent), then packs the occupied cells in order and publishes them, so every subscript is a constant or a counted index below a constant bound. A zero byte marks an empty cell. The digit characters are the count low-order digits of digits.digits, as digits_write's contract states.";
+  let negative = digits.negative;
+  let value = digits.digits;
+  let count = digits.count;
+  let exponent = digits.exponent;
+  let chars = array_filled::<u8, 17>(value: 48_u8);
+  let template = array_filled::<u8, 64>(value: 0_u8);
+  if negative {
+    set template[0_u64] = 45_u8;
+  }
+  if value == 0_u64 {
+    set template[1_u64] = 48_u8;
+  } else {
+    let remaining = count;
+    let rest = value;
+    loop @extract (
+      invariant within: remaining <= count
+    ) {
+      if 0_u64 < remaining {
+      } else {
+        break @extract;
+      }
+      let at = remaining - 1_u64;
+      let low = rest % 10_u64;
+      let code = low + 48_u64;
+      let byte = cvt::<u64, u8>(code);
+      set chars[at] = byte;
+      set rest = rest / 10_u64;
+      set remaining = at;
+    }
+    let kept = count;
+    loop @strip (
+      invariant shrinks: kept <= count,
+      invariant positive: 1_u64 <= kept
+    ) {
+      if 1_u64 < kept {
+      } else {
+        break @strip;
+      }
+      let last = kept - 1_u64;
+      let tail = chars[last];
+      if tail == 48_u8 {
+        set kept = last;
+      } else {
+        break @strip;
+      }
+    }
+    let count_signed = cvt::<u64, i64>(count);
+    let top = exponent + count_signed;
+    let lead = top - 1_i64;
+    let limit = cvt::<u64, i64>(precision);
+    let fixed = if -4_i64 <= lead {
+      let below = lead < limit;
+      give below;
+    } else {
+      give False();
+    }
+    if fixed {
+      if lead < 0_i64 {
+        set template[1_u64] = 48_u8;
+        set template[18_u64] = 46_u8;
+        let negated = 0_i64 - lead;
+        let zeros_signed = negated - 1_i64;
+        let zeros = cvt::<i64, u64>(zeros_signed);
+        for (offset in 0_u64..3_u64) {
+          if offset < zeros {
+            let slot = 21_u64 - offset;
+            set template[slot] = 48_u8;
+          }
+        }
+        for (column in 0_u64..17_u64) {
+          if column < kept {
+            let byte = chars[column];
+            let slot = column + 22_u64;
+            set template[slot] = byte;
+          }
+        }
+      } else {
+        let lead_unsigned = cvt::<i64, u64>(lead);
+        let integer_digits = lead_unsigned + 1_u64;
+        for (position in 0_u64..17_u64) {
+          if position < integer_digits {
+            let byte = chars[position];
+            let slot = position + 1_u64;
+            set template[slot] = byte;
+          }
+        }
+        if integer_digits < kept {
+          set template[18_u64] = 46_u8;
+          for (column in 0_u64..17_u64) {
+            if integer_digits <= column {
+              if column < kept {
+                let byte = chars[column];
+                let slot = column + 19_u64;
+                set template[slot] = byte;
+              }
+            }
+          }
+        }
+      }
+    } else {
+      let first = chars[0_u64];
+      set template[1_u64] = first;
+      if 1_u64 < kept {
+        set template[18_u64] = 46_u8;
+        for (column in 1_u64..17_u64) {
+          if column < kept {
+            let byte = chars[column];
+            let slot = column + 19_u64;
+            set template[slot] = byte;
+          }
+        }
+      }
+      set template[40_u64] = 101_u8;
+      let sign_byte = if lead < 0_i64 {
+        give 45_u8;
+      } else {
+        give 43_u8;
+      }
+      set template[41_u64] = sign_byte;
+      let magnitude = if lead < 0_i64 {
+        let negated = 0_i64 - lead;
+        let converted = cvt::<i64, u64>(negated);
+        give converted;
+      } else {
+        let converted = cvt::<i64, u64>(lead);
+        give converted;
+      }
+      let hundreds_total = magnitude / 100_u64;
+      let hundreds = hundreds_total % 10_u64;
+      let tens_total = magnitude / 10_u64;
+      let tens = tens_total % 10_u64;
+      let ones = magnitude % 10_u64;
+      let tens_code = tens + 48_u64;
+      let ones_code = ones + 48_u64;
+      let tens_byte = cvt::<u64, u8>(tens_code);
+      let ones_byte = cvt::<u64, u8>(ones_code);
+      set template[43_u64] = tens_byte;
+      set template[44_u64] = ones_byte;
+      if 0_u64 < hundreds {
+        let hundreds_code = hundreds + 48_u64;
+        let hundreds_byte = cvt::<u64, u8>(hundreds_code);
+        set template[42_u64] = hundreds_byte;
+      }
+    }
+  }
+  let packed = array_filled::<u8, 64>(value: 0_u8);
+  let total = 0_u64;
+  for (
+    cell in 0_u64..64_u64,
+    invariant filled: total <= cell,
+    invariant bounded: total <= 64_u64
+  ) {
+    let byte = template[cell];
+    if byte != 0_u8 {
+      set packed[total] = byte;
+      set total = total + 1_u64;
+    }
+  }
+  return publish_text(text: &packed[0_u64..64_u64], total: total, destination: destination, start: start, end: end);
+}

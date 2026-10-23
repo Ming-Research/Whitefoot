@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 Decimal text conversion is a checked standard-library module over exact decimal arithmetic
+
+Nodes: language/standard-library/float-text
+
+Summary: Firn and Halo each carried their own hand-written decimal readers and writers for `f64`, with differing edge handling, and both must answer as Redis 7.2.16 does. The new node records that conversion lives in the checked Whitefoot module `std::float_text`, which returns selected digits apart from their `%g` layout, instead of per-writer digit selection or host-runtime routines; that reading, shortest selection and significant-digit rounding share one exact 800-digit decimal representation with Clinger's single-operation fast path, instead of cached-power algorithms before a consumer needs their speed; that shortest output has an exact value contract instead of reproducing Redis's Grisu2 output; and that product spelling policies stay with the caller. The alternatives and their grounds are in the "Algorithms" section of research/investigations/float-text/DESIGN.md.
+
 ## 2026-10-14 An enum's route states are computed only for values a later reader demands
 
 Nodes: compiler/checker-facts

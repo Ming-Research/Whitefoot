@@ -1,0 +1,35 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn normalization_zeros(first: u64, shift: u32) -> result: u64 pure contract {
+  requires 1_u64 <= first;
+  requires first <= 9_u64;
+  requires shift <= 60_u32;
+  ensures result <= 19_u64;
+} {
+  doc "A positive leading decimal digit needs at most 19 multiplications by ten to reach 2^60. Predicted refusal: INV-1 cannot re-establish the skipped <= 19 loop invariant from the scalar affine facts; the necessary relation connects the number of steps with the multiplicative growth of value. This prediction has not been compiled.";
+  let divisor = ishl(1_u64, shift);
+  let value = first;
+  let skipped = 0_u64;
+  loop @leading (
+    invariant positive: 1_u64 <= value,
+    invariant value_bound: value <= 11529215046068469760_u64,
+    invariant skipped_bound: skipped <= 19_u64
+  ) {
+    if value < divisor {
+      set value = value * 10_u64;
+      set skipped = skipped + 1_u64;
+    } else {
+      invariant done: skipped <= 19_u64;
+      return skipped;
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let skipped = normalization_zeros(first: 1_u64, shift: 60_u32);
+  if skipped == 19_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

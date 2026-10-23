@@ -1,0 +1,17 @@
+fn decimal_prefix(digit: u8, count: u64) -> result: u64 pure contract {
+  requires digit <= 9_u8;
+  requires count <= 18_u64;
+  ensures result <= 999999999999999999_u64;
+} {
+  doc "Predicted INV-1 refusal, not compiled: the next-header prefix bound needs the relation between the number of Horner steps and the value. Eighteen copies of any decimal digit form an integer at most 10^18 minus one. The body multiplication and addition fit in u64 even under the weaker written header bound. This isolates the coefficient recurrence in decimal_round_integer rather than the separate scale recurrence.";
+  let wide = cvt::<u8, u64>(digit);
+  let value = 0_u64;
+  for (
+    position in 0_u64..count,
+    invariant prefix_bound: value <= 999999999999999999_u64
+  ) {
+    let tens = value * 10_u64;
+    set value = tens + wide;
+  }
+  return value;
+}

@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const shifts: Array<u32, 3> =[0_u32, 3_u32, 6_u32];
+
+fn positive_shift(index: u64) -> result: u32 pure contract {
+  requires 1_u64 <= index;
+  requires index < 3_u64;
+  ensures 1_u32 <= result;
+} {
+  doc "Every selected element is positive because the requirements exclude the sole zero at index zero. The direct indexed return was rejected as FN-9 InvalidPostconditionReturn before its numeric proof. The read now supplies one named scalar result datum. The intended FN-9 proof remains unverified: ENT-3.S9 bounds a read by the whole constant array's element extrema rather than the selected index range.";
+  let shift = shifts[index];
+  return shift;
+}
+
+fn main() -> status: ExitStatus pure {
+  let shift = positive_shift(index: 1_u64);
+  if shift == 3_u32 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
