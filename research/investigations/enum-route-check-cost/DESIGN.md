@@ -970,6 +970,89 @@ additionally saves the adaptation of the Halo library checked out inside Firn
 (`deps/halo-wf`, a submodule that the outer diff does not contain), which the
 earlier runs redid every time.
 
+### Result of the segment timing on the head that merges
+
+[Run 39732958986](https://github.com/Ming-Research/Whitefoot/actions/runs/39732958986),
+workflow head `6d3cf6679`, whose `compiler/` is that of the head that merges
+(merge base `48b94ccfc`). Every exit code was 0 and every twin median lay inside
+its own range (Firn 0.995 (0.992–1.004), `pkg::vm` 0.996 (0.990–1.006),
+`pkg::test` 0.995 (0.980–1.000)), so nothing was repeated. The three workloads
+ran on different hosted CPUs (Firn EPYC 7763, `pkg::vm` Xeon Platinum 8370C,
+`pkg::test` EPYC 7763), so only ratios within one workload compare. The unit
+tests and the design-tree check ran on the same head in
+[run 39732959008](https://github.com/Ming-Research/Whitefoot/actions/runs/39732959008):
+3,026 unit tests passed, 0 failed; the design-tree lint printed nodes 142 (base
+142, +0), depth 3 (+0), decisions 922 (+0), rejected 789 (+0).
+
+Median of the per-round ratio to `base`, with min–max over the rounds:
+
+| Workload | `base` CPU s | `twin` | `c431` (`a`) | `main` | `branch` (`D`) |
+|---|---:|---:|---:|---:|---:|
+| Firn (5 rounds) | 90.05 | 0.995 (0.992–1.004) | 1.149 (1.145–1.151) | 1.239 (1.235–1.260) | 1.082 (1.044–1.111) |
+| `pkg::vm` (5 rounds) | 15.95 | 0.996 (0.990–1.006) | 1.152 (1.149–1.174) | 0.775 (0.770–0.793) | 0.632 (0.615–0.638) |
+| `pkg::test` (3 rounds, `main` once) | 1.99 | 0.995 (0.980–1.000) | not run | 591.32 s | 1.010 (1.005–1.025) |
+
+The segments, per round in round order, with median and min–max:
+
+| Workload | `a` = `c431`/`base` | `b` = `main`/`c431` | `c` = `branch`/`main` | `D` = `branch`/`base` | `N` = `c` × `a` |
+|---|---|---|---|---|---|
+| Firn | 1.149 (1.145–1.151) | 1.080 (1.077–1.096) | 0.868 (0.845–0.887) | 1.082 (1.044–1.111) | 0.995 (0.967–1.019) |
+| `pkg::vm` | 1.152 (1.149–1.174) | 0.673 (0.668–0.676) | 0.804 (0.798–0.823) | 0.632 (0.615–0.638) | 0.936 (0.918–0.948) |
+
+Per-round Firn CPU seconds (rounds 1–5): `base` 90.77, 89.58, 90.05, 90.18,
+89.58; `c431` 103.89, 103.07, 103.47, 103.42, 102.94; `main` 112.11, 110.97,
+113.43, 111.66, 112.26; `branch` 94.76, 96.89, 98.13, 96.92, 99.54. The `branch`
+column is the noisiest here (about ±2.5%), the others about ±1%.
+
+Against the decision rules written above:
+
+- `pkg::vm`: `D` 0.632 is at most 1.03, rule 1, met. `pkg::test`: 1.010 is at
+  most 1.5, met.
+- Firn: `D` 1.082 exceeds 1.03, so the row's own criterion is not met (rule 1
+  fails). Rule 2 or 3 would turn on `N` (0.995, at most 1.03), but the premise
+  checks decide first.
+- **P1 holds** on both workloads: `affine_interval_warm_probes` and
+  `affine_interval_construction_probes` are 0 in `base` and `c431` and positive
+  in `main` and `branch` (Firn 215,561 and 93,430, identical in `main` and
+  `branch`; `pkg::vm` 32,536 and 16,103, identical).
+- **P2 is refuted** on both workloads, by one of its three counters. The limit
+  is a tenth of what #431 added (`c431` minus `base`):
+
+  | Counter | Workload | #431 added | limit | `c431` → `main` |
+  |---|---|---:|---:|---:|
+  | `join:join` | Firn | 751,764 | 75,176 | +35 |
+  | | `pkg::vm` | 264,868 | 26,487 | 0 |
+  | `snapshot:rows_sum` | Firn | 759,266 | 75,927 | −52,704 |
+  | | `pkg::vm` | 122,680 | 12,268 | +6,578 |
+  | `closure:count` | Firn | 57,255 | 5,726 | **+25,802** |
+  | | `pkg::vm` | 11,782 | 1,178 | **+3,588** |
+
+  `closure:count` moves by 45.1% (Firn) and 30.5% (`pkg::vm`) of what #431 added,
+  both over the limit. By the rule fixed before the run, `N` is therefore not
+  used; the segment figures above are reported as they are and the architect is
+  asked again.
+
+Two further readings of the same counters, made after the result and not part of
+the rule above (the tenth was picked, not derived):
+
+- `main` minus `branch` is what this change removes. For `join:join` it is
+  744,966 (Firn) and 261,470 (`pkg::vm`), 99.1% and 98.7% of what #431 added; for
+  `snapshot:rows_sum` 804,462 and 129,178, 106% and 105%; for `closure:count`
+  60,001 and 11,990, 105% and 102%. The change removes about what #431 added, on
+  the later main.
+- What `branch` keeps above `base` in `closure:count` (+23,056 Firn, +3,380
+  `pkg::vm`) is about what `main` gained over `c431` (+25,802, +3,588), 89% and
+  94%. This fits closures added by the merges since #431 and left alone by this
+  change, and fits equally well closures that #431's work multiplied on the later
+  main and this change did not remove; the counters do not tell them apart.
+
+Whether the later merges added those closures, and which, is not measured here.
+
+Whether the head's change applies onto `c431` was checked without a build: the
+seven `compiler/` files that differ between `48b94ccfc` and the head apply onto
+`af7665be6` with `git apply --3way` into a scratch index, with no conflict. That
+the result compiles and what it measures are not known.
+
 ### Reviews
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
