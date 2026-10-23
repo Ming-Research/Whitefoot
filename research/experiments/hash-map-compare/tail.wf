@@ -111,7 +111,8 @@ fn quantile(counts: &Box<Slots<u64>>, need: u64) -> value: u64 reads(counts) {
   doc "The least nanosecond count whose cumulative count reaches need, or exact when it lies among the removals of exact nanoseconds or more.";
   let seen = 0_u64;
   for (at in 0_u64..counts^.inner.len) {
-    set seen = seen +wrap counts^.inner[at];
+    let tally = counts^.inner[at];
+    set seen = seen +wrap tally;
     if seen >= need {
       return at;
     }
@@ -272,7 +273,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     }
     let elapsed = nanoseconds_from(earlier: started, later: ended);
     if elapsed < counts.inner.len {
-      set counts.inner[elapsed] = counts.inner[elapsed] +wrap 1_u64;
+      let tally = counts.inner[elapsed];
+      set counts.inner[elapsed] = tally +wrap 1_u64;
     }
     if elapsed > longest {
       set longest = elapsed;
@@ -281,12 +283,15 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let half = size / 2_u64;
   let hundredth = size / 100_u64;
   let thousandth = size / 1000_u64;
+  let median_need = size -sat half;
+  let p99_need = size -sat hundredth;
+  let p999_need = size -sat thousandth;
   let fields = array_filled::<u64, 6>(value: 0_u64);
   set fields[0_u64] = size;
   set fields[1_u64] = found;
-  set fields[2_u64] = quantile(counts: &counts, need: size -sat half);
-  set fields[3_u64] = quantile(counts: &counts, need: size -sat hundredth);
-  set fields[4_u64] = quantile(counts: &counts, need: size -sat thousandth);
+  set fields[2_u64] = quantile(counts: &counts, need: median_need);
+  set fields[3_u64] = quantile(counts: &counts, need: p99_need);
+  set fields[4_u64] = quantile(counts: &counts, need: p999_need);
   set fields[5_u64] = longest;
   let status = emit(factory: &factory, output: &output, fields: &fields);
   release_map(map: move map);
