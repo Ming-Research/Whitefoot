@@ -299,26 +299,47 @@ jobs:
           open(sys.argv[2], "w").write("\n".join(lines) + "\n")
           EOF
           # hinted: an inline hint on the removal's definitions, as an inline
-          # marker on hash_map_remove would lower; on candidate and weighted.
-          for pair in candidate:hinted weighted:weightedhinted; do
-            python3 - "$out/${pair%%:*}.ll" "$out/${pair##*:}.ll" <<'EOF'
+          # marker on hash_map_remove would lower (Rust's #[inline]); always:
+          # an always-inline attribute (Rust's #[inline(always)]). Each on
+          # candidate and on weighted.
+          for spec in candidate:hinted:inlinehint weighted:weightedhinted:inlinehint \
+                      candidate:always:alwaysinline weighted:weightedalways:alwaysinline; do
+            IFS=: read -r from to attr <<< "$spec"
+            python3 - "$out/$from.ll" "$out/$to.ll" "$attr" <<'EOF'
           import sys
           lines = open(sys.argv[1]).read().split("\n")
           hits = 0
           for i, line in enumerate(lines):
               if line.startswith("define") and "hash_map_remove$instance" in line and line.endswith(" {"):
-                  lines[i] = line[:-2] + " inlinehint {"
+                  lines[i] = line[:-2] + f" {sys.argv[3]} {{"
                   hits += 1
           assert hits >= 1, hits
-          print(sys.argv[2], "hinted definitions:", hits)
+          print(sys.argv[2], sys.argv[3], "definitions:", hits)
           open(sys.argv[2], "w").write("\n".join(lines) + "\n")
           EOF
           done
-          sed -i 's/weighted/weighted hinted weightedhinted inlined/' "$out/arms.txt"
+          # coldsplit: weighted with LLVM's hot/cold splitting run on the
+          # unoptimized module first, so the cold side is outlined before the
+          # inliner prices the removal, as a compiler pass splitting cold code
+          # ahead of LLVM would; coldsplitforced also outlines regions the
+          # splitter's benefit model would keep.
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          "/usr/bin/opt-$version" -passes=hot-cold-split -S "$out/weighted.ll" -o "$out/coldsplit.ll"
+          "/usr/bin/opt-$version" -passes=hot-cold-split -hotcoldsplit-threshold=-1 -S "$out/weighted.ll" -o "$out/coldsplitforced.ll"
+          for arm in coldsplit coldsplitforced; do
+            echo "$arm outlined functions: $(grep -c '^define .*\.cold' "$out/$arm.ll")"
+            grep '^define .*\.cold' "$out/$arm.ll" | cut -c1-200 || true
+          done
+          # Where hot/cold splitting and the partial inliner stand in the O2
+          # pipeline relative to the inliner.
+          "/usr/bin/opt-$version" -passes='default<O2>' -hot-cold-split -enable-partial-inlining -print-pipeline-passes -disable-output "$out/weighted.ll" \
+            | tr ',' '\n' | grep -n -E 'inline|hotcold|partial' || true
+          sed -i 's/weighted/weighted hinted weightedhinted inlined always weightedalways coldsplit coldsplitforced partial/' "$out/arms.txt"
           cat "$out/arms.txt"
           for arm in $(cat "$out/arms.txt"); do
             source=$arm; extra=""
             if [ "$arm" = inlined ]; then source=candidate; extra="-mllvm -inline-threshold=2000"; fi
+            if [ "$arm" = partial ]; then source=weighted; extra="-mllvm -enable-partial-inlining"; fi
             clang -O2 -falign-functions=64 $extra -Wno-override-module -x ir -c "$out/$source.ll" -o "$out/$arm.o"
             clang -O2 "$out/$arm.o" $objects -pthread -lm -o "$out/hand-$arm"
             clang -O2 -falign-functions=64 $extra -Wno-override-module -x ir -S -emit-llvm "$out/$source.ll" -o "$out/$arm.opt.ll"
@@ -339,7 +360,9 @@ jobs:
               for m in re.finditer(r'^define [^@]*@("?[^(]+"?)\(.*?^}', text, re.S | re.M):
                   name = m.group(1).strip('"')
                   short = name.split("$")[0].split(".")[-1]
-                  if short not in ("wf_remove_one", "wf_churn_sample", "hash_map_remove", "hash_map_shrink", "hash_map_find"):
+                  if ".cold" in name:
+                      short += ".cold"
+                  if short.removesuffix(".cold") not in ("wf_remove_one", "wf_churn_sample", "hash_map_remove", "hash_map_shrink", "hash_map_find"):
                       continue
                   count = sum(1 for l in m.group(0).splitlines() if l.startswith("  "))
                   calls = sorted({c.split("$")[0].split(".")[-1] for c in re.findall(r'call [^@]*@"?([A-Za-z0-9_.$]+)', m.group(0)) if not c.startswith("llvm")})
