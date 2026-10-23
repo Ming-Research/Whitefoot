@@ -1,9 +1,0 @@
-fn probe(values: &Array<u8, 1>) -> result: u8 reads(values) contract {
-  requires 256_u16 <= cvt::<u8, u16>(values^[1_u64]);
-} {
-  return values^[0_u64];
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}

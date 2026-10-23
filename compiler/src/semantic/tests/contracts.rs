@@ -864,11 +864,10 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// FN-6 admits this closed callback cycle. FN-9 must still withhold the
-/// selected actual's same-component summary when checking the wrapper's
-/// postcondition; a formal boundary cannot bootstrap that summary.
+/// FN-6 admits this closed callback cycle. The retained formal boundary
+/// transports the actual's same-component induction hypothesis [DIAG-2].
 #[test]
-fn a_closed_recursive_bound_call_cannot_bootstrap_summary_publication() {
+fn a_closed_recursive_bound_call_uses_its_actuals_induction_hypothesis() {
     let source = r#"interface Identity {
   fn get(value: i32) -> result: i32 pure contract {
     ensures result == value;
@@ -903,7 +902,12 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_behavior_rule(source, SemanticRule::Fn9);
+    with_semantics(source.as_bytes(), |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "{outcome:?}"
+        );
+    });
 }
 
 #[test]
@@ -1525,13 +1529,8 @@ fn invoke<interface Reader<T>>(value: &Envelope<T>) -> result: u64 reads(value) 
 
 fn main() -> status: std::process::ExitStatus pure {
   let value = Envelope<u64>(tag: 7_u64, payload: 8_u64);
-  if value.tag <= 99_u64 {
-    let tag = invoke::<ReadU64>(value: &value);
-    if tag == 7_u64 {
-      return std::process::exit_status(code: 0_u8);
-    }
-  }
-  return std::process::exit_status(code: 1_u8);
+  let tag = invoke::<ReadU64>(value: &value);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for mode in [OverlapLowering::Off, OverlapLowering::On] {

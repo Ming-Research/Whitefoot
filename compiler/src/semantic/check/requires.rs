@@ -34,21 +34,18 @@ pub(super) struct CheckedRequires {
 }
 
 /// One checked definition's contribution to the requirements that expand it.
-pub(super) struct ClauseDefinition {
-    pub(super) binding: BindingId,
+struct ClauseDefinition {
+    binding: BindingId,
     /// The clause (b) places its own initializer writes.
-    pub(super) places: Vec<CheckedExpression>,
+    places: Vec<CheckedExpression>,
     /// The earlier definitions its initializer reads.
-    pub(super) uses: Vec<BindingId>,
+    uses: Vec<BindingId>,
 }
 
 /// [ENT-2] every clause (b) place one checked clause expression writes, in
 /// source order: a measure of a subscripted place and a subscripted read,
 /// the two forms whose subscripts owe [OP-4] where the place is formed.
-pub(super) fn collect_clause_places(
-    expression: &CheckedExpression,
-    places: &mut Vec<CheckedExpression>,
-) {
+fn collect_clause_places(expression: &CheckedExpression, places: &mut Vec<CheckedExpression>) {
     let subscripted = |path: &[CheckedPlaceStep]| {
         path.iter()
             .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
@@ -63,10 +60,7 @@ pub(super) fn collect_clause_places(
         CheckedExpression::RangeMeasure { root, .. } if root.formation.is_some() => {
             places.push(expression.clone());
         }
-        CheckedExpression::ArrayIndex { .. }
-        | CheckedExpression::BufferIndex { .. }
-        | CheckedExpression::RangeElementMeasure { .. }
-        | CheckedExpression::RangeIndex { .. } => {
+        CheckedExpression::RangeElementMeasure { .. } | CheckedExpression::RangeIndex { .. } => {
             places.push(expression.clone());
         }
         _ => {}
@@ -76,227 +70,57 @@ pub(super) fn collect_clause_places(
     }
 }
 
-/// Earlier checked definitions after alpha expansion. Their full expressions
-/// remain available when a later selector projects an aggregate alias, and
-/// preserve an inadmissible computed or element offset for clause rejection.
-pub(super) type DefinitionOffsets = HashMap<BindingId, CheckedExpression>;
+/// Each definition whose value can stand as an offset of a clause (b) place,
+/// with that value and the captured term it reads: a binding read, an integer
+/// literal or named const, or a const generic, followed through earlier
+/// definitions [ENT-2].
+type DefinitionOffsets = HashMap<BindingId, (CheckedExpression, CapturedTerm)>;
 
 /// The offset a definition's value supplies after expansion, when it is one.
-pub(super) fn definition_offset(
+fn definition_offset(
     value: &CheckedExpression,
+    definitions: &[ClauseDefinition],
     offsets: &DefinitionOffsets,
-    types: &TypeContext<'_>,
-) -> Result<CheckedExpression, CheckStop> {
-    let mut expanded = expand_definition_value(value, offsets, types)?;
-    expand_definition_offsets(&mut expanded, offsets, types)?;
-    Ok(expanded)
-}
-
-/// Alpha-expand a checked datum before deciding whether it can be a
-/// selector. Projected aliases use the same typed field nodes as ordinary
-/// checked expressions; an inadmissible initializer remains visible to the
-/// clause admission judgment instead of becoming an erased local's term.
-fn expand_definition_value(
-    value: &CheckedExpression,
-    offsets: &DefinitionOffsets,
-    types: &TypeContext<'_>,
-) -> Result<CheckedExpression, CheckStop> {
+    places: &super::super::places::CapturedPlaceTable,
+) -> Option<(CheckedExpression, CapturedTerm)> {
     match value {
         CheckedExpression::Binding {
             binding,
             consume_root: false,
             ..
-        } => Ok(offsets
-            .get(binding)
-            .cloned()
-            .unwrap_or_else(|| value.clone())),
-        CheckedExpression::Project {
-            carrier,
-            binding,
-            fields,
-            consume_root: false,
-            ..
-        } if offsets.contains_key(binding) => {
-            let mut value = offsets
-                .get(binding)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                .clone();
-            for field in fields {
-                let CheckedType::Nominal(nominal) = value.ty() else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                let CheckedNominalKind::Struct { fields } = &types
-                    .nominals
-                    .get(nominal.0 as usize)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                    .kind
-                else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                let ty = fields
-                    .get(*field as usize)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                    .ty;
-                value = CheckedExpression::ProjectValue {
-                    carrier: carrier.clone(),
-                    value: Box::new(value),
-                    nominal,
-                    field: *field,
-                    ty,
-                };
-            }
-            Ok(value)
-        }
-        CheckedExpression::ProjectValue {
-            carrier,
-            value,
-            nominal,
-            field,
-            ty,
-        } => Ok(CheckedExpression::ProjectValue {
-            carrier: carrier.clone(),
-            value: Box::new(expand_definition_value(value, offsets, types)?),
-            nominal: *nominal,
-            field: *field,
-            ty: *ty,
-        }),
-        CheckedExpression::BufferMeasure { measure, root } => {
-            let mut root = super::super::model::CheckedContainerRoot {
-                root: super::super::places::PlaceRoot::Binding(root.binding),
-                path: root.path.clone(),
-                ty: CheckedType::Buffer {
-                    element: root.element,
-                },
-                proof_base: root.proof_base.clone(),
-            };
-            expand_definition_root(&mut root, offsets)?;
-            Ok(CheckedExpression::ContainerMeasure {
-                measure: *measure,
-                root,
-            })
-        }
-        CheckedExpression::ArrayMeasure {
-            measure,
-            root: super::super::model::CheckedArrayRoot::Binding { binding, fields },
-            ..
-        } if offsets.contains_key(binding) => {
-            let value = offsets
-                .get(binding)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            let mut root = definition_container_root(value)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            for field in fields {
-                let CheckedType::Nominal(nominal) = root.ty else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                let CheckedNominalKind::Struct { fields } = &types.nominal(nominal)?.kind else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                root.ty = fields
-                    .get(*field as usize)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                    .ty;
-                root.path.push(CheckedPlaceStep::Field(*field));
-            }
-            Ok(CheckedExpression::ContainerMeasure {
-                measure: *measure,
-                root,
-            })
-        }
-        CheckedExpression::ContainerMeasure { measure, root } => {
-            let mut root = root.clone();
-            expand_definition_root(&mut root, offsets)?;
-            Ok(CheckedExpression::ContainerMeasure {
-                measure: *measure,
-                root,
-            })
-        }
-        CheckedExpression::BoxDeref { .. } => {
-            let mut expanded = value.clone();
-            if let CheckedExpression::BoxDeref { value, .. } = &mut expanded {
-                **value = expand_definition_value(value, offsets, types)?;
-            }
-            Ok(expanded)
-        }
-        _ => Ok(value.clone()),
-    }
-}
-
-/// A direct alias keeps the same checked storage vocabulary when a later
-/// measure or subscript selects below it; no erased definition is a root.
-fn definition_container_root(
-    value: &CheckedExpression,
-) -> Option<super::super::model::CheckedContainerRoot> {
-    use super::super::model::CheckedContainerRoot;
-    use super::super::places::PlaceRoot;
-    let root = |root, path, proof_base| CheckedContainerRoot {
-        root,
-        path,
-        proof_base,
-        ty: value.ty(),
-    };
-    match value {
-        CheckedExpression::Binding { binding, .. } => {
-            Some(root(PlaceRoot::Binding(*binding), Vec::new(), None))
-        }
-        CheckedExpression::NamedConstant { constant, .. } => {
-            Some(root(PlaceRoot::Constant(*constant), Vec::new(), None))
-        }
-        CheckedExpression::Project {
-            binding, fields, ..
-        } => Some(root(
-            PlaceRoot::Binding(*binding),
-            fields
+        } => match offsets.get(binding) {
+            Some(expanded) => Some(expanded.clone()),
+            None if definitions
                 .iter()
-                .copied()
-                .map(CheckedPlaceStep::Field)
-                .collect(),
-            None,
-        )),
-        CheckedExpression::DerefAddressed { binding, proof, .. } => Some(root(
-            PlaceRoot::Binding(*binding),
-            Vec::new(),
-            proof.clone(),
-        )),
-        CheckedExpression::ProjectValue {
-            value: base, field, ..
-        } => {
-            let mut selected = definition_container_root(base)?;
-            selected.path.push(CheckedPlaceStep::Field(*field));
-            selected.ty = value.ty();
-            Some(selected)
-        }
-        CheckedExpression::BoxDeref {
-            value: base,
-            nominal,
+                .any(|definition| definition.binding == *binding) =>
+            {
+                None
+            }
+            None => Some((value.clone(), CapturedTerm::Binding(*binding))),
+        },
+        CheckedExpression::Constant(CheckedValue::Integer { bits, .. })
+        | CheckedExpression::NamedConstant {
+            value: CheckedValue::Integer { bits, .. },
             ..
-        } => {
-            let mut selected = definition_container_root(base)?;
-            selected.path.push(CheckedPlaceStep::BoxReferent(*nominal));
-            selected.ty = value.ty();
-            Some(selected)
+        } => Some((value.clone(), CapturedTerm::Literal(*bits))),
+        CheckedExpression::Constant(CheckedValue::ConstGeneric { declaration, .. }) => {
+            Some((value.clone(), CapturedTerm::Const(*declaration)))
         }
-        CheckedExpression::ReadStorage { root, .. } => Some(root.clone()),
-        _ => None,
+        _ => {
+            let place = super::super::places::tracked_offset_place(value)?;
+            if !matches!(value.ty(), CheckedType::Integer(_)) {
+                return None;
+            }
+            let id = places.intern(place.clone());
+            let term = match place.root {
+                super::super::places::PlaceRoot::Binding(binding) if place.path.is_empty() => {
+                    CapturedTerm::Binding(binding)
+                }
+                _ => CapturedTerm::Place(id),
+            };
+            Some((value.clone(), term))
+        }
     }
-}
-
-fn expand_definition_root(
-    root: &mut super::super::model::CheckedContainerRoot,
-    offsets: &DefinitionOffsets,
-) -> Result<(), CheckStop> {
-    let super::super::places::PlaceRoot::Binding(binding) = root.root else {
-        return Ok(());
-    };
-    let Some(value) = offsets.get(&binding) else {
-        return Ok(());
-    };
-    let mut expanded =
-        definition_container_root(value).ok_or(SemanticCompilerFailure::InvalidResolution)?;
-    expanded.path.extend(root.path.iter().cloned());
-    expanded.ty = root.ty;
-    *root = expanded;
-    Ok(())
 }
 
 /// One subscript offset of a clause place, read through a definition, is the
@@ -305,183 +129,155 @@ fn expand_definition_offset(
     offset: &mut CheckedExpression,
     captured: &mut CapturedValue,
     offsets: &DefinitionOffsets,
-    types: &TypeContext<'_>,
-) -> Result<(), CheckStop> {
-    *offset = expand_definition_value(offset, offsets, types)?;
-    captured.term = offset.tracked_offset().unwrap_or(CapturedTerm::Opaque);
-    Ok(())
+) {
+    if let CheckedExpression::Binding { binding, .. } = offset
+        && let Some((value, term)) = offsets.get(binding)
+    {
+        *offset = value.clone();
+        captured.term = *term;
+    }
 }
 
-fn expand_definition_path_offsets(
-    path: &mut [CheckedPlaceStep],
-    offsets: &DefinitionOffsets,
-    types: &TypeContext<'_>,
-) -> Result<(), CheckStop> {
+fn expand_definition_path_offsets(path: &mut [CheckedPlaceStep], offsets: &DefinitionOffsets) {
     for step in path {
         if let CheckedPlaceStep::Subscript(subscript) = step {
             let subscript = subscript.as_mut();
-            expand_definition_offset(
-                &mut subscript.offset,
-                &mut subscript.captured,
-                offsets,
-                types,
-            )?;
+            expand_definition_offset(&mut subscript.offset, &mut subscript.captured, offsets);
         }
     }
-    Ok(())
 }
 
 /// [FN-8] a definition is erased by expansion, so a clause (b) place is formed
 /// with every offset it reads through a definition replaced by the offset
 /// that definition expands to; its subscripts then owe [OP-4] over the same
 /// terms the expanded requirement establishes.
-pub(super) fn expand_definition_offsets(
-    place: &mut CheckedExpression,
-    offsets: &DefinitionOffsets,
-    types: &TypeContext<'_>,
-) -> Result<(), CheckStop> {
-    // Legacy flat indexes carry their base outside CheckedContainerRoot.
-    // Canonicalize an erased alias into the shared proof-only storage form
-    // before forming its OP-4 obligations.
-    let aliased_index = match place {
-        CheckedExpression::ArrayIndex {
-            carrier,
-            root: super::super::model::CheckedArrayRoot::Binding { binding, fields },
-            element_type,
-            offset,
-            obligation,
-            target_domain,
-            ..
-        } if offsets.contains_key(binding) => {
-            let value = offsets
-                .get(binding)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            let mut root = definition_container_root(value)
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            for field in fields {
-                let CheckedType::Nominal(nominal) = root.ty else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                let CheckedNominalKind::Struct { fields } = &types.nominal(nominal)?.kind else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                root.ty = fields
-                    .get(*field as usize)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                    .ty;
-                root.path.push(CheckedPlaceStep::Field(*field));
-            }
-            Some((
-                carrier.clone(),
-                root,
-                *element_type,
-                (**offset).clone(),
-                obligation.clone(),
-                *target_domain,
-            ))
-        }
-        CheckedExpression::BufferIndex {
-            carrier,
-            root,
-            offset,
-            obligation,
-            target_domain,
-        } if offsets.contains_key(&root.binding) => {
-            let mut selected = super::super::model::CheckedContainerRoot {
-                root: super::super::places::PlaceRoot::Binding(root.binding),
-                path: root.path.clone(),
-                ty: CheckedType::Buffer {
-                    element: root.element,
-                },
-                proof_base: root.proof_base.clone(),
-            };
-            expand_definition_root(&mut selected, offsets)?;
-            Some((
-                carrier.clone(),
-                selected,
-                root.element_type,
-                (**offset).clone(),
-                obligation.clone(),
-                *target_domain,
-            ))
-        }
-        _ => None,
-    };
-    if let Some((carrier, mut root, element_type, offset, obligation, target_domain)) =
-        aliased_index
-    {
-        root.path.push(CheckedPlaceStep::Subscript(Box::new(
-            super::super::model::CheckedPlaceSubscript {
-                base_type: root.ty,
-                element_type,
-                offset,
-                obligation,
-                target_domain,
-                captured: CapturedValue::unknown(),
-            },
-        )));
-        root.ty = element_type;
-        *place = CheckedExpression::ReadStorage { carrier, root };
-    }
+fn expand_definition_offsets(place: &mut CheckedExpression, offsets: &DefinitionOffsets) {
     match place {
         CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => {
-            expand_definition_root(root, offsets)?;
-            expand_definition_path_offsets(&mut root.path, offsets, types)?;
-        }
-        CheckedExpression::ArrayIndex { offset, .. } => {
-            let mut captured = CapturedValue::unknown();
-            expand_definition_offset(offset, &mut captured, offsets, types)?;
-        }
-        CheckedExpression::BufferIndex { root, offset, .. } => {
-            expand_definition_path_offsets(&mut root.path, offsets, types)?;
-            let mut captured = CapturedValue::unknown();
-            expand_definition_offset(offset, &mut captured, offsets, types)?;
+            expand_definition_path_offsets(&mut root.path, offsets);
         }
         CheckedExpression::RangeMeasure { root, .. } => {
             if let Some(formation) = root.formation.as_deref_mut() {
-                expand_definition_offsets(formation, offsets, types)?;
+                expand_definition_offsets(formation, offsets);
             }
         }
         CheckedExpression::BorrowSegment { root, segment, .. } => {
             match root {
                 super::super::model::CheckedSegmentSource::Storage(root) => {
-                    expand_definition_path_offsets(&mut root.path, offsets, types)?
+                    expand_definition_path_offsets(&mut root.path, offsets)
                 }
                 super::super::model::CheckedSegmentSource::Element(place) => {
                     if let Some(formation) = place.root.formation.as_deref_mut() {
-                        expand_definition_offsets(formation, offsets, types)?;
+                        expand_definition_offsets(formation, offsets);
                     }
-                    expand_definition_offset(
-                        &mut place.offset,
-                        &mut place.captured,
-                        offsets,
-                        types,
-                    )?;
-                    expand_definition_path_offsets(&mut place.path, offsets, types)?;
+                    expand_definition_offset(&mut place.offset, &mut place.captured, offsets);
+                    expand_definition_path_offsets(&mut place.path, offsets);
                 }
             }
             if let super::super::model::CheckedSegmentSelect::One(index)
             | super::super::model::CheckedSegmentSelect::Page(index) = segment
             {
-                expand_definition_offset(&mut index.offset, &mut index.captured, offsets, types)?;
+                expand_definition_offset(&mut index.offset, &mut index.captured, offsets);
             }
         }
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. } => {
             if let Some(formation) = place.root.formation.as_deref_mut() {
-                expand_definition_offsets(formation, offsets, types)?;
+                expand_definition_offsets(formation, offsets);
             }
-            expand_definition_offset(&mut place.offset, &mut place.captured, offsets, types)?;
-            expand_definition_path_offsets(&mut place.path, offsets, types)?;
+            expand_definition_offset(&mut place.offset, &mut place.captured, offsets);
+            expand_definition_path_offsets(&mut place.path, offsets);
         }
         _ => {}
     }
-    Ok(())
+}
+
+/// [ENT-2] the clause (b) places one `contract_block` forms: each
+/// definition's own places, with every offset read through an earlier
+/// definition expanded, and the places each clause forms through the
+/// definitions its expansion reaches [FN-8, FN-9].
+#[derive(Default)]
+pub(super) struct ClausePlaces {
+    definitions: Vec<ClauseDefinition>,
+    offsets: DefinitionOffsets,
+}
+
+impl ClausePlaces {
+    /// Records one checked definition, in written order.
+    pub(super) fn define(
+        &mut self,
+        binding: BindingId,
+        value: &CheckedExpression,
+        captured_places: &super::super::places::CapturedPlaceTable,
+    ) {
+        let mut places = Vec::new();
+        collect_clause_places(value, &mut places);
+        for place in &mut places {
+            expand_definition_offsets(place, &self.offsets);
+        }
+        if let Some(offset) =
+            definition_offset(value, &self.definitions, &self.offsets, captured_places)
+        {
+            self.offsets.insert(binding, offset);
+        }
+        let mut uses = Vec::new();
+        collect_clause_reads(value, &mut uses);
+        uses.retain(|read| {
+            self.definitions
+                .iter()
+                .any(|earlier| earlier.binding == *read)
+        });
+        self.definitions.push(ClauseDefinition {
+            binding,
+            places,
+            uses,
+        });
+    }
+
+    /// The recorded definitions' bindings, in written order.
+    pub(super) fn bindings(&self) -> impl Iterator<Item = BindingId> + '_ {
+        self.definitions.iter().map(|definition| definition.binding)
+    }
+
+    /// The places one clause forms: those of every definition its expansion
+    /// reaches that `formed` does not already hold, in definition order,
+    /// then its own. Each definition reached is added to `formed`.
+    pub(super) fn clause(
+        &self,
+        condition: &CheckedExpression,
+        formed: &mut HashSet<BindingId>,
+    ) -> Vec<CheckedExpression> {
+        let mut reached = HashSet::new();
+        let mut pending = Vec::new();
+        collect_clause_reads(condition, &mut pending);
+        while let Some(read) = pending.pop() {
+            if let Some(definition) = self
+                .definitions
+                .iter()
+                .find(|definition| definition.binding == read)
+                && reached.insert(read)
+            {
+                pending.extend(definition.uses.iter().copied());
+            }
+        }
+        let mut places = Vec::new();
+        for definition in &self.definitions {
+            if reached.contains(&definition.binding) && formed.insert(definition.binding) {
+                places.extend(definition.places.iter().cloned());
+            }
+        }
+        let own = places.len();
+        collect_clause_places(condition, &mut places);
+        for place in &mut places[own..] {
+            expand_definition_offsets(place, &self.offsets);
+        }
+        places
+    }
 }
 
 /// The bindings one checked clause expression reads by name.
-pub(super) fn collect_clause_reads(expression: &CheckedExpression, reads: &mut Vec<BindingId>) {
+fn collect_clause_reads(expression: &CheckedExpression, reads: &mut Vec<BindingId>) {
     if let CheckedExpression::Binding { binding, .. } | CheckedExpression::Project { binding, .. } =
         expression
     {
@@ -501,7 +297,7 @@ pub(super) enum ClauseKind<'record> {
 /// One source-stable leaf shared by FN-8 and FN-9 alpha expansion.  The
 /// symbolic result is private to this intermediate tree; conversion to a
 /// GoalTemplate rejects it, so GoalDatum and GoalTemplate remain unchanged.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub(super) enum ExpandedClauseDatum {
     Parameter {
         ordinal: u32,
@@ -517,10 +313,12 @@ pub(super) enum ExpandedClauseDatum {
         declaration: DeclarationId,
         projections: Vec<GoalProjection>,
         ty: CheckedType,
+        spelling: Option<String>,
     },
     Literal {
         value: CheckedValue,
         origin: PostconditionConstantOrigin,
+        spelling: Option<String>,
     },
     /// One [FN-9] clause result datum: the declared result ordinal it
     /// names [CALL-4], the member path written below it, and the type that
@@ -535,6 +333,114 @@ pub(super) enum ExpandedClauseDatum {
         projections: Vec<GoalProjection>,
         ty: CheckedType,
     },
+}
+
+// Source spellings never participate in contract identity or its receipt key.
+impl PartialEq for ExpandedClauseDatum {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Parameter {
+                    ordinal: a,
+                    projections: b,
+                    ty: c,
+                    denotation: d,
+                },
+                Self::Parameter {
+                    ordinal: w,
+                    projections: x,
+                    ty: y,
+                    denotation: z,
+                },
+            ) => (a, b, c, d) == (w, x, y, z),
+            (
+                Self::NamedConst {
+                    declaration: a,
+                    projections: b,
+                    ty: c,
+                    ..
+                },
+                Self::NamedConst {
+                    declaration: x,
+                    projections: y,
+                    ty: z,
+                    ..
+                },
+            ) => (a, b, c) == (x, y, z),
+            (
+                Self::Result {
+                    ordinal: a,
+                    projections: b,
+                    ty: c,
+                },
+                Self::Result {
+                    ordinal: x,
+                    projections: y,
+                    ty: z,
+                },
+            ) => (a, b, c) == (x, y, z),
+            (
+                Self::Literal {
+                    value: a,
+                    origin: b,
+                    ..
+                },
+                Self::Literal {
+                    value: x,
+                    origin: y,
+                    ..
+                },
+            ) => (a, b) == (x, y),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ExpandedClauseDatum {}
+
+impl std::fmt::Debug for ExpandedClauseDatum {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Parameter {
+                ordinal,
+                projections,
+                ty,
+                denotation,
+            } => f
+                .debug_struct("Parameter")
+                .field("ordinal", ordinal)
+                .field("projections", projections)
+                .field("ty", ty)
+                .field("denotation", denotation)
+                .finish(),
+            Self::NamedConst {
+                declaration,
+                projections,
+                ty,
+                ..
+            } => f
+                .debug_struct("NamedConst")
+                .field("declaration", declaration)
+                .field("projections", projections)
+                .field("ty", ty)
+                .finish(),
+            Self::Result {
+                ordinal,
+                projections,
+                ty,
+            } => f
+                .debug_struct("Result")
+                .field("ordinal", ordinal)
+                .field("projections", projections)
+                .field("ty", ty)
+                .finish(),
+            Self::Literal { value, origin, .. } => f
+                .debug_struct("Literal")
+                .field("value", value)
+                .field("origin", origin)
+                .finish(),
+        }
+    }
 }
 
 impl ExpandedClauseDatum {
@@ -632,6 +538,7 @@ impl ExpandedClauseExpression {
                 declaration,
                 projections,
                 ty,
+                ..
             }) => Some(GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration,
                 projections,
@@ -677,8 +584,7 @@ impl<'unit> Checker<'_, 'unit> {
             function,
         } = context;
         let mut expanded_bindings = HashMap::new();
-        let mut definitions: Vec<ClauseDefinition> = Vec::new();
-        let mut definition_offsets = DefinitionOffsets::new();
+        let mut clause_places = ClausePlaces::default();
         for (ordinal, parameter) in function.parameters.iter().enumerate() {
             let local = bindings
                 .get(&parameter.declaration)
@@ -740,12 +646,6 @@ impl<'unit> Checker<'_, 'unit> {
             };
             self.types
                 .validate_clause_checked_forms(ClauseKind::Requires, definition, value)?;
-            self.types.validate_clause_alias_offsets(
-                ClauseKind::Requires,
-                definition,
-                value,
-                &definition_offsets,
-            )?;
             self.types.validate_clause_copy_local(
                 check_context,
                 ClauseKind::Requires,
@@ -754,28 +654,14 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
             )?;
             let expanded = self.types.build_clause_expression(
-                context,
+                check_context,
                 expression,
                 value,
                 bindings,
                 &expanded_bindings,
             )?;
             expanded_bindings.insert(*binding, expanded);
-            let mut places = Vec::new();
-            collect_clause_places(value, &mut places);
-            for place in &mut places {
-                expand_definition_offsets(place, &definition_offsets, self.types)?;
-            }
-            let offset = definition_offset(value, &definition_offsets, self.types)?;
-            definition_offsets.insert(*binding, offset);
-            let mut uses = Vec::new();
-            collect_clause_reads(value, &mut uses);
-            uses.retain(|read| definitions.iter().any(|earlier| earlier.binding == *read));
-            definitions.push(ClauseDefinition {
-                binding: *binding,
-                places,
-                uses,
-            });
+            clause_places.define(*binding, value, &self.types.captured_places);
         }
 
         // [ENT-2, FN-8] a requirement forms its places at body entry, in the
@@ -794,6 +680,9 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .children_with(block, Production::RequiresClause)?
         {
+            if self.types.declarations.tree.first_child_with(clause, Production::HeldClause)?.is_some() {
+                continue;
+            }
             if let Some(range_clause) = self
                 .types
                 .declarations
@@ -824,12 +713,6 @@ impl<'unit> Checker<'_, 'unit> {
                 clause,
                 &condition.expression,
             )?;
-            self.types.validate_clause_alias_offsets(
-                ClauseKind::Requires,
-                clause,
-                &condition.expression,
-                &definition_offsets,
-            )?;
             if condition.mode != CheckedMode::Own || condition.expression.ty() != CheckedType::Bool
             {
                 return self.types.declarations.issue_node(
@@ -841,7 +724,7 @@ impl<'unit> Checker<'_, 'unit> {
             let root = self
                 .types
                 .build_clause_expression(
-                    context,
+                    check_context,
                     expression,
                     &condition.expression,
                     bindings,
@@ -854,41 +737,17 @@ impl<'unit> Checker<'_, 'unit> {
                 clause: self.types.declarations.tree.path(clause)?.clone(),
                 subject: None,
             });
-            let mut reached = HashSet::new();
-            let mut pending = Vec::new();
-            collect_clause_reads(&condition.expression, &mut pending);
-            while let Some(read) = pending.pop() {
-                if let Some(definition) = definitions
-                    .iter()
-                    .find(|definition| definition.binding == read)
-                    && reached.insert(read)
-                {
-                    pending.extend(definition.uses.iter().copied());
-                }
-            }
-            let mut places = Vec::new();
-            for definition in &definitions {
-                if reached.contains(&definition.binding)
-                    && expanded_definitions.insert(definition.binding)
-                {
-                    places.extend(definition.places.iter().cloned());
-                }
-            }
-            let own = places.len();
-            collect_clause_places(&condition.expression, &mut places);
-            for place in &mut places[own..] {
-                expand_definition_offsets(place, &definition_offsets, self.types)?;
-            }
-            requirement_places.push(places);
+            requirement_places
+                .push(clause_places.clause(&condition.expression, &mut expanded_definitions));
         }
-        let definitions = definitions
-            .into_iter()
-            .map(|definition| {
+        let definitions = clause_places
+            .bindings()
+            .map(|binding| {
                 let expression = expanded_bindings
-                    .remove(&definition.binding)
+                    .remove(&binding)
                     .and_then(ExpandedClauseExpression::into_goal_expression)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                Ok((definition.binding, expression))
+                Ok((binding, expression))
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
         Ok(CheckedRequires {
@@ -908,12 +767,10 @@ impl<'unit> Checker<'_, 'unit> {
         let CheckStop::Issue(mut issue) = stop else {
             return stop;
         };
-        if matches!(issue.kind, SemanticIssueKind::BareAffineUse { .. })
+        if let SemanticIssueKind::BareAffineUse { mechanical_fix, .. } = &mut issue.kind
             && matches!(issue.rule, SemanticRule::Own1)
         {
-            issue.kind = SemanticIssueKind::BareAffineUse {
-                mechanical_fix: "restate the definition or clause over copy operands or non-consuming admitted reads",
-            };
+            *mechanical_fix = "restate the definition or clause over copy operands or non-consuming admitted reads".to_owned();
         }
         CheckStop::Issue(issue)
     }
@@ -1251,28 +1108,8 @@ impl<'unit> DeclarationInventory<'unit> {
         {
             return self.invalid_clause(clause, entry);
         }
-        // Typed admission decides whether a selected place is an ENT-2
-        // term. A terminal subscript is an ordinary place suffix.
         if let Some(place) = self.tree.first_child_with(atom, Production::Place)? {
-            // [ENT-2(b), FN-8] an element is an ordinary clause datum, but
-            // an offset selecting it must still be a clause (a) place or a
-            // clause (c) constant. Diagnose a written nested element before
-            // the template builder attempts to represent its selector.
-            for suffix in self.tree.children_with(place, Production::Psuffix)? {
-                let Some(offset) = self.tree.subscript_offset(suffix)? else {
-                    continue;
-                };
-                let Some(offset_place) = self.tree.first_child_with(offset, Production::Place)?
-                else {
-                    continue;
-                };
-                for step in self.tree.children_with(offset_place, Production::Psuffix)? {
-                    if self.tree.subscript_offset(step)?.is_some() {
-                        return self.invalid_clause(clause, entry);
-                    }
-                }
-            }
-            return Ok(());
+            return self.validate_clause_place(clause, entry, place);
         }
         if self
             .tree
@@ -1282,6 +1119,27 @@ impl<'unit> DeclarationInventory<'unit> {
             return Ok(());
         }
         Err(SemanticCompilerFailure::InvalidCanonicalTree.into())
+    }
+    fn validate_clause_place(
+        &self,
+        clause: ClauseKind<'_>,
+        entry: NodeId,
+        place: NodeId,
+    ) -> Result<(), CheckStop> {
+        // [ENT-2] clause (b): a place formed with field selections,
+        // `^` suffixes and at least one subscript whose final step
+        // selects a readonly field is a term of the clause language,
+        // `rows^[i].len` and `nodes^[i].count` alike. A clause names no element value, so
+        // a subscript that ends the place is this rule's refusal here; one
+        // followed by a further step is judged against the selected field's
+        // declaration once the place is typed [`validate_clause_checked_forms`].
+        let suffixes = self.tree.children_with(place, Production::Psuffix)?;
+        for (position, &suffix) in suffixes.iter().enumerate() {
+            if self.tree.subscript_offset(suffix)?.is_some() && position + 1 == suffixes.len() {
+                return self.invalid_clause(clause, entry);
+            }
+        }
+        Ok(())
     }
     pub(super) fn invalid_clause<T>(
         &self,
@@ -1302,22 +1160,6 @@ impl<'unit> DeclarationInventory<'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
-    pub(super) fn validate_clause_alias_offsets(
-        &self,
-        clause: ClauseKind<'_>,
-        entry: NodeId,
-        expression: &CheckedExpression,
-        offsets: &DefinitionOffsets,
-    ) -> Result<(), CheckStop> {
-        let mut places = Vec::new();
-        collect_clause_places(expression, &mut places);
-        for mut place in places {
-            expand_definition_offsets(&mut place, offsets, self)?;
-            self.validate_clause_checked_forms(clause, entry, &place)?;
-        }
-        Ok(())
-    }
-
     /// The [MSR-1] row one written measure selects over a place of this type
     /// [OP-15].
     ///
@@ -1361,7 +1203,7 @@ impl<'unit> TypeContext<'unit> {
     /// supplies the uniquely selected row and types.
     pub(super) fn build_clause_expression(
         &mut self,
-        context: FunctionContext<'_, '_>,
+        check_context: &CheckContext<'_>,
         source: NodeId,
         checked: &CheckedExpression,
         bindings: &HashMap<DeclarationId, LocalBinding>,
@@ -1373,7 +1215,7 @@ impl<'unit> TypeContext<'unit> {
         match self.declarations.tree.production(source)? {
             Production::ClauseExpr => {
                 return self.build_clause_root(
-                    context,
+                    check_context,
                     source,
                     checked,
                     bindings,
@@ -1382,7 +1224,7 @@ impl<'unit> TypeContext<'unit> {
             }
             Production::AffineExpr | Production::AffineTerm | Production::AffineFactor => {
                 return self.build_clause_affine(
-                    context,
+                    check_context,
                     source,
                     None,
                     checked,
@@ -1414,7 +1256,7 @@ impl<'unit> TypeContext<'unit> {
                 .first_child_with(source, Production::Atom)?
         {
             return self.build_clause_atom(
-                context,
+                check_context,
                 atom,
                 Some(checked),
                 bindings,
@@ -1531,7 +1373,7 @@ impl<'unit> TypeContext<'unit> {
                 .zip(checked_arguments)
                 .map(|(atom, argument)| {
                     self.build_clause_operand(
-                        context,
+                        check_context,
                         atom,
                         Some(argument),
                         bindings,
@@ -1558,7 +1400,7 @@ impl<'unit> TypeContext<'unit> {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             }
             let argument =
-                self.build_clause_atom(context, atoms[0], None, bindings, expanded_bindings)?;
+                self.build_clause_atom(check_context, atoms[0], None, bindings, expanded_bindings)?;
             let row = match (checked, argument.ty()) {
                 (
                     CheckedExpression::ArrayMeasure {
@@ -1611,7 +1453,7 @@ impl<'unit> TypeContext<'unit> {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         }
         self.build_clause_operand(
-            context,
+            check_context,
             atoms[0],
             Some(checked),
             bindings,
@@ -1622,7 +1464,7 @@ impl<'unit> TypeContext<'unit> {
     /// `clause_op` whose row the typer has already selected.
     fn build_clause_root(
         &mut self,
-        context: FunctionContext<'_, '_>,
+        check_context: &CheckContext<'_>,
         source: NodeId,
         checked: &CheckedExpression,
         bindings: &HashMap<DeclarationId, LocalBinding>,
@@ -1631,7 +1473,14 @@ impl<'unit> TypeContext<'unit> {
         match self.declarations.tree.children(source)? {
             [side] => {
                 let side = *side;
-                self.build_clause_affine(context, side, None, checked, bindings, expanded_bindings)
+                self.build_clause_affine(
+                    check_context,
+                    side,
+                    None,
+                    checked,
+                    bindings,
+                    expanded_bindings,
+                )
             }
             [left, _operator, right] => {
                 let (left, right) = (*left, *right);
@@ -1675,7 +1524,7 @@ impl<'unit> TypeContext<'unit> {
                     result,
                     arguments: vec![
                         self.build_clause_affine(
-                            context,
+                            check_context,
                             left,
                             None,
                             checked_left,
@@ -1683,7 +1532,7 @@ impl<'unit> TypeContext<'unit> {
                             expanded_bindings,
                         )?,
                         self.build_clause_affine(
-                            context,
+                            check_context,
                             right,
                             None,
                             checked_right,
@@ -1705,7 +1554,7 @@ impl<'unit> TypeContext<'unit> {
     /// walk uses, so the two walks stay in step over `a + b - c`.
     fn build_clause_affine(
         &mut self,
-        context: FunctionContext<'_, '_>,
+        check_context: &CheckContext<'_>,
         source: NodeId,
         terms: Option<usize>,
         checked: &CheckedExpression,
@@ -1723,7 +1572,7 @@ impl<'unit> TypeContext<'unit> {
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
                 if count == 1 {
                     return self.build_clause_affine(
-                        context,
+                        check_context,
                         last,
                         None,
                         checked,
@@ -1732,7 +1581,7 @@ impl<'unit> TypeContext<'unit> {
                     );
                 }
                 self.build_clause_affine_operation(
-                    context,
+                    check_context,
                     (source, Some(count - 1)),
                     last,
                     checked,
@@ -1747,7 +1596,7 @@ impl<'unit> TypeContext<'unit> {
                     .children_with(source, Production::AffineFactor)?;
                 match factors.as_slice() {
                     [factor] => self.build_clause_affine(
-                        context,
+                        check_context,
                         *factor,
                         None,
                         checked,
@@ -1755,7 +1604,7 @@ impl<'unit> TypeContext<'unit> {
                         expanded_bindings,
                     ),
                     [left, right] => self.build_clause_affine_operation(
-                        context,
+                        check_context,
                         (*left, None),
                         *right,
                         checked,
@@ -1767,10 +1616,17 @@ impl<'unit> TypeContext<'unit> {
             }
             Production::AffineFactor => {
                 let child = self.declarations.tree.only_child(source)?;
-                self.build_clause_affine(context, child, None, checked, bindings, expanded_bindings)
+                self.build_clause_affine(
+                    check_context,
+                    child,
+                    None,
+                    checked,
+                    bindings,
+                    expanded_bindings,
+                )
             }
             _ => self.build_clause_operand(
-                context,
+                check_context,
                 source,
                 Some(checked),
                 bindings,
@@ -1781,7 +1637,7 @@ impl<'unit> TypeContext<'unit> {
     /// One binary node of a clause side's affine fold [MSR-5].
     fn build_clause_affine_operation(
         &mut self,
-        context: FunctionContext<'_, '_>,
+        check_context: &CheckContext<'_>,
         (left, left_terms): (NodeId, Option<usize>),
         right: NodeId,
         checked: &CheckedExpression,
@@ -1811,7 +1667,7 @@ impl<'unit> TypeContext<'unit> {
             result: *result,
             arguments: vec![
                 self.build_clause_affine(
-                    context,
+                    check_context,
                     left,
                     left_terms,
                     checked_left,
@@ -1819,7 +1675,7 @@ impl<'unit> TypeContext<'unit> {
                     expanded_bindings,
                 )?,
                 self.build_clause_affine(
-                    context,
+                    check_context,
                     right,
                     None,
                     checked_right,
@@ -1835,27 +1691,32 @@ impl<'unit> TypeContext<'unit> {
     /// against the row the typer already selected for it.
     fn build_clause_operand(
         &mut self,
-        context: FunctionContext<'_, '_>,
+        check_context: &CheckContext<'_>,
         node: NodeId,
         checked: Option<&CheckedExpression>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<ExpandedClauseExpression, CheckStop> {
         if self.declarations.tree.production(node)? == Production::Atom {
-            return self.build_clause_atom(context, node, checked, bindings, expanded_bindings);
+            return self.build_clause_atom(
+                check_context,
+                node,
+                checked,
+                bindings,
+                expanded_bindings,
+            );
         }
         let checked = checked.ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        self.build_clause_expression(context, node, checked, bindings, expanded_bindings)
+        self.build_clause_expression(check_context, node, checked, bindings, expanded_bindings)
     }
     fn build_clause_atom(
         &mut self,
-        context: FunctionContext<'_, '_>,
+        check_context: &CheckContext<'_>,
         atom: NodeId,
         checked: Option<&CheckedExpression>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<ExpandedClauseExpression, CheckStop> {
-        let check_context = context.check_context;
         if self
             .declarations
             .postcondition_selector_use_inside(check_context, atom)?
@@ -1865,7 +1726,7 @@ impl<'unit> TypeContext<'unit> {
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?
                 .result_type;
             if let Some(expanded) =
-                self.build_clause_result_place(context, atom, bindings, expanded_bindings)?
+                self.build_clause_result_place(check_context, atom, bindings, expanded_bindings)?
             {
                 return Ok(expanded);
             }
@@ -1882,7 +1743,8 @@ impl<'unit> TypeContext<'unit> {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             };
             let bytes = self.declarations.tree.token_bytes(literal)?;
-            let origin = if matches!(bytes, b"0_T" | b"1_T") {
+            let generic = crate::syntax::terminal::is_generic_numeric_literal(bytes);
+            let origin = if generic {
                 let usage = self.declarations.use_at(
                     check_context,
                     atom,
@@ -1897,7 +1759,7 @@ impl<'unit> TypeContext<'unit> {
                 };
                 PostconditionConstantOrigin::GenericNumericIdentity {
                     type_parameter: declaration,
-                    one: bytes == b"1_T",
+                    one: bytes.first() == Some(&b'1'),
                 }
             } else {
                 PostconditionConstantOrigin::Literal
@@ -1906,6 +1768,7 @@ impl<'unit> TypeContext<'unit> {
                 ExpandedClauseDatum::Literal {
                     value: value.clone(),
                     origin,
+                    spelling: (!generic).then(|| String::from_utf8_lossy(bytes).into_owned()),
                 },
             ));
         }
@@ -1925,6 +1788,7 @@ impl<'unit> TypeContext<'unit> {
                 ExpandedClauseDatum::Literal {
                     value: value.clone(),
                     origin: PostconditionConstantOrigin::ConstGeneric { declaration },
+                    spelling: None,
                 },
             ));
         }
@@ -1933,7 +1797,7 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .first_child_with(atom, Production::Place)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let result = self.build_clause_place(context, place, bindings, expanded_bindings)?;
+        let result = self.build_clause_place(check_context, place, bindings, expanded_bindings)?;
         if checked.is_some_and(|expression| expression.ty() != result.ty()) {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -1956,12 +1820,11 @@ impl<'unit> TypeContext<'unit> {
     /// invalid selector use.
     fn build_clause_result_place(
         &mut self,
-        context: FunctionContext<'_, '_>,
+        check_context: &CheckContext<'_>,
         atom: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<Option<ExpandedClauseExpression>, CheckStop> {
-        let check_context = context.check_context;
         let Some(place) = self
             .declarations
             .tree
@@ -1989,7 +1852,7 @@ impl<'unit> TypeContext<'unit> {
             )));
         }
         let Some(measure) = self.clause_trailing_measure(
-            context,
+            check_context,
             &suffixes,
             datum_type,
             false,
@@ -2000,7 +1863,7 @@ impl<'unit> TypeContext<'unit> {
             // [CALL-4] a fragment-integer place reached through struct-field
             // and `Box` content steps is a datum as its own value.
             let (projections, reached, _) = self.clause_member_projections(
-                context,
+                check_context,
                 &suffixes,
                 datum_type,
                 false,
@@ -2024,7 +1887,7 @@ impl<'unit> TypeContext<'unit> {
             )));
         };
         let (projections, measured_type, measured_range) = self.clause_member_projections(
-            context,
+            check_context,
             &suffixes[..suffixes.len()
                 - if measure == CheckedMeasure::Pages {
                     2
@@ -2058,8 +1921,8 @@ impl<'unit> TypeContext<'unit> {
     /// content is measured [OP-14]. Everywhere else it is the ordinary field
     /// of that name, as it is in an expression.
     fn clause_trailing_measure(
-        &mut self,
-        context: FunctionContext<'_, '_>,
+        &self,
+        check_context: &CheckContext<'_>,
         suffixes: &[NodeId],
         base: CheckedType,
         range_referent: bool,
@@ -2081,7 +1944,7 @@ impl<'unit> TypeContext<'unit> {
                 == ".pages"
         {
             let (_, reached, reached_range) = self.clause_member_projections(
-                context,
+                check_context,
                 &prefix[..prefix.len() - 1],
                 base,
                 range_referent,
@@ -2104,7 +1967,7 @@ impl<'unit> TypeContext<'unit> {
             (base, range_referent)
         } else {
             let (_, reached, reached_range) = self.clause_member_projections(
-                context,
+                check_context,
                 prefix,
                 base,
                 range_referent,
@@ -2133,15 +1996,14 @@ impl<'unit> TypeContext<'unit> {
     /// whose type is its element type [TYPE-8]: its first subscript selects
     /// an element of that type rather than indexing a value of it.
     fn clause_member_projections(
-        &mut self,
-        context: FunctionContext<'_, '_>,
+        &self,
+        check_context: &CheckContext<'_>,
         suffixes: &[NodeId],
         mut ty: CheckedType,
         mut range_referent: bool,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<(Vec<GoalProjection>, CheckedType, bool), CheckStop> {
-        let check_context = context.check_context;
         let mut projections = Vec::with_capacity(suffixes.len());
         let mut pages = false;
         for suffix in suffixes {
@@ -2153,7 +2015,7 @@ impl<'unit> TypeContext<'unit> {
             // a composite value this version cannot represent.
             if self.declarations.tree.subscript_offset(*suffix)?.is_some() {
                 let (projection, element) = self.clause_subscript_projection(
-                    context,
+                    check_context,
                     *suffix,
                     ty,
                     range_step,
@@ -2165,13 +2027,12 @@ impl<'unit> TypeContext<'unit> {
                 projections.push(if pages {
                     match projection {
                         GoalProjection::Subscript(offset) => GoalProjection::Page(offset),
-                        GoalProjection::FormalSubscript {
-                            ordinal,
-                            projections,
-                        } => GoalProjection::FormalPage {
-                            ordinal,
-                            projections,
-                        },
+                        GoalProjection::FormalSubscript { ordinal } => {
+                            GoalProjection::FormalPage { ordinal }
+                        }
+                        GoalProjection::FormalPlaceSubscript { ordinal, place, ty } => {
+                            GoalProjection::FormalPlacePage { ordinal, place, ty }
+                        }
                         _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
                     }
                 } else {
@@ -2225,21 +2086,29 @@ impl<'unit> TypeContext<'unit> {
     }
     /// One written subscript inside a clause (b) place [ENT-2].
     ///
-    /// A source offset expands to an ENT-2(a) place or ENT-2(c) constant.
-    /// A formal selector retains every field, dereference and admitted measure
-    /// projection so body and caller substitution preserve its proof path and
-    /// ordinary support. Earlier definitions are erased before this judgment.
-    /// A written element read or computation cannot be a selector.
+    /// [ENT-2] fixes what may stand there: "Each offset occurring inside a
+    /// clause (b) place is itself a clause (a) or clause (c) term, because the
+    /// place's identity is decided over its offsets." A clause is no
+    /// evaluation, so the offset carries no occurrence of its own: [ENT-2]
+    /// identifies the substituted place by its proof root and ordered steps,
+    /// using each offset's current-place identity. [ENT-5] puts the offset's
+    /// own support into every enclosing term so a write to it kills them all.
+    ///
+    /// A parameter offset is kept as the formal it names, because a caller
+    /// substitutes its own actual there [FN-8, CALL-6]; a literal and a const
+    /// are values and need no substitution. Field and dereference offsets
+    /// retain their complete projected parameter identity; an
+    /// element read never reaches here, because a subscript that ends a
+    /// clause place is refused first.
     fn clause_subscript_projection(
-        &mut self,
-        context: FunctionContext<'_, '_>,
+        &self,
+        check_context: &CheckContext<'_>,
         suffix: NodeId,
         base: CheckedType,
         range_referent: bool,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<(GoalProjection, CheckedType), CheckStop> {
-        let check_context = context.check_context;
         let element = match base {
             // [REF-4] a range reference's referent is the run of its element
             // type, which is the type its checked datum carries.
@@ -2285,15 +2154,12 @@ impl<'unit> TypeContext<'unit> {
             .declarations
             .clause_const_generic_base(check_context, offset)?
         {
-            // [FN-2, MSR-6] the selector is this concrete instance's
-            // constant, exactly as an ordinary checked offset is. A
-            // forwarded symbolic argument keeps the supplying declaration.
-            let term = match context.function.substitution.const_argument(declaration) {
-                Some(CheckedConst::Value(value)) => CapturedTerm::Literal(value),
-                Some(CheckedConst::Parameter(supplied)) => CapturedTerm::Const(supplied),
-                _ => CapturedTerm::Const(declaration),
-            };
-            return Ok((GoalProjection::Subscript(value(term)), element));
+            return Ok((
+                GoalProjection::Subscript(value(crate::semantic::places::CapturedTerm::Const(
+                    declaration,
+                ))),
+                element,
+            ));
         }
         let Some(place) = self
             .declarations
@@ -2304,155 +2170,170 @@ impl<'unit> TypeContext<'unit> {
                 .declarations
                 .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
         };
-        // Offset syntax is deliberately nonrecursive: a selected element
-        // cannot select another ordinary element term.
-        for step in self
+        let suffixes = self
             .declarations
             .tree
-            .children_with(place, Production::Psuffix)?
-        {
-            if self.declarations.tree.subscript_offset(step)?.is_some() {
+            .children_with(place, Production::Psuffix)?;
+        for step in &suffixes {
+            if self.declarations.tree.subscript_offset(*step)?.is_some() {
                 return self
                     .declarations
                     .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
             }
         }
-        let selected = self.build_clause_place(context, place, bindings, expanded_bindings)?;
-        let selected = match selected {
-            ExpandedClauseExpression::Operation {
-                row, mut arguments, ..
-            } => {
-                let measure = match row {
-                    GoalOperation::ArrayMeasure { measure, .. }
-                    | GoalOperation::BufferMeasure { measure, .. }
-                    | GoalOperation::ContainerMeasure { measure, .. }
-                        if measure != CheckedMeasure::Pages =>
-                    {
-                        measure
-                    }
-                    _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-                };
-                if arguments.len() != 1 {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                }
-                arguments
-                    .pop()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                    .with_projection(
-                        GoalProjection::Measure(measure),
-                        CheckedType::Integer(super::super::model::IntegerType::U64),
-                    )
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            }
-            other => other,
-        };
-        match selected {
-            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal {
-                value: CheckedValue::Integer { bits, .. },
-                ..
-            }) => Ok((
-                GoalProjection::Subscript(value(CapturedTerm::Literal(bits))),
-                element,
-            )),
-            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal {
-                value: CheckedValue::ConstGeneric { declaration, .. },
-                ..
-            }) => Ok((
-                GoalProjection::Subscript(value(CapturedTerm::Const(declaration))),
-                element,
-            )),
-            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
-                ordinal,
-                projections,
-                ty: CheckedType::Integer(_),
-                ..
-            }) if projections.iter().all(|step| {
-                matches!(
-                    step,
-                    GoalProjection::Field(_)
-                        | GoalProjection::Deref
-                        | GoalProjection::Payload { .. }
-                        | GoalProjection::Measure(_)
-                )
-            }) =>
-            {
-                Ok((
-                    GoalProjection::FormalSubscript {
-                        ordinal,
-                        projections,
-                    },
-                    element,
-                ))
-            }
-            ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
-                declaration,
-                projections,
-                ..
-            }) => {
-                let constant = self
-                    .constants
-                    .get(&declaration)
-                    .copied()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                if matches!(projections.last(), Some(GoalProjection::Measure(_))) {
-                    let place = crate::semantic::places::ResolvedPlace {
-                        root: crate::semantic::places::PlaceRoot::Constant(constant),
-                        path: projections.iter().map(GoalProjection::place_step).collect(),
-                        atomic_aliases: Vec::new(),
-                    };
-                    return Ok((
-                        GoalProjection::Subscript(value(CapturedTerm::Place(
-                            crate::semantic::places::ProjectedSelector::new(place),
-                        ))),
-                        element,
-                    ));
-                }
-                let mut selected = &self.constant(constant)?.value;
-                for projection in &projections {
-                    let (GoalProjection::Field(field), CheckedValue::Struct { fields, .. }) =
-                        (projection, selected)
-                    else {
-                        return self.declarations.unsupported(
-                            crate::UnsupportedSemanticFeature::CompositeValues,
-                            suffix,
-                        );
-                    };
-                    selected = fields
-                        .get(*field as usize)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                }
-                let CheckedValue::Integer { bits, .. } = selected else {
-                    return self
-                        .declarations
-                        .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
-                };
-                let term = if projections.is_empty() {
-                    CapturedTerm::Literal(*bits)
-                } else {
-                    let place = crate::semantic::places::ResolvedPlace {
-                        root: crate::semantic::places::PlaceRoot::Constant(constant),
-                        path: projections.iter().map(GoalProjection::place_step).collect(),
-                        atomic_aliases: Vec::new(),
-                    };
-                    CapturedTerm::Place(crate::semantic::places::ProjectedSelector::new(place))
-                };
-                Ok((GoalProjection::Subscript(value(term)), element))
-            }
-            _ => self
+        let pbase = self
+            .declarations
+            .tree
+            .first_child_with(place, Production::Pbase)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let usage = self
+            .declarations
+            .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
+        let ResolvedTarget::Source { declaration, class } = usage.target() else {
+            return self
                 .declarations
-                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix),
+                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+        };
+        if class == DeclarationClass::NamedConst && suffixes.is_empty() {
+            let constant = self
+                .constants
+                .get(&declaration)
+                .copied()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let CheckedValue::Integer { bits, .. } = self.constant(constant)?.value else {
+                return self
+                    .declarations
+                    .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+            };
+            return Ok((
+                GoalProjection::Subscript(value(crate::semantic::places::CapturedTerm::Literal(
+                    bits,
+                ))),
+                element,
+            ));
         }
+        if class != DeclarationClass::Value {
+            return self
+                .declarations
+                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+        }
+        let local = bindings
+            .get(&declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let Some(ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
+            ordinal,
+            projections,
+            ty,
+            ..
+        })) = expanded_bindings.get(&local.binding)
+        else {
+            return self
+                .declarations
+                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+        };
+        let parameter_reference = bindings.values().any(|binding| {
+            binding.mode.is_reference()
+                && matches!(expanded_bindings.get(&binding.binding),
+                    Some(ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
+                        ordinal: candidate, projections, ..
+                    })) if candidate == ordinal && projections.is_empty())
+        });
+        let mut projections = projections.clone();
+        // A definition has already expanded its reference caret, whereas a
+        // direct reference parameter still writes that caret in the source.
+        if parameter_reference
+            && !local.mode.is_reference()
+            && matches!(projections.first(), Some(GoalProjection::Deref))
+        {
+            projections.remove(0);
+        }
+        let mut suffixes = suffixes.as_slice();
+        if local.mode.is_reference() {
+            let Some((&caret, remaining)) = suffixes.split_first() else {
+                return self
+                    .declarations
+                    .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+            };
+            if !matches!(
+                self.declarations.tree.place_suffix(caret)?,
+                crate::syntax::views::PlaceSuffix::Dereference
+            ) {
+                return self
+                    .declarations
+                    .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+            }
+            suffixes = remaining;
+        }
+        // Measure-valued offsets retain their existing unsupported result:
+        // the checked measure member needs more than an ordinary field path.
+        if self
+            .clause_trailing_measure(
+                check_context,
+                suffixes,
+                *ty,
+                false,
+                bindings,
+                expanded_bindings,
+            )?
+            .is_some()
+        {
+            return self
+                .declarations
+                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+        }
+        let (members, ty, _) = self.clause_member_projections(
+            check_context,
+            suffixes,
+            *ty,
+            false,
+            bindings,
+            expanded_bindings,
+        )?;
+        projections.extend(members);
+        if !matches!(ty, CheckedType::Integer(_))
+            || projections.iter().any(|projection| {
+                !matches!(
+                    projection,
+                    GoalProjection::Deref
+                        | GoalProjection::Field(_)
+                        | GoalProjection::Payload { .. }
+                )
+            })
+        {
+            return self
+                .declarations
+                .unsupported(crate::UnsupportedSemanticFeature::CompositeValues, suffix);
+        }
+        if projections.is_empty() && !parameter_reference {
+            return Ok((
+                GoalProjection::FormalSubscript { ordinal: *ordinal },
+                element,
+            ));
+        }
+        let captured = self.captured_places.intern_formal(
+            projections
+                .iter()
+                .map(|projection| projection.place_step())
+                .collect(),
+        );
+        Ok((
+            GoalProjection::FormalPlaceSubscript {
+                ordinal: *ordinal,
+                place: captured,
+                ty,
+            },
+            element,
+        ))
     }
-
     fn build_clause_place(
         &mut self,
-        context: FunctionContext<'_, '_>,
+        check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<ExpandedClauseExpression, CheckStop> {
         let (expression, holder_pending, _) =
-            self.build_clause_place_inner(context, place, bindings, expanded_bindings)?;
+            self.build_clause_place_inner(check_context, place, bindings, expanded_bindings)?;
         if holder_pending {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -2470,12 +2351,11 @@ impl<'unit> TypeContext<'unit> {
     /// parameter name the path itself, drops it instead.
     fn build_clause_place_inner(
         &mut self,
-        context: FunctionContext<'_, '_>,
+        check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
         expanded_bindings: &HashMap<BindingId, ExpandedClauseExpression>,
     ) -> Result<(ExpandedClauseExpression, bool, bool), CheckStop> {
-        let check_context = context.check_context;
         let pbase = self
             .declarations
             .tree
@@ -2513,6 +2393,7 @@ impl<'unit> TypeContext<'unit> {
                             declaration,
                             projections: Vec::new(),
                             ty: self.constant(constant)?.ty,
+                            spelling: self.declarations.tree.source_spelling(pbase).ok(),
                         }),
                         false,
                         false,
@@ -2562,7 +2443,7 @@ impl<'unit> TypeContext<'unit> {
         // [MSR-1] gives it no storage below itself, so it is the last written
         // suffix and everything before it is the ordinary field path.
         let measure = self.clause_trailing_measure(
-            context,
+            check_context,
             suffixes,
             expression.ty(),
             range_referent,
@@ -2584,7 +2465,7 @@ impl<'unit> TypeContext<'unit> {
         }
         if !fields_only.is_empty() {
             let (projections, final_ty, selected_range) = self.clause_member_projections(
-                context,
+                check_context,
                 fields_only,
                 expression.ty(),
                 range_referent,
@@ -2636,9 +2517,9 @@ impl<'unit> TypeContext<'unit> {
     /// as executable conversion obligations.
     ///
     /// A subscript is admitted only inside an [ENT-2] clause (b) place: a
-    /// measure read or a selected integer whose every offset is itself a
-    /// tracked place or constant. Formation still proves every OP-4 before
-    /// the containing clause can establish its conclusion.
+    /// measure read, or a read whose final step selects a readonly field of
+    /// one fragment type. Any other subscripted read names an element value,
+    /// which a clause cannot.
     pub(super) fn validate_clause_checked_forms(
         &self,
         clause: ClauseKind<'_>,
@@ -2655,35 +2536,21 @@ impl<'unit> TypeContext<'unit> {
         {
             return self.declarations.invalid_clause(clause, entry);
         }
-        // A measure's selected value is not an integer element, but its
-        // place has the same selector admission. This judgment also runs
-        // after definition expansion, before template construction, so an
-        // element hidden behind an alias cannot become an offset here.
-        // Flat ArrayMeasure roots contain fields only; indexed aliases are
-        // normalized to ContainerMeasure by expand_definition_offsets.
-        let invalid_measure_selector = match expression {
-            CheckedExpression::ContainerMeasure { root, .. } => root.subscripted_term().is_none(),
-            CheckedExpression::BufferMeasure { root, .. } => root.subscripted_term().is_none(),
-            CheckedExpression::RangeElementMeasure { place, .. } => {
-                place.subscripted_term().is_none()
-            }
-            _ => false,
-        };
-        if invalid_measure_selector {
-            return self.declarations.invalid_clause(clause, entry);
-        }
-        let subscripted = match expression {
+        let subscripted_field = match expression {
             CheckedExpression::ReadStorage { root, .. } => root
                 .path
                 .iter()
-                .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))),
+                .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
+                .then(|| root.readonly_field_term(&self.nominals)),
+            CheckedExpression::RangeIndex { place, .. } => {
+                Some(place.readonly_field_term(&self.nominals))
+            }
             CheckedExpression::ArrayIndex { .. }
             | CheckedExpression::BufferIndex { .. }
-            | CheckedExpression::RangeIndex { .. }
-            | CheckedExpression::BorrowRangeIndex { .. } => true,
-            _ => false,
+            | CheckedExpression::BorrowRangeIndex { .. } => Some(None),
+            _ => None,
         };
-        if subscripted && expression.integer_element_term().is_none() {
+        if subscripted_field == Some(None) {
             return self.declarations.invalid_clause(clause, entry);
         }
         for child in expression_children(expression) {
@@ -2716,5 +2583,58 @@ impl<'unit> TypeContext<'unit> {
             return self.declarations.invalid_clause(clause, entry);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::semantic::model::IntegerType;
+
+    #[test]
+    fn diagnostic_spelling_changes_neither_clause_identity_nor_receipt_debug() {
+        let value = CheckedValue::Integer {
+            ty: IntegerType::U8,
+            bits: 97,
+        };
+        let literal = |spelling: &str| ExpandedClauseDatum::Literal {
+            value: value.clone(),
+            origin: PostconditionConstantOrigin::Literal,
+            spelling: Some(spelling.to_owned()),
+        };
+        let character = literal("'a'_u8");
+        let decimal = literal("97_u8");
+        assert_eq!(character, decimal);
+        assert_eq!(format!("{character:?}"), format!("{decimal:?}"));
+        assert_eq!(
+            format!("{character:?}"),
+            format!("Literal {{ value: {value:?}, origin: Literal }}")
+        );
+        let different = ExpandedClauseDatum::Literal {
+            value: CheckedValue::Integer {
+                ty: IntegerType::U8,
+                bits: 98,
+            },
+            origin: PostconditionConstantOrigin::Literal,
+            spelling: Some("'a'_u8".to_owned()),
+        };
+        assert_ne!(character, different);
+        let declaration = DeclarationId::from_index(0).expect("the first declaration fits");
+        let named = |spelling: &str| ExpandedClauseDatum::NamedConst {
+            declaration,
+            projections: Vec::new(),
+            ty: CheckedType::Integer(IntegerType::U8),
+            spelling: Some(spelling.to_owned()),
+        };
+        let alias = named("limits::upper");
+        let absolute = named("pkg::limits::upper");
+        assert_eq!(alias, absolute);
+        assert_eq!(format!("{alias:?}"), format!("{absolute:?}"));
+        assert_eq!(
+            format!("{alias:?}"),
+            format!(
+                "NamedConst {{ declaration: {declaration:?}, projections: [], ty: Integer(U8) }}"
+            )
+        );
     }
 }

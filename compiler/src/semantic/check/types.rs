@@ -49,7 +49,7 @@ const EFF1_CATEGORY_ORDER_FIX: &str = "write every `reads` entry before the firs
 const EFF1_REPEATED_PATH: &str =
     "a row lists each path at most once per category, and this entry repeats one";
 const EFF1_REPEATED_PATH_FIX: &str = "delete the repeated entry";
-const EFF1_NON_PARAMETER_ROOT: &str = "every effect path is rooted at one formal value parameter of the same callable, and this root is not one";
+const EFF1_NON_PARAMETER_ROOT: &str = "every effect path is rooted at one reference parameter of the same callable, and this root is not one";
 const EFF1_NON_PARAMETER_ROOT_FIX: &str = "root the path at a parameter of this function; a local, a result binder, a region, and an unrelated declaration are never effect roots";
 const EFF1_FIELD_OF_NON_STRUCT: &str = "each effect-path suffix must select a field, payload, measure, window part, or indexed position admitted by its prefix type";
 const EFF1_FIELD_OF_NON_STRUCT_FIX: &str = "select a member or position admitted by the prefix type, or name the reference parameter's complete state; use .inner for Box contents";
@@ -277,6 +277,7 @@ impl<'unit> Checker<'_, 'unit> {
                             | crate::BuiltinPreludeId::DIV_ERROR_TYPE
                             | crate::BuiltinPreludeId::NARROW_ERROR_TYPE
                             | crate::BuiltinPreludeId::SCAN_STEP
+                            | crate::BuiltinPreludeId::DECISION_STATE
                     ) =>
                 {
                     if targs.is_some() {
@@ -294,6 +295,7 @@ impl<'unit> Checker<'_, 'unit> {
                         crate::BuiltinPreludeId::DIV_ERROR_TYPE => PreludeType::DivError,
                         crate::BuiltinPreludeId::NARROW_ERROR_TYPE => PreludeType::NarrowError,
                         crate::BuiltinPreludeId::SCAN_STEP => PreludeType::ScanStep,
+                        crate::BuiltinPreludeId::DECISION_STATE => PreludeType::DecisionState,
                         _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
                     };
                     return Ok(CheckedType::Nominal(self.types.prelude_nominal(ty)?));
@@ -1400,18 +1402,23 @@ impl<'unit> DeclarationInventory<'unit> {
         // [EFF-1] a root resolving to a local, a result binder, a by-value
         // parameter, or a non-parameter declaration is a rejection: a
         // by-value parameter has no effect entry at all, the call site
-        // recording the consumption of a `move` argument instead [EFF-5].
-        let Some(parameter) = parameters
+        // recording the argument's read or consumption instead [EFF-5].
+        let root_parameter = parameters
             .iter()
-            .find(|parameter| parameter.declaration == declaration)
-            .filter(|parameter| parameter.mode.is_reference())
+            .find(|parameter| parameter.declaration == declaration);
+        let Some(parameter) = root_parameter.filter(|parameter| parameter.mode.is_reference())
         else {
             return self.issue_node(
                 SemanticRule::Eff1,
                 effect,
                 SemanticIssueKind::InvalidEffectRow {
                     reason: EFF1_NON_PARAMETER_ROOT,
-                    mechanical_fix: EFF1_NON_PARAMETER_ROOT_FIX,
+                    mechanical_fix: root_parameter.map_or_else(
+                        || EFF1_NON_PARAMETER_ROOT_FIX.to_owned(),
+                        |parameter| {
+                            super::repairs::writer_references::by_value_effect_root(&parameter.name)
+                        },
+                    ),
                 },
             );
         };
@@ -1440,7 +1447,7 @@ impl<'unit> DeclarationInventory<'unit> {
             node,
             SemanticIssueKind::InvalidEffectRow {
                 reason,
-                mechanical_fix,
+                mechanical_fix: mechanical_fix.to_owned(),
             },
         )
     }
@@ -1851,9 +1858,9 @@ impl<'unit> TypeContext<'unit> {
                     ..
                 }
         ) {
-            "wrap it in a Box and pass a reference to its content".to_owned()
+            super::repairs::INLINE_SEGMENTS_OR_PAGED.to_owned()
         } else {
-            "wrap it in a Box, or write the constant-capacity form".to_owned()
+            super::repairs::INLINE_RUNTIME_STORAGE.to_owned()
         };
         self.declarations.issue_node(
             SemanticRule::Type9,
@@ -1973,6 +1980,7 @@ impl<'unit> TypeContext<'unit> {
                     Some(PreludeType::DivError) => (27, None),
                     Some(PreludeType::NarrowError) => (28, None),
                     Some(PreludeType::ScanStep) => (29, None),
+                    Some(PreludeType::DecisionState) => (30, None),
                     _ => {
                         result.push(self.checked_type_name(ty)?);
                         (100, None)
@@ -2382,7 +2390,7 @@ impl<'unit> TypeContext<'unit> {
                     node,
                     SemanticIssueKind::InvalidEffectRow {
                         reason: EFF1_CATEGORY_ORDER,
-                        mechanical_fix: EFF1_CATEGORY_ORDER_FIX,
+                        mechanical_fix: EFF1_CATEGORY_ORDER_FIX.to_owned(),
                     },
                 );
             }
@@ -2397,7 +2405,7 @@ impl<'unit> TypeContext<'unit> {
                         effect,
                         SemanticIssueKind::InvalidEffectRow {
                             reason: EFF1_REPEATED_PATH,
-                            mechanical_fix: EFF1_REPEATED_PATH_FIX,
+                            mechanical_fix: EFF1_REPEATED_PATH_FIX.to_owned(),
                         },
                     );
                 }

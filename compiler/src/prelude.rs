@@ -86,12 +86,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     // [SHARE-1]'s handle: the state lives in the shared object, not in the
-    // handle, so the record declares no field; `T: drop` because the last
-    // handle's release drops the state.
+    // handle, so the record declares no field. A handle to a linear state is
+    // linear [PROV-6], and its last `shared_close` receives the state.
     (
         "prelude/Shared.wf",
         PreludeSource::Opaque,
-        r#"opaque nocopy struct Shared<T: drop> {
+        r#"opaque nocopy struct Shared<T> {
 }
 "#,
     ),
@@ -136,6 +136,13 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Opaque,
         r#"opaque nocopy struct Entries<V: drop> {
   readonly len: u64;
+}
+"#,
+    ),
+    (
+        "prelude/DecisionCell.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct DecisionCell {
 }
 "#,
     ),
@@ -350,6 +357,15 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/clear.wf",
+        PreludeSource::Function,
+        r#"fn clear<W, T: drop>(window: &W) -> result: unit writes(window.filled), writes(window.len) contract {
+  ensures window^.len == 0_u64;
+  ensures window^.cap == entry(window)^.cap;
+};
+"#,
+    ),
+    (
         "prelude/swap.wf",
         PreludeSource::Function,
         r#"fn swap<T>(first: &T, second: &T) -> result: unit writes(first), writes(second);
@@ -358,7 +374,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     (
         "prelude/shared_new.wf",
         PreludeSource::Function,
-        r#"fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
+        r#"fn shared_new<T>(value: T) -> result: Shared<T> pure;
 "#,
     ),
     (
@@ -370,7 +386,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     (
         "prelude/shared_share.wf",
         PreludeSource::Function,
-        r#"fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
+        r#"fn shared_share<T>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 "#,
     ),
     (
@@ -475,6 +491,42 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         r#"fn release<T: drop>(value: T) -> result: unit pure;
 "#,
     ),
+    (
+        "prelude/decision_cell_new.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_new() -> result: DecisionCell pure;
+"#,
+    ),
+    (
+        "prelude/decision_cell_share.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_share(cell: &DecisionCell) -> result: DecisionCell reads(cell);
+"#,
+    ),
+    (
+        "prelude/decision_cell_read.wf",
+        PreludeSource::Function,
+        r#"fn decision_cell_read(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/claim_written.wf",
+        PreludeSource::Function,
+        r#"fn claim_written(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/claim_killed.wf",
+        PreludeSource::Function,
+        r#"fn claim_killed(cell: &DecisionCell) -> result: DecisionState reads(cell);
+"#,
+    ),
+    (
+        "prelude/shared_close.wf",
+        PreludeSource::Function,
+        r#"fn shared_close<T>(shared: Shared<T>) -> result: Option<T> pure waits;
+"#,
+    ),
 ];
 
 #[cfg(test)]
@@ -534,12 +586,17 @@ mod tests {
         signatures.sort_unstable();
         // [PRE-1] keeps no host record: the host signatures are the standard
         // library's [PRE-2], which this unit names none of. Of the
-        // compiler-owned rows only the key set's four functions [SHARE-1]
-        // take no type parameter, so each is one ordinary checked function;
-        // every other row is generic, and [FN-2] gives it a checked function
-        // only per concrete instance, of which this unit, calling none of
-        // them, has none.
+        // compiler-owned rows the key set's four functions [SHARE-1] and
+        // the decision cell's five functions [PRE-1] take no type parameter,
+        // so each is one ordinary checked function; every other row is
+        // generic, and [FN-2] gives it a checked function only per concrete
+        // instance, of which this unit, calling none of them, has none.
         let ungeneric = [
+            "claim_killed",
+            "claim_written",
+            "decision_cell_new",
+            "decision_cell_read",
+            "decision_cell_share",
             "key_set_bytes",
             "key_set_insert",
             "key_set_new",

@@ -1,4 +1,4 @@
-# Kernel Specification v0.144
+# Kernel Specification
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -23,14 +23,14 @@ Resource failure establishes no source fact, grants no fallback path, and cannot
 ## 2. Canonical form
 
 [FORM-1] There is exactly one spelling per semantic construct and one legal byte-level formatting.
-Non-canonical input is a hard error; the toolchain never auto-formats.
+Non-canonical input is a hard error; acceptance never formats input on the writer's behalf.
 Unknown constructs are hard errors (conservative extension).
 
 [FORM-2] Each source file is UTF-8.
 Once every source has passed raw lexical formation and the complete compilation unit has one derivation, each source owns one ordered derivation forest: exactly the top-level `item` subtrees under the single compilation-unit `program` root whose terminals belong to that source, in source-local item order.
 A source forest is not a second `program` node, and a source with no items owns an empty forest.
 That source's canonical bytes are exactly the result of rendering its forest by the following rules.
-The input bytes must equal that rendering byte for byte; the toolchain does not normalize or rewrite input.
+The input bytes must equal that rendering byte for byte [FORM-1]; a formatting request that replaces a source with its rendering is a writer tool outside acceptance and changes no verdict.
 A source that has no complete `item*` derivation is rejected by its owning lexical or grammar rule before this forest-format comparison, and no tree or forest is fabricated [DIAG-1].
 A module graph record [MOD-1] is rendered by the same rules over its forest of `package_decl`, `module_row` and `entry_decl` subtrees under its `graph_file` root.
 
@@ -131,8 +131,8 @@ An out-of-range integer, a leading-zero integer, a noncanonical float spelling, 
 ## 3. Grammar
 
 [GRAM-1] The grammar is deterministic and unambiguous.
-Raw lexical formation scans each source independently from byte offset zero and partitions it into tokens and trivia without normalization, decoding a value, or consulting grammar position, name lookup, the operation table, or another source.
-At each cursor it takes exactly the following maximal form; no token or trivia crosses a source boundary.
+Raw lexical formation partitions each diagnostic segment [DIAG-1] independently into tokens and trivia without normalization, decoding a value, or consulting grammar position, name lookup, the operation table, or another segment.
+At each cursor it takes exactly the following maximal form; every token and trivia item is contained in its segment.
 
 - One or more ASCII space bytes form one trivia item.
 One LF byte forms one trivia item.
@@ -198,7 +198,8 @@ fn_decl      := "fn" IDENT generics? "(" param_list? ")"
 result_binding:= IDENT ":" rtype
 contract_block:= "contract" "{" contract_define* requires_clause* ensures_clause* "}"
 contract_define:= "define" IDENT "=" expr ";"
-requires_clause:= "requires" (clause_expr | range_clause) ";"
+requires_clause:= "requires" (clause_expr | range_clause | held_clause) ";"
+held_clause := "held" "(" IDENT ("," IDENT)* ")"
 ensures_clause:= "ensures" ("when" result_route ":")? (clause_expr | range_clause) ";"
 result_route:= (IDENT "is")? TYPEID "(" fieldbind ")"
 interface_decl  := "interface" TYPEID generics? "{" doc? (fn_sig ";")* "}"
@@ -218,11 +219,14 @@ capability_bound:= "copy" | "drop"
 param_list   := param ("," param)*
 param        := IDENT ":" (type | "&" (type | "[" type "]"))
 graph_file   := package_decl* module_row+ entry_decl*
+graph_segment:= (package_decl | module_row | entry_decl)*
 package_decl := "package" IDENT "=" STRING ";"
 module_row   := module_path ":" "[" (module_path ("," module_path)*)? "]" ";"
 module_path  := ("pkg" | "std" | IDENT) ("::" IDENT)*
 entry_decl   := "entry" IDENT "=" module_path (";" | "{" "no_heap" ";" "}")
 ```
+
+The `graph_segment` production is the diagnostic entry defined by [DIAG-1]; complete graph records derive `graph_file` [MOD-1].
 
 A `heap_decl` is admitted at most once in a source bundle and only as the first `item` of its first source record [PROG-2]; a second `heap_decl`, or one at any later item position, is a hard error citing GRAM-2 at that `heap_decl` node, and a module program admits none [MOD-9].
 Its two fixed atoms compete with no other `item` arm, so the decision is strong-LL(2) on the first token alone [GRAM-1].
@@ -282,7 +286,8 @@ atomic_stmt := "atomic" IDENT "=" "&" place ("," IDENT "=" "&" place)* ("when" e
                "{" stmt* "}"
 match_stmt  := "match" expr "{" arm+ "}"
 value_match := "match" expr "{" arm+ "}"
-arm            := TYPEID "(" ( fieldbind_list ("," "..")? | ".." )? ")" "=>" "{" stmt* "}"
+arm            := ( TYPEID "(" ( fieldbind_list ("," "..")? | ".." )? ")"
+                  | literal | IDENT | "else" ) "=>" "{" stmt* "}"
 fieldbind_list := fieldbind ("," fieldbind)*
 fieldbind      := IDENT ":" IDENT
 apart_clause   := "apart" "(" IDENT "," IDENT ")" "{" proof_use* "}"
@@ -331,8 +336,8 @@ The `^` alternative of `psuffix` follows a `place` whose selected kind is a refe
 [GRAM-6] There is no general operator syntax and no precedence: an `infix` expression is exactly one operation over two atoms [GRAM-5, GRAM-9], composition is by `let`, and no precedence, associativity, or parenthesization surface exists.
 The `compare_op` alternatives are the value equalities `==` and `!=` [OP-16] and the four integer orderings of [OP-1], and form `infix` expressions exactly as the `infix_op` arithmetic does; a `call` writes its type arguments after the `::` delimiter, `cvt::<u8, u32>(w)`, so that `IDENT "<"` begins a comparison and never a type-argument list, while a constructor `call` and a `type` write theirs bare.
 There is no `while`.
-Conditional control is type-driven with one form per class: a Bool condition takes `if`/`else`, an enum scrutinee takes `match`, and each is the sole legal form for its class — a `match` whose scrutinee has type `Bool` is a hard error citing GRAM-6 at the scrutinee `expr` node, with a repair [DIAG-1].
-An `if` condition must have exact value mode and type `own Bool` under exactly the [OP-5] condition judgment, TYPE-7 exclusivity included; every other condition failure cites GRAM-6 at the condition `expr` node.
+Conditional control is type-driven with one form per class: a Bool condition takes `if`/`else`, an enum or integer scrutinee takes `match`, and each is the sole legal form for its class — a `match` whose scrutinee has type `Bool` is a hard error citing GRAM-6 at the scrutinee `expr` node, with a repair [DIAG-1].
+An `if` condition must have exact value mode and type `own Bool` under exactly the [OP-5] condition judgment, TYPE-7 exclusivity included; every other exact-mode or exact-type failure of a condition cites GRAM-6 at the condition `expr` node, and its source redundancy is [OP-5]'s judgment.
 An `if_stmt` `else` whose block is empty is a hard error citing GRAM-6 at that `if_stmt` node, with a repair [DIAG-1]; a `value_if`'s undelivering else is [GIVE-1]'s rejection, not this one.
 An `else` whose block contains exactly one `if_stmt` and nothing else is a hard error citing GRAM-6 at that nested `if_stmt` node, with a repair [DIAG-1]; in a `value_if` whose else block is exactly one else-free `if_stmt`, the branch cannot deliver, [GIVE-1] owns the rejection, and GRAM-6 forms no candidate there, so no repair demands a chain form that could not be spelled.
 A conditional value is a `let`-initializer `match` or `if` [GRAM-7, GIVE-1].
@@ -365,7 +370,7 @@ This recursion is strictly simpler than the ownership checker.
 When an initializer's derived delivery mode is `own`, a `give` of it additionally participates in [ENT-5]'s bounded relation delivery as its carrier, in the form the initializer's type selects.
 For a type that is one [ENT-2] fragment integer, the carrier is an integer carrier: a direct non-consuming bare atom, a typed integer literal, an integer-typed named const, or an expression that [ENT-3] relates to its operands as the initializer of an ordinary `let`.
 For every other type, the carrier is a value carrier: the operand itself, whatever its expression.
-A local Result or Option value follows ENT-5's conditional value transport through either initializer.
+A local own enum value follows ENT-5's conditional value transport through either initializer.
 This delivery adds no typing premise, and a borrow, which no `own` delivery gives, is never a carrier.
 GIVE-1 still owns delivery completeness and exact mode/type agreement; only after those judgments succeed may ENT-5 deliver the carrier's already evaluated value to the receiving binding.
 
@@ -381,7 +386,19 @@ Field names are redundant-explicit facts (the TYPE-5 class): checked, never chos
 The name-only-when-two-same-typed-fields alternative is a context-dependent spelling and is rejected [META-2].
 
 [GRAM-9] Flat (three-address) computation.
-Every call argument, construct field value, infix operand, subscript offset, and lower or upper endpoint of a `for_stmt` is an `atom` [GRAM-5]; a `call` or constructor `call` in an atom position does not derive under the grammar and is a hard error citing GRAM-9.
+The atom-only positions are the following production occurrences under [GRAM-4, GRAM-5].
+
+| Production | Atom-only occurrence |
+| --- | --- |
+| `atom_list` | Every list element |
+| `fieldinit` | The value after `":"` |
+| `infix_tail` | The right operand |
+| `psuffix` | The subscript offset or slice lower endpoint |
+| `range_tail` | The slice upper endpoint |
+| `for_binding` | Both endpoints |
+| `range_binder` | Both endpoints |
+
+A `call` or constructor `call` in an atom-only position does not derive under the grammar and is a hard error citing GRAM-9.
 A computed value is forwarded to another operation only by binding it with a preceding `let` (whose mode and type are derived [TYPE-5]) and referencing the binding.
 Nesting and let-splitting are not two spellings of one computation; there is no expression-nesting alternative [FORM-1].
 `borrow_expr` is an `atom`, so references passed as arguments need no binding and [REF-1] is untouched.
@@ -394,9 +411,9 @@ Binder modes remain derived by [OWN-13] (not written), a reference-mode binder n
 A nullary variant is written `K()`.
 
 The `result_route` owns exactly one `fieldbind`, so zero-field and multi-field route shapes do not derive.
-FN-9, not GRAM-10, owns that route after its leading TYPEID resolves: it admits exactly the success routes [FN-9] states.
+FN-9, not GRAM-10, owns that route after its leading TYPEID resolves and states its admission.
 A misspelled field is therefore an FN-9 rejection at the `fieldbind`, as [DIAG-1] fixes; no match arm or runtime binder is formed.
-Every other successfully resolved variant, payload type, nested projection, or route is outside the postcondition boundary and is rejected by FN-9 rather than generalized through this rule.
+Every route's variant, field, payload type and symbolic binder are judged by [FN-9].
 
 [GRAM-11] Named call arguments.
 A `call` whose callee resolves to an ordinary function, a source function and a [PRE-1] prelude function alike, writes its arguments as `fieldinit_list` [GRAM-5] — each `IDENT ":" atom` equal to the callee's declared parameter names in declared order [FN-1], the GRAM-8 discipline applied to calls.
@@ -404,6 +421,26 @@ A missing, extra, repeated, misspelled, or out-of-order parameter name is a hard
 A `call` whose callee resolves to a table operation [OP-1] writes positional `atom_list` operands (operands are order-intrinsic and unnamed).
 Argument reordering is not a spelling option: declared order is the one legal byte sequence [FORM-1], so parameter names are redundant checked facts, never a reordering license.
 Callee kind is resolved by name lookup [OP-1], the same partition that already selects the callee.
+
+[GRAM-12] A `match_stmt` and a `value_match` dispatch on one scrutinee, evaluated exactly once before any arm is entered.
+An integer scrutinee produces `own T`, where T is one [OP-2] integer type or a live type parameter bounded `Int` [FN-2]; an enum scrutinee follows [OWN-13].
+A reference used as an integer value retains [TYPE-7]'s rejection; a Bool scrutinee retains [GRAM-6]'s rejection; every other scrutinee type is a hard error citing TYPE-5 at its `expr`, with a repair [DIAG-1].
+An arm's admitted header is selected by the scrutinee's class:
+
+| Scrutinee class | Admitted arm header |
+| --- | --- |
+| Enum | A variant TYPEID and its named payload binders [TYPE-6, GRAM-10]. |
+| Integer | One `literal` of exact type T, one IDENT naming an integer-typed [CONST-2] item of exact type T, or `else`. |
+
+An integer literal header includes the character-literal forms of [FORM-5] with integer type and its `0_T` and `1_T` forms when T is bounded `Int`.
+The lexical lookup of an IDENT header admits the named-const declaration class alone [TYPE-6, DIAG-1]; a const-generic parameter is a different class.
+A header outside its row, a literal or named const of another type, and a non-integer literal or named const are each a hard error citing GRAM-12 at that `arm`, with a repair.
+An integer match has at least one value arm, its decoded mathematical arm values are pairwise distinct, and its `else` count is zero or one, with a present `else` the final arm.
+A match with no value arm cites GRAM-12 at its match node; a duplicate value cites GRAM-12 at the later `arm` and names the earlier arm and decoded value; an `else` that is repeated or not final cites GRAM-12 at the first offending `else` arm, each with a repair [DIAG-1].
+A generic body judges its header types and values at its source instance and each concrete instance [FN-2]; the two generic numeric literal values are the mathematical integers zero and one.
+Coverage is [ERR-2]'s judgment after these header judgments succeed.
+Execution enters the arm whose decoded value equals the integer scrutinee, or the final `else` when its value is absent from the value-arm set; enum selection follows the declared variant.
+A selected arm executes once and its normal successor is the match's continuation [FN-1], with value delivery governed by [GIVE-1].
 
 ## 4. Types
 
@@ -415,7 +452,7 @@ The six are ordinary nominals of the nominal-type TYPEID domain [TYPE-6], writte
 In this specification's prose `N` stands for a written const argument; source writes a `const` IDENT, lowercase under [FORM-3], as the [PRE-1] rows do.
 `Slots`, `Ring`, `Segments`, `Paged`, and `Box` are declared `nocopy`, so their values are affine unless an element or content type makes them linear, and an `Array` has exactly the capabilities of its element type [OWN-1, PROV-6].
 A `struct` or `enum` declaration may carry one capability modifier [GRAM-2]: `nodrop`, which states a logical must-consume obligation on values of that nominal in every scope, or `nocopy`, which makes its values non-duplicable although every part could be copied; neither changes a component, layout, or construction route [OWN-1, PROV-6].
-A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of a field it owns [PROV-6] is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: a construction row [OP-13] forms the five storage shapes and `Box<T>`, which the prelude declares [PRE-1], the functions of [SHARE-1] form its shared and frozen handles, maps and key sets, and a host function forms the opaque structs the host modules declare, their host handles among them [PRE-2], so no other opaque struct ever has a value.
+A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of a field it owns [PROV-6] is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: a construction row [OP-13] forms the five storage shapes and `Box<T>`, which the prelude declares [PRE-1], the functions of [SHARE-1] form its shared and frozen handles, maps and key sets, the decision-cell functions [PRE-1] form `DecisionCell` handles, and a host function forms the opaque structs the host modules declare, their host handles among them [PRE-2], so no other opaque struct ever has a value.
 A `field` may carry the `readonly` modifier [GRAM-2]; a source field carries it only together with `public` [MOD-6]. Inside the module that declares a source struct its readonly field is an ordinary field. Outside that module — and everywhere, for a PRE-1 struct's field — a path that ends at or passes through a readonly field is never a write target: a `set` whose target is such a path [SET-1], and an argument naming such a path at a reference parameter whose callee row writes that parameter [EFF-5], are each a hard error citing TYPE-2 at the complete target `place` or argument `atom`, with a repair [DIAG-1]. Construction gives a readonly field its value like any other field [GRAM-8], and a construction outside the declaring module supplies none [MOD-5]; a whole-value assignment replaces it together with its owner. Its value otherwise changes only through a compiler-owned [PRE-1] operation whose row declares `writes` of it [OP-10]; a declared row may name a readonly field in `writes`, because a row reports every change its callees make [EFF-2]. `readonly` states that the field is not assignable, not that its value is constant.
 
 [TYPE-11] Type invariants.
@@ -432,7 +469,7 @@ The function-boundary sites below read each parameter's and result ordinal's dec
 - Each target of an atomic statement whose handle place has type `Shared` or `SharedRead` of the struct [SHARE-2] establishes each type invariant over its binding's referent at the block's entry, as a guard's comparison is established there [ENT-3.S1], and each edge leaving the block owes it as an [INV-1] invariant stated at that edge.
 
 Each occurrence of a type invariant is identified by its function instance, the `type_invariant`, and its site: the parameter or result ordinal it is taken over, the construction, or the edge leaving the atomic block. A requirement's failure and a postcondition's failure are the rejections of [FN-8] and [FN-9] for an affine type invariant and of [RANGE-3] for a range type invariant. A construction's failure and a leaving edge's failure are each a hard error citing TYPE-11: at the construction, at the complete `atomic_stmt` for its block's end, and at the leaving `return_stmt`, `break_stmt`, `continue_stmt`, `give_stmt` or `let_stmt` for every other edge. Each failure names the type invariant, with a repair [DIAG-1].
-A call to a member of the caller's own call-graph component receives the affine postconditions above before that component publishes, as [DIAG-2] states.
+The postconditions above follow the call-graph component availability judgment [DIAG-2].
 
 [TYPE-3] Nameability: every constructible type, parameter kind and effect has a canonical, finite source spelling requiring no compiler execution [GRAM-3, EFF-1].
 A capability modifier and a generic parameter's capability bound are properties of a declaration and not components of a type name: two instances of one nominal have one name whether or not its declaration is marked, and no name spells a capability [PROV-6].
@@ -458,7 +495,7 @@ Explicit boundary information remains mandatory — signatures with parameter ki
 
 Every result ordinal of a `fn_decl` or `fn_sig` has one mandatory `result_binding` whose written `rtype` fixes that callable result's mode and type.
 The result name is a proof-only boundary spelling: it denotes no runtime slot, does not enter callable signature equality, and is unavailable in a function body.
-An unrouted [FN-9] postcondition may admit it as that clause's symbolic whole-result datum; a routed postcondition instead derives its payload binder's type from the admitted success payload, `Result.Ok` or `Option.Some`, and makes the whole-result name unavailable in that clause.
+Postconditions admit symbolic result datums and determine a routed binder's type and availability under [FN-9].
 
 A `contract_define` derives exactly the own copy mode and type of its right-hand-side expression.
 It is an erased, declaration-before-use abbreviation rather than a statement, evaluation, snapshot, or storage allocation.
@@ -472,7 +509,7 @@ The grammar role, never an inferred type or expected result, selects the domain 
 
 | domain | declarations | admitted uses |
 |---|---|---|
-| lexical IDENT | top-level `fn_decl`; raw function-kind `gparam`; top-level `const_decl`; const `gparam`; `param`; `let_stmt`; `for_stmt` binder; `atomic_stmt` binders; arm `fieldbind` binders; `contract_define`; FN-9-owned result and route candidates; PRE-1 functions | a `callee` IDENT admits a top-level function, in-scope function parameter, or PRE-1 function; an unqualified `function_arg` or `fn_bind` right side admits an ordinary function or function parameter; `const` IDENT admits an in-scope const generic or a named const; `cvalue` IDENT admits a named const; `pbase` admits an in-scope runtime value binding, contract definition, admitted symbolic result datum, named const, or in-scope const generic [MSR-6] |
+| lexical IDENT | top-level `fn_decl`; raw function-kind `gparam`; top-level `const_decl`; const `gparam`; `param`; `let_stmt`; `for_stmt` binder; `atomic_stmt` binders; arm `fieldbind` binders; `contract_define`; FN-9-owned result and route candidates; PRE-1 functions | a `callee` IDENT admits a top-level function, in-scope function parameter, or PRE-1 function; an unqualified `function_arg` or `fn_bind` right side admits an ordinary function or function parameter; `const` IDENT admits an in-scope const generic or a named const; `cvalue` IDENT admits a named const; an `arm` IDENT admits a named const [GRAM-12]; `pbase` admits an in-scope runtime value binding, contract definition, admitted symbolic result datum, named const, or in-scope const generic [MSR-6] |
 | nominal-type TYPEID | source `struct_decl` and `enum_decl` names; source interface and binding groups; PRE-1 nominal types and the reference-kind name `Run` [TYPE-8]; lexical type `gparam`s overlay this domain while live | a runtime `type` or generic-numeric suffix admits only its ordinary type class; an explicit `targ` additionally admits a interface or binding abbreviation; a `pack_use` admits a interface or binding group, with FN-3/FN-5 checking its position and member selection |
 | constructor TYPEID | each source struct constructor under its struct TYPEID; PRE-1 variants, classified as struct-constructor or enum-variant; an opaque struct's constructor, existing only to be refused [TYPE-2] | the constructor TYPEID of a `call`, `cvalue` or destructuring `let_stmt` admits either class |
 | built-in-bound TYPEID | the three built-in bounds `Int`, `Float` and `Eq` [PRE-1] | the bound TYPEID of a type `gparam`; a capability bound instead uses its fixed grammar spelling [GRAM-2, PROV-6] |
@@ -482,7 +519,7 @@ The grammar role, never an inferred type or expected result, selects the domain 
 A source struct contributes one declaration event that adds one nominal-type entry and one constructor entry with the same spelling.
 Those entries do not collide because the grammar distinguishes a `type` role from a constructor `call` role.
 An enum declaration adds only its nominal type. Each source variant belongs to its enum and enters no constructor domain: a construction writes it after its enum, `E::V(...)` or `E<args>::V(...)`, directly or behind a module prefix [MOD-5], or through an alias of it [MOD-4]; an enum declares each variant spelling once, and variants of different enums never collide.
-The label of an `arm` resolves against its scrutinee's already known enum type, the label of a `result_route` against its result ordinal's declared type, and the TYPEID of a `range_variant` against its tested value's enum type [RANGE-1]: it names the variant of that enum with its spelling, and an arm label naming no variant of the scrutinee's enum is a hard error citing TYPE-6 at the `arm`. A PRE-1 variant is written unqualified.
+For an enum scrutinee admitted by [GRAM-12], the TYPEID label of an `arm` resolves against that already known enum type; the label of a `result_route` resolves against its result ordinal's declared type, and the TYPEID of a `range_variant` against its tested value's enum type [RANGE-1]: it names the variant of that enum with its spelling, and an arm label naming no variant of the scrutinee's enum is a hard error citing TYPE-6 at the `arm`. A PRE-1 variant is written unqualified.
 Entries must be unique within, but not across, the nominal-type, constructor, and built-in-bound domains. Interface and binding group names share the nominal-type collision domain, but neither is a runtime type or a constructor.
 Construction and matching never consult an expected nominal type: a constructor names its struct, its PRE-1 variant or its variant's enum, and an arm or route label reads the type its scrutinee or result already has.
 
@@ -564,7 +601,7 @@ Every aggregate therefore holds only owned values, which is what [STOR-7] rests 
 `Array<T, N>`, `Slots<T, N>`, and `Ring<T, N>` are the constant-capacity forms, whose capacity is the type constant N [CONST-1] and whose storage is inline in the owner or the stack frame [STOR-1].
 `Array<T>`, `Slots<T>`, and `Ring<T>` are the runtime-capacity forms, written by omitting the const argument N, whose capacity is fixed at construction and read as the readonly field `cap`, or as `len` for an `Array<T>` [MSR-1], each placed by the placement table below.
 `Segments<T>` is the prelude's opaque struct `Segments` [TYPE-2, PRE-1], declared with no capacity parameter and its one measure `len` as a readonly field [MSR-1]: a run of `len` segments of T whose boundaries `box_segments_filled` fixes when it builds the run [OP-13] and no operation changes, its elements stored contiguously in segment order. It has no constant-capacity form and is placed by the placement table below. Its segments and the run of all its elements are reached by [OP-4, REF-4].
-`Paged<T>` is the prelude's opaque struct `Paged` [TYPE-2, PRE-1], a runtime-capacity window with paged element storage [WIN-1] and the measures of [MSR-1]. It has no constant-capacity form and is placed by the table below. Its elements, runs and pages are reached by [OP-4, REF-4], and its admitted boundary operations are [OP-10].
+`Paged<T>` is the prelude's opaque struct `Paged` [TYPE-2, PRE-1], a window with paged element storage [WIN-1] whose capacity is fixed at construction, not one of the runtime-capacity forms, and the measures of [MSR-1]. It has no constant-capacity form and is placed by the table below. Its elements, runs and pages are reached by [OP-4, REF-4], and its admitted boundary operations are [OP-10].
 `Box<T>` is the prelude's opaque struct `opaque nocopy struct Box<T> { inner: T; }` [TYPE-2, PRE-1]: its one field `inner` is its content, stored as [STOR-1] places it; T is any nameable type [TYPE-3] the placement table admits as a `Box`'s content, a runtime-capacity form, a `Segments<T>` and a `Paged<T>` included; there is one heap [STOR-8], a `Box` carries no brand, and it may be moved, stored in an aggregate, and returned freely.
 The content is reached by the ordinary field step, `b.inner`, and through a reference to the cell as `cell^.inner`, where `^` steps through the reference and `inner` through the cell; `^` never reaches the content itself [TYPE-7, REF-1]. `let n = move b.inner;` consumes the `Box`, yields its content, and frees the cell [WIN-3].
 A `move` of a runtime-capacity, `Segments` or `Paged` content is a hard error citing TYPE-9 at the complete `place`, with a repair [DIAG-1].
@@ -583,7 +620,7 @@ The places a value can take are a binding, a value parameter, a result, a field,
 [TYPE-10] Window parts are names, not declarations.
 `len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes, the key set and the entries [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and they change only through the operations of [OP-10] and [OP-13], the key-set insertions of [SHARE-1], and a replacement [SET-1] or exchange [OP-11] of the whole value that holds them.
 `next`, `last`, `filled`, and `free` are the four window parts [WIN-2]; they are vocabulary for effect rows and the overlap judgment only, selected by the window type of the place they follow, and they occupy no declaration domain and reserve nothing: a binding, a field of another type, or a label may carry the same spelling.
-`pages` following a `Paged` place is a selector, not a field, and occupies no declaration domain. It is admitted only in the measure `p.pages.len` [MSR-1], as the base of a page subscript whose use [OP-4] judges, and in a page-selection effect path [EFF-1]; a different use is a hard error citing TYPE-10 at the complete `place`.
+`pages` following a `Paged` place is a selector, not a field, and occupies no declaration domain. Its measure use `p.pages.len` is judged by [MSR-1], its use as the base of a page subscript by [OP-4], and its page-selection effect path by [EFF-1]; a different use is a hard error citing TYPE-10 at the complete `place`.
 A read of a window part, a `borrow_expr` over one, and a write of one are each a hard error citing TYPE-10 at the complete `place`, with a repair [DIAG-1].
 
 [TYPE-7] Reading through a reference is explicit.
@@ -594,7 +631,7 @@ There is no implicit read through a reference [TYPE-4, META-2].
 `place^` where `place` is not a reference, a `Box` included, is a hard error citing TYPE-7 at the complete `place`, with a repair [DIAG-1].
 
 [SET-1] Place assignment.
-For `set p = e;`, target evaluation first resolves and evaluates the complete `p` without reading or consuming the value stored there.
+For `set p = e;`, the right-hand side `e` is evaluated first; target evaluation then resolves and evaluates the complete `p` in the state `e` left, without reading or consuming the value stored there, and the commit stores the value of `e` there.
 A `set` target must resolve to a binding already in scope: a `set` whose target name resolves to nothing declares nothing and is a hard error citing SET-1 at that `place`, with a repair [DIAG-1].
 A nested place is evaluated from its base outward; at each subscript, the base place is evaluated before its offset atom, and the subscript's [OP-4] discharge obligation is judged at that target place exactly as in read position, so accepted target evaluation executes no runtime check and cannot trap.
 Field suffixes introduce no runtime evaluation.
@@ -609,19 +646,18 @@ A `for_stmt` binder is compiler-updated state and is never source-writable; a ta
 A target satisfying the writable-root condition is writable exactly when its root is live or it is the complete own-mode value binding [OWN-1, OWN-11].
 These specific rules own their stated violations; every other failure of this closed writability relation cites SET-1 at the complete target `place` child of the `set_stmt`, carrying the resolved root class and the required writable classes.
 
-The right-hand side is then checked under [TYPE-5] and evaluated under its ordinary expression, ownership, effect, and partial-operation domain rules.
-The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable under the same writable-root and live-or-complete-binding conditions.
-If the right-hand side moved a strict prefix of the target place, the commit is a later write of a dead root under OWN-1.
-If it invalidated a reference the target path is reached through, [REF-2] rejects the commit.
-This is a static acceptance check: at runtime every target component is evaluated exactly once before `e`, and lowering carries the resulting target address and offset values across `e` rather than evaluating source again.
-No root-liveness or writability fact from before the right-hand side bypasses the post-state check.
+The right-hand side is checked under [TYPE-5] and evaluated under its ordinary expression, ownership, effect, and partial-operation domain rules, on the normal continuation of the statement's entry.
+Every judgment of target evaluation is made on the normal continuation of `e`: the writable-root and live-or-complete-binding conditions above, each subscript's [OP-4] discharge, and the validity [REF-2] of each reference the target path is reached through; no fact from before `e` that `e` killed reaches them.
+A `set p = e;` that is not an [OP-12] atomic update therefore means exactly `let t = e; set p = move t;`, or `set p = t;` when the value is copy, for a fresh binding `t`.
+At runtime `e` is evaluated once, then each target component exactly once, then the one store; nothing evaluated for the target is carried across `e`.
+An [OP-12] atomic update reads its target out at its call's first argument, under the conditions that rule states, which make that place the one target evaluation after the call names.
 
-On successful revalidation, assignment performs exactly one write of the resulting value into `p`.
+On successful target evaluation, assignment performs exactly one write of the resulting value into `p`.
 The old value's disposition at the commit is [WIN-3]'s.
 A commit derives no drop, release, finalizer, or cleanup edge beyond that disposition.
 The new value occupies the same place and the target root is live after the commit, reinitializing a dead complete binding [OWN-1, OWN-11].
 The store occurs only after right-hand-side evaluation completes; until that commit point a live target retains its previous value.
-The checked program retains the exact target path, each required target check, the right-hand-side value, the post-right-hand-side liveness and writability judgments, and the single store before lowering [DIAG-2].
+The checked program retains the right-hand-side value, the exact target path with each required target check and its liveness and writability judgments, made after the right-hand side, and the single store before lowering [DIAG-2].
 
 [CONST-1] The grammar production `const` of the fence below is usable at `Array<T, N>` sizes and `const` targs, and, being the `const` alternative of `targ` [GRAM-3], at every const argument of a compiler-owned storage nominal [TYPE-9].
 
@@ -655,6 +691,7 @@ cvalue := literal | STRING | IDENT | "[" cvalue ("," cvalue)* "]"
 The `cvalue` totally defines the value: a primitive-typed const takes a FORM-5 numeric or unit literal or an IDENT naming a const of that exact type; an `Array<T, N>`-typed const takes `[cvalue, ..., cvalue]` with exactly N entries, each of type T, or, where T is `u8`, a STRING [FORM-5] whose value is the UTF-8 encoding of its scalar values in order, one entry per byte, and whose byte length must equal N, a STRING of any other length being a hard error citing CONST-2 at that `cvalue` with a repair stating its byte length [DIAG-1]; and a struct-typed const takes the construction form `TYPEID(field: cvalue, ...)` naming its exact struct and writing every declared field in declared order [GRAM-8], each field value a cvalue of the declared field type.
 The const-dependency graph is acyclic: consts are visible throughout their module [MOD-3], and a const whose value depends on itself through any chain of consts is a hard error citing CONST-2 at the first const in item order on that cycle. Evaluation follows the dependencies and is substitution and layout only.
 A const item is never `move`d or `set`, and no declared row may write a path rooted at one [EFF-1, EFF-5].
+A source struct whose declaration carries `nodrop`, or whose fields are linear, is const-eligible on the same terms: a const is never moved or released [STOR-3], and a linear type is never copy [OWN-1], so no reading of the const yields an owned value of that type and no scope holds one to consume [PROV-6].
 It is read via a subscript, a measure member [OP-15], a field suffix, or a `&` reference [REF-1], so a const table may be passed to a consumer, and, when its type is copy [OWN-1], as a whole value, which reads a copy of it as a bare place of a copy type reads one.
 A struct-typed const is additionally read via its field suffixes exactly as subscript reads: a copy-scalar selection copies out, and a composite selection keeps the whole-composite read rules.
 A struct-typed const is laid out as one read-only static aggregate in the nominal's ordinary representation.
@@ -663,15 +700,16 @@ A struct-typed const is laid out as one read-only static aggregate in the nomina
 
 [OWN-1] Every value has exactly one owner.
 A type has two capabilities, copy and drop, and its class is read from them: a type with both is *copy*, a type with drop alone is *affine*, and a type with neither is *linear* [PROV-6]; no type has copy without drop.
-Primitives (TYPE-1) have both. Every other type has a capability exactly when every part it owns has it [PROV-6] — its owned fields, its variant payload fields, its `Box` content, and the elements of a storage shape — and its declaration does not remove it [GRAM-2]: `nocopy` removes copy, and `nodrop` removes drop and copy with it. A tag-only enum and a struct of copy fields are therefore copy, `Bool` being the canonical case; the prelude declares `Slots`, `Ring`, `Segments`, `Paged` and `Box` `nocopy` [PRE-1] and the host modules declare every host handle `nocopy` or `nodrop` [PRE-2], so a type owning one of them is not copy, and an `Array` has the capabilities of its element type [TYPE-9].
+Primitives (TYPE-1) have both. Every other type has a capability exactly when every part it owns has it [PROV-6] — its owned fields, its variant payload fields, its `Box` content, the elements of a storage shape, and the state of a `Shared<T>` handle — and its declaration does not remove it [GRAM-2]: `nocopy` removes copy, and `nodrop` removes drop and copy with it. A tag-only enum and a struct of copy fields are therefore copy, `Bool` being the canonical case; the prelude declares `Slots`, `Ring`, `Segments`, `Paged` and `Box` `nocopy` [PRE-1] and the host modules declare every host handle `nocopy` or `nodrop` [PRE-2], so a type owning one of them is not copy, and an `Array` has the capabilities of its element type [TYPE-9].
 A type parameter has the capabilities its bound grants [PROV-6], so a generic nominal's class is decided at each instance from its arguments.
 An affine or linear place rooted in a live own-mode binding is consumed exactly once by an explicit `move p`, including an own-place match scrutinee [OWN-13], a propagation operand [ERR-3], and the `move place` of a destructuring consume [PROV-6].
+A consuming use of a place rooted in no live own-mode binding, such as a place reached through a reference [TYPE-7], is a hard error citing OWN-1 at the complete consumed `place`, with a repair [DIAG-1]; a use of a dead binding is the error stated below. OWN-1 forms no candidate [DIAG-1] at the `move` operand of an [OP-12] update, whose target [OP-12] judges, at a place whose path is formed through a `SharedRead` target binding, whose consumption [SHARE-2] refuses, or at a window slot or an array element, whose move [WIN-3] refuses.
 A bare `place` expression used as an owned affine or linear value is a hard error, and `move p` on a copy value is a hard error (copy values are used bare — one spelling per meaning, FORM-1), each with a repair [DIAG-1].
 That spelling judgment is made once per written body: at a concrete instance of a generic template it is not re-made, and a `move` of a value whose type parameter was bounded `drop` or left unbounded denotes a copy there [FN-2, PROV-6].
 Resolving and evaluating the target of SET-1 does not by itself read, copy, or move the selected value or its affine owner.
 After any consuming use, the whole binding rooting `p` is dead (partial moves kill the whole binding) [WIN-3]; any later use of a dead binding, and any write or `set` of a place projected, dereferenced, or subscripted from a dead root, is an error at the later use or target place.
 `swap` is not a consuming use: it swaps the stored values of its two places, leaves both roots live, and leaves each root the sole owner of the value the other held [OP-11].
-SET-1 rechecks its premises after its right-hand side under [LIV-1]; a dead binding is revived only by a [SET-1] commit whose target is that complete binding, which reinitializes it, and by nothing else.
+SET-1 judges its target after its right-hand side under [LIV-1]; a dead binding is revived only by a [SET-1] commit whose target is that complete binding, which reinitializes it, and by nothing else.
 
 [REF-1] A reference is a local name for a path.
 A path starts at a local variable, a parameter, a named const [CONST-2] or the state of the object an atomic statement's target names [SHARE-1], and continues through field selections, `^` (a reference's referent [TYPE-7]), an index step, a range or page step [REF-4], or an enum payload step [GRAM-5].
@@ -685,7 +723,7 @@ A `let` binder whose initializer is a `borrow_expr`, and a `let` binder whose in
 A `set` whose target is a reference variable and whose right-hand side is a `borrow_expr` rebinds that name and writes no storage, so [SET-1]'s value-target judgment does not apply to it.
 At a control-flow join, the join of a value initializer's delivering arms included, a reference variable's target is the union of the path sets its incoming edges may name, and every check on it must hold for every member of that set.
 A loop-carried rebinding may extend its path through itself; its finite checking description is the loop-header summary below, not an enumeration of runtime path depths.
-There is no permission marker on a reference; whether a callee may write through a reference parameter is stated by its effect row [EFF-1].
+Held origin and protected cover are retained and checked under [HOLD-1]. There is no permission marker on a reference; whether a callee may write through a reference parameter is stated by its effect row [EFF-1].
 
 For each loop header and reference holder that a structurally continuing body path may rebind, retain one possible-location description per ultimate root. Seed it with the entering paths. A description is either the finite set of entering static path shapes with opaque captured offsets, or a known prefix R followed by an unknown descendant cover, written `R.**` in this specification only. The cover includes R and all its finite owned descendants; it is not writer syntax. Distinct roots are never dropped.
 Join a contribution with the description for its root as follows. An incoming static shape already present in the entering set keeps that set; each potentially rebound index, page index or range endpoint has a finite opaque identity distinguished by loop, holder, path and endpoint. Otherwise take the longest common definitely identical prefix of the existing alternatives and incoming cover and append `**`. Unequal or nonidentical captured selectors end that common prefix. A summary contains no nested `**`; further descent is absorbed by the cover. Once introduced, a cover's prefix may only shorten. A reset can add a root or shorten an anchor, and does not narrow the settled header.
@@ -755,6 +793,7 @@ A counted binder may be copied and may have a reference formed to it [REF-1], bu
 These restrictions are checked for each enclosing loop, so nesting never grants an outer binding to an inner body.
 
 [OWN-13] Match ownership: a non-place expression scrutinee is an owned temporary (moved into the match).
+An integer match copies its `own` integer value and introduces no payload binder [GRAM-12]; the payload and reference-mode judgments below apply to enum scrutinees.
 An own-mode place scrutinee follows [OWN-1]: copy places are copied and noncopy places are explicitly moved; binders receive `own` payloads, and a consumed root dies. Matching through a reference leaves the scrutinee live and binds each payload as a reference naming the scrutinee path extended by that payload step [REF-1]. Its selected place follows [REF-2], while newly written payload selections require [ENT-3.S15]'s current refinement.
 Binder modes are derived by this rule, stated once; they are not written.
 Sibling binders are judged by [OWN-7].
@@ -768,13 +807,13 @@ This agreement is judged before any capability limit of a conforming checker rep
 Because the status agrees at every join, whether a compiler-derived release runs on an edge leaving a scope is not runtime state: on every edge leaving a scope — a `break`, a `continue`, a `give`, a `propagate` error edge, the function-return edge, and a block exit — every binding of that scope that is live on that edge takes its compiler-derived release there, unconditionally, and a binding that is dead takes none [STOR-3].
 Which release runs inside a live value may still be selected by that value's own discriminant, exactly as an enum's derived drop selects on its variant today.
 A binding whose value is linear [PROV-6] takes no compiler-derived release on such an edge and is refused there instead, because the compiler never releases a linear value.
-This rule states the liveness premise [SET-1] rechecks after a right-hand side, and the premise [OWN-11] reads at a backedge; it adds no scope-exit action and removes none.
+This rule states the liveness premise [SET-1] judges at target evaluation, after a right-hand side, and the premise [OWN-11] reads at a backedge; it adds no scope-exit action and removes none.
 
 [PROV-6] Linearity is a property of the type, closed under ownership.
-A type is linear, lacking the drop capability [OWN-1], exactly when its declaration carries the `nodrop` modifier [GRAM-2] or it owns, at any depth, a linear type; a struct, an enum, a storage shape or a `Box` [TYPE-9] owning a linear part is linear, and every other type is copy or affine by [OWN-1].
+A type is linear, lacking the drop capability [OWN-1], exactly when its declaration carries the `nodrop` modifier [GRAM-2] or it owns, at any depth, a linear type; a struct, an enum, a storage shape, a `Box` [TYPE-9] or a `Shared<T>` handle [SHARE-1] owning a linear part is linear, and every other type is copy or affine by [OWN-1].
 Linearity is a property of the type and not of a scope.
 This rule refines [OWN-1]'s classification and replaces none of it: a copy value is never linear, and a value this rule does not make linear keeps exactly the disposition [OWN-1] and [STOR-3] give it.
-A type owns its fields, its enum variant payloads, its `Box` content [TYPE-9], and the elements of a storage shape it is [TYPE-9]; a `Frozen<T>` handle owns no `T`, the value its field `inner` names being held by its frozen object [SHARE-1].
+A type owns its fields, its enum variant payloads, its `Box` content [TYPE-9], and the elements of a storage shape it is [TYPE-9]; a `Shared<T>` handle owns its state's type `T`, because the handle whose close is last receives the state [SHARE-1], and that ownership adds no edge to its executable release graph; a `SharedRead<T>` or `Frozen<T>` handle owns no `T`, the value being held by its object [SHARE-1].
 A full `Array` has the same element-type ownership closure as a window [WIN-1]: if T is linear then `Array<T, N>` is linear, including when N is zero; a zero extent changes the executed element count, not this type-level judgment.
 A written type argument is owned through the field, payload, or element position it lands in and never by the type that writes it.
 
@@ -796,14 +835,14 @@ For a copy operand, each bound field is copied and the source remains live and u
 For an affine or linear operand, the statement is the destructuring consume: one consuming use of the operand [OWN-1], with no surviving residual and no derived release of the consumed value's own storage [STOR-3].
 An own-place `match` [OWN-13] is the enum form of the same destructuring.
 
-The release graph of a type `T` has as its nodes the types reachable from `T` through the parts each node owns: its owned fields, enum variant payloads, `Box` content, and the elements of every storage shape [TYPE-9].
-A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, is reached in that graph only as the content of its `Box` [TYPE-9], so the `Box` is the leaf every owner's edge lands on and no such shape is ever a node of an owner other than its own cell.
-A type's release action is non-empty by the least fixed point of two clauses: a `Box` or `Paged` [TYPE-9], or a `Shared<T>`, `SharedRead<T>` or `Frozen<T>` handle [SHARE-1], is non-empty, and any type owning a non-empty type is non-empty [STOR-3].
-The graph has an edge from a node to a sub-node exactly when that sub-node's release action is non-empty.
-One walk performs the compiler-derived release, and it visits exactly the nodes of that graph in [STOR-3]'s order — every owned field of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, every element of an `Array` and every slot of a window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
-A field, payload, or element whose release action is empty is never visited, and a container's elements are visited before its backing is released, so a release of a full container needs no emptiness premise.
-A type whose release graph has a cycle makes that walk's depth a runtime quantity rather than a compile-time constant, and is admitted: the derived release of such a type is one release action per node type, entering itself where the graph closes, and the walk's depth is the value's own.
-Every judgment of this rule that reads the graph reads each node once, which terminates on a cyclic graph and is exactly the node set this version's release actions need.
+The type-ownership closure of a type `T` contains `T` and every type transitively owned under this rule; linearity reads this closure [OWN-1].
+A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, is reached in that closure only as the content of its `Box` [TYPE-9].
+A type's release action is non-empty by the least fixed point of these clauses: a `Box` or `Paged` [TYPE-9], a `Shared<T>`, `SharedRead<T>` or `Frozen<T>` handle, a `ConcurrentHashMap<V>` or `KeySet` [SHARE-1], or a `DecisionCell` handle [PRE-1], is non-empty; a struct or enum owning a non-empty field or variant payload is non-empty; and a storage shape with a non-empty element type is non-empty when its type has no constant extent or that extent is not statically zero. A symbolic type parameter is non-empty exactly when its written capability bound [FN-2] does not grant `copy`.
+The executable release graph of `T`, used by [STOR-3, FN-10], starts at `T` and contains precisely these edges: a node has an edge to each owned field, variant payload or `Box` content whose release action is non-empty, and a storage-shape node has an edge to its element type exactly when that element contributes non-empty release by the storage-shape clause above.
+One walk performs the compiler-derived release, following those executable edges for the components present in the value in [STOR-3]'s order — owned fields of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, the initialized elements of an `Array` or window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
+A release of a full container needs no emptiness premise [STOR-3].
+A type whose executable release graph has a cycle makes that walk's depth a runtime quantity rather than a compile-time constant, and is admitted: the derived release of such a type is one release action per node type, entering itself where the graph closes, and the walk's depth is the value's own.
+Every compile-time judgment of this rule reads each type once in its corresponding type-ownership closure or executable release graph, so its traversal terminates on cyclic type descriptions.
 
 A consume of a proper sub-place of a value one of whose remaining parts is linear is a partial consume [WIN-3].
 A partial consume is a hard error citing PROV-6 at the complete consumed `place`, naming the residual linear part, with a repair [DIAG-1].
@@ -818,11 +857,11 @@ An instantiation whose argument's class does not satisfy the written bound is a 
 A type parameter with no bound is linear at the one symbolic instance its body is checked at [FN-2], so a body that lets such a parameter's value reach a scope exit receives this rule's own not-consumed rejection there, naming the absent bound in place of a `nodrop` declaration.
 The bound is a capability filter: it supplies no function-kind argument, selects no behavior, and creates no bound-satisfaction judgment other than this one [FN-2, FN-3].
 
-The checked program retains, before lowering [DIAG-2], each type's linearity class, each release edge's release graph, each struct destructuring's binder list, and each declaration bound that was checked.
+The checked program retains, before lowering [DIAG-2], each type's linearity class, each release edge's executable release graph, each struct destructuring's binder list, and each declaration bound that was checked.
 
 ## 6. Storage
 
-[STOR-1] Storage class is a function of type, stated once: `Box<T>` is heap-owned: a content that is a runtime-capacity `Array<T>`, `Slots<T>`, `Ring<T>`, or `Paged<T>` of capacity 0 is the shared empty header, immutable static storage that occupies no heap allocation and that no release frees; a positive-capacity `Paged<T>` content occupies a compiler-derived cell allocation containing its header and directory and the page allocations of [OP-13]; every other content is one compiler-derived allocation; each allocated object is released by its compiler-derived action at owner scope exit [STOR-3]; a constant-capacity `Array<T, N>`, `Slots<T, N>`, or `Ring<T, N>` is frame-resident, its slots inline in its owner or the stack frame; a runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, exists only as `Box` content [TYPE-9] and is heap-owned with that `Box`; a `const` item [CONST-2] is immutable static storage; every other owned value is frame-resident, inline in its owner or the stack frame.
+[STOR-1] Storage class is a function of type, stated once: `Box<T>` is heap-owned: a content that is a runtime-capacity form or a `Paged<T>` of capacity 0 is the shared empty header, immutable static storage that occupies no heap allocation and that no release frees; a positive-capacity `Paged<T>` content occupies a compiler-derived cell allocation containing its header and directory and the page allocations of [OP-13]; every other content is one compiler-derived allocation; each allocated object is released by its compiler-derived action at owner scope exit [STOR-3]; a constant-capacity `Array<T, N>`, `Slots<T, N>`, or `Ring<T, N>` is frame-resident, its slots inline in its owner or the stack frame; a runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, a `Segments<T>`, and a `Paged<T>`, exists only as `Box` content [TYPE-9] and is heap-owned with that `Box`; a `const` item [CONST-2] is immutable static storage; every other owned value is frame-resident, inline in its owner or the stack frame.
 There is no per-binding storage annotation and no default clause.
 An `Array<T, N>` holds exactly N stride-spaced element representations in index order and stores no length, capacity, head, occupancy, or discriminant; a window stores its `len`, and a `Ring` its `head`, with the block [WIN-1].
 A shape's concrete size, stride, padding, and zero-extent representation obey [STOR-6]; placing a shape inside another owner changes no element order or ownership.
@@ -836,7 +875,7 @@ No slot carries a tag, no occupancy bitmap, and no runtime discriminant; the win
 A subscript `r[i]` selects the element at logical offset `i` and carries [OP-4]'s obligation `i < r.len`, stated against `len` and never against `cap` or `head`; on a `Slots` it selects slot i, on a `Ring` slot `(r.head + i) mod r.cap`, and on a `Paged` slot `(i >> s, i & (B - 1))`, a page index and an offset within that page, where `B = 2^s` is [OP-13]'s page length. Pages have distinct backing storage and hold the stride-spaced elements their allocated lengths [OP-13] admit; [MSR-1] relates these storage coordinates to logical offsets.
 
 [WIN-2] Besides its slots, a window has four named parts that paths and effect rows may name, all interpreted at call entry: `r.next` is the append slot at index `r.len`, `r.last` is the last filled slot at index `r.len - 1`, `r.filled` is every slot below `r.len`, and `r.free` is every slot from `r.len` up.
-Overlap is fixed data for [OWN-7], read in the state where the two places are compared: an `r[i]` live there, `i < r.len` being proved there, never overlaps `r.next` or `r.free`; any other `r[i]` overlaps both; a range `r[lo..hi]` does not overlap `r.next` or `r.free` when `hi <= r.len` or `hi <= lo` is proved there, and overlaps both otherwise; every `r[i]` and every range overlap `r.last` and `r.filled`, because a row's `r.last` stands for every slot its callee's successive `take_back` calls reach, one `writes(r.last)` covering them all [EFF-2]; `r.filled` and `r.free` do not overlap; `r.next` is contained in `r.free`; `r.last` is contained in `r.filled`; the measure `r.len` is itself a write target and overlaps no slot.
+Overlap is fixed data for [OWN-7], read in the state where the two places are compared: an `r[i]` live there, `i < r.len` being proved there, never overlaps `r.next` or `r.free`; any other `r[i]` overlaps both; a range `r[lo..hi]` does not overlap `r.next` or `r.free` when `hi <= r.len` or `hi <= lo` is proved there, and overlaps both otherwise; every `r[i]` and every range overlap `r.last` and `r.filled`, because a row's `r.last` stands for every slot its callee's successive `take_back` calls reach, one `writes(r.last)` covering them all [EFF-2]; `r.filled` and `r.free` do not overlap; `r.next` is contained in `r.free`; `r.last` is contained in `r.filled`; the measure `r.len` is a word of the window's descriptor storage, which an effect row may write [MSR-2] and which overlaps no slot.
 A subscript formed in that state is live there by its discharged [OP-4] obligation, a range formed there ends at or below `r.len` there by its discharged [REF-4] obligation, and a reference into a window stays valid only while that bound holds [OP-10]; the place of a fact an [ENT-5] event may kill, and an index or range position an effect row takes from other arguments [EFF-5], are live, or end at or below `r.len`, exactly where [ENT-6] derives the bound in the entry state of that event or call.
 Page references within the filled window use [OWN-7]'s page-step answers.
 Parts are vocabulary for effect rows and the overlap judgment only: no program forms a reference to a part, reads one, or writes one [TYPE-10], and the append slot is written only by `place_back` and `insert_at` [OP-10].
@@ -848,7 +887,7 @@ A destructuring consume binds the fields it names and covers the rest with `..` 
 A move out of a window slot or an array element is a hard error citing WIN-3 at that `place`, with a repair [DIAG-1].
 Assigning over a live owned place releases the old value when it is affine and is a hard error citing WIN-3 at the target `place` when it is linear.
 A dead binding holds no old value, and its reinitialization [SET-1] releases nothing.
-At scope exit the compiler releases the slots inside the window recursively and frees the block; an `Array` releases every slot.
+At scope exit the compiler releases the slots inside the window recursively and an `Array` releases every slot [STOR-3]; the block of a window or `Array` that is `Box` content is freed by its `Box` [STOR-1, STOR-3].
 No operation releases a linear element: a storage whose element type is linear is itself linear [PROV-6] and the program must take every element out and consume it, and then, with the storage proved empty, call `free_empty` [OP-14].
 That one route also consumes a `Box` whose content is such a window, freeing the cell with it [OP-14].
 
@@ -862,6 +901,7 @@ The arithmetic that computes an allocation size never wraps: a count's size, pag
 Addresses are not observable, so allocator concurrency does not affect program determinism.
 Allocation and release carry no effect entry [EFF-1] and never prevent two statements from overlapping [PAR-1].
 A source bundle that carries the no-heap declaration [GRAM-2, PROG-3] cannot name `Box`, the runtime-capacity shapes, `Segments`, or `Paged` [TYPE-9] and cannot call an allocating prelude row — `box_new`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, `box_paged_new`, `grow`, and `grow_paged` [OP-13, OP-10]; naming such a type is a hard error citing STOR-8 at the complete `type`, and calling such a row is a hard error citing STOR-8 at the complete `call`, each with a repair [DIAG-1].
+The declaration withdraws exactly those types and rows: a shared object, a frozen object, a concurrent hash map and a key set, whose storage the runtime holds [SHARE-1], remain available under it.
 A module program entry whose `no_heap` states the requirement [MOD-9] withdraws the heap from that entry's execution closure: the entry function and every function its checked body reaches through its calls, in every branch, each as the concrete instance the call selects [FN-6]; an instance's body calls the function-kind actuals it names, and an erased proof annotation calls nothing.
 A function of that closure uses the heap on its own when its body calls an allocating prelude row, or when the concrete type of one of its parameters, its results, or a value its body evaluates, binds or releases holds a `Box`, a runtime-capacity shape, a `Segments` or a `Paged` [TYPE-9] as itself, a field, a payload field or an element, private fields included, since releasing such a value frees heap storage [STOR-3]; it requires the heap when it uses it on its own or calls a function that requires it.
 A component of the closure's call graph introduces the requirement when its functions require the heap and no function of another component that they call does; the first such component a breadth-first walk from the entry reaches is a hard error citing STOR-8 at the declaration of its first function in that walk that uses the heap on its own, reporting the call path from the entry. Definitions the closure does not reach impose nothing on the entry.
@@ -878,17 +918,20 @@ An external-resource termination under [SCOPE-3] likewise creates no source edge
 No exit duplicates an action already carried by an inner scope edge.
 
 The release action of a type is compiler-owned semantic data selected by that type, not a fixed enumeration of memory-reclamation actions.
-Which components of a value that action visits, and in which order, is [PROV-6]'s release graph and its one walk; the per-type actions below are the leaves that walk runs.
+Which components of a value that action visits, and in which order, is [PROV-6]'s executable release graph and its one walk; the per-type actions below are the leaves that walk runs.
 A `Box<T>` release runs its content's compiler-derived release; when [STOR-1] places that content in an allocated cell, the release then runs one compiler-derived heap free of that cell.
 An `Array` release is each element's compiler-derived release in ascending index order and no storage reclamation of its own.
 A `Slots` or `Ring` release is each element's compiler-derived release over its window in ascending logical index order and no storage reclamation of its own.
 A `Paged` release visits its initialized elements in [PROV-6]'s order and frees each allocated page; the containing cell, including its directory, is freed by the `Box` action above.
 A `Shared<T>`, `SharedRead<T>` or `Frozen<T>` release is [SHARE-1]'s handle release.
+A `DecisionCell` release is [PRE-1]'s handle release.
+A `KeySet` release returns the storage the runtime holds for that set [SHARE-1].
+A `ConcurrentHashMap<V>` release releases every value its entries hold [SHARE-1], then returns the storage the runtime holds for that map.
 A `const` item [CONST-2] is never released.
 Every other frame-resident owned value [STOR-1] has no release action of its own.
 
-A host handle [PRE-2] has no fields, so its release is empty; a shared or frozen handle takes [SHARE-1]'s handle release; and every other opaque struct [TYPE-2] takes the release of the fields it owns [PROV-6] under this rule, the storage shapes and `Box` taking the actions above.
-An opaque struct's `nodrop` modifier, and only the ordinary ownership closure of [PROV-6], requires explicit consumption.
+A host handle [PRE-2] has no fields, so its release is empty. An opaque type with a per-type action above takes that action; every other opaque struct [TYPE-2] takes the release of the fields it owns [PROV-6] under this rule.
+An opaque struct's `nodrop` modifier, and only the type-ownership closure of [PROV-6], requires explicit consumption.
 No source declaration, annotation, attribute, contract, or binding attaches a finalizer or any other user-defined action to a value's release.
 
 A successful [SET-1] assignment derives no finalizer or cleanup edge and no release beyond the old value's own: a copy target's previous value needs none, and an affine target's previous value takes the release [WIN-3] states.
@@ -916,7 +959,7 @@ It must not wrap, truncate, underallocate, reduce alignment, change [STOR-1] sto
 This stop is a target-layout failure under [DIAG-1], not a source-language rejection, and cites no language rule.
 
 For a runtime-sized allocation, the concrete descriptor and element layout are checked statically as above.
-For every runtime-capacity shape materialized by a construction function [OP-13] or resized by `grow` or `grow_paged` [OP-10], and every `Segments<T>` that `box_segments_filled` materializes [OP-13], target qualification additionally verifies the actual size, alignment, and element stride against [OP-9]'s language ceilings, and the shape's padded descriptor against the selected target's runtime-allocation byte maximum, before lowering the operation; a `Segments` descriptor counts here its `len` word and its first boundary, the others following at a runtime count.
+For every runtime-capacity shape and `Paged<T>` materialized by a construction function [OP-13] or resized by `grow` or `grow_paged` [OP-10], and every `Segments<T>` that `box_segments_filled` materializes [OP-13], target qualification additionally verifies the actual size, alignment, and element stride against [OP-9]'s language ceilings, and the shape's padded descriptor against the selected target's runtime-allocation byte maximum, before lowering the operation; a `Segments` descriptor counts here its `len` word and its first boundary, the others following at a runtime count.
 For a contiguous shape the lowered operation computes the complete allocation size, the shape's descriptor, its padding before the elements and the count multiplied by the actual target stride, with checked arithmetic, and compares it with the selected target's runtime-allocation byte maximum before any allocator call; for a `Segments` the descriptor holds every boundary, whose number is the length of an allocated run of lengths and so keeps the descriptor's arithmetic from wrapping, and the count is the element total, itself summed with checked arithmetic. A sum or size that wraps or a size that exceeds that maximum is one the target cannot allocate [OP-9], so every size an allocator receives fits both the allocator-parameter and address-index domains.
 For `Paged<T>`, target qualification checks the cell's fixed header and directory tail, each page at its allocated length [OP-13], the directory entries and their stride, and the directory capacity. The lowered operation computes the page count `ceil(cap / B)`, each page's padded size at that allocated length, and the complete cell size, its header plus its directory capacity multiplied by the pointer stride, with checked arithmetic before allocation, applying the same allocation maximum to each object. A page or complete cell size that wraps or exceeds that maximum is heap exhaustion [OP-9, STOR-8]. Qualification proves each directory index, in-page offset and scaled displacement against the particular object it addresses; a logical element count is not a contiguous allocation size.
 Every materialized contiguous runtime-capacity shape and `Segments` therefore satisfies the successful-allocation representation invariant: its padded descriptor and the elements its count sizes, at the actual stride, fit the selected target's runtime-allocation byte maximum.
@@ -1047,7 +1090,7 @@ Exact division is truncating toward zero and exact remainder satisfies `n = (n /
 Exact `ineg` returns mathematical `-x`, and exact `iabs` returns the nonnegative mathematical absolute value; their obligation excludes the signed minimum.
 Exact `ishl` is the fixed-width left shift and may discard high bits, exact signed `ishr` is arithmetic, and exact unsigned `ishr` is logical; their sole domain condition is `k < K`.
 
-The wrap forms return `wrap_T(z)` for add, subtract, multiply, and negation; `iabs.wrap(MIN(T))` returns `MIN(T)`.
+The wrap forms return `wrap_T(z)` for add, subtract, multiply, negation, and absolute value, so `iabs.wrap(MIN(T))` returns `MIN(T)`.
 `ishl.wrap` and `ishr.wrap` mask the amount to `k & (K-1)`.
 The checked add, subtract, multiply, negation, and absolute forms return `Ok(value: z)` when their exact mathematical result belongs to T and otherwise `Err(error: Overflow())`.
 `/checked` and `%checked` return `Err(error: DivideByZero())` for zero divisor, `Err(error: DivOverflow())` for the signed minimum/-1 pair, and `Ok(value: result)` otherwise.
@@ -1075,7 +1118,7 @@ Conversion that ROUNDS into a float format is `cvt.nearest` [OP-6], whose suffix
 [OP-4] An element subscript `p[i]` selects one element place of an indexable base: the base place `p`'s final selection must be `Array<T, N>`, `Array<T>`, `Slots<T, N>`, `Slots<T>`, `Ring<T, N>`, `Ring<T>`, `Paged<T>`, an `Entries<V>`, whose element type T is `Option<V>` [SHARE-2], a `ConcurrentHashMap<V>`, whose element type T is `Option<V>` [SHARE-2], or a run of T elements selected below or named by a range reference `&[T]` or `&Run<T>` [TYPE-9, REF-4], a runtime-capacity form, an `Entries`, a `ConcurrentHashMap` and a range reference alike being reached through `^` [TYPE-7], and the subscripted place's selected type is exactly that element type T — derived from the base place's already-fixed type [TYPE-5] — written where the binding carries an annotation, derived at a body `let` — by the same declared-type selection that types a field suffix, never from expected type or cross-statement inference; an element subscript whose base's final selection is not one of those indexable types or runs is a hard error citing OP-4 at that subscript's `psuffix` node.
 A `const` item whose type is `Array<T, N>` is indexable on the same terms [CONST-2].
 A segment subscript `s[i]` of a `Segments<T>` place and a page subscript `p.pages[k]` of a `Paged<T>` place select runs of T elements [REF-4], with bases `s` and `p.pages` respectively; the following bounds and offset judgments apply to each run selector as to an element subscript.
-A run-selecting place is admitted exactly as the complete place of its [REF-4] borrow, as the base of its `len` measure read [MSR-1], or as the base of a further element subscript, whose element place is an ordinary element place [OP-4]; every other use of the run-selecting place is a hard error citing [OP-4] at the run selector's `psuffix`.
+A run-selecting place is admitted exactly as the complete place of its [REF-4] borrow, as the base of its `len` measure [MSR-1], or as the base of a further element subscript, whose element place is an ordinary element place [OP-4]; every other use of the run-selecting place is a hard error citing [OP-4] at the run selector's `psuffix`.
 A run-selecting place denotes exactly the [REF-1] place its borrow resolves to, with the same effect attribution [EFF-2], overlap judgment [OWN-7] and parallel permission [PAR-1, PAR-2].
 A `ConcurrentHashMap<V>` subscript's offset atom has type `&[u8]` or is a place of type `KeySet`, admitted as the complete place of a `borrow_expr` alone; [SHARE-2] defines both selections. A `ConcurrentHashMap` subscript carries no obligation and reads or writes with no runtime check in every build mode, since a map holds an entry under every key [SHARE-1]. An offset of another type, and a `KeySet` offset outside a `borrow_expr`, are each a hard error citing OP-4 at the offset `atom`, with a repair [DIAG-1].
 A subscript of every base but a `ConcurrentHashMap` carries the bounds obligation `i < p.len` [ENT-6], and `i` is a logical offset whose storage slot [WIN-1] fixes, so the obligation is against `p.len` for every indexable base and never against `p.cap`.
@@ -1084,7 +1127,7 @@ The obligation is submitted to the one numeric goal disposition [MSR-4]; that ru
 A discharged subscript reads or writes with no runtime bounds check in every build mode, and its checked-program disposition records the discharging derivation [DIAG-2].
 A subscript whose current ProofContext does not discharge the obligation is a compile-time rejection citing OP-4 at that subscript's `psuffix` node, carrying the residual obligation rendered exactly per [ENT-6], and publishes no checked program.
 Discharge is a deterministic checker derivation [ENT-1]; a solver result never participates.
-A runtime-capacity shape's obligation is over the runtime length term.
+The obligation of a runtime-capacity shape or a `Paged<T>` is over the runtime length term.
 The offset atom of every base but a `ConcurrentHashMap` has exact value mode and type `own u64`; after the [TYPE-7] implicit-read exclusivity, any other offset mode or type is a hard error citing OP-4 at the offset `atom` node, with `SourceCoordinate` equal to that atom's complete checked half-open source extent.
 A subscript in a [SET-1] target forms the selected place without reading its stored value; its base and offset are evaluated during target evaluation, and its discharge judgment is identical in target position.
 A successful bounds judgment neither narrows nor authorizes narrowing the offset or its scaled byte offset; target address formation additionally obeys [STOR-6].
@@ -1095,6 +1138,17 @@ The implicit-read case already owned by [TYPE-7] is exclusive: when `e` uses a r
 Every other exact-mode or exact-type failure is a hard error citing OP-5 at the selected `expr` node, with `SourceCoordinate` equal to that expression node's complete checked half-open source extent.
 An `if` condition is executed control flow [GRAM-6], while a contract predicate, invariant relation, and `proof_use` are erased proof syntax [FN-8, FN-9, INV-1, PRF-1].
 This judgment alone creates no runtime check or effect.
+
+The source redundancy judgment applies to the condition `expr` of every `if_stmt` and `value_if`, including each `else if` link [GRAM-6, GRAM-7].
+Its query point is after the condition's ordinary evaluation, obligations, effects and fact publications and before its branch-entry facts [ENT-3.S1].
+A nongeneric body is judged at its ordinary instance; a generic body is judged once at the symbolic instance of its own parameters under their written bounds [FN-2], and a concrete-instance recheck does not judge it again.
+In a contradictory entering state [ENT-4] this judgment admits the condition; structural reachability remains [FN-1]'s judgment.
+A condition with neither a goal origin nor a comparison origin [ENT-3] has no derivable truth, and this judgment admits it.
+In a noncontradictory entering state, a condition with a goal origin or a comparison origin is decided True when every fact the then-block's entry would establish [ENT-3.S1] is already derivable there: each member of its goal-origin set [ENT-3], direct before expanded, is discharged by the Signed Goal query [ENT-6], whose numeric steps are [MSR-4]'s disposition in the [ENT-4.OT] view, and its comparison origin, when it has one, is derivable in the closed L0 state [ENT-4].
+It is decided False when every fact the else-block's entry or the false edge would establish is derivable: the Signed Goal query discharges `bnot` of each member, and the comparison origin's exact negation [ENT-4] is derivable in the closed L0 state.
+The queries use no `proof_use` and publish nothing; True is tried first, and a condition that neither truth decides is admitted.
+Deleting a decided test and its dead branch therefore removes no fact a later goal could use.
+A decided condition is a redundant source form and is a hard error citing OP-5 at its complete `expr` node, with `SourceCoordinate` equal to that node's complete checked half-open source extent, residual `RedundantCondition`, the condition and its decided truth, and a repair [DIAG-1] that names the deciding facts and directs removal of the test and its dead branch while retaining the selected branch's execution and delivery [GIVE-1].
 
 [OP-6] Exact numeric conversion has one partial value function `C(Src,Dst,x)` and one total Boolean domain predicate `D(Src,Dst,x)` over all 100 ordered pairs of the ten numeric primitives.
 Both endpoints are written type arguments [TYPE-5]; an endpoint may be a numeric primitive or a symbolic type parameter whose [FN-2] bound is `Int` or `Float`.
@@ -1150,7 +1204,7 @@ The total value-result policies are `.wrap`, `.checked`, `.sat`, and `.nearest` 
 Signedness-parametric lowering keyed on the operand-derived selected type [OP-2] (`ishr` is `ashr` for signed T and `lshr` for unsigned T; `imin` is `smin` or `umin`) is the same discipline as the `<` = `slt`/`ult` row, not overloading.
 Nominal type identity is likewise checked from the operand-derived selected type before `==`/`!=` lowering; equal representation never makes distinct nominal types interchangeable.
 
-[OP-8] Edge semantics and confirmed lowerings for the operations added in this revision; every totality edge is closed here as table data, so no added row is writer-reachable poison.
+[OP-8] Edge semantics and confirmed lowerings for the operations below; every totality edge is closed here as table data, so no row below is writer-reachable poison.
 `iand`/`ior`/`ixor` lower to `and`/`or`/`xor` and `inot` to `xor x, -1` (total).
 A shift or rotate amount is `u32`; `ishl.wrap`/`ishr.wrap` mask the amount to `amt & (width-1)` and are total, exact `ishl`/`ishr` execute an ordinary shift only after [OP-2] proves the amount smaller than the width, `ishr` is `ashr` for signed T and `lshr` for unsigned T, and `irotl`/`irotr` lower to `llvm.fshl`/`llvm.fshr` whose amount is taken modulo width, so rotates are total.
 `ipopcount` is `llvm.ctpop`; `iclz`/`ictz` are `llvm.ctlz`/`llvm.cttz` with is-zero-poison false, so a zero input returns the bit width (the zero-input fix); counts return `u32`.
@@ -1172,13 +1226,13 @@ The comparisons `feq`/`flt`/`fle`/`fgt`/`fge` are ordered (`fcmp o*`, false when
 `finf` is the positive-infinity value (negative infinity is `fneg(finf::<T>())`) and `fnan` is the canonical quiet NaN; other NaN payloads are reachable through `reinterpret`.
 
 [OP-9] An allocation's size is computed at run time, and a size the target cannot allocate is heap exhaustion; a stored type has fixed language layout ceilings.
-A runtime-capacity construction [OP-13] and `grow` or `grow_paged` [OP-10] compute the byte size of their storage from their own count `n`, and `box_segments_filled` [OP-13] from the sum of its lengths and their number, with the checked arithmetic [STOR-6] fixes, and a size the selected target cannot allocate, including one whose sum of lengths wraps, is a request the heap cannot serve, which is heap exhaustion [STOR-8].
+A construction of a runtime-capacity shape or a `Paged<T>` [OP-13] and `grow` or `grow_paged` [OP-10] compute the byte size of their storage from their own count `n`, and `box_segments_filled` [OP-13] from the sum of its lengths and their number, with the checked arithmetic [STOR-6] fixes, and a size the selected target cannot allocate, including one whose sum of lengths wraps, is a request the heap cannot serve, which is heap exhaustion [STOR-8].
 No count or length carries a static obligation, and every value of its `u64` type is admitted.
 
 All layout-ceiling arithmetic is over unbounded mathematical integers.
 Let `round_up(x,a) = ceil(x/a) * a`.
 For a sequence of `(size, alignment)` pairs, start at offset zero, round each current offset up to the next field's alignment, add that field's size, take aggregate alignment as the maximum of one and the field alignments, and round the final offset to that aggregate alignment.
-The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; a `Segments<T>` `(16,8)`, a pointer and a length; a `Paged<T>` `(32,8)`, its length, capacity and directory-capacity words and the first page pointer, the rest of the page-pointer directory following at a runtime count in the same cell; a `Shared<T>` or `SharedRead<T>` `(8,8)`, one pointer to its shared object [SHARE-1]; a `Frozen<T>` `(8,8)`, one pointer to its frozen object, its `inner` field living in that object and entering no sequence [SHARE-1]; a `KeySet` `(16,8)`, its count and a pointer to its store; an `Entries<V>` `(24,8)`, a pointer to the statement's hold, the position of the set's first key in it and the count [SHARE-2]; and every other fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
+The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; a `Segments<T>` `(16,8)`, a pointer and a length; a `Paged<T>` `(32,8)`, its length, capacity and directory-capacity words and the first page pointer, the rest of the page-pointer directory following at a runtime count in the same cell; a `Shared<T>` or `SharedRead<T>` `(8,8)`, one pointer to its shared object [SHARE-1]; a `Frozen<T>` `(8,8)`, one pointer to its frozen object, its `inner` field living in that object and entering no sequence [SHARE-1]; a `DecisionCell` `(8,8)`, one pointer to its verdict [PRE-1]; a `KeySet` `(16,8)`, its count and a pointer to its store; an `Entries<V>` `(24,8)`, a pointer to the statement's hold, the position of the set's first key in it and the count [SHARE-2]; and every other fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
 Every other struct applies the sequence rule to fields in declaration order.
 A constant-capacity `Array<T, N>` repeats T's pair N times.
 A constant-capacity `Slots<T, N>` repeats T's pair N times and then applies the sequence rule to that block followed by one `(8,8)` word, its length.
@@ -1195,8 +1249,8 @@ The [STOR-6] rule separately governs allocator and address-index representabilit
 The language defines no numeric frame limit, and target-layout and resource failure are not program execution.
 
 [OP-10] The window operations.
-The ten operations are `place_back`, `take_back`, `insert_at`, `remove_at`, `append`, `split_off`, `grow`, `grow_paged`, `place_front`, and `take_front`; their signatures, rows and contracts are the [PRE-1] records and are declared there alone, and this rule states which part of the window each one moves and what that costs.
-A compiler-owned window type parameter, written W in this rule and W or X in a [PRE-1] record, admits `Slots<T, n>`, `Slots<T>`, `Ring<T, n>`, and `Ring<T>` for `place_back`, `take_back`, `insert_at`, `remove_at`, `append`, and `split_off`, and additionally `Paged<T>` for `place_back` and `take_back`; its element type is that shape's own element type; it is supplied by the operand and never written, and no source declaration can write such a parameter.
+The eleven operations are `place_back`, `take_back`, `insert_at`, `remove_at`, `append`, `split_off`, `grow`, `grow_paged`, `place_front`, `take_front`, and `clear`; their signatures, rows and contracts are the [PRE-1] records and are declared there alone, and this rule states which part of the window each one moves and what that costs.
+A compiler-owned window type parameter, written W in this rule and W or X in a [PRE-1] record, admits `Slots<T, n>`, `Slots<T>`, `Ring<T, n>`, and `Ring<T>` for `place_back`, `take_back`, `insert_at`, `remove_at`, `append`, `split_off`, and `clear`, and additionally `Paged<T>` for `place_back`, `take_back`, and `clear`; its element type is that shape's own element type; it is supplied by the operand and never written, and no source declaration can write such a parameter.
 A window operation, `swap` [OP-11], and `free_empty` [OP-14] therefore write no type arguments at a call: every type parameter of those rows is supplied by an operand.
 The construction functions [OP-13] write theirs explicitly at every call, as [FN-2] requires of every other generic callee.
 An operand whose shape is outside the operation's admitted set — `place_front` or `take_front` on a `Slots`, or any other operand outside the admitted arguments stated here — is a hard error citing OP-10 at the complete `call`, with a repair [DIAG-1].
@@ -1208,15 +1262,19 @@ Each of those two is a content write of `r.filled`, so a surviving slot referenc
 `grow_paged` is defined on `Box<Paged<T>>` alone and gives its pages the allocated lengths of [OP-13] at the new capacity. Positive growth from the shared empty header [STOR-1] allocates its first cell and pages. Growth that exceeds page 0's allocated length while that length is below B replaces page 0 with a larger block and copies its initialized elements; all such replacements together copy at most B - 1 elements over the owner's growth. Each replacement is a relocation that retains their values. Growth whose new capacity fits page 0's allocated length retains every existing page and element address. Growth with page 0 already allocated for B elements retains every existing page and element address and allocates only additional pages, together with any replacement of the cell that holds the directory. Its allocation sizes follow [OP-9, STOR-6].
 Both growth operations retain their whole-cell rows [PRE-1], with reference validity governed by [REF-2], parallel permission by [PAR-1], and fact survival by [ENT-5].
 `place_front` and `take_front` admit `Ring<T, n>` and `Ring<T>` alone and shift every logical index of `r`, so every reference into `r` becomes invalid [REF-2].
+`clear` ends the lifetime of every element of `r.filled`, running each element's compiler-derived release action in ascending logical index order by [PROV-6]'s walk, and then sets `r.len` to zero. Its record's `T: drop` bound is judged against the window's element type at every call [PROV-6], so a window of a linear element type is refused whatever its length.
+`clear` retains the window's storage, its `cap`, a `Ring`'s `head` and a `Paged`'s allocated pages, and allocates nothing [STOR-8]; a later placement fills slots that hold nothing [WIN-1].
+Its element work is [PROV-6]'s executable release graph over the old window: for an element type whose release action is empty that graph has no element edge, so `clear` visits no element and its cost is independent of `len` and `cap`; for an element type whose release action is non-empty it visits each of the old `len` elements once, so its cost grows with that count and with the elements' own release work.
 Writing one element is not a window operation: it is the ordinary assignment `set r[k] = x;` [SET-1], whose old value takes [WIN-3]'s disposition.
 A reference into a window is formed under a bound and stays valid while that bound holds: `&r[i]` under `i < r.len`, and `&r[lo..hi]` under `hi <= r.len` [REF-4]; a page reference requires its captured initialized extent [REF-4] to remain filled.
 `place_back`'s `ensures` carries these bounds across the call, while `take_back`'s and `remove_at`'s do not, so such references die there.
+`clear` ends every reference into `r` formed before the call, whatever bound it was formed under: each element, range and page reference, an empty range included, becomes invalid there [REF-2], and no later placement makes it valid again. A reference to `r` itself names the window, not an element, and stays valid [REF-2].
 A ring position is a logical index and the wrap is the storage's business [WIN-1].
 
 [OP-11] `swap`.
 `swap(first: p, second: q)` exchanges the values at two owned places of one type; its signature and row are the [PRE-1] record, and it is built in because no source body can write it without a hole [WIN-3].
 It is the one operation whose two reference arguments may name the same place, in which case nothing happens, so `swap(first: &r[i], second: &r[j])` needs no `i != j` branch [EFF-5].
-Every possible pair of exchange targets must be equal or disjoint, with neither possibly a proper ancestor of the other. Equal captured targets and equal-depth slots under one identical array or window satisfy the equality allowance. Equal descendant covers alone do not. An unproved proper-ancestry exclusion is a hard error citing OP-11 at the call, with a repair [DIAG-1].
+Every possible pair of exchange targets must be equal or disjoint, with neither possibly a proper ancestor of the other. Equal captured targets and equal-depth slots under containing paths that are identical step for step or differ only in index steps, as [OWN-7] reads them, satisfy the equality allowance. Equal descendant covers alone do not. An unproved proper-ancestry exclusion is a hard error citing OP-11 at the call, with a repair [DIAG-1].
 That admission concerns its own two arguments and nothing else: against any other statement a `swap` is judged by the ordinary pairwise rule on its two write paths [PAR-1, EFF-5], so an adjacent statement touching either path denies overlap permission.
 At every program point each place holds exactly one valid owner; no temporary uninitialized hole, vacancy state, or second owner exists.
 Neither root is consumed: both bindings remain live.
@@ -1228,7 +1286,7 @@ The target argument carries [OWN-1]'s spelling of its own class and no other.
 Its target `p` is any owned place named by a path [REF-1] and writable under [SET-1], a place reached through `^` of a reference parameter whose declared row carries `writes` of that path included.
 Its effect is `writes(p)`.
 `f` must return the place's type and must have no failure exit — every declared result ordinal is the place's type and no `ensures when` route removes a normal return.
-`f`'s declared row must not write, move out of, or free any prefix of `p`, while reading anything and writing disjoint storage is admitted [EFF-5]; a row that does is a hard error citing OP-12 at the complete `call`, carrying that substituted path.
+`f`'s declared row must not write, move out of, or free any prefix of `p`, while reading anything and writing disjoint storage is admitted [EFF-5]; a row that does is a hard error citing OP-12 at the complete `call`, carrying that substituted path. The first argument reads every place an offset atom of `p` reads, and [EFF-5] refuses a row that writes one of them, so the target is located once, at the call's first argument, and the place [SET-1]'s target evaluation names after the call is that same place.
 Nothing is said about termination.
 A failure is an enum in the place, not a second result.
 A call that fails the result condition is not an atomic update and is judged as an ordinary `set` [SET-1], in which the consumed argument would kill the target root [OWN-1]; the resulting rejection cites OWN-1 at the argument `atom`.
@@ -1236,22 +1294,22 @@ The parallel-permission classification of an atomic update is governed by [PAR-2
 
 [OP-13] Construction.
 The construction functions are the [PRE-1] records `box_new`, `slots_new`, `ring_new`, `array_filled`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, `box_paged_new`, `slots_from_array`, and `slots_into_array`; there is no `Type::name` spelling and no element-list literal in expression position [FORM-5].
-Each runtime-capacity construction and `grow` or `grow_paged` [OP-10] computes its size from its own count as [OP-9] states.
+Each construction of a runtime-capacity shape or a `Paged<T>` and `grow` or `grow_paged` [OP-10] computes its size from its own count as [OP-9] states.
 Allocation is total [STOR-8], so no construction has a failure arm for exhausted storage.
 A window built by `slots_new`, `ring_new`, `box_slots_new`, `box_ring_new`, or `box_paged_new` starts empty.
-A runtime-capacity construction whose count is 0 places its content as [STOR-1] states for capacity 0.
+A construction of a runtime-capacity shape or a `Paged<T>` whose count is 0 places its content as [STOR-1] states for capacity 0.
 An `Array` built by `array_filled` or `box_array_filled` has every slot holding the supplied value and requires a copy element type [OWN-1].
 `box_segments_filled(lengths: r, value: v)` builds a `Segments<T>` of `r^.len` segments whose segment k holds `r^[k]` elements, every element holding the supplied value, and requires a copy element type [OWN-1].
 Its element total, the sum of the lengths, is a runtime sum that no term states; the run's block holds `r^.len + 1` boundaries and that total of elements, its size is computed as [OP-9] states, and its result is the cell itself.
 `slots_from_array` consumes a full array into a full window, and `slots_into_array` consumes a window whose `len` equals its `cap`.
 `paged_page_len<T>()` is the pure [PRE-1] record returning the page length B of `Paged<T>`. B is the largest power of two whose product with `stride_ceiling(T)` [OP-9] is at most 4096, or 1 when `stride_ceiling(T)` exceeds 4096; it depends on T alone and is the same on every qualified target. Its only published fact is its declared postcondition, so B supplies no source acceptance fact.
 A `Paged<T>` of positive capacity allocates `ceil(cap / B)` pages. Page 0's allocated length is the least power of two at least `cap` when `cap < B`, and B when `cap >= B`; each later page has allocated length B. The logical capacity remains the requested count, and the element coordinates remain [WIN-1]'s page-and-offset map.
-A pool is a `Slots` plus indices used as handles, and a bump allocator is the same storage used with `place_back` [OP-10] as allocation and a library reset.
+A pool is a `Slots` plus indices used as handles, and a bump allocator is the same storage used with `place_back` [OP-10] as allocation and `clear` [OP-10] as its reset.
 A stale index that is still in bounds names the current occupant of that slot, which is a logic error and not a memory error, and a program that must detect it keeps a generation number as data.
 
 [OP-14] `free_empty`.
 `free_empty(window: move r)` consumes any window proved empty, an affine element type and a linear one alike, with the contract `requires window.len == 0_u64` submitted to [MSR-4] at the call.
-Its compiler-owned shape parameter W has exactly the admitted arguments `Slots<T, n>`, `Slots<T>`, `Ring<T, n>`, `Ring<T>`, `Box<Slots<T>>`, `Box<Ring<T>>`, and `Box<Paged<T>>`, so `free_empty(window: move b)` consumes a boxed runtime-capacity window and runs its storage release [STOR-3], freeing its cell with it; at a boxed argument the row's measure place instantiates as `window.inner` and the clause reads `window.inner.len == 0_u64`, exactly as any `Box` content is reached [TYPE-9, OP-4].
+Its compiler-owned shape parameter W has exactly the admitted arguments `Slots<T, n>`, `Slots<T>`, `Ring<T, n>`, `Ring<T>`, `Box<Slots<T>>`, `Box<Ring<T>>`, and `Box<Paged<T>>`, so `free_empty(window: move b)` consumes a boxed window and runs its storage release [STOR-3], freeing its cell with it; at a boxed argument the row's measure place instantiates as `window.inner` and the clause reads `window.inner.len == 0_u64`, exactly as any `Box` content is reached [TYPE-9, OP-4].
 An operand whose shape is outside that admitted set is a hard error citing OP-14 at the complete `call`, with a repair [DIAG-1], exactly as [OP-10] refuses its own operands.
 A linear element type stays linear [PROV-6]; the proof is about the runtime length and never about the class.
 An undischarged obligation is a hard error citing OP-14 at the complete `call`, rendering the residual and its disposition [ENT-4], with a repair [DIAG-1].
@@ -1260,7 +1318,7 @@ An undischarged obligation is a hard error citing OP-14 at the complete `call`, 
 `r.len`, `r.cap`, and `r.head` are ordinary `psuffix` field selections of the readonly fields the prelude declares [GRAM-5, MSR-1, PRE-1], and the measures without declarations are the range and run-selection lengths and page count of [MSR-1]; none is a call.
 Reading one performs no operation, allocates nothing, and reads only the descriptor storage [MSR-2]; its exact type is `own u64` and its value mode is exact `own`, so the ordinary [TYPE-5] check applies at each use.
 Its effect is the ordinary attribution [EFF-2]: a measure read through a reference parameter `p`, written `p^.len` [REF-1], exhibits `reads(p.len)`, the measure being a path below that parameter [EFF-1]; a measure read rooted in a local exhibits nothing. A page-count read `p^.pages.len` exhibits `reads(p.len)`, the supporting descriptor word [MSR-2].
-A measure is never a write target [TYPE-2].
+No `set` target and no argument at a reference parameter whose row writes it is a measure [TYPE-2]; a measure changes only through the operations that write the descriptor storage holding it [MSR-2].
 One quantity, one spelling: there is no reader operation beside the place form [FORM-1].
 
 ## 8. Functions, generics, contracts
@@ -1273,7 +1331,7 @@ Both operations are pure and total: after normal operand evaluation they read on
 Lowering compares the parts this rule names: an enum's discriminants and then the payload fields of the variant both hold, a struct's fields, an `Array`'s elements. It never reads padding or storage no variant of the held value owns [STOR-6]. A comparison of whole representations is a lowering of a type only where it gives this rule's answer on every value of that type.
 The ordering symbols `<`, `<=`, `>`, `>=` stay integer-only: struct, enum and `Array` ordering, payload ordering and enum/integer conversion are outside the operation table.
 
-[FN-1] A concrete function's callable boundary states everything ordinary callers need: parameter modes and types, the ordered result list's modes and types, one formal-path state-effect row, whether it waits [WAIT-1], the ordered [FN-8] requirement GoalTemplates, the ordered verified [FN-9] normal-result RelationTemplates.
+[FN-1] A concrete function's callable boundary states everything ordinary callers need: parameter modes and types, the ordered result list's modes and types, one formal-path state-effect row, whether it waits [WAIT-1], the optional [HOLD-1] held requirement, the ordered [FN-8] requirement GoalTemplates, the ordered verified [FN-9] normal-result RelationTemplates.
 A function returns owned values only [GRAM-3, REF-3]; a position found by a search is returned as an index with its bounds relation in `ensures` [FN-9].
 Every result binder's spelling is mandatory but ignored by callable-signature equality and denotes no runtime storage.
 
@@ -1283,9 +1341,9 @@ A declaration that writes a list hands its ordinals back together, and a caller 
 This rule's remaining sentences are stated over a written result and read per ordinal where a declaration writes a list.
 The written templates are ordinary interface propositions. A Whitefoot definition proves them under FN-9; a PRE-1 or PRE-2 definition is supplied under SCOPE-3. A caller consults only the declared finite summary and never the definition.
 The written effect paths state which reference-parameter-supplied state the function observes or changes. The checker derives the exact same set from body accesses and calls and checks it in both directions under [EFF-2].
-Strengthening a requirement GoalTemplate or RelationTemplate is a caller-visible interface change.
+Strengthening a requirement GoalTemplate, held requirement [HOLD-1] or RelationTemplate is a caller-visible interface change.
 A generic function carries the same boundary with its written type, const, and function parameters, and each concrete [FN-2] instance substitutes them before its calls and body are re-checked.
-A `fn_sig` may carry the same requirement and postcondition templates. FN-4 checks their formation and refinement at binding; its selected ordinary definition supplies their proof under FN-9, PRE-1 or PRE-2.
+A `fn_sig` may carry the same requirement and postcondition templates and held requirement [HOLD-1]. FN-4 checks their formation and refinement at binding; the selected actual satisfies its own boundary under FN-9, PRE-1 or PRE-2.
 Function-signature visibility is the [TYPE-6] table.
 Every explicit `return e1, ..., en;` writes exactly as many expressions as the enclosing declaration writes results, and expression i must produce exactly result ordinal i's `rtype`; there is no result-mode or result-type conversion [TYPE-4].
 A written count other than the declared result count is a hard error citing FN-1 at the `return_stmt` node.
@@ -1319,7 +1377,7 @@ A `let_stmt` selecting `value_if` enters both branch blocks the same way and fol
 A `let_stmt` selecting `propagate_let_rhs` has an `Ok` edge to `normal_successor` of that enclosing `let_stmt` and an `Err` edge to the function-return sink [ERR-3].
 A `break_stmt` reaches `normal_successor` of its resolved target loop, ordinary or counted.
 A `continue_stmt` has only the next-iteration edge of its resolved target: the body entry for an ordinary loop, or the compiler-owned update for a counted loop, carrying the current values of that loop's carried bindings after [STOR-3] cleanup; no intervening inner counted loop is updated.
-Every atomic block that this edge leaves completes its ordinary exit, including [TYPE-11] obligations and [SHARE-2] release.
+Every atomic block that this edge leaves completes its ordinary exit, including [TYPE-11] obligations, and its atomic statement completes there, ending its exclusive access to its targets' states [SHARE-3].
 A `loop_stmt` reaches its body entry, or its body's normal exit when the body contains no statement; the loop-body normal exit reaches the body entry again, or itself when the body contains no statement.
 A `loop_stmt` also has an edge to `normal_successor(loop_stmt)` exactly when some `break_stmt` resolves to that loop, including a labeled break or a break inside a value initializer's arm or branch.
 A `for_stmt` reaches its compiler-owned preheader, the preheader reaches its header after both endpoint evaluations and binder initialization, and the header has both a true edge to its body entry (or the body's normal exit when empty) and a false edge to `normal_successor(for_stmt)`.
@@ -1368,12 +1426,16 @@ A binding group's member may be forwarded by its explicitly qualified name. Its 
 [FN-4] Every function-kind binding is checked against the instantiated formal signature before use. Named groups check all members at declaration; raw arguments receive the same check at their written argument.
 A supplied function may refine the formal signature rather than match it.
 Parameter and result counts, modes, and exact types must agree in order; parameter and result binder spellings are not signature identity.
-The actual's declared row must be a subset of the formal's after parameter-ordinal and path normalization; a row states exactly what the body does [EFF-2], so a read-only function cannot declare a write.
+The actual's declared row must be a subset of the formal's after parameter-ordinal and path normalization, including a proper subset or `pure`; a row states exactly what the body does [EFF-2], so a read-only function cannot declare a write.
 The actual's own declaration must independently satisfy EFF-1 and exhibit exactly its own row under EFF-2.
 An actual that waits [WAIT-1] requires a formal that waits; a formal that waits admits an actual that does not.
-The actual's `requires` must be weaker than the formal's and its `ensures` stronger, and each actual's requirements and ensures have the ordinary FN-8/FN-9 formation and verification boundary, including PRE-1 and PRE-2 declarations.
-Weaker and stronger are decided by a fixed finite check inside the existing affine entailment fragment [ENT-1, MSR-4] and by no solver: for each actual `requires` goal, the formal's `requires` set must discharge it under [MSR-4]'s disposition with the formal's own set as the only premises; for each formal `ensures` relation, the actual's `ensures` set must discharge it with the actual's own set as the only premises.
+The actual's held requirement, normalized to its set of parameter ordinals, must be a subset of the formal's; absence denotes the empty set [HOLD-1]. The formal held group is authoritative at a call through that formal, just as its row is [EFF-2].
+The actual's expression `requires` must be weaker than the formal's, and each formal `ensures` must be discharged by the actual's frame or its stronger `ensures`; each actual's requirements and ensures retain the ordinary FN-8/FN-9 formation and verification boundary, including PRE-1 and PRE-2 declarations.
+A formal relation is discharged by frame exactly when its FN-9-normalized comparison is equality, its two displacements are equal, and its datums are the exit and explicit entry values of the same fragment-integer place P, or the same measure of the same place P, in either operand order; parameter ordinal, complete projection, datum type and measure identity must agree. This includes affine expressions that FN-9 reduces to those terms and displacements, on any admitted result route.
+For that discharge, P is rooted at a reference parameter, and no `writes` path in the actual's declared row overlaps P after parameter-ordinal and path normalization [EFF-1, OWN-7]; for a measure datum, P is the measured place. This declaration-only comparison uses the structural and literal-value separations of [OWN-7, WIN-2], with no assumed inequalities between parameter positions: writes at, above or below P overlap it, and different index or range parameter names do not prove separation. A write through another parameter needs no binding condition, because the formal relation reads P and so places it in every call's contract-read footprint, which [EFF-5] separates from that argument's writes. The frame check uses these declared paths, not body inspection or an unwritten contract, and adds no effect or runtime action.
+The remaining refinement is decided by a fixed finite check inside the existing affine entailment fragment [ENT-1, MSR-4] and by no solver: for each actual expression `requires` goal, the formal's expression `requires` set must discharge it under [MSR-4]'s disposition with that expression set as the only premises; for each formal `ensures` relation not discharged by frame, the actual's `ensures` set must discharge it with the actual's own set as the only premises. A frame discharge supplies no premise to another relation's query.
 The check is deterministic and terminating because both sets are finite and each query exhausts [ENT-6]'s fixed families.
+A call through the formal compares only the formal's row and contract-read footprint [EFF-5], and that suffices for the actual's own proof: that proof learns the value of a place only from its requirements, from its row's reads and from its parameters' type invariants [FN-9, TYPE-11]; its requirements are discharged from the formal's alone, its row is a subset of the formal's, and its parameter types are the formal's, so every place whose value it depends on is a place the call compares.
 
 A mismatch names the member or raw argument and the differing signature, row, clause, or result ordinal, and carries a repair [DIAG-1].
 No reflexivity, transitivity, ordering consistency, hash/equality compatibility, or other algebraic law follows from a binding. Ownership, range proofs, initialization and cleanup must hold even for inconsistent supplied behavior.
@@ -1395,10 +1457,10 @@ A module program names its entries in its graph [MOD-9]; a source bundle's build
 
 [FN-8] Every source `fn_decl`, generic or nongeneric, and every `fn_sig` may carry one optional `contract_block`. A function formal's block has the same formation rules and constrains bindings under FN-4. Every supplied definition must satisfy the ordinary declared contract; a Whitefoot body is checked under FN-9 and a PRE-1 or PRE-2 declaration is supplied under SCOPE-3.
 A present block must contain at least one `requires_clause` or `ensures_clause`; an empty or define-only block is an FN-8 rejection at `contract_block`.
-Grammar fixes all definitions before all requirements and all requirements before all postconditions.
+Grammar fixes all definitions before all requirements and all requirements before all postconditions. A requirement selecting `held_clause` has the structural formation, call and body judgment of [HOLD-1], rather than a GoalTemplate; the following expression judgments apply to `clause_expr` requirements.
 
 The definition scope initially contains the function parameters, named consts, and live type and const parameters, then each earlier definition after its complete initializer.
-Every definition and clause expression must consist only of non-consuming datums, measure place forms [OP-15], subscripted integer places admitted by [ENT-2] clause (b), and operation-table forms that are pure and total for every value in their selected operand domain.
+Every definition and clause expression must consist only of non-consuming datums, measure place forms [OP-15], [ENT-2] clause (b) places, and operation-table forms that are pure and total for every value in their selected operand domain.
 Bare `cvt` is admitted exactly for [OP-6]'s whole-type total pairs, including its universally total symbolic pairs; `cvt.checked`, `cvt.defined`, `cvt.wrap`, and `cvt.nearest` are admitted on their respective endpoint domains by their total rows.
 Exact addition, subtraction, and multiplication are admitted and read as operations over the mathematical integers rather than as evaluations, exactly as an `affine_expr` is [INV-1]. A clause is erased before lowering and evaluates nothing, so a row whose meaning is total over the mathematical integers states a relation where it would otherwise request an operation, and no domain obligation arises to discharge.
 Function calls, construction, move, borrow, a subscript outside a clause (b) place, mutation, control flow, allocation, and every other partial operation are inadmissible even when another clause states their domain. Exact division, remainder, negation, absolute value, and the shifts remain partial under this judgment.
@@ -1426,7 +1488,7 @@ exact operation or index identity is admitted before all of its nested domain
 obligations succeed.
 Every instantiated goal is submitted independently to [MSR-4] in that unchanged state; a discharged clause adds no fact for a later clause.
 The first refuted or unproved clause is the FN-8 call-site rejection and forms no checked program.
-Only total success reaches ordinary transfer, effects, and normal return; no call receives a runtime fallback, alternate entry, or body clone.
+Only total success of these judgments and [HOLD-1] reaches ordinary transfer, effects, and normal return; no call receives a runtime fallback, alternate entry, or body clone.
 
 At concrete body entry, every requirement goal is established independently as an [ENT-3] S4 source, in source order, with its own signed decomposition and exact L0 projection.
 Its established ordering leaves also receive exactly S4's fixed affine images below.
@@ -1441,43 +1503,57 @@ An uninhabited instance publishes no postcondition summary.
 Lowering must preserve its ordinary ABI and symbol but emit exactly one empty entry block terminated by `unreachable`, without traversing or lowering any source statement.
 A source call must still prove every contradictory requirement, which no reachable non-contradictory caller state can do.
 
+[HOLD-1] A `held_clause` is an ordinary callable requirement on reference-parameter origins and state stability. A `fn_decl` or `fn_sig` contract admits at most one such clause; it names a nonempty group of distinct identifiers, each resolving to one reference parameter of that callable under the owner-dependent use judgment of [DIAG-1]. Every ordinary reference kind is admitted. A declaration carrying it does not wait [WAIT-1] and its declared effect row contains only reads or is pure [EFF-1]; its implementation exhibits that row under [EFF-2]. Writes framed out of the enclosing row remain ordinary checked writes and footprints. Formation failure is a hard error citing HOLD-1 at the complete owning `requires_clause`, naming the failed condition with a repair [DIAG-1].
+
+The group states that its referent regions originate in one caller atomic statement H and remain unchanged throughout H's complete block, so their observation is the observation at H's one effect point [SHARE-3]. A protected region consists of the named referent and its finite owned descendants [PROV-6]; it follows no handle to separately shared or frozen state. The group introduces no runtime token, new reference kind, affine predicate, value-history fact or source observation before that point.
+
+At entry to a contracted body, each listed reference parameter carries one symbolic common H and its protected region. That structural interface fact permits ordinary aliases and checked descendants of those parameters to be forwarded to another held requirement; an unlisted parameter or a local reference supplies no such fact. Symbolic checking of a generic body uses its written group independently of concrete instantiation [FN-2]. Calls through function-kind parameters use their formal's group [FN-4], without unfolding the selected actual's body.
+
+At a call, ordinary resolution, argument evaluation, exact types, reference formation and borrow feasibility complete first [FN-8]. For every listed formal, every possible resolved actual path must originate in the same H: either the current atomic statement's block target, or the enclosing callable's symbolic group. Aliases, checked projections, reference joins and loop-header covers preserve the originating H and protected cover under [REF-1]; a descendant is admitted only when it remains within that cover on every alternative. A join preserves common origin only when every alternative has the same H. An actual originating in a copied local value supplies no held origin. A call evaluated in an atomic guard is not admitted by this judgment: its potentially repeated observations have no committed block effect point. Failure is a hard error citing HOLD-1 at the complete `call`, naming the failed formal and its origins with a repair [DIAG-1]. No transfer occurs before this structural judgment and the ordinary expression requirements succeed.
+
+For each concrete atomic H containing such a call, substitute its group's resolved referents and require that H's complete conservative block write footprint [EFF-2, EFF-5] overlap none of their protected regions under [OWN-7]. This includes writes before or after the call, writes reached through other target aliases, substituted callee writes and checked cleanup actions. Writes to proved disjoint regions and unrelated held targets retain their ordinary admission. Failure is a hard error citing HOLD-1 at the complete contracted `call` within H that first establishes the failing protection requirement in source order, carrying its owning requirement and overlapping write with a repair [DIAG-1]. When a contracted wrapper forwards its group, its instantiated boundary establishes these same protection obligations at the caller without callee-body unfolding.
+
+Checking is structural over the finite normalized parameter set, [REF-1]'s settled possible-location descriptions and the complete finite block footprint. It uses the existing conservative overlap judgment, adds no entailment family, and has no fuel, timeout, solver or acceptance budget. The checked program retains the normalized requirement and successful origin and protection judgments [DIAG-2]; they have no executable contract form.
+
 [FN-9] Each `ensures_clause` in a FN-8 `contract_block` declares one independent normal-return relation: one whose body is a `clause_expr` is the relation this rule forms and proves, and one whose body is a `range_clause` is a range postcondition, which takes this rule's route admission and which [RANGE-1] forms and [RANGE-3] selects and proves.
 A source declaration is not a trusted assertion: its body proves the relation by the selected-return judgment below. A PRE-1 or PRE-2 signature supplies its declared relation under SCOPE-3 and has no source returns to check. Formation and caller instantiation are the same ordinary judgments in both cases.
 No contract definition or clause contributes an effect, executable epilogue, runtime operation, storage slot, or runtime report.
 
-Every declared result ordinal is a datum of every clause, written as that ordinal's `result_binding` spelling [CALL-4].
-An unrouted clause is admitted only when every result ordinal it names is `own T` with T a type that supplies data under [CALL-4] after concrete [FN-2] substitution, and the clause names it only through those data.
+The clause's result ordinals have [GRAM-3, FN-1]'s owned-value mode and [CALL-4]'s data.
+An unrouted clause is admitted only when every result ordinal it names has a type T that supplies data under [CALL-4] after concrete [FN-2] substitution, and the clause names it only through those data.
 Its symbolic result datums are those data of those ordinals' `result_binding`s.
-A routed clause is admitted only as exact `when V(value: r):` or `when b is V(value: r):` for a result ordinal whose mode and type are `own Result<T,E>` with V its success variant `Ok`, or `own Option<T>` with V its success variant `Some`, and whose payload type T supplies data under [CALL-4], where `b` names that ordinal, r is that clause's fresh symbolic payload datum supplying exactly the data an unrouted result ordinal of type T supplies, and V and `value` retain their PRE-1 identities.
-The ordinal binder may be omitted exactly when one declared ordinal has that enum type; two or more leave the route ambiguous and are refused at the declaration [CALL-4].
+A routed clause is admitted as exact `when V(f: r):` or `when b is V(f: r):` for a result ordinal whose type after concrete [FN-2] substitution is an enum, where V is a variant of that enum, f is one declared field of V written by its declared name, that field's substituted type T supplies data under [CALL-4], `b` names that ordinal, and r is that clause's fresh symbolic payload datum supplying exactly the data an unrouted result ordinal of type T supplies. The enum, variant and field retain their declaration identities. Each clause binds one field; independent clauses may route the same or different fields of the same or different variants.
+Each route is attributed to one result ordinal under [CALL-4].
 Route owner, ordinal, variant, field, and freshness admission precedes resolution of that clause expression [GRAM-10, TYPE-6].
 The routed ordinal's whole-value binder is unavailable in that clause; every other ordinal's binder remains a datum of it.
-A unit, float, or Bool value, a bare aggregate binder, a place [CALL-4]'s projections do not reach, a whole Result or Option value, a failure-variant route, and every other shape remains a legal ordinary result but cannot supply a relation datum in this version.
-Omitting failure routes means `Err` and `None` exits are unselected, not unreachable.
+The complete result-datum vocabulary is the data [CALL-4] supplies; every other legal ordinary result supplies no relation datum.
 
 After recursively alpha-expanding every shared `contract_define`, the clause expression must have exact type `own Bool` and its root must be exactly one `compare_op` — `==`, `!=`, `<`, `<=`, `>`, or `>=` [GRAM-5].
 Each operand is one **relation term**: one datum displaced by a written constant, optionally with one additional parameter datum on one side of the relation [ENT-2, ENT-4].
-Its datum must be one of the clause's symbolic result datums [CALL-4], a parameter datum with field and `^` projections or the subscripts admitted by [ENT-2] clause (b), a named const, a typed integer literal, a measure member of an admitted formal place P [OP-15, MSR-5], or a widening conversion of one of these [ENT-2]; at least one operand contains a result datum or an exit-state datum of a reference parameter whose row declares a write rooted at it [MSR-3], and the two may name two different result ordinals. A clause naming only that exit state is admitted regardless of the result type, including unit.
+Its datum must be one of the clause's symbolic result datums [CALL-4], a parameter datum with field and `^` projections, a named const, a typed integer literal, a measure member of an admitted formal place P [OP-15, MSR-5], or a widening conversion of one of these [ENT-2]; at least one operand contains a result datum or an exit-state datum of a reference parameter whose row declares a write rooted at it [MSR-3], and the two may name two different result ordinals. A clause naming only that exit state is admitted regardless of the result type, including unit.
 Its displacement is the mathematical value of the constant part of that `affine_expr` side. Each side carries zero or one primary datum with coefficient one and a constant displacement. At most one side additionally carries one distinct bare own-mode fragment-integer parameter with coefficient one, denoting its function-entry value [MSR-3]. This parameter has no projection. These are the complete admitted side shapes; every other shape is an FN-9 rejection at that clause naming the fragment.
 A measure member or fragment-integer place rooted at a reference parameter whose row declares a write rooted at that parameter denotes the selected return's exit state; `entry(parameter)` denotes that parameter at function entry [MSR-3].
-No proof-required exact operation, computed arithmetic result, occurrence-local evaluated-value datum, Boolean connective, result projection outside [CALL-4]'s admitted data, or body local becomes a relation datum; a clause side's own `+`, `-`, and `*` are the mathematical integer expression [MSR-5] fixes and perform no operation.
+No proof-required exact operation, computed arithmetic result, subscript, occurrence-local evaluated-value datum, Boolean connective, result projection outside [CALL-4]'s admitted data, or body local becomes a relation datum; a clause side's own `+`, `-`, and `*` are the mathematical integer expression [MSR-5] fixes and perform no operation.
 The comparison normalizes to one finite L0 RelationTemplate whose two terms carry their displacements as one folded constant; a side with the additional parameter uses [ENT-2]'s sum term, and equality's two bounds remain one relation occurrence.
 A parameter datum denotes what [MSR-3]'s table gives its position: the exit state for a bare measure member or fragment-integer place of a reference parameter whose row declares a write rooted at that parameter, and the function-entry image for every other.
+A parameter written as a subscript offset of a clause place is a referenced parameter datum of that clause and denotes its function-entry image: a selected return reads it under the entry-image stability rule below, and a call substitutes its actual for it under M(c,q).
 The template retains parameter ordinals and projections, result ordinals and projections, route declarations, named-const identity, literals, substitutions, comparison row, operand order, and normalized relation, while excluding result/route/definition spellings, definition sharing, and callee identity.
 Its occurrence is `(concrete function instance, ensures_clause NodePath)`.
 
 An unrouted clause selects every explicit return and every propagated error exit [ERR-3], the `Err` edge of a `let_stmt` selecting `propagate_let_rhs`, whose returned value is the propagated outcome.
-A routed clause selects an explicit return of its routed ordinal under the assumption that the returned value holds its routed variant V, its payload being V's routed field: `value` for a written route, and the field f for a route of [TYPE-11]. A direct construction of V uses the operand of that field as that ordinal's returned value. A forwarded enum value uses the private payload root and conditional numeric context of [ENT-5] for that route; the return proves the clause in that context combined with the ordinary current context.
-A direct construction of another variant and an outcome whose transported constructor-tag information definitely excludes V [ENT-5] are unselected by a routed clause. A propagated error exit [ERR-3] is selected by a route of [TYPE-11] whose V is `Err`, the propagated outcome's context for that route supplying the returned value as a forwarded value's does, and is unselected by every other routed clause. No other enum expression is rejected solely for its return shape; absent transported evidence supplies only the payload's standing type facts.
+A routed clause selects an explicit return of its routed ordinal under the assumption that the returned value holds its routed variant V, its payload being V's routed field f. A direct construction of V uses the operand of f as that ordinal's returned value. A forwarded enum value uses the private payload root and conditional numeric context of [ENT-5] for that route; the return proves the clause in that context combined with the ordinary current context.
+A direct construction of another variant and an outcome whose transported constructor-tag information definitely excludes V [ENT-5] are unselected by a routed clause. A propagated error exit [ERR-3] is selected by a route whose V is `Err`, the propagated outcome's context for that route supplying the returned value as a forwarded value's does, and is unselected by every other routed clause. No other enum expression is rejected solely for its return shape; absent transported evidence supplies only the payload's standing type facts.
 At a selected return, each result datum the clause names evaluates to one [ENT-2] term or constant, read from its own ordinal's returned value through the datum's projection [CALL-4]: a returned place q gives the tracked place q so projected, a returned construction gives the operand of the selected field, which is an atom [GRAM-9], projected by the rest of the projection, and a forwarded enum value gives the corresponding term of its payload root; an ordinal the clause does not name imposes nothing.
 For an ordinary inhabited instance, each written clause's and each unrouted [TYPE-11] postcondition's selected-return set is independently nonempty; an empty set rejects at that clause. A routed [TYPE-11] postcondition whose selected-return set is empty holds vacuously, because no value the instance returns holds its variant.
 An [FN-8] uninhabited instance still checks route, type, expression, and return-shape source judgments, but is exempt from nonempty and proof requirements and publishes no relation.
 
-A referenced `own` parameter's measure, a measure member of a reference parameter whose row declares no write rooted at it, or a measure member or fragment-integer place explicitly rooted at `entry(parameter)`, is that parameter's entry datum [MSR-3], which is minted at body entry, contains no place, and is therefore killed by nothing. A bare measure member or fragment-integer place of a reference parameter whose row declares a write rooted at it instead evaluates over the storage that parameter received, as it stands immediately before each selected return, after the return's ordinary effects and kills; a write of that storage changes this exit term and never retargets the entry datum. When some `set` in the body rebinds that parameter, a place written through it names its current target rather than that storage [ENT-2], no term of the body names that storage, and a relation over such an exit term is unproved at every selected return. Every other parameter datum uses the entry-image stability judgment [ENT-5].
-Each subscript offset in a parameter datum denotes its function-entry [ENT-2] clause (a) term or clause (c) constant, independently of the denotation of the selected storage. At the caller its formal ordinal and projections substitute with that actual's pre-transfer term or constant. Each such selector and every other referenced parameter entry image creates no snapshot term and uses [ENT-5]'s entry-image stability judgment.
+A referenced `own` parameter's measure, a measure member of a reference parameter whose row declares no write rooted at it, or a measure member or fragment-integer place explicitly rooted at `entry(parameter)`, is that parameter's entry datum [MSR-3], which is minted at body entry, contains no place, and is therefore killed by nothing. A bare measure member or fragment-integer place of a reference parameter whose row declares a write rooted at it instead evaluates over the storage that parameter received, as it stands immediately before each selected return, after the return's ordinary effects and kills; a write of that storage changes this exit term and never retargets the entry datum. When some `set` in the body rebinds that parameter, a place written through it names its current target rather than that storage [ENT-2], no term of the body names that storage, and a relation over such an exit term is unproved at every selected return. Every other parameter datum retains the entry-image stability rule below.
+Every other referenced parameter entry image creates no snapshot term.
+Its stability begins live at body entry and becomes permanently unavailable on the first structural edge whose [ENT-5] kill overlaps the datum, a holder used by it, or its support; join is intersection and contradiction never restores it.
+The image follows [ENT-5]'s support-survival classification, with descriptor-word support from [MSR-2] and projected call-write reach from [CALL-1] through [CALL-3], never the argument's shape [CALL-5].
 
 For each clause in source order and then each selected return in NodePath order, the checker first completes ordinary return typing, obligations, calls, effects, and pre-return kills.
-Selected-return proof requires every referenced entry image and selector to remain available. Form each parameter datum at its stable entry selectors in the state its denotation selects and discharge each subscript's [OP-4] membership independently under [MSR-4], before querying the relation; that relation supplies no premise for its own membership. Substitute the result datum and query immediately before return transfer and edge cleanup.
+If an entry image is unavailable, the relation is unproved; otherwise substitute the result datum and query immediately before return transfer and edge cleanup.
 The relation is queried once in the current ProofContext at that return.
 Every query must discharge; the first clause/return failure rejects with no runtime fallback.
 
@@ -1491,7 +1567,7 @@ Declaration or worklist order and iteration cannot change the result.
 
 For one ordinary call c, `A0(c)` means resolution, concrete instantiation, named arguments, exact types, borrow feasibility, every actual-expression obligation, exact formal substitution, and success of every FN-8 requirement have all occurred in that order at the same pre-transfer point.
 Failure forms no postcondition candidate.
-For one relation q, `M(c,q)` holds only when q's route matches that exact establishment event, result and referenced formals substitute independently to live [ENT-2] terms or constants after ordinary kills, with each subscript selector retaining the pre-transfer substitution and its live support, and no referenced actual is represented only by an occurrence-local evaluated-value datum.
+For one relation q, `M(c,q)` holds only when q's route matches that exact establishment event, result and referenced formals substitute independently to live [ENT-2] terms or constants after ordinary kills, and no referenced actual is represented only by an occurrence-local evaluated-value datum.
 A discarded or aggregate-stored result with no admitted destination, an unsupported route, killed support, or a nonterm actual makes only the relations that reference that unavailable datum false under M. An enum result's conditional destination and variant selections are [ENT-5]'s. A relation naming no result needs no result destination and establishes on an ordinary successful call continuation, including a unit-returning or discarded-result call.
 
 Subject to A0 and M, failure-atomic scratch establishes q after transfer, consumes, borrow commits, callee-effect kills, and target kills.
@@ -1528,13 +1604,13 @@ What a result ordinal supplies is decided by its declared type after concrete [F
 Each datum below a result place is instantiated at that ordinal's own destination [ENT-3.S12], the destination place projected by the datum's projection, exactly as a measure member of a formal place is instantiated at the formal's, and is queried at a selected return over the value that return hands back [FN-9]; a projected destination that is no [ENT-2] term makes only the relations naming it unavailable.
 An enum-payload step, a subscript, and a step below a value whose declared type is a type parameter supply no datum: no route selects a variant of an unrouted result, a subscript leaves the owned descendants [MSR-3], and a type parameter declares no field for a step to select [FN-2].
 
-A routed clause is written `when V(f: r):` or `when b is V(f: r):`, where `b` names the result ordinal the route applies to.
+Routed clauses use [FN-9]'s route vocabulary.
 The ordinal binder may be omitted exactly when one declared ordinal has that route's enum type; when two or more do, the route is ambiguous and the declaration is a hard error citing CALL-4 at the `ensures_clause`, `AmbiguousResultRoute`, carrying a repair [DIAG-1].
 The judgment is at the declaration because the ordinal set is fixed there, exactly as [CALL-6]'s consistency judgment is: a route no reader can attribute to one ordinal publishes a fact about a value the writer did not name.
 
 The destinations are exactly [ENT-3.S12]'s closed list, and a relation reaches a caller only there; [CALL-6] fixes the point at which each is instantiated and the point at which each is established.
 For a multi-result contract, **each binder of a destructuring `let`** is the S12 destination for every published relation naming the value that lands there, ordinal i landing at binder i [GRAM-4].
-An own-place match of a Result or Option selects its transported conditional evidence under [ENT-5]. Payload binders and struct-destructuring binders also receive the relations of their source places through [MSR-3]'s placement table.
+An own-place match of an enum selects its transported conditional evidence under [ENT-5]. Payload binders and struct-destructuring binders also receive the relations of their source places through [MSR-3]'s placement table.
 A published measure or fragment-integer value of the transferred value or one of its exact owned descendants reaches both through [MSR-3]'s payload and destructuring placements; a placement datum carries nothing else.
 
 [FN-10] Guaranteed self-tail calls.
@@ -1544,6 +1620,7 @@ Every ordinary call and return judgment still applies, including contracts, effe
 After evaluating the actual arguments in their declared order, every path in every reference argument's [REF-1] path set is rooted at a reference parameter of the current function, never at storage owned by the current activation.
 Every still-live owned binding, parameters included, must admit its ordinary scope release [PROV-6]. A binding with a nonempty release may be released before the transfer exactly when no live valid reference binding has a path rooted at that owner; a release is nonempty when its type's release graph [STOR-3, PROV-6] can perform an action, with a symbolic type parameter read at its written capability bound [FN-2].
 The checker represents all remaining releases explicitly [DIAG-2]; after capturing all actual values, those releases run in their ordinary order, then all parameters receive the captured arguments together and execution restarts at function entry. No caller continuation, result copy, or release remains after the transfer.
+The transfer is an edge that leaves the current activation, so before it the activation joins every context its spawns started and has not yet joined [WAIT-3]; a started context holds only the values moved or copied into it, so no reference reaches the replaced activation.
 A failed condition is a hard error citing FN-10 at the marked `call`, naming the failed condition and the offending argument or owner when applicable; a call to another function, including a mutual-recursion edge or a function-kind parameter, fails the direct-self condition.
 An unmarked call carries no tail-transfer guarantee. The guarantee bounds only stack retained by the marked transfer, not the stack or heap used by argument evaluation, release, or the rest of the program, and does not prove termination.
 
@@ -1587,13 +1664,29 @@ One row states each access once. An entry is covered by another entry of the row
 [EFF-2] A concrete function declaration exhibits the union of its resolved body accesses and calls.
 The body contribution is syntactic over the complete function body. Erased definitions and contracts [FN-8, FN-9], proofs, and the compiler-owned captures, comparison and update of a counted loop contribute nothing. Contract-read separation at a call is governed by [EFF-5].
 Every source occurrence contributes even in an FN-8 uninhabited instance. No path condition, constant evaluation, proof, optimizer result, or backend reachability narrows the conservative structural normal-control graph [FN-1].
-An allocation or a release contributes no path [STOR-8].
+
+Body operations contribute the following access categories; target, operand, offset and endpoint evaluations contribute through their own operations, and the following paragraphs attribute and project the resulting paths.
+
+| body operation | exhibited access categories |
+|---|---|
+| Reading a value from a place [TYPE-7, OP-15] | Read of the selected storage |
+| Dispatching a `match` on an enum place [OWN-13] | Read of the scrutinee storage, which holds the enum tag |
+| Beginning an atomic statement [SHARE-2] | Read of each target's handle place and of the storage its index atom names |
+| Committing a value assignment to a target live where [SET-1] evaluates it, or read out by an [OP-12] update | Write of the target storage |
+| Reinitializing a complete binding dead where [SET-1] evaluates the target and read out by no [OP-12] update | No target-storage access contribution |
+| Read-modify-write `set p = p +wrap x;` [SET-1, OP-2] | Read of p through the right-hand side and write of p at commit |
+| Atomic in-place update [OP-12] | The effect [OP-12] states |
+| Handing over a value by `move`, `give`, `return`, or structural repacking [GIVE-1, FN-1, OWN-1] | Contributions of value evaluation; the transfer adds no read or write |
+| Forming a reference to a path or range [REF-1, REF-4] | Contributions of offset and endpoint evaluation; naming the referent adds no read or write of its contents |
+| Forming a page reference `&p.pages[k]` [REF-4] | The read specified by [REF-4] |
+| Calling a callable [EFF-1, EFF-5] | Read for each projected `reads` entry and write for each projected `writes` entry |
+| Allocation or release [STOR-8] | No access contribution |
 
 At a function-kind parameter or named member call [FN-5], the instantiated formal's written row is the authoritative callable boundary. Its paths undergo the same resolved-place projection and ENT-5 support kill as ordinary callee paths; the selected actual's narrower covered row never substitutes for that boundary. Generic spelling checking retains formal-rooted contributions under the written bounds, including an owned parameter that later has a copy instance. Concrete rechecking verifies the fixed containing declaration's row under the same formal interface and independently checks each actual against FN-4 and its own row. No adapter, dummy read, widened runtime access, or law supplies an exhibited path.
 
 Every read or write is attributed after ordinary place resolution [REF-1]. A reference parameter's effect path names the path the reference names rather than the reference variable. An access rooted in a formal contributes the most precise static path EFF-1 admits for that resolved place; a dynamic element or range maps to its nearest statically nameable enclosing path.
 An unknown descendant cover maps to its nearest statically nameable containing prefix by the same rule; no wildcard is written in an effect row. Substitution retains the actual's captured target and the declared finite suffix for [OWN-7], rather than treating the actual as equal to its anchor.
-Moving, returning, or structurally repacking an owner contributes no read or write merely by transferring it. After transfer into a local binding or aggregate field, subsequent accesses are attributed to that destination's resolved storage. A whole-place replacement changes the value at that place without changing the place's effect root. No effect root follows an owned value through moves, results, or replacements.
+After transfer into a local binding or aggregate field, subsequent accesses are attributed to that destination's resolved storage. A whole-place replacement changes the value at that place without changing the place's effect root. No effect root follows an owned value through moves, results, or replacements.
 A const root and `immutable-const` contribute no read effect. An access rooted only in local storage contributes no enclosing formal-rooted effect, including through a local reference; the checked access and its ordinary footprint remain.
 A write is admitted only where ordinary ownership already admits it [SET-1]. An effect path grants no permission.
 
@@ -1601,12 +1694,18 @@ At a call, each declared effect path selects its root formal's actual argument a
 The actuals' call data are captured after argument evaluation and before the call. Each projected write applies [ENT-5]'s support-survival classification, then CALL-6 instantiates entry terms from that call datum and exit terms from the actual's resolved return place. This substitution does not inspect the callee body and retains no owned-result or exclusive-referent ancestry.
 Framing an action out of an enclosing row removes no checked action or ordinary effect footprint. Optimization is governed by EFF-3 and the source's value, ownership and control semantics.
 
-A SET-1 commit contributes a write. SET-1's reinitialization of a complete binding already dead at statement entry keeps its no-previous-owner exception. Target and right-hand-side evaluation contribute ordinarily.
-A declared entry is exhibited when the body accesses storage at or below its path. Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
+A declared entry is exhibited by an access at or below its path whose category is admitted by this table:
+
+| declared entry | exhibited access categories |
+|---|---|
+| `writes(path)` | Write |
+| `reads(path)` | Read or write |
+
+Rows are checked both ways against this complete exhibited set — every declared entry is exhibited in that sense, and every exhibited access lies under some declared entry — so undeclared-but-exhibited and declared-but-unexhibited are both EFF-2 errors. A declaration with no exhibited contribution writes `pure`, whether or not it carries erased contracts.
 A PRE-1 or PRE-2 function signature is the ordinary declared boundary; its supplied definition must satisfy the same boundary [SCOPE-3, PRE-1, PRE-2]. No source body is fabricated for it and no alternate effect rule applies to its calls.
 
-[EFF-3] A call whose row is `pure`, which is not a waiting call [WAIT-1], and which allocates nothing licenses deduplication and reordering with equal arguments.
-The ground is that the heap a call takes from is finite and a duplicated take is a different program [STOR-8], and that a waiting call's changes to shared objects take effect in the execution's order [WAIT-2, SHARE-3] and appear in no row [SHARE-2].
+[EFF-3] A call whose row is `pure`, whose boundary is decision-cell-free [SHARE-3], which is not a waiting call [WAIT-1], which allocates nothing, and which creates no shared object, frozen object, concurrent hash map or key set [SHARE-1] licenses deduplication and reordering with equal arguments.
+The ground is that the heap a call takes from is finite and a duplicated take is a different program [STOR-8], that two calls that each create an object create two objects, each with storage of its own that a write to it or its release reaches apart from the other [SHARE-1, STOR-3], and that a waiting call's changes to shared objects take effect in the execution's order [WAIT-2, SHARE-3] and appear in no row [SHARE-2].
 Elimination of an unused licensed call additionally requires a termination proof; v0 provides no termination checker, so unused calls are not eliminated.
 The source spelling `pure` excludes state reads and state writes; it does not promise termination.
 A call that exhibits `writes(path)` may remain observable even when its result is unused. A call on fresh local state retains that instantiated effect even though it frames out of the enclosing signature. No optimization may erase, duplicate, speculate, or reorder either call unless ordinary effect-path overlap, closed-state, escape, ownership, control, result, release, and surviving-observer proofs establish the exact transformation.
@@ -1624,7 +1723,7 @@ Two declared paths rooted at one parameter overlap at every position when one is
 Two effects one argument supplies whose declared paths overlap at every position reach that storage through that one parameter, and the callee's body is checked against both [EFF-2]; their writes still apply [ENT-5]'s support-survival classification, with reach from [CALL-5], and invalidate references under clause 3.
 
 1. Two compared effects on overlapping paths [OWN-7] where at least one is a write must be proved disjoint, by different roots, by index and range positions proved apart, by page positions proved distinct, or by an index, range or page position proved apart from a window's `.next` or `.free` [WIN-2], and are otherwise a hard error citing EFF-5 at the complete `call`, carrying both substituted paths and a repair [DIAG-1]. Read/read overlap is admitted. The built-in `swap` [OP-11] is the one operation whose two arguments may name the same place.
-2. A by-value argument contributes a consumption (`move`) or a read (copy) of its place to this same comparison.
+2. A by-value argument contributes a consumption (`move`) or a read (copy) of its place, and a read of every place its offset atoms read, to this same comparison.
 3. Every live reference, including an actual argument, receives the invalidations of every substituted write under [REF-2]. A content write at or below its captured target preserves it; argument membership does not protect it from another actual's destructive ancestor write.
 
 A function body is checked against its own row: every statement's effect and every callee's substituted row must be exactly covered by the declared row [EFF-2].
@@ -1636,7 +1735,17 @@ Recursion is checked through contracts, never by unfolding bodies.
 [ERR-1] Recoverable errors are values: prelude `Result<T, E>` and `Option<T>` (§14), dispatched by `match`.
 No exceptions, no unwinding, no panic values.
 
-[ERR-2] Every `match` is exhaustive over declared variants; there are no wildcard arms.
+[ERR-2] A `match_stmt` or `value_match` is exhaustive under the following table, after [GRAM-12]'s arm judgments:
+
+| Scrutinee class | Required coverage |
+| --- | --- |
+| Enum | Every declared variant is named exactly once. |
+| Integer with value-arm set S equal to its type's complete mathematical domain | There is no `else` arm. |
+| Integer with value-arm set S a proper subset of its type's mathematical domain | There is one final `else` arm. |
+
+For a concrete integer type, complete coverage is decided by the number of distinct decoded values: `max(T) - min(T) + 1`, computed as a mathematical integer, so u8 needs 256 arms and u64 needs 18446744073709551616.
+For a live `Int`-bounded type parameter, coverage must hold for every permitted concrete type under [FN-2].
+An omitted or repeated enum variant, a partial integer match with no `else`, and a complete integer match with `else` are hard errors citing ERR-2 at the complete match node, naming the uncovered variants or integer domain, the repeated variant, or the unnecessary `else`, respectively, with a repair [DIAG-1].
 Bool exhaustiveness is carried by `if`: an else-free `if` is the empty-alternative form, an `if` with `else` covers both, and a Bool-scrutinee `match` is rejected at GRAM-6.
 The asymmetry is deliberate and content-driven: the empty then-block is admitted while the empty else is not, because the else-free form is the one spelling of the empty alternative.
 Variant addition surfaces site-enumerated edit lists (toolchain contract).
@@ -1646,7 +1755,7 @@ Operand evaluation follows [OWN-1]: an owned place has that rule's copy or expli
 A place reached through `^` of a reference, a reference binding used without `^`, a dead root, and an outer affine root consumed inside a loop retain their REF-2, TYPE-7, OWN-1, and OWN-11 judgments; ERR-3 grants no read-through, move-through-reference, revival, copy, or loop escape.
 The operand is evaluated once before the result tag is dispatched.
 On `Ok(v)` propagation binds v; on `Err(err)` the function returns `Err(err)`, and the checked program attaches an auto-derived context record `(function, node_path)` to the propagation edge — zero hand-written tokens per site.
-For an enclosing FN-9 `Ok` route, that automatic error return is unselected and publishes no normal-result relation.
+That automatic error return takes the selected-return judgment of [FN-9].
 This is Result propagation, not an exception construct or a scope in which an exception may be thrown.
 
 [ERR-4] Classification: expected environment and input failures represented by an operation contract are values (`Result`); unproved function, operation-domain, bounds, layout, address, and target-domain obligations attached to source execution are source rejections.
@@ -1709,6 +1818,7 @@ The final name resolves in the named module's inventory in the grammar-selected 
 One accessibility rule serves executable code and annotations: every name and field selection in a body, a contract clause or `define`, an invariant, a `use` premise, an effect row and a function-kind formal must be accessible where it is written.
 A private declaration or field is accessible only in its declaring module; a public one also in each module whose graph row lists its declaring module. PRE-1 declarations and members keep their ordinary availability.
 A construction names every field [GRAM-8], so a construction outside the declaring module requires every field to be public and supplies no readonly field [TYPE-2]; a struct destructuring or an `arm` outside it binds only public fields, covering the rest with `..`. Each inaccessible selection, binding or construction is a hard error citing MOD-5 at its `psuffix`, `effect_path`, `fieldbind`, `arm`, `call` or `cvalue`.
+A qualified path written in an `expr`, `affine_factor` or `atom` that ends in an IDENT which neither `(` nor `::` follows continues no call, and the grammar rejection at it [DIAG-1] carries a repair naming the `alias_decl` that binds that IDENT to the path's target in the record's alias header [MOD-4], `alias k = pkg::m::k;` for `pkg::m::k`, with the bare IDENT written in the path's place.
 
 [MOD-6] `public` is written only in an interface record, on a top-level declaration, a struct `field` or an enum `vfield`; a declaration or field without it is private to its module, and a public enum's variants are public.
 `public` in an implementation record or a source bundle, and `public` on a field or payload field of a private type, are each a hard error citing MOD-6 at that `item`, `field` or `vfield`; so is `readonly` on a field that is not `public` [TYPE-2].
@@ -1720,9 +1830,9 @@ An interface function declaration has at most one definition among its module's 
 A struct, enum, interface, binding or const that an interface record declares has that one definition, used by every record of the module; a declaration of the same name in an implementation record is a redeclaration [TYPE-6].
 
 [MOD-8] A module's source verdict covers every judgment on its records and depends only on them, the graph, the prelude and the interfaces of the modules it may name; it never depends on another module's implementation records.
-A module program's source check judges the verdict of every module of its own package and of every package it binds [MOD-11], in the bound unit's module order, and then each named entry's composition; a standard library module's verdict is judged with the library [MOD-10].
+A module program's source check completes the frontend stages of [DIAG-1], then judges the verdict of every module of its own package and of every package it binds [MOD-11], in the bound unit's module order, and then each named entry's composition; a standard library module's verdict is judged with the library [MOD-10].
 An interface function declaration without a definition is pending: callers use its written boundary as they use every callee's [FN-8, FN-9], and it blocks only composition, lowering and publication.
-A program composes when every selected module's verdict holds, every declared function has its definition, which is a body in its module's implementation records or the definition the build supplies for a host function [PRE-2], every required concrete instance checks [FN-2, FN-6] and every target requirement of its entry holds [MOD-9]. Composition judges the selected modules' verdicts in the bound unit's module order [MOD-2, MOD-10] before its own conditions and reports the first rejection. A rejection raised while checking a required concrete instance is reported at its template's source, in the module that declares the template, and names a call that requested the instance.
+A program composes when every selected module's verdict holds, every declared function has its definition, which is a body in its module's implementation records or the definition the build supplies for a host function [PRE-2], every required concrete instance checks [FN-2, FN-6] and every target requirement of its entry holds [MOD-9]. After the frontend stages of [DIAG-1], composition judges the selected modules' verdicts in the bound unit's module order [MOD-2, MOD-10] before its own conditions and reports the first rejection. A rejection raised while checking a required concrete instance is reported at its template's source, in the module that declares the template, and names a call that requested the instance.
 
 [MOD-9] A named entry selects one public, ordinary, nongeneric function by its full path, and a build may select any ordinary nongeneric function of a registered module as an unnamed entry; the build calls the selected function under [PROG-3], and an entry naming no such function is a hard error citing MOD-9, at a named entry's `entry_decl`.
 An entry's `no_heap` states the no-heap requirement over that entry's execution closure [STOR-8]; entries of one graph share its modules and proofs and impose no requirement on one another.
@@ -1734,7 +1844,7 @@ A `std` prefix in a standard library record, a `module_row` or `entry_decl` path
 The standard library's graph binds no package [MOD-11].
 A module program selects the standard library modules its packages' rows list, and a source bundle those its records name by a `std` path; each selected module selects its dependencies in the standard library's graph. The bound unit orders the program's modules first [MOD-2], then its bound packages' modules [MOD-11], then the selected standard library modules in the standard library's row order, so a program record's ordinal never depends on which packages or standard library modules it selects.
 A standard library module's verdict depends only on the standard library's records and graph and the prelude [MOD-8], never on the program that selects it, and a check or composition reads a standard library module's records only when it selects that module.
-The host modules are the standard library modules PRE-2 fixes; every other standard library module is written in Whitefoot and checked as every module is.
+The host modules are the standard library modules PRE-2 fixes, including the snapshot module whose supplied export judgment is [SNAP-1, SNAP-3]; every other standard library module is written in Whitefoot and checked as every module is.
 
 [MOD-11] A `package_decl` binds its IDENT, in its graph's package alone, to one package.
 Its STRING's value is a relative location: one or more components separated by exactly one `/`, each `..` or a logical path component [PROG-2]. The bound package's root is the directory the host reaches from the binding graph's package root by following those components in order, a symbolic link on the way being followed as the host follows it, and its graph record is the `modules.wfg` in that directory. A STRING whose value is not a relative location is a hard error citing MOD-11 at the `package_decl`.
@@ -1760,7 +1870,7 @@ This form requires the empty root `NodePath` and carries no source-local byte in
 
 `SourceCoordinate` is `(source_ordinal, byte_start, byte_end)` in the bound [PROG-2] unit.
 Its byte interval is checked, half-open, and contained in that exact source.
-End of source is the zero-width interval whose two offsets equal the source byte length.
+The end of a source or diagnostic segment has the zero-width interval whose two offsets equal its source-local ending byte offset.
 `NodePath` is the sequence of zero-based child ordinals from the finalized compilation-unit root; the root path is the empty sequence.
 Every source-backed node has one checked source-local extent.
 In `SourceNode`, the rule-selected coordinate lies within that extent (`node_start <= byte_start <= byte_end <= node_end`) but need not equal the complete extent; the path identifies the existing offending or owning node while the coordinate identifies its exact offending subinterval or boundary.
@@ -1768,9 +1878,25 @@ In `SourceNode`, the rule-selected coordinate lies within that extent (`node_sta
 A diagnostic never fabricates a node or node path.
 A nested-place rejection additionally renders the offending access-path segment.
 
-The frontend selects defects stage by stage.
-Each stage scans every source in source-ordinal order and byte order, stops at its first defect, and the next stage begins only if the preceding stage succeeds for every source.
-The stage order is: raw lexical formation; terminal membership; grammar derivation; then canonical [FORM-2] rendering.
+The frontend partitions each writer source record [PROG-2, MOD-2] and each graph record [MOD-1] into diagnostic segments using its raw bytes; compiler-owned declaration records follow [PRE-1].
+A line begins at byte offset zero or immediately after LF.
+A declaration start is a line whose column-zero maximal lower word is a fixed terminal in the FIRST set of `item` [GRAM-2].
+A graph-record start is a line whose column-zero maximal lower word satisfies a first-terminal predicate of `package_decl`, `module_row`, or `entry_decl` [GRAM-2].
+The maximal lower word is the complete `[a-z][a-z0-9_]*` byte sequence at that position; its boundary is the next byte outside that set or source end.
+For a source record the segment boundaries are source start, each declaration start, and source end; for a graph record they are source start, each graph-record start, and source end.
+Each distinct pair of adjacent boundaries delimits one segment, and an empty source has one empty segment.
+Thus bytes before the first declaration or graph-record start form a segment of their own.
+
+Each segment runs raw lexical formation, terminal membership, and grammar derivation in that order.
+Each stage scans that segment in byte order, reports its first defect, and admits the next stage only on success.
+Source-record segments derive `program`; graph-record segments derive `graph_segment` [GRAM-2].
+Every segment is judged independently, and each segment whose completed judgment rejects the source contributes exactly one rejection.
+Once every segment has a completed language judgment, the frontend reports these rejections together, ordered by source ordinal and then byte offset.
+A non-language failure while judging a segment is the sole reported stop and replaces all accumulated segment source rejections.
+The end of a segment acts as `SOURCE_END` during its lexical formation and grammar derivation and uses the boundary coordinate defined above.
+Success of every segment admits the complete source's grammar derivation, which retains its ordinary start production and selects its first defect in source order.
+Success of every complete derivation admits one canonical [FORM-2] rendering stage over the complete ordered source bundle; this stage reports only its first defect in source-ordinal and byte order.
+Success of canonical rendering admits the semantic stages below, which retain their single-rejection selection.
 Within one grammar decision, production definitions rank by their first appearance in this specification, and alternatives rank left to right as written.
 Numbered rules rank by their first appearance in this specification.
 
@@ -1788,23 +1914,26 @@ A backslash followed by an ASCII byte other than `\`, `n`, `t`, `r`, `u`, or the
 If the actual byte sequence beginning at a backslash's follower does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, that follower instead cites [FORM-2] and spans only its first byte; if the follower begins a valid non-ASCII scalar, [FORM-5] spans the backslash and that scalar's complete UTF-8 encoding.
 A raw ASCII byte outside the permitted interior set cites [FORM-5] and spans that byte.
 At any other cursor inside a quoted candidate, if the actual byte sequence beginning there does not begin one complete well-formed UTF-8 encoding of a Unicode scalar value, [FORM-2] spans its first byte; a valid non-ASCII scalar instead cites [FORM-5] and spans its complete UTF-8 encoding.
-If no unescaped closing quote occurs and no earlier defect applies, the unterminated quoted candidate cites [FORM-5] and spans from its opening quote through end of source.
-Terminal membership uses the complete context-free predicate set required by [GRAM-1]; a token with no matching predicate cites [FORM-3] or [FORM-5], whichever rule owns the rejected spelling.
-Every lexical, terminal-membership, or grammar rejection uses `SourceBytes`; its coordinate is the exact interval above, the exact offending token interval, or the zero-width end-of-source interval defined above.
+If no unescaped closing quote occurs and no earlier defect applies, the unterminated quoted candidate cites [FORM-5] and spans from its opening quote through end of segment.
+Terminal membership uses the complete context-free predicate set required by [GRAM-1]; a token with no matching predicate cites [FORM-3], [FORM-5] or [GRAM-1], whichever rule owns the rejected spelling, [GRAM-1] owning the operator-form spellings.
+Every lexical, terminal-membership, or grammar rejection uses `SourceBytes`; its coordinate is the exact interval above, the exact offending token interval, or the zero-width segment-end interval defined above.
 
 Every grammar production and external terminal predicate is owned by the numbered rule containing its unique definition.
 A source-EBNF decision is a `|`, `?`, `*`, or the continuation decision of `+`.
 Its stable identity is the zero-based ordinal of its production by first definition in this specification followed by the zero-based EBNF child-index path from that production's root.
 Its arms retain source order; a consuming arm precedes an exit arm.
-The strong-LL(2) analysis required by [GRAM-1] supplies every arm's `SELECT_2` rows.
-Every predicate in a row retains its source-EBNF provenance and whether it came from inside that arm or from the arm's caller continuation.
+The strong-LL(2) analysis required by [GRAM-1] supplies every arm's recognition `SELECT_2` rows.
+For diagnostics, an arm's contextual `SELECT_2` rows are the two-terminal prefixes of that arm followed by the pending continuation of the actual production instances at the frontier.
+That continuation consists of the remaining sequence children and repetition continuations at each enclosing EBNF occurrence, followed by the continuation of each actual caller instance out to the segment's start production.
+Each completed continuation is padded with `SOURCE_END`.
+Every predicate in a contextual row retains its source-EBNF provenance and whether it came from inside that arm or from its continuation.
 Lookahead is padded to two positions with `SOURCE_END`.
 
 Recognition selects an arm only when that arm has a full two-position row match.
 Two matching arms are a [GRAM-1] specification defect, not a precedence rule.
-Whenever no row matches, the diagnostic machine computes each arm's score: the greatest proper-prefix length, zero or one, by which any of that arm's rows accepts the actual two-position lookahead.
+Whenever no recognition row matches, the diagnostic machine uses the contextual rows to compute each arm's score: the greatest proper-prefix length, zero or one, by which any of that arm's rows accepts the actual two-position lookahead.
 Let `m` be the greatest score at that frontier.
-The failure boundary is the actual lookahead token at position `m`, or the zero-width end-of-source coordinate when that position is `SOURCE_END`.
+The failure boundary is the actual lookahead token at position `m`, or the zero-width segment-end coordinate when that position is `SOURCE_END`.
 The maximal-prefix rows are every row with score `m`.
 The expected-terminal set is the distinct predicates at position `m` in those rows, ordered by their first terminal occurrence in the grammar; written terminals precede `SOURCE_END`.
 A direct terminal mismatch is the same calculation with one row and has a singleton expected set.
@@ -1819,9 +1948,19 @@ Its coordinate is the complete interval from the first IDENT through the second 
 An allowed suffix would already be one maximal OPNAME token, while a field place cannot be called or given targs.
 This bounded diagnostic window may include already recognized tokens, performs no operation-table or name lookup, consumes nothing, and does not enlarge recognition's two-token lookahead.
 2.
-If source-EBNF provenance reaches or would next enter an `atom` occurrence in `atom_list`, `fieldinit`, an `infix` operand, the subscript offset, or either endpoint of a `for_stmt`, and the two actual tokens at the start of that occurrence are `(IDENT, "(")`, `(IDENT, "::")`, `("pkg", "::")`, `(OPNAME, "(")`, `(OPNAME, "::")`, `(TYPEID, "(")`, `(TYPEID, "<")`, or `(TYPEID, "::")`, the rejection cites [GRAM-9]; in an infix-operand occurrence, a two-token start whose second token is an `infix_op` or `compare_op` token — the forbidden nested-infix start — likewise cites [GRAM-9].
-These are exactly the `call` and constructor `call` starts forbidden in an atom-only position; no name lookup participates.
+If source-EBNF provenance reaches or would next enter an atom-only position of [GRAM-9], and the two actual tokens at the start of that occurrence match a row in the following table, the rejection cites [GRAM-9].
+
+| First token predicate | Permitted second token predicates |
+| --- | --- |
+| `IDENT` or `OPNAME` | `"("` or `"::"` |
+| `"pkg"` or `"std"` | `"::"` |
+| `TYPEID` | `"("`, `"<"`, or `"::"` |
+| `"musttail"` or `"spawn"` | `IDENT`, `OPNAME`, `TYPEID`, `"pkg"`, or `"std"` |
+
+These are exactly the `call` and constructor `call` starts forbidden in an atom-only position; the second-token predicates after a call marker are `FIRST(callee)` under [GRAM-5], and no name lookup participates.
+In an infix-operand occurrence, a two-token start whose second token is an `infix_op` or `compare_op` token — the forbidden nested-infix start — likewise cites [GRAM-9].
 Its coordinate is the complete interval from the first through the second token of that forbidden call or construct start.
+If the frontier is a decision of a `call` that an `expr` or `affine_factor` derives, or of that call's `callee` or `callee_path`, the tokens from the call's first token form `("pkg" | "std" | IDENT) "::" IDENT ("::" IDENT)*` through a final IDENT that is either the last token the call consumed or the frontier's first lookahead token, and the actual token after that final IDENT is neither `(` nor `::`, the path continues no call and the rejection cites [MOD-5]; its coordinate is the complete interval from the first token of that path through its final IDENT, its expected-terminal set is replaced by `::` and `(`, and no name lookup participates.
 3.
 If the boundary token has the raw shape admitted by an expected external predicate before that predicate's explicit spelling restrictions, and fails only those restrictions, the rejection cites that predicate's owner.
 This includes an exact fixed lowercase grammar word in an IDENT slot and a numeric-form token missing FORM-5 membership.
@@ -1847,7 +1986,7 @@ At `program`'s `item*`, after any complete item prefix, if the first actual toke
 If no attribution row applies and exactly one arm has a score strictly greater than every other arm, diagnostic traversal descends into that arm only when every next expected predicate in that arm's maximal-prefix rows came from inside the arm rather than from its caller continuation.
 Otherwise the current frontier is the stopping point.
 A tie is never guessed.
-Traversal through the selected arm follows the same source EBNF and repeats this procedure.
+Traversal through the selected arm follows the same source EBNF, retains the actual caller continuation, and repeats this procedure.
 It cannot cross from a completed arm into its continuation, make a failed row valid, insert, delete, recover, or skip a token, or create a derivation or node.
 It is used only after recognition has failed; reaching a successful end instead of a stopping point is a compiler-invariant failure.
 
@@ -1870,7 +2009,7 @@ After canonical FORM-2 succeeds for every source, semantic diagnostic selection 
 An empty or define-only block uses `SourceNode` at that complete `contract_block`; no declaration, route reservation, or use role inside such a rejected block is classified or counted.
 Grammar already fixes each admitted block's definitions-before-requirements-before-postconditions structure and excludes every statement form, so no second structural-entry filter exists.
 Only complete unit-wide FN-8 admission permits the remaining resolution stages, each complete over the unit before the next begins: the [GRAM-2] heap-declaration position of a source bundle; the module forms, one scan in source order judging [MOD-4]'s alias placement, [MOD-9]'s heap declaration of a module program, [MOD-6]'s `public` and `readonly` placement and [MOD-7]'s function item forms; ordinary role classification and declaration inventory, whose event order also reports each refused alias target [MOD-4, MOD-5]; lexical resolution, including qualified references [MOD-5]; [MOD-6]'s closure of public signatures, in source order of the offending use; and [MOD-7]'s correspondence of each definition with its interface declaration, in definition source order.
-A module program's graph records are formed first [MOD-1]. A graph record, when read, passes the lexical, grammar and canonical stages and has its locations' form and its repeated names judged [MOD-11]; the walk then judges its bindings in written order, each binding's reached directory, cycle and repeated package, reading a newly reached package's graph record and walking its bindings before the next binding; after the walk each graph's rows and entries are judged in package order. The first rejection in this order is reported, and no module record is read before every graph forms.
+A module program's graph records are formed first [MOD-1]. A graph record, when read, passes the lexical, grammar and canonical stages and has its locations' form and its repeated names judged [MOD-11]; the walk then judges its bindings in written order, each binding's reached directory, cycle and repeated package, reading a newly reached package's graph record and walking its bindings before the next binding; after the walk each graph's rows and entries are judged in package order. Each graph's segment rejections are reported as defined above; after segment success the first rejection in this graph-formation order is reported. After every graph forms, module records are read in [MOD-2]'s order and all their segment rejections are aggregated by the segment-reporting rule above before those records proceed to later stages.
 Within an admitted routed `ensures_clause`, the route's leading lookup and [FN-9] route-admission subjudgment occur before lexical resolution of that clause expression; every unrelated block and event retains the ordinary global ordering.
 Poison declarations and partial resolution are forbidden.
 An early FN-8 rejection outranks every inventory or resolution rejection; inventory still outranks resolution even when the later-stage event has an earlier source coordinate.
@@ -1952,10 +2091,11 @@ For one lexical-use event the closed lookup rank is:
 |---|---|
 | `type` TYPEID | TYPE-5 |
 | built-in-bound TYPEID or the group TYPEID of `pack_use` | FN-3 |
-| constructor `call` constructor TYPEID, enum-variant-only `arm` TYPEID, or `result_route` TYPEID | TYPE-6 |
+| constructor `call` constructor TYPEID or `result_route` TYPEID | TYPE-6 |
 | LABEL use | TYPE-6 |
 | `const` IDENT | CONST-1 |
 | `cvalue` IDENT | CONST-2 |
+| `arm` IDENT | GRAM-12 |
 | `pbase` IDENT | TYPE-5 |
 | IDENT or OPNAME `callee` | OP-1 |
 | unqualified `fn_bind` or `function_arg` callee IDENT | FN-3 |
@@ -1977,22 +2117,23 @@ Every resolution rejection uses `SourceNode` at the use role and has no expected
 The dependent-declaration carriers are exactly the `field` and `vfield` declarations. A `fn_sig` instead contributes a function-parameter declaration with the scope and qualified-member disposition stated by TYPE-6 and FN-3.
 Each is a declaration-class carrier that produces one dependent-declaration record and one declaration event for later typed owner/member checking, but none enters a resolver lookup inventory.
 The two field carriers participate in FORM-3's reservation inventory; a function-parameter name has the ordinary function-name reservation judgment.
-The deferred-use carriers are the left IDENT of `fn_bind`, the member IDENT of a qualified `callee`, the first IDENT of an arm `fieldbind`, each `fieldinit` IDENT, each `psuffix` IDENT, the TYPEID and IDENT of a payload `psuffix`, the TYPEID of a `range_variant`, and each field selected below an effect-path root.
-Each produces one deferred-use record for later typed owner/member checking.
+The deferred-use carriers are the TYPEID label of an `arm`, the left IDENT of `fn_bind`, the member IDENT of a qualified `callee`, the first IDENT of an arm `fieldbind`, each `fieldinit` IDENT, each `psuffix` IDENT, the TYPEID and IDENT of a payload `psuffix`, the TYPEID of a `range_variant`, each field selected below an effect-path root, and each IDENT of a `held_clause`.
+Each produces one deferred-use record for later typed owner/member checking. A `held_clause` identifier is checked against its owning callable's parameter declarations by [HOLD-1], not through the ordinary expression lookup domain.
 The `result_binding` IDENT and the second IDENT of a `result_route` fieldbind are FN-9-owned result-datum carriers.
 The header candidate produces one reservation event with `role_ordinal` zero in its `result_binding`.
 The route candidate produces one reservation event with `role_ordinal` one in its `fieldbind`, after the first IDENT's FN-9 field-owner carrier.
 A result-datum reservation uses the canonical key above but is not a runtime declaration, lexical use, dependent declaration, or deferred use.
 Candidates participate in FORM-3 reservation checking but provide no pbase target before FN-9 admission; they enter no owner/member lookup and no TYPE-6 duplicate or shadow inventory.
-The header candidate is available only to an admitted unrouted ensures clause; after the leading route TYPEID's ordinary constructor lookup, FN-9 admits the route payload candidate only within that one routed clause.
+The header candidate is available only to an admitted unrouted ensures clause; after the leading route TYPEID's variant-label lookup [TYPE-6], FN-9 admits the route payload candidate only within that one routed clause.
 No result datum is visible in a contract definition, requirement, function body, or different ensures clause.
 The name of every `header_invariant` and `invariant_stmt` produces one proof-only invariant declaration record that uses TYPE-6's inventory and scope machinery; [INV-1] owns collision and lookup failure in this domain.
 An IDENT premise of `use_premise` produces one lexical-use record querying only that domain; it can never resolve to a value declaration that happens to have the same spelling. A `proof_use`'s own IDENT is the named multiplicity and queries the value domain instead, so the two positions never compete for one spelling.
 These records have no runtime declaration or value identity and participate in deterministic lexical resolution exactly at their stated scopes; OP-1 owns declaration-name reservation.
 A function-formal expansion retains its written declaration and application identities rather than fabricating a second lexical spelling.
-In an `arm` or `result_route`, the leading TYPEID first resolves globally to an enum variant.
+An `arm` TYPEID is a deferred scrutinee-owned label: [GRAM-12] first judges its header class against the scrutinee class, and an admitted variant header then resolves within that enum under [TYPE-6].
+In an admitted variant arm or `result_route`, a source variant label uses [TYPE-6]'s owner-local lookup; a PRE-1 variant uses its global constructor declaration.
 Later typed checking compares that variant's owner with the scrutinee enum for an arm; a foreign arm variant cites TYPE-6.
-FN-9 separately requires the route's successfully resolved variant and owner to be exactly PRE-1 `Result.Ok` or `Option.Some`.
+FN-9 separately judges the route's successfully resolved variant and owner against its result ordinal.
 The resolver does not otherwise accept or reject a dependent role's owner/member relation.
 
 A missing whole-unit requirement is not fabricated as an inventory or lookup event.
@@ -2010,10 +2151,10 @@ A whole-unit requirement with no offending source declaration uses `BundleRoot` 
 Post-resolution semantic rejection never uses `SourceBytes`, fabricates a node, or carries an expected-terminal set.
 
 Two or more simultaneously established post-resolution semantic rejections whose immediate offending source premise is the same use of the same canonical node are one rejection event, and that event cites the established rule whose definition appears first in this specification; a rule whose own text states that it forms no candidate in that situation [FN-1] is not among the established rules, and the event's location follows the cited rule.
-The order among rejection events at distinct nodes is implementation-defined.
-One compiler executable invoked on the identical bound unit with identical options and sufficient resources must use one stable deterministic traversal and produce the same first rejection event.
+The order among post-resolution semantic rejection events at distinct nodes is implementation-defined.
+For those events, one compiler executable invoked on the identical bound unit with identical options and sufficient resources must use one stable deterministic traversal and produce the same first rejection event.
 Selection may not depend on allocation identity, unordered-container iteration, worker scheduling, or backend traversal.
-Different conforming implementations may report different first established rejection events at distinct nodes; the same-node citation above is fixed for every conforming implementation, and neither freedom changes the accepted-program set or checked-program authority.
+Different conforming implementations may report different first established post-resolution semantic rejection events at distinct nodes; the same-node citation above is fixed for every conforming implementation, and neither freedom changes the accepted-program set or checked-program authority.
 
 Semantic success is failure-atomic at its publication boundary.
 Private scratch judgments may be constructed in any deterministic order, but no checked program, lowering input, optimization fact, partially accepted declaration, or other semantic authority is published unless every applicable source-side numbered-rule judgment through complete-unit semantic checking succeeds.
@@ -2048,10 +2189,10 @@ This rejection is never replaced with a runtime fallback or reported at the call
 
 An [FN-9] result-datum admission subjudgment begins only after [FN-8] contract admission, FORM-3 result reservation, the route's ordinary leading-variant lookup when present, and concrete [FN-2] signature substitution.
 Admission through freshness precedes lexical resolution or semantic checking of the owning `ensures_clause` expression; the remaining clause, selected-return, and proof judgments begin only after that expression resolves and the surrounding function's ordinary semantic judgments required by the failed premise succeed.
-For an unrouted clause, test in this fixed order: result mode/type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause that it competes with [TYPE-6].
-For a routed clause, test in this fixed order: whole-result mode/type determined by its declared `rtype`, its `Result` or `Option` class, and the data [CALL-4] gives its payload type; resolved variant owner and exact success-variant identity, `Ok` for a Result and `Some` for an Option; the written field against the variant's sole declaration-order field; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause that it competes with [TYPE-6].
+For an unrouted clause, test in this fixed order: result type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause that it competes with [TYPE-6].
+For a routed clause, test in this fixed order: whole-result type determined by its declared `rtype` and its enum class; resolved variant owner and membership in that enum; the written field's membership in that variant and the data [CALL-4] gives its substituted type; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause that it competes with [TYPE-6].
 A result, class, owner, variant, or missing-field failure uses `SourceNode` at the complete `ensures_clause` or its `result_route` when present.
-An extra, misspelled, or out-of-order field uses `SourceNode` at the complete `fieldbind`.
+An extra or misspelled field uses `SourceNode` at the complete `fieldbind`.
 A candidate equal to its paired field, another live candidate, or a live declaration it competes with uses `SourceNode` at its owning `result_binding` or `fieldbind`, with coordinate equal to the candidate IDENT token.
 Those are FN-9 events, not GRAM-10 or TYPE-6 duplicates.
 An unresolved leading route TYPEID remains the earlier TYPE-6 lexical-use rejection and forms no FN-9 candidate.
@@ -2095,7 +2236,7 @@ It also retains every proved loop-invariant base and arbitrary-backedge judgment
 Target lowering must discharge each target-domain obligation from the selected target plus already-checked layout, allocation, and bounds facts before emitting the governed allocation or address operation; it may not replace a missing proof with a runtime guard.
 No accepted proof-required operation carries an implicit runtime check or elimination disposition: a subscript, exact integer operation, or function range requirement is `discharged` at its owning source node, and the checked program retains its exact [ENT-4] or [ENT-6] derivation there.
 A concrete terminal-root identity uses the owning function instance plus the operation NodePath/family/conjunct, the call NodePath/callee/requirement NodePath, or the complete-postcondition block/relation ordinal; display symbols are never identity.
-A `requires_clause` is represented only by its GoalTemplate, call-site derivations, and proved body-entry fact; an `ensures_clause` only by its verified RelationTemplate, selected-exit judgments, and derivations.
+An expression `requires_clause` is represented only by its GoalTemplate, call-site derivations, and proved body-entry fact; a held requirement by the structural judgments of [HOLD-1]; an `ensures_clause` only by its verified RelationTemplate, selected-exit judgments, and derivations.
 Neither contract clause has executable checked-program form.
 Facts-off compilation preserves every source-acceptance and call-goal judgment and erases the same proof-only syntax before lowering.
 Neither a discharged call goal nor a proved body-entry fact authorizes a second lowering path or an alternate acceptance; what a proved fact may tell the backend is stated below.
@@ -2107,8 +2248,8 @@ That supply authorizes no second lowering path and no alternate acceptance.
 The one current ProofContext is failure-atomic.
 No fact, postcondition summary, invariant target, partial-operation discharge, checked function, or lowering input leaves semantic scratch until every premise of its originating judgment has succeeded.
 Every `requires` fact enters a callee only after the caller has discharged that concrete call's complete instantiated requirements; runtime argument values establish nothing by themselves.
-The `ensures` summaries of one call-graph strongly connected component publish atomically once every selected return of every concrete member has proved them from its own entry facts, body flow and the induction hypotheses below.
-Before that publication, a member's call to a member of its own component receives exactly the callee's affine [TYPE-11] postconditions, as induction hypotheses by strong induction on the order in which calls of the component return: the first call to return used no hypothesis, each later return's proof uses hypotheses only of calls that returned before it, and every selected return proves the generated postconditions, so every value a returning call hands back or leaves behind satisfies them, and a call that never returns hands back nothing. A written postcondition stays withheld, because postcondition verification has no summary fixed point [FN-9] and a written clause is not a standing property of a type, so recursive written postconditions never bootstrap one another.
+The postcondition summaries of one call-graph strongly connected component follow the atomic publication judgment [FN-9] at the module boundary [MOD-8].
+Before that publication, a member's call to a member of its own component receives every callee postcondition, written and type-invariant-generated, affine and range, unrouted and routed, under each postcondition's ordinary selection and establishment conditions [FN-9, TYPE-11, ENT-3, RANGE-2]. These are induction hypotheses justified by strong induction on the order in which calls of the component return: the first call to return used no same-component hypothesis, each later return's proof uses hypotheses only of calls that returned before it, and every selected return proves its postconditions, so every value a returning call hands back or leaves behind satisfies them. This is partial correctness, not a termination judgment: a call that never returns hands back nothing. The hypotheses grant final checked-program authority only after the body proofs and composition judgments [FN-9, MOD-8] succeed.
 A header invariant enters the current loop-body ProofContext as an induction hypothesis only after its complete simultaneous base batch succeeds; it grants no checked-program or continuation authority unless every applicable arbitrary-backedge batch also succeeds. A local invariant enters its dominance region only after its one AUTO or complete PRF-1 judgment succeeds. A PRF-1 conclusion enters only after every source, factor, scaled sum, and final DIRECT residual succeeds.
 Any failure discards the complete prospective checked program and every unpublished derivation root.
 
@@ -2127,7 +2268,7 @@ For every concrete FN-9 declaration, `PostconditionExit` roots each discharged s
 It also retains the entry-image-stability disposition and ordered invalidating event when unavailable; successful absence of an invalidating event is diagnostic metadata, not a fabricated positive parent.
 `PostconditionAggregate` has the nonempty selected-exit roots as parents in return-NodePath order.
 A non-discharged declaration retains its ordered dispositions and residual but no success aggregate root.
-Component summaries become referenceable together only after the SCC schedule validates that every summary reference points from a caller component to an earlier callee component, or to a [TYPE-11] postcondition of its own component received as an induction hypothesis above.
+Component summaries become referenceable together only after the SCC schedule validates that every summary reference points from a caller component to an earlier callee component, or to a postcondition of its own component received as an induction hypothesis above.
 
 Every S12 fact actually established in accepted semantic flow is a required caller-local root even when no later query consumes it.
 `PostconditionCall` carries q, the checked aggregate summary reference, exact per-formal pre-transfer substitution, A0's complete actual-obligation and FN-8 goal roots, and the ordered transfer/consume/borrow/effect/kill event prefix.
@@ -2163,7 +2304,7 @@ An implementation may report unavailable resources, trusted-computing-base failu
 
 ## 13. Execution overlap
 
-[CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] are the complete authority and interference vocabulary available to [PAR-1], [PAR-2] and [WAIT-3].
+[CAP-1] The kernel defines no writer-visible capability category and no additional concurrency permission. `own`, `&`, path overlap [OWN-7], and the ordinary effect row [EFF-1] supply the authority and storage-interference vocabulary of [PAR-1], [PAR-2] and [WAIT-3]; waiting calls [WAIT-1] and decision-cell boundaries [SHARE-3] supply [PAR-1] and [PAR-2]'s shared-effect exclusions.
 The kernel defines no thread construct: its one concurrency construct is the spawn [WAIT-3], whose context's footprint is its own arguments and, for a `let_stmt`, its binding. Its data-race guarantee is subject to [SCOPE-3]; it does not exclude general race conditions.
 A shared object [SHARE-1] adds no overlap permission.
 
@@ -2177,6 +2318,7 @@ The paths of both statements are interpreted in the state before the first state
 Permission composes: any run of adjacent statements that pairwise may overlap may all overlap, and "pairwise" means every ordered pair in the run.
 A footprint element whose caller place the implementation does not resolve overlaps every place and denies permission.
 A statement that contains a waiting call [WAIT-1] has no overlap permission with any statement.
+A statement has overlap permission only when every call it contains has a decision-cell-free boundary [SHARE-3].
 
 Under a permitted overlap, bindings and every Whitefoot state place equal the source-order result, and the two statements' host effects follow [HOST-1].
 That identity is conditional on contract compliance, exactly as [SCOPE-3]'s freedom from undefined behavior is conditional on its trusted computing base.
@@ -2239,6 +2381,7 @@ A footprint element whose caller place the implementation does not resolve overl
 Effects and path overlap decide interference between iterations exactly as they do between [PAR-1] statements. An implementation retains each iteration's live storage for that complete extent.
 Every normal continuation of every statement of B reaches L's compiler-owned binder update, so no statement of B is a `return_stmt`, a `give_stmt`, a `break_stmt` resolved to L or a loop enclosing L, a `continue_stmt` resolved to a loop enclosing L, or a `let_stmt` selecting `propagate_let_rhs` [FN-1, GIVE-1, ERR-3].
 B contains no waiting call [WAIT-1].
+Every call in B has a decision-cell-free boundary [SHARE-3].
 
 Under a permitted overlap every state-place observable is the one produced by executing L's iterations in index order.
 Write a0 for the accumulator's value on the true header edge entering the first executed iteration, and t0 through tm for the values the second operand of its writes evaluates to, in the order those writes execute across L's iterations taken in index order.
@@ -2267,7 +2410,8 @@ A program that needs two host operations ordered passes both through one owner w
 Each context executes its own constructs one at a time, in the order they define, and a call that is not spawned executes in its caller's context in that order.
 A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
 A context waits at a waiting host call until the host has produced its outcome, at an atomic statement until the statement takes effect [SHARE-3], and at a join until the joined context has completed [WAIT-3].
-Which of several outstanding operations completes first, how the host effects of different contexts interleave, the order in which atomic statements and cancellation-state updates of different contexts take effect [SHARE-3], the positions of byte sequences, the extents of map scans, the bytes a release of a map's reserve reports and the bytes `key_set_bytes` reports [SHARE-1], and the invocation's runtime driver count [PRE-2] are inputs of the execution: two executions that receive the same inputs in the same order execute every context identically.
+Which of several outstanding operations completes first, how the host effects of different contexts interleave, the order of shared effects [SHARE-3], the order in which the handles of one object end [SHARE-1], the positions of byte sequences, the extents of map scans, the bytes a release of a map's reserve reports and the bytes `key_set_bytes` reports [SHARE-1], and the invocation's runtime driver count and process identifier [PRE-2] are inputs of the execution: two executions that receive the same inputs in the same order execute every context identically.
+The snapshot creation result, child termination, collection outcomes and unconstrained traversal orders of [SNAP-2, SNAP-3] are also inputs of the execution. A snapshot child executes one supplied encoder under [SNAP-3] and creates no Whitefoot context or source continuation.
 Where a context executes, and whether two contexts execute at the same time, are not observable.
 While every context, from every point of its execution, reaches in finitely many steps its completion or a wait, each context that does not wait, or waits for a host outcome that has been produced or for a context that has completed, eventually takes its next step, and each atomic statement that has begun, and that has no guard or whose guard is true in its targets' states at every point from some point on, eventually takes effect. The waiting cancellation-state update [PRE-2] has the same progress guarantee as an unguarded atomic statement; a firing that makes a guard persistently true is covered by this guarantee for guarded statements.
 An execution in which every context that has not completed waits for an atomic statement whose guard is false or for another context, and no host operation is outstanding, takes no further step and does not complete; an implementation may stop it with a report, which is not a program outcome [SCOPE-3].
@@ -2288,13 +2432,14 @@ The starting context joins the started one, waiting there until it has completed
 A value of either prelude type `Shared<T>` or `SharedRead<T>` [PRE-1] is a handle to a shared object, which holds one value of type `T`, its state.
 `shared_new` moves its argument into a new shared object and returns a handle to it, `shared_map_new` returns a handle to a new shared object whose state is a concurrent hash map whose every entry is `None`, sized for its argument's number of `Some` entries, and `shared_share` returns a further handle to the object its argument names.
 `shared_read` returns a `SharedRead<T>` retaining the same object as its `Shared<T>` argument, and `shared_read_share` returns a further `SharedRead<T>` retaining the object its argument names. There is no conversion from a `SharedRead<T>` handle to a `Shared<T>` handle.
-Releasing a handle [OWN-1, STOR-3] releases that handle. An object's state is released when its last handle has been released and no atomic statement on it is executing.
+`shared_close` consumes its `Shared<T>` argument [OWN-1] and ends that handle. Releasing a handle [OWN-1, STOR-3] ends that handle. The handles of one object end in one total order [WAIT-2]. When the last to end is a close, that close returns `Some` holding the object's state, which then belongs to its caller, and every other close returns `None`. When the last to end is a release, the state is released once no atomic statement on the object is executing.
+A `Shared<T>` whose `T` is linear is linear [PROV-6], so each of its handles ends in a close. A type argument for `T` that is linear has no part, at any depth of field, payload field, element, `Box` content or the state of a `Shared` handle, that is that `Shared<T>`, since a handle its own object held would keep the object's last close from being reached; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part a depth-first walk of the type's parts in declaration order reaches, the walk visiting each type once [DIAG-1]. A type argument is judged at a generic function's symbolic instance, under the classes its type parameters have there [PROV-6], and again at each concrete instance [FN-2].
 The state of a shared object is storage of no binding and belongs to no context [WAIT-2]. Paths into it start at it [REF-1], and the targets of an atomic statement [SHARE-2] are the only forms that form one.
 A value of the prelude type `Frozen<T>` [PRE-1] is a handle to a frozen object, which holds one value of type `T`, read as the handle's readonly field `inner`. `frozen_new` moves its argument into a new frozen object and returns a handle to it, and `frozen_share` returns a further handle to the object its argument names; no operation writes a frozen object's value, so it is the value `frozen_new` moved in for as long as the object lives.
-A type argument for `T` has no part, at any depth of field, payload field, element or `Box` content, that is a `Shared<U>`, a `SharedRead<U>` or a host handle [PRE-2], so nothing a frozen object holds changes; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part a depth-first walk of the type's parts in declaration order reaches, the walk visiting each type once [DIAG-1].
+A type argument for `T` has no part, at any depth of field, payload field, element or `Box` content, that is a `Shared<U>`, a `SharedRead<U>`, a `DecisionCell` [PRE-1] or a host handle [PRE-2], so nothing a frozen object holds changes; a type argument with such a part is a hard error citing SHARE-1 at that `targ`, with a repair naming the first such part a depth-first walk of the type's parts in declaration order reaches, the walk visiting each type once [DIAG-1].
 A path that ends at or passes through `inner` is a readonly path [TYPE-2] and is never moved or consumed [OWN-1], a `move` or consuming use of one being a hard error citing SHARE-1 at the `place`, with a repair [DIAG-1]; reading it reads the frozen object's value, which is storage of no binding and belongs to no context [WAIT-2], needs no atomic statement, and is admitted wherever a read of the handle is, an atomic statement's guard and block included.
 Releasing a handle releases that handle, and the object's value is released when its last handle has been released [STOR-3].
-A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, which holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`. A map is only ever the state of a shared object [TYPE-9]. Releasing a map releases every value its entries hold.
+A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, which holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`. A map is only ever the state of a shared object [TYPE-9]. Its release is [STOR-3]'s map action.
 `map_count` returns how many entries of the map its argument names are `Some`.
 Each execution gives every sequence of bytes a position, a `u64`, the same in every map; which position each sequence has is an input of the execution [WAIT-2].
 `map_scan` with cursor `c` takes an extent `e`, an integer greater than `c` and at most two to the 64th, which is an input of the execution and which an implementation may choose by `count`; `count` states nothing else. It inserts into its key set, as `key_set_insert` does, each key whose entry in the map is `Some` and whose position `p` satisfies `c <= p < e`, in increasing order of position and, among keys of one position, in lexicographic order of their bytes as unsigned values with a proper prefix first; it returns `e` modulo two to the 64th, so `0` exactly when `e` is two to the 64th.
@@ -2337,16 +2482,20 @@ The statement reads its handle places and index atoms when it begins. Each objec
 The bindings are in scope in the guard and the block, and their roots leave scope when the block ends by any edge [REF-2]. A binding `es` whose atom is a key set `ks` establishes `es^.len == ks.len` at the block's entry, as a guard's comparison is established there [ENT-3.S1], and a write to `ks` while `es` is valid invalidates `es` [REF-2].
 Every atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`.
 The guard and the block contain no call to a waiting function [WAIT-1] and no atomic statement. The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
+Every call in the guard has a decision-cell-free boundary [SHARE-3].
 No path of the guard's footprint, read or written, has a type that is a self-changing host handle [PRE-2] or has one as a part at any depth of field, payload field, element, map entry [OP-4] or `Box` content.
-The guard and the block together name every binding.
+The guard and the block together name every binding. Ordinary held requirements are checked under [HOLD-1].
 A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt`, target, guard `expr`, `place` or index atom, with a repair [DIAG-1]. For a footprint path with a self-changing host handle, the offending `call` is the guard's call whose projected row [EFF-5] reads or writes that path, the one `call` a guard's `expr` can hold [GRAM-5], and the repair waits for a time outside the guard, with a deadline [PRE-2] or with a context that waits for the deadline and fires a cancellation source whose state the guard reads.
 The statement's footprint is its handle places and index atoms, read, together with the footprint of its guard and block from which every path that starts at a target's state is removed.
 
 [SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.
 Its guard and block execute with exclusive access to the states its targets name, and every read and write they make of those states takes effect at that point. When the statement has a guard, the guard is true in those states at that point.
-The atomic statements and the cancellation-state updates of [PRE-2] take effect in one order [WAIT-2], and those of one context take effect in its source order.
+The shared effects are atomic statements, cancellation-state updates [PRE-2], and the `shared_close`, `decision_cell_read`, `claim_written` and `claim_killed` calls [PRE-1]. They take effect in one total order [WAIT-2], respecting the source order of nonoverlapping constructs in each context and the order of effects whose calls have returned before another begins.
+Each decision-cell read or claim takes effect at its own point between its call and return, separate from the enclosing atomic statement's point. Its returned value is the cell's state immediately after that point. The enclosing statement's state accesses retain their single-point meaning above; the verdict publishes no intermediate contents of its targets.
+A decision-cell-free callable boundary has no `DecisionCell` in any parameter or result type, recursively through fields, payload fields, elements, `Box` content and shared or frozen content, and each callable boundary in its function-kind parameters and interface members is decision-cell-free. This judgment uses the concrete substitutions of [FN-2, FN-5] and visits each type and callable boundary once. It inspects declarations and no implementation body.
 A statement whose guard is false in its targets' states at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
 A statement that has begun and has not taken effect waits for its guard while its guard is false in its targets' states, and [WAIT-2] states when it takes effect.
+Calls with held requirements have this same observation under [HOLD-1].
 A guard writes nothing and reaches no self-changing host handle [SHARE-2], and its context executes nothing else while it waits [WAIT-2], so its value changes only when an atomic statement or a cancellation-state update changes one of its targets' states.
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
 An implementation may hold less than a statement's states, or hold them together with other statements, wherever the program's outcomes are those it has when every statement's block executes with exclusive access to its states.
@@ -2355,7 +2504,9 @@ An implementation may hold less than a statement's states, or hold them together
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, built-in-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
-The prelude's opaque structs [TYPE-2] are the five storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handles `Shared` and `SharedRead`, the frozen-object handle `Frozen`, the concurrent hash map `ConcurrentHashMap` and the key set `KeySet` [SHARE-1], and the `Entries` a target over a key set names [SHARE-2]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
+These compiler-owned declaration records are language-defined declaration data, not writer source records [PROG-2], and the compiler validates each complete record against this rule.
+
+The prelude's opaque structs [TYPE-2] are the five storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handles `Shared` and `SharedRead`, the frozen-object handle `Frozen`, the concurrent hash map `ConcurrentHashMap` and the key set `KeySet` [SHARE-1], the `Entries` a target over a key set names [SHARE-2], and the decision-cell handle `DecisionCell` defined below. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
 
 ```
 opaque struct Array<T, const n: u64> {
@@ -2386,7 +2537,7 @@ opaque nocopy struct Box<T> {
   inner: T;
 }
 
-opaque nocopy struct Shared<T: drop> {
+opaque nocopy struct Shared<T> {
 }
 
 opaque nocopy struct SharedRead<T: drop> {
@@ -2406,6 +2557,9 @@ opaque nocopy struct KeySet {
 
 opaque nocopy struct Entries<V: drop> {
   readonly len: u64;
+}
+
+opaque nocopy struct DecisionCell {
 }
 ```
 
@@ -2444,7 +2598,16 @@ enum ScanStep {
   Next(next: u64);
   Needs(bytes: u64);
 }
+
+enum DecisionState {
+  Open();
+  Written();
+  Killed();
+}
 ```
+
+A `DecisionCell` is an owning handle retaining one opaque control verdict of type `DecisionState`. `decision_cell_new` forms a new cell in `Open`; `decision_cell_share` forms another handle to the same cell. Releasing a handle releases that handle, and releasing the last handle releases the cell [STOR-3]. Handles move into contexts and aggregates under the ordinary ownership rules [OWN-1, WAIT-3]; the verdict has no source-addressable field or path and is reached only by the operations below.
+`decision_cell_read` observes the verdict. `claim_written` changes `Open` to `Written`, and `claim_killed` changes `Open` to `Killed`; each leaves either decided state unchanged. Their results and effect points follow [SHARE-3]. A claim decides only this control verdict, independently of whether the caller changes any other value, so a claim preceding a no-op write has the same meaning. An `Open` observation establishes only the returned snapshot and no fact about a later observation or claim. Guard admission is [SHARE-2].
 
 The two built-in numeric bounds `Int` and `Float` admit exactly OP-1's integer and floating-point domains and imply `copy` under PROV-6, and the built-in equality bound `Eq` admits exactly the equality types [OP-16] and implies `copy` likewise. They are not source declarations, interface groups, implicit behaviors or logical-law bundles; a source actual cannot bind or extend any of the three.
 The prelude also contributes the reference-kind name `Run` [TYPE-8]; it denotes no type and has no constructor.
@@ -2552,10 +2715,14 @@ fn take_front<W, T>(window: &W) -> value: T writes(window) contract {
   ensures window^.head >= 0_u64;
   ensures window^.head <= window^.cap;
 };
+fn clear<W, T: drop>(window: &W) -> result: unit writes(window.filled), writes(window.len) contract {
+  ensures window^.len == 0_u64;
+  ensures window^.cap == entry(window)^.cap;
+};
 fn swap<T>(first: &T, second: &T) -> result: unit writes(first), writes(second);
-fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
+fn shared_new<T>(value: T) -> result: Shared<T> pure;
 fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>> pure;
-fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
+fn shared_share<T>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 fn shared_read<T: drop>(shared: &Shared<T>) -> result: SharedRead<T> reads(shared);
 fn shared_read_share<T: drop>(shared: &SharedRead<T>) -> result: SharedRead<T> reads(shared);
 fn frozen_new<T: drop>(value: T) -> result: Frozen<T> pure;
@@ -2588,14 +2755,20 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
 fn release<T: drop>(value: T) -> result: unit pure;
+fn decision_cell_new() -> result: DecisionCell pure;
+fn decision_cell_share(cell: &DecisionCell) -> result: DecisionCell reads(cell);
+fn decision_cell_read(cell: &DecisionCell) -> result: DecisionState reads(cell);
+fn claim_written(cell: &DecisionCell) -> result: DecisionState reads(cell);
+fn claim_killed(cell: &DecisionCell) -> result: DecisionState reads(cell);
+fn shared_close<T>(shared: Shared<T>) -> result: Option<T> pure waits;
 ```
 
 The definition of `release` returns `unit` and releases its parameter under the ordinary leaving-edge rules [STOR-3, PROV-6].
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_bytes`, `key_set_read_key`, `free_empty` and `release`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, `Eq`, `Run`, then each construction function above in written order, then each window operation and `paged_page_len` above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `shared_read`, `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`, `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_bytes`, `key_set_read_key`, `free_empty`, `release`, `decision_cell_new`, `decision_cell_share`, `decision_cell_read`, `claim_written`, `claim_killed` and `shared_close`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
-[PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
+[PRE-2] The host modules are the seven standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net`, `std::process` and `std::snapshot`, registered by these rows of the standard library's graph:
 
 ```
 pkg::time: [];
@@ -2604,14 +2777,24 @@ pkg::text: [];
 pkg::fs: [pkg::io, pkg::text];
 pkg::net: [pkg::io, pkg::time];
 pkg::process: [pkg::io, pkg::text, pkg::fs, pkg::time];
+pkg::snapshot: [pkg::time];
 ```
 
 A host module has no implementation record, and its interface record is exactly the text below. Each function it declares is an ordinary callable boundary whose definition the build supplies and must satisfy the declared boundary [SCOPE-3], exactly as a PRE-1 function record's is; calls neither inspect nor classify that definition, and its requirement templates and postconditions are discharged and instantiated as PRE-1's are.
 A host function may declare type parameters under [FN-2]; all its instantiations use the one callable boundary whose definition the build supplies.
 A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation, its release is empty [STOR-3], and only a host function returns one.
 An opaque struct a host module declares with fields, `Instant`, `CancelState`, `CancelSource` or `CancelWatch`, has the representation and capabilities its fields give it [PROV-6], and its fields have their declared visibility [MOD-6]. Its values originate in definitions the build supplies [TYPE-2].
-A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
+A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for an outstanding host outcome. The nonwaiting `capture_export` performs the one synchronous creation attempt of [SNAP-3], returning its immediate outcome while the atomic statement holds its states; it neither suspends its context nor waits for child output or termination.
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(deadline: d, cancel: c)` has returned `Ok`, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
+`local_offset_seconds(clock: c, at: t)` reads the host's local time rule for the second s, the greatest integer not above t divided by 10^9, which is the calendar instant s seconds after 1970-01-01T00:00:00Z. Its offset d is the number of seconds by which the local calendar date and time that the following table gives for s, read as a UTC calendar date and time, follows s, negative when it precedes s. It returns `Some` containing d when the table's conversion gives a local calendar time for s and d satisfies the postconditions of `local_offset_seconds`'s signature, and `None` otherwise. Each reading is an input of the execution [WAIT-2], as a clock reading is.
+
+| Host | Local calendar date and time for s |
+|---|---|
+| POSIX | The broken-down time the host C library's `localtime` gives for s, whose rule the `TZ` environment variable selects when set and the host's system zone selects otherwise, daylight saving time included |
+| Windows | The broken-down time the C runtime's `_localtime64_s` gives for s after `_tzset`, whose rule `TZ` in the C runtime's own format selects when set and the system zone's current rule selects otherwise |
+| Another host whose C library has `localtime` | The broken-down time that `localtime` gives for s |
+| Another host whose C library has no `localtime` | s itself, so the result is `Some` containing zero |
+
 `CancelSource` and `CancelWatch` are opaque structs whose private fields hold, respectively, a `Shared<CancelState>` and a `SharedRead<CancelState>` of one shared cancellation state. Their capabilities and field-wise release follow [PROV-6]. `cancel_source` creates that state with `fired` false; `cancel_share` returns another source of the same state and `cancel_watch` returns a watch of it. `cancel_state` returns a `SharedRead<CancelState>` retaining that same state, with its readable `fired: Bool` field. The waiting `cancel_fire` performs the false-to-true transition as an atomic state update in [SHARE-3]'s order, waking guards that observe it and supplying the host-wait cancellation below; repeated firings leave it true. A statement observing true is ordered after that transition, and its state observations have [SHARE-3]'s single-point meaning, including shared-state updates completed before the firing. Firing does not mean cancelled host calls have returned, contexts have joined or cleanup has completed, and supplies no independent order on unrelated host effects, whose order remains [HOST-1]'s. Dropping a source or watch releases only its shared handle and neither fires nor clears the state; the explicit `close_cancel_source` and `close_cancel_watch` consume and drop their argument; sources, watches and shared views retain it under [SHARE-1]. `cancel_never` returns a watch retaining a private shared state for which no source is made available, so its state and every view of it remain false. These handles consume no host handle credit.
 A host function with a parameter `deadline: Option<Instant>` bounds its wait by it and takes `cancel: &CancelWatch` immediately after it. With `None` no clock deadline bounds the wait. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`. When the watch fires before the host has produced the outcome, the outcome is `Cancelled`; a watch already fired when the call begins ends the wait at once. Both outcomes are carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request. The call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced only by reaching the supplied deadline, and `Cancelled` only by the supplied watch firing. An outcome the host has already produced wins over both, so neither discards a completed transfer. A deadline and a firing that race may produce either outcome; that selection and a race with the host's own outcome are inputs of the execution [WAIT-2]. `sleep_until` takes a watch after its required deadline and returns `Ok(value: unit)` for reaching the deadline or `Err(error: unit)` for cancellation, under the same race rule. File-system functions take neither bound.
 `MemoryMeter` observes this execution's process memory. The heap the program holds consists of the requested bytes of every live allocation made for emitted program storage, including direct page and directory allocations, plus the granted sizes of live runtime-pool blocks and the requested bytes of the host descriptor registry. Allocator usable-size rounding, unused pool reserves, released blocks retained by an allocator, executable mappings and stacks do not contribute to that holding. When nothing allocates or releases while `heap_in_use` takes its reading, neither another context nor a statement of the reading's own context that overlaps it [PAR-1], the reading equals that holding. Otherwise its nonnegative reading may differ from the holding at every single instant during the reading by at most the bytes those concurrent allocations and releases moved. `resident_bytes` returns `Some` containing the operating system's resident set size of the process, which includes resident pages independently of whether their allocations remain live, or `None` when the host cannot report it. Failure to obtain a resident-set reading does not terminate the execution. Each memory reading is an input of the execution [WAIT-2], as a clock reading is; reads write their meter, and meters related by `meter_share` observe the same process with ordering governed by [HOST-1].
@@ -2620,14 +2803,50 @@ The self-changing host handles are the host handles of this table. Through each,
 | Self-changing host handle | Value its host functions observe |
 |---|---|
 | `std::time::Clock` | The monotonic clock's reading, through `now` |
-| `std::time::WallClock` | The calendar time, through `unix_nanoseconds` |
+| `std::time::WallClock` | The calendar time and the local time rule, through `unix_nanoseconds` and `local_offset_seconds` |
 | `std::process::MemoryMeter` | The process memory, through `heap_in_use`, `resident_bytes` and `release_map_reserve` |
+| `std::io::HandleFactory` | The open-files limit, which another process may change, through `open_files_limit` |
 
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
-A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
+The name bytes of a sequence of host code units, a path component or the text of a `HostString`, are its bytes on a POSIX host, and on a Windows host the WTF-8 encoding of its UTF-16 code units: each surrogate pair is the UTF-8 encoding of the scalar value it denotes, and each other code unit, an unpaired surrogate included, is the one to three bytes of the UTF-8 encoding form applied to its value. A sequence that is text therefore has its UTF-8 encoding as its name bytes on both hosts, and distinct sequences have distinct name bytes; `host_copy_name_bytes` copies a `HostString`'s.
+A name given with a root to a `std::fs` operation is the name bytes of a path component, and denotes an entry directly below that root exactly when that component is nonempty and other than `.` and `..`; an operation given a name that denotes no such entry, on a Windows host one that is the name bytes of no component included, returns `InvalidPath`. `open_file`, `open_directory`, `open_append` and `open_directory_write` open the entry their name denotes only when that entry is not a symbolic link; for an entry that is one, each returns `Err` and opens no object, the link's target included.
+`directory_next` writes into the window of destination from start toward end one record for each of the next entries of source's directory, other than its `.` and `..` entries, in the order the host's enumeration reports them: the entry's kind byte by the table below, the byte count of its name bytes as two bytes, low byte first, and its name bytes. The records follow one another from start; next is the index after the last of them and entries counts them. A call that returns `Ok` over a nonempty window writes at least one record, `ListEnd` reports that no entry remains to be written, and a nonempty window shorter than the host's enumeration needs returns `ListFailed`. Over an empty window the call returns `Ok`, writes nothing and leaves the enumeration where it was.
+
+| Kind byte | Entry on a POSIX host, by its `d_type` | Entry on a Windows host, by its attributes |
+|---|---|---|
+| 0 | `DT_UNKNOWN` | `FILE_ATTRIBUTE_DEVICE`, without `FILE_ATTRIBUTE_REPARSE_POINT` or `FILE_ATTRIBUTE_DIRECTORY` |
+| 1 | `DT_REG` | None of `FILE_ATTRIBUTE_REPARSE_POINT`, `FILE_ATTRIBUTE_DIRECTORY` and `FILE_ATTRIBUTE_DEVICE` |
+| 2 | `DT_DIR` | `FILE_ATTRIBUTE_DIRECTORY`, without `FILE_ATTRIBUTE_REPARSE_POINT` |
+| 3 | `DT_LNK` | `FILE_ATTRIBUTE_REPARSE_POINT` |
+| 4 | Every other value | None |
+
+`open_read` opens the file that the host's lookup of path from root selects, the host resolving its `..` components and symbolic links, so that file need not be below root.
+`HostPaths` is the authority to look up host paths, which the six host-path opens `open_host_read`, `open_host_read_bytes`, `open_host_directory_read`, `open_host_directory_read_bytes`, `open_host_directory` and `open_host_directory_bytes` take; no host function returns one. When the invocation [PROG-3] supplies `Inputs`, its `host_paths` field is `Some` containing a `HostPaths` on a POSIX host and on a Windows host, and `None` on every other host.
+A host-path open's path is a sequence of native code units: a byte on a POSIX host, and on a Windows host a UTF-16 code unit, whose native bytes are its two bytes, low byte first. It is the code units whose native bytes `host_copy_bytes` copies from its `HostString`, or those that the bytes of `path` from `start` to `end` denote in its encoding: with `NativeBytes` the bytes are the native bytes of the code units, unpaired UTF-16 surrogates included, and with `Utf8` they are UTF-8 text, whose code units are its bytes on a POSIX host and its UTF-16 encoding on a Windows host. For an empty path, a path holding a zero code unit, a window whose code units number at least the host's limit — `PATH_MAX` on a POSIX host and 32767 on a Windows host — a `NativeBytes` window of odd length on a Windows host, and a `Utf8` window that is not UTF-8 text, the open returns `InvalidPath`, a runtime-synthesized condition, and looks nothing up. Otherwise, on a POSIX host it looks the path up as POSIX `openat` does with base's directory as its starting directory: a path beginning with `/` starts at the host's root directory and ignores base, every other path starts at base, each `..` component selects the parent of the directory that the components before it reached after following their symbolic links, and every symbolic link the lookup reaches, its last component included, is followed. On a Windows host, where `\` and `/` are both separators, it looks the path up in the Win32 path dialect by the first matching row of the following table, and every symbolic link and junction the lookup reaches, its last component included, is followed.
+
+| Windows path form | Lookup |
+|---|---|
+| Extended: begins `\\?\` | The rest of the path as written, below the host's `\??\` namespace, without normalization |
+| Device: two separators, then `.` or `?`, then a separator or the end | None; the open returns `InvalidPath` carrying `ERROR_INVALID_NAME` and origin 1 |
+| UNC: begins with two separators | The normalized path |
+| Drive-absolute: a letter, `:` and a separator | The normalized path |
+| Drive-relative: a letter and `:` | The rest after `:`, as a relative path, when base is on that drive; otherwise the normalized path, starting at the current directory the host held for that drive when the invocation started |
+| Root-relative: begins with one separator | The path normalized after the root of base's drive or share |
+| Relative: every other path | The path normalized after base |
+
+The normalized form of a path is the one the host's `GetFullPathNameW` produces from it: each `/` becomes `\`, each `.` component is removed, each `..` component removes the component before it but never the drive or share root, and the last component loses its trailing periods and spaces; a relative or root-relative path is normalized after the path the host reports for base when the open looks it up. A relative path, or a drive-relative path on base's drive, whose normalized form begins with the path the host reports for base, compared code unit for code unit, and then ends or continues after a separator is looked up from base's directory object by the components after base, so a rename of base or of a directory above it does not change what it opens; every other normalized path, one that spells base in another letter case included, is looked up by its full spelling, and one the host normalizes to a device path returns `InvalidPath` carrying `ERROR_INVALID_NAME` and origin 1. The open creates no entry, changes no process state such as the working directory, and makes one lookup of the path; a host refusal of the lookup or the open is `Err` carrying the host's code and origin 1 — on a POSIX host `ENOENT` as `NotFound`, `ENOTDIR` as `NotDirectory`, and `EACCES` and `EPERM` as `PermissionDenied`, and on a Windows host `ERROR_FILE_NOT_FOUND` and `ERROR_PATH_NOT_FOUND` as `NotFound`, `ERROR_DIRECTORY` as `NotDirectory`, and `ERROR_ACCESS_DENIED` as `PermissionDenied`.
+`open_host_read` and `open_host_read_bytes` open a regular file; for a directory they open they return `IsDirectory`, and for another kind of object they open `Unsupported`, each a runtime-synthesized condition that closes what was opened. The other four open an existing directory and never create one; for an object that is not a directory they return `NotDirectory`. `open_host_directory` and `open_host_directory_bytes` return the read and write halves of the one directory the lookup opened, which close separately, and spend two handle credits; when either half cannot be obtained, the open returns `Err`, holds neither half and spends no credit. A directory a host-path open returns is an ordinary `DirectoryRead` or `Directory`, below which the name rule above holds.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
-`TcpConnection`, `AcceptedConnection`, `Directory` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
+The budget the invocation's factory draws on starts with c(n) credits on a POSIX host, where n is the soft open-files limit when the invocation starts and c(n) = max(0, min(n, 2^20) - 64), and with 4096 credits on every other host.
+The open-files limit is the host's per-process limit on the files a process may hold open. `open_files_limit` and `raise_open_files_limit` read and change it by the following table, where a limit the host reports as unlimited reads as 2^64 - 1, a refusal by the host is `Err` carrying the host's code and origin 11 and changes nothing, and each reading is an input of the execution [WAIT-2].
+
+| Host | `open_files_limit(factory: f)` | `raise_open_files_limit(factory: f, wanted: w)` |
+|---|---|---|
+| POSIX | `Ok` containing the soft and hard `RLIMIT_NOFILE` limits `getrlimit` reports | `Ok` containing the limits, unchanged, when w is at most the soft limit; otherwise the outcome of `setrlimit` setting the soft limit to w and keeping the hard limit, which the host refuses when w exceeds the hard limit, and whose success returns `Ok` containing the limits `getrlimit` reports after it and adds max(0, c(m) - c(n)) credits to the budget f draws on, n being the soft limit before the call and m the soft limit after it |
+| Every other host, Windows included | `Unsupported`, a runtime-synthesized condition | `Unsupported`, a runtime-synthesized condition, changing nothing |
+
+`TcpConnection`, `AcceptedConnection`, `Directory`, `Inputs` and `OpenFilesLimit` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 A `SocketAddress` is one IPv4 address or one IPv6 address together with a port. `socket_address_v4` gives the IPv4 address whose four octets in written order are `a` to `d`, `socket_address_v6` gives the IPv6 address whose eight 16-bit groups in written order are `a` to `h`, and each gives `port` as its port. The peer `tcp_accept` returns and the address `local_address` returns are the host's report of one endpoint in that same form: its family is the family the host reports, so an IPv4 peer that the host reports through an IPv6 listener as an IPv4-mapped address is an IPv6 address, and an IPv6 report keeps its address and port without its scope identifier or flow label. `socket_address_ip` returns `Ipv4` carrying the four octets of an IPv4 address, or `Ipv6` carrying the eight groups of an IPv6 address, in written order, and `socket_address_port` returns the port. For all arguments, `socket_address_ip` of `socket_address_v4(a: a, b: b, c: c, d: d, port: p)` returns `Ipv4(a: a, b: b, c: c, d: d)`, `socket_address_ip` of `socket_address_v6` returns `Ipv6` with that call's eight groups in the same order, and `socket_address_port` of either returns `p`. Reading an address reads only that value.
 `local_address` returns the host's report of the local endpoint of the connection whose receiving half `receive` is: for a connection `tcp_accept` returned, the address and port its peer reached; for a connection `tcp_connect` opened, the address and port the host gave its own end. A receiving half denotes its connection until `close_receive` consumes it, whether or not the sending half has been closed. The query transfers no byte and leaves the connection's state unchanged. A host refusal of the query returns `Err` carrying the host's code and origin 10.
 When the invocation [PROG-3] supplies `Inputs`, its `drivers` field holds the number of drivers the runtime uses to execute contexts [WAIT-2], after applying the runtime's configuration and host rules. That count is fixed before the entry runs, remains fixed for the whole execution, and is at least one. Driver threads may start on first need; their later start must establish that same number of drivers. A runtime unable to establish it stops with a report under [SCOPE-3]. These guarantees describe the invocation-supplied value; source construction and assignment retain the ordinary field rules [TYPE-2, SET-1].
@@ -2638,6 +2857,8 @@ On an embedded, single-threaded or single-driver target the count is one. On a t
 | Unset, empty, or an integer equal to zero | The available CPU count. |
 | A positive integer at most the runtime's driver upper bound | That integer. |
 | A negative integer, an integer over the runtime's driver upper bound, or text the runtime's integer parser does not accept | Stop before entry with a configuration diagnostic and no program outcome [SCOPE-3]. |
+
+When the invocation supplies `Inputs`, its `process_id` field holds `Some` containing the identifier the host gives the operating-system process executing the program, which is the value of `getpid` on POSIX and of `GetCurrentProcessId` on Windows, on a host that gives that process an identifier, and `None` on a host that gives it none. That value is fixed before the entry runs and remains fixed for the whole execution; this describes the invocation-supplied value, and source construction and assignment retain the ordinary field rules [TYPE-2, SET-1].
 
 A runtime-produced `IoError` with a nonzero `code` carries the failed condition's host error code: an `errno` value on POSIX hosts, and a Windows system error code, including Winsock codes, on Windows. Windows native `NTSTATUS` failures are converted to that system error-code namespace; equivalent socket conditions may be normalized to a common system code before classification. A runtime-synthesized condition in a variant with a `code` field carries zero. In a runtime-produced variant with an `origin` field, that field identifies the failed operation class, with the following meanings; it is independent of the error variant and is not an additional code to format.
 
@@ -2654,6 +2875,7 @@ A runtime-produced `IoError` with a nonzero `code` carries the failed condition'
 | 8 | Close |
 | 9 | Synchronization, truncation or namespace operation |
 | 10 | Socket address query |
+| 11 | Open-files limit query or change |
 
 `error_copy_description` selects a description by the following table. Its selection ignores `origin`. The host text is host-version dependent.
 
@@ -2764,6 +2986,11 @@ public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool p
 public fn sleep_until(deadline: Instant, cancel: &CancelWatch) -> result: Result<unit, unit> reads(cancel) waits doc "Returns Ok with unit when the monotonic clock reaches deadline, or Err with unit when cancel ends the wait.";
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
+
+public fn local_offset_seconds(clock: &WallClock, at: i64) -> result: Option<i64> reads(clock) contract {
+  ensures when Some(value: offset): -86400_i64 < offset;
+  ensures when Some(value: offset): offset < 86400_i64;
+} doc "Returns the local time offset of the second containing at, as specified by PRE-2.";
 
 public opaque struct CancelSource {
   state: Shared<CancelState>;
@@ -2922,6 +3149,13 @@ public fn host_copy_bytes(value: &HostString, destination: &[u8], start: u64, en
   ensures when Ok(value: next): next <= end;
 } doc "Copies every byte of value into destination from start; Ok carries the index after the last byte copied, and CopyTooSmall carries the length the window needs when it is shorter.";
 
+public fn host_copy_name_bytes(value: &HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, CopyError> reads(value), writes(destination) contract {
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Copies the name bytes of value [PRE-2] into destination from start; Ok carries the index after the last byte copied, and CopyTooSmall carries the length the window needs when it is shorter.";
+
 public fn host_utf8_len(value: &HostString) -> result: Result<u64, Utf8Error> reads(value) doc "Returns the length in bytes of the UTF-8 text value denotes, or Utf8Invalid when it denotes none.";
 
 public fn host_copy_utf8(value: &HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, Utf8CopyError> reads(value), writes(destination) contract {
@@ -2972,9 +3206,38 @@ public enum ListStop {
   ListFailed(public error: IoError);
 }
 
+public opaque nocopy struct HostPaths {
+}
+
+public enum PathEncoding {
+  NativeBytes();
+  Utf8();
+}
+
 public fn relative_path(value: HostString) -> result: Result<RelativePath, PathError> pure doc "Returns value as a path relative to a directory, or PathInvalid when it cannot name one.";
 
-public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens the file at path below root for reading.";
+public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens for reading the file that the host's lookup of path from root selects [PRE-2].";
+
+public fn open_host_read(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<ReadFile, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens for reading the existing regular file that path names, looked up from base as a host path [PRE-2].";
+
+public fn open_host_read_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<ReadFile, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens for reading the existing regular file that the bytes of path from start to end name in encoding, looked up from base as a host path [PRE-2].";
+
+public fn open_host_directory_read(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<DirectoryRead, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens the read half of the existing directory that path names, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory_read_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<DirectoryRead, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens the read half of the existing directory that the bytes of path from start to end name in encoding, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<Directory, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens both halves of the existing directory that path names, looked up from base as a host path, never creating a directory [PRE-2].";
+
+public fn open_host_directory_bytes(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &[u8], start: u64, end: u64, encoding: PathEncoding) -> result: Result<Directory, IoError> reads(paths), reads(base), reads(path), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= path^.len;
+} doc "Opens both halves of the existing directory that the bytes of path from start to end name in encoding, looked up from base as a host path, never creating a directory [PRE-2].";
 
 public fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) waits contract {
   requires start <= end;
@@ -3000,7 +3263,7 @@ public fn directory_next(source: &DirectorySource, destination: &[u8], start: u6
   requires end <= destination^.len;
   ensures start <= next;
   ensures next <= end;
-} doc "Writes the names of the next entries of source into destination from start toward end; next is the index after the bytes written, entries counts the names, and ListEnd reports that no entry remains.";
+} doc "Writes a record of the kind and name bytes of each of the next entries of source, other than . and .., into destination from start toward end [PRE-2]; next is the index after the records written, entries counts them, and ListEnd reports that no entry remains.";
 
 public fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) waits contract {
   requires start <= end;
@@ -3141,6 +3404,7 @@ alias InputStream = pkg::io::InputStream;
 alias OutputStream = pkg::io::OutputStream;
 alias Args = pkg::text::Args;
 alias Directory = pkg::fs::Directory;
+alias HostPaths = pkg::fs::HostPaths;
 alias Clock = pkg::time::Clock;
 alias WallClock = pkg::time::WallClock;
 
@@ -3173,6 +3437,8 @@ public struct Inputs {
   public wall_clock: WallClock;
   public stops: StopSignals;
   public memory_meter: MemoryMeter;
+  public host_paths: Option<HostPaths>;
+  public process_id: Option<u64>;
 }
 
 public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
@@ -3190,21 +3456,174 @@ public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Retu
 public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";
 
 public fn release_map_reserve<V: drop>(map: &Shared<ConcurrentHashMap<V>>, meter: &MemoryMeter) -> freed: u64 reads(map), writes(meter) doc "Releases map reserve storage as specified by SHARE-1 and returns the decrease in program heap bytes.";
+
+public struct OpenFilesLimit {
+  public soft: u64;
+  public hard: u64;
+}
+
+public fn open_files_limit(factory: &HandleFactory) -> result: Result<OpenFilesLimit, IoError> reads(factory) doc "Returns the soft and hard limits on the files the process may hold open, as specified by PRE-2.";
+
+public fn raise_open_files_limit(factory: &HandleFactory, wanted: u64) -> result: Result<OpenFilesLimit, IoError> writes(factory) doc "Raises the soft limit on the files the process may hold open to wanted, as specified by PRE-2.";
 ```
+
+`std::snapshot`, the record `snapshot/module.wfm`:
+
+```
+alias Instant = pkg::time::Instant;
+alias CancelWatch = pkg::time::CancelWatch;
+
+public opaque nodrop struct Reserve {
+}
+
+public opaque nodrop struct Job {
+}
+
+public enum PrepareError {
+  SnapshotReserveUnavailable();
+  SnapshotPrepareRefused();
+}
+
+public enum CreateError {
+  SnapshotCreateRefused();
+}
+
+public enum ReadError {
+  SnapshotReadFailed();
+  DeadlinePassed();
+  Cancelled();
+}
+
+public enum ExportError {
+  SnapshotScratchExhausted();
+  SnapshotOutputExhausted();
+  SnapshotLengthOverflow();
+  SnapshotPipeFailed();
+  SnapshotChildSetupFailed();
+}
+
+public enum ProtocolError {
+  SnapshotStatusMissing();
+  SnapshotStatusMalformed();
+  SnapshotStreamTruncated();
+  SnapshotStreamMalformed();
+}
+
+public enum ChildOutcome {
+  SnapshotExportComplete(public bytes: u64, public records: u64);
+  SnapshotExportFailed(public error: ExportError);
+  SnapshotChildExited(public code: u8);
+  SnapshotChildSignalled(public signal: u32);
+  SnapshotProtocolFailed(public error: ProtocolError);
+}
+
+public enum CollectionOutcome {
+  SnapshotCollected(public bytes: u64);
+  SnapshotDiscarded(public delivered: u64, public discarded: u64);
+  SnapshotCollectionFailed(public error: ReadError, public delivered: u64);
+}
+
+public struct Outcome {
+  public child: ChildOutcome;
+  public collection: CollectionOutcome;
+  public abort_requested: Bool;
+}
+
+public fn prepare(scratch_bytes: u64, output_bytes: u64) -> result: Result<Reserve, PrepareError> pure waits doc "Prepares one capture's workspace and dedicated pipes under SNAP-3.";
+
+public fn discard(reserve: Reserve) -> result: unit pure waits doc "Consumes an unused reserve and releases its prepared resources under SNAP-3.";
+
+public fn capture_export<V: drop>(reserve: Reserve, map: &ConcurrentHashMap<V>, cut: &u64) -> result: Result<Job, CreateError> reads(map), reads(cut) contract {
+  requires held(map, cut);
+} doc "Attempts the typed export whose graph is admitted by SNAP-1, with bytes specified by SNAP-2 and lifetime and outcomes by SNAP-3.";
+
+public fn read(job: &Job, out: &[u8], deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, ReadError> reads(cancel), writes(job), writes(out) waits contract {
+  requires 0_u64 < out^.len;
+  ensures when Ok(value: count): count <= out^.len;
+} doc "Collects the next stream bytes under SNAP-3; zero reports EOF and establishes no export success.";
+
+public fn finish(job: Job) -> result: Outcome pure waits doc "Drains remaining output and consumes and reaps the job exactly once under SNAP-3.";
+
+public fn abort(job: Job) -> result: Outcome pure waits doc "Requests child termination and consumes and reaps the job exactly once under SNAP-3.";
+```
+
+[SNAP-1] The type argument of the typed export declared in [PRE-2] obeys its ordinary `drop` bound and the following snapshot-resource-free judgment on the encoder's input graph. This judgment selects the encoder's supported value closure; it introduces no new function kind or held-call admission rule.
+
+A concrete type is snapshot-resource-free exactly when every vertex of its finite owned-type graph belongs to these permitted shapes: a primitive [TYPE-1]; an enum, with edges to every declared variant-payload type in declaration order; a struct declared in a module or source bundle, nonopaque or having at least one declared field, with edges to its declared fields in order; one of the five storage shapes [TYPE-9], with an edge to its element type; or `Box<T>`, with an edge to T. The storage shapes and `Box` use their content edge rather than their representation fields. The prelude `Shared`, `SharedRead`, `Frozen`, `ConcurrentHashMap`, `Entries` and `KeySet` have no permitted shape in this judgment. An opaque struct with no fields has no permitted shape, so fieldless resource handles are refused independently of their module of origin. All payload types participate, including those of inactive variants. Capability modifiers remain governed by [OWN-1]; resource freedom neither grants `copy` nor changes ordinary release.
+
+The graph uses concrete nominal instances and primitive types as vertices and is visited depth first, each vertex once, in declared field and payload order. Finite cycles through `Box` or storage are admitted when each visited vertex has a permitted shape; ordinary finite-layout and instantiation rules still apply [STOR-6, FN-6]. A generic body retains this obligation and each concrete instance discharges it under [FN-2]. Every concrete selection of the export instance obtains the same graph judgment: selection by an ordinary call, by a raw function-kind argument, or by a binding member [FN-3, FN-4], including through aliases [MOD-4]. A selected instance is graph-qualified before its function-kind binding is admitted; forwarding that checked binding retains the qualification and introduces no held-call exception. Complete declarations, including private owned fields, supply the graph at composition; this grants no source field-selection visibility [MOD-5]. Failure is a hard error citing SNAP-1 at the complete `call` for ordinary call selection, the complete `function_arg` for raw function-kind selection, or the complete `fn_bind` for binding-member selection, naming the first forbidden vertex and the owned path that first reaches it, with a repair [DIAG-1].
+
+[SNAP-2] A successful export has the following byte format, version 1. Octets below are hexadecimal, juxtaposition concatenates, `U32(n)` and `U64(n)` encode an unsigned integer in respectively four and eight little-endian octets, and `raw(n)` is exactly n arbitrary octets. Counts describe logical contents, never capacities, allocator padding, addresses or unused storage. The consumer's schema is the exact concrete V and its declaration graph, including nominal field order and enum variant order; the stream carries no declaration names or schema migration promise.
+
+```
+stream       = 57 46 53 4e 41 50 30 31 U64(cut) record* ff U64(record_count)
+record       = 01 U64(key_length) U64(cut) chunk+ 03
+chunk        = 02 U32(n) raw(n)                 (1 <= n <= 4096)
+record_body  = raw(key_length) E(V)
+```
+
+Concatenating one record's chunk payloads yields exactly its record_body. Every record repeats the header's cut. A record's key is its exact binary map key, including zero octets. Every present entry appears once. Top-level record order is an input of the execution [WAIT-2]. Chunk boundaries may divide any encoded field or scalar; the encoder fills each chunk to 4096 octets while at least that many body octets remain and emits the final shorter chunk when needed. This needs no whole-record length prepass or second dataset copy. `record_count` equals the number of completed records. An empty map emits the header and terminal with zero records.
+
+The recursive encoding E has the following disjoint one-octet tags. An integer's following octets have its declared width, little endian; signed integers use two's complement. An enum variant ordinal is zero based in declaration order. Each component encoding includes its own tag.
+
+| Type or shape | E encoding |
+|---|---|
+| `unit` | `00` |
+| `i8`, `i16`, `i32`, `i64` | respectively `01`, `02`, `03`, `04`, followed by the integer's 1, 2, 4 or 8 octets |
+| `u8`, `u16`, `u32`, `u64` | respectively `05`, `06`, `07`, `08`, followed by the integer's 1, 2, 4 or 8 octets |
+| `f32`, `f64` | respectively `09`, `0a`, followed by the exact IEEE 754 binary32 or binary64 representation in 4 or 8 little-endian octets |
+| A struct using its declared fields | `10 U64(field_count)` followed by each field's E in declaration order |
+| An enum, including `Bool` | `11 U64(variant_ordinal) U64(payload_count)` followed by the active variant's payload fields' E in declaration order |
+| `Array`, `Slots`, `Ring`, `Segments`, `Paged` | respectively `20`, `21`, `22`, `23`, `24`, then `U64(length)` and each initialized logical element's E in index order |
+| `Box<T>` | `25` followed by E of its content |
+| `std::collections::hash_map::HashMap<K, W, ceiling>` | `30 U64(pair_count)` followed by E(key), E(value) for each present pair |
+| `std::collections::ordered_map::OrderedMap<K, W, ceiling>` | `31 U64(pair_count)` followed by E(key), E(value) for each present pair in stored structural in-order |
+
+The two named standard-library collection rows select their exact nominal declarations before the general struct row; aliases name the same declaration [MOD-4], and other structs use their declared fields even if their representation resembles a collection. The hash map row walks filled buckets, omitting vacant and deleted buckets; its pair order is an input of the execution [WAIT-2]. The ordered map row recursively visits a node's leading child, then each entry's pair followed by that entry's child, in the initialized entry order. It invokes no comparator and makes no additional claim that an inconsistent user comparison protocol sorted those pairs. These rows expose logical entries rather than hash buckets, capacity, tree nodes or balancing shape. General struct encoding includes private fields and recursively owned contents; privacy restricts source selection, not these exported contents. A ring's logical index zero is its front, so wrapping changes no encoding order. `Segments` and `Paged` emit logical indices across their physical segments or pages. Floating encodings preserve signed zero, infinities and every NaN sign and payload bit: the encoder performs no floating operation or NaN normalization.
+
+All lengths, ordinals, counts and total output accounting are mathematical nonnegative integers representable by their stated fields. An encoder unable to represent one terminates with `SnapshotLengthOverflow`; no field wraps. Framing and terminal bytes count toward the output reserve [SNAP-3]. A prefix lacking the final terminal is incomplete even when its last record is complete. A complete terminal by itself is not success: final success requires the matching child status and termination under [SNAP-3]. An explicit export failure is carried by the independent bounded status channel, so exhausting the output quota never needs an unbudgeted error record on the data stream.
+
+[SNAP-3] The capture reads every present map entry, its key bytes and the complete owned value closure; no absent key is a record. Its ordinary held contract [HOLD-1] supplies the common observation point for the map and the referent of `cut`; the language gives that `u64` no application-specific log or sequence meaning. The supplied image retains precisely that observation under [SHARE-3] independently of parent mutation, release or replacement after the statement. No parent reference is retained beyond the call [REF-3].
+
+The current supplied research route uses one restricted child on Linux x86-64 LP64 with glibc and requires the execution conditions below. A composition containing this export on a different selected target receives an explicit unsupported-target diagnostic after source checking under [DIAG-1], naming that required platform; it is neither source rejection nor a substitute algorithm. The source interface represents logical export and its ordinary owners and outcomes; it exposes no fork operation, process identity, callback or parent continuation.
+
+A `Reserve` owns the preparation of exactly one attempted export. `prepare` creates all descriptors, a fresh dedicated output pipe, a private bounded status pipe, and the scratch arena before returning `Ok`; allocation refusal produces `SnapshotReserveUnavailable`, and another host refusal produces `SnapshotPrepareRefused`, with no resource retained by the failed call. `discard` consumes an unused reserve and releases those resources. These operations wait and therefore occur outside a held atomic block [SHARE-2]. The dedicated pipes consume resources of the reserve, not credits from a `HandleFactory`.
+
+The requested `scratch_bytes` bounds the prepared arena's requested size. All data-dependent encoder workspace, including traversal frames for recursive values, buffering and pending lengths, comes from that arena; exhaustion produces `SnapshotScratchExhausted`. The same prepared image supplies the child's private arena. Fixed runtime-owned per-reserve/job control storage, including the child encoder's private bounded stack, totals at most 65536 requested bytes, in addition to that arena. Recursive traversal uses arena frames, not unbounded native recursion. The output pipe's payload capacity is at most 65536 bytes and the status pipe's at most 4096 bytes. `output_bytes` bounds the cumulative number of bytes written to the output pipe, including the [SNAP-2] header, every frame and terminal; before any write would exceed it, the encoder stops with `SnapshotOutputExhausted`, and no byte beyond that bound is written. Zero reserves are admitted and may produce these exhaustion outcomes. Partial writes count only transferred bytes. The reserve holds no buffer proportional to the dataset or to one record's total size; collection writes directly into the caller's supplied window and charges its bounded parsing state to the prepared workspace. Parent parsing-workspace exhaustion is a collection failure reported as `SnapshotReadFailed`, with no overrun or fallback allocation.
+
+This supplied route is research-only; production eligibility under a total-memory service-first policy is deferred. These quantities bound requested workspace, control storage, pipe payload capacity and total output, not total process memory. Allocator rounding, kernel descriptor and pipe metadata, ordinary runtime stacks, page tables and copy-on-write growth are outside them. The fork image may retain the entire original process image; parent writes can duplicate its writable pages while the child retains the originals. Neither retained pages nor these private pages are charged to a snapshot meter in this version. This version promises abort on encoder-workspace or output exhaustion and explicit caller abort; it promises no worst-case aggregate physical-memory reserve, automatic COW-budget abort, capture-pause bound or wall-clock cleanup bound. Observed RSS, COW growth, pause and cleanup time are measurements of particular executions, not stronger guarantees. Host resource exhaustion retains [SCOPE-3]'s external conditions.
+
+`capture_export` consumes the reserve and makes exactly one synchronous child-creation attempt while the map and cut are held. Inside the hold its parent-side work performs no allocation, descriptor operation, suspension or waiting for the child; preparation and any signal masking precede acquisition of the hold, and parent activation and descriptor cleanup follow release of that hold on every leaving edge. These phases preserve the ordinary source order and outcomes; a failed creation returns `Err(SnapshotCreateRefused())`, retains no child or live job, and releases the consumed reserve outside the hold. A successful creation returns `Ok` owning one linear `Job` regardless of subsequent child failure. A successful image is retained until that child terminates, and the child runs neither source code nor source-level release on that image.
+
+The child first performs qualified capsule setup using raw host operations to isolate signals, arrange termination when its parent dies, close inherited descriptors outside the two designated pipes, and establish its private stack/workspace; setup may inspect its parent identity and the host's descriptor inventory and writes only that child's descriptor table, signal state and prepared workspace. It then executes exactly one runtime-supplied encoder for the complete admitted type closure. The encoder reads only its private captured image and immutable encoder descriptions, writes only its private stack/workspace and the two designated pipes, and invokes only the qualified raw host operations for output, status and exit. Both setup and encoding call no user function, hash callback or comparison callback; acquire no inherited lock; use no inherited allocator, TLS, runtime queue or cleanup; create no further child; and never return into the parent's continuation. Snapshot data goes through the one dedicated output pipe alone; the status pipe carries only the fixed terminal control record below. Neither pipe is a preexisting file, socket or source handle. Preparation failure, export failure and abort perform no modification or publication of an application file or log.
+
+Preparation supplies storage for the child identity and parent collection/reaping bookkeeping. The linear job exclusively owns the child identity and uses the owned `waitpid` path to confirm termination and reap exactly once; the source exporter acquires no pidfd. Any parent reaping notification is activated after release of the hold without acquiring a new descriptor.
+
+The supported execution leaves the child waitable for its one runtime owner, permits no competing reaper, registers no `pthread_atfork` handler, and preserves the native capsule's calling-thread lifetime through child termination. The runtime supplies these conditions for a composed Whitefoot program; linked native components must preserve them under [SCOPE-3]. Signal masking and worker placement are implementation obligations, never a source calling-thread requirement or an additional source function kind.
+
+The child attempts one 32-byte status record: ASCII octets `WFSSTAT1`, one status octet, seven zero octets, `U64(bytes_written)` and `U64(records_completed)`. Status zero reports completed export; statuses 1 through 5 respectively report `SnapshotScratchExhausted`, `SnapshotOutputExhausted`, `SnapshotLengthOverflow`, `SnapshotPipeFailed` and `SnapshotChildSetupFailed`. This control record has fixed space reserved by preparation and does not consume the output quota. A failure to deliver it can leave status absent or incomplete. A valid record is exactly 32 bytes with that magic, zero reserved octets and a defined status. The counts equal actual transferred output bytes and completed record frames. The child exits with code zero after reporting either complete export or an explicit export failure; an unsuccessful status transfer may instead produce missing status or abnormal termination.
+
+`read` returns `Ok(count)` after copying that many next stream bytes to `out^[0..count]`, leaves the rest of the window unchanged, and returns a positive count whenever it has delivered bytes. At permanent data-pipe EOF it returns `Ok(0)`; subsequent reads also return zero. This says nothing about child success. Its deadline and cancellation follow [PRE-2], producing the ReadError variants `DeadlinePassed` and `Cancelled`; these outcomes transfer no byte, retain the usable job, and record no collection failure. A parent collection failure returns `Err(SnapshotReadFailed())`, transfers no byte for that call, records the failure in the job and ends further successful collection; subsequent reads return the same error. An export failure can follow earlier successful reads, which remain only a prefix. Read chunks need not coincide with the encoder's frames.
+
+`finish` and `abort` consume the job. `finish` drains and discards unread output while awaiting termination, so an unread full pipe cannot make it wait for a child that is waiting for pipe capacity; `abort` records an abort request and requests termination if the child is still alive, drains or closes its collection endpoint as needed, then awaits termination. Both reap their child exactly once, release their descriptors and prepared memory, and return only after that cleanup; finite data and descriptor work is bounded by the reserves, while waiting for host termination/reaping is governed by [WAIT-2] and has no elapsed-time bound. The child may already have completed when abort is requested. `abort_requested` is `True` exactly for the consuming abort operation; the child's actual termination is reported independently.
+
+`Outcome.child` selects as follows, in order: death by signal gives `SnapshotChildSignalled` with its positive signal number; normal exit with nonzero code gives `SnapshotChildExited`; zero exit with no status bytes gives `SnapshotProtocolFailed(SnapshotStatusMissing())`; zero exit with an incomplete, invalid or extra status record gives `SnapshotProtocolFailed(SnapshotStatusMalformed())`; zero exit with valid nonzero status gives `SnapshotExportFailed` with that status's error. Zero exit with success status and an output prefix ending before its required terminal gives `SnapshotProtocolFailed(SnapshotStreamTruncated())`; a complete stream violating [SNAP-2]'s byte grammar, schema tags, field lengths, repeated cut or terminal count, or disagreeing with the success status's byte or record counts, gives `SnapshotProtocolFailed(SnapshotStreamMalformed())`; a complete matching stream gives `SnapshotExportComplete` with those counts. This protocol validation retains only bounded parsing state; the encoder's obligation to emit exactly the captured map's keys and values is its supplied-definition obligation under [SCOPE-3], not a second map comparison by the collector. After a zero exit and valid success status, a collection failure that prevents deciding the stream yields `SnapshotProtocolFailed(SnapshotStreamTruncated())` alongside the collection failure, never `SnapshotExportComplete`.
+
+`Outcome.collection` independently gives `SnapshotCollectionFailed` and the bytes previously delivered when a parent read or drain failed; otherwise it gives `SnapshotDiscarded` with delivered and discarded byte counts when any bytes were drained or discarded by the consuming operation, and `SnapshotCollected` with delivered bytes when none were discarded. A successful child does not establish that the caller received every byte: only `SnapshotExportComplete` together with `SnapshotCollected` and `abort_requested` equal to `False` establishes the complete collected export. Keeping or publishing a durable base and its log suffix remains the application's separate operation.
 
 ## 15. Obligation discharge: deterministic facts, invariants, and local certificates (normative)
 
 [ENT-1] The entailment fragment is a closed, deterministic, terminating derivation system fixed completely by this specification.
-Its state is the L0 relation state, [ENT-2]'s finite signed opaque goals, [ENT-6]'s exact current-value images and specification-fixed automatic affine images, and the finite affine theorems admitted by [INV-1] and [PRF-1].
+Its state is the L0 relation state, [ENT-2]'s finite signed opaque goals and integer-exclusion facts, [ENT-6]'s exact current-value images and specification-fixed automatic affine images, and the finite affine theorems admitted by [INV-1] and [PRF-1].
 Complete-state obligation discharge [ENT-6], ordinary-call requirement discharge [FN-8], verified normal-return proof [FN-9], loop induction and program-point invariant checking [INV-1], and local certificate checking [PRF-1] are post-resolution source-acceptance judgments under [DIAG-1].
 They are identical in facts-on and facts-off compilation and are not an optimizer-fact family.
 Which of their obligations this derivation leaves undischarged are judged next by the range judgment is fixed by [RANGE-2].
 
-The fact sources are exactly the executed control-flow edges, independently proved function requirements at callee entry, declaration and type properties fixed by this specification, constants, compiler-owned structural consequences enumerated by [ENT-3], verified earlier-SCC normal-result publications [FN-9] and same-SCC type-invariant induction hypotheses [DIAG-2], and machine-proved header or local invariant targets.
+The fact sources are exactly the executed control-flow edges, independently proved function requirements at callee entry, declaration and type properties fixed by this specification, constants, compiler-owned structural consequences enumerated by [ENT-3], normal-result relations available under [FN-9, DIAG-2], and machine-proved header or local invariant targets.
 A runtime-origin value is an ordinary typed term in those judgments; its origin is neither a fact source nor a reason to discard an otherwise derived fact [SCOPE-2].
 Only the fact sources enumerated above establish propositions; a written conclusion, unselected condition, diagnostic record, or optimizer result does not.
 
-No source postcondition is trusted: FN-9 proves every selected exit, requires a nonempty selected-exit set, and makes only type-invariant postconditions available inside an SCC before its atomic publication [DIAG-2].
+No source postcondition is trusted: [FN-9] and [RANGE-3] prove every selected exit under their selected-exit judgments, and [DIAG-2] owns call-graph component availability.
 The fragment is the deterministic checker derivation of [OP-2], [OP-4], [OP-6], [FN-8], [FN-9], [INV-1], [PRF-1], [STOR-6], and [DIAG-2] for the judgments this version attaches.
 A solver result never participates, and no implementation may strengthen, weaken, time-bound, randomize, or truncate an unsuccessful query within the derivable set.
 Every semantic candidate family and iteration count is fixed below from the complete source text; an unproved result requires exhausting its complete family regardless of elapsed time, machine speed, thread schedule, hash iteration order, or memory pressure short of [SCOPE-3]'s external resource boundary.
@@ -3216,7 +3635,7 @@ Two conforming implementations derive the same fact state at every applicable pr
 Every nongeneric source body receives this judgment whether or not the selected invocation reaches it.
 Every generic source body additionally receives one source-schema judgment under the one source-canonical symbolic substitution formed during generic-body validation, even when it has no concrete instantiation.
 That schema checks every OP-2/OP-4, FN-8, and expressible FN-9 judgment its symbolic vocabulary can represent; an unproved operation is not accepted merely because no concrete instance is reachable.
-Generic integer and float type parameters are copy datums only for exact opaque goals in this schema and are not [ENT-2] L0 fragment types, while an integer-typed const generic remains the symbolic constant term [ENT-2] fixes.
+Generic integer and float type parameters are copy datums for exact opaque goals in this schema, with Int-bound datums also admitted by S17 integer exclusions, and are not [ENT-2] L0 fragment types, while an integer-typed const generic remains the symbolic constant term [ENT-2] fixes.
 An FN-9 schema goal exists only when its result datum, selected return, and normalized relation are expressible in the finite schema vocabulary; otherwise it is rechecked in every inhabited concrete instance and is never approximated.
 The schema publishes no executable function, callable summary, or lowering authority.
 Every inhabited concrete [FN-2] instance is rechecked independently after substitution; a contradictory path discharges only by [ENT-4] and never bypasses an ordinary formation check.
@@ -3225,11 +3644,11 @@ If concrete instances disagree, the first invalid concrete instance in stable in
 The fragment joins the trusted computing base exactly as the type and ownership checkers do [SCOPE-3]; a wrong derivation is a compiler defect owned by implementation repair and tests, not a second runtime validation layer.
 No implementation may add a fact source, relation family, closure rule, proof rule, protected operation family, or callable publication surface beyond those defined here.
 [ENT-2] The fragment constructs one ProofContext for one concrete function body at a time.
-No caller fact is copied into a callee: an ordinary call judges its instantiated [FN-8] goal in the caller's entering state, the callee body begins with its own proved requirement as [ENT-3] source S4, and only a separately FN-9-verified earlier-SCC summary, or a same-component [TYPE-11] induction hypothesis [DIAG-2], may establish its instantiated normal-result relation back in the caller.
+No caller fact is copied into a callee: an ordinary call judges its instantiated [FN-8] goal in the caller's entering state, the callee body begins with its own proved requirement as [ENT-3] source S4, and only a normal-result relation available under [FN-9, DIAG-2] may establish its instantiated normal-result relation back in the caller.
 A fragment type is one member of the closed integer set [OP-2]; relations are over mathematical values, so relations between terms of different fragment types are well-formed and are created only by the sources and flow transports [ENT-3, ENT-5] admit.
 A widening conversion is a bare `cvt::<S, D>(e)` with integer S and D whose pair is whole-type total [OP-6]; it denotes the mathematical value of e, so wherever an [FN-9] relation term or a comparison-origin operand [ENT-3] admits a term or constant, a widening conversion of one is that term or constant itself.
 
-A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted integer place — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final selected type is one fragment type, an integer element or an integer field inside an element alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, its result ordinal and projection [CALL-4], and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, or the one compiler-owned given value of a `give` whose operand is a [GIVE-1] integer carrier, each identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant relations and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, whether it denotes the endpoint's value or one measure of it)`.
+A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted readonly field — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final step selects a readonly field [TYPE-2] of one fragment type, `table[i].len` [MSR-1] and a writer's `nodes[i].count` alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, its result ordinal and projection [CALL-4], and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, or the one compiler-owned given value of a `give` whose operand is a [GIVE-1] integer carrier, each identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant relations and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, whether it denotes the endpoint's value or one measure of it)`.
 Alternative (i) is a term of the private payload root of an ENT-5 conditional context, typed by its route's field, and scoped to that context: one term for each datum [CALL-4] gives that payload type, the value of a fragment-integer place and each measure of a measured place, identified by its projection and whether it denotes the place's value or one measure of it; the same root in two contexts does not identify their values.
 
 Alternative (k) is a compiler-owned sum term for the side of an [FN-9] relation that carries its admitted additional parameter: the mathematical sum of that side's primary datum term and parameter term, identified by that unordered pair. It is formed only for a declared template, its selected-return or call instantiation, or an [ENT-5] transport of such a term, from already formed terms; no closure rule synthesizes further sums. Its interval is the mathematical sum of its operands' intervals, its affine image is [ENT-6]'s operand-image sum, and its support is [ENT-5]'s. It is not a fragment-typed runtime value and has no fragment-type upper bound of its own.
@@ -3256,17 +3675,21 @@ Target-instance terms and their private standing facts add no premise to another
 Their identities and proofs remain in the retained derivation.
 They evaluate no runtime expression and introduce no writer-visible binding or offset form.
 
-The FN-9 result datum occurs only in its template: every selected-return or caller query substitutes it with an ordinary term, constant or the corresponding term of the private payload root of ENT-5's conditional context. That typed root denotes only the routed field of the value associated with its context; roots of distinct contexts have no shared value identity. Its terms are compiler-owned, unwritable, carry their fragment type's standing bounds, and are substituted away at an ordinary success delivery. Neither symbolic datum creates runtime storage.
+The FN-9 result datum occurs only in its template: every selected-return or caller query substitutes it with an ordinary term, constant or the corresponding term of the private payload root of ENT-5's conditional context. That typed root denotes only the routed field of the value associated with its context; roots of distinct contexts have no shared value identity. Its terms are compiler-owned, unwritable, carry their fragment type's standing bounds, and are substituted away at an ordinary variant-field delivery. Neither symbolic datum creates runtime storage.
 A place is identified, as a term and as a Goal datum, by its proof path, formed where the place is evaluated; admission under clauses (a) and (b) is judged on the place as written, and the proof path only identifies an admitted place.
 A path [REF-1] is exact when it has no `R.**` cover, each of its index and page steps selects by a literal, a const or a binding its formation read and each of its range steps by endpoints its formation evaluated, so that no step is a loop header's opaque identity, a keyed entry's position [SHARE-2] or a run of every segment, and it starts at a local variable, a named const, or a parameter or `atomic_stmt` binder that no `set` in its function body rebinds, reachable or not.
 A `&T` reference variable is exact at a point when no `set` in its function body rebinds it, reachable or not, and its path set there is one exact path.
-The proof path of a place written through a reference variable exact at that point is that path followed by the place's steps below the variable's `^`; the proof path of every other place is its root declaration event [TYPE-6, DIAG-1] with its canonical source spelling [FORM-2], so a place written through a rebound reference variable, through one whose path set is not one exact path, or through either range-reference kind, whose `len` is the value its formation captured [REF-4], is identified through that variable.
-Two places are the same term exactly when their proof paths have the same root declaration event and the same steps in order, where two index steps are the same when they are one literal or const value, when they read one binding to which no assignment has intervened since either was formed, or when they are one formation's evaluation, two page steps that end a page-reference borrow are the same when they are one formation's evaluation [REF-4], and segment steps, page steps of direct run-selecting places [OP-4] and every page step followed by a further step, including one a call's substitution appends below a page reference, compare as index steps; a fresh binding legally reusing an expired spelling is a distinct term, and places with distinct proof paths are distinct terms even when they resolve to overlapping storage.
+A range-reference variable of either kind [REF-4] is a range alias when its `let` initializer [REF-1] is a bare range-reference variable, its source, and no `set` in its function body rebinds either of the two, reachable or not; a range alias's identifying variable is its source's identifying variable when its source is itself a range alias, and its source otherwise.
+The proof path of a place written through a reference variable exact at that point is that path followed by the place's steps below the variable's `^`; the proof path of a place written through a range alias is that of the same place written through the range alias's identifying variable; the proof path of every other place is its root declaration event [TYPE-6, DIAG-1] with its canonical source spelling [FORM-2], so a place written through a rebound reference variable, through one whose path set is not one exact path, or through a range-reference variable that is no range alias, whose `len` is the value its formation captured [REF-4], is identified through that variable.
+Two places are the same term exactly when their proof paths have the same root declaration event and the same steps in order, where two index steps are the same when they are one literal or const value, when they read one binding to which no assignment has intervened since either was formed, when they are one formation's evaluation, or when they read one tracked field or dereference term to which no write of its support places has intervened since either was formed, two page steps that end a page-reference borrow are the same when they are one formation's evaluation [REF-4], and segment steps, page steps of direct run-selecting places [OP-4] and every page step followed by a further step, including one a call's substitution appends below a page reference, compare as index steps; a fresh binding legally reusing an expired spelling is a distinct term, and places with distinct proof paths are distinct terms even when they resolve to overlapping storage.
 These conditions keep apart two places one declaration event could otherwise name: a rebound variable names one storage before a rebinding and another after it, and a rebound parameter or `atomic_stmt` binder also roots the path of every reference formed from it.
+A range alias forms no range and its source is never rebound, so throughout the range alias's scope, which its source's scope encloses, both name the one formation the source holds and its captured `len`.
 Term identity thus under-approximates aliasing, while kills [ENT-5] use [OWN-7]'s resolved-place overlap relation and over-approximate it.
-A clause (b) term has the selected integer storage and offset support [ENT-5] fixes, with the ordinary support-survival and transport judgments of that rule.
+A readonly field below a subscript is a term because every event that changes one writes a place containing its storage: outside its declaring module it is never a write target [TYPE-2], so the event is a replaced value holding it [SET-1], an element exchanged or updated with it [OP-11, OP-12], a window part an [OP-10] operation moves, or the field itself under a row that writes it [EFF-2], and inside that module an assignment to it writes its own place; the ordinary [ENT-5] kill reaches every term over it in either case.
 Each subscript in a clause (b) place is an [OP-4] occurrence like every other and owes that rule's own obligation against the base it indexes, submitted to [MSR-4] where the place is formed; a place whose subscripts are not all discharged is no term, exactly as an undischarged subscript in read position is no value.
 A requirement forms its places at body entry, in the state holding the requirements written before its clause [FN-8], and a definition's places are formed in the first requirement whose expansion reaches them, so `requires k < rows^[i].len;` needs `i < rows^.len` from an earlier requirement.
+A postcondition forms its places, those of every definition its expansion reaches included, at each of its selected returns, in the context that return proves the clause in, and judges each subscript over what [FN-9] makes its operands denote: a parameter offset is read at its function-entry value even where the body has since rebound the parameter, and a base is read in the state the place denotes, so a base of an entry datum is judged against its length at function entry and a base of an exit term against its length at the return.
+So `ensures r <= rows^[i].len;` with `rows` only read needs the entry value of `i` below the entry `rows^.len`, from a requirement or from the facts at each of those returns, and `ensures r <= entry(rows)^[i].len;` is not discharged by an element the body appends.
 Each offset occurring inside a clause (b) place is itself a clause (a) or clause (c) term, because the place's identity is decided over its offsets [OWN-7] and [ENT-5] kills a term only through its support, which takes in each offset's own: an offset of any other form, such as an element read or a computed value, could come to select another element with no event killing the term.
 A place carrying any other offset is no term, and reading it remains an ordinary read.
 An implementation that cannot represent an admitted offset reports the place as an unsupported compiler capability, never as a source rejection [DIAG-1].
@@ -3283,9 +3706,10 @@ A call datum is compiler-owned and unwritable in the same sense, and denotes the
 One static term per statement is enough because [ENT-3]'s forward flow visits every statement of one function body exactly once: a loop body is walked once from the head state [ENT-5] forms before that walk, each `match` arm walks its own statements, and no statement is visited twice in one analysis.
 A commit or given value therefore denotes that statement's value in the one abstract evaluation the walk performs, exactly as a counted header image denotes the binder's value in an arbitrary iteration, and every fact derived about it holds of each dynamic evaluation of that statement separately.
 
-A template's parameter datums and subscript selectors use [FN-9]'s denotation, stability and substitution judgments.
+An FN-9 parameter datum denotes its function-entry image in the RelationTemplate but creates no snapshot term.
+Local proof may reuse the ordinary parameter term only while FN-9's entry-image stability remains live; caller publication substitutes the corresponding pre-transfer actual image independently for each referenced formal.
 
-A concrete goal is one finite typed expression tree with exact result `own Bool` formed under [FN-8]'s structural identity, either by concrete substitution of a GoalTemplate, by [ENT-3]'s goal-origin judgment in the current function, or as the canonical total predicate of an [ENT-6] operation obligation.
+A concrete goal is one finite typed expression tree with exact result `own Bool` formed under [FN-8]'s structural identity, either by concrete substitution of a GoalTemplate, by [ENT-3]'s goal-origin judgment in the current function, by [ENT-3.S17]'s integer value-arm equality, or as the canonical total predicate of an [ENT-6] operation obligation.
 A concrete place datum is identified by its proof path above, the subscripts of a clause (b) place included; an actual substituted for a reference formal uses the proof path of the place it names, which for a reference-variable actual is that variable's path when it is exact and its own spelling when it is not, while an own actual uses its pre-transfer datum.
 Named consts and typed literals retain the identities FN-8 fixes.
 
@@ -3293,7 +3717,7 @@ A direct value expression is the finite typed tree formed from those datums and 
 An admitted value expression is a finite tree recursively formed from direct-value rows and selected exact integer-operation, exact conversion, or index rows.
 Each selected partial row may enter that tree only after its own occurrence and every nested child obligation have succeeded in source evaluation order.
 An index row retains its indexable family and exact selected element, length, and range arguments as applicable.
-This admitted structure records the mathematical identity of the value already proved safe at that occurrence; L0 term admission remains exactly the alternatives above, and evaluation follows success of its owning nested obligation.
+This admitted structure records the mathematical identity of the value already proved safe at that occurrence; it neither makes a subscript an L0 term nor authorizes evaluation before its owning nested obligation has succeeded.
 Two occurrences of the same admitted typed tree therefore have the same value identity, but each occurrence separately discharges its nested operations and an earlier signed fact remains available only while [ENT-5] retains its support.
 
 An evaluated-value datum is the finite occurrence-local identity for a value that has already been evaluated but has no admitted value expression.
@@ -3301,14 +3725,19 @@ FN-8's call-argument form is identified by `(concrete caller instance, call Node
 An [ENT-6] obligation-operand form is identified by `(concrete function instance, owning obligation NodePath, operand ordinal, exact captured type, ordered projections, final result type)` and may occur only in the canonical Goal queried for that one obligation.
 Both forms are neither places nor L0 terms, have no direct or complete ordinary source goal origin, add no flow fact or place support, and cannot be established by naming or reevaluating their source expression.
 Goal equality is exact typed tree equality, including every selected row and datum field, and therefore may hold across two source occurrences or concrete callee instances only when their complete typed trees are identical.
-The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, and the canonical OP-2 and OP-6 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit and the query-local term views of [ENT-4.OT].
+The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, S17 value-arm equalities, and the canonical OP-2 and OP-6 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit and the query-local term views of [ENT-4.OT].
 Invariant targets and `proof_use` sources are affine inequalities rather than opaque Goals [INV-1, PRF-1]; an OP-4 bounds obligation remains an L0/affine relation and has no opaque Goal of its own.
-Goal construction may intern only written subexpressions, the field equalities [ENT-3] of a struct equality, and the exact normalized components fixed by their owning rules; it synthesizes no arbitrary formula or unbounded algebraic search.
+Goal construction may intern only written subexpressions, the field equalities [ENT-3] of a struct equality, the S17 value-arm equalities, and the exact normalized components fixed by their owning rules; it synthesizes no arbitrary formula or unbounded algebraic search.
 
 A signed opaque fact is exactly `+G` or `-G` for one concrete goal G, meaning that exact whole expression evaluated respectively true or false.
 It carries no child facts merely by existing; [ENT-3] fact sources establish their selected signed contribution and [ENT-4] alone performs the finite parent reconstruction below.
 If G's complete root is exactly one comparison origin relation R under [ENT-3], `+G` has the exact L0 projection R and `-G` has R's exact negation; a non-comparison root has no L0 projection.
 The signed fact and its projection are distinct manifestations in one combined state and have the supports [ENT-5] fixes.
+
+An integer-exclusion fact is `Excluded(E, S)`: E is one admitted integer value expression and S is a finite set of decoded mathematical integers, canonically ordered increasingly, stating that E's value is not a member of S.
+Its identity is the exact typed identity of E together with S; an excluded set is one fact, not a conjunction tree or a family of established offset disequalities.
+Only [ENT-3.S17] establishes one, and [ENT-4, ENT-5] fix its queries and flow.
+A set introduces no new L0 term and no goal for any of its members.
 
 An atomic fact is one difference bound `t1 - t2 <= c` (t1, t2 terms, c a mathematical integer) or one offset disequality `t1 - t2 != c`.
 Difference-bound identity preserves the ordered term pair; offset-disequality identity identifies `(t1, t2, c)` with `(t2, t1, -c)`, although the first source-normalization encounter preserves its written orientation for rendering and component order.
@@ -3324,6 +3753,8 @@ The subscript admission is what makes `table[i].len` a term, so a storage whose 
 Its subscripts and their offsets are those [ENT-2] clause (b) admits.
 
 For an admitted measure place P of type `Paged<T>`, `P.pages.len` is additionally a u64 measure term with value `ceil(P.len / B)`, the number of pages holding initialized elements, using [OP-13]'s B and mathematical arithmetic. It is zero for an empty window and counts no page that holds only free slots. Its support is [MSR-2], and it adds no term relating an element index to a page index.
+
+A `borrow_expr` whose complete `place` selects a measure with no field declaration — the `len` of `&[T]` or `&Run<T>`, the `len` of a run-selecting place [OP-4], or a `Paged` page count — is a hard error citing MSR-1 at that complete `place`, with a repair [DIAG-1], and the measure is read by value [OP-15].
 
 The table classifies the prelude's readonly measure fields and reference lengths by what each denotes and whether it is *exact* or *bounded*; the page count is the derived measure defined above.
 The rule is that the table exists, gives every measured type a row, and gives every cell exactly one of *exact*, *bounded*, or *absent*.
@@ -3477,13 +3908,13 @@ A tracked place's path admits that step [ENT-2], so an enum more than one of who
 *Judgment:* the denotation at every operand position, and the restriction of `entry(parameter)` to a reference parameter the row writes, in `ensures`.
 *Publishes:* the call datum at the call placement, the entry datum at the entry placement, the placement datum at every placement of the table above, and the denotation table.
 
-[CALL-1] Through a reference the callee only reads, every fact survives.
-For an argument whose declared parameter is a reference whose row carries no `writes` of any path rooted at it, of any type, the call is a kill event for no fact supported by that actual's path.
-The whole ground is [EFF-2]'s both-ways check: a body exhibits no write its declared row does not carry and this row carries none, so no `writes` occurrence projects onto that place and no [MSR-2] kill fires.
+[CALL-1] A reference parameter the callee only reads contributes no write to the call.
+For an argument whose declared parameter is a reference whose row carries no `writes` of any path rooted at it, of any type, that parameter contributes no projected write to the call's [ENT-5] kill (b); a fact supported by that actual's path dies at the call through a write only when a projected write another argument supplies kills a support member, as two reference arguments may name overlapping storage when one of them supplies no compared effect [EFF-5].
+The whole ground is [EFF-2]'s both-ways check: a body exhibits no write its declared row does not carry and this row carries none, so no `writes` occurrence projects from that parameter and no [MSR-2] kill fires through it.
 That ground is exactly as strong as the set of actions this document classifies as writes, so a later family that makes a new action a write of a referenced path reaches this rule through [EFF-2] alone and needs no clause here.
 
-*Judgment:* none; the absence of a kill, which is [MSR-2]'s kill not firing.
-*Publishes:* the survival of every fact supported by the path of an actual at a reference parameter the row only reads.
+*Judgment:* none; the absence of a kill through that parameter, which is [MSR-2]'s kill not firing.
+*Publishes:* the absence of a projected write from a reference parameter the row only reads.
 
 [CALL-2] Through a value passed and returned, only the contract's facts exist on the result.
 An `own` argument whose type is affine or linear [OWN-1, PROV-6] is a consuming use, so every fact whose support contains that binding's root dies at the call [ENT-5](c), that place's measures included.
@@ -3514,10 +3945,10 @@ Window mutation uses the operations of [OP-10]; a source helper over a written r
 *Judgment:* the conservative default for every parameter that is not a range reference.
 *Publishes:* the absence of any call-site-derived or body-derived classification.
 
-[ENT-3] The fact state is defined constructively over the conservative structural normal-control graph [FN-1]: each source below establishes its L0 and signed-goal facts at its stated point; facts flow forward along normal edges; kill events apply on the edges where [ENT-5] places them, with scope-exit kills applied before any join; merge points take the [ENT-5] join and loop heads the [ENT-5] loop rule; and the state queried at any point is the [ENT-4] closure of that flow.
+[ENT-3] The fact state is defined constructively over the conservative structural normal-control graph [FN-1]: each source below establishes its L0, signed-goal and integer-exclusion facts at its stated point; facts flow forward along normal edges; kill events apply on the edges where [ENT-5] places them, with scope-exit kills applied before any join; merge points take the [ENT-5] join and loop heads the [ENT-5] loop rule; and the state queried at any point is the [ENT-4] closure of that flow.
 Dominated straight-line establishment is a consequence of this construction, not a second definition.
 Nothing else is a fact: a writer's `ensures_clause` is only an FN-9 proof obligation, never a trusted source; a written header or local invariant conclusion has no authority until INV-1 and any applicable PRF-1 certificate prove it; a type invariant is a fact only where [TYPE-11] makes it a requirement, a postcondition or an atomic block's entry fact; and no compiler-invented loop proposition, inferred summary, or unverified user-function result exists.
-S11 is only the compiler-owned consequence of the counted operations [FN-1] actually executes, and S12 exists only from the declaration relations available under FN-9: a separately verified earlier-SCC summary, a same-component [TYPE-11] induction hypothesis [DIAG-2], or a PRE-1 or PRE-2 supplied declaration, under the publication formula below.
+S11 is only the compiler-owned consequence of the counted operations [FN-1] actually executes, and S12 exists only from the declaration relations available under [FN-9, DIAG-2], under the publication formula below.
 Each accepted fact retains the constructor identity and direct parents that already produced it; this diagnostic information establishes and kills no additional relation or signed goal, and no [ENT-4] answer depends on a second provenance state.
 
 An ordinary-let binding b holds its initializer right-hand side E at a use when, on every path from that initializer to the use that does not execute the initializer again, no [ENT-5] kill event (a)–(d) applies to a fact supported by b or by any member of E's opaque-goal support [ENT-5].
@@ -3567,11 +3998,11 @@ S4 is the admitted-body axiom justified by every ordinary caller's static discha
 [ENT-3.S5]
 - S5 (copy and conversion equalities).
 An `ordinary_let_rhs` establishes at its binding: for `let x = lit;`, x = value(lit); for `let x = p;` with p a term of type T, x = p; for `let y = cvt::<Src, Dst>(p);` with integer Src and Dst and p a term or constant, y = p after its [OP-6] obligation succeeds — `cvt` keeps its written type pair [TYPE-5].
-A successful [SET-1] commit to a fragment-typed place admitted by [ENT-2] clauses (a) or (b) first evaluates its right-hand side to that occurrence's commit value v, establishing at v exactly the [ENT-3] image the same right-hand side establishes at an `ordinary_let_rhs` binding: this clause's three rows and every S6, S7, and S9 row whose conclusion is a relation over the bound value itself.
+A successful [SET-1] commit to a direct fragment-typed place first evaluates its right-hand side to that occurrence's commit value v, establishing at v exactly the [ENT-3] image the same right-hand side establishes at an `ordinary_let_rhs` binding: this clause's three rows and every S6, S7, and S9 row whose conclusion is a relation over the bound value itself.
 A row concluding instead over a measure term of the destination place has no commit form, a commit value being no place.
 Every fact supported by the old target value then dies under [ENT-5], and only then is the post-write equality x = v established.
 Evaluating v before that kill is what lets [ENT-5]'s pre-kill closure carry the value's surviving consequences across the write, and the equality still carries no old target fact, since v is a term distinct from x and every fact naming x has died.
-These are the complete S5 commit forms: the target is an admitted fragment-typed place and the right-hand side matches an image row. Every other commit leaves exactly the state [ENT-5]'s kill supplies.
+An index target and a non-fragment target receive no commit value, and a right-hand side whose form matches no image row forms none either: with no commit value to name, S5 establishes no post-write equality and adds nothing to the state [ENT-5]'s kill leaves, and no S5 commit image beyond that exists in this version.
 [ENT-3.S6]
 - S6 (length facts).
 S6 carries no construction row: a construction function's length, capacity and origin facts are the `ensures` of its [PRE-1] record and reach the caller through [ENT-3.S12] like any other declared relation.
@@ -3648,7 +4079,7 @@ Before the binder and captures leave scope, [INV-1]'s separately proved exact-ex
 [ENT-3.S12]
 - S12 (ordinary declared normal results).
 S12 has one owning `CallResultPublication(c,q)` judgment in the ordinary semantic flow.
-That judgment succeeds only when q belongs to a declaration relation available under FN-9, either supplied by PRE-1 or PRE-2, atomically published by a strictly earlier call-graph component, or received as a same-component [TYPE-11] induction hypothesis [DIAG-2]; every actual-expression obligation and instantiated FN-8 requirement of c is discharged in the caller before transfer; every referenced formal has its exact pre-transfer substitution; ordinary consumes, borrow commits, projected effects, writes, target commits, and kills have run in the fixed order below; and every support of the substituted result relation remains live.
+That judgment succeeds only when q belongs to a declaration relation available under [FN-9, DIAG-2]; every actual-expression obligation and instantiated FN-8 requirement of c is discharged in the caller before transfer; every referenced formal has its exact pre-transfer substitution; ordinary consumes, borrow commits, projected effects, writes, target commits, and kills have run in the fixed order below; and every support of the substituted result relation remains live.
 The candidate relation and all of those parent derivations remain private until every source-semantic judgment in the compilation unit succeeds, then enter the checked program in the same failure-atomic publication as their call and function.
 Failure of any premise or any later source-semantic judgment discards the candidate and the complete prospective checked program.
 This is the original construction of S12, not a second provenance pass or a check of compiler-generated data.
@@ -3656,15 +4087,15 @@ For one call c and verified relation q, use exactly FN-9's `A0(c)` and per-relat
 Candidate scratch establishes q once in the current ProofContext exactly as [FN-9] fixes, after ordinary transfer and every applicable consume, borrow, callee-effect, and target kill.
 Each substituted formal is independent: a referenced actual that has no ENT-2 image makes only that q unavailable, while an unreferenced non-ENT-2 actual has no effect on q.
 Occurrence-local call-argument evaluated-value datums never enter q.
-For relations that name a result, the result destinations are the fresh direct ordinary-let binding, the direct-set target place — including FN-9's narrow direct-set receiver — each binder of a destructuring `let`, and the private payload root of an admitted single-result Result or Option call's conditional context [FN-9, CALL-4, ENT-5].
+For relations that name a result, the result destinations are the fresh direct ordinary-let binding, the direct-set target place — including FN-9's narrow direct-set receiver — each binder of a destructuring `let`, and the private payload root of an admitted single-result enum call's conditional context [FN-9, CALL-4, ENT-5].
 The destructuring destination takes result ordinal i at binder i and exists only for a declaration that writes an ordered result list [GRAM-2, GRAM-4]. An unrouted result-free relation over the exit state of a written reference parameter needs no result destination: it establishes once on the call's normal continuation at its resolved exit places, after the same kills, including for an expression statement and a unit call.
-A false matching predicate, killed support or rejected call establishes nothing. Conditional evidence moves and is selected only under ENT-5; its excluded aggregate and indexed enum-value storage adds no conditional transport.
+A false matching predicate, killed support or rejected call establishes nothing. Conditional evidence moves and is selected only under ENT-5; excluded aggregate and indexed storage adds no transport.
 The complete candidate set stays unchanged in failure-atomic scratch until the owning source judgment succeeds; any failure publishes none, and success commits all of them atomically.
 
 [ENT-3.S13]
 - S13 (call datums).
-At an ordinary source call whose callee has an atomically published summary, each own measure operand, each own fragment-integer operand admitted by [ENT-2] clause (a) or (c), and each explicitly entry-qualified measure or fragment-integer place of a written reference parameter of each declared relation of the resolved callee mints one call datum [MSR-3] and establishes it equal to that operand's exact pre-transfer term, at the pre-transfer point of [ENT-5]'s call-boundary order and before that boundary's consumes, borrow commits, callee-effect kills, and target kills.
-The population of this source is every callee whose declared relation list is published data: an ordinary function with its FN-9-verified, PRE-1-supplied or PRE-2-supplied contract. A PRE-1 or PRE-2 signature is declaration data and requires no source-body earlier-component verification premise; it gains no additional result-fact source.
+At an ordinary source call whose callee has postconditions available under [FN-9, DIAG-2], each `own` operand and each explicitly entry-qualified measure or fragment-integer place of a written reference parameter of each declared relation of the resolved callee mints one call datum [MSR-3] and establishes it equal to that operand's exact pre-transfer term, at the pre-transfer point of [ENT-5]'s call-boundary order and before that boundary's consumes, borrow commits, callee-effect kills, and target kills.
+The population of this source is every callee whose declared relation list is available under [FN-9, DIAG-2]. A PRE-1 or PRE-2 signature is declaration data and requires no source-body earlier-component verification premise; it gains no additional result-fact source.
 The same datum formation applies to source summaries and [PRE-1] and [PRE-2] declarations. The exit-state measure or fragment-integer place of a written reference parameter is never a call datum: it is the ordinary live term after the call's exact projected effects and the statement's own kills.
 The operand's pre-transfer term is the one [FN-9]'s `A0(c)` substitution already fixes; the datum adds no term the substitution could not name and no relation the callee did not declare.
 A datum has empty support, so [ENT-5]'s pre-kill closure carries its consequences across the same statement's kills while every fact whose support those kills remove dies normally.
@@ -3673,7 +4104,7 @@ S13 is the one source by which a declared relation's substitution is computed at
 
 [ENT-3.S15]
 - S15 (variant refinement facts).
-At entry to an `arm` of a `match_stmt` or `value_match` whose scrutinee is a tracked place, the fact that that place holds the arm's declared variant is established.
+At entry to a variant `arm` of a `match_stmt` or `value_match` whose enum scrutinee is a tracked place, the fact that that place holds the arm's declared variant is established.
 It is the fact a payload path step depends on [REF-1] and the fact [MSR-3]'s PAYLOAD placement stands on.
 Its support is that scrutinee place's own storage, so it dies on any [ENT-5] event whose written place overlaps it and on the arm's exit edges by the ordinary join.
 This loss forbids a new payload selection; it does not itself destroy a payload place already captured by a reference [REF-2].
@@ -3685,6 +4116,15 @@ When a header or local invariant gains authority under [INV-1], each bound of it
 An equality contributes its two bounds together.
 Normalization here combines the written affine expression over its source terms, without substituting their current immutable value images or eliminating other terms using premises.
 The fact has ordinary [ENT-5] term support, kills, joins and snapshots; a conclusion outside this exact difference-bound form contributes only its existing affine premise.
+
+[ENT-3.S17]
+- S17 (integer selection facts).
+An integer `match_stmt` or `value_match` first judges and evaluates its scrutinee under [GRAM-12], with every nested obligation and effect completed before the arm-entry state is formed.
+When that evaluated scrutinee has an admitted value expression E [ENT-2], entry to a value arm with decoded value c establishes the exact signed equality `+(E == c)`, with c the typed literal value of the scrutinee's type.
+Its direct goal, complete live origin expansion, signed decomposition and exact comparison projections are established as for [ENT-3.S1]; an expression that denotes an [ENT-2] term or a widening conversion of one therefore establishes that term equal to c.
+Entry to `else` establishes exactly one `Excluded(E, S)`, with S the set of all that match's value-arm values; its origin-equivalent query views are [ENT-4.OT]'s, not additional flow facts.
+Every arm starts from the same post-evaluation incoming state together with its own selection fact; no arm receives an earlier arm's fact or a prefix of excluded values.
+A scrutinee with no admitted value expression establishes no reusable selection fact, as an ordinary call condition establishes no goal origin [ENT-3]; selection still follows [GRAM-12].
 
 [CALL-6] Publication: how a declared relation becomes a fact, where it is computed, where it is established, and that the set it belongs to is consistent.
 Every published relation in this document is published by exactly one route — [ENT-3.S12]'s, with [ENT-3.S13]'s substitution — and nothing else publishes anything.
@@ -3699,7 +4139,7 @@ A relation naming results uses exactly [ENT-3.S12]'s closed result-destination l
 
 Every published relation set is checked for consistency at the declaration.
 A `contract_block` whose instantiated relations are contradictory at their establishment point is a hard error citing CALL-6 at the `fn_decl`, `ContradictoryPublishedRelations`, naming the clauses and carrying a repair [DIAG-1].
-The set is partitioned by route first, because a routed clause is available only on its own arm and two clauses on two arms are never in one caller state together; an unrouted clause selects every explicit return and every propagated error exit [FN-9] and is therefore a member of every route's set.
+The set is partitioned by route, identified by its result ordinal, variant and field, first; each partition retains that field's distinct symbolic datums, and different variants have different selection guards [FN-9, ENT-5]. An unrouted clause is a member of every route's set.
 Contradiction is the ordinary [ENT-4] judgment over the declared templates, with each distinct operand datum one term and literals normalized under [ENT-2].
 A template whose operand shape that closure cannot represent contributes no premise, so a reported contradiction is always a real one.
 The judgment is at the declaration because the set is fixed there: at a contradictory point every L0 relation and both signs of every goal are derivable [ENT-4], so an inconsistent contract is not one wrong fact at a caller but every fact at every caller, and no caller state repairs it.
@@ -3709,7 +4149,14 @@ A contradictory `requires` set is a different thing and stays admissible: it mak
 *Publishes:* the source, the substitution, the instantiation point, the establishment point, the destination list, and the support of every declared relation in the language.
 
 [ENT-4] The L0 component of the closed fact state is the least set containing its established and implicit facts and closed under exactly: (1) from `t1 - t2 <= c1` and `t2 - t3 <= c2`, derive `t1 - t3 <= c1 + c2`; (2) from `t1 - t2 <= c` and `t1 - t2 != c`, derive `t1 - t2 <= c - 1`, and from `t2 - t1 <= -c` and that same disequality, derive `t2 - t1 <= -c - 1`; (3) of two bounds on one ordered pair, the smaller constant subsumes.
-L0 derivability is exact: `a - b <= c` is derivable when the closed state contains `a - b <= c'` with c' <= c; `a - b = c` when both `a - b <= c` and `b - a <= -c` are derivable; `a - b != c` when that offset disequality is present under [ENT-2]'s identity or `a - b <= c - 1` or `b - a <= -c - 1` is derivable.
+An exclusion whose expression denotes term t or a widening conversion of t supplies membership to this closure: when `Excluded(t, S)` holds and c belongs to S, `t - Z != c` and its reversed orientation are derivable.
+Rule (2) may use that membership at the bound's endpoint exactly as it uses an offset disequality, repeatedly to the same least fixed point; no membership query inserts an established disequality or enumerates unrelated set members.
+An exclusion over a constant expression is contradictory exactly when that constant belongs to its set.
+L0 derivability is exact: `a - b <= c` is derivable when the closed state contains `a - b <= c'` with c' <= c; `a - b = c` when both `a - b <= c` and `b - a <= -c` are derivable; `a - b != c` when that offset disequality is present under [ENT-2]'s identity, when the preceding exclusion-membership judgment derives it, or when `a - b <= c - 1` or `b - a <= -c - 1` is derivable.
+
+For an already-interned exact integer equality or disequality goal comparing E with a decoded constant c, in either operand order, `Excluded(E, S)` with c in S derives the negative sign of equality and the positive sign of disequality.
+It derives neither sign for a constant outside S.
+This query creates no goal for another member and performs no algebraic rewrite of E; [ENT-4.OT] supplies its origin-equivalent expressions.
 
 The opaque component retains established signed facts and the following finite truth-functional parent reconstruction over exact parent goals already interned in [ENT-2]'s universe.
 `+band(A,B)` derives from both `+A` and `+B`; `-band(A,B)` derives from either `-A` or `-B`; `+bor(A,B)` derives from either `+A` or `+B`; `-bor(A,B)` derives from both `-A` and `-B`; and either sign of `bnot(A)` derives from the opposite sign of A. `+(a == b)` and `-(a != b)` over a struct type derive from `+` of each of its field equalities [ENT-3], and `-(a == b)` and `+(a != b)` over one from `-` of any of them.
@@ -3717,13 +4164,13 @@ Literal `True()` has an implicit positive proof and literal `False()` an implici
 No `bxor` or Boolean-equivalence introduction is admitted in this version.
 The closure considers only already-interned exact parent trees, uses the written rule order and minimum non-cyclic derivation depth, and creates no new formula.
 Exact signed-goal identity includes every selected operation-table row, concrete selected operand type, and complete ordered operand GoalExpression.
-`+G` is derivable when that exact positive fact is present, when G has an exact comparison projection R and L0 derives R, when G is an operation-domain predicate whose fixed [ENT-6] normalization proves true, or when G's comparison root has an affine normalization and `AUTO` proves it. The affine route is the goal's own comparison normalized, so proving it proves the goal and an L0 projection is what the retained evidence names rather than what the route requires: a goal carrying a coefficient has no two-term projection to name and its retained derivation is the affine consequence alone.
-`-G` is derivable when that exact negative fact is present, when G has a comparison projection and L0 derives R's exact negation, or when G is an operation-domain predicate whose fixed normalization proves false.
+`+G` is derivable when that exact positive fact is present, when the preceding integer-exclusion judgment derives it, when G has an exact comparison projection R and L0 derives R, when G is an operation-domain predicate whose fixed [ENT-6] normalization proves true, or when G's comparison root has an affine normalization and `AUTO` proves it. The affine route is the goal's own comparison normalized, so proving it proves the goal and an L0 projection is what the retained evidence names rather than what the route requires: a goal carrying a coefficient has no two-term projection to name and its retained derivation is the affine consequence alone.
+`-G` is derivable when that exact negative fact is present, when the preceding integer-exclusion judgment derives it, when G has a comparison projection and L0 derives R's exact negation, or when G is an operation-domain predicate whose fixed normalization proves false.
 Integer-domain component relations are only an alternate derivation route into that same exact signed goal; they establish no second source goal and receive no source-obligation identity of their own.
 Derivability never decomposes a merely derived parent: [ENT-3] decomposes only the specification-enumerated source establishments.
 One retained proof never uses a parent-to-child source derivation and then that child solely to reconstruct the same parent; deterministic minimum-depth selection therefore contains no parent-child-parent cycle.
 
-The combined state is contradictory when L0 derives `t - t <= -1` for any t or when both signs of one exact goal are derivable.
+The combined state is contradictory when L0 derives `t - t <= -1` for any t, when an exclusion over a constant is contradictory, or when both signs of one exact goal are derivable.
 At a contradictory point every L0 relation and both signs of every goal in the finite universe are derivable and every ordinary obligation, call goal, and FN-9 selected-return relation is discharged.
 At a non-contradictory query point, an instantiated goal G is `discharged` when `+G` is derivable in the [ENT-4.OT] view, `refuted` when `+G` is absent and `-G` is derivable there, and `unproved` otherwise.
 An instantiated L0 relation R is `discharged` when every normalized conjunct of R is derivable, `refuted` when R is not discharged and R's exact negation is derivable, and `unproved` otherwise.
@@ -3734,11 +4181,12 @@ Implementations may compute lazily or incrementally, but every derivability and 
 
 [ENT-4.OT] Origin transport forms one query-local view of the entering fact state for [MSR-4].
 Two admitted value expressions are origin-equivalent at that point exactly when their complete valid [ENT-3] origin expansions have identical typed trees under [ENT-2]'s proof-path identity.
-The collection consists, in order, of each live origin link's binding datum and right-hand side in binding-declaration order, the entering signed goals in source-allocation order with positive sign first, and the submitted signed goal when present, each followed by its value subtrees in preorder and with exact duplicate trees retained only at their first occurrence.
+The collection consists, in order, of each live origin link's binding datum and right-hand side in binding-declaration order, the entering signed goals in source-allocation order with positive sign first, the expressions of entering exclusions in source-allocation order, and the submitted signed goal when present, each followed by its value subtrees in preorder and with exact duplicate trees retained only at their first occurrence.
 Each origin class containing fragment-integer expressions with an L0 term-plus-constant representation selects its first such expression as representative and supplies the equality of every other such member to that representative.
 Each collected Boolean tree supplies one term view obtained by simultaneously replacing its proper integer subtrees having such representatives with those representatives, stopping traversal at a replacement.
 The Boolean inventory contains the collected Boolean trees, their term views and the Boolean subtrees of those views, partitioned by origin equivalence.
 Each entering signed fact supplies its sign to every member of its Boolean class and supplies each member's exact signed comparison projection when that projection exists.
+Each entering exclusion supplies the same set to every expression in its origin class in this query view, and to that class's L0 representative when present; these are shared views of one set, not per-member disequalities or additional flow establishments.
 These equalities and projections augment the entering L0 state for this query, closed by [ENT-4].
 Over this fixed numeric state, the existing signed-goal derivation rules and transport of either proved sign to every member of its Boolean class are iterated to their least fixed point.
 Within [ENT-6]'s positive Boolean-introduction traversal, a visited Boolean datum also visits its live definition under the demanded sign and transports a successful child proof back to that datum.
@@ -3749,10 +4197,12 @@ The view's contradiction and disposition are [ENT-4]'s judgments over that fixed
 The view adds no ordinary flow fact, affine premise, source establishment or runtime evaluation and is discarded after this query.
 Its finite shared expression identities, one term view per collected Boolean tree, represented-value equalities and two signs per Boolean member fix its entire candidate set independently of any search order or work budget.
 
-[ENT-5] The support of an L0 fact is every tracked place occurring in its terms; every compiler-owned counted capture term occurring in its terms; for each [ENT-2] clause (b) term, the integer storage it selects — for a measure term over P, P's descriptor storage but not P's element storage [MSR-2] — and the support of every offset occurring in its place; and every reference variable [REF-1] and every `Box` binding [TYPE-7] the proof path [ENT-2] of any of its places reads through, a bound call-result binding included — its resolved place is the candidate actual's complete resolved place, so a `set` commit or projected callee write through the chain applies the support-survival classification below to that storage.
+[ENT-5] The support of an L0 fact is every tracked place occurring in its terms; every compiler-owned counted capture term occurring in its terms; for each [ENT-2] clause (b) term, the storage of the readonly field its final step selects — for a measure term over P, P's descriptor storage but not P's element storage [MSR-2] — and the support of every offset occurring in its place; and every reference variable [REF-1] and every `Box` binding [TYPE-7] the proof path [ENT-2] of any of its places reads through, a bound call-result binding included — its resolved place is the candidate actual's complete resolved place, so a `set` commit or projected callee write through the chain applies the support-survival classification below to that storage.
 The support of a sum term is the union of its operand supports; all ordinary kills and transports below inspect those operands recursively.
 Z, literals, named const values, and every measure datum of [MSR-3] — a call datum, an entry datum, and a placement datum alike — have empty support and never die.
 A counted capture is immutable and can die only on an edge leaving its compiler-owned construct scope.
+
+The support of an integer-exclusion fact is its expression's opaque-goal support below; its constant set has empty support.
 
 The support of either sign of an opaque goal is the union of the resolved places whose values its complete typed expression reads.
 A direct binding goal therefore depends on that binding, while its separately established complete origin expansion depends on the places read by the expansion.
@@ -3777,8 +4227,8 @@ An S12 relation, a narrow-receiver relation, and a relation transported through 
 The callee summary reference, call or delivery edge, pre-transfer substitution record, and a result or payload binder already replaced by its receiver are checked metadata, not additional support.
 A route whose substitution leaves a non-[ENT-2] operand never creates an L0 fact.
 
-Independently of relation flow, FN-9 entry-image stability begins live for each referenced parameter datum and each subscript selector at function-body entry.
-The first structural edge whose overlap, reference, consume, effect, scope-exit, or counted-continuing-kill classification below invalidates its support makes it permanently unavailable; for a measure datum the descriptor-storage boundary is the same as for ordinary measure support [MSR-2], with projected call-write reach from [CALL-1] through [CALL-3], never the argument's shape [CALL-5].
+Independently of relation flow, FN-9 entry-image stability begins live for each referenced parameter datum at function-body entry.
+The same overlap, reference, consume, effect, scope-exit, and counted-continuing-kill classifications below permanently invalidate it; for a measure datum the descriptor-storage boundary is the same as for ordinary measure support [MSR-2].
 A structural merge retains stability only when every reaching input retains it, and a loop head removes stability for every datum a continuing kill may invalidate.
 Neither contradiction, re-establishment of a fact, assignment of an equal value, nor a later iteration restores stability.
 This metadata creates no snapshot, term, relation, signed goal, or runtime action.
@@ -3793,11 +4243,13 @@ For support survival, a write event is classified by the following table. A **re
 | Relocation write, a `Box` binding used to reach C, W or a filled descendant | Survives as the same owning binding. |
 | Either write, a reference binding used by the proof path | Survives exactly when that binding is not replaced and its reference remains valid under [REF-2]. |
 
-Every offset and holder is a separate support member; a conclusion survives exactly when every member survives. The table applies to L0 and signed goals, live origin links [ENT-4.OT], current affine-image associations [ENT-6], entry-image stability [FN-9], conditional-result evidence below, and current storage-version transitions [RANGE-2]. Measures use the supporting word [MSR-2], so derived observations use the same classification as their supporting reads. The relocation classification is independent of the element type and supplies no element-equality premise. The cell's new capacity is established by the operation's postcondition [PRE-1].
+Every offset and holder is a separate support member; a conclusion survives exactly when every member survives. The table applies to L0, signed goals and integer exclusions, live origin links [ENT-4.OT], current affine-image associations [ENT-6], entry-image stability [FN-9], conditional-result evidence below, and current storage-version transitions [RANGE-2]. Measures use the supporting word [MSR-2], so derived observations use the same classification as their supporting reads. The relocation classification is independent of the element type and supplies no element-equality premise. The cell's new capacity is established by the operation's postcondition [PRE-1].
 
-An L0 fact or opaque signed goal dies at the earliest of: (a) a [SET-1] `set` commit, an [OP-11] `swap` — one read and one write of each of its two targets — or an [OP-12] update — one write of its target — whose resolved target [SET-1] overlaps, under [OWN-7]'s overlap relation, the resolved place of any support member, or the compiler-owned update of a `for_stmt` binder when that binder is a support member — a measure term's support is its place's descriptor storage [MSR-2], so a write to that place or to any prefix of it kills that place's measures, a write at an element position of it kills the measures of the written element and none of its own, and a write to a sibling field kills neither; a [SET-1] `set` commit whose right-hand side has one fragment type evaluates that right-hand side to its commit value before this kill, and after the kill exactly [ENT-3.S5]'s applicable post-write image is established; (b) a call — ordinary function or table operation — one of whose [EFF-2] boundary-projected `writes` occurrences kills a support member under the table above; the projection is exactly [EFF-2]'s, and a call whose row carries no `writes` kills nothing; how far such a projected write *reaches* — the actual's descriptor storage, or only a range reference's element storage — is classified by [CALL-1] through [CALL-3] from the callee's declaration and by nothing else [CALL-5], and neither the actual's spelling nor the callee's body is consulted; (c) a consuming use [OWN-1] of any support member's root; (d) an edge leaving the lexical scope of any support binding, or leaving the owning counted construct of any capture term in its support.
-Immediately before every specification-ordered batch of kills (a)–(d), materialize the complete [ENT-4] least closure while every pre-kill term and goal remains available; then remove exactly the conclusions whose own support the batch kills. This includes consequences obtained through transitive bounds, implicit type or constant bounds, disequality strengthening, and opaque-goal closure; a partial projection over explicit bound edges is not equivalent. A post-write image or other post-event establishment occurs only after that event's kill as its source rule states.
+An L0 fact, opaque signed goal or integer-exclusion fact dies at the earliest of: (a) a [SET-1] `set` commit, an [OP-11] `swap` — one read and one write of each of its two targets — or an [OP-12] update — one write of its target — whose resolved target [SET-1] overlaps, under [OWN-7]'s overlap relation, the resolved place of any support member, or the compiler-owned update of a `for_stmt` binder when that binder is a support member — a measure term's support is its place's descriptor storage [MSR-2], so a write to that place or to any prefix of it kills that place's measures, a write at an element position of it kills the measures of the written element and none of its own, and a write to a sibling field kills neither; a [SET-1] `set` commit whose right-hand side has one fragment type evaluates that right-hand side to its commit value before this kill, and after the kill exactly [ENT-3.S5]'s applicable post-write image is established; (b) a call — ordinary function or table operation — one of whose [EFF-2] boundary-projected `writes` occurrences kills a support member under the table above; the projection is exactly [EFF-2]'s, and a call whose row carries no `writes` kills nothing; how far such a projected write *reaches* — the actual's descriptor storage, or only a range reference's element storage — is classified by [CALL-1] through [CALL-3] from the callee's declaration and by nothing else [CALL-5], and neither the actual's spelling nor the callee's body is consulted; (c) a consuming use [OWN-1] of any support member's root; (d) an edge leaving the lexical scope of any support binding, or leaving the owning counted construct of any capture term in its support.
+Immediately before every specification-ordered batch of kills (a)–(d), materialize the complete [ENT-4] least closure while every pre-kill term and goal remains available; then remove exactly the conclusions whose own support the batch kills. This includes consequences obtained through transitive bounds, implicit type or constant bounds, disequality strengthening including exclusion membership, and opaque-goal closure; a partial projection over explicit bound edges is not equivalent. A post-write image or other post-event establishment occurs only after that event's kill as its source rule states.
 Scope exits are edge events. After every earlier event and its stated post-event image on that edge, materialize the complete reaching closure, apply scope kills (c) and (d), and close the surviving state before any query or join at the target.
+An exclusion remains one compact set throughout pre-kill closure: materialization retains that set and its ordinary bound and already-interned signed-goal consequences, and creates no separately established offset disequality for its members.
+Its membership consequences remain represented by that set while its support survives; their query derivations do not become additional join or value-delivery candidates.
 A materialized conclusion survives exactly when its own support survives. Thus an arm-local term may be an intermediate vertex proving a relation among outer values, but no fact or goal whose conclusion still names that local, its holder, or its storage survives the scope into a join.
 
 An ordinary user-call boundary has one order in the current ProofContext.
@@ -3808,15 +4260,15 @@ A fresh direct ordinary-let result is introduced only after the call kills. A wh
 For the narrow direct-set route, the target kill precedes the result-to-post-write receiver substitution.
 No pre-transfer substitution carries an old fact through a kill, no later substitution reverses a kill, and every non-result support must still be live at establishment.
 
-Conditional payload transport: a local own enum value has one route for each variant field that is either the success variant's field of a `Result<T,E>` or `Option<T>` whose payload type T supplies data under [CALL-4], or a field whose type is a struct with affine type invariants [TYPE-11]. Each route has an independent conditional numeric context meaning "if this value holds the route's variant, these L0 relations hold of the route's field". It carries one private payload root typed by that field's type, whose terms are those data [ENT-2], and the existing finite L0 vocabulary, with no new source spelling or runtime value. No conditional relation is an ordinary fact before its variant's selection, and contexts of different routes or outcomes are never conjoined. An unknown outcome has an empty conditional context for each route and no known constructor tag.
+Conditional payload transport: a local own enum value has one route for each variant field whose substituted type supplies data under [CALL-4] or is a struct with affine type invariants [TYPE-11]. Each route has an independent conditional numeric context meaning "if this value holds the route's variant, these L0 relations hold of the route's field". It carries one private payload root typed by that field's type, whose terms are those data [ENT-2], and the existing finite L0 vocabulary, with no new source spelling or runtime value. No conditional relation is an ordinary fact before its variant's selection, and contexts of different routes or outcomes are never conjoined. An unknown outcome has an empty conditional context for each route and no known constructor tag.
 
-A successful ordinary single-result call of such a value's type establishes each admitted routed relation in its route's context by FN-9 and CALL-6. Constructing a variant substitutes, in the context of each of its routes, each root term for the corresponding evaluated term of that field's operand — the operand atom's own term, or the operand place projected by the root term's projection — in the closed ordinary L0 facts and establishes their equality; a payload term outside the existing term vocabulary contributes no numeric image, exactly as [MSR-3] carries no such endpoint. It gives each route of another variant a contradictory context and tag information that definitely excludes that route's variant; for the success route, constructing `Err` or `None` is definitely failure. A direct non-consuming or consuming use of a bare own enum binding copies that value's contexts and tag information before transfer. A fresh binding, a whole-binding set commit and a give edge install the evaluated value's context at their destination after the operation's ordinary kills. The source association then follows the ordinary copy, consume and replacement rules. An enum value held in an aggregate field or indexed storage, a borrowed selection, and a multi-result call add no conditional transport in this version; their ordinary value and existing placement semantics remain unchanged.
+A successful ordinary single-result call of such a value's type establishes each admitted routed relation in its route's context by FN-9 and CALL-6. Constructing a variant substitutes, in the context of each of its routes, each root term for the corresponding evaluated term of that field's operand — the operand atom's own term, or the operand place projected by the root term's projection — in the closed ordinary L0 facts and establishes their equality; a payload term outside the existing term vocabulary contributes no numeric image, exactly as [MSR-3] carries no such endpoint. It gives each route of another variant a contradictory context and tag information that definitely excludes that route's variant. A direct non-consuming or consuming use of a bare own enum binding copies that value's contexts and tag information before transfer. A fresh binding, a whole-binding set commit and a give edge install the evaluated value's context at their destination after the operation's ordinary kills. The source association then follows the ordinary copy, consume and replacement rules. An enum value held in an aggregate field or indexed storage, a borrowed selection, and a multi-result call add no conditional transport in this version; their ordinary value and existing placement semantics remain unchanged.
 
 Evaluating `cvt.checked::<Src, Dst>(x)` with integer Src and Dst creates a conditional context whose private payload root denotes x's evaluated mathematical integer, captured before any later event. At that root it establishes exactly the L0 bound-value image that [ENT-3.S5], [ENT-3.S6], [ENT-3.S7], and [ENT-3.S9] would establish for an ordinary let of x, together with x's source-type bounds and the root's destination-type bounds. An admitted operand term therefore contributes its equality and closed ordinary L0 relations. An operand outside those rows contributes only those type bounds; an indirect storage read creates no new relation to mutable element storage. An affine current-value image adds no premise beyond that L0 context. The result then follows exactly the conditional transport above, including pre-kill closure, replacement, joins, continuing-backedge kills, success selection and FN-9 forwarded-return checking. A conversion with a float endpoint creates no conditional numeric relation or opaque domain fact; the Result's Ok tag alone therefore establishes no `cvt.defined` goal about the original input.
 
 Evaluating an integer `+checked`, `-checked`, `*checked`, `/checked`, `%checked`, `ineg.checked`, or `iabs.checked` likewise creates a conditional context whose private payload root denotes the corresponding exact row's mathematical result. Success implies that exact row's domain, so at that root it establishes exactly the [ENT-3.S7] facts the exact row would establish on an ordinary let of its result, reading the operand intervals in the ordinary closed state where the operation is evaluated. Its `Err` outcome carries no relation. The result then follows exactly the conditional transport above.
 
-Before a conditional context crosses an ordinary event or scope exit, include the current ordinary closed L0 facts, close under ENT-4 and apply ENT-5's existing support kills to its conclusions. The private payload root itself has no external support. A write that may overlap the owning Result, its consume or its scope exit removes that holder's association; a previously evaluated copy has its own association. No association is reconstructed from an old call expression. At a loop head, remove associations and external supports changed by any continuing-backedge kill under the existing loop rule. Calls and constructions in the abstract body create evidence for that iteration, without identifying values of separate iterations or unrolling them.
+Before a conditional context crosses an ordinary event or scope exit, include the current ordinary closed L0 facts, close under ENT-4 and apply ENT-5's existing support kills to its conclusions. The private payload root itself has no external support. A write that may overlap the owning enum value, its consume or its scope exit removes that holder's association; a previously evaluated copy has its own association. No association is reconstructed from an old call expression. At a loop head, remove associations and external supports changed by any continuing-backedge kill under the existing loop rule. Calls and constructions in the abstract body create evidence for that iteration, without identifying values of separate iterations or unrolling them.
 
 At an ordinary control-flow or value-delivery join, align each reaching value's private payload root term by term and join its conditional contexts by ENT-5's weakest-bound and common-disequality judgment. A missing association supplies an empty context; an alternative that definitely excludes a route's variant supplies a contradictory context for that route. Tag information that definitely excludes a route's variant survives exactly when every contributing incoming value has it. Conditional contradiction remains local and never makes the ordinary continuation contradictory. No conjunction of guards, path-history enumeration or iterative summary inference is performed.
 
@@ -3895,7 +4347,9 @@ Joins: at the continuation of a `match_stmt` or `value_match`, the ordinary fact
 In any nonempty join with at least one non-contradictory input, a contradictory all-derivable input imposes no constraint.
 Over the non-contradictory inputs, the L0 join keeps for each ordered term pair the weakest (largest-constant) bound held by all, and each offset disequality whose offset is zero or is established on some non-contradictory input exactly when every non-contradictory input holds it under [ENT-4]'s derivability.
 The opaque join keeps one signed fact exactly when that identical goal and sign are held by all non-contradictory inputs.
-The join of closed states is closed.
+The exclusion join keeps `Excluded(E, S)` exactly when that identical expression and set are present on every non-contradictory input; it forms no new set by union, intersection, subset enumeration or distribution.
+Exclusion membership is not an established offset disequality for the L0 join's candidate selection; the zero-offset candidates and independently established disequalities keep their ordinary derivability judgment.
+The resulting join is closed again under [ENT-4].
 A nonempty join whose every input is contradictory, and an empty join with no reaching edge, are each the contradictory all-derivable state.
 At the continuation of an `if_stmt` or `value_if`, this same join is taken over every branch exit edge reaching that continuation — for an else-free `if_stmt`, the false edge is such an edge — each after its pre-exit closure, scope-exit kills, and surviving-state closure; a branch every path of which leaves by `return`, `break` or `continue` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
 The continuation of a `loop_stmt` uses the same join over its `break` edges.
@@ -3911,6 +4365,8 @@ Because the counted binder and both captures are out of scope before the join, n
 An [INV-1] exact-exhaustion conclusion reaches the continuation only when the identical outer-value conclusion is present on every reaching input of this join; in particular, a `break` edge receives no conclusion from the false header and therefore removes a conclusion not independently true on that edge.
 
 For an ordinary loop L, the conservative head state is the state before L minus every fact having a support member that a continuing kill event of L may kill.
+A continuing kill event of an ordinary or counted loop may kill a support member when the event's written place overlaps that member under [OWN-7] with no offset proved distinct or apart: two index, range or page steps at one position of their common prefix overlap there, while field and payload steps separate as [OWN-7] states and window parts take [WIN-2]'s fixed answers, an index or range of the member that is live, or ends at or below `r.len`, in the state the head is formed from being judged so at the event, since `r.len` falls only at an event writing `r.last`, `r.filled` or the whole window, which overlaps every index and range of `r` [WIN-2].
+The judgment therefore reads no fact of the head state it forms, and an offset a continuing event reads may hold another value at each iteration; a fact the head loses this way is kept by a header invariant, whose preservation [INV-1] is proved inside the iteration under the ordinary separation.
 A kill event (a)–(d) placed inside L's body, at any nesting depth, is continuing for L exactly when some path of the conservative structural normal-control graph [FN-1] leads from the edge carrying that event to L's body entry without leaving L's body — that is, exactly when an execution taking that edge can reach a later iteration head of the same loop.
 Every other kill event inside the body is not continuing and is not scanned: an event on or reachable only through a `continue` to a loop enclosing L, a `break` edge resolved to L or any enclosing loop, a `return` edge, or a `propagate` error edge leaves L for the resolved target or the function-return sink [FN-1, ERR-3], and no iteration head of L is reached from it without first re-entering L from outside, where the enclosing flow supplies the state.
 Without a parenthesized invariant header, exactly those surviving facts hold at every iteration head; establishment and kills then proceed ordinarily within the iteration, and no fact established inside an iteration survives to the next iteration's head.
@@ -4020,7 +4476,7 @@ An unproved result exhausts the whole set; a proved result may stop at the first
 `AUTO` does not recurse, saturate newly derived residuals, search for a multiplier outside the two integer-tightening factors fixed above, choose a subset larger than two published affine premises, or publish an intermediate result.
 Consequently an author can determine from this rule alone whether a target is automatic: a derivation outside these exact shapes requires the explicit [PRF-1] `proof_use` list rather than compiler probing.
 
-An [FN-8] Signed Goal query first applies the ordinary positive and negative [ENT-4] disposition to its complete root.
+A Signed Goal query [FN-8, OP-5] first applies the ordinary positive and negative [ENT-4] disposition to its complete root.
 When neither sign is ordinarily derivable, its one remaining positive-proof route recursively follows exactly [ENT-4]'s fixed Boolean introduction table over the already-written goal tree: positive `band` and negative `bor` require every child in source order; negative `band` and positive `bor` visit every child in source order and retain the first successful witness; and `bnot` checks its sole child under the opposite sign.
 Visits use [ENT-4.OT]'s live definition links in the same query view.
 `bxor` has no introduction route.
@@ -4049,11 +4505,11 @@ Every step reads the origin-transport query view formed by [ENT-4.OT].
 Step 2 applies exactly when the submitted goal has an exact signed identity in [ENT-2]'s finite universe; a normalized affine relation with no opaque goal skips it.
 Step 6 visits its candidates in compiler-owned source-allocation order, measure terms and tracked field places before own integer bindings; when closed L0 has the tightest bound `m - r <= c` relating a candidate m to the goal's right-hand term r, it submits the one exact residual target to `AUTO` and composes a success transitively with that L0 bridge.
 Step 7 applies exactly when the normalized affine target is `q <= k`, with one atom q of coefficient one and a constant k, and q is the quotient image of a captured division [ENT-3.S7], which is unique because each division's result is a fresh atom [ENT-6]; with that division's captured dividend image a and divisor image d, it submits the one target `a - (k + 1)*d <= -1`, formed in checked `i128` arithmetic, to `AUTO`.
-An unavailable image or an unrepresentable candidate is skipped without suppressing a later candidate; a goal no step discharges is unproved and is rejected by its owning rule.
+An unavailable image or an unrepresentable candidate is skipped without suppressing a later candidate; a goal no step discharges is unproved, and its consumer applies its owning rule.
 
-The consumers are exactly [OP-4] subscript bounds, [OP-2] integer domain, [OP-6] conversion domain, [FN-8] requirements, [FN-9] normal-result relations, and [INV-1] invariant targets.
+The consumers are exactly [OP-4] subscript bounds, [OP-2] integer domain, [OP-6] conversion domain, [OP-5] condition redundancy, [FN-8] requirements, [FN-9] normal-result relations, and [INV-1] invariant targets.
 Each keeps its own normalization — which proposition it forms from its source node — and none keeps a route grant of its own: an operation adds a goal, never a route.
-A rejection for a goal that no step discharges names its disposition, `refuted` or `unproved` [ENT-4], and carries a repair [DIAG-1]; an [INV-1] target that no step discharges is refuted when this disposition derives the negation of one of its bounds, and unproved otherwise.
+A rejection for a required goal that no step discharges names its disposition, `refuted` or `unproved` [ENT-4], and carries a repair [DIAG-1]; an [INV-1] target that no step discharges is refuted when this disposition derives the negation of one of its bounds, and unproved otherwise; [OP-5] states its own result judgment, under which a discharged query rejects.
 Each family paragraph below states its normalization and then submits.
 
 A derivation outside these exact automatic families requires the explicit [PRF-1] `proof_use` list; this rule admits no additional automatic candidates.
@@ -4300,11 +4756,12 @@ A `range_relation` with a `compare_op` compares two range terms with any of the 
 
 A `range_relation` spelled `P unchanged` is admitted as a conclusion of a range postcondition when P is a single place selecting an element projection, with no final measure, whose `pbase` is the IDENT of a reference parameter whose declared row carries a write rooted at it [MSR-3]. It states that the selected exit storage is the version the same selection held at entry, with every subscript evaluated as written; it needs no equality capability [OP-16] and admits any selected type. An `unchanged` in a requirement, guard, loop invariant, type invariant or ordinary relation, or on any other expression or place, is a hard error citing RANGE-1 at it, with a repair [DIAG-1].
 
-A range term is formed from `affine_expr` syntax over these atoms: an integer literal or an integer-typed named const, read as its mathematical value; a bound variable of the clause, or in a certificate one of its two iteration names [RANGE-5]; a live own-mode integer binding, read as its value where the clause is formed; a tracked field place [ENT-6], read as its current image where the clause is formed, with its support and killing events fixed by that rule; a measure `p.len`, `p.cap`, or `p.bytes` that the selected type of place p has [MSR-1], or `p.pages.len` for a Paged place; the length `s[d].len` of one segment of a `Segments` place s; and one element projection.
+A range term is formed from `affine_expr` syntax over these atoms: an integer literal or an integer-typed named const, read as its mathematical value; a bound variable of the clause, or in a certificate one of its two iteration names [RANGE-5]; a live own-mode integer binding, read as its value where the clause is formed; a measure `p.len`, `p.cap`, or `p.bytes` that the selected type of place p has [MSR-1], or `p.pages.len` for a Paged place; the length `s[d].len` of one segment of a `Segments` place s; and one element projection.
+A `define` name in a clause is replaced by its definition [FN-8] before the clause's range terms are checked.
 An element projection is `p[i]` of a place whose selected value is an `Array`, a `Slots`, a `Paged` or the run either range-reference kind names, or `s[d][k]` of a `Segments`, followed by zero or more steps, each a struct field, a `Box` `inner`, an enum payload `V.f` naming a variant V of the selected enum and a field f of V [GRAM-5], or a subscript `[j]` by a range term j of an indexable collection the preceding steps select, other than an `Entries` or a `ConcurrentHashMap` [OP-4], and then at most one measure that the selected type has, `len`, `cap`, or `bytes`, or `pages.len` of a `Paged` [MSR-1]; each field step obeys [MOD-5], and the final selected value is an integer [TYPE-1], as a side of a value equality above an equality type, or as the operand of a variant relation an enum, `Bool` included, or as an `unchanged` conclusion any type.
-A place in a range term is a live binding followed by `^`, field and `Box` `inner` steps [GRAM-5, TYPE-7, TYPE-9]; its subscripts are range terms; it forms no range step, and below an element it continues only as an element projection. A place reached through a reference parameter denotes entry storage in a requirement and the storage as the return leaves it in a postcondition. In a range postcondition it may also begin with an entry former `entry(p)` or `entry(p projection)` admitted by [MSR-3], the steps inside the former preceding those after it, and every selection below the former reads the version of that storage at function entry.
+A place in a range term is a live binding followed by `^`, field and `Box` `inner` steps [GRAM-5, TYPE-7, TYPE-9]; its subscripts are range terms; it forms no range step, and below an element it continues only as an element projection. In a range postcondition it may also begin with an entry former `entry(p)` or `entry(p projection)` admitted by [MSR-3], the steps inside the former preceding those after it, and every selection below the former reads the version of that storage at function entry.
 In a goal the range judgment reads [RANGE-2], the referent `x^` of a payload binder x is also an element projection where a `match` binds x through a reference [OWN-13] and the match's scrutinee, or the place its `borrow_expr` scrutinee borrows, is an element projection selecting an enum, such a referent included: it is that projection, each subscript holding the value the match recorded for it [REF-1], followed by the payload step `V.f` of the arm's variant V and x's field f. Steps after `x^` continue it as steps after an element do, and a use reads that storage as the use finds it, x being valid there [REF-2]. A range clause written in source forms no such term: there `x^` is only a place.
-In a range postcondition a term may also name a result ordinal of the function [FN-1] as the root of a place, through its `result_binding` spelling or, for the ordinal a route `when V(value: r)` names [FN-9], through r, which denotes V's payload; the routed ordinal's whole-value binder is unavailable in its clause, as [FN-9] states, and such a root forms range terms by this rule, not only through [CALL-4]'s data. There a parameter that holds an integer denotes its value at entry; a place rooted at another `own` parameter, whose storage the call consumes, is a hard error citing RANGE-1 at the place, with a repair [DIAG-1].
+In a range postcondition a term may also name a result ordinal of the function [FN-1] as the root of a place, through its `result_binding` spelling or, for the ordinal a route [FN-9] names, through its binder r, which denotes that route's field f of variant V; the routed ordinal's whole-value binder is unavailable in its clause, as [FN-9] states, and such a root forms range terms by this rule, not only through [CALL-4]'s data. There a parameter that holds an integer denotes its value at entry and a place reached through a reference parameter denotes that storage as the return leaves it; a place rooted at another `own` parameter, whose storage the call consumes, is a hard error citing RANGE-1 at the place, with a repair [DIAG-1].
 In a generic function a range clause is formed at its symbolic instance, with each value and element whose type is a type parameter taken as an integer, and again at each concrete instance, where a relation `==` whose two sides have a non-integer equality type is the value equality above; in a range postcondition a part formed from a by-value parameter denotes that parameter's value at entry, as an integer parameter does, and elsewhere its value where the clause is formed. A concrete clause instance is active exactly when each use of a value or element whose source type is a type parameter has a type admitted by that use above; an inactive instance is neither a fact nor owed, and a `use` of it instantiates nothing.
 `+` and `-` combine terms and `*` scales one by an integer literal or named const; a call, a moved value, a borrow and every other form is a hard error citing RANGE-1 at the smallest offending node.
 A read in a range term executes nothing and owes no [OP-4] obligation where it is written. A read is defined where each of its element selections selects an existing element and each of its payload steps selects the variant its enum holds. The reads a conclusion depends on are the reads its clause's ranges and guards form and the reads that conclusion itself forms, each part of a value equality being one conclusion; an instance of a clause claims each conclusion where every read that conclusion depends on is defined [RANGE-3], so two conclusions that read payloads of different variants each hold where their own variant is held. The reads of an `unchanged` conclusion include the corresponding entry selection, so a tuple outside that selection's entry domain asserts no conclusion.
@@ -4312,30 +4769,36 @@ The requirements of a conclusion's instance are the variant of each payload step
 
 [RANGE-2] The range judgment runs after every function's ordinary entailment [ENT-1], over one forward walk of each function body that takes part: one that has a range requirement or a range postcondition, states a range clause, calls a function with a range requirement or a range postcondition, constructs a struct that has a range type invariant, or contains an atomic statement whose target establishes one [TYPE-11].
 In a function that takes part, an [OP-2] or [OP-6] operation obligation, an [OP-4] subscript bound, an ordinary-call requirement [FN-8], or an [INV-1] local invariant or incoming edge of a loop invariant that ordinary entailment leaves undischarged, and whose goal at its site is a comparison or a conjunction of comparisons whose sides are range terms [RANGE-1], is owed to the range judgment at its site [RANGE-3], the goal being read with each type-membership condition as its two bounding comparisons, each condition on the concrete type and each comparison between constants replaced by its truth value, and each conjunction or disjunction with a truth-value operand reduced; any other undischarged obligation keeps the verdict ordinary entailment gave it, and the walk assumes a local invariant's target after its statement only once the judgment has proved it there.
-The walk carries a symbolic state: each binding's value, the current images of tracked field places [ENT-6], each storage location's contents as one version, the variant each location of an enum type is known to hold, the path conditions of the branches taken, the facts that hold, and the joins the walk passed. A location's variant is known where a construction of that variant was stored there or a `match` arm that takes it was entered, until a write to the location or a forgetting below; a `match` arm whose variant the state excludes is not entered, and a join keeps a location's variant only where every arm knows that location to hold it, so a binding the arms bind to different storage holds, after the join, storage whose variant is not known.
+The walk carries a symbolic state: each binding's value, each storage location's contents as one version, the variant each location of an enum type is known to hold, the path conditions of the branches taken, the facts that hold, and the joins the walk passed. A location's variant is known where a construction of that variant was stored there or a `match` arm that takes it was entered, until a write to the location or a forgetting below; a `match` arm whose variant the state excludes is not entered, and a join keeps a location's variant only where every arm knows that location to hold it, so a binding the arms bind to different storage holds, after the join, storage whose variant is not known.
 A fact is a range clause with what each of its places and values denotes where it became active: a place denotes one version of one storage location, so a fact never changes meaning. A write makes a new version defined by the old one: at the written index tuple, each projection the written place overlaps [OWN-7] is the written value's projection where the walk can name it and unknown otherwise, and every other projection is the old version's; at every other index tuple the element is the old version's. A question about the new version reaches the old version's facts only through that definition [RANGE-3].
 Every element selection has a whole-element read, an integer read used only to identify its storage version and carrying no value meaning. A write overlapping that element or any owned descendant [OWN-7] leaves the written version's whole-element read unknown at the written tuple; at every other tuple it is the old version's read.
-The variant an enum selection holds is its tag, an integer read of the same version and index tuple whose value numbers the enum's variants in declaration order; a construction stored there defines it, and a `match` arm that takes a variant of a value the walk holds as that selection is entered with the tag equal to that variant. An `if` whose condition is a `Bool` value the walk holds as a selection enters its then-block with that selection's tag equal to the tag of `True` and its else-block, written or not, with it equal to the tag of `False`.
-Facts become active from four sources and no other: a function's range requirements at entry; a counted or ordinary loop's range invariants at its header; the range type invariants an atomic statement's targets establish at its block's entry [TYPE-11]; and a callee's postconditions after each call: its range postconditions and each of its [FN-9] relations whose two sides are range terms a range postcondition admits [RANGE-1], as a clause without bound variables, every other relation being left to ordinary entailment, with each parameter denoting its argument, a reference parameter's storage as the call leaves it, and each result ordinal the value the call hands back at it [CALL-4]. An unrouted one holds at once; one under `when V(value: r)` holds in the arm of a `match` on that ordinal's value that takes V, with r denoting that arm's payload.
+The variant an enum selection holds is its tag, an integer read of the same version and index tuple whose value numbers the enum's variants in declaration order; a construction stored there defines it, and a `match` arm that takes a variant of a value the walk holds as that selection is entered with the tag equal to that variant. For an integer match, this walk represents [GRAM-12]'s evaluated scrutinee as its symbolic value, enters each value arm with that value equal to the arm's decoded integer, and enters `else` with one exclusion of that value from the entire decoded arm set [ENT-2, ENT-3.S17].
+These are path conditions over the evaluated symbolic value, so a later write creates a new value or storage version without retargeting them; every arm starts from the same post-evaluation state and carries only its own selection condition.
+An `if` whose condition is a `Bool` value the walk holds as a selection enters its then-block with that selection's tag equal to the tag of `True` and its else-block, written or not, with it equal to the tag of `False`.
+Facts become active from four sources and no other: a function's range requirements at entry; a counted or ordinary loop's range invariants at its header; the range type invariants an atomic statement's targets establish at its block's entry [TYPE-11]; and a callee's postconditions available under [FN-9, DIAG-2] after each call: its range postconditions and each of its [FN-9] relations whose two sides are range terms a range postcondition admits [RANGE-1], as a clause without bound variables, every other relation being left to ordinary entailment, with each parameter denoting its argument, a reference parameter's storage as the call leaves it, and each result ordinal the value the call hands back at it [CALL-4]. An unrouted one holds at once; a routed one holds in the arm of a `match` on that ordinal's value that takes its variant V, with the route's binder r denoting that arm's field f.
 Before a call applies its effects, the walk records each argument storage's version; an imported postcondition's `entry(p)` places denote that argument's recorded version. An instance of an imported `unchanged` conclusion whose ranges, guards and read domains hold defines every read already in the problem of its exit selection, at the selected tuple and with any projection, as that projection's read of the recorded entry version. Its projections at a concrete generic instance are those of the instantiated element type. These are definitions of [RANGE-3], formed only at tuples selected by reads already in the problem.
-The walk evaluates integer expressions it can name exactly — literals, consts, bindings, tracked field current-image reads [RANGE-1], the measures and element reads above, exact `+` and `-`, exact `*` by a constant, and exact integer `cvt` [OP-1, OP-7] — and an integer comparison as a path condition; every other expression is a fresh unknown of its type.
+The walk evaluates integer expressions it can name exactly — literals, consts, bindings, the measures and element reads above, exact `+` and `-`, exact `*` by a constant, and exact integer `cvt` [OP-1, OP-7] — and an integer comparison as a path condition; every other expression is a fresh unknown of its type.
 An operation of an [ENT-3.S7] row that the walk does not name exactly yields a fresh unknown r of its type together with, as path conditions at its statement, each relation that row states between r and an operand, the operand taken as the walk holds its value, where the row's condition and the relation's own condition hold over the operand intervals [ENT-3.S7] reads at that statement; this holds whether or not ordinary entailment admits the operand as a term [ENT-2].
 A `let`, a `set`, a `give`, a construction field and a by-value `match` binder that take an aggregate from storage without consuming it copy it [OWN-1], and the copy is new storage defined by the source's version and index tuple where it was taken: each value projection of the copy, its tag included, is that projection of the source version, and a write makes a version of the copy only; a consuming read hands the storage itself over, the value a `take_back` call hands back is the removed element below, and an aggregate any other call or a construction yields is new storage of its own.
-An `if` and a `match` fork the state; at the join each binding, tracked field image, version and value the arms disagree on becomes one defined by the arm taken, the join records that one of its arms' conditions held, and each fact active at the end of an arm, and each routed postcondition awaiting its `match` there, stays so after the join where that arm was taken.
-A binding is a location once a reference to it is formed. A loop header forgets every projection of a location, every binding and every tracked field current-image association whose support its body can kill under [ENT-5, ENT-6] in any iteration, and which variant every enum stored in such a place holds, and assumes its affine invariants [INV-1], its range invariants and, for a counted loop, its binder's range.
+An `if` and a `match` fork the state; at the join each binding, version and value the arms disagree on becomes one defined by the arm taken, the join records that one of its arms' conditions held, and each fact active at the end of an arm, and each routed postcondition awaiting its `match` there, stays so after the join where that arm was taken.
+A binding is a location once a reference to it is formed. A loop header forgets every projection of a location and every binding whose support its body can kill under [ENT-5] in any iteration, and which variant every enum stored in such a place holds, and assumes its affine invariants [INV-1], its range invariants and, for a counted loop, its binder's range.
 The state after a loop is the join, as at an `if`, of the states that leave it: the state at each `break` to it and, for a counted loop, its header state with the binder at least the upper endpoint, and equal to it where the lower endpoint is no greater.
-A call of `place_back` [OP-10] is a write the walk places: it defines a new version of the window with the placed value at the old length and every other element unchanged, and the window's length one more; a call of `take_back` defines one with every element below the new length unchanged and the length one less, and hands over the element at the new length as a consuming read of the version before the call: the value it hands back is that storage, each of its projections, its tag included, being that projection of the window's version before the call at the new length, and a later write to it makes a version of that value only. A `grow` or `grow_paged` call applies [ENT-5]'s relocation classification to the window version and its projections. Every call outside these four operations forgets every location the callee's row writes through a reference argument [EFF-5], one element where the argument names one element; an `atomic_stmt` and every write the walk cannot place forget every location.
+A call of `place_back` [OP-10] is a write the walk places: it defines a new version of the window with the placed value at the old length and every other element unchanged, and the window's length one more; a call of `take_back` defines one with every element below the new length unchanged and the length one less, and hands over the element at the new length as a consuming read of the version before the call: the value it hands back is that storage, each of its projections, its tag included, being that projection of the window's version before the call at the new length, and a later write to it makes a version of that value only. A `grow` or `grow_paged` call applies [ENT-5]'s relocation classification to the window version and its projections. Every call outside these four operations forgets each projection that overlaps a path the callee's row writes after substituting the reference argument's path [EFF-5, OWN-7, WIN-2], within that element where the argument names one element; an `atomic_stmt` and every write the walk cannot place forget every location.
 An affine requirement of the function and every published [INV-1] target are path conditions where they hold.
 
-[RANGE-3] A range fact is owed at these sites, and the range judgment proves it at each: an ordinary obligation owed to the range judgment [RANGE-2], as a clause without bound variables at its site; a range type invariant at each construction of its struct and on each edge leaving an atomic statement that establishes it [TYPE-11], the binder denoting the constructed value or the target's referent; a callee's range requirement at every call, with each parameter denoting its argument; a range invariant at its loop's entry, with a counted loop's binder at the lower endpoint; a range invariant on every normal backedge, including `continue` [FN-1], with a counted loop's binder at its next value; and a range postcondition at every exit that selects it, with each result ordinal denoting the value the return hands back at it. An unrouted range postcondition is selected by every explicit return and every propagated error exit [ERR-3]. One routed through `when V(value: r)` is selected by every explicit return whose value at the routed ordinal is not a construction of another variant and is not known by the walk's state to hold another variant, and r denotes the payload of variant V in that value. A return the walk does not reach, such as one in a `match` arm the state excludes, selects nothing. For an inhabited instance [FN-8], a range postcondition that no exit selects is a hard error citing RANGE-3 at its `range_clause` node.
+[RANGE-3] A range fact is owed at these sites, and the range judgment proves it at each: an ordinary obligation owed to the range judgment [RANGE-2], as a clause without bound variables at its site; a range type invariant at each construction of its struct and on each edge leaving an atomic statement that establishes it [TYPE-11], the binder denoting the constructed value or the target's referent; a callee's range requirement at every call, with each parameter denoting its argument; a range invariant at its loop's entry, with a counted loop's binder at the lower endpoint; a range invariant on every normal backedge, including `continue` [FN-1], with a counted loop's binder at its next value; and a range postcondition at every exit that selects it, with each result ordinal denoting the value the return hands back at it. An unrouted range postcondition is selected by every explicit return and every propagated error exit [ERR-3]. A routed one is selected by every explicit return whose value at the routed ordinal is not a construction of another variant and is not known by the walk's state to hold another variant, and its binder r denotes its field f of variant V in that value. A propagated error exit selects a routed range postcondition whose V is `Err` and supplies its error field. A return the walk does not reach, such as one in a `match` arm the state excludes, selects nothing. For an inhabited instance [FN-8], a range postcondition that no exit selects is a hard error citing RANGE-3 at its `range_clause` node.
 An owed `unchanged` conclusion is the equality of its exit and entry whole-element reads [RANGE-2]. An owed clause holds when, for fresh bound variables within their ranges whose guards hold, each conclusion follows wherever every read it depends on is defined [RANGE-1], by this fixed derivation, together with the state's path conditions and joins and each typed value's range:
 
 1. Instances. Every active fact is instantiated once at each tuple whose every bound variable takes a value that an element read already in the problem selects through one of the fact's own element reads whose index is that bare bound variable, after every definition below has been added, and then once more at each tuple that a read of those instances selects in the same way; an instance formed in that second round forms no further instance. An instance asserts each conclusion where its ranges and its guards hold and every read that conclusion depends on is defined [RANGE-1] and its fact is active [RANGE-2], a payload read's definition adding its tag's equality with the payload's variant.
-2. Definitions. The imported `unchanged` definitions of [RANGE-2] are added, and tracked field current-image reads use [RANGE-1]. A read of a written version is defined by that version's write [RANGE-2], case by case over where the read's index tuple and projection meet the written ones; a value or a read the walk joined is the one of the arm taken, under that arm's conditions, or its join was bypassed; a join is bypassed where a later join, some of whose arms did not pass through it, took one of those arms or was itself bypassed; and a join on which a fact's activity depends took one of its arms.
-3. Theory. The equalities of a set of literals are solved over the integers, their integer solutions written one to one over free integer parameters, and two reads of one version with the same projection whose index tuples agree at every solution are one value, an equality solved with the others. The set is contradictory when the equalities have no integer solution, the two sides of a disequality agree at every solution, or the inequalities have no rational solution once each is written over the parameters and tightened over the integers, its coefficients divided by their greatest common divisor and its bound rounded down. No choice of parameters or order of solving changes this, Fourier-Motzkin elimination decides the last condition in any order, and what it derives is not tightened again.
-4. Decision. An instance whose premises the literals entail asserts its conclusions, a premise being entailed when the literals with each of its negations are contradictory. An open item is a definition without a case among the literals; a disequality whose two sides differ by an amount the solutions do not fix; or two reads of one version with the same projection whose index tuples do not agree at every solution and are not held apart at a position where they differ, where a position is held apart when the difference of its two indices is constant over the solutions, or agrees at every solution, up to sign, with the difference of the two sides of a disequality or strict comparison among the literals. Each branch is split on an open item into one branch per case, a definition's cases, the disequality as `<` and as `>` in its place, and the two reads at equal index tuples or apart at one position where they differ, until a branch is contradictory or has no open item. The clause holds when every branch is contradictory. A set stays contradictory when literals are added to it, and each split covers its item's cases, so the order in which items are split does not change this.
+2. Definitions. The imported `unchanged` definitions of [RANGE-2] are added. A read of a written version is defined by that version's write [RANGE-2], case by case over where the read's index tuple and projection meet the written ones; a value or a read the walk joined is the one of the arm taken, under that arm's conditions, or its join was bypassed; a join is bypassed where a later join, some of whose arms did not pass through it, took one of those arms or was itself bypassed; and a join on which a fact's activity depends took one of its arms.
+3. Theory. The equalities of a set of literals are solved over the integers, their integer solutions written one to one over free integer parameters, and two reads of one version with the same projection whose index tuples agree at every solution are one value, an equality solved with the others. The set is contradictory when the equalities have no integer solution, the two sides of a disequality agree at every solution, an excluded expression is fixed by every solution to one member of its excluded set, or the inequalities have no rational solution once each is written over the parameters and tightened over the integers, its coefficients divided by their greatest common divisor and its bound rounded down. No choice of parameters or order of solving changes this, Fourier-Motzkin elimination decides the last condition in any order, and what it derives is not tightened again.
+4. Decision. An instance whose premises the literals entail asserts its conclusions, a premise being entailed when the literals with each of its negations are contradictory. An open item is a definition without a case among the literals; an exclusion whose expression is not fixed by the solutions and whose gap has not been selected; a disequality whose two sides differ by an amount the solutions do not fix; or two reads of one version with the same projection whose index tuples do not agree at every solution and are not held apart at a position where they differ, where a position is held apart when the difference of its two indices is constant over the solutions, or agrees at every solution, up to sign, with the difference of the two sides of a disequality or strict comparison among the literals. Each branch is split on an open item into one branch per case, a definition's cases, an exclusion's nonempty integer gaps in its place, the disequality as `<` and as `>` in its place, and the two reads at equal index tuples or apart at one position where they differ, until a branch is contradictory or has no open item. The clause holds when every branch is contradictory. A set stays contradictory when literals are added to it, and each split covers its item's cases, so the order in which items are split does not change this.
 
-Nothing is searched beyond these fixed steps, and the derivation runs to completion over exact integer and rational arithmetic. One problem holds at most 4096 atoms, counted after step 2 adds every definition, and step 1 forms at most 256 instances of one fact. These are structural ceilings of the problem, not of the derivation's work: a site whose problem exceeds one is a hard error citing RANGE-3, or RANGE-5 for a certificate, that names the ceiling, never an unproved verdict.
+For an excluded set `s0 < ... < sn`, its gaps are `E < s0`, `si < E < s(i+1)` for each adjacent pair, and `sn < E`; a gap containing no integer is absent.
+An empty excluded set has the one unrestricted gap.
+A whole exclusion therefore contributes at most its cardinality plus one cases, its exact complement; it is never expanded into independent binary disequality choices.
+A solved constant outside the set satisfies the exclusion without a split.
+Nothing is searched beyond these fixed steps, and the derivation runs to completion over exact integer and rational arithmetic. One problem holds at most 4096 atoms, counted after step 2 adds every definition, with each exclusion counted as its expression atom plus one atom per distinct set member, and step 1 forms at most 256 instances of one fact. These are structural ceilings of the problem, not of the derivation's work: a site whose problem exceeds one is a hard error citing RANGE-3, or RANGE-5 for a certificate, that names the ceiling, never an unproved verdict.
 A range requirement, range invariant or range postcondition that does not hold is a hard error citing RANGE-3 at the call, at the loop, at its backedge's loop, or at the exit, naming the fact, the site and the first conclusion not established, with a repair [DIAG-1]. An ordinary obligation owed here [RANGE-2] that does not hold is rejected with its own rule and diagnostic, and a range type invariant at a construction or a leaving edge as [TYPE-11] states.
 
 [RANGE-4] A `proof_use` whose `use_premise` is `NAME(atom, ...)` instantiates the range fact NAME at the written terms: one range term per bound variable, in order, formed by [RANGE-1] in the certificate's scope.
@@ -4401,13 +4864,8 @@ fn main() -> status: ExitStatus pure {
       return move failed;
     }
   }
-  let expected = v == 42_i32;
-  if expected {
-  } else {
-    let failed = exit_status(code: 1_u8);
-    return move failed;
-  }
-  let success = exit_status(code: 0_u8);
+  let code = cvt::<i32, u8>(v);
+  let success = exit_status(code: code);
   return move success;
 }
 ```

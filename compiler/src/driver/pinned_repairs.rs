@@ -6,25 +6,45 @@
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
 //! Adding or rewording a repair means adding or updating a pair here or in
-//! its family module; the repairs still printed without one are listed in
-//! status board item coord-wfbl-01-25.
+//! its family module. Constructor, ownership, placement and linear-exit
+//! repairs are pinned in `remaining_repairs`, including multi-module fields.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod captured_indices;
+mod cell_consumption;
+mod clause_requirements;
 mod collisions_and_killed_facts;
+mod common_syntax;
 mod content_moves;
-mod element_terms;
+mod derived_measures;
+mod effect_row_categories;
+mod enum_routed_ensures;
+mod entry_formers;
 mod floats;
+mod harness;
 mod interface_applications;
-mod postcondition_bounds;
+mod lexical_syntax;
+mod lost_header_relations;
+mod postcondition_places;
 mod prelude_opaque;
-mod range_lengths;
+mod proof_place_spellings;
+mod qualified_constants;
+mod qualified_names;
 mod recursive_effects;
+mod redundant_conditions;
+mod remaining_repairs;
+mod reserved_names;
+mod rewritten_effect_indices;
 mod selector_scope;
 mod shared_maps;
 mod storage_destructuring;
+mod unavailable_summaries;
+mod writer_operations;
+mod writer_ownership;
+mod writer_references;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -49,9 +69,11 @@ struct RepairPair {
     /// The numbered rule [DIAG-1] must select.
     rule: &'static str,
     /// Exact substrings of the rendered rejection: the disposition where the
-    /// rule carries one, and the repair.
+    /// rule carries one, and the repair. An empty list pins the absence of a
+    /// repair; its accepted sources are controls, not advertised alternatives.
     sentences: &'static [&'static str],
-    /// One program for each alternative the pair carries out.
+    /// One program for each alternative the pair carries out, or accepted
+    /// controls when `sentences` pins the absence of a repair.
     repaired: &'static [&'static [u8]],
 }
 
@@ -103,9 +125,7 @@ const REPAIRS: &[RepairPair] = &[
     },
     RepairPair {
         name: "const2-neg-whole-nocopy-struct.wf",
-        rejected: include_bytes!(
-            "../../../tests/conformance/cases/const2-neg-whole-nocopy-struct.wf"
-        ),
+        rejected: include_bytes!("../../../tests/conformance/cases/const2-neg-whole-nocopy-struct.wf"),
         rule: "OWN-1",
         sentences: &[
             "]: BareAffineUse\n",
@@ -542,10 +562,10 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
-        // The integer field inside an element is a tracked place [ENT-2(b)].
-        // Its requirement names that place and its repair can prove or guard
-        // the same read without copying it into another binding.
-        name: "call-requirement-over-an-admitted-element-field.wf",
+        // A field of an element read through a range reference is no admitted
+        // value [ENT-3], so the goal keeps the argument's occurrence-local
+        // value, which DIAG-1 spells for the payload.
+        name: "call-requirement-over-an-argument-evaluated-in-the-call.wf",
         rejected: br#"struct Stats {
   count: u64;
 }
@@ -569,33 +589,10 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FN-8",
         sentences: &[
-            "\n  instantiated_goal: view^[0_u64].count < 10_u64\n",
-            "\n  mechanical_fix: add `requires view^[0_u64].count < 10_u64;` to the `contract` of `first`, which each caller then establishes; or guard the call with `if view^[0_u64].count < 10_u64` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  instantiated_goal: argument #0 pre-transfer value < 10_u64\n",
+            "\n  mechanical_fix: argument #0 is evaluated inside the call, where no fact names its value: bind it with one preceding `let`, establish the requirement over that binding, and pass the binding, borrowing it when the parameter is a reference\n",
         ],
-        repaired: &[
-            br#"struct Stats {
-  count: u64;
-}
-
-fn small(x: u64) -> result: u64 pure contract {
-  requires x < 10_u64;
-} {
-  return x;
-}
-
-fn first(view: &[Stats]) -> result: u64 reads(view) contract {
-  requires 1_u64 <= view^.len;
-  requires view^[0_u64].count < 10_u64;
-} {
-  let r = small(x: view^[0_u64].count);
-  return r;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"struct Stats {
+        repaired: &[br#"struct Stats {
   count: u64;
 }
 
@@ -608,8 +605,9 @@ fn small(x: u64) -> result: u64 pure contract {
 fn first(view: &[Stats]) -> result: u64 reads(view) contract {
   requires 1_u64 <= view^.len;
 } {
-  if view^[0_u64].count < 10_u64 {
-    let r = small(x: view^[0_u64].count);
+  let c = view^[0_u64].count;
+  if c < 10_u64 {
+    let r = small(x: c);
     return r;
   }
   return 0_u64;
@@ -618,12 +616,303 @@ fn first(view: &[Stats]) -> result: u64 reads(view) contract {
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
+"#],
+    },
+    RepairPair {
+        name: "call-requirement-over-a-range-formed-at-the-call.wf",
+        rejected: br#"fn need(v: &[u64]) -> result: u64 pure contract {
+  requires 2_u64 <= v^.len;
+} {
+  return 0_u64;
+}
+
+fn caller(k: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  if k <= 4_u64 {
+    let r = need(v: &values[0_u64..k]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(k: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `values[0_u64..k].len` is `k` [REF-4], so this call needs `2_u64 <= k`: guard the call with `if 2_u64 <= k` where skipping it is the intended behavior; or bind the range with one preceding `let`, use the binding in the call, and establish the relation over the binding\n",
+        ],
+        repaired: &[
+            br#"fn need(v: &[u64]) -> result: u64 pure contract {
+  requires 2_u64 <= v^.len;
+} {
+  return 0_u64;
+}
+
+fn caller(k: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  if k <= 4_u64 {
+    if 2_u64 <= k {
+      let r = need(v: &values[0_u64..k]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(k: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn need(v: &[u64]) -> result: u64 pure contract {
+  requires 2_u64 <= v^.len;
+} {
+  return 0_u64;
+}
+
+fn caller(k: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  if k <= 4_u64 {
+    let part = &values[0_u64..k];
+    if 2_u64 <= part^.len {
+      let r = need(v: part);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(k: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
 "#,
         ],
     },
-];
+    RepairPair {
+        name: "call-requirement-over-a-range-length-that-is-a-difference.wf",
+        rejected: br#"fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
 
-const REPAIRS_AFTER_RANGES: &[RepairPair] = &[
+fn caller(start: u64, end: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let r = need(v: &values[start..end]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(start: 1_u64, end: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `values[start..end].len` is `end - start` [REF-4], so this call needs `end - start <= 2_u64`: where `start <= end` holds, bind the difference with the exact `-`, `let width = end - start;` (a `-wrap` difference carries no relation to the range's length), and guard the call with `if width <= 2_u64` where skipping it is the intended behavior; or bind the range with one preceding `let`, use the binding in the call, and establish the relation over the binding\n",
+        ],
+        repaired: &[
+            br#"fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(start: u64, end: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let width = end - start;
+    if width <= 2_u64 {
+      let r = need(v: &values[start..end]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(start: 1_u64, end: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(start: u64, end: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let part = &values[start..end];
+    if part^.len <= 2_u64 {
+      let r = need(v: part);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(start: 1_u64, end: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "call-requirement-over-a-range-with-field-endpoints.wf",
+        rejected: br#"struct Span {
+  start: u64;
+  end: u64;
+}
+
+fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(span: Span) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = span.start <= span.end;
+  let within = span.end <= 4_u64;
+  if band(ordered, within) {
+    let r = need(v: &values[span.start..span.end]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(start: 1_u64, end: 3_u64);
+  let r = caller(span: span);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  instantiated_goal: values[span.start..span.end].len <= 2_u64\n",
+            "\n  mechanical_fix: `values[span.start..span.end].len` is the difference of its endpoints [REF-4], and its endpoints `span.start` and `span.end` are not bindings, so no fact names that difference: copy each into a `let` binding before the call and form the range from the bindings, then, where the start is at most the end, bind the difference of the bindings with the exact `-` (a `-wrap` difference carries no relation to the range's length) and establish the requirement over it\n",
+        ],
+        repaired: &[br#"struct Span {
+  start: u64;
+  end: u64;
+}
+
+fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(span: Span) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let start = span.start;
+  let end = span.end;
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let width = end - start;
+    if width <= 2_u64 {
+      let r = need(v: &values[start..end]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(start: 1_u64, end: 3_u64);
+  let r = caller(span: span);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "call-requirement-equating-range-length-differences.wf",
+        rejected: br#"fn pair(left: &[u64], right: &[u64]) -> result: u64 reads(left.len) contract {
+  requires left^.len == right^.len;
+} {
+  return left^.len;
+}
+
+fn caller(s: u64, e: u64, t: u64, u: u64) -> result: u64 pure {
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  let b = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = s <= e;
+  let within = e <= 4_u64;
+  let other_ordered = t <= u;
+  let other_within = u <= 4_u64;
+  let first = band(ordered, within);
+  let second = band(other_ordered, other_within);
+  if band(first, second) {
+    let r = pair(left: &a[s..e], right: &b[t..u]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(s: 1_u64, e: 3_u64, t: 0_u64, u: 2_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `a[s..e].len` is `e - s` and `b[t..u].len` is `u - t` [REF-4], so this call needs `e - s == u - t`, and an equality over the difference of two distinct endpoints has no difference-bound form [ENT-4]: where the start is at most the end, bind each such difference with the exact `-`, as `let width = e - s;` (a `-wrap` difference carries no relation to the range's length), bind its range with one preceding `let`, as `let part = &a[s..e];`, and pass `&part^[0_u64..width]` in its place, whose length is `width` itself; then establish the requirement over those bindings\n",
+        ],
+        repaired: &[br#"fn pair(left: &[u64], right: &[u64]) -> result: u64 reads(left.len) contract {
+  requires left^.len == right^.len;
+} {
+  return left^.len;
+}
+
+fn caller(s: u64, e: u64, t: u64, u: u64) -> result: u64 pure {
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  let b = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = s <= e;
+  let within = e <= 4_u64;
+  let other_ordered = t <= u;
+  let other_within = u <= 4_u64;
+  let first = band(ordered, within);
+  let second = band(other_ordered, other_within);
+  if band(first, second) {
+    let width = e - s;
+    let other_width = u - t;
+    let part = &a[s..e];
+    let other = &b[t..u];
+    if width == other_width {
+      let r = pair(left: &part^[0_u64..width], right: &other^[0_u64..other_width]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(s: 1_u64, e: 3_u64, t: 0_u64, u: 2_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
     // -------------------------------------------------------------------
     // [FN-9] a normal-result relation at one selected return.
     // -------------------------------------------------------------------
@@ -1022,8 +1311,9 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
-        // The integer element is a term [ENT-2(b)] rooted at an unwritten
-        // reference parameter. Requirements and guards may name it.
+        // An element read is no term [ENT-2], but it is part of the goal's
+        // identity, which a condition naming the same expression establishes
+        // [ENT-3].
         name: "integer-domain-over-an-element.wf",
         rejected: br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
   let y = values^[0_u64] + 1_u8;
@@ -1037,55 +1327,14 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-2",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires values^[0_u64] +defined 1_u8;` to the `contract` of `bump`, which each caller then establishes; or guard the operation with `if values^[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
+            "\n  mechanical_fix: `values^[0_u64] +defined 1_u8` is not proved here: when facts that reach the operation imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the operation with `if values^[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
         ],
-        repaired: &[br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) contract {
-  requires values^[0_u64] +defined 1_u8;
-} {
-  let y = values^[0_u64] + 1_u8;
-  return y;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#, br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
+        repaired: &[br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
   if values^[0_u64] +defined 1_u8 {
     let y = values^[0_u64] + 1_u8;
     return y;
   }
   return 0_u8;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#, br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
-  let y = values^[0_u64] +wrap 1_u8;
-  return y;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#, br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
-  let outcome = values^[0_u64] +checked 1_u8;
-  match outcome {
-    Ok(value: y) => {
-      return y;
-    }
-    Err(error: e) => {
-      return 0_u8;
-    }
-  }
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#, br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
-  let y = values^[0_u64] +sat 1_u8;
-  return y;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1349,43 +1598,6 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: `i < h^.Some.value.items.len` is not proved here: when facts that reach the access imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the access with `if i < h^.Some.value.items.len` where skipping it is the intended behavior\n",
         ],
         repaired: &[
-            // Four independently available premises require written use
-            // steps; AUTO's two-listed-premise family cannot cancel all three
-            // extra parameter differences in this bound.
-            br#"struct Holder {
-  items: Slots<u64, 4>;
-  tag: u64;
-}
-
-fn get(h: &Option<Holder>, i: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> result: u64 reads(h) contract {
-  requires i + a + b < c + d + e;
-  requires c <= a;
-  requires d <= b;
-} {
-  match &h^ {
-    Some(value: v) => {
-      if e <= v^.items.len {
-        invariant bounded: i < v^.items.len {
-          use (i + a + b < c + d + e);
-          use (c <= a);
-          use (d <= b);
-          use (e <= v^.items.len);
-        }
-        let x = v^.items[i];
-        return x;
-      }
-      return 0_u64;
-    }
-    None() => {
-      return 0_u64;
-    }
-  }
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
             br#"struct Holder {
   items: Slots<u64, 4>;
   tag: u64;
@@ -1489,8 +1701,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        // An integer element is an ENT-2(b) term. Its own selector and
-        // both roots must be unwritten parameters for a requirement route.
+        // An offset that is itself an element is no term [ENT-2], and a
+        // bound names terms alone, so no condition over it establishes one.
         name: "bounds-over-an-element-offset.wf",
         rejected: br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
   requires j < order^.len;
@@ -1505,23 +1717,14 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-4",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: add `requires order^[j] < lens^.len;` to the `contract` of `pick`, which each caller then establishes; or guard the access with `if order^[j] < lens^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  mechanical_fix: `order^[j] < lens^.len` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the access, and establish the relation over the binding\n",
         ],
         repaired: &[br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
   requires j < order^.len;
-  requires order^[j] < lens^.len;
 } {
-  return lens^[order^[j]];
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#, br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
-  requires j < order^.len;
-} {
-  if order^[j] < lens^.len {
-    return lens^[order^[j]];
+  let k = order^[j];
+  if k < lens^.len {
+    return lens^[k];
   }
   return 0_u8;
 }
@@ -2337,7 +2540,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2380,7 +2583,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2399,7 +2602,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
@@ -2417,7 +2620,7 @@ alias Inputs = std::process::Inputs;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   let DirectoryRead() = move directory;
@@ -2435,7 +2638,7 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   close_directory(factory: &factory, directory: move directory);
@@ -3579,251 +3782,9 @@ fn main() -> status: ExitStatus pure {
 }
 "#],
     },
-    RepairPair {
-        // An integer field below a literal index is an admitted endpoint.
-        // An element-valued selector is outside ENT-2(a,c), so this complete
-        // read remains a computed endpoint even when its bound is proved.
-        name: "element-selector-counted-endpoint.wf",
-        rejected: br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let positions = array_filled::<u64, 2>(value: 1_u64);
-  let count = 0_u64;
-  if positions[1_u64] < spans.len {
-    for (i in 0_u64..spans[positions[1_u64]].len) {
-      set count = count +wrap 1_u64;
-    }
-  }
-  let code = cvt.wrap::<u64, u8>(count);
-  return std::process::exit_status(code: code);
-}
-"#,
-        rule: "ENT-2",
-        sentences: &[
-            "]: InvalidCountedEndpoint\n",
-            "\n  mechanical_fix: bind the computed u64 value with one preceding ordinary let and use that term as the endpoint\n",
-        ],
-        repaired: &[br#"struct Span {
-  len: u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
-  let positions = array_filled::<u64, 2>(value: 1_u64);
-  let count = 0_u64;
-  if positions[1_u64] < spans.len {
-    let length = spans[positions[1_u64]].len;
-    for (i in 0_u64..length) {
-      set count = count +wrap 1_u64;
-    }
-  }
-  let code = cvt.wrap::<u64, u8>(count);
-  return std::process::exit_status(code: code);
-}
-"#],
-    },
 ];
 
-/// Every function a source declares, by the name its `fn` introduces.
-fn declared_functions(source: &[u8]) -> Vec<String> {
-    let text = std::str::from_utf8(source).expect("a pinned source is UTF-8");
-    text.split("fn ")
-        .skip(1)
-        .filter_map(|rest| {
-            let name: String = rest
-                .chars()
-                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-                .collect();
-            (!name.is_empty()).then_some(name)
-        })
-        .collect()
-}
-
-/// The judgments in `source` that succeed only in a contradictory state, or
-/// the rejection that stops it.
-fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<String>, String> {
-    let functions = declared_functions(source);
-    super::with_checked_program(
-        &[SourceInput::new(name, source)],
-        None,
-        CompilerLimits::default(),
-        |program, _| Ok(program.contradictory_successes(&functions)),
-    )
-    .map_err(|failure| failure.to_string())
-}
-
-/// Every repair pair in the shared harness's stable order. Family-local
-/// regression checks use the same inventory when locating another pair.
-fn repair_pairs() -> impl Iterator<Item = &'static RepairPair> {
-    REPAIRS
-        .iter()
-        .chain(range_lengths::RANGE_LENGTHS)
-        .chain(REPAIRS_AFTER_RANGES)
-        .chain(call_separations::CALL_SEPARATIONS)
-        .chain(content_moves::CONTENT_MOVES)
-        .chain(element_terms::ELEMENT_TERMS)
-        .chain(prelude_opaque::PRELUDE_OPAQUE)
-        .chain(postcondition_bounds::POSTCONDITION_BOUNDS)
-        .chain(recursive_effects::RECURSIVE_EFFECTS)
-        .chain(storage_destructuring::STORAGE_DESTRUCTURING)
-        .chain(shared_maps::SHARED_MAPS)
-        .chain(floats::FLOATS)
-        .chain(interface_applications::INTERFACE_APPLICATIONS)
-        .chain(selector_scope::SELECTOR_SCOPE)
-        .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
-}
-
-/// Each pinned repair is carried out by its programs [DIAG-1]: each
-/// alternative is accepted, and its construct runs in a state that is not
-/// contradictory.
 #[test]
 fn each_pinned_repair_is_carried_out_by_its_programs() {
-    for pair in repair_pairs() {
-        let failure = compile(
-            &[SourceInput::new(pair.name, pair.rejected)],
-            CompilerLimits::default(),
-        )
-        .expect_err(pair.name);
-        assert_eq!(
-            failure.kind(),
-            CompilationFailureKind::Source,
-            "{}: {failure}",
-            pair.name
-        );
-        assert_eq!(
-            failure.rule_id(),
-            Some(pair.rule),
-            "{}: {failure}",
-            pair.name
-        );
-        // [TYPE-9] semantic tests pin the complete call or written targ
-        // span. Pin its rendered start here with the existing repair run.
-        let citation = match pair.name {
-            "type9-neg-runtime-slots-content-swap.wf" => {
-                Some(("  ", "swap(first: &small.inner, second: &large.inner)"))
-            }
-            "type9-neg-generic-runtime-content-swap.wf" => Some(("exchange::<", "Slots<u64>")),
-            "type9-neg-function-actual-runtime-content-swap.wf" => {
-                Some(("fn swap::<", "Slots<u64>"))
-            }
-            _ => None,
-        };
-        if let Some((prefix, cited)) = citation {
-            let source = std::str::from_utf8(pair.rejected).expect("source is text");
-            let start = source
-                .find(&format!("{prefix}{cited}"))
-                .expect("refused construct")
-                + prefix.len();
-            let before = &source[..start];
-            let line = before.bytes().filter(|byte| *byte == b'\n').count() as u64 + 1;
-            let column = before
-                .rsplit('\n')
-                .next()
-                .expect("source line")
-                .chars()
-                .count() as u64
-                + 1;
-            let location = failure.location().expect("source location");
-            assert_eq!(location.path(), pair.name);
-            assert_eq!((location.line(), location.column()), (line, column));
-        }
-        let rendered = format!("{failure}\n");
-        for sentence in pair.sentences {
-            assert!(
-                rendered.contains(sentence),
-                "{}: the rejection no longer carries this repair.\nwanted: {sentence}\ngot:    {rendered}",
-                pair.name,
-            );
-        }
-        for (alternative, source) in pair.repaired.iter().enumerate() {
-            match contradictory_successes(pair.name, source) {
-                Ok(contradictions) => assert!(
-                    contradictions.is_empty(),
-                    "{}: alternative {alternative} succeeds only where its state is contradictory: {contradictions:?}",
-                    pair.name
-                ),
-                Err(rejection) => panic!(
-                    "{}: alternative {alternative} is rejected:\n{rejection}",
-                    pair.name
-                ),
-            }
-        }
-    }
-}
-
-/// An allocation whose count is bounded only by its type: `u64::MAX` for a
-/// `u8` element, which no supported target can allocate. This is the program
-/// a writer met in an image decoder, where the count came from the image's
-/// dimensions.
-const UNBOUNDED_TARGET_COUNT: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
-alias Inputs = std::process::Inputs;
-alias args_count = std::text::args_count;
-alias close_directory = std::fs::close_directory;
-alias exit_status = std::process::exit_status;
-
-fn make(count: u64) -> made: Box<Slots<u8>> pure {
-  let cell = box_slots_new::<u8>(capacity: count);
-  return move cell;
-}
-
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
-  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
-  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
-  close_directory(factory: &files, directory: move cwd);
-  let n = args_count(args: &args);
-  let cell = make(count: n);
-  let cap = cell.inner.cap;
-  let code = cvt.wrap::<u64, u8>(cap);
-  return exit_status(code: code);
-}
-"#;
-
-/// [OP-9] the image decoder's program builds: its count carries no static
-/// bound, and a size the target cannot allocate is heap exhaustion at run
-/// time rather than a target-layout stop. The OP-9 repair pairs, the
-/// target's count-limit stop and the tests that carried both out retired
-/// with v0.87's [OP-9]; the run-time check is observed by the backend
-/// exhaustion tests.
-#[test]
-fn an_allocation_count_bounded_only_by_its_type_builds() {
-    super::check(
-        &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
-        CompilerLimits::default(),
-    )
-    .expect("the count carries no static bound");
-    if let Err(failure) = compile(
-        &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
-        CompilerLimits::default(),
-    ) {
-        panic!("a count bounded only by its type does not build:\n{failure}");
-    }
-}
-
-/// The pair test's second condition is live: a guard around a refuted goal
-/// is accepted, and the goal inside it succeeds only because the branch
-/// state is contradictory, which is what makes guarding a refuted goal no
-/// repair [DIAG-1].
-#[test]
-fn a_guard_around_a_refuted_goal_succeeds_only_in_a_contradictory_state() {
-    let guarded = br#"fn main() -> status: std::process::ExitStatus pure {
-  let x = 255_u8;
-  if x +defined 1_u8 {
-    let y = x + 1_u8;
-    return std::process::exit_status(code: y);
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    let contradictions = contradictory_successes("guarded-refuted-goal.wf", guarded)
-        .expect("the guarded program is accepted");
-    assert!(
-        !contradictions.is_empty(),
-        "the operation inside the dead branch must be discharged by contradiction"
-    );
+    harness::run_pairs();
 }

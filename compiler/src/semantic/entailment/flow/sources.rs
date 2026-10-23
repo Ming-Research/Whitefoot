@@ -294,8 +294,8 @@ impl Judging<'_, '_, '_> {
 
     /// [ENT-3] one body goal entering as a positive opaque fact, with its
     /// exact comparison-root projection and its signed decomposition: a
-    /// requirement at body entry [ENT-3.S4], and a type invariant at an
-    /// atomic block's entry [TYPE-11].
+    /// requirement at body entry [ENT-3.S4], a type invariant at an
+    /// atomic block's entry [TYPE-11], or a selected integer value [ENT-3.S17].
     pub(super) fn establish_body_goal(
         &mut self,
         goal: GoalExpression,
@@ -479,31 +479,23 @@ impl Vocabulary {
         Some(self.terms.intern(kind))
     }
 
-    /// [ENT-3.S5] an admitted integer target receives the existing commit
-    /// value, including a subscripted destination. This creates no affine
-    /// element image or conditional aggregate destination.
+    /// [ENT-3.S5] admits direct scalar places, including fields and Box
+    /// content reached through a reference. A subscript anywhere in the
+    /// path excludes a commit image, even if its offset is a literal.
     pub(super) fn commit_target_term(&mut self, target: &CheckedSetTarget) -> Option<TermId> {
         match target {
             CheckedSetTarget::Place(target) => {
                 self.writable_place_term(target.binding, &target.fields, target.ty)
             }
             CheckedSetTarget::Storage(target)
-                if target.subscripted_term() == Some(SubscriptedTerm::Represented) =>
+                if !target
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))) =>
             {
                 let fragment = fragment_type(target.ty)?;
-                Some(
-                    self.terms
-                        .intern(TermKind::Place(container_root_path(target), fragment)),
-                )
-            }
-            CheckedSetTarget::RangeIndex(target)
-                if target.integer_element_term() == Some(SubscriptedTerm::Represented) =>
-            {
-                let fragment = fragment_type(target.ty)?;
-                Some(
-                    self.terms
-                        .intern(TermKind::Place(target.proof_place(), fragment)),
-                )
+                let place = container_root_path(target);
+                Some(self.terms.intern(TermKind::Place(place, fragment)))
             }
             _ => None,
         }
@@ -634,12 +626,14 @@ impl Reasoning<'_, '_, '_> {
         state: &mut ProofFlowState,
     ) -> Option<MeasureCarry> {
         let source = self.input.placement_source_place(value)?;
+        let source_consumed = self.input.placement_consumes_source(value, &source);
         self.mint_measure_datums(
             node_path,
             ordinal,
             MeasurePlacement::Rebind,
             source,
             value.ty(),
+            source_consumed,
             state,
         )
     }
@@ -688,34 +682,6 @@ impl Input<'_, '_> {
         value: &CheckedExpression,
     ) -> Option<ResolvedPlace> {
         let source = match value {
-            CheckedExpression::ReadStorage { root, .. }
-                if root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
-            {
-                Some(root.proof_place())
-            }
-            CheckedExpression::RangeIndex { place, .. }
-                if place.subscripted_term() == Some(SubscriptedTerm::Represented) =>
-            {
-                Some(place.proof_place())
-            }
-            CheckedExpression::ArrayIndex { root, offset, .. } => {
-                let mut place = root.proof_place();
-                place.path.push(PlaceStep::Index(
-                    CapturedValue::new(CapturedValue::unknown().capture, offset.tracked_offset()?)
-                        .goal_identity(),
-                ));
-                Some(place)
-            }
-            CheckedExpression::BufferIndex { root, offset, .. }
-                if root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
-            {
-                let mut place = root.proof_place();
-                place.path.push(PlaceStep::Index(
-                    CapturedValue::new(CapturedValue::unknown().capture, offset.tracked_offset()?)
-                        .goal_identity(),
-                ));
-                Some(place)
-            }
             CheckedExpression::Project {
                 binding, fields, ..
             } => Some(ResolvedPlace {
@@ -738,6 +704,21 @@ impl Input<'_, '_> {
         }))
         .then_some(source)
     }
+
+    /// Only an actual root consume makes a placement's source unavailable
+    /// to later comparisons. Copies and checked read wrappers keep it live.
+    fn placement_consumes_source(
+        &self,
+        value: &CheckedExpression,
+        source: &ResolvedPlace,
+    ) -> bool {
+        let mut kills = Vec::new();
+        self.collect_expression_kills(value, &mut kills);
+        kills.iter().any(|kill| {
+            matches!(kill, KillEvent::Consume { binding, .. }
+                if source.root == PlaceRoot::Binding(*binding))
+        })
+    }
 }
 
 impl Reasoning<'_, '_, '_> {
@@ -754,8 +735,8 @@ impl Reasoning<'_, '_, '_> {
     /// the source.
     ///
     /// `ordinal` separates the placements one statement carries — a
-    /// construct's field, a destructuring's binder, a target list's target,
-    /// the displaced and the stored halves of one `replace`.
+    /// construct's field, a destructuring's binder, or a target list's target.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn mint_measure_datums(
         &mut self,
         node_path: &crate::NodePath,
@@ -763,6 +744,7 @@ impl Reasoning<'_, '_, '_> {
         placement: MeasurePlacement,
         source: ResolvedPlace,
         ty: CheckedType,
+        source_consumed: bool,
         state: &mut ProofFlowState,
     ) -> Option<MeasureCarry> {
         let mut carried = Vec::new();
@@ -772,7 +754,30 @@ impl Reasoning<'_, '_, '_> {
             };
             let constant = super::type_constant(measured_type);
             let mut place = source.clone();
-            place.path.extend(path.iter().cloned());
+            place.path.extend(path.iter().copied());
+            // [MSR-3] an unmentioned descendant of a consumed source has
+            // only standing facts, which hold at its destination without
+            // transport. A surviving source still needs its equality to the
+            // destination, including when its extent has no standing term.
+            // Any tracked family member retains the whole family's transport.
+            if source_consumed
+                && ![
+                    CheckedMeasure::Length,
+                    CheckedMeasure::Capacity,
+                    CheckedMeasure::Head,
+                    CheckedMeasure::Pages,
+                    CheckedMeasure::Bytes,
+                ]
+                .into_iter()
+                .any(|measure| {
+                    self.vocabulary
+                        .terms
+                        .interned(&TermKind::Measure(measure, place.clone()))
+                        .is_some()
+                })
+            {
+                continue;
+            }
             let event = self
                 .vocabulary
                 .proof_event(FlowEventKind::S5, Some(node_path));
@@ -824,7 +829,7 @@ impl Reasoning<'_, '_, '_> {
                 continue;
             }
             let mut place = source.clone();
-            place.path.extend(path.iter().cloned());
+            place.path.extend(path.iter().copied());
             let Some(live) = self
                 .vocabulary
                 .terms
@@ -1176,7 +1181,7 @@ impl Reasoning<'_, '_, '_> {
             .proof_event(FlowEventKind::S5, Some(node_path));
         for carried in &carry.carried {
             let mut place = destination.clone();
-            place.path.extend(carried.path.iter().cloned());
+            place.path.extend(carried.path.iter().copied());
             for (measure, datum) in MEASURES
                 .into_iter()
                 .filter(|measure| {
@@ -1206,14 +1211,14 @@ impl Reasoning<'_, '_, '_> {
                 let projections = prefix
                     .iter()
                     .chain(&value.path)
-                    .cloned()
+                    .copied()
                     .collect::<Vec<_>>();
                 if !self.input.set_integer_place_admitted(target, &projections) {
                     continue;
                 }
             }
             let mut place = destination.clone();
-            place.path.extend(value.path.iter().cloned());
+            place.path.extend(value.path.iter().copied());
             let left = self
                 .vocabulary
                 .terms
@@ -1255,27 +1260,19 @@ impl Vocabulary {
     /// about the old target value; this equality names that evaluated value,
     /// so an arithmetic or other computed right-hand side carries its own
     /// image across the write exactly as an intervening `let` would. Only a
-    /// admitted fragment place receives it, at the target evaluated before
-    /// RHS effects rather than a later selector value.
+    /// direct fragment place receives it; indexed storage establishes
+    /// nothing, since one element write is no image of the whole collection.
     pub(super) fn establish_commit_copy_fact(
         &mut self,
         node_path: &crate::NodePath,
         target: &CheckedSetTarget,
-        captured_destination: Option<&ResolvedPlace>,
         commit: TermId,
         state: &mut FactState,
         event: &mut Option<(FlowEventKind, FlowEventId)>,
     ) {
-        if self.commit_target_term(target).is_none() {
-            return;
-        }
-        let Some(place) = captured_destination else {
+        let Some(destination) = self.commit_target_term(target) else {
             return;
         };
-        let Some(fragment) = fragment_type(target.ty()) else {
-            return;
-        };
-        let destination = self.terms.intern(TermKind::Place(place.clone(), fragment));
         self.establish_copy_equality(node_path, destination, commit, state, event);
     }
 }
@@ -1711,6 +1708,54 @@ impl Reasoning<'_, '_, '_> {
     /// relation and goal origins of a `Bool` match. A checked row's success
     /// facts reach its `Ok` arm through the scrutinee's conditional Result
     /// context instead [ENT-5].
+    pub(super) fn match_arm_facts(
+        &mut self,
+        scrutinee: &CheckedExpression,
+        match_type: CheckedMatchType,
+        arms: &[CheckedMatchArm],
+        state: &FactState,
+    ) -> ArmFacts {
+        if let CheckedMatchType::Enum(enum_type) = match_type {
+            return self.arm_facts(scrutinee, enum_type, state);
+        }
+        let Some(expression) = self.input.admitted_value_goal_expression(scrutinee) else {
+            return ArmFacts::default();
+        };
+        let mut values = arms
+            .iter()
+            .filter_map(|arm| match arm.selection {
+                CheckedMatchSelection::Integer(value) => Some(value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values.dedup();
+        ArmFacts {
+            integer: Some((expression, values.into())),
+            node_path: expression_node_path(scrutinee).cloned(),
+            ..ArmFacts::default()
+        }
+    }
+
+    /// An exclusion projects only a term (including a widening view), never
+    /// a general affine spelling such as `x + 1` [ENT-4].
+    pub(super) fn exclusion_projection(
+        &mut self,
+        expression: &GoalExpression,
+    ) -> Option<(TermId, i128)> {
+        if let Some(value) = self.input.goal_integer_constant(expression) {
+            return Some((ZERO, value));
+        }
+        if let GoalExpression::Operation { row, arguments, .. } = expression
+            && super::super::super::goal::widening_integer_conversion(row)
+            && let [argument] = arguments.as_slice()
+        {
+            return self.exclusion_projection(argument);
+        }
+        let term = self.goal_operand(expression)?;
+        Some(self.vocabulary.terms.constant_part(term))
+    }
+
     pub(super) fn arm_facts(
         &mut self,
         scrutinee: &CheckedExpression,
@@ -1720,12 +1765,14 @@ impl Reasoning<'_, '_, '_> {
         let node_path = expression_node_path(scrutinee).cloned();
         if enum_type != CheckedEnumType::Bool {
             return ArmFacts {
+                integer: None,
                 node_path,
                 comparison: None,
                 goals: Vec::new(),
             };
         }
         ArmFacts {
+            integer: None,
             node_path,
             comparison: self.scrutinee_relation(scrutinee, state),
             goals: self.goal_origin_set(scrutinee, state),
@@ -2894,7 +2941,16 @@ impl Reasoning<'_, '_, '_> {
         } else {
             MeasurePlacement::Rebind
         };
-        self.mint_measure_datums(node_path, ordinal, placement, source, value.ty(), state)
+        let source_consumed = self.input.placement_consumes_source(value, &source);
+        self.mint_measure_datums(
+            node_path,
+            ordinal,
+            placement,
+            source,
+            value.ty(),
+            source_consumed,
+            state,
+        )
     }
 
     /// [MSR-3] the construct placement: the datums one `construct`'s field
@@ -2981,12 +3037,14 @@ impl Reasoning<'_, '_, '_> {
             let Some(source) = self.input.placement_source_place(field) else {
                 continue;
             };
+            let source_consumed = self.input.placement_consumes_source(field, &source);
             if let Some(carry) = self.mint_measure_datums(
                 node_path,
                 ordinal,
                 MeasurePlacement::Construct,
                 source,
                 field.ty(),
+                source_consumed,
                 state,
             ) {
                 carried.push((destination, carry));
@@ -3008,8 +3066,8 @@ impl Reasoning<'_, '_, '_> {
     ) {
         for (step, carry) in carried {
             let mut destination = base.clone();
-            destination.path.push(step.clone());
-            let prefix = [step.clone()];
+            destination.path.push(*step);
+            let prefix = [*step];
             let written = target.map(|target| (target, prefix.as_slice()));
             self.establish_measure_datums(node_path, destination, written, carry, state);
         }
@@ -3018,10 +3076,9 @@ impl Reasoning<'_, '_, '_> {
     /// [MSR-3] the payload placement: the datums a `match` over an own enum
     /// place carries out of that place's payload.
     ///
-    /// The `match` consumes the scrutinee, so a measure of the payload dies
-    /// with it; the datum minted here is the value that measure had
-    /// immediately before the consume, and the arm binder that names the
-    /// payload receives it on its own arm.
+    /// A consuming `match` kills the payload's source measures; a copying
+    /// `match` keeps them. The datum retains the measure's pre-transfer value,
+    /// and the arm binder receives it on its own arm in either case.
     pub(super) fn mint_payload_placements(
         &mut self,
         scrutinee: &CheckedExpression,
@@ -3031,6 +3088,7 @@ impl Reasoning<'_, '_, '_> {
         let Some(base) = self.input.placement_source_place(scrutinee) else {
             return Vec::new();
         };
+        let source_consumed = self.input.placement_consumes_source(scrutinee, &base);
         let Some(node_path) = scrutinee.carrier() else {
             return Vec::new();
         };
@@ -3066,6 +3124,7 @@ impl Reasoning<'_, '_, '_> {
                     MeasurePlacement::Payload,
                     source,
                     field.ty,
+                    source_consumed,
                     state,
                 ) {
                     carried.push((field_ordinal, carry));
@@ -3101,6 +3160,7 @@ impl Reasoning<'_, '_, '_> {
         let Some(base) = self.input.placement_source_place(value) else {
             return Vec::new();
         };
+        let source_consumed = self.input.placement_consumes_source(value, &base);
         let mut carried = Vec::new();
         // [MSR-3] the destructuring placement's source is the field the
         // binder names, which the rest marker makes a written ordinal rather
@@ -3115,6 +3175,7 @@ impl Reasoning<'_, '_, '_> {
                 MeasurePlacement::Destructuring,
                 source,
                 *ty,
+                source_consumed,
                 state,
             ) {
                 carried.push((ordinal, carry));
@@ -3295,6 +3356,7 @@ impl Analyzer<'_, '_> {
             affine: AffineFlowState::default(),
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
+            lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
         };
         // The forward substitution happens above before the ordinary edge
@@ -3396,6 +3458,7 @@ impl Analyzer<'_, '_> {
             affine: AffineFlowState::default(),
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
+            lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
         };
         self.kill_scopes_to(&mut image, context.scope_depth);

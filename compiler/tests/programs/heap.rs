@@ -14,7 +14,9 @@ fn growable_vector_grows_by_affine_replace_and_runs_its_checks() {
     let llvm = compile_program("growable_vec.wf");
     let output = compile_and_run(&llvm);
     assert!(output.status.success());
-    assert!(output.stdout.is_empty());
+    // Length and free slots after reserving 24, capacity after the fill, then
+    // length and free slots after reserving 8 [MSR-1].
+    assert_eq!(output.stdout, [0, 24, 24, 0, 8]);
     assert!(output.stderr.is_empty());
 }
 
@@ -25,6 +27,15 @@ fn musttail_consumes_a_deep_heap_linked_sequence() {
     assert!(output.status.success(), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn a_mutually_recursive_walk_sharing_its_borrows_matches_its_loop() {
+    let llvm = compile_program("shared_environment.wf");
+    let output = compile_and_run(&llvm);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
 }
 
 #[test]

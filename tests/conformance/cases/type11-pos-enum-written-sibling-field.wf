@@ -1,0 +1,32 @@
+struct RoutedSpan {
+  start: u64;
+  end: u64;
+  invariant ordered(span): span.start <= span.end;
+}
+
+enum RoutedShape {
+  Pair(span: RoutedSpan, index: u64);
+}
+
+fn make(start: u64, end: u64) -> result: RoutedShape pure contract {
+  requires start <= end;
+  ensures when Pair(index: payload): payload <= 7_u64;
+} {
+  let span = RoutedSpan(start: start, end: end);
+  return RoutedShape::Pair(span: span, index: 7_u64);
+}
+
+fn width(span: RoutedSpan) -> result: u64 pure {
+  return span.end - span.start;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let made = make(start: 2_u64, end: 5_u64);
+  match made {
+    Pair(span: selected_span, index: selected_index) => {
+      let measured = width(span: selected_span);
+      let code = cvt::<u64, u8>(selected_index);
+      return std::process::exit_status(code: code);
+    }
+  }
+}

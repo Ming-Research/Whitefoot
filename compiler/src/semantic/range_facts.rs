@@ -8,7 +8,7 @@
 //! resulting facts and judges every obligation they create, after the
 //! entailment flow.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::{DeclarationId, NodePath};
 
@@ -101,11 +101,6 @@ pub(crate) enum CheckedRangeTerm {
     Iteration(u32),
     /// The current value of an own integer binding.
     Value(CheckedRangeRoot),
-    /// The current image of one tracked integer field place [ENT-6].
-    Field {
-        place: CheckedRangePlace,
-        element: IntegerType,
-    },
     /// Compiler-formed integer projection of a copy aggregate value [RANGE-1].
     /// Array indices here are in bounds by construction from the concrete type.
     ValueProjection {
@@ -250,8 +245,10 @@ pub(crate) struct CheckedRangePostcondition {
 pub(crate) struct CheckedRangeRoute {
     /// The result ordinal the route names.
     pub(crate) ordinal: u32,
-    /// The tag of its success variant V.
+    /// The tag of its variant V.
     pub(crate) tag: u32,
+    /// The selected field in declaration order.
+    pub(crate) field: u32,
     /// The type of V's payload, which [`CheckedRangeRoot::Result`] of that
     /// ordinal names.
     pub(crate) payload: CheckedType,
@@ -269,8 +266,6 @@ pub(crate) struct CheckedRangeFacts {
     pub(crate) constructions: BTreeMap<NodePath, Vec<CheckedRangeClause>>,
     /// TYPE-11 clauses over each atomic target binding.
     pub(crate) atomics: BTreeMap<NodePath, Vec<CheckedRangeClause>>,
-    /// Atomic targets whose possibly shared storage the range walk cannot model yet.
-    pub(crate) atomic_aliases: BTreeSet<NodePath>,
 }
 
 impl CheckedRangeFacts {
@@ -313,7 +308,7 @@ impl CheckedRangeTerm {
             | Self::Iteration(_)
             | Self::Value(_)
             | Self::ValueProjection { .. } => {}
-            Self::Field { place, .. } | Self::Measure { place, .. } => out.push(place.clone()),
+            Self::Measure { place, .. } => out.push(place.clone()),
             Self::SegmentLength { place, segment } => {
                 out.push(place.clone());
                 segment.collect_places(out);
@@ -340,7 +335,7 @@ impl CheckedRangeTerm {
             Self::Value(binding) | Self::ValueProjection { root: binding, .. } => {
                 out.push(*binding)
             }
-            Self::Field { .. } | Self::Measure { .. } => {}
+            Self::Measure { .. } => {}
             Self::SegmentLength { segment, .. } => segment.collect_values(out),
             Self::Read { indices, .. } => {
                 for index in indices {
@@ -361,35 +356,6 @@ impl CheckedRangeClause {
     /// not relations, guards come before conclusions.
     pub(crate) fn relations(&self) -> impl Iterator<Item = &CheckedRangeRelation> {
         self.guards.iter().chain(self.conclusions.iter())
-    }
-
-    /// The integer type of a tracked field read, including reads in indices.
-    pub(crate) fn field_type(&self, place: &CheckedRangePlace) -> Option<IntegerType> {
-        fn find(term: &CheckedRangeTerm, place: &CheckedRangePlace) -> Option<IntegerType> {
-            match term {
-                CheckedRangeTerm::Field {
-                    place: field,
-                    element,
-                } if field == place => Some(*element),
-                CheckedRangeTerm::Read { indices, .. }
-                | CheckedRangeTerm::ValueProjection { indices, .. } => {
-                    indices.iter().find_map(|term| find(term, place))
-                }
-                CheckedRangeTerm::SegmentLength { segment, .. } => find(segment, place),
-                CheckedRangeTerm::Sum { terms, .. } => {
-                    terms.iter().find_map(|(_, term)| find(term, place))
-                }
-                _ => None,
-            }
-        }
-        self.binders
-            .iter()
-            .flat_map(|binder| [&binder.start, &binder.end])
-            .chain(
-                self.relations()
-                    .flat_map(|relation| [&relation.left, &relation.right]),
-            )
-            .find_map(|term| find(term, place))
     }
 
     /// Every place the clause reads.
@@ -416,8 +382,7 @@ impl CheckedRangeClause {
             match value {
                 CheckedRangeTerm::Value(subject)
                 | CheckedRangeTerm::ValueProjection { root: subject, .. } => *subject = root,
-                CheckedRangeTerm::Field { place, .. }
-                | CheckedRangeTerm::Measure { place, .. }
+                CheckedRangeTerm::Measure { place, .. }
                 | CheckedRangeTerm::SegmentLength { place, .. }
                 | CheckedRangeTerm::Read { place, .. } => {
                     place.root = root;

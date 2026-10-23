@@ -88,16 +88,81 @@ impl Judging<'_, '_, '_> {
         state: &mut FactState,
         event: Option<FlowEventId>,
     ) {
+        if let Some((expression, values)) = &facts.integer {
+            let event = event.expect("integer selection has an S17 event");
+            match arm.selection {
+                CheckedMatchSelection::Integer(value) => {
+                    let literal = match expression.ty() {
+                        CheckedType::Integer(ty) => CheckedValue::Integer {
+                            ty,
+                            bits: (value as u64) & (u64::MAX >> (64 - ty.width())),
+                        },
+                        ty => CheckedValue::NumericIdentity {
+                            ty,
+                            one: value == 1,
+                        },
+                    };
+                    let equality = GoalExpression::Operation {
+                        row: GoalOperation::Integer {
+                            operation: CheckedIntegerOperation::Equal,
+                            operand_type: expression.ty(),
+                        },
+                        type_arguments: Vec::new(),
+                        const_arguments: Vec::new(),
+                        result: CheckedType::Bool,
+                        arguments: vec![
+                            expression.clone(),
+                            GoalExpression::Datum(GoalDatum::Literal(literal)),
+                        ],
+                    };
+                    let complete = self.reasoning().expand_goal_expression(&equality, state);
+                    for expression in [equality, complete] {
+                        // S17 has the same root comparison projection as S1:
+                        // recording only the opaque sign would leave bounds
+                        // obligations without the selected term's equality.
+                        self.establish_body_goal(expression, state, event);
+                    }
+                }
+                CheckedMatchSelection::Else => {
+                    let projection = self.reasoning().exclusion_projection(expression);
+                    let expression = self.reasoning().intern_goal_expression(expression.clone());
+                    let proof =
+                        self.vocabulary
+                            .derivations
+                            .intern(DerivationNode::IntegerExclusion {
+                                detail: Box::new(ExclusionProof {
+                                    projection,
+                                    expression,
+                                    values: std::sync::Arc::clone(values),
+                                    conclusion: ExclusionConclusion::Set,
+                                    event: Some(event),
+                                    parents: Vec::new(),
+                                }),
+                            });
+                    state.establish_exclusion(Exclusion::from_view(
+                        expression,
+                        std::sync::Arc::clone(values),
+                        projection,
+                        proof,
+                        &self.vocabulary.goals,
+                    ));
+                }
+                CheckedMatchSelection::Variant(_) => {
+                    unreachable!("integer selection checked before flow")
+                }
+            }
+            return;
+        }
         if let Some(relation) = &facts.comparison {
             // Bool arms: tag 1 is `True()`, tag 0 is `False()`; the False
             // arm takes the exact negation [ENT-3].
-            if arm.tag == 1 {
+            if arm.selection == CheckedMatchSelection::Variant(1) {
                 state.establish(
                     relation,
                     &mut self.vocabulary.derivations,
                     event.expect("comparison arm has an S1 proof event"),
                 );
-            } else if arm.tag == 0 {
+            } else if arm.selection == CheckedMatchSelection::Variant(0) {
                 state.establish(
                     &relation.negated(),
                     &mut self.vocabulary.derivations,
@@ -106,7 +171,7 @@ impl Judging<'_, '_, '_> {
             }
         }
         for goal in &facts.goals {
-            if arm.tag == 1 {
+            if arm.selection == CheckedMatchSelection::Variant(1) {
                 state.establish_goal(
                     *goal,
                     GoalSign::Positive,
@@ -122,7 +187,7 @@ impl Judging<'_, '_, '_> {
                     event.expect("goal arm has an S1 proof event"),
                 );
                 self.record_boolean_decomposition(*goal, GoalSign::Positive, state);
-            } else if arm.tag == 0 {
+            } else if arm.selection == CheckedMatchSelection::Variant(0) {
                 state.establish_goal(
                     *goal,
                     GoalSign::Negative,
@@ -182,6 +247,10 @@ impl Analyzer<'_, '_> {
                 break;
             }
             continues = self.walk_statement(statement, state, frontier);
+            self.reasoning().observe_summary_context(state);
+            for edge in frontier.iter() {
+                self.reasoning().observe_summary_context(&edge.state);
+            }
         }
         if continues {
             let depth = self.frames.scopes.len() - 1;
@@ -202,6 +271,29 @@ impl Analyzer<'_, '_> {
         expression: &CheckedExpression,
         state: &mut ProofFlowState,
     ) -> ExpressionJudgment {
+        let judgment = self.expression_effects_before_result(expression, state);
+        self.judge_expression_window_bounds(expression, state);
+        judgment
+    }
+
+    fn judge_expression_window_bounds(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &mut ProofFlowState,
+    ) {
+        if let CheckedExpression::UserCall { call, .. } = expression {
+            self.judging().judge_window_bounds(call, state);
+        }
+    }
+
+    /// A direct result destination publishes its S12 relations after its
+    /// own commit. Its window bounds must see those relations too, before
+    /// any subsequent source statement can add facts.
+    fn expression_effects_before_result(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &mut ProofFlowState,
+    ) -> ExpressionJudgment {
         let mut judgment = self.judge_expression(expression, state);
         let mut events = Vec::new();
         self.input.collect_expression_kills(expression, &mut events);
@@ -212,7 +304,9 @@ impl Analyzer<'_, '_> {
                     KillEvent::Consume { .. } | KillEvent::EntryImageHolderConsume { .. } => {
                         FlowEventKind::PostconditionCallConsume
                     }
-                    KillEvent::Write { .. } | KillEvent::EntryImageHolderWrite { .. } => {
+                    KillEvent::Rebind { .. }
+                    | KillEvent::Write { .. }
+                    | KillEvent::EntryImageHolderWrite { .. } => {
                         FlowEventKind::PostconditionCallWrite
                     }
                 };
@@ -253,22 +347,36 @@ impl Analyzer<'_, '_> {
         } else {
             Vec::new()
         };
-        // [SET-1]: the target's base and offset are evaluated before the
-        // right-hand side; both are judged at this point, then the commit
-        // kill applies.
-        let target_reached = self.judge_set_target(target, state);
-        let mut destination = set_target_place(target);
-        let mut result = self.capture_result(node_path, value, state);
+        let destination = set_target_place(target);
+        let retain_result = match target {
+            CheckedSetTarget::Place(place) if place.fields.is_empty() => {
+                self.input.needs_result(place.binding, value.ty())
+            }
+            _ => self.input.eager_result(value.ty()),
+        };
+        let mut result = if retain_result {
+            self.capture_result(node_path, value, state)
+        } else {
+            Vec::new()
+        };
         let affine_value = self
             .reasoning()
             .affine_expression_form(value, &mut state.affine);
-        let judgment = self.expression_effects(value, state);
-        self.reasoning()
-            .finish_result(value, &judgment, &mut result, state);
+        let judgment = self.expression_effects_before_result(value, state);
+        if retain_result || judgment.prepared_call.is_some() {
+            // DIAG-2 retains every established S12 root, even for an unread
+            // result. Its conditional state need not survive this statement.
+            self.reasoning()
+                .finish_result(value, &judgment, &mut result, state);
+        }
         let ExpressionJudgment {
             prepared_call: prepared,
             reached: value_reached,
         } = judgment;
+        // [SET-1]: the target's base and offsets are evaluated after the
+        // right-hand side, so they are judged here, in the state it left,
+        // and only when it completes; then the commit kill applies.
+        let target_reached = value_reached && self.judge_set_target(target, state);
         let ranges_reached = self.judging().judge_call_separations(node_path, state);
         let commit_reached = target_reached && value_reached && ranges_reached;
         let receiver_route = commit_reached
@@ -287,7 +395,7 @@ impl Analyzer<'_, '_> {
         // carry the surviving consequences of that value past the write,
         // instead of losing them with the old target value.
         //
-        // Only an admitted fragment place can receive that image, so only such a
+        // Only a direct fragment place can receive that image, so only such a
         // commit forms a value term: with no destination to carry it to, the
         // image would relate nothing to the program's later state.
         let commit_carries_image = self.vocabulary.commit_target_term(target).is_some();
@@ -313,27 +421,6 @@ impl Analyzer<'_, '_> {
         let mut target_kills = Vec::new();
         self.input
             .collect_target_kill(node_path, target, state, &mut target_kills);
-        // SET-1 evaluates the target first. Preserve that selection across
-        // the RHS effects and the commit, never a later selector spelling.
-        if let Some(place) = &mut destination {
-            let identified = place.supersede_selectors(|support| {
-                prepared.as_ref().is_some_and(|prepared| {
-                    prepared.kills.iter().any(|event| {
-                        self.input.event_kills_selected_place(
-                            &prepared.entry_separations(&state.separations),
-                            support,
-                            event,
-                        )
-                    })
-                }) || target_kills.iter().any(|event| {
-                    self.input
-                        .event_kills_selected_place(&state.separations, support, event)
-                })
-            });
-            if !identified {
-                destination = None;
-            }
-        }
         let receivers =
             if let (Some(prepared), Some(receiver_route)) = (prepared.as_ref(), receiver_route) {
                 self.reasoning().prepare_direct_receiver(
@@ -350,27 +437,12 @@ impl Analyzer<'_, '_> {
             self.vocabulary
                 .proof_event(FlowEventKind::PostconditionReceiverWrite, Some(node_path))
         });
-        if !result.is_empty() {
-            let live = self.reasoning().event_live_bounds(state, &target_kills);
-            let separations = EventSeparations {
-                ledger: &state.separations,
-                live: &live,
-            };
-            for result in &mut result {
-                self.reasoning()
-                    .apply_kills_one(&separations, &mut result.facts, &target_kills);
-            }
-        }
-        if let Some(target_event) = target_event {
-            self.apply_kills_each(state, &target_kills, |_, _| target_event);
-        } else {
-            self.apply_kills(state, &target_kills);
-        }
+        self.apply_kills_with_pending_results(state, &target_kills, &mut result, target_event);
         // [MSR-3] the placement's second half, after the target's own kills:
         // the committed place's measures are the datums minted before them.
         if commit_reached
             && let Some(carry) = &placement
-            && let Some(destination) = destination.clone()
+            && let Some(destination) = set_target_place(target)
         {
             self.reasoning().establish_measure_datums(
                 node_path,
@@ -392,13 +464,13 @@ impl Analyzer<'_, '_> {
             let destination = bound_place(place.binding);
             let _ = self.reasoning().establish_captured_range_length(
                 destination,
-                captured.clone(),
+                *captured,
                 &mut state.affine,
             );
         }
         if commit_reached
             && !constructed.is_empty()
-            && let Some(base) = destination.clone()
+            && let Some(base) = set_target_place(target)
         {
             self.reasoning().establish_construct_placements(
                 node_path,
@@ -418,15 +490,42 @@ impl Analyzer<'_, '_> {
         // target's own kills the events every substitution must survive.
         if commit_reached
             && let Some(prepared) = prepared.as_ref()
-            && let Some(place) = destination.clone()
+            && let Some(mut place) = destination
         {
-            let destinations = vec![Some((
-                target.binding(),
-                ResultDestination::SetTarget {
-                    target: target.clone(),
-                    place,
-                },
-            ))];
+            // [SET-1, ENT-2] this place captures its offsets after the RHS,
+            // so only the commit's own kills can end an offset spelling as a
+            // name for the captured value, just as they do for a
+            // pre-existing reference. Keep the evaluation capture so
+            // publication cannot reach a later access through the binding's
+            // new value.
+            let bindings = place.spelled_indices().collect::<Vec<_>>();
+            let mut identity_preserved = true;
+            for (capture, source) in bindings {
+                let mut support = place.clone();
+                support.path.clear();
+                support
+                    .path
+                    .push(PlaceStep::Index(CapturedValue::new(capture, source)));
+                if target_kills.iter().any(|event| {
+                    self.input
+                        .event_kills_offset_support(&state.separations, &support, event)
+                }) {
+                    if !matches!(capture, CaptureId::Source(_) | CaptureId::LoopHeader { .. }) {
+                        identity_preserved = false;
+                        break;
+                    }
+                    place.supersede_term(source);
+                }
+            }
+            let destinations = vec![identity_preserved.then(|| {
+                (
+                    target.binding(),
+                    ResultDestination::SetTarget {
+                        target: target.clone(),
+                        place,
+                    },
+                )
+            })];
             self.reasoning().establish_result_list_destinations(
                 node_path,
                 &destinations,
@@ -446,7 +545,6 @@ impl Analyzer<'_, '_> {
                 self.vocabulary.establish_commit_copy_fact(
                     node_path,
                     target,
-                    destination.as_ref(),
                     commit,
                     &mut state.facts,
                     &mut set_image_event,
@@ -496,6 +594,7 @@ impl Analyzer<'_, '_> {
             }
         }
         if commit_reached
+            && retain_result
             && !result.is_empty()
             && let CheckedSetTarget::Place(place) = target
             && place.fields.is_empty()
@@ -503,6 +602,7 @@ impl Analyzer<'_, '_> {
         {
             state.results.insert(place.binding, result);
         }
+        self.judge_expression_window_bounds(value, state);
     }
 
     pub(super) fn walk_statement(
@@ -512,6 +612,10 @@ impl Analyzer<'_, '_> {
         frontier: &mut Vec<FlowEdge>,
     ) -> bool {
         // Every checked statement is a real source action (docs are erased).
+        self.reasoning().observe_summary_context(state);
+        for edge in frontier.iter() {
+            self.reasoning().observe_summary_context(&edge.state);
+        }
         // Continue and break route the pending inputs to their own sinks.
         if !matches!(
             statement,
@@ -562,11 +666,18 @@ impl Analyzer<'_, '_> {
                 let constructed = self
                     .reasoning()
                     .mint_construct_placements(node_path, value, state);
-                let mut result = self.capture_result(node_path, value, state);
-                let judgment = self.expression_effects(value, state);
-                self.reasoning()
-                    .finish_result(value, &judgment, &mut result, state);
-                if !result.is_empty() {
+                let retain_result = self.input.needs_result(*binding, value.ty());
+                let mut result = if retain_result {
+                    self.capture_result(node_path, value, state)
+                } else {
+                    Vec::new()
+                };
+                let judgment = self.expression_effects_before_result(value, state);
+                if retain_result || judgment.prepared_call.is_some() {
+                    self.reasoning()
+                        .finish_result(value, &judgment, &mut result, state);
+                }
+                if retain_result && !result.is_empty() {
                     state.results.insert(*binding, result);
                 }
                 self.declare(*binding);
@@ -694,13 +805,14 @@ impl Analyzer<'_, '_> {
                     {
                         self.establish_range_length(
                             bound_place(*binding),
-                            captured.clone(),
+                            *captured,
                             (start, end),
                             node_path,
                             state,
                         );
                     }
                 }
+                self.judge_expression_window_bounds(value, state);
                 true
             }
             // [GRAM-4, CALL-4] `let (a, b) = f(...);`. The call is judged once;
@@ -719,7 +831,7 @@ impl Analyzer<'_, '_> {
                 let taken = self
                     .reasoning()
                     .mint_destructuring_placements(node_path, bindings, value, state);
-                let judgment = self.expression_effects(value, state);
+                let judgment = self.expression_effects_before_result(value, state);
                 let mut destinations = Vec::with_capacity(bindings.len());
                 for (binding, ty, _) in bindings {
                     self.declare(*binding);
@@ -765,6 +877,7 @@ impl Analyzer<'_, '_> {
                         state,
                     );
                 }
+                self.judge_expression_window_bounds(value, state);
                 true
             }
             CheckedStatement::PropagateLet {
@@ -782,14 +895,16 @@ impl Analyzer<'_, '_> {
                 self.judge_atomic_exit(node_path, state);
                 // [FN-9] and it is a selected return of every unrouted
                 // clause, judged over the state that edge leaves with, and of
-                // every route a type invariant generates over the `Err`
-                // field, judged in the operand's own context for that field.
-                self.judge_postcondition_return(
+                // every route over the `Err` field, judged in the operand's
+                // own context for that field.
+                self.judge_postcondition_places(node_path, state, std::slice::from_ref(&result));
+                self.judging().judge_postcondition_return(
                     node_path,
                     state,
                     None,
                     judgment.reached,
                     std::slice::from_ref(&result),
+                    &[scrutinee],
                 );
                 self.declare(*binding);
                 if let Some(success) = result.iter().find(|result| result.success) {
@@ -1091,6 +1206,26 @@ impl Analyzer<'_, '_> {
                     target_refuted,
                 };
 
+                let lost_header = if !certificate_written
+                    && !target_proved
+                    && !target_refuted
+                    && target_failure.is_none()
+                {
+                    let goals = target
+                        .iter()
+                        .map(|target| target_goal(target, target_right))
+                        .chain(
+                            partner.iter().map(|partner| target_goal(partner, partner_right)),
+                        )
+                        .collect::<Vec<_>>();
+                    if goals.is_empty() {
+                        None
+                    } else {
+                        self.reasoning().explain_lost_header(state, &goals)
+                    }
+                } else {
+                    None
+                };
                 // A participating function may defer this target. Publication
                 // follows its own proof point; acceptance still owes the record.
                 if let Some(target) = target
@@ -1122,6 +1257,7 @@ impl Analyzer<'_, '_> {
                     name: proof.name.clone(),
                     certificate_written,
                     check,
+                    lost_header,
                 });
                 true
             }
@@ -1143,7 +1279,13 @@ impl Analyzer<'_, '_> {
                 };
                 let mut results = returned
                     .iter()
-                    .map(|value| self.capture_result(node_path, value, state))
+                    .map(|value| {
+                        if self.input.needs_return_result(value.ty()) {
+                            self.capture_result(node_path, value, state)
+                        } else {
+                            Vec::new()
+                        }
+                    })
                     .collect::<Vec<_>>();
 
                 let affine_result = self
@@ -1175,7 +1317,12 @@ impl Analyzer<'_, '_> {
                 if !matches!(value, CheckedExpression::UserCall { .. }) {
                     self.input.collect_expression_kills(value, &mut events);
                 }
-                for result in &mut results {
+                for (returned, result) in returned.iter().zip(&mut results) {
+                    if !self.input.needs_return_result(returned.ty())
+                        && judgment.prepared_call.is_none()
+                    {
+                        continue;
+                    }
                     // Every ordinal sees the complete return expression's
                     // effects. A clause selects only its own Result context.
                     self.reasoning()
@@ -1184,12 +1331,14 @@ impl Analyzer<'_, '_> {
 
                 // [TYPE-11] a return inside an atomic block leaves it.
                 self.judge_atomic_exit(node_path, state);
-                self.judge_postcondition_return(
+                self.judge_postcondition_places(node_path, state, &results);
+                self.judging().judge_postcondition_return(
                     node_path,
                     state,
                     affine_result.as_ref(),
                     judgment.reached,
                     &results,
+                    &returned,
                 );
                 self.apply_kills(state, &events);
                 false
@@ -1207,10 +1356,21 @@ impl Analyzer<'_, '_> {
                     .last()
                     .is_some_and(|frame| value_carrier(frame.result_mode, frame.result_type, value))
                     .then(|| self.reasoning().mint_value_carrier(node_path, value, state));
-                let mut result = self.capture_result(node_path, value, state);
+                let retain_result = self
+                    .frames
+                    .gives
+                    .last()
+                    .is_none_or(|frame| self.input.needs_result(frame.binding, value.ty()));
+                let mut result = if retain_result {
+                    self.capture_result(node_path, value, state)
+                } else {
+                    Vec::new()
+                };
                 let judgment = self.expression_effects(value, state);
-                self.reasoning()
-                    .finish_result(value, &judgment, &mut result, state);
+                if retain_result || judgment.prepared_call.is_some() {
+                    self.reasoning()
+                        .finish_result(value, &judgment, &mut result, state);
+                }
                 // [TYPE-11] a give to a value initializer around an atomic
                 // block leaves the block.
                 if self
@@ -1260,7 +1420,7 @@ impl Analyzer<'_, '_> {
                         ProofFlowState::default()
                     });
                     let mut exit = state.clone();
-                    if !result.is_empty() {
+                    if retain_result && !result.is_empty() {
                         exit.results.insert(binding, result);
                     }
                     self.exit_scopes_to(&mut exit, scope_depth);
@@ -1372,7 +1532,7 @@ impl Analyzer<'_, '_> {
                         let held = CheckedMatchArm {
                             node_path: node_path.clone(),
                             label: "atomic guard".to_owned(),
-                            tag: 1,
+                            selection: CheckedMatchSelection::Variant(1),
                             binders: Vec::new(),
                             covered: Vec::new(),
                             body: Vec::new(),
@@ -1464,6 +1624,7 @@ impl Analyzer<'_, '_> {
                             };
                             self.frames.loops[position].continues.push(edge);
                         } else {
+                            self.frames.loops[position].break_sites.push(edge.site);
                             self.frames.loops[position].breaks.push(edge.state);
                         }
                     }
@@ -1471,17 +1632,21 @@ impl Analyzer<'_, '_> {
                 false
             }
             CheckedStatement::Match {
+                condition,
                 scrutinee,
-                enum_type,
+                match_type,
                 arms,
                 ..
             } => {
                 // [MSR-3] the payload placement is minted before the `match`
                 // consumes its scrutinee, because the datums it forms are the
                 // measures the payload had immediately before that consume.
-                let payload = self
-                    .reasoning()
-                    .mint_payload_placements(scrutinee, *enum_type, state);
+                let payload = match match_type {
+                    CheckedMatchType::Enum(enum_type) => self
+                        .reasoning()
+                        .mint_payload_placements(scrutinee, *enum_type, state),
+                    CheckedMatchType::Integer(_) => Vec::new(),
+                };
                 let mut result = expression_node_path(scrutinee)
                     .cloned()
                     .map(|site| self.capture_result(&site, scrutinee, state))
@@ -1491,13 +1656,18 @@ impl Analyzer<'_, '_> {
                     .finish_result(scrutinee, &judgment, &mut result, state);
                 let facts = if judgment.reached {
                     self.reasoning()
-                        .arm_facts(scrutinee, *enum_type, &state.facts)
+                        .match_arm_facts(scrutinee, *match_type, arms, &state.facts)
                 } else {
                     ArmFacts::default()
                 };
+                if let Some(site) = condition {
+                    self.judging().judge_condition(site, &facts, state);
+                }
                 let mut exits = Vec::new();
                 for arm in arms {
-                    let payload = payload.iter().find(|payload| payload.tag == arm.tag);
+                    let payload = payload.iter().find(|payload| {
+                        arm.selection == CheckedMatchSelection::Variant(payload.tag)
+                    });
                     exits.extend(self.walk_arm(arm, state, &facts, payload, &result));
                 }
                 if exits.is_empty() {
@@ -1509,30 +1679,37 @@ impl Analyzer<'_, '_> {
             }
             CheckedStatement::ValueMatchLet {
                 node_path,
+                condition,
                 binding,
                 result_type,
                 result_mode,
                 scrutinee,
-                enum_type,
+                match_type,
                 arms,
                 ..
             } => {
                 // [MSR-3] the payload placement is minted before the `match`
                 // consumes its scrutinee, because the datums it forms are the
                 // measures the payload had immediately before that consume.
-                let payload = self
-                    .reasoning()
-                    .mint_payload_placements(scrutinee, *enum_type, state);
+                let payload = match match_type {
+                    CheckedMatchType::Enum(enum_type) => self
+                        .reasoning()
+                        .mint_payload_placements(scrutinee, *enum_type, state),
+                    CheckedMatchType::Integer(_) => Vec::new(),
+                };
                 let mut result = self.capture_result(node_path, scrutinee, state);
                 let judgment = self.expression_effects(scrutinee, state);
                 self.reasoning()
                     .finish_result(scrutinee, &judgment, &mut result, state);
                 let facts = if judgment.reached {
                     self.reasoning()
-                        .arm_facts(scrutinee, *enum_type, &state.facts)
+                        .match_arm_facts(scrutinee, *match_type, arms, &state.facts)
                 } else {
                     ArmFacts::default()
                 };
+                if let Some(site) = condition {
+                    self.judging().judge_condition(site, &facts, state);
+                }
                 self.frames.gives.push(GiveFrame {
                     scope_depth: self.frames.scopes.len(),
                     loop_depth: self.frames.loops.len(),
@@ -1548,7 +1725,9 @@ impl Analyzer<'_, '_> {
                 for arm in arms {
                     // Every delivering path leaves by `give`; an arm's
                     // fall-through state contributes nothing [GIVE-1].
-                    let payload = payload.iter().find(|payload| payload.tag == arm.tag);
+                    let payload = payload.iter().find(|payload| {
+                        arm.selection == CheckedMatchSelection::Variant(payload.tag)
+                    });
                     let _ = self.walk_arm(arm, state, &facts, payload, &result);
                 }
                 let frame = self
@@ -1618,6 +1797,7 @@ impl Analyzer<'_, '_> {
                     invariant_atoms: HashSet::new(),
                     capture_path: None,
                     breaks: Vec::new(),
+                    break_sites: Vec::new(),
                     continues: Vec::new(),
                 });
                 let mut body_state = state.clone();
@@ -1648,11 +1828,15 @@ impl Analyzer<'_, '_> {
                 // Each break state already left the loop's name scope in
                 // `exit_counted_loops_from`; its header conclusions stay.
                 let frame = self.frames.loops.pop();
-                let breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
+                let (breaks, break_sites, templates) = frame
+                    .map(|frame| (frame.breaks, frame.break_sites, frame.templates))
+                    .unwrap_or_default();
                 let has_breaks = !breaks.is_empty();
                 // [FN-1, ENT-5] only breaks resolved to this loop reach its
                 // continuation; an empty join has no continuing path.
                 *state = self.join_with_transport(&breaks, &[]);
+                self.reasoning()
+                    .record_exit_header_losses(state, &breaks, &break_sites, &templates);
                 if !has_breaks {
                     state.entry_images = head_entry_images;
                 }
@@ -1820,6 +2004,7 @@ impl Analyzer<'_, '_> {
                     invariant_atoms,
                     capture_path: Some(range_path.clone()),
                     breaks: Vec::new(),
+                    break_sites: Vec::new(),
                     continues: Vec::new(),
                 });
                 let mut body_state = head.clone();
@@ -1883,7 +2068,9 @@ impl Analyzer<'_, '_> {
                 // Each break state already left the loop's name scope in
                 // `exit_counted_loops_from`; its header conclusions stay.
                 let frame = self.frames.loops.pop();
-                let breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
+                let (breaks, break_sites, templates) = frame
+                    .map(|frame| (frame.breaks, frame.break_sites, frame.templates))
+                    .unwrap_or_default();
 
                 // Unlike an ordinary loop, the real false-header edge always
                 // contributes. Binder and captures leave scope before it or
@@ -1941,6 +2128,11 @@ impl Analyzer<'_, '_> {
                 exits.extend(breaks);
                 self.frames.scopes.pop();
                 *state = self.join_with_transport(&exits, &[]);
+                let mut exit_sites = Vec::with_capacity(1 + break_sites.len());
+                exit_sites.push(node_path.clone());
+                exit_sites.extend(break_sites);
+                self.reasoning()
+                    .record_exit_header_losses(state, &exits, &exit_sites, &templates);
                 record_continuing(&mut state.continuing, &outer_continuing);
                 true
             }
@@ -1961,10 +2153,18 @@ impl Analyzer<'_, '_> {
         let mut state = entry.clone();
         let mut frontier = Vec::new();
         self.frames.branches.push(arm.label.clone());
-        let s1_event = (!facts.goals.is_empty() || facts.comparison.is_some()).then(|| {
-            self.vocabulary
-                .proof_event(FlowEventKind::S1, facts.node_path.as_ref())
-        });
+        let s1_event =
+            (!facts.goals.is_empty() || facts.comparison.is_some() || facts.integer.is_some())
+                .then(|| {
+                    self.vocabulary.proof_event(
+                        if facts.integer.is_some() {
+                            FlowEventKind::S17
+                        } else {
+                            FlowEventKind::S1
+                        },
+                        facts.node_path.as_ref(),
+                    )
+                });
         self.judging()
             .establish_arm_entry(arm, facts, &mut state.facts, s1_event);
         // [MSR-3] the payload placement's second half: on the arm whose
@@ -1988,7 +2188,7 @@ impl Analyzer<'_, '_> {
         // [ENT-5] the arm for a route's variant selects that route's
         // context onto the own binder of the routed field.
         for result in results {
-            if arm.tag != result.route.tag {
+            if arm.selection != CheckedMatchSelection::Variant(result.route.tag) {
                 continue;
             }
             if let Some(binder) = arm.binders.iter().find(|binder| {
@@ -2066,7 +2266,7 @@ impl Analyzer<'_, '_> {
     ) {
         let term = self.reasoning().establish_captured_range_length(
             destination,
-            captured.clone(),
+            captured,
             &mut state.affine,
         );
         let Some(term) = term else {

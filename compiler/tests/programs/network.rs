@@ -51,18 +51,76 @@ fn connect_when_ready(port: u16) -> TcpStream {
 
 /// Connects to a program that is still starting, at the address it listens on.
 fn connect_to_when_ready(address: SocketAddr) -> TcpStream {
-    let port = address.port();
+    connect_to_when_ready_using(address, TcpStream::connect_timeout)
+}
+
+fn connect_to_when_ready_using(
+    address: SocketAddr,
+    mut connect: impl FnMut(&SocketAddr, Duration) -> std::io::Result<TcpStream>,
+) -> TcpStream {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        match TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "connect to program at {address} exceeded the 20-second deadline"
+        );
+        match connect(&address, remaining) {
             Ok(stream) => return bounded_stream(stream),
-            Err(error) if Instant::now() < deadline => {
-                let _ = error;
+            // A timeout may be reported after the handshake completed. Retrying
+            // it could abandon a connection the program already admitted.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ConnectionRefused
+                    && Instant::now() < deadline =>
+            {
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(error) => panic!("the program never listened on {port}: {error}"),
+            Err(error) => panic!("connect to program at {address} failed: {error}"),
         }
     }
+}
+
+#[test]
+fn readiness_does_not_retry_a_timeout_after_a_completed_handshake() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listen for the readiness regression");
+    let address = listener.local_addr().expect("the listener's address");
+    let mut attempts = 0;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        connect_to_when_ready_using(address, |address, timeout| {
+            attempts += 1;
+            let stream = TcpStream::connect_timeout(address, timeout)?;
+            if attempts == 1 {
+                drop(stream);
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "timeout observed after a completed handshake",
+                ))
+            } else {
+                Ok(stream)
+            }
+        })
+    }));
+    let failure = outcome.expect_err("a timeout must fail readiness");
+    let message = failure
+        .downcast_ref::<String>()
+        .expect("readiness reports a formatted connection error");
+    assert!(
+        message.contains("timeout observed after a completed handshake"),
+        "readiness must report the injected timeout: {message}"
+    );
+    assert_eq!(attempts, 1, "an admitted connection must not be replaced");
+    listener
+        .set_nonblocking(true)
+        .expect("bound regression acceptance");
+    let (accepted, _) = listener.accept().expect("the first connection was admitted");
+    let mut accepted = bounded_stream(accepted);
+    assert_eq!(
+        accepted
+            .read(&mut [0_u8; 1])
+            .expect("read the abandoned connection"),
+        0,
+        "the admitted connection was abandoned before the timeout was reported"
+    );
 }
 
 fn bounded_stream(stream: TcpStream) -> TcpStream {
@@ -350,9 +408,19 @@ fn a_peer_that_resets_reaches_the_program_as_its_own_outcome_on_both_routes() {
         // on the macOS runner.
         let bytes = vec![7_u8; 64 * 1024];
         stream.write_all(&bytes).expect("send the payload");
-        stream
-            .peek(&mut [0_u8; 1])
-            .expect("the first echoed byte arrives before the peer closes");
+        let local = stream.local_addr();
+        let peer = stream.peer_addr();
+        let peeked = stream.peek(&mut [0_u8; 1]).unwrap_or_else(|error| {
+            panic!(
+                "the first echoed byte must arrive before the peer closes: {error} \
+                 (native ring: {native_ring}, port: {port}, local: {local:?}, peer: {peer:?})"
+            )
+        });
+        assert_eq!(
+            peeked, 1,
+            "the peer must hold an unread echoed byte before closing \
+             (native ring: {native_ring}, port: {port}, local: {local:?}, peer: {peer:?})"
+        );
         drop(stream);
         let (status, _) = finished(child);
         // `tcp_echo.wf` reports 20 plus the portable class for a refused
@@ -919,7 +987,7 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let address = std::net::socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 49151_u16);
@@ -948,7 +1016,7 @@ fn crossed_ordinary_tcp_halves_keep_the_other_directions_live() {
             }
         }
         .expect("ordinary construction and cleanup of crossed halves must compile");
-        let program = build_program(&llvm);
+        let program = build_program(&crate::support::sanitized(llvm));
         for native_ring in [true, false] {
             let mut child = program.spawn_on_route(native_ring, &[]);
             let mut accept = || {
@@ -1158,13 +1226,58 @@ fn whole_reply(stream: &mut TcpStream, what: &str) -> String {
 #[cfg(target_os = "linux")]
 fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
     let mut returned = vec![0_u8; expected.len()];
-    stream
-        .read_exact(&mut returned)
-        .unwrap_or_else(|error| panic!("{what}: {error}"));
+    let local = stream.local_addr();
+    let peer = stream.peer_addr();
+    let mut read = 0;
+    while read < returned.len() {
+        let error = match stream.read(&mut returned[read..]) {
+            Ok(0) => std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "peer closed before the expected replies were complete",
+            ),
+            Ok(count) => {
+                read += count;
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => error,
+        };
+        panic!(
+            "{what}: {error}; expected {} bytes, read {read}; \
+             reply prefix (at most 256 bytes): {}; local: {local:?}, peer: {peer:?}",
+            expected.len(),
+            returned[..read.min(256)].escape_ascii()
+        );
+    }
     assert_eq!(
-        String::from_utf8_lossy(&returned),
-        String::from_utf8_lossy(expected),
-        "{what}"
+        returned.as_slice(),
+        expected,
+        "{what}; local: {local:?}, peer: {peer:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn reply_assertion_rejects_distinct_non_utf8_bytes() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listen for the reply regression");
+    let address = listener.local_addr().expect("the listener's address");
+    let mut stream = connect_to_when_ready(address);
+    let (peer, _) = listener.accept().expect("accept the reply regression peer");
+    let mut peer = bounded_stream(peer);
+    peer.write_all(b"\xff").expect("send the invalid UTF-8 byte");
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        expect_replies(&mut stream, b"\xfe", "different invalid UTF-8 bytes");
+    }));
+    let failure = outcome.expect_err(
+        "different bytes must fail even when their lossy UTF-8 renderings are equal",
+    );
+    let message = failure
+        .downcast_ref::<String>()
+        .expect("the byte comparison reports a formatted assertion failure");
+    assert!(
+        message.contains("assertion `left == right` failed")
+            && message.contains("different invalid UTF-8 bytes"),
+        "the byte comparison, not a socket error, must fail: {message}"
     );
 }
 

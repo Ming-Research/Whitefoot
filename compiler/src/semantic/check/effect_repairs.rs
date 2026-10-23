@@ -158,14 +158,11 @@ impl Checker<'_, '_> {
                 let complete = place.path.iter().all(|step| match step {
                     PlaceStep::Descendant(_) => false,
                     PlaceStep::Index(value) | PlaceStep::Page(value) => {
-                        self.captured_parameter(value.clone(), bindings).is_some()
+                        self.captured_parameter(*value, bindings).is_some()
                     }
                     PlaceStep::Range(range) => {
-                        self.captured_parameter(range.start.clone(), bindings)
-                            .is_some()
-                            && self
-                                .captured_parameter(range.end.clone(), bindings)
-                                .is_some()
+                        self.captured_parameter(range.start, bindings).is_some()
+                            && self.captured_parameter(range.end, bindings).is_some()
                     }
                     _ => true,
                 });
@@ -189,7 +186,7 @@ impl Checker<'_, '_> {
                 bases,
                 offset: captures
                     .get(index)
-                    .and_then(|value| self.captured_parameter(value.clone(), bindings)),
+                    .and_then(|value| self.captured_parameter(*value, bindings)),
             });
         }
         Ok(EffectCall {
@@ -272,9 +269,7 @@ impl Checker<'_, '_> {
             // nor an instruction to insert it is published without validation.
             let (expected_row, mechanical_fix) = if validated {
                 let expected = self.types.render_effect_row(&suggested, signature)?;
-                let mut fix = format!(
-                    "declare the row as `{expected}`, which covers every access the body makes and no other"
-                );
+                let mut fix = super::repairs::effect_row_repair(&expected);
                 for companion in companions {
                     fix.push_str("; ");
                     fix.push_str(&companion);

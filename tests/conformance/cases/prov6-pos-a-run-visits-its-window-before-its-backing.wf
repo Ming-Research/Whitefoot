@@ -20,11 +20,7 @@ fn walk(first: Holder) -> code: u8 pure {
   place_back(window: &run, value: move first);
   let second = hold(value: 5_u8);
   place_back(window: &run, value: move second);
-  let held = run.len;
-  if held == 2_u64 {
-  } else {
-    return 1_u8;
-  }
+  let observed = run.len;
   let back = take_back(window: &run);
   let width = back.data.inner.len;
   if width == 2_u64 {
@@ -32,15 +28,13 @@ fn walk(first: Holder) -> code: u8 pure {
     return 2_u8;
   }
   let left = run.len;
-  if left == 1_u64 {
-  } else {
-    return 3_u8;
-  }
-  return 0_u8;
+  let scaled = observed * 10_u64;
+  let total = scaled + left;
+  return cvt::<u64, u8>(total);
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "The entry builds the first holder and hands it to the walk, whose own window then owns both.";
+  doc "The entry builds the first holder and hands it to the walk, whose own window then owns both. The window's length before and after the take, 2 and 1, form the exit status 21.";
   let first = hold(value: 3_u8);
   let code = walk(first: move first);
   return exit_status(code: code);

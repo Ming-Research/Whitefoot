@@ -19,16 +19,19 @@ mod containers;
 /// The §9.1 cost census, every case of which compiles `wfgrep`.
 mod cost_shape;
 mod counted_ranges;
+mod decision_cell;
 mod deterministic_target;
 mod division_obligations;
 mod effect_attributes;
 mod enumeration_records;
+mod executable_runner;
 mod exhaustion;
 mod float_conversion;
 mod floating;
 mod frames;
 mod frozen;
 mod generics;
+mod heap_alignment;
 mod heap_programs;
 mod indexed_reductions;
 mod integer_absolute;
@@ -53,6 +56,7 @@ mod payload_enums;
 mod ranges;
 mod read_through;
 mod value_equality;
+mod wake;
 // Retired with [OWN-6] and [OWN-14]: the `reborrows` module's four tests all
 // had the reborrow as their subject - a callee taking `&uniq 'r T` and
 // returning `&uniq 'r target^`, the child chain through a `box<u64>`
@@ -72,7 +76,9 @@ mod reinterpret;
 mod requires;
 mod resource_enums;
 mod result_abi;
+mod shared_environment;
 mod shared_maps;
+mod snapshot;
 mod stack_ledger;
 mod storage_alias;
 mod system;
@@ -402,6 +408,16 @@ fn append_runtime_units_with_library_defines(
         ("completion/contract.h", COMPLETION_CONTRACT_HEADER),
         ("completion/file_adapter.h", COMPLETION_FILE_ADAPTER_HEADER),
         ("completion/bridge.h", COMPLETION_BRIDGE_HEADER),
+        (
+            "completion/snapshot_export.h",
+            crate::SNAPSHOT_EXPORT_HEADER,
+        ),
+        ("completion/fork_capsule.h", crate::FORK_CAPSULE_HEADER),
+        (
+            "completion/snapshot_export.c",
+            crate::SNAPSHOT_EXPORT_SOURCE,
+        ),
+        ("completion/fork_capsule.c", crate::FORK_CAPSULE_SOURCE),
         ("completion/file_posix.h", COMPLETION_FILE_POSIX_HEADER),
         (
             "completion/socket_address.h",
@@ -427,6 +443,7 @@ fn append_runtime_units_with_library_defines(
             COMPLETION_LINUX_IO_URING_SOURCE,
         ),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
+        ("concurrent_map_layout.h", crate::CONCURRENT_MAP_LAYOUT_HEADER),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
     ];
@@ -454,6 +471,40 @@ fn append_runtime_units_with_library_defines(
         {
             continue;
         }
+        if matches!(
+            name,
+            "completion/snapshot_export.c" | "completion/fork_capsule.c"
+        ) {
+            let object = directory.join(name).with_extension("o");
+            #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+            let output = Command::new(crate::clang_executable())
+                .args(HOST_OPTIMIZATION_ARGUMENTS)
+                .args(crate::RESTRICTED_CHILD_COMPILE_ARGUMENTS)
+                .arg("-std=c11")
+                .arg("-pthread")
+                .arg("-I")
+                .arg(directory)
+                .arg("-I")
+                .arg(directory.join("completion"))
+                .arg("-c")
+                .arg(directory.join(name))
+                .arg("-o")
+                .arg(&object)
+                .output()
+                .expect("compile restricted child unit");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            command.arg("-x").arg("none").arg(object);
+            artifacts.push(if name.ends_with("snapshot_export.c") {
+                "completion/snapshot_export.o"
+            } else {
+                "completion/fork_capsule.o"
+            });
+            continue;
+        }
         command
             .arg("-x")
             .arg(if name.ends_with(".ll") { "ir" } else { "c" })
@@ -473,6 +524,7 @@ fn append_runtime_units_with_library_defines(
             library.arg(format!("-D{define}"));
         }
         let object = directory.join("ordinary_values.o");
+        #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
         let reached = library
             .arg(directory.join("ordinary_values.c"))
             .arg("-o")
@@ -540,6 +592,7 @@ pub(super) fn build_linked_executable_with_library_fixture(
             library_fixture,
             directory,
         )
+        .unwrap_or_else(|failure| panic!("{failure}"))
     })
 }
 
@@ -550,7 +603,11 @@ fn build_linked_executable_inner(
     library_defines: &[String],
     library_fixture: &str,
     directory: &Path,
-) -> PathBuf {
+) -> Result<PathBuf, String> {
+    // A supplied host caller can run a checked library with another signature.
+    if host.is_none() {
+        crate::require_executable_runner(llvm)?;
+    }
     let module = directory.join("program.ll");
     let executable = directory.join("program");
     std::fs::write(&module, llvm).expect("write backend test module");
@@ -613,6 +670,7 @@ fn build_linked_executable_inner(
             staged_units.extend(names.into_iter().map(|name| directory.join(name)));
         }
     }
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let compile = command
         .args(HOST_OPTIMIZATION_ARGUMENTS)
         .args(HOST_LINK_LIBRARIES)
@@ -637,7 +695,7 @@ fn build_linked_executable_inner(
     for staged in ["completion", "sched"] {
         std::fs::remove_dir(directory.join(staged)).expect("remove staged runtime directory");
     }
-    executable
+    Ok(executable)
 }
 
 /// Runs one emitted module with exact argument bytes.
@@ -705,6 +763,7 @@ fn compile_link_and_run_with(
 
 /// Returns the module as the host optimizer leaves it at the shipped level.
 fn host_optimized_module(llvm: &str) -> String {
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let mut child = Command::new(crate::clang_executable())
         .arg("-x")
         .arg("ir")
@@ -804,14 +863,20 @@ fn emitted_function<'module>(module: &'module str, name: &str) -> &'module str {
 /// The definition that carries one source function's emitted body: the
 /// function's own definition, or, for a result returned in registers, the
 /// internal destination-form body its public entry calls
-/// (compiler/src/backend/abi.rs).
+/// (compiler/src/backend/abi.rs), in the internal environment form of a
+/// recursive group's member where it has one
+/// (compiler/recursive-environment).
 fn emitted_body<'module>(module: &'module str, name: &str) -> &'module str {
-    let body = format!("{name}.body");
-    if module.contains(&format!(" @wf_{body}(")) {
-        emitted_function(module, &body)
-    } else {
-        emitted_function(module, name)
+    for candidate in [
+        format!("_env_{name}.body"),
+        format!("_env_{name}"),
+        format!("{name}.body"),
+    ] {
+        if module.contains(&format!(" @wf_{candidate}(")) {
+            return emitted_function(module, &candidate);
+        }
     }
+    emitted_function(module, name)
 }
 
 /// The first-class aggregate type one emitted definition returns in
@@ -1249,11 +1314,10 @@ struct Outer {
   other: i32;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn exercise(flag: Bool) -> status: std::process::ExitStatus pure {
   let number = 1_i32;
   let inner = Inner(value: 2_i32);
   let outer = Outer(inner: inner, other: 7_i32);
-  let flag = True();
   if flag {
     set number = 42_i32;
     set outer.inner.value = number;
@@ -1266,9 +1330,6 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 1_u8);
   }
   let preserved = outer.other;
-  if preserved != 7_i32 {
-    return std::process::exit_status(code: 2_u8);
-  }
   let selected = if flag {
     set number = 43_i32;
     give number;
@@ -1279,25 +1340,35 @@ fn main() -> status: std::process::ExitStatus pure {
   if selected != 43_i32 {
     return std::process::exit_status(code: 3_u8);
   }
-  if number != 43_i32 {
-    return std::process::exit_status(code: 4_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let number_gap = number -wrap 43_i32;
+  let status_value = preserved +wrap number_gap;
+  let status_code = cvt.wrap::<i32, u8>(status_value);
+  return std::process::exit_status(code: status_code);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let chosen = True();
+  return exercise(flag: chosen);
 }
 "#;
+    // `exercise` takes the branch selector as its parameter, so both
+    // assignment branches and both value-if arms are emitted and joined. Its
+    // exit status is the untouched sibling field `outer.other` plus the root
+    // local's distance from 43 after the value-if, which the harness
+    // compares with the constructed 7, so a wrong joined `number` moves it.
     let llvm = emit(source);
-    let main = emitted_function(&llvm, "main");
-    assert!(main.contains(" = phi i32 "));
-    assert!(main.contains(&format!(
+    let exercise = emitted_function(&llvm, "exercise");
+    assert!(exercise.contains(" = phi i32 "));
+    assert!(exercise.contains(&format!(
         "store {} zeroinitializer, ptr ",
         nominal_type("Outer")
     )));
-    assert!(main.contains(&format!(
+    assert!(exercise.contains(&format!(
         "store {} zeroinitializer, ptr ",
         nominal_type("Inner")
     )));
     let mut value_addresses = Vec::new();
-    for line in main.lines() {
+    for line in exercise.lines() {
         let Some((address, operation)) = line.trim().split_once(" = ") else {
             continue;
         };
@@ -1313,7 +1384,7 @@ fn main() -> status: std::process::ExitStatus pure {
             value_addresses.push(address);
         }
     }
-    let value_stores = main
+    let value_stores = exercise
         .lines()
         .filter(|line| {
             line.trim().starts_with("store i32 ")
@@ -1328,7 +1399,7 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 
     let output = compile_and_run(&llvm);
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(7), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }
@@ -1423,17 +1494,6 @@ fn main() -> status: std::process::ExitStatus pure {
     Err(error: underflow) => {
     }
   }
-  let multiply_result = 6_i16 *checked 7_i16;
-  match multiply_result {
-    Ok(value: product) => {
-      if product != 42_i16 {
-        return std::process::exit_status(code: 3_u8);
-      }
-    }
-    Err(error: product_error) => {
-      return std::process::exit_status(code: 4_u8);
-    }
-  }
   let success = forward(value: 7_i32);
   match success {
     Ok(value: answer) => {
@@ -1484,7 +1544,16 @@ fn main() -> status: std::process::ExitStatus pure {
       return std::process::exit_status(code: 12_u8);
     }
   }
-  return std::process::exit_status(code: 0_u8);
+  let multiply_result = 6_i16 *checked 7_i16;
+  match multiply_result {
+    Ok(value: product) => {
+      let product_code = cvt::<i16, u8>(product);
+      return std::process::exit_status(code: product_code);
+    }
+    Err(error: product_error) => {
+      return std::process::exit_status(code: 4_u8);
+    }
+  }
 }
 "#;
     let llvm = compile(source);
@@ -1492,7 +1561,9 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(llvm.contains("@llvm.usub.with.overflow.i8"));
     assert!(llvm.contains("@llvm.smul.with.overflow.i16"));
     let output = compile_and_run(&llvm);
-    assert!(output.status.success());
+    // The last step returns the checked product `6 * 7` as the exit status;
+    // every earlier failure returns a code from 1 to 12.
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }

@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-10: clear empties a boxed byte window and keeps its storage and capacity. Its record publishes len == 0 and an unchanged cap, so the invariants hold and the refill needs no new guard; the refilled byte is read back. A second clear of the now empty window and a clear of a zero-capacity window, the shared empty header, leave both empty.";
+  let bytes = box_slots_new::<u8>(capacity: 65536_u64);
+  place_back(window: &bytes.inner, value: 65_u8);
+  place_back(window: &bytes.inner, value: 66_u8);
+  clear(window: &bytes.inner);
+  invariant empty: bytes.inner.len == 0_u64;
+  invariant retained: bytes.inner.cap == 65536_u64;
+  place_back(window: &bytes.inner, value: 67_u8);
+  if bytes.inner[0_u64] != 67_u8 {
+    return exit_status(code: 1_u8);
+  }
+  clear(window: &bytes.inner);
+  clear(window: &bytes.inner);
+  invariant again_empty: bytes.inner.len == 0_u64;
+  invariant again_retained: bytes.inner.cap == 65536_u64;
+  let none = box_slots_new::<u8>(capacity: 0_u64);
+  clear(window: &none.inner);
+  invariant none_empty: none.inner.len == 0_u64;
+  return exit_status(code: 0_u8);
+}

@@ -244,10 +244,9 @@ impl Reasoning<'_, '_, '_> {
             return source;
         };
         if !path
-            .support_places()
-            .into_iter()
-            .skip(1)
-            .any(|support| support.root == PlaceRoot::Binding(next.binder))
+            .path
+            .iter()
+            .any(|step| step.measure_offset_support() == Some(next.binder))
         {
             return source;
         }
@@ -321,7 +320,7 @@ impl Reasoning<'_, '_, '_> {
                     targets,
                     proofs,
                 )?;
-                base.path.push(PlaceStep::Index(place.captured.clone()));
+                base.path.push(PlaceStep::Index(place.captured));
                 (base, place.path.as_slice())
             }
             _ => return Ok(()),
@@ -329,6 +328,12 @@ impl Reasoning<'_, '_, '_> {
         for step in steps {
             match step {
                 CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    base.path.push(PlaceStep::Payload {
+                        variant: *variant,
+                        field: *field,
+                    });
+                }
                 CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
                 CheckedPlaceStep::Measure(measure) => base.path.push(PlaceStep::Measure(*measure)),
                 CheckedPlaceStep::Subscript(subscript) => {
@@ -348,7 +353,7 @@ impl Reasoning<'_, '_, '_> {
                             proofs,
                         )?;
                     }
-                    base.path.push(PlaceStep::Index(subscript.captured.clone()));
+                    base.path.push(PlaceStep::Index(subscript.captured));
                 }
             }
         }

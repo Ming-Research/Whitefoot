@@ -27,11 +27,7 @@ fn advance(counter: &Counter, delta: u64) -> result: unit writes(counter) contra
 fn main() -> status: ExitStatus pure {
   doc "Advances 5 by 7 and checks the count and the tag.";
   let counter = Counter(count: 5_u64, tag: 0_u64);
-  let held = counter.count;
-  if held <= 793_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  let kept = counter.count;
   advance(counter: &counter, delta: 7_u64);
   let count = counter.count;
   if count == 12_u64 {

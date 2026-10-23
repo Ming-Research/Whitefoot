@@ -115,7 +115,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -136,7 +136,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -154,7 +154,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         SemanticRule::Type7,
         SemanticIssueKind::MissingDereference {
-            mechanical_fix: "write `holder^`",
+            mechanical_fix: "write `holder^`".to_owned(),
         },
     );
 
@@ -186,26 +186,14 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_checks(subscript);
-    let nested_offset =
-        br#"fn probe(bounds: Array<u64, 2>, slots: Array<u64, 1>) -> result: unit pure {
-  for @items (i in bounds[slots[0_u64]]..0_u64) {
-  }
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
     assert_rule(
-        nested_offset,
+        subscript,
         SemanticRule::Ent2,
         SemanticIssueKind::InvalidCountedEndpoint {
             mechanical_fix: ENDPOINT_TERM_FIX,
         },
     );
-    super::assert_rule_at(nested_offset, SemanticRule::Ent2, "bounds[slots[0_u64]]");
+    super::assert_rule_at(subscript, SemanticRule::Ent2, "bounds[0_u64]");
 
     // [EFF-1] a by-value parameter has no effect entry at all, so the row
     // names only the reference endpoint. The v0.59 spelling declared
@@ -252,9 +240,10 @@ fn check_records_client(main: &[u8]) -> Result<(), crate::CompilationFailure> {
 /// exactly when every offset in its place is itself a clause (a) or clause
 /// (c) term.
 ///
-/// A bare binding or tracked field offset is admitted. An array-element
-/// offset is no clause (a) or (c) selector, so the selected place is no term
-/// and the endpoint is ENT-2's rejection.
+/// A bare binding offset is represented and admitted. An array-element offset
+/// is no term, so the place is no term and the endpoint is ENT-2's rejection.
+/// A tracked field place is an admitted offset with its own identity and
+/// support, so it also supplies a readonly-field endpoint.
 #[test]
 fn a_readonly_field_endpoint_follows_its_offset_forms() {
     let program = |offset: &str| {
@@ -294,10 +283,10 @@ fn main() -> status: std::process::ExitStatus pure {{
         .expect("a tracked field offset is admitted");
 }
 
-/// [ENT-2] a tracked field offset retains its selected value and support in
-/// ordinary reads, requirement places, and measured places alike.
+/// [ENT-2] projected offsets share their tracked-place identity in body
+/// reads, contract clauses and measures.
 #[test]
-fn a_tracked_field_offset_is_admitted_wherever_the_place_is_read() {
+fn projected_offsets_are_represented_in_bodies_clauses_and_measures() {
     let body = br#"alias Entry = pkg::records::Entry;
 
 struct Cursor {
@@ -315,27 +304,26 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    check_records_client(body).expect("a body read retains the tracked field offset");
-    // [EFF-2] clauses are erased: the body must perform the declared read,
-    // and its selector reuses the same parameter-field bound as the clause.
+    check_records_client(body).expect("a projected body offset is represented");
+    // [EFF-2] these erased contract reads contribute no body effect.
     let clause = br#"alias Node = pkg::records::Node;
 
 struct Cursor {
   at: u64;
 }
 
-fn probe(nodes: &[Node], cursor: Cursor) -> result: u64 reads(nodes) contract {
+fn probe(nodes: &[Node], cursor: Cursor) -> result: u64 pure contract {
   requires cursor.at < nodes^.len;
   requires nodes^[cursor.at].count <= 8_u64;
 } {
-  return nodes^[cursor.at].count;
+  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    check_records_client(clause).expect("a clause read retains the tracked field offset");
+    check_records_client(clause).expect("a projected contract offset is represented");
     let measure = br#"struct Cursor {
   at: u64;
 }
@@ -375,6 +363,7 @@ fn counted_binder_is_not_source_writable_and_is_not_written_through() {
         SemanticIssueKind::InvalidSetTarget {
             root_class: "compiler-updated counted binder".to_owned(),
             required_classes: SET1_WRITABLE_ROOTS,
+            mechanical_fix: None,
         },
     );
 
@@ -417,8 +406,8 @@ fn a_counted_binders_reference_does_not_make_it_writable() {
     assert_only_rule(
         br#"fn main() -> status: std::process::ExitStatus pure {
   for (i in 0_u64..2_u64) {
-    let held = &i;
-    let aliased = held;
+    let observed = &i;
+    let aliased = observed;
     set aliased^ = 9_u64;
   }
   return std::process::exit_status(code: 0_u8);
@@ -438,12 +427,12 @@ fn a_counted_binders_reference_does_not_make_it_writable() {
 fn examine(flag: Bool) -> result: unit pure {
   for (i in 0_u64..2_u64) {
     let spare = 0_u64;
-    let held = if flag {
+    let observed = if flag {
       give &spare;
     } else {
       give &i;
     }
-    overwrite(target: held);
+    overwrite(target: observed);
   }
   return unit;
 }

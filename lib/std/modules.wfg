@@ -4,6 +4,7 @@ pkg::text: [];
 pkg::fs: [pkg::io, pkg::text];
 pkg::net: [pkg::io, pkg::time];
 pkg::process: [pkg::io, pkg::text, pkg::fs, pkg::time];
+pkg::snapshot: [pkg::time];
 pkg::collections::vector: [];
 pkg::collections::deque: [];
 pkg::collections::slab: [];

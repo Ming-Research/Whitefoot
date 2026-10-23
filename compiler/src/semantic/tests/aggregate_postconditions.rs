@@ -151,12 +151,12 @@ fn an_enum_payload_step_below_an_unrouted_result_is_no_datum() {
 }
 
 struct Slot {
-  held: Held;
+  observed: Held;
   serial: u64;
 }
 
 fn pass_slot(slot: Slot) -> result: Slot pure contract {
-  ensures result.held.Full.count == 3_u64;
+  ensures result.observed.Full.count == 3_u64;
 } {
   return move slot;
 }
@@ -187,14 +187,14 @@ fn hold<T>(item: T) -> result: Holder<T> pure contract {
   ensures result.serial == 0_u64;
   ensures result.item.count == 0_u64;
 } {
-  let held = Holder<T>(item: move item, serial: 0_u64);
-  return move held;
+  let observed = Holder<T>(item: move item, serial: 0_u64);
+  return move observed;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let counter = Counter(count: 0_u64);
-  let held = hold::<Counter>(item: counter);
-  let code = cvt.wrap::<u64, u8>(held.serial);
+  let observed = hold::<Counter>(item: counter);
+  let code = cvt.wrap::<u64, u8>(observed.serial);
   return std::process::exit_status(code: code);
 }
 "#;
@@ -388,10 +388,17 @@ fn main() -> status: std::process::ExitStatus pure {{
         )
     };
     // [ENT-2, MSR-3] the constructor's `.cell` step precedes the carried
-    // `.value` suffix. Both complete destinations select an admitted integer
-    // place, and both reference reads name the same indexed storage.
-    let indexed = source("set cells^[0_u64] = Envelope(cell: cell);\n  let ref = &cells^[0_u64];");
-    assert_complete(indexed.as_bytes());
+    // `.value` suffix. Only the unsubscripted written destination admits it,
+    // even though both reference reads resolve to the same indexed storage.
+    let indexed = source(
+        "set cells^[0_u64] = Envelope(cell: cell);\n  let ref = &cells^[0_u64];",
+    );
+    assert_rule_kind(indexed.as_bytes(), SemanticRule::Op2, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::UndischargedIntegerDomainObligation { .. }
+        )
+    });
     let reference = source("let ref = &cells^[0_u64];\n  set ref^ = Envelope(cell: cell);");
     assert_complete(reference.as_bytes());
 }
@@ -486,7 +493,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn indexed_destinations_receive_result_field_relations() {
+fn indexed_and_consumed_destinations_keep_no_result_field_relation() {
     let indexed = format!(
         "{RESULT_FIELD_CALLER}fn main() -> status: std::process::ExitStatus pure {{
   let table = box_array_filled::<u8>(count: 4_u64, value: 5_u8);
@@ -499,13 +506,8 @@ fn indexed_destinations_receive_result_field_relations() {
 }}
 "
     );
-    // ENT-2(b) admits atoms[0].index, so CALL-4 can publish the result
-    // field there and MSR-3 carries the bound into the copied Atom.
-    assert_complete(indexed.as_bytes());
-}
+    assert_rule_kind(indexed.as_bytes(), SemanticRule::Op4, |_| true);
 
-#[test]
-fn a_call_without_a_summary_does_not_forward_result_field_relations() {
     let consumed = format!(
         "{RESULT_FIELD_CALLER}fn pass(atom: Atom) -> result: Atom pure {{
   return atom;
@@ -702,7 +704,9 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         none_route,
         SemanticRule::Fn9,
-        SemanticIssueKind::invalid_postcondition_selector(),
+        SemanticIssueKind::InvalidPostconditionFields {
+            required_fields: Vec::new(),
+        },
     );
 
     let unproved = br#"fn find(limit: u64) -> result: Option<u64> pure contract {

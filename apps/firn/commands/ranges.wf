@@ -367,11 +367,9 @@ fn walk_node(node: &OrderedNode<Rank, unit>, walk: &Walk, client: &Client) -> re
       if first >= count {
         break @seek;
       }
-      if first < node^.entries.len {
-        let begun = starts(walk: walk, rank: &node^.entries[first].pair.key);
-        if begun {
-          break @seek;
-        }
+      let begun = starts(walk: walk, rank: &node^.entries[first].pair.key);
+      if begun {
+        break @seek;
       }
       set first = first +wrap 1_u64;
     }
@@ -388,10 +386,8 @@ fn walk_node(node: &OrderedNode<Rank, unit>, walk: &Walk, client: &Client) -> re
     if walk^.ended {
       return unit;
     }
-    if index < node^.entries.len {
-      walk_visit(walk: walk, client: client, rank: &node^.entries[index].pair.key);
-      walk_link(link: &node^.entries[index].after, walk: walk, client: client);
-    }
+    walk_visit(walk: walk, client: client, rank: &node^.entries[index].pair.key);
+    walk_link(link: &node^.entries[index].after, walk: walk, client: client);
   }
   return unit;
 }
@@ -715,8 +711,8 @@ fn run_zrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = range_ranked(env: client, value: held, walk: &walk);
+      Some(value: observed) => {
+        let found = range_ranked(env: client, value: observed, walk: &walk);
       }
       None() => {
       }
@@ -794,8 +790,8 @@ fn run_zcount(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = count_ranked(env: client, value: held, walk: &walk);
+      Some(value: observed) => {
+        let found = count_ranked(env: client, value: observed, walk: &walk);
       }
       None() => {
       }
@@ -945,8 +941,8 @@ fn run_zremrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = remove_walked(env: client, value: held, walk: &walk);
+      Some(value: observed) => {
+        let edited = remove_walked(env: client, value: observed, walk: &walk);
       }
       None() => {
       }

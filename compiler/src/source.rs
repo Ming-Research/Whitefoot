@@ -1,5 +1,9 @@
 use core::fmt;
 
+mod description;
+pub use description::SourceDescription;
+pub(crate) use description::{DescriptionPart, DescriptionPosition, SourceReading};
+
 /// Dense source ordinal interpreted within an accompanying source context.
 ///
 /// This is a portable coordinate, not a validated or global identity. The same

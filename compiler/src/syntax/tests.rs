@@ -114,6 +114,28 @@ fn every_external_shape_is_classified_context_free() {
 }
 
 #[test]
+fn generic_numeric_suffixes_classify_without_declared_type_or_bound_context() {
+    // N and Float are simply TYPEID-shaped suffixes here: Int/Float bounds
+    // and integer-match admission belong to later semantic judgments.
+    let source = b"0_N 1_N 0_Number2 1_Float";
+    let inputs = [SourceInput::new("generic-identities.wf", source)];
+    let bundle = source_bundle(&inputs).expect("generic identity source must be constructible");
+    let lexed = lexed(&bundle).expect("generic identities must remain complete numeric tokens");
+    let TerminalOutcome::Complete(classified) = classify_terminals(
+        &lexed,
+        ACTIVE_KERNEL_SPEC_HASH,
+        TerminalLimits { max_tokens: 4 },
+    ) else {
+        panic!("generic identities must classify without inspecting declarations");
+    };
+    assert_eq!(classified.tokens().len(), 4);
+    for token in classified.tokens() {
+        assert_eq!(token.terminals().len(), 1);
+        assert!(token.terminals().contains(TerminalPredicate::Literal));
+    }
+}
+
+#[test]
 fn retired_statement_spellings_are_ordinary_identifiers() {
     // v0.60 releases eleven more spellings back to IDENT: the region and
     // permission markers, the two retired statements, the retired effect
@@ -308,6 +330,57 @@ fn malformed_numeric_membership_stops_at_first_source_then_byte() {
     assert_eq!(issue.token().source(), SourceId::from_ordinal(0));
     assert_eq!(issue.token().start().value(), 2);
     assert_eq!(issue.token().end().value(), 5);
+}
+
+#[test]
+fn malformed_literal_and_remainder_fixes_keep_membership_owners_and_tokens() {
+    use crate::diagnostic_repairs::{
+        CHARACTER_SUFFIX_FIX, DECIMAL_INTEGER_FIX, REMAINDER_MODE_FIX,
+    };
+    for (spelling, owner, fix) in [
+        (
+            b"'a'".as_slice(),
+            TerminalIssueOwner::Form5,
+            CHARACTER_SUFFIX_FIX,
+        ),
+        (
+            br"'\u{e9}'".as_slice(),
+            TerminalIssueOwner::Form5,
+            CHARACTER_SUFFIX_FIX,
+        ),
+        (
+            b"0xff_u32".as_slice(),
+            TerminalIssueOwner::Form5,
+            DECIMAL_INTEGER_FIX,
+        ),
+        (
+            b"%wrap".as_slice(),
+            TerminalIssueOwner::Gram1,
+            REMAINDER_MODE_FIX,
+        ),
+    ] {
+        let inputs = [SourceInput::new("spelling.wf", spelling)];
+        let Ok(bundle) = source_bundle(&inputs) else {
+            panic!("source bundle must be constructible");
+        };
+        let Ok(lexed) = lexed(&bundle) else {
+            panic!("the complete malformed spelling must still form one token");
+        };
+        let TerminalOutcome::SourceIssue(issue) = classify_terminals(
+            &lexed,
+            ACTIVE_KERNEL_SPEC_HASH,
+            TerminalLimits { max_tokens: 1 },
+        ) else {
+            panic!("malformed spelling must fail membership");
+        };
+        assert_eq!(issue.owner(), owner);
+        assert_eq!(issue.mechanical_fix(), Some(fix));
+        assert_eq!(issue.token().start().value(), 0);
+        assert_eq!(
+            issue.token().end().value(),
+            u64::try_from(spelling.len()).unwrap_or(u64::MAX)
+        );
+    }
 }
 
 #[test]

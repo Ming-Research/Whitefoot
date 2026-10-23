@@ -29,15 +29,13 @@ use super::solver::{
     AtomId, AtomKind, Capacity, Linear, Literal, Problem, Relation, Rule, Verdict,
 };
 use super::world::{
-    AtomDef, ContainerId, FactId, Guarded, Stored, VersionDef, VersionId, World,
-    projections_overlap,
+    AtomDef, ContainerId, FactId, Guarded, RangeBarrier, RangeFrame, Stored, VersionDef, VersionId,
+    World, projections_overlap,
 };
 
 /// What one place of a clause denotes in a frame.
 #[derive(Clone, Debug)]
 pub(super) enum PlaceView {
-    /// Immutable current image of a tracked integer field.
-    Integer(Linear),
     /// A run of elements: element `k` is the container's element at
     /// `prefix ++ [offset + k]` in `version`.
     Run {
@@ -45,6 +43,8 @@ pub(super) enum PlaceView {
         version: VersionId,
         generation: u32,
         prefix: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
+        barrier: Option<RangeBarrier>,
         offset: Linear,
         length: Linear,
     },
@@ -57,6 +57,7 @@ pub(super) enum PlaceView {
     },
     /// An indexable value below an outer container element.
     Element {
+        barrier: Option<RangeBarrier>,
         version: VersionId,
         indices: Vec<Linear>,
         projection: Vec<CheckedRangeProjection>,
@@ -70,6 +71,7 @@ pub(super) enum PlaceView {
 pub(super) struct Frame {
     pub(super) places: BTreeMap<CheckedRangePlace, PlaceView>,
     pub(super) values: BTreeMap<CheckedRangeRoot, Linear>,
+    pub(super) value_reads: BTreeMap<CheckedRangeRoot, Vec<ReadProvenance>>,
     pub(super) aggregates: BTreeMap<CheckedRangeRoot, VersionId>,
 }
 
@@ -92,6 +94,7 @@ impl Frame {
                         version,
                         indices,
                         projection,
+                        ..
                     } => {
                         let mut path = projection.clone();
                         path.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
@@ -102,9 +105,7 @@ impl Frame {
                             Some(super::super::model::IntegerType::U64),
                         )
                     }
-                    PlaceView::Integer(_) | PlaceView::Segments { .. } | PlaceView::Unknown => {
-                        return None;
-                    }
+                    PlaceView::Segments { .. } | PlaceView::Unknown => return None,
                 };
                 (length != fixed).then(|| Literal::new(length, Relation::Equal, fixed))
             })
@@ -121,6 +122,7 @@ pub(super) struct Fact {
 
 /// One clause formed at one tuple.
 pub(super) struct Formed {
+    pub(super) reads: Vec<Vec<ReadProvenance>>,
     /// Descriptor equalities needed by fixed-length substitutions in this instance.
     pub(super) type_facts: BTreeSet<Literal>,
     /// Each bound variable's range, the clause's guards, and the definedness
@@ -139,6 +141,7 @@ struct Former<'world> {
     bounds: Vec<Literal>,
     guards: Vec<Literal>,
     fixed_lengths: BTreeSet<CheckedRangePlace>,
+    reads: Vec<ReadProvenance>,
 }
 
 impl Former<'_> {
@@ -161,11 +164,17 @@ impl Former<'_> {
             CheckedRangeTerm::Iteration(position) => {
                 self.iterations.get(*position as usize).cloned()
             }
-            CheckedRangeTerm::Value(root) => self.frame.values.get(root).cloned(),
-            CheckedRangeTerm::Field { place, .. } => match self.frame.places.get(place)? {
-                PlaceView::Integer(value) => Some(value.clone()),
-                _ => None,
-            },
+            CheckedRangeTerm::Value(root) => {
+                self.reads.extend(
+                    self.frame
+                        .value_reads
+                        .get(root)
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                );
+                self.frame.values.get(root).cloned()
+            }
             CheckedRangeTerm::ValueProjection {
                 root,
                 indices,
@@ -178,7 +187,15 @@ impl Former<'_> {
                     .collect::<Option<Vec<_>>>()?;
                 let version = *self.frame.aggregates.get(root)?;
                 let implicit: Vec<_> = (0..values.len() as u32).collect();
-                Some(self.projected_read(version, values, projection, *element, &implicit, Some(0)))
+                Some(self.projected_read(
+                    version,
+                    values,
+                    projection,
+                    *element,
+                    &implicit,
+                    Some(0),
+                    None,
+                ))
             }
             CheckedRangeTerm::Measure { place, measure, .. } => {
                 if *measure == CheckedMeasure::Length
@@ -187,7 +204,17 @@ impl Former<'_> {
                     return Some(length);
                 }
                 match (self.frame.places.get(place)?, measure) {
-                    (PlaceView::Run { length, .. }, CheckedMeasure::Length) => Some(length.clone()),
+                    (
+                        PlaceView::Run {
+                            length, barrier, ..
+                        },
+                        CheckedMeasure::Length,
+                    ) => {
+                        let length = length.clone();
+                        let barrier = barrier.clone();
+                        self.record_read(&length, barrier.as_ref());
+                        Some(length)
+                    }
                     (
                         PlaceView::Run {
                             container,
@@ -204,17 +231,21 @@ impl Former<'_> {
                             version,
                             indices,
                             projection,
+                            barrier,
                         },
                         measure,
                     ) => {
                         let mut path = projection.clone();
                         path.push(CheckedRangeProjection::Measure(*measure));
-                        Some(self.world.read(
+                        let barrier = barrier.clone();
+                        let value = self.world.read(
                             *version,
                             indices.clone(),
                             path,
                             Some(super::super::model::IntegerType::U64),
-                        ))
+                        );
+                        self.record_read(&value, barrier.as_ref());
+                        Some(value)
                     }
                     _ => None,
                 }
@@ -235,6 +266,7 @@ impl Former<'_> {
                         version,
                         mut indices,
                         mut projection,
+                        barrier,
                     } => {
                         projection.push(CheckedRangeProjection::Index(indices.len() as u32));
                         indices.push(row);
@@ -246,6 +278,7 @@ impl Former<'_> {
                             super::super::model::IntegerType::U64,
                             &[],
                             None,
+                            barrier.as_ref(),
                         ))
                     }
                     _ => None,
@@ -269,6 +302,8 @@ impl Former<'_> {
                         PlaceView::Run {
                             version,
                             prefix,
+                            projection: mut path,
+                            barrier,
                             offset,
                             length,
                             ..
@@ -277,23 +312,26 @@ impl Former<'_> {
                     ) => {
                         let index = values.first()?;
                         let length = self.fixed_length(place).unwrap_or(length);
+                        self.record_read(&length, barrier.as_ref());
                         self.within(index, &length);
-                        let projection =
-                            super::world::shift_projection(projection, 0, prefix.len());
-                        let implicit: Vec<_> = implicit_indices
+                        let guarded = guarded_from.map(|at| at + path.len());
+                        path.extend(super::world::shift_projection(projection, 0, prefix.len()));
+                        let mut implicit: Vec<_> = implicit_indices
                             .iter()
                             .map(|index| *index + prefix.len() as u32)
                             .collect();
+                        implicit.push(prefix.len() as u32);
                         let mut selected = prefix;
                         selected.push(offset.plus(index)?);
                         selected.extend_from_slice(&values[1..]);
                         Some(self.projected_read(
                             version,
                             selected,
-                            &projection,
+                            &path,
                             *element,
                             &implicit,
-                            *guarded_from,
+                            guarded,
+                            barrier.as_ref(),
                         ))
                     }
                     (
@@ -319,6 +357,7 @@ impl Former<'_> {
                             *element,
                             implicit_indices,
                             *guarded_from,
+                            None,
                         ))
                     }
                     (
@@ -326,6 +365,7 @@ impl Former<'_> {
                             version,
                             indices: prefix,
                             projection: mut path,
+                            barrier,
                         },
                         _,
                     ) => {
@@ -349,11 +389,15 @@ impl Former<'_> {
                         }
                         let mut indices = prefix;
                         indices.extend(values);
-                        Some(
-                            self.projected_read(
-                                version, indices, &path, *element, &implicit, guarded,
-                            ),
-                        )
+                        Some(self.projected_read(
+                            version,
+                            indices,
+                            &path,
+                            *element,
+                            &implicit,
+                            guarded,
+                            barrier.as_ref(),
+                        ))
                     }
                     _ => None,
                 }
@@ -368,6 +412,14 @@ impl Former<'_> {
         }
     }
 
+    fn record_read(&mut self, value: &Linear, barrier: Option<&RangeBarrier>) {
+        self.reads
+            .extend(value.terms.iter().map(|(atom, _)| ReadProvenance {
+                atom: *atom,
+                frames: barrier.map_or_else(Vec::new, |barrier| barrier.frames.clone()),
+            }));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn projected_read(
         &mut self,
@@ -377,6 +429,7 @@ impl Former<'_> {
         element: super::super::model::IntegerType,
         implicit_indices: &[u32],
         guarded_from: Option<usize>,
+        barrier: Option<&RangeBarrier>,
     ) -> Linear {
         let mut depth = projection
             .iter()
@@ -400,6 +453,7 @@ impl Former<'_> {
                     length_path,
                     Some(super::super::model::IntegerType::U64),
                 );
+                self.record_read(&length, barrier);
                 self.within(&indices[position], &length);
                 depth = position + 1;
             }
@@ -412,6 +466,7 @@ impl Former<'_> {
                 let tag = self
                     .world
                     .read(version, indices[..depth].to_vec(), tag_path, None);
+                self.record_read(&tag, barrier);
                 let guards = if guarded_from.is_some_and(|start| at >= start) {
                     &mut self.guards
                 } else {
@@ -424,8 +479,11 @@ impl Former<'_> {
                 ));
             }
         }
-        self.world
-            .read(version, indices, projection.to_vec(), Some(element))
+        let value = self
+            .world
+            .read(version, indices, projection.to_vec(), Some(element));
+        self.record_read(&value, barrier);
+        value
     }
 
     fn within(&mut self, index: &Linear, length: &Linear) {
@@ -469,6 +527,7 @@ pub(super) fn vacuous(world: &mut World, clause: &CheckedRangeClause, frame: &Fr
         bounds: Vec::new(),
         guards: Vec::new(),
         fixed_lengths: BTreeSet::new(),
+        reads: Vec::new(),
     };
     clause.binders.iter().any(|binder| {
         let Some(start) = former.term(&binder.start) else {
@@ -499,6 +558,7 @@ pub(super) fn form(
         bounds: Vec::new(),
         guards: Vec::new(),
         fixed_lengths: BTreeSet::new(),
+        reads: Vec::new(),
     };
     let mut premises = Vec::new();
     for (position, binder) in clause.binders.iter().enumerate() {
@@ -526,8 +586,12 @@ pub(super) fn form(
     // different variants each hold where their own variant is held.
     premises.append(&mut former.bounds);
     let mut conclusions = Vec::new();
+    let mut reads = Vec::new();
+    let prerequisite_reads = former.reads.clone();
     for conclusion in &clause.conclusions {
+        former.reads = prerequisite_reads.clone();
         let literal = former.relation(conclusion)?;
+        reads.push(former.reads.clone());
         let mut guards = std::mem::take(&mut former.bounds);
         guards.append(&mut former.guards);
         let mut seen: BTreeSet<Literal> = premises.iter().cloned().collect();
@@ -545,6 +609,7 @@ pub(super) fn form(
     premises.retain(|literal| seen.insert(literal.clone()));
     Some(Formed {
         type_facts: frame.type_facts(former.world, &former.fixed_lengths),
+        reads,
         premises,
         conditions,
         conclusions,
@@ -626,7 +691,6 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>, overflowing
         | CheckedRangeTerm::Bound(_)
         | CheckedRangeTerm::Iteration(_)
         | CheckedRangeTerm::Value(_)
-        | CheckedRangeTerm::Field { .. }
         | CheckedRangeTerm::ValueProjection { .. }
         | CheckedRangeTerm::Measure { .. } => {}
     }
@@ -637,8 +701,185 @@ pub(super) use super::super::range_facts::MAX_RANGE_ATOMS as MAX_ATOMS;
 /// The largest number of instances one fact contributes to one problem.
 pub(super) use super::super::range_facts::MAX_RANGE_INSTANCES as MAX_INSTANCES;
 
+/// Source-path provenance belongs to one formed query, not to an interned read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ReadProvenance {
+    pub(super) atom: AtomId,
+    pub(super) frames: Vec<RangeFrame>,
+}
+
+/// A call-footprint precision loss and the conditions that keep it relevant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct CallFootprintCandidate {
+    pub(super) guards: Vec<Literal>,
+    /// Every group must hold; the literals within one group are alternatives.
+    pub(super) conditions: Vec<Vec<Literal>>,
+    pub(super) restore: Literal,
+}
+
+/// Trace a query dependency's read to a widened call. Later writes contribute
+/// OWN-7 separation conditions and joins contribute their selected arm guards.
+/// Restoring equalities is confined to a counterfactual diagnostic query.
+pub(super) fn call_footprint_losses(
+    world: &mut World,
+    reads: &[ReadProvenance],
+    owed: &[Literal],
+) -> Vec<CallFootprintCandidate> {
+    let mut used = BTreeSet::new();
+    for literal in owed {
+        collect_literal(literal, &mut used);
+    }
+    let mut losses = Vec::new();
+    for read in reads.iter().filter(|read| used.contains(&read.atom)) {
+        let AtomDef::Read {
+            version,
+            indices,
+            projection,
+        } = world.atoms[read.atom as usize].def.clone()
+        else {
+            continue;
+        };
+        let ty = world.atoms[read.atom as usize].ty;
+        let mut pending = vec![(version, Vec::new(), Vec::new())];
+        while let Some((version, guards, conditions)) = pending.pop() {
+            // An unresolved formal offset can widen only the write that
+            // actually retained it. Optimistically remove that write in the
+            // diagnostic query; this is never a definition for acceptance.
+            let unresolved_previous = match &world.versions[version as usize].def {
+                VersionDef::Write {
+                    previous, indices, ..
+                } if indices.iter().any(|index| {
+                    index
+                        .terms
+                        .iter()
+                        .any(|(atom, _)| world.unresolved_call_offsets.contains(atom))
+                }) =>
+                {
+                    Some(*previous)
+                }
+                VersionDef::Havoc {
+                    previous, indices, ..
+                } if indices
+                    .iter()
+                    .any(|index| index.has_offset_in(&world.unresolved_call_offsets)) =>
+                {
+                    Some(*previous)
+                }
+                _ => None,
+            };
+            if let Some(previous) = unresolved_previous {
+                let before = world.read(previous, indices.clone(), projection.clone(), ty);
+                losses.push(CallFootprintCandidate {
+                    guards: guards.clone(),
+                    conditions: conditions.clone(),
+                    restore: Literal::new(Linear::atom(read.atom), Relation::Equal, before),
+                });
+                pending.push((previous, guards, conditions));
+                continue;
+            }
+            if let Some(loss) = world.call_footprint_losses.get(&version).cloned()
+                && loss.frames.len() == read.frames.len()
+                && loss.frames.iter().zip(&read.frames).all(|(written, read)| {
+                    written.prefix == read.prefix
+                        && written.projection == read.projection
+                        && written.offset == read.offset
+                        && written.start == read.start
+                        && written.end == read.end
+                        && written.captured.start.provably_same(read.captured.start)
+                        && written.captured.end.provably_same(read.captured.end)
+                })
+            {
+                let VersionDef::Havoc { previous, .. } = &world.versions[version as usize].def
+                else {
+                    continue;
+                };
+                let before = world.read(*previous, indices.clone(), projection.clone(), ty);
+                let mut loss_candidate = CallFootprintCandidate {
+                    guards: guards.clone(),
+                    conditions: conditions.clone(),
+                    restore: Literal::new(Linear::atom(read.atom), Relation::Equal, before),
+                };
+                if !projections_overlap(&projection, &loss.projection) {
+                    losses.push(loss_candidate);
+                } else {
+                    let conditions: Vec<_> = loss
+                        .indices
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(position, index)| index.separations(indices.get(position)))
+                        .collect();
+                    if !conditions.is_empty() {
+                        loss_candidate.conditions.push(conditions);
+                        losses.push(loss_candidate);
+                    }
+                }
+            }
+            let mut conditions = conditions;
+            match &world.versions[version as usize].def {
+                VersionDef::Write {
+                    previous,
+                    indices: written,
+                    projection: path,
+                    ..
+                } => {
+                    if projections_overlap(path, &projection) {
+                        let separate: Vec<_> = written
+                            .iter()
+                            .zip(&indices)
+                            .map(|(at, index)| {
+                                Literal::new(index.clone(), Relation::NotEqual, at.clone())
+                            })
+                            .collect();
+                        if separate.is_empty() {
+                            continue;
+                        }
+                        conditions.push(separate);
+                    }
+                    pending.push((*previous, guards, conditions));
+                }
+                VersionDef::Havoc {
+                    previous,
+                    indices: written,
+                    projection: path,
+                } => {
+                    if projections_overlap(path, &projection) {
+                        let separate: Vec<_> = written
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(position, index)| index.separations(indices.get(position)))
+                            .collect();
+                        if separate.is_empty() {
+                            continue;
+                        }
+                        conditions.push(separate);
+                    }
+                    pending.push((*previous, guards, conditions));
+                }
+                VersionDef::Forget {
+                    previous,
+                    projections,
+                } if projections
+                    .iter()
+                    .all(|path| !projections_overlap(path, &projection)) =>
+                {
+                    pending.push((*previous, guards, conditions));
+                }
+                VersionDef::Join { join, versions } => {
+                    for (arm, version) in versions.iter().enumerate() {
+                        let mut arm_guards = guards.clone();
+                        arm_guards.extend(world.joins[*join as usize][arm].iter().cloned());
+                        pending.push((*version, arm_guards, conditions.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    losses
+}
+
 /// One obligation's problem under construction, over world atoms.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Query {
     /// Each substituted descriptor equality belongs to the query once, across
     /// its owed clause, automatic instances and written instances.
@@ -652,9 +893,65 @@ pub(super) struct Query {
     /// Imported frame instances contribute step-2 definitions, not a round
     /// of automatic instantiation [RANGE-3].
     pub(super) frames: unchanged::Definitions,
+    /// Reached whole sets, deduplicated across repeated path conditions.
+    /// Each distinct member additionally counts once for its exclusion.
+    pub(super) exclusions: BTreeSet<Literal>,
+    pub(super) exclusion_members: usize,
+    /// An expression already represented by one atom reuses that slot.
+    /// Constants and compound expressions need one structural slot, shared
+    /// across their sets, plus their normally collected definition inputs.
+    pub(super) exclusion_expressions: BTreeSet<Linear>,
 }
 
 impl Query {
+    /// Counterfactual definitions are never used by the accepting query.
+    /// Each choice states: guards and every separation group imply restore.
+    pub(super) fn restore_call_footprints(
+        &mut self,
+        world: &mut World,
+        reads: &[ReadProvenance],
+        owed: &[Literal],
+    ) -> bool {
+        let candidates = call_footprint_losses(world, reads, owed);
+        let found = !candidates.is_empty();
+        for candidate in candidates {
+            let mut alternatives: Vec<Vec<Literal>> = candidate
+                .guards
+                .iter()
+                .map(|guard| vec![super::world::negated(guard)])
+                .collect();
+            alternatives.extend(
+                candidate
+                    .conditions
+                    .iter()
+                    .map(|conditions| conditions.iter().map(super::world::negated).collect()),
+            );
+            alternatives.push(vec![candidate.restore]);
+            self.choices.push(alternatives);
+        }
+        found
+    }
+
+    // An included set is a negated exclusion. Source never states one: it
+    // arises only when a path condition is negated, so it is counted as the
+    // exclusion it negates.
+    fn record_exclusion(&mut self, literal: &Literal) {
+        if matches!(literal.relation, Relation::Excluded | Relation::Included) {
+            let mut exclusion = literal.clone();
+            exclusion.relation = Relation::Excluded;
+            if self.exclusions.insert(exclusion) {
+                // One atom with coefficient one plus any constant reuses that
+                // atom, as RANGE-3 counts it; other expressions add one.
+                if !matches!(literal.left.terms.as_slice(), [(_, 1)]) {
+                    self.exclusion_expressions.insert(literal.left.clone());
+                }
+                self.exclusion_members = self
+                    .exclusion_members
+                    .saturating_add(literal.members().len());
+            }
+        }
+    }
+
     fn add_instance(
         &mut self,
         world: &mut World,
@@ -825,8 +1122,16 @@ pub(super) fn judge(
                 };
                 for (version, indices, projection) in &ground {
                     let expected = match view {
-                        PlaceView::Run { prefix, .. } => {
-                            super::world::shift_projection(&trigger.projection, 0, prefix.len())
+                        PlaceView::Run {
+                            prefix, projection, ..
+                        } => {
+                            let mut path = projection.clone();
+                            path.extend(super::world::shift_projection(
+                                &trigger.projection,
+                                0,
+                                prefix.len(),
+                            ));
+                            path
                         }
                         PlaceView::Element {
                             indices: prefix,
@@ -971,7 +1276,7 @@ fn match_trigger(
         PlaceView::Element {
             version, indices, ..
         } => (*version, indices.as_slice(), None),
-        PlaceView::Integer(_) | PlaceView::Unknown => return,
+        PlaceView::Unknown => return,
     };
     let expected = prefix.len() + trigger.positions.len();
     if view_version != version
@@ -1020,7 +1325,35 @@ fn expand(
     expanded: &mut BTreeSet<AtomId>,
     query: &mut Query,
 ) -> Result<(), Capacity> {
+    // Each expansion call starts with all currently formed instances.
+    // Later definitions register the conditions they introduce below.
+    let exclusions: Vec<_> = query
+        .units
+        .iter()
+        .chain(&query.type_facts)
+        .chain(&query.support)
+        .chain(query.choices.iter().flatten().flatten())
+        .chain(
+            query
+                .rules
+                .iter()
+                .flat_map(|rule| rule.guards.iter().chain(&rule.conclusions)),
+        )
+        .filter(|literal| matches!(literal.relation, Relation::Excluded | Relation::Included))
+        .cloned()
+        .collect();
+    for exclusion in exclusions {
+        query.record_exclusion(&exclusion);
+    }
     loop {
+        if atoms
+            .len()
+            .saturating_add(query.exclusion_expressions.len())
+            .saturating_add(query.exclusion_members)
+            > MAX_ATOMS
+        {
+            return Err(Capacity::Atoms);
+        }
         let Some(atom) = atoms.iter().copied().find(|atom| !expanded.contains(atom)) else {
             // Frame definitions also apply to reads introduced by ordinary
             // version definitions and second-round instances. They add no
@@ -1031,9 +1364,6 @@ fn expand(
             return Ok(());
         };
         expanded.insert(atom);
-        if atoms.len() > MAX_ATOMS {
-            return Err(Capacity::Atoms);
-        }
         let def = world.atoms[atom as usize].def.clone();
         let ty = world.atoms[atom as usize].ty;
         let value = Linear::atom(atom);
@@ -1105,6 +1435,29 @@ fn expand(
                                 Relation::Equal,
                                 old,
                             )]);
+                        }
+                    }
+                    VersionDef::Havoc {
+                        previous,
+                        indices: written,
+                        projection: footprint,
+                    } => {
+                        let old = world.read(previous, indices.clone(), projection.clone(), ty);
+                        let unchanged = Literal::new(value.clone(), Relation::Equal, old);
+                        if !projections_overlap(&projection, &footprint) {
+                            alternatives.push(vec![unchanged]);
+                        } else {
+                            let separate: Vec<_> = written
+                                .iter()
+                                .enumerate()
+                                .flat_map(|(position, written)| {
+                                    written.separations(indices.get(position))
+                                })
+                                .collect();
+                            alternatives.push(separate.iter().map(super::world::negated).collect());
+                            for condition in separate {
+                                alternatives.push(vec![condition, unchanged.clone()]);
+                            }
                         }
                     }
                     VersionDef::Write {
@@ -1289,6 +1642,7 @@ fn expand(
         if !alternatives.is_empty() {
             for literal in alternatives.iter().flatten() {
                 collect_literal(literal, atoms);
+                query.record_exclusion(literal);
             }
             query.choices.push(alternatives);
         }
@@ -1317,11 +1671,10 @@ fn localize(world: &World, atoms: &BTreeSet<AtomId>, query: Query) -> Problem {
         }
     };
     let map_literal = |literal: &Literal| -> Literal {
-        Literal::new(
-            map_linear(&literal.left),
-            literal.relation,
-            map_linear(&literal.right),
-        )
+        let mut mapped = literal.clone();
+        mapped.left = map_linear(&literal.left);
+        mapped.right = map_linear(&literal.right);
+        mapped
     };
     let mut reads: BTreeMap<(VersionId, Vec<CheckedRangeProjection>), u32> = BTreeMap::new();
     let mut descriptors: BTreeMap<(ContainerId, u32), u32> = BTreeMap::new();
@@ -1408,6 +1761,7 @@ mod aggregate_tests {
             bounds: Vec::new(),
             guards: Vec::new(),
             fixed_lengths: BTreeSet::new(),
+            reads: Vec::new(),
         };
         assert_eq!(
             former.term(&CheckedRangeTerm::ConstGeneric { declaration, ty }),
@@ -1488,6 +1842,8 @@ mod aggregate_tests {
                 version: world.new_version(VersionDef::Initial),
                 generation: 0,
                 prefix: Vec::new(),
+                projection: Vec::new(),
+                barrier: None,
                 offset: Linear::constant(0),
                 length: length.clone(),
             },
@@ -1572,6 +1928,7 @@ mod aggregate_tests {
         fact.frame.places.insert(
             place.clone(),
             PlaceView::Element {
+                barrier: None,
                 version,
                 indices: indices.clone(),
                 projection: projection.clone(),
@@ -1630,6 +1987,8 @@ mod aggregate_tests {
                 version: world.new_version(VersionDef::Initial),
                 generation: 0,
                 prefix: Vec::new(),
+                projection: Vec::new(),
+                barrier: None,
                 offset: Linear::constant(0),
                 length: source_length,
             },
@@ -1663,6 +2022,7 @@ mod aggregate_tests {
         fact.frame.places.insert(
             place.clone(),
             PlaceView::Element {
+                barrier: None,
                 version: world.new_version(VersionDef::Initial),
                 indices: vec![Linear::constant(0)],
                 projection: Vec::new(),
@@ -1777,6 +2137,8 @@ mod aggregate_tests {
                 version,
                 generation: 0,
                 prefix: Vec::new(),
+                projection: Vec::new(),
+                barrier: None,
                 offset: Linear::constant(0),
                 length: Linear::constant(1),
             },
@@ -1877,6 +2239,8 @@ mod aggregate_tests {
                 version: world.new_version(VersionDef::Initial),
                 generation: 0,
                 prefix: Vec::new(),
+                projection: Vec::new(),
+                barrier: None,
                 offset: Linear::constant(0),
                 length: length.clone(),
             },
@@ -1967,6 +2331,327 @@ mod aggregate_tests {
         for (variant, rule) in formed.conclusions.iter().enumerate() {
             assert_eq!(rule.guards.len(), 1);
             assert_eq!(rule.guards[0].right, Linear::constant(variant as i128));
+        }
+    }
+}
+
+#[cfg(test)]
+mod integer_exclusion_tests {
+    use super::super::solver::exclusion_cases;
+    use super::*;
+
+    #[test]
+    fn whole_exclusion_uses_only_nonempty_gaps() {
+        let cases = exclusion_cases(Linear::atom(0), &[0, 1, 2, 5]);
+        assert_eq!(
+            cases.len(),
+            3,
+            "only three nonempty complement gaps, without an inactive case"
+        );
+        assert!(
+            cases
+                .iter()
+                .flatten()
+                .all(|literal| literal.relation != Relation::NotEqual)
+        );
+        assert_eq!(exclusion_cases(Linear::atom(0), &[]).len(), 1);
+    }
+
+    #[test]
+    fn separated_exclusion_members_have_exactly_cardinality_plus_one_gaps() {
+        let cases = exclusion_cases(Linear::atom(0), &[0, 2, 4, 6]);
+        assert_eq!(cases.len(), 5);
+        assert!(cases.iter().all(|case| !case.is_empty()));
+        assert!(cases.iter().flatten().all(|literal| {
+            matches!(literal.relation, Relation::Less | Relation::Greater)
+                && literal.left == Linear::atom(0)
+        }));
+        assert_eq!(
+            exclusion_cases(Linear::atom(0), &[]),
+            vec![Vec::<Literal>::new()]
+        );
+    }
+
+    #[test]
+    fn exclusion_and_bounds_determine_remaining_value() {
+        let mut world = World::default();
+        let value = world.opaque(Some(super::super::super::model::IntegerType::U64));
+        let exclusion = Literal::exclusion(value.clone(), vec![0, 1, 2].into());
+        let query = Query {
+            units: vec![
+                exclusion,
+                Literal::new(value.clone(), Relation::LessEqual, Linear::constant(3)),
+                Literal::new(value, Relation::NotEqual, Linear::constant(3)),
+            ],
+            ..Query::default()
+        };
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Refuted)
+        );
+    }
+
+    #[test]
+    fn exclusion_join_does_not_restrict_another_arm() {
+        let mut world = World::default();
+        let value = world.opaque(None);
+        let exclusion = Literal::exclusion(value.clone(), vec![0, 1, 2].into());
+        let zero = Literal::new(value.clone(), Relation::Equal, Linear::constant(0));
+        let query = Query {
+            units: vec![zero.clone()],
+            choices: vec![vec![vec![exclusion], vec![zero]]],
+            ..Query::default()
+        };
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
+    }
+
+    #[test]
+    fn unreferenced_exclusion_does_not_count_toward_a_problem() {
+        let mut world = World::default();
+        let value = world.opaque(None);
+        let values = (0..MAX_ATOMS as i128).collect::<Vec<_>>().into();
+        let _unused = Literal::exclusion(value.clone(), values);
+        let query = Query {
+            units: vec![Literal::new(value, Relation::Equal, Linear::constant(0))],
+            ..Query::default()
+        };
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
+    }
+
+    #[test]
+    fn repeated_exclusion_conditions_count_members_once() {
+        let mut world = World::default();
+        let value = world.opaque(None);
+        let exclusion = Literal::exclusion(
+            value.clone(),
+            (0..(MAX_ATOMS - 1) as i128).collect::<Vec<_>>().into(),
+        );
+        let query = Query {
+            units: vec![
+                exclusion.clone(),
+                Literal::new(value, Relation::Equal, Linear::constant(-1)),
+            ],
+            choices: vec![vec![vec![exclusion.clone()], vec![exclusion]]],
+            ..Query::default()
+        };
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
+    }
+
+    #[test]
+    fn duplicate_members_count_once_at_the_structural_ceiling() {
+        let mut world = World::default();
+        let value = world.opaque(None);
+        let mut values: Vec<_> = (0..(MAX_ATOMS - 1) as i128).rev().collect();
+        values.extend([0, 1, 2]);
+        let exclusion = Literal::exclusion(value.clone(), values.into());
+        assert_eq!(exclusion.members().len(), MAX_ATOMS - 1);
+        let query = Query {
+            units: vec![
+                exclusion,
+                Literal::new(value, Relation::Equal, Linear::constant(-1)),
+            ],
+            ..Query::default()
+        };
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
+    }
+
+    #[test]
+    fn distinct_exclusion_sets_count_their_own_members() {
+        let mut world = World::default();
+        let value = world.opaque(None);
+        let first = Literal::exclusion(
+            value.clone(),
+            (0..(MAX_ATOMS - 1) as i128).collect::<Vec<_>>().into(),
+        );
+        let second = Literal::exclusion(value, vec![0].into());
+        let query = Query {
+            units: vec![first, second],
+            ..Query::default()
+        };
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Err(Capacity::Atoms)
+        );
+    }
+
+    #[test]
+    fn exclusion_negation_is_exact_for_fixed_values_and_empty_sets() {
+        for members in [vec![], vec![0, 1, 2]] {
+            for selected in [-1, 0, 1, 2, 3] {
+                for negate in [false, true] {
+                    let mut world = World::default();
+                    let value = world.opaque(None);
+                    let exclusion = Literal::exclusion(value.clone(), members.clone().into());
+                    let condition = if negate {
+                        super::super::world::negated(&exclusion)
+                    } else {
+                        exclusion
+                    };
+                    let query = Query {
+                        units: vec![
+                            condition,
+                            Literal::new(value, Relation::Equal, Linear::constant(selected)),
+                        ],
+                        ..Query::default()
+                    };
+                    let holds = members.contains(&selected) == negate;
+                    let expected = if holds {
+                        Verdict::Open
+                    } else {
+                        Verdict::Refuted
+                    };
+                    assert_eq!(
+                        judge(&mut world, &[], &[], &[], &[], query),
+                        Ok(expected),
+                        "members={members:?}, selected={selected}, negate={negate}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exclusion_as_guard_uses_exact_membership_negation() {
+        let mut world = World::default();
+        let value = world.opaque(None);
+        let exclusion = Literal::exclusion(value.clone(), vec![0, 1, 2].into());
+        let query = Query {
+            units: vec![Literal::new(value, Relation::Greater, Linear::constant(2))],
+            rules: vec![Rule {
+                guards: vec![exclusion],
+                conclusions: vec![Literal::new(
+                    Linear::constant(0),
+                    Relation::Equal,
+                    Linear::constant(1),
+                )],
+            }],
+            ..Query::default()
+        };
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Refuted)
+        );
+    }
+
+    #[test]
+    fn constant_and_compound_exclusions_count_expression_slots() {
+        for compound in [false, true] {
+            // A constant has one expression slot. A two-atom sum also has
+            // its two definition inputs, so its total before members is 3.
+            let slots = if compound { 3 } else { 1 };
+            for (members, expected) in [
+                (MAX_ATOMS - slots, Ok(Verdict::Open)),
+                (MAX_ATOMS - slots + 1, Err(Capacity::Atoms)),
+            ] {
+                let mut world = World::default();
+                let value = if compound {
+                    world.opaque(None).plus(&world.opaque(None)).unwrap()
+                } else {
+                    Linear::constant(-1)
+                };
+                let exclusion = Literal::exclusion(
+                    value.clone(),
+                    (0..members as i128).collect::<Vec<_>>().into(),
+                );
+                let query = Query {
+                    units: vec![
+                        exclusion,
+                        Literal::new(value, Relation::Equal, Linear::constant(-1)),
+                    ],
+                    ..Query::default()
+                };
+                assert_eq!(
+                    judge(&mut world, &[], &[], &[], &[], query),
+                    expected,
+                    "compound={compound}, members={members}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn distinct_sets_share_their_compound_expression_slot() {
+        let mut world = World::default();
+        let value = world.opaque(None).plus(&world.opaque(None)).unwrap();
+        let first = Literal::exclusion(
+            value.clone(),
+            (0..(MAX_ATOMS - 4) as i128).collect::<Vec<_>>().into(),
+        );
+        let second = Literal::exclusion(value.clone(), vec![0].into());
+        let query = Query {
+            units: vec![
+                first,
+                second,
+                Literal::new(value, Relation::Equal, Linear::constant(-1)),
+            ],
+            ..Query::default()
+        };
+        assert_eq!(
+            judge(&mut world, &[], &[], &[], &[], query),
+            Ok(Verdict::Open)
+        );
+    }
+
+    #[test]
+    fn exclusion_members_share_the_structural_atom_ceiling() {
+        for (members, expected) in [
+            (MAX_ATOMS - 1, Ok(Verdict::Open)),
+            (MAX_ATOMS, Err(Capacity::Atoms)),
+        ] {
+            let mut world = World::default();
+            let value = world.opaque(None);
+            let values = (0..members as i128).collect::<Vec<_>>().into();
+            let exclusion = Literal::exclusion(value.clone(), values);
+            let query = Query {
+                units: vec![
+                    exclusion,
+                    Literal::new(value, Relation::Equal, Linear::constant(-1)),
+                ],
+                ..Query::default()
+            };
+            assert_eq!(
+                judge(&mut world, &[], &[], &[], &[], query),
+                expected,
+                "the expression atom plus each distinct member: at the ceiling and one past it"
+            );
+        }
+    }
+
+    #[test]
+    fn an_offset_atom_exclusion_reuses_its_atom() {
+        for (members, expected) in [
+            (MAX_ATOMS - 1, Ok(Verdict::Open)),
+            (MAX_ATOMS, Err(Capacity::Atoms)),
+        ] {
+            let mut world = World::default();
+            let value = world.opaque(None);
+            let offset = value.plus_constant(3).expect("small offset");
+            let values = (0..members as i128).collect::<Vec<_>>().into();
+            let exclusion = Literal::exclusion(offset, values);
+            let query = Query {
+                units: vec![
+                    exclusion,
+                    Literal::new(value, Relation::Equal, Linear::constant(-10)),
+                ],
+                ..Query::default()
+            };
+            assert_eq!(
+                judge(&mut world, &[], &[], &[], &[], query),
+                expected,
+                "`i + 3` counts as the atom `i`, not as a further expression"
+            );
         }
     }
 }

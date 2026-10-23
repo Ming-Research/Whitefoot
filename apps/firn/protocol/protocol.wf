@@ -49,7 +49,7 @@ struct Line {
   state: u64;
 }
 
-fn short_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
+fn short_line(input: &[u8], marker: u64, observed: u64) -> line: Line reads(input) {
   doc "Reads the line after a marker byte when it is one digit, or two without a leading zero, then a carriage return and one more byte, all held: state 1 with the number and where its carriage return is, and state 0, leaving the line to the caller's general reading, for every other line.";
   let first = marker +wrap 1_u64;
   let second = marker +wrap 2_u64;
@@ -63,7 +63,7 @@ fn short_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
   let lead_value = lead -wrap 48_u8;
   let lead_wide = cvt::<u8, u64>(lead_value);
   let one_end = next == 13_u8;
-  let one_held = third < held;
+  let one_held = third < observed;
   let one_shaped = band(lead_digit, one_end);
   let one = band(one_shaped, one_held);
   if one {
@@ -76,7 +76,7 @@ fn short_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
   let unpadded = lead != 48_u8;
   let after = byte_at(input: input, index: third);
   let two_end = after == 13_u8;
-  let two_held = fourth < held;
+  let two_held = fourth < observed;
   let digits = band(lead_digit, next_digit);
   let leading = band(digits, unpadded);
   let shaped = band(leading, two_end);
@@ -92,26 +92,26 @@ fn short_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
   return Line(value: 0_i64, end: marker, state: 0_u64);
 }
 
-fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
+fn read_line(input: &[u8], marker: u64, observed: u64) -> line: Line reads(input) {
   doc "Reads a count or length line as read_line_full does, first trying the common line of one to nine digits without a sign or leading zero, whose carriage return and the byte after it are held. A marker byte that is a zero byte or a carriage return ends the line at the marker, as strchr ends it, so that line is left to read_line_full.";
   let position = marker +wrap 1_u64;
   let value = 0_u64;
-  if marker < held {
+  if marker < observed {
     let mark = byte_at(input: input, index: marker);
     let zero = mark == 0_u8;
     let ends = mark == 13_u8;
     let at_marker = bor(zero, ends);
     if at_marker {
-      let line = read_line_full(input: input, marker: marker, held: held);
+      let line = read_line_full(input: input, marker: marker, observed: observed);
       return line;
     }
   }
-  let short = short_line(input: input, marker: marker, held: held);
+  let short = short_line(input: input, marker: marker, observed: observed);
   if short.state == 1_u64 {
     return short;
   }
   loop @digits {
-    if position >= held {
+    if position >= observed {
       break @digits;
     }
     let byte = byte_at(input: input, index: position);
@@ -120,7 +120,7 @@ fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
       let digits = position -wrap first;
       let after = position +wrap 1_u64;
       let some = digits >= 1_u64;
-      let held_after = after < held;
+      let held_after = after < observed;
       let lone = digits == 1_u64;
       let lead = byte_at(input: input, index: first);
       let unpadded = lead != 48_u8;
@@ -150,21 +150,21 @@ fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
     set value = scaled +wrap wide;
     set position = position +wrap 1_u64;
   }
-  let line = read_line_full(input: input, marker: marker, held: held);
+  let line = read_line_full(input: input, marker: marker, observed: observed);
   return line;
 }
 
-fn read_line_full(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
+fn read_line_full(input: &[u8], marker: u64, observed: u64) -> line: Line reads(input) {
   doc "Reads a count or length line whose marker byte, * or $, is at marker, as Redis 7.0 reads one. The line ends at the first carriage return from the marker on, found as strchr finds it, so that a zero byte, like the end of the bytes held, leaves the line incomplete; the byte after the carriage return must be held too and is skipped unread. State 1 is a complete line whose bytes after the marker read as a number, as string2ll reads one, into value; 2 is a complete line that does not read as one; 0 is an incomplete line; and 3 is a line still incomplete with more than 65,536 bytes held from its marker. end is the carriage return's position.";
   let position = marker;
   loop @find {
-    if position >= held {
+    if position >= observed {
       break @find;
     }
     let byte = byte_at(input: input, index: position);
     if byte == 13_u8 {
       let after = position +wrap 1_u64;
-      if after >= held {
+      if after >= observed {
         return Line(value: 0_i64, end: position, state: 0_u64);
       }
       if position > marker {
@@ -182,7 +182,7 @@ fn read_line_full(input: &[u8], marker: u64, held: u64) -> line: Line reads(inpu
     }
     set position = position +wrap 1_u64;
   }
-  let pending = held -wrap marker;
+  let pending = observed -wrap marker;
   if pending > 65536_u64 {
     return Line(value: 0_i64, end: position, state: 3_u64);
   }
@@ -221,9 +221,9 @@ fn push_arg(args: &Box<Slots<Span>>, start: u64, length: u64) -> result: unit wr
   return unit;
 }
 
-fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed reads(input), writes(args) {
+fn parse_multibulk(input: &[u8], start: u64, observed: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed reads(input), writes(args) {
   doc "Reads a RESP array of bulk strings whose leading asterisk is at start, as Redis 7.0 reads one. The count line is read as read_line reads it, and each length line of the common shape, a dollar sign and one to nine digits without a leading zero whose carriage return and following byte are held, is read in place, every other one as read_line_full reads it. The count is at most 2,147,483,647, and an array of no element or a negative count is skipped; each bulk string's line starts with a dollar sign, its length is 0 to 536,870,912, and the two bytes after its data are skipped unread. A client that must authenticate first, when locked is true, may send at most 10 elements and bulk strings of at most 16,384 bytes.";
-  let header = read_line(input: input, marker: start, held: held);
+  let header = read_line(input: input, marker: start, observed: observed);
   if header.state == 0_u64 {
     return Parsed(state: 0_u64, next: start);
   }
@@ -253,7 +253,7 @@ fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>,
     let size = 0_i64;
     let line_end = 0_u64;
     let quick = False();
-    let short = short_line(input: input, marker: position, held: held);
+    let short = short_line(input: input, marker: position, observed: observed);
     let dollared = dollar == 36_u8;
     let shortened = short.state == 1_u64;
     let ready = band(dollared, shortened);
@@ -266,7 +266,7 @@ fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>,
       let scan = first;
       let value = 0_u64;
       loop @digits {
-        if scan >= held {
+        if scan >= observed {
           break @digits;
         }
         let byte = byte_at(input: input, index: scan);
@@ -274,7 +274,7 @@ fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>,
           let digits = scan -wrap first;
           let after = scan +wrap 1_u64;
           let some = digits >= 1_u64;
-          let held_after = after < held;
+          let held_after = after < observed;
           let lone = digits == 1_u64;
           let lead = byte_at(input: input, index: first);
           let unpadded = lead != 48_u8;
@@ -307,7 +307,7 @@ fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>,
     }
     if quick {
     } else {
-      let line = read_line_full(input: input, marker: position, held: held);
+      let line = read_line_full(input: input, marker: position, observed: observed);
       if line.state == 0_u64 {
         return Parsed(state: 0_u64, next: start);
       }
@@ -338,7 +338,7 @@ fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>,
     let data_start = line_end +wrap 2_u64;
     let data_end = data_start +wrap length;
     let closed = data_end +wrap 2_u64;
-    if closed > held {
+    if closed > observed {
       return Parsed(state: 0_u64, next: start);
     }
     push_arg(args: args, start: data_start, length: length);
@@ -405,12 +405,12 @@ fn put_decoded(input: &[u8], position: u64, value: u8) -> result: unit writes(in
   return unit;
 }
 
-fn parse_inline(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) -> parsed: Parsed writes(input), writes(args) {
+fn parse_inline(input: &[u8], start: u64, observed: u64, args: &Box<Slots<Span>>) -> parsed: Parsed writes(input), writes(args) {
   doc "Reads an inline command as Redis 7.0 reads one. The line runs to a line feed found as strchr finds it, so that a zero byte before it leaves the line incomplete, and a carriage return before the line feed is dropped; a line incomplete with more than 65,536 bytes held is malformed. The line splits into arguments as sdssplitargs splits it: white space separates them; an argument may hold double-quoted parts, where a backslash before x and two hexadecimal digits stands for that byte, before n, r, t, b or a for line feed, carriage return, tab, backspace or bell, and before any other byte for that byte, and single-quoted parts, where only a backslash before a quote stands for the quote; a closing quote must be followed by white space or the end of the line, and a part not closed is malformed. Each argument's decoded bytes are written back into the input from where the line's earlier arguments end, so that each span names decoded bytes and no write passes the byte being read. A line of no argument is skipped.";
   let line_end = start;
   let found = False();
   loop @find {
-    if line_end >= held {
+    if line_end >= observed {
       break @find;
     }
     let byte = byte_at(input: input, index: line_end);
@@ -425,7 +425,7 @@ fn parse_inline(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) ->
   }
   if found {
   } else {
-    let pending = held -wrap start;
+    let pending = observed -wrap start;
     if pending > 65536_u64 {
       return Parsed(state: 5_u64, next: start);
     }
@@ -565,17 +565,17 @@ fn parse_inline(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) ->
   return Parsed(state: 1_u64, next: next);
 }
 
-fn parse_request(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed writes(input), writes(args) {
-  doc "Reads one request from a position of the input, of which held bytes are filled: a RESP array of bulk strings, or an inline command, told apart by its first byte as Redis tells them. A command's arguments replace what args held, one span each; an inline command's decoded arguments are written back into the input over its line. locked is true for a client that must authenticate first, whose arrays Redis limits.";
-  if start >= held {
+fn parse_request(input: &[u8], start: u64, observed: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed writes(input), writes(args) {
+  doc "Reads one request from a position of the input, of which observed bytes are filled: a RESP array of bulk strings, or an inline command, told apart by its first byte as Redis tells them. A command's arguments replace what args held, one span each; an inline command's decoded arguments are written back into the input over its line. locked is true for a client that must authenticate first, whose arrays Redis limits.";
+  if start >= observed {
     return Parsed(state: 0_u64, next: start);
   }
   let marker = byte_at(input: input, index: start);
   if marker == 42_u8 {
-    let parsed = parse_multibulk(input: input, start: start, held: held, args: args, locked: locked);
+    let parsed = parse_multibulk(input: input, start: start, observed: observed, args: args, locked: locked);
     return parsed;
   }
-  let parsed = parse_inline(input: input, start: start, held: held, args: args);
+  let parsed = parse_inline(input: input, start: start, observed: observed, args: args);
   return parsed;
 }
 
@@ -646,11 +646,11 @@ fn input_grow(input: &Box<Slots<u8>>) -> result: unit writes(input) {
   return unit;
 }
 
-fn keep_rest(input: &Box<Slots<u8>>, from: u64, held: u64) -> kept: u64 writes(input) {
-  doc "Moves the bytes from a position up to held, an incomplete request, to the front of the input and returns how many it moved.";
+fn keep_rest(input: &Box<Slots<u8>>, from: u64, observed: u64) -> kept: u64 writes(input) {
+  doc "Moves the bytes from a position up to observed, an incomplete request, to the front of the input and returns how many it moved.";
   let kept = 0_u64;
-  if from < held {
-    set kept = held -wrap from;
+  if from < observed {
+    set kept = observed -wrap from;
   }
   for @move_bytes (offset in 0_u64..kept) {
     let source = from +wrap offset;

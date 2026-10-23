@@ -27,9 +27,6 @@ fn array_element_length(rows: &Segments<Array<u64, 4>>, segment: u64, offset: u6
 } {
   doc "The run length in a contract counts complete arrays rather than their four inner elements.";
   let tail = &rows^[segment][offset][1_u64..4_u64];
-  if tail^.len != 3_u64 {
-    return 0_u64;
-  }
   if tail^[0_u64] != 17_u64 {
     return 0_u64;
   }

@@ -9,7 +9,7 @@ use crate::semantic::{
 use crate::{
     IrAddressed, IrConstant, IrDrop, IrDropSubject, IrMatchTarget, IrNominalId, IrNominalKind,
     IrOperation, IrRecord, IrRecordKind, IrShared, IrTerminator, IrType, IrValueId,
-    LoweringFailure, NodePath,
+    LoweringFailure, NodePath, SourceDescription,
 };
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -25,12 +25,19 @@ pub(super) struct AtomicRegion {
     bindings: HashMap<BindingId, usize>,
     target_bindings: HashMap<BindingId, usize>,
     ledger: Rc<RefCell<AtomicLedger>>,
+    wait_site: SourceDescription,
 }
 #[derive(Clone)]
 struct TargetRegion {
+    binding: BindingId,
     object: IrValueId,
     nominal: IrNominalId,
+    /// The address of the object's state.
+    state: IrValueId,
     owned: bool,
+    /// Whether the statement's block or guard may write the state, so that
+    /// leaving the block releases it as written [SHARE-3].
+    wrote: bool,
     lock: Lock,
 }
 #[derive(Clone)]
@@ -100,20 +107,29 @@ impl IrBuilder<'_> {
                 .push(index);
         }
         let mut guard_roots = Vec::new();
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(guard) = guard {
             expression_bindings(guard, &mut guard_roots);
         }
+        let mut body_roots = Vec::new();
+        block_bindings(body, &mut body_roots);
         let ledger_site = self
             .lock_ledger_sources
             .get(site)
             .cloned()
-            .unwrap_or_else(|| "<unknown site>".to_owned());
+            .unwrap_or_else(|| SourceDescription::literal("<unknown site>"));
         let ledger = Rc::new(RefCell::new(AtomicLedger::new(ledger_site.clone())));
         let guard_site = guard
             .and_then(CheckedExpression::carrier)
             .and_then(|path| self.lock_ledger_sources.get(path))
             .cloned()
             .unwrap_or_else(|| ledger_site.clone());
+        let target_site = |target: &CheckedTarget| {
+            self.target_ledger_sources
+                .get(&target.node_path)
+                .cloned()
+                .unwrap_or_else(|| SourceDescription::literal("<unknown site>"))
+        };
         let mut eager_direct = BTreeMap::new();
         for (group_index, indexes) in grouped.values().enumerate() {
             let source = indexes.iter().find_map(|index| {
@@ -122,9 +138,13 @@ impl IrBuilder<'_> {
                     target.kind,
                     CheckedTargetKind::MapEntry(_) | CheckedTargetKind::MapSet(_)
                 ) {
-                    Some(target.ledger_site.clone())
+                    Some(target_site(target))
                 } else if guard_roots.iter().any(|root| root.binding == target.binding) {
                     Some(guard_site.clone())
+                } else if !body_roots.iter().any(|root| root.binding == target.binding) {
+                    // Proof-only targets have no executable first use to
+                    // trigger a lazy take, but the statement still holds them.
+                    Some(target_site(target))
                 } else {
                     None
                 }
@@ -142,6 +162,15 @@ impl IrBuilder<'_> {
             bindings: HashMap::new(),
             target_bindings: HashMap::new(),
             ledger: ledger.clone(),
+            wait_site: self
+                .wait_report_sources
+                .get(site)
+                .cloned()
+                .unwrap_or_else(|| {
+                    SourceDescription::literal(
+                        "waits for the guard of an atomic statement (source unavailable)",
+                    )
+                }),
         };
         for (group_index, indexes) in grouped.into_values().enumerate() {
             ledger.borrow_mut().push_group(
@@ -169,7 +198,7 @@ impl IrBuilder<'_> {
                         referent: IrAddressed::Nominal(nominal),
                     },
                 )?;
-                let object = if target.borrowed {
+                let object = if target.kept_by_place {
                     loaded
                 } else {
                     self.define(
@@ -260,9 +289,12 @@ impl IrBuilder<'_> {
                     .insert(target.binding, region.targets.len());
                 members.push(region.targets.len());
                 region.targets.push(TargetRegion {
+                    binding: target.binding,
                     object,
                     nominal,
-                    owned: !target.borrowed,
+                    state: field,
+                    owned: !target.kept_by_place,
+                    wrote: !target.reads,
                     lock,
                 });
             }
@@ -402,7 +434,7 @@ impl IrBuilder<'_> {
                 .ledger_path()
                 .and_then(|path| self.lock_ledger_sources.get(path))
                 .cloned()
-                .unwrap_or_else(|| "<unknown site>".to_owned());
+                .unwrap_or_else(|| SourceDescription::literal("<unknown site>"));
             let direct = reached
                 .into_iter()
                 .map(|group| (group, source.clone()))
@@ -451,7 +483,7 @@ impl IrBuilder<'_> {
         &mut self,
         region: &AtomicRegion,
         last: usize,
-        direct: &BTreeMap<usize, String>,
+        direct: &BTreeMap<usize, SourceDescription>,
         before_guard: bool,
     ) -> Result<(), LoweringFailure> {
         for (index, group) in region.groups.iter().enumerate().take(last + 1) {
@@ -492,10 +524,20 @@ impl IrBuilder<'_> {
                                 .map_err(|_| LoweringFailure::CounterOverflow)?,
                             object: target.object,
                             hold,
+                            wrote: target.wrote,
                         },
                     )?;
                 }
-                self.define(IrType::Unit, IrOperation::AtomicGroupTake { record })?;
+                // The first group holds nothing before it, so it waits
+                // and suspends as a first object's acquire does.
+                self.define(
+                    IrType::Unit,
+                    if index == 0 {
+                        IrOperation::AtomicGroupAcquire { record }
+                    } else {
+                        IrOperation::AtomicGroupTake { record }
+                    },
+                )?;
             } else {
                 let target = &region.targets[group.targets[0]];
                 match &target.lock {
@@ -620,7 +662,14 @@ impl IrBuilder<'_> {
     fn atomic_binding_target(&self, region: &AtomicRegion, binding: BindingId) -> Option<usize> {
         region.target_bindings.get(&binding).copied()
     }
-    fn release_groups(&mut self, region: &AtomicRegion) -> Result<(), LoweringFailure> {
+    /// Gives up every group, last first. After a false guard, `watched`, the
+    /// statement wrote nothing; on leaving its block it releases an object
+    /// as written when the block or guard may write it.
+    fn release_groups(
+        &mut self,
+        region: &AtomicRegion,
+        watched: bool,
+    ) -> Result<(), LoweringFailure> {
         for group in region.groups.iter().rev() {
             let done = group
                 .flag
@@ -643,6 +692,7 @@ impl IrBuilder<'_> {
                             IrType::Unit,
                             IrOperation::SharedUnlock {
                                 object: target.object,
+                                wrote: target.wrote && !watched,
                             },
                         )?;
                     }
@@ -687,6 +737,7 @@ impl IrBuilder<'_> {
                 self.current = Some(done);
             }
         }
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicEnd)?;
         Ok(())
     }
     fn lower_guard(
@@ -694,8 +745,8 @@ impl IrBuilder<'_> {
         region: &AtomicRegion,
         guard: &CheckedExpression,
         eager: Option<usize>,
-        eager_direct: &BTreeMap<usize, String>,
-        ledger_site: &str,
+        eager_direct: &BTreeMap<usize, SourceDescription>,
+        ledger_site: &SourceDescription,
     ) -> Result<(), LoweringFailure> {
         let mut roots = Vec::new();
         expression_bindings(guard, &mut roots);
@@ -714,6 +765,7 @@ impl IrBuilder<'_> {
             drops: Vec::new(),
         })?;
         self.current = Some(acquire);
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(last) = read.last().copied().max(eager) {
             self.take_groups_through(region, last, &direct, true)?;
         }
@@ -736,11 +788,20 @@ impl IrBuilder<'_> {
             ],
         })?;
         self.current = Some(watch);
+        let targets = region
+            .targets
+            .iter()
+            .map(|target| target.binding)
+            .collect::<Vec<_>>();
         if region.targets.len() == 1 && matches!(region.targets[0].lock, Lock::Object) {
+            let target = &region.targets[0];
+            let test = self.wake_test(guard, target.binding, target.state, &targets)?;
             self.define(
                 IrType::Unit,
                 IrOperation::SharedWatch {
-                    object: region.targets[0].object,
+                    object: target.object,
+                    test,
+                    site: region.wait_site.clone(),
                 },
             )?;
         } else {
@@ -751,11 +812,14 @@ impl IrBuilder<'_> {
                     let target = &region.targets[*member];
                     match &target.lock {
                         Lock::Object => {
+                            let test =
+                                self.wake_test(guard, target.binding, target.state, &targets)?;
                             self.define(
                                 IrType::Unit,
                                 IrOperation::WatchObject {
                                     record,
                                     object: target.object,
+                                    test,
                                 },
                             )?;
                         }
@@ -771,8 +835,14 @@ impl IrBuilder<'_> {
                     }
                 }
             }
-            self.release_groups(region)?;
-            self.define(IrType::Unit, IrOperation::WatchPark { record })?;
+            self.release_groups(region, true)?;
+            self.define(
+                IrType::Unit,
+                IrOperation::WatchPark {
+                    record,
+                    site: region.wait_site.clone(),
+                },
+            )?;
         }
         self.terminate(IrTerminator::Jump {
             target: acquire,
@@ -852,7 +922,7 @@ impl IrBuilder<'_> {
         if let Some(block) = self.current {
             region.ledger.borrow_mut().exits.insert(block);
         }
-        self.release_groups(region)?;
+        self.release_groups(region, false)?;
         self.append_drops(
             region
                 .targets
@@ -867,6 +937,35 @@ impl IrBuilder<'_> {
     }
     pub(super) fn atomic_depth(&self) -> usize {
         self.atomics.len()
+    }
+}
+/// Executable uses throughout a block, reusing the same direct-expression
+/// walk that triggers lazy acquisition while lowering each statement.
+fn block_bindings(statements: &[CheckedStatement], roots: &mut Vec<Root>) {
+    for statement in statements {
+        statement_bindings(statement, roots);
+        match statement {
+            CheckedStatement::Loop { body, .. }
+            | CheckedStatement::CountedRange { body, .. } => block_bindings(body, roots),
+            CheckedStatement::Match { arms, .. }
+            | CheckedStatement::ValueMatchLet { arms, .. } => {
+                for arm in arms {
+                    block_bindings(&arm.body, roots);
+                }
+            }
+            CheckedStatement::Let { .. }
+            | CheckedStatement::DestructuringLet { .. }
+            | CheckedStatement::PropagateLet { .. }
+            | CheckedStatement::Evaluate { .. }
+            | CheckedStatement::DropExpression { .. }
+            | CheckedStatement::Set { .. }
+            | CheckedStatement::Proof(_)
+            | CheckedStatement::Return { .. }
+            | CheckedStatement::Give { .. }
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. }
+            | CheckedStatement::Atomic { .. } => {}
+        }
     }
 }
 /// The places a statement's own expressions reach, not those of the blocks

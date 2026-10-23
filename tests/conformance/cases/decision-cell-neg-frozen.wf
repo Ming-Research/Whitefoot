@@ -1,0 +1,3 @@
+fn freeze(cell: DecisionCell) -> result: Frozen<DecisionCell> pure {
+  return frozen_new::<DecisionCell>(value: move cell);
+}

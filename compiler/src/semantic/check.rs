@@ -3,15 +3,20 @@ mod behavior;
 mod cleanup;
 mod contract_reads;
 mod control;
+mod decision_cell;
 mod effect_repairs;
 mod ensures;
 pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
 mod frozen;
 mod generics;
+mod goal_instances;
+mod held;
+mod index_write_repairs;
 mod inventory;
 mod linearity;
 mod lock_ledger_sources;
+mod match_diagnostics;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -20,19 +25,26 @@ mod range_clauses;
 mod range_type_invariants;
 mod receipts;
 mod references;
-mod repairs;
+pub(in crate::semantic) mod repairs;
 mod requires;
 mod schedule;
 mod spawn;
+mod summary_repairs;
 mod support;
 mod tail_calls;
 mod text_literals;
 mod type_invariants;
 mod type_regions;
 mod types;
+mod wait_report_sources;
 
+#[cfg(test)]
+pub(super) use match_diagnostics::capture_match_sites;
 pub(crate) use receipts::ProofReceipts;
-pub(crate) use repairs::{header_invariant_scope_repair, postcondition_selector_repair};
+pub(crate) use repairs::{
+    executable_caller_repair, executable_runner_repair, header_invariant_scope_repair,
+    postcondition_selector_repair,
+};
 
 use std::collections::{HashMap, HashSet};
 
@@ -53,18 +65,18 @@ use super::model::{
     CheckedFunction, CheckedGenericRequirement, CheckedMode, CheckedNominal, CheckedNominalKind,
     CheckedNumericType, CheckedParameter, CheckedProgramData, CheckedSetTarget, CheckedShared,
     CheckedStatement, CheckedType, CheckedValue, DerivedConst, DerivedConstId, FunctionId,
-    IntegerType, NominalId, ValueInitializerKind, evaluate_const_operation,
+    NominalId, ValueInitializerKind, evaluate_const_operation,
 };
 use super::permission::{PermissionSignature, analyze_permission, plan_permission_separations};
 use super::permission_ledger::{LedgerSource, prepare_storage_ledger, render_ledger};
 use super::places::ResolvedPlace;
-use super::postcondition::CheckedPostconditionSelector;
+use super::postcondition::{CheckedPostcondition, CheckedPostconditionSelector};
 use super::tree::TreeView;
 use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
 use generics::{GenericParameter, GenericSubstitution};
 use inventory::InventoryView;
-use references::ReferenceInfo;
+use references::{ReferenceInfo, ReferenceSelection};
 
 /// The syntax tree, as the permission ledger's citations reach it.
 struct PermissionLedgerSource<'view, 'unit> {
@@ -149,6 +161,8 @@ struct FunctionSignature {
     /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
     /// whose calls are admitted only in the body of another waiting function.
     waits: bool,
+    /// Normalized reference parameter ordinals of the ordinary held contract.
+    held_parameters: Vec<usize>,
     /// A callable hypothesis used only while checking generic source spelling.
     /// Concrete calls always select a verified source function instead.
     formal_parameter: Option<generics::GenericParameterKey>,
@@ -274,11 +288,15 @@ struct LocalBinding {
     /// was the loan apparatus's way of stating what [REF-2] now states
     /// directly as a validity fact.
     reference: Option<ReferenceInfo>,
-    /// [REF-2, ENT-3.S15] the borrowed-match refinement occurrences this
-    /// binding witnesses. The occurrence identity is immutable even when a
+    /// [REF-2, ENT-3.S15] the match refinement occurrences rooted at this
+    /// binding. The occurrence identity is immutable even when a
     /// reference binding is rebound; only its flow-sensitive validity meets
     /// at joins.
     refinement_witnesses: Vec<RefinementWitness>,
+    /// [SHARE-2] on an atomic statement's binding, the places its handle was
+    /// read from, which every write and move checked in the statement marks
+    /// when it may overlap one of them. Every copy of this state shares it.
+    handle_watch: Option<std::rc::Rc<references::HandleWatch>>,
     /// [EFF-1] whether this binding is a parameter holding the value its call
     /// passed on every path to here. An index names a row's index parameter
     /// only while it does, since a row evaluates that parameter once at the
@@ -290,6 +308,8 @@ struct LocalBinding {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RefinementWitness {
     origin: NodePath,
+    /// The selected target, distinct from the possible storage supports.
+    selection: ReferenceSelection,
     place: ResolvedPlace,
     variant: u32,
     valid: bool,
@@ -297,7 +317,10 @@ struct RefinementWitness {
 
 impl RefinementWitness {
     fn same_occurrence(&self, other: &Self) -> bool {
-        self.origin == other.origin && self.place == other.place && self.variant == other.variant
+        self.origin == other.origin
+            && self.selection == other.selection
+            && self.place == other.place
+            && self.variant == other.variant
     }
 }
 
@@ -358,12 +381,11 @@ impl LocalBinding {
             }
     }
 
-    /// A loop header is checked once rather than materialized by `join_from`.
-    /// Its reference validity has a separate finite equation, but every
-    /// non-reference refinement witness must therefore still agree exactly
-    /// with the backedge as it did before loop-header widening.
+    /// Loop-header reference validity uses its finite equations, and variant
+    /// witnesses use the same structural retry's entry/backedge meet. Their
+    /// flow validity is therefore excluded from this structural comparison.
     fn loop_agrees_with(&self, other: &Self) -> bool {
-        self.agrees_with(other) && self.refinement_witnesses == other.refinement_witnesses
+        self.agrees_with(other)
     }
 }
 
@@ -536,6 +558,7 @@ enum PreludeType {
     DivError,
     NarrowError,
     ScanStep,
+    DecisionState,
 }
 
 /// Source declarations and syntax shared read-only by preflight and body checking.
@@ -543,6 +566,8 @@ struct DeclarationInventory<'unit> {
     resolved: &'unit ResolvedSyntaxUnit,
     /// Lazily indexed source lines for non-normative lock-ledger locations.
     ledger_line_starts: lock_ledger_sources::SourceLines,
+    /// Target binder locations do not participate in analyzed function bodies.
+    target_ledger_sources: std::cell::RefCell<HashMap<NodePath, crate::SourceDescription>>,
     /// [STOR-8, GRAM-2] whether this compilation unit wrote `program
     /// no_heap;`.
     ///
@@ -560,6 +585,11 @@ struct DeclarationInventory<'unit> {
 /// extend this context directly; checking phases select ordered views of it.
 struct TypeContext<'unit> {
     declarations: &'unit DeclarationInventory<'unit>,
+    /// Exact source text for diagnostic-only captured-value occurrences.
+    source_spellings: HashMap<NodeId, String>,
+    postcondition_clauses:
+        HashMap<(FunctionId, crate::NodePath), super::postcondition::PostconditionClause>,
+    postcondition_sources: HashMap<crate::NodePath, super::postcondition::PostconditionSource>,
     view: InventoryView,
     nominals: Vec<CheckedNominal>,
     /// Counts the changes to `nominals`: an instance appended or completed.
@@ -603,6 +633,7 @@ struct TypeContext<'unit> {
     /// symbolic validation instance is checked; every concrete instantiation
     /// evaluates entries away, so no id reaches lowering.
     derived_consts: Vec<DerivedConst>,
+    captured_places: super::places::CapturedPlaceTable,
     behavior: behavior::BehaviorInventory,
     /// [TYPE-11] each struct's formed type invariants, in declaration order.
     type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
@@ -623,6 +654,8 @@ struct TypeContext<'unit> {
 /// a reference-summary retry; the completed attempt publishes its own facts.
 #[derive(Default)]
 struct BodyChecker {
+    /// Explanation only: an uncovered call write uses a rewritten row index.
+    rewritten_index_repair: Option<String>,
     /// Allocated and populated only by an EFF-2 rejection replay.
     repair_calls: Option<Vec<effect_repairs::EffectCall>>,
     /// [LIV-2] the target places of the `set` commit whose right-hand side is
@@ -651,7 +684,13 @@ struct BodyChecker {
     /// ends those call values. The sets only grow across the function's
     /// retries, and a new member restarts the walk, as a new loop-header
     /// summary path does.
-    loop_superseded_bindings: HashMap<super::model::CheckedLoopId, HashSet<BindingId>>,
+    loop_superseded_bindings:
+        HashMap<super::model::CheckedLoopId, HashSet<super::places::CapturedTerm>>,
+    /// [ENT-3.S15, ENT-5] enclosing match occurrences whose variant fact
+    /// does not survive every executable backedge of this loop. Each newly
+    /// recorded occurrence restarts the existing structural walk; header
+    /// formation applies the kills before checking any iteration's body.
+    loop_invalidated_refinements: HashMap<super::model::CheckedLoopId, Vec<RefinementWitness>>,
     /// [EFF-1] the index and range-endpoint captures that read a parameter
     /// while it held its call value on every path to their formation, which
     /// name the row's index parameter whatever later writes and joins do.
@@ -664,6 +703,13 @@ struct BodyChecker {
     /// checked: inside one, a waiting call or another atomic statement is
     /// refused.
     atomic_depth: u32,
+    /// Current atomic target origins and protection obligations before framing.
+    held_atomic_roots: Vec<BindingId>,
+    held_calls: Vec<(NodeId, Vec<ResolvedPlace>)>,
+    held_writes: Vec<(NodeId, ResolvedPlace)>,
+    checked_held_calls: Vec<super::model::CheckedHeldCall>,
+    held_atomic_node: Option<crate::NodePath>,
+    held_guard: bool,
     table_set_borrow: Option<NodeId>,
     /// [RANGE-1] the range clauses of the function being checked, published
     /// with its finished body. Every retry starts empty.
@@ -678,11 +724,17 @@ struct BodyChecker {
     /// [ENT-2] the rebound reference parameters and `atomic` binders, whose
     /// own binding roots the path they name; no exact path starts at one.
     rebound_anchors: HashSet<BindingId>,
+    /// [ENT-2] each range alias, `let q = r;` with neither variable rebound,
+    /// to the variable its places are identified through: the source's own
+    /// entry when the source is itself a range alias, else the source.
+    range_alias_sources: HashMap<BindingId, BindingId>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
 #[derive(Default)]
 struct AnalysisState {
+    /// [ERR-2] rejected structural scratch, stopped before proof consumers.
+    match_diagnostics: match_diagnostics::MatchDiagnostics,
     /// [DIAG-1, FN-10] retain tail-condition failures until ordinary call
     /// checking, including FN-8 proofs, can establish a prior same-node rule.
     musttail_rejections: Vec<SemanticIssue>,
@@ -805,6 +857,7 @@ fn check_semantics_with(
                     issue.kind,
                     SemanticIssueKind::EffectMismatch {
                         expected_row: None,
+                        mechanical_fix: None,
                         ..
                     }
                 ) =>
@@ -863,6 +916,7 @@ fn check_semantics_attempt(
     repair_mode: effect_repairs::RepairMode,
 ) -> Result<CheckedProgramData, CheckStop> {
     DeclarationInventory::new(resolved).and_then(|declarations| {
+        declarations.check_entry_positions()?;
         let mut types = TypeContext::new(&declarations);
         types.effect_repairs = repair_mode;
         if !resolved.postconditions().is_empty() {
@@ -893,6 +947,7 @@ fn check_semantics_attempt(
             receipts,
         );
         let result = checker.check_program(&CheckContext::default());
+        let result = checker.analysis.match_diagnostics.finish(result);
         checker.analysis.finish_musttail_checks(result)
     })
 }
@@ -914,6 +969,7 @@ impl<'unit> DeclarationInventory<'unit> {
         Ok(Self {
             resolved,
             ledger_line_starts: Default::default(),
+            target_ledger_sources: Default::default(),
             tree,
             no_heap,
         })
@@ -1310,6 +1366,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .map(|signature| {
                 Ok(PermissionSignature {
                     name: signature.name.clone(),
+                    decision_cell: self.types.decision_cell_boundary(signature.id)?,
                     parameter_declarations: signature
                         .parameters
                         .iter()
@@ -1342,6 +1399,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let optimistic_batch = function_inventory.iter().any(|checked| {
             ordinary[checked.function.id.0 as usize]
                 && (!checked.function.postconditions.is_empty()
+                    || !checked.function.range_facts.postconditions.is_empty()
                     || Checker::statements_contain_value_if(
                         checked.function.body.as_deref().unwrap_or_default(),
                     ))
@@ -1355,10 +1413,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             true,
             None,
         )?;
-        let mut functions = function_inventory
+        let (mut functions, binding_names): (Vec<_>, Vec<_>) = function_inventory
             .into_iter()
-            .map(|checked| checked.function)
-            .collect::<Vec<_>>();
+            .map(|checked| (checked.function, checked.binding_names))
+            .unzip();
         for function in &mut functions {
             function.body_disposition = function.entailment.body_disposition;
         }
@@ -1391,6 +1449,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         &ranges[index].discharged,
                         &ranges[index].inconclusive,
                     )
+                    .map_err(|stop| {
+                        self.explain_summary_stop(
+                            stop,
+                            function,
+                            &baseline_functions,
+                            &callees,
+                            &binding_names[index],
+                        )
+                    })
                     .map_err(|stop| self.types.attribute_to_request(function.id, stop))
                 {
                     Ok(()) => {}
@@ -1407,12 +1474,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     Err(stop) => return Err(stop),
                 }
             }
-            // Every accepted fresh analysis is kept, whether or not another
-            // function's rejection fails this check [MOD-8].
+            // An accepted component's fresh analyses are kept even when
+            // another component fails this check [MOD-8].
             for (index, judged) in ranges.iter().enumerate() {
                 rejected[index] |= !judged.issues.is_empty();
             }
-            self.record_receipts(&baseline_functions, &rejected);
+            self.record_receipts(&baseline_functions, &rejected, &postcondition_schedule);
             rejections.sort_by(|left, right| {
                 left.0
                     .components()
@@ -1519,6 +1586,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .types
             .declarations
             .lock_ledger_sources(&functions, &executable_functions);
+        let wait_report_sources = self
+            .types
+            .declarations
+            .wait_report_sources(&functions, &executable_functions);
 
         Ok(CheckedProgramData {
             nominals: self.types.nominals.clone(),
@@ -1563,6 +1634,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             permission,
             permission_ledger,
             lock_ledger_sources,
+            target_ledger_sources: self.types.declarations.target_ledger_sources.borrow().clone(),
+            wait_report_sources,
         })
     }
 
@@ -1791,11 +1864,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         };
         let queries = self.analysis.contract_queries.len();
         let tail_rejections = self.analysis.musttail_rejections.len();
+        let match_rejections = self.analysis.match_diagnostics.len();
         loop {
             self.analysis.contract_queries.truncate(queries);
             // Only the settled body may contribute FN-10 refusals. Keep the
             // position checks and earlier functions outside this attempt.
             self.analysis.musttail_rejections.truncate(tail_rejections);
+            self.analysis.match_diagnostics.truncate(match_rejections);
             let outcome = {
                 let mut attempt = Checker::new(
                     self.types,
@@ -1815,6 +1890,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         ),
                         loop_superseded_bindings: std::mem::take(
                             &mut body.loop_superseded_bindings,
+                        ),
+                        loop_invalidated_refinements: std::mem::take(
+                            &mut body.loop_invalidated_refinements,
                         ),
                         ..BodyChecker::default()
                     };
@@ -1977,7 +2055,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let mut postcondition_places = Vec::with_capacity(postcondition_selectors.len());
         for selector in &postcondition_selectors {
             let mut postcondition_bindings = parameter_bindings.clone();
-            let (relation, places, entry_places) = self.check_postcondition_clause(
+            let (relation, places) = self.check_postcondition_clause(
                 FunctionContext {
                     check_context,
                     function: signature,
@@ -1987,7 +2065,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 &mut counters,
             )?;
             postcondition_relations.push(relation);
-            postcondition_places.push((places, entry_places));
+            postcondition_places.push(places);
         }
         self.types
             .declarations
@@ -2133,20 +2211,22 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 &signature.declared_effects,
                 signature,
             )?;
-            // An acyclic repair keeps origin/main's exact text. Recursive
+            // Rewritten-index repairs keep the declared row. Other recursive
             // rows are withheld until the rejection-only replay validates them.
             // If source graph classification is unavailable, replay is conservative.
             let recursive = self.types.effect_repairs.is_ordinary()
                 && self
                     .requires_recursive_row_repair(signature)
                     .unwrap_or(true);
-            let (expected_row, mechanical_fix) = if recursive {
+            let (expected_row, mechanical_fix) = if let Some(repair) =
+                &self.body.rewritten_index_repair
+            {
+                (None, Some(repair.clone()))
+            } else if recursive {
                 (None, None)
             } else {
                 let expected = self.types.render_effect_row(&suggested, signature)?;
-                let fix = format!(
-                    "declare the row as `{expected}`, which covers every access the body makes and no other"
-                );
+                let fix = repairs::effect_row_repair(&expected);
                 (Some(expected), Some(fix))
             };
             return self.types.declarations.issue_node(
@@ -2163,13 +2243,29 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 },
             );
         }
+        // [TYPE-11, FN-2] generated promises follow the written clauses in
+        // both concrete and symbolic instances. A known invariant struct
+        // supplies its ordinary integer relations even while another type
+        // remains symbolic. Schema admission and renamed-instance reuse
+        // must retain those clauses with the written ones, so FN-4's actual
+        // premises have the FN-9 summaries a bound call requires.
+        for (invariant, subject, selector) in
+            self.type_invariant_postcondition_selectors(signature)?
+        {
+            postcondition_selectors.push(selector);
+            postcondition_relations.push(type_invariants::substitute_relation(
+                &invariant.relation,
+                subject,
+            ));
+            postcondition_places.push(Vec::new());
+        }
         let postconditions = if signature.substitution.is_concrete(&self.types.elements) {
-            let mut postconditions = postcondition_selectors
+            postcondition_selectors
                 .into_iter()
                 .zip(postcondition_relations)
                 .zip(postcondition_places)
-                .map(|((selector, relation), (places, entry_places))| {
-                    let mut checked = self.types.build_checked_postcondition(
+                .map(|((selector, relation), places)| {
+                    let mut postcondition = self.types.build_checked_postcondition(
                         FunctionContext {
                             check_context,
                             function: signature,
@@ -2179,32 +2275,21 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         relation,
                         &checked.statements,
                     )?;
-                    checked.places = places;
-                    checked.entry_places = entry_places;
-                    Ok::<_, CheckStop>(checked)
+                    postcondition.places = places;
+                    Ok::<_, CheckStop>(postcondition)
                 })
-                .collect::<Result<Vec<_>, _>>()?;
-            postconditions.extend(self.type_invariant_postconditions(
-                FunctionContext {
-                    check_context,
-                    function: signature,
-                },
-                &parameters,
-                &checked.statements,
-            )?);
-            postconditions
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             let source_admitted = summary_source
                 .and_then(|source| self.analysis.symbolic_admitted.get(&source))
                 .cloned();
             let mut admitted = Vec::new();
             let mut postconditions = Vec::new();
-            for (position, ((selector, relation), (places, entry_places))) in
-                postcondition_selectors
-                    .into_iter()
-                    .zip(postcondition_relations)
-                    .zip(postcondition_places)
-                    .enumerate()
+            for (position, ((selector, relation), places)) in postcondition_selectors
+                .into_iter()
+                .zip(postcondition_relations)
+                .zip(postcondition_places)
+                .enumerate()
             {
                 if source_admitted
                     .as_ref()
@@ -2212,7 +2297,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 {
                     continue;
                 }
-                if let Some(mut postcondition) = self.types.build_checked_schema_postcondition(
+                if let Some(postcondition) = self.types.build_checked_schema_postcondition(
                     FunctionContext {
                         check_context,
                         function: signature,
@@ -2223,9 +2308,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     &checked.statements,
                 )? {
                     admitted.push(position);
-                    postcondition.places = places;
-                    postcondition.entry_places = entry_places;
-                    postconditions.push(postcondition);
+                    postconditions.push(CheckedPostcondition {
+                        places,
+                        ..postcondition
+                    });
                 }
             }
             if self
@@ -2289,6 +2375,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             // its own allocation here.
             allocates: exhibited.allocates,
             requirements,
+            held_parameters: signature.checked_held_parameters()?,
+            held_calls: std::mem::take(&mut self.body.checked_held_calls),
             requirement_places,
             routed_requirements,
             postconditions,
@@ -2371,6 +2459,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 )
             }),
             refinement_witnesses: Vec::new(),
+            handle_watch: None,
             call_value: true,
         })
     }
@@ -2668,441 +2757,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             | CheckedExpression::Project { .. } => {}
         }
         Ok(())
-    }
-
-    fn instantiate_goal_expression(
-        &mut self,
-        check_context: &CheckContext<'_>,
-        expression: &GoalExpression,
-        signature: &FunctionSignature,
-        regions: &[DeclarationId],
-        arguments: &[GoalExpression],
-    ) -> Result<GoalExpression, CheckStop> {
-        match expression {
-            GoalExpression::Datum(GoalDatum::Parameter {
-                ordinal,
-                projections,
-                ty,
-            }) => {
-                let index = usize::try_from(*ordinal)
-                    .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                let parameter = signature
-                    .parameters
-                    .get(index)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let mut image = arguments
-                    .get(index)
-                    .cloned()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let parameter_type =
-                    self.instantiate_goal_type(check_context, parameter.ty, signature, regions)?;
-                if image.ty() != parameter_type {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                }
-                let remaining = if parameter.mode == CheckedMode::Own {
-                    projections.as_slice()
-                } else {
-                    let Some((GoalProjection::Deref, remaining)) = projections.split_first() else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    remaining
-                };
-                let final_type =
-                    self.instantiate_goal_type(check_context, *ty, signature, regions)?;
-                for projection in remaining {
-                    // [MSR-1, EFF-5] a formal-valued subscript names a value
-                    // parameter of the callee, and the caller substitutes its
-                    // own actual for it exactly as it substitutes a row's
-                    // index positions: the offset the place is identified
-                    // over is the value that argument names here.
-                    let projection =
-                        self.instantiate_goal_projection(projection, signature, arguments)?;
-                    image = image
-                        .with_projection(projection, final_type)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                }
-                if image.ty() != final_type {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                }
-                Ok(image)
-            }
-            GoalExpression::Datum(GoalDatum::NamedConst {
-                declaration,
-                projections,
-                ty,
-                admission,
-            }) => {
-                let projections = projections
-                    .iter()
-                    .map(|projection| {
-                        self.instantiate_goal_projection(projection, signature, arguments)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let mut admission = admission.clone();
-                admission.projections = admission
-                    .projections
-                    .iter()
-                    .map(|projection| {
-                        self.instantiate_goal_projection(projection, signature, arguments)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(GoalExpression::Datum(GoalDatum::NamedConst {
-                    declaration: *declaration,
-                    projections,
-                    ty: self.instantiate_goal_type(check_context, *ty, signature, regions)?,
-                    admission,
-                }))
-            }
-            GoalExpression::Datum(GoalDatum::Literal(value)) => {
-                Ok(GoalExpression::Datum(GoalDatum::Literal(
-                    self.instantiate_goal_value(check_context, value, signature, regions)?,
-                )))
-            }
-            GoalExpression::Datum(GoalDatum::Place { .. } | GoalDatum::EvaluatedValue { .. }) => {
-                Err(SemanticCompilerFailure::InvalidResolution.into())
-            }
-            GoalExpression::Operation {
-                row,
-                type_arguments,
-                const_arguments,
-                result,
-                arguments: operands,
-            } => Ok(GoalExpression::Operation {
-                row: self.instantiate_goal_operation(check_context, *row, signature, regions)?,
-                type_arguments: type_arguments
-                    .iter()
-                    .map(|ty| self.instantiate_goal_type(check_context, *ty, signature, regions))
-                    .collect::<Result<Vec<_>, _>>()?,
-                const_arguments: const_arguments
-                    .iter()
-                    .map(|value| self.types.instantiate_goal_const(*value, signature))
-                    .collect::<Result<Vec<_>, _>>()?,
-                result: self.instantiate_goal_type(check_context, *result, signature, regions)?,
-                arguments: operands
-                    .iter()
-                    .map(|operand| {
-                        self.instantiate_goal_expression(
-                            check_context,
-                            operand,
-                            signature,
-                            regions,
-                            arguments,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
-        }
-    }
-
-    fn instantiate_goal_projection(
-        &self,
-        projection: &GoalProjection,
-        signature: &FunctionSignature,
-        arguments: &[GoalExpression],
-    ) -> Result<GoalProjection, CheckStop> {
-        Ok(match projection {
-            GoalProjection::FormalSubscript {
-                ordinal,
-                projections,
-            }
-            | GoalProjection::FormalPage {
-                ordinal,
-                projections,
-            } => {
-                let parameter = signature
-                    .parameters
-                    .get(*ordinal as usize)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let mut selector = arguments
-                    .get(*ordinal as usize)
-                    .cloned()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let selected = if parameter.mode == CheckedMode::Own {
-                    projections.as_slice()
-                } else {
-                    projections
-                        .strip_prefix(&[GoalProjection::Deref])
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                };
-                for step in selected {
-                    selector = selector
-                        .with_projection(step.clone(), CheckedType::Integer(IntegerType::U64))
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                }
-                let offset = self.goal_argument_offset(Some(&selector))?;
-                if matches!(projection, GoalProjection::FormalPage { .. }) {
-                    GoalProjection::Page(offset)
-                } else {
-                    GoalProjection::Subscript(offset)
-                }
-            }
-            other => other.clone(),
-        })
-    }
-
-    /// The offset one actual supplies to a formal-valued subscript [MSR-1].
-    ///
-    /// [ENT-2] decides a place's identity by its canonical spelling, so an
-    /// argument that names a literal, a named or generic const, or a live
-    /// binding supplies exactly that, and an argument that names none of
-    /// them supplies the unknown offset, which no admitted family separates
-    /// -- the conservative reading in both directions [OWN-7].
-    fn goal_argument_offset(
-        &self,
-        argument: Option<&GoalExpression>,
-    ) -> Result<super::places::CapturedValue, CheckStop> {
-        Ok(argument
-            .and_then(|argument| {
-                argument.captured_offset(&self.types.constants, &self.types.checked_constants)
-            })
-            .unwrap_or_else(super::places::CapturedValue::unknown))
-    }
-
-    fn instantiate_goal_operation(
-        &mut self,
-        check_context: &CheckContext<'_>,
-        operation: GoalOperation,
-        signature: &FunctionSignature,
-        regions: &[DeclarationId],
-    ) -> Result<GoalOperation, CheckStop> {
-        Ok(match operation {
-            GoalOperation::Integer {
-                operation,
-                operand_type,
-            } => GoalOperation::Integer {
-                operation,
-                operand_type: self.instantiate_goal_type(
-                    check_context,
-                    operand_type,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::Float {
-                operation,
-                operand_type,
-            } => GoalOperation::Float {
-                operation,
-                operand_type: self.instantiate_goal_type(
-                    check_context,
-                    operand_type,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::NumericConversion {
-                mode,
-                source,
-                destination,
-            } => GoalOperation::NumericConversion {
-                mode,
-                source: self.instantiate_goal_numeric_type(
-                    check_context,
-                    source,
-                    signature,
-                    regions,
-                )?,
-                destination: self.instantiate_goal_numeric_type(
-                    check_context,
-                    destination,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::Reinterpret {
-                source,
-                destination,
-            } => GoalOperation::Reinterpret {
-                source: self.instantiate_goal_numeric_type(
-                    check_context,
-                    source,
-                    signature,
-                    regions,
-                )?,
-                destination: self.instantiate_goal_numeric_type(
-                    check_context,
-                    destination,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::Boolean(operation) => GoalOperation::Boolean(operation),
-            GoalOperation::ValueEquality {
-                equal,
-                operand_type,
-            } => GoalOperation::ValueEquality {
-                equal,
-                operand_type: self.instantiate_goal_type(
-                    check_context,
-                    operand_type,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::ArrayMeasure {
-                measure,
-                element,
-                length,
-            } => GoalOperation::ArrayMeasure {
-                measure,
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                length: self.types.instantiate_goal_const(length, signature)?,
-            },
-            GoalOperation::ArrayIndex { element, length } => GoalOperation::ArrayIndex {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                length: self.types.instantiate_goal_const(length, signature)?,
-            },
-            GoalOperation::BufferMeasure { measure, element } => GoalOperation::BufferMeasure {
-                measure,
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::BufferIndex { element } => GoalOperation::BufferIndex {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::ContainerMeasure {
-                measure,
-                measured,
-                element,
-                constant,
-            } => GoalOperation::ContainerMeasure {
-                measure,
-                measured,
-                element: element
-                    .map(|element| {
-                        self.instantiate_goal_element(check_context, element, signature, regions)
-                    })
-                    .transpose()?,
-                constant: constant
-                    .map(|constant| self.types.instantiate_goal_const(constant, signature))
-                    .transpose()?,
-            },
-            GoalOperation::RunIndex {
-                measured,
-                element,
-                constant,
-            } => GoalOperation::RunIndex {
-                measured,
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                constant: constant
-                    .map(|constant| self.types.instantiate_goal_const(constant, signature))
-                    .transpose()?,
-            },
-        })
-    }
-
-    fn instantiate_goal_numeric_type(
-        &mut self,
-        check_context: &CheckContext<'_>,
-        ty: CheckedNumericType,
-        signature: &FunctionSignature,
-        regions: &[DeclarationId],
-    ) -> Result<CheckedNumericType, CheckStop> {
-        CheckedNumericType::from_type(self.instantiate_goal_type(
-            check_context,
-            ty.ty(),
-            signature,
-            regions,
-        )?)
-        .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
-    }
-
-    fn instantiate_goal_type(
-        &mut self,
-        check_context: &CheckContext<'_>,
-        ty: CheckedType,
-        signature: &FunctionSignature,
-        regions: &[DeclarationId],
-    ) -> Result<CheckedType, CheckStop> {
-        Ok(match ty {
-            CheckedType::Generic(declaration)
-            | CheckedType::GenericInt(declaration)
-            | CheckedType::GenericFloat(declaration) => signature
-                .substitution
-                .type_argument(declaration)
-                .unwrap_or(ty),
-            CheckedType::Array { element, length } => CheckedType::Array {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                length: self.types.instantiate_goal_const(length, signature)?,
-            },
-            CheckedType::Segments { element } => CheckedType::Segments {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            CheckedType::Buffer { element } => CheckedType::Buffer {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            CheckedType::Window {
-                shape,
-                element,
-                capacity,
-            } => CheckedType::Window {
-                shape,
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                capacity: capacity
-                    .map(|capacity| self.types.instantiate_goal_const(capacity, signature))
-                    .transpose()?,
-            },
-            CheckedType::Entries { element } => CheckedType::Entries {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            CheckedType::Nominal(id) => {
-                self.instantiate_goal_nominal(check_context, id, signature, regions)?
-            }
-            CheckedType::Unit
-            | CheckedType::Bool
-            | CheckedType::Integer(_)
-            | CheckedType::Float(_)
-            | CheckedType::KeySet => ty,
-        })
     }
 
     /// [FN-2, S20] one nominal instance read at a caller with every formal
@@ -3933,6 +3587,9 @@ impl<'unit> TypeContext<'unit> {
     fn new(declarations: &'unit DeclarationInventory<'unit>) -> Self {
         Self {
             declarations,
+            source_spellings: HashMap::new(),
+            postcondition_clauses: HashMap::new(),
+            postcondition_sources: HashMap::new(),
             view: InventoryView::default(),
             nominal_templates: Default::default(),
             prelude_nominals: Default::default(),
@@ -3955,6 +3612,7 @@ impl<'unit> TypeContext<'unit> {
             constants: Default::default(),
             checked_constants: Default::default(),
             derived_consts: Default::default(),
+            captured_places: Default::default(),
             behavior: Default::default(),
             type_invariants: Default::default(),
             range_type_invariants: Default::default(),

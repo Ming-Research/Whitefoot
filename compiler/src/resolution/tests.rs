@@ -75,6 +75,13 @@ fn with_resolution_sources<ResultValue>(
         SourceBundle::with_limits(inputs, SOURCE_LIMITS)
     }
     .expect("resolver test bundle must be valid");
+    with_resolution_bundle(bundle, run)
+}
+
+fn with_resolution_bundle<ResultValue>(
+    bundle: SourceBundle,
+    run: impl FnOnce(ResolutionOutcome) -> ResultValue,
+) -> ResultValue {
     let LexOutcome::Complete(lexed) = lex(&bundle, LEX_LIMITS) else {
         panic!("resolver test source must lex");
     };
@@ -105,6 +112,188 @@ fn with_one_resolution<ResultValue>(
     run: impl FnOnce(ResolutionOutcome) -> ResultValue,
 ) -> ResultValue {
     with_resolution(&[SourceInput::new("test.wf", source)], run)
+}
+
+fn qualified_hint(source: &[u8], role: LexicalUseRole, expected: &str) {
+    with_one_resolution(source, |outcome| {
+        let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("missing qualified inventory name must reject: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), ResolutionRule::Mod5);
+        let ResolutionIssueKind::QualifiedNameNotFound {
+            role: found_role,
+            mechanical_fix,
+            ..
+        } = issue.kind()
+        else {
+            panic!("expected a qualified inventory lookup failure: {issue:?}");
+        };
+        assert_eq!(*found_role, role);
+        assert_eq!(mechanical_fix, expected);
+    });
+}
+
+#[test]
+fn qualified_call_hint_lists_only_module_callables_in_spelling_order() {
+    let source = "const limit: u8 = 1_u8;\n\nstruct Record {\n  value: u8;\n}\n\nenum Choice {\n  Pick();\n}\n\nfn zeta() -> result: unit pure {\n  pkg::missing();\n  return unit;\n}\n\nfn alpha() -> result: unit pure {\n  return unit;\n}\n";
+    qualified_hint(
+        source.as_bytes(),
+        LexicalUseRole::IdentifierCallee,
+        "replace `missing` with an accessible name declared in `pkg` for this grammar position: `alpha`, `zeta` [MOD-5]",
+    );
+    for name in ["alpha", "zeta"] {
+        let repaired = source.replace("pkg::missing", &format!("pkg::{name}"));
+        with_one_resolution(repaired.as_bytes(), |outcome| {
+            assert!(
+                matches!(outcome, ResolutionOutcome::Complete(_)),
+                "each suggested callable must resolve: {outcome:?}"
+            );
+        });
+    }
+}
+
+#[test]
+fn qualified_name_hint_caps_sorted_inventory_at_eight_names() {
+    let mut source = String::new();
+    for name in [
+        "zulu", "zeta", "theta", "sigma", "rho", "omega", "lambda", "gamma", "beta", "alpha",
+    ] {
+        if !source.is_empty() {
+            source.push('\n');
+        }
+        source.push_str(&format!("fn {name}() -> result: unit pure {{\n"));
+        if name == "zulu" {
+            source.push_str("  pkg::missing();\n");
+        }
+        source.push_str("  return unit;\n}\n");
+    }
+    qualified_hint(
+        source.as_bytes(),
+        LexicalUseRole::IdentifierCallee,
+        "replace `missing` with an accessible name declared in `pkg` for this grammar position: `alpha`, `beta`, `gamma`, `lambda`, `omega`, `rho`, `sigma`, `theta` [MOD-5]",
+    );
+}
+
+#[test]
+fn qualified_name_hint_uses_type_and_constructor_domains() {
+    for (wrong, role, choices) in [
+        (
+            "fn probe(value: pkg::Missing) -> result: unit pure {\n  return unit;\n}\n",
+            LexicalUseRole::Type,
+            "`Alpha`, `Choice`, `Zeta`",
+        ),
+        (
+            "fn probe() -> result: unit pure {\n  let value = pkg::Missing();\n  return unit;\n}\n",
+            LexicalUseRole::Construct,
+            "`Alpha`, `Zeta`",
+        ),
+    ] {
+        let source = format!(
+            "struct Zeta {{\n}}\n\nenum Choice {{\n  Pick();\n}}\n\nstruct Alpha {{\n}}\n\n{wrong}"
+        );
+        qualified_hint(
+            source.as_bytes(),
+            role,
+            &format!(
+                "replace `Missing` with an accessible name declared in `pkg` for this grammar position: {choices} [MOD-5]"
+            ),
+        );
+        let repaired = source.replace("pkg::Missing", "pkg::Alpha");
+        with_one_resolution(repaired.as_bytes(), |outcome| {
+            assert!(
+                matches!(outcome, ResolutionOutcome::Complete(_)),
+                "suggested type or struct constructor must resolve: {outcome:?}"
+            );
+        });
+    }
+}
+
+#[test]
+fn qualified_name_hint_with_empty_domain_requests_an_accessible_declaration() {
+    let source = "fn probe(value: pkg::Missing) -> result: unit pure {\n  return unit;\n}\n";
+    qualified_hint(
+        source.as_bytes(),
+        LexicalUseRole::Type,
+        "declare an accessible name in `pkg` for this grammar position [MOD-5]",
+    );
+    let repaired = format!("struct Missing {{\n}}\n\n{source}");
+    with_one_resolution(repaired.as_bytes(), |outcome| {
+        assert!(
+            matches!(outcome, ResolutionOutcome::Complete(_)),
+            "declaring the missing type must resolve: {outcome:?}"
+        );
+    });
+}
+
+#[test]
+fn qualified_name_hint_excludes_private_declarations_locals_and_other_modules() {
+    let graph = crate::form_module_graph(
+        SourceInput::new(
+            "modules.wfg",
+            b"pkg::leaf: [];\npkg: [pkg::leaf];\n\nentry app = pkg::probe;\n",
+        ),
+        crate::CompilerLimits::default(),
+    )
+    .expect("hint fixture graph forms");
+    let module = |path: &[&str]| {
+        graph
+            .modules()
+            .iter()
+            .position(|module| module.path() == path)
+            .and_then(crate::ModuleId::from_index)
+            .expect("fixture module is registered")
+    };
+    let interface = b"public fn visible() -> result: unit pure doc \"Returns unit.\";\n\nfn hidden() -> result: unit pure doc \"Returns unit privately.\";\n";
+    let implementation = b"fn visible() -> result: unit pure {\n  let local = 1_u8;\n  return unit;\n}\n\nfn hidden() -> result: unit pure {\n  return unit;\n}\n\nfn implementation_only() -> result: unit pure {\n  return unit;\n}\n";
+    let wrong = "fn probe() -> result: unit pure {\n  pkg::leaf::missing();\n  return unit;\n}\n";
+    for repaired in [false, true] {
+        let root = if repaired {
+            wrong.replace("missing", "visible")
+        } else {
+            wrong.to_owned()
+        };
+        let inputs = [
+            SourceInput::new("leaf/module.wfm", interface)
+                .in_module(module(&["leaf"]), crate::SourceRole::Interface),
+            SourceInput::new("leaf/body.wf", implementation)
+                .in_module(module(&["leaf"]), crate::SourceRole::Implementation),
+            SourceInput::new(
+                "module.wfm",
+                b"public fn probe() -> result: unit pure doc \"Calls a leaf function.\";\n",
+            )
+            .in_module(module(&[]), crate::SourceRole::Interface),
+            SourceInput::new("probe.wf", root.as_bytes())
+                .in_module(module(&[]), crate::SourceRole::Implementation),
+        ];
+        let bundle = SourceBundle::with_prelude_and_modules(
+            &inputs,
+            graph.modules().to_vec(),
+            SOURCE_LIMITS,
+        )
+        .expect("module hint fixture bundle forms");
+        with_resolution_bundle(bundle, |outcome| {
+            if repaired {
+                assert!(
+                    matches!(outcome, ResolutionOutcome::Complete(_)),
+                    "accessible suggestion must resolve across the module boundary: {outcome:?}"
+                );
+            } else {
+                let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
+                    panic!("missing external qualified name must reject: {outcome:?}");
+                };
+                assert_eq!(issue.rule(), ResolutionRule::Mod5);
+                let ResolutionIssueKind::QualifiedNameNotFound { mechanical_fix, .. } =
+                    issue.kind()
+                else {
+                    panic!("expected a missing qualified name: {issue:?}");
+                };
+                assert_eq!(
+                    mechanical_fix,
+                    "replace `missing` with an accessible name declared in `pkg::leaf` for this grammar position: `visible` [MOD-5]"
+                );
+            }
+        });
+    }
 }
 
 /// Dense role fixture for the effect checker's lookup regression. Only the
@@ -162,7 +351,11 @@ fn minimal_function_publishes_the_closed_prelude_and_source_declaration() {
         let ResolutionOutcome::Complete(resolved) = outcome else {
             panic!("minimal canonical function must resolve: {outcome:?}");
         };
-        assert_eq!(resolved.prelude_declarations().len(), 31);
+        // Without parsed opaque/function records, PRE-1 contributes just
+        // its enum catalog and Int, Float, Eq, Run. The enum preorders have
+        // 3 (Bool), 5 (Option), 7 (Result), 2 (Overflow), 3 (DivError),
+        // 2 (NarrowError), 5 (ScanStep), and 4 (DecisionState) records.
+        assert_eq!(resolved.prelude_declarations().len(), 35);
         assert_eq!(resolved.declarations().len(), 1);
         assert_eq!(resolved.declarations()[0].role(), DeclarationRole::Function);
         assert_eq!(resolved.declarations()[0].spelling(), "probe");
@@ -428,6 +621,85 @@ fn variant_postcondition_selector_preserves_prelude_identity_without_match_roles
             );
         });
     }
+}
+
+#[test]
+fn route_labels_retain_the_declared_enum_when_a_prelude_variant_has_the_same_name() {
+    let source = br#"enum Outcome {
+  Some(value: u64);
+}
+
+fn single() -> result: Outcome pure contract {
+  ensures when Some(value: payload): payload == 7_u64;
+} {
+  return Outcome::Some(value: 7_u64);
+}
+
+fn pair() -> (source: Outcome, builtin: Option<u64>) pure contract {
+  ensures when source is Some(value: payload): payload == 7_u64;
+  ensures when builtin is Some(value: payload): payload == 9_u64;
+  ensures when Some(value: payload): payload == 9_u64;
+} {
+  let source_value = Outcome::Some(value: 7_u64);
+  let builtin_value = Some<u64>(value: 9_u64);
+  return source_value, builtin_value;
+}
+
+fn unrelated() -> (source: Outcome, builtin: Result<u64, u64>) pure contract {
+  ensures when Some(value: payload): payload == 7_u64;
+} {
+  let source_value = Outcome::Some(value: 7_u64);
+  let builtin_value = Ok<u64, u64>(value: 9_u64);
+  return source_value, builtin_value;
+}
+
+fn scalar() -> (source: Outcome, number: u64) pure contract {
+  ensures when Some(value: payload): payload == 7_u64;
+} {
+  let source_value = Outcome::Some(value: 7_u64);
+  return source_value, 9_u64;
+}
+
+enum AnotherOutcome {
+  Some(value: u64);
+}
+
+fn conflicting() -> (first: Outcome, second: AnotherOutcome) pure contract {
+  ensures when Some(value: payload): payload == 7_u64;
+} {
+  let first_value = Outcome::Some(value: 7_u64);
+  let second_value = AnotherOutcome::Some(value: 9_u64);
+  return first_value, second_value;
+}
+"#;
+    with_one_resolution(source, |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("result-owned route labels must resolve: {outcome:?}");
+        };
+        let [implicit_source, explicit_source, explicit_prelude, mixed_owners, unrelated, scalar, conflicting] =
+            resolved.postconditions()
+        else {
+            panic!("seven routes are required");
+        };
+        assert!(matches!(
+            implicit_source.variant_target,
+            Some(ResolvedTarget::Source {
+                class: DeclarationClass::EnumVariant,
+                ..
+            })
+        ));
+        assert_eq!(implicit_source.variant_target, explicit_source.variant_target);
+        assert_eq!(implicit_source.variant_target, unrelated.variant_target);
+        assert_eq!(implicit_source.variant_target, scalar.variant_target);
+        assert_eq!(
+            explicit_prelude.variant_target,
+            Some(ResolvedTarget::Prelude(super::BuiltinPreludeId::SOME))
+        );
+        // Preserve the existing lexical choice when multiple result owners
+        // can supply the same omitted label.
+        assert_eq!(mixed_owners.variant_target, explicit_prelude.variant_target);
+        assert_eq!(conflicting.variant_target, explicit_prelude.variant_target);
+    });
 }
 
 #[test]
@@ -1885,8 +2157,8 @@ fn probe() -> result: unit pure {
     break @counted;
   }
   match ordinary {
-    Present(value: held) => {
-      give held;
+    Present(value: observed_state) => {
+      give observed_state;
     }
     Absent() => {
       return unit;
@@ -2693,12 +2965,13 @@ fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_res
             );
         },
     );
-    // [TYPE-6] a source variant belongs to its enum and enters no
-    // constructor domain, so it shares a PRE-1 variant's spelling freely.
+    // [TYPE-6] a source variant belongs to its enum and enters no constructor
+    // domain, so it shares PRE-1 decision-state and PRE-2 host variants'
+    // spellings freely.
     with_resolution_sources(
         &[SourceInput::new(
             "owned.wf",
-            b"enum Collision {\n  NotFound();\n}\n",
+            b"enum Collision {\n  NotFound();\n  Open();\n  Written();\n  Killed();\n}\n",
         )],
         true,
         |outcome| {
@@ -2788,9 +3061,13 @@ fn supplied_signature_locals_do_not_capture_writer_global_names() {
 fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
     // The opaque structs first, each with the nominal and the refused
     // constructor [TYPE-2] its collision names in both domains; `Bool` and
-    // its variants follow. `Bool` collides on its nominal alone, because an
-    // enum contributes its variants' spellings to the constructor domain and
-    // not its own.
+    // its variants follow. `Bool` collides on its nominal alone, because a
+    // prelude enum contributes its variants' spellings to the constructor
+    // domain and not its own. DecisionCell's fieldless opaque declaration
+    // contributes records 52 and 53, placing Bool at 54; Bool, Option and
+    // Result contribute 3 + 5 + 7 records before Overflow at 69. The enums
+    // through ScanStep occupy 27 records, so DecisionState is at 81 and its
+    // three tag-only variants occupy 82 through 84.
     for (name, origins) in [
         ("Slots", vec![5, 6]),
         ("Paged", vec![22, 23]),
@@ -2799,8 +3076,13 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
         ("Frozen", vec![37, 38]),
         ("ConcurrentHashMap", vec![41, 42]),
         ("KeySet", vec![44, 45]),
-        ("Bool", vec![52]),
-        ("Overflow", vec![67, 68]),
+        ("DecisionCell", vec![52, 53]),
+        ("Bool", vec![54]),
+        ("Overflow", vec![69, 70]),
+        ("DecisionState", vec![81]),
+        ("Open", vec![82]),
+        ("Written", vec![83]),
+        ("Killed", vec![84]),
     ] {
         let source = format!("struct {name} {{\n}}\n");
         with_resolution_sources(
@@ -2894,9 +3176,9 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[28].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[29].1, "T");
     assert_eq!(first[30].1, "inner");
-    // The shared-object handles, the keyed table, the key set and the keyed
-    // entries [SHARE-1] close the opaque phase: each nominal, its refused
-    // constructor, its type parameter and its readonly measure field.
+    // Shared handles, the keyed table, the key set, keyed entries and the
+    // decision cell close the opaque phase: each nominal, its refused
+    // constructor, and any type parameters and readonly measure fields.
     assert_eq!(first[31].1, "Shared");
     assert_eq!(first[31].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[32].1, "Shared");
@@ -2926,6 +3208,10 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[48].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[50].1, "V");
     assert_eq!(first[51].1, "len");
+    assert_eq!(first[52].1, "DecisionCell");
+    assert_eq!(first[52].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[53].1, "DecisionCell");
+    assert_eq!(first[53].2, Some(DeclarationClass::StructConstructor));
     // Then each enum with its variants and their fields, then `Int`,
     // `Float`, `Eq` and the reference-kind name `Run` [TYPE-8], then the
     // construction functions [OP-13], then the window operations in written
@@ -2934,74 +3220,102 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // `shared_new`, `shared_map_new`, `shared_share`, `shared_read`,
     // `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`,
     // `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`,
-    // `key_set_insert`, `key_set_bytes` and `key_set_read_key` [SHARE-1] and `free_empty`
-    // [OP-14] and `release` [PRE-1], each with its type, const and value
-    // parameters in declared order and then its range postconditions' names and bound variables
+    // `key_set_insert`, `key_set_bytes` and `key_set_read_key` [SHARE-1] and
+    // `free_empty` [OP-14], `release` and the five decision-cell functions
+    // [PRE-1], each with its type, const and value parameters in declared
+    // order and then its range postconditions' names and bound variables
     // [RANGE-1].
-    assert_eq!(first[52].1, "Bool");
-    assert_eq!(first[74].1, "ScanStep");
-    assert_eq!(first[75].1, "Next");
-    assert_eq!(first[77].1, "Needs");
-    assert_eq!(first[79].1, "Int");
-    assert_eq!(first[80].1, "Float");
-    assert_eq!(first[81].1, "Eq");
-    assert_eq!(first[81].2, Some(DeclarationClass::BuiltinBound));
-    assert_eq!(first[82].1, "Run");
-    assert_eq!(first[82].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[83].1, "box_new");
-    assert_eq!(first[86].1, "array_filled");
-    assert_eq!(first[87].1, "T");
-    assert_eq!(first[88].1, "n");
-    assert_eq!(first[89].1, "value");
-    assert_eq!(first[90].1, "filled");
-    assert_eq!(first[91].1, "k");
-    assert_eq!(first[92].1, "slots_new");
-    assert_eq!(first[95].1, "ring_new");
-    assert_eq!(first[98].1, "box_array_filled");
-    assert_eq!(first[102].1, "filled");
-    assert_eq!(first[103].1, "k");
-    assert_eq!(first[104].1, "box_segments_filled");
-    assert_eq!(first[119].1, "box_paged_new");
-    assert_eq!(first[130].1, "place_back");
-    assert_eq!(first[165].1, "grow_paged");
-    assert_eq!(first[169].1, "paged_page_len");
-    assert_eq!(first[180].1, "swap");
-    assert_eq!(first[184].1, "shared_new");
-    assert_eq!(first[187].1, "shared_map_new");
-    assert_eq!(first[190].1, "shared_share");
-    assert_eq!(first[193].1, "shared_read");
-    assert_eq!(first[196].1, "shared_read_share");
+    assert_eq!(first[54].1, "Bool");
+    assert_eq!(first[76].1, "ScanStep");
+    assert_eq!(first[77].1, "Next");
+    assert_eq!(first[79].1, "Needs");
+    assert_eq!(first[81].1, "DecisionState");
+    assert_eq!(first[81].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[82].1, "Open");
+    assert_eq!(first[82].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[83].1, "Written");
+    assert_eq!(first[83].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[84].1, "Killed");
+    assert_eq!(first[84].2, Some(DeclarationClass::EnumVariant));
+    assert_eq!(first[85].1, "Int");
+    assert_eq!(first[86].1, "Float");
+    assert_eq!(first[87].1, "Eq");
+    assert_eq!(first[87].2, Some(DeclarationClass::BuiltinBound));
+    assert_eq!(first[88].1, "Run");
+    assert_eq!(first[88].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[89].1, "box_new");
+    assert_eq!(first[92].1, "array_filled");
+    assert_eq!(first[93].1, "T");
+    assert_eq!(first[94].1, "n");
+    assert_eq!(first[95].1, "value");
+    assert_eq!(first[96].1, "filled");
+    assert_eq!(first[97].1, "k");
+    assert_eq!(first[98].1, "slots_new");
+    assert_eq!(first[101].1, "ring_new");
+    assert_eq!(first[104].1, "box_array_filled");
+    assert_eq!(first[108].1, "filled");
+    assert_eq!(first[109].1, "k");
+    assert_eq!(first[110].1, "box_segments_filled");
+    assert_eq!(first[125].1, "box_paged_new");
+    assert_eq!(first[136].1, "place_back");
+    assert_eq!(first[171].1, "grow_paged");
+    assert_eq!(first[175].1, "paged_page_len");
+    // v0.164 inserts `clear` with W, T and window after `take_front`: four
+    // records. Every later ordinal shifts by four.
+    assert_eq!(first[186].1, "clear");
+    assert_eq!(first[187].1, "W");
+    assert_eq!(first[188].1, "T");
+    assert_eq!(first[189].1, "window");
+    assert_eq!(first[190].1, "swap");
+    assert_eq!(first[194].1, "shared_new");
+    assert_eq!(first[197].1, "shared_map_new");
+    assert_eq!(first[200].1, "shared_share");
+    assert_eq!(first[203].1, "shared_read");
+    assert_eq!(first[206].1, "shared_read_share");
     // Each frozen function contributes its function, T and value parameter:
     // three records each. Frozen adds four opaque records, and ScanStep adds
     // five enum records before these functions.
-    assert_eq!(first[199].1, "frozen_new");
-    assert_eq!(first[200].1, "T");
-    assert_eq!(first[201].1, "value");
-    assert_eq!(first[202].1, "frozen_share");
-    assert_eq!(first[203].1, "T");
-    assert_eq!(first[204].1, "frozen");
-    assert_eq!(first[205].1, "map_count");
-    assert_eq!(first[208].1, "map_scan");
-    assert_eq!(first[214].1, "map_scan_within");
-    assert_eq!(first[221].1, "map_clear");
-    assert_eq!(first[224].1, "key_set_new");
-    assert_eq!(first[226].1, "key_set_insert");
-    assert_eq!(first[229].1, "key_set_bytes");
-    assert_eq!(first[230].1, "keys");
-    assert_eq!(first[231].1, "key_set_read_key");
-    assert_eq!(first[235].1, "free_empty");
-    assert_eq!(first[238].1, "release");
-    assert_eq!(first[239].1, "T");
-    assert_eq!(first[240].1, "value");
-    // PRE-1 v0.128: 52 opaque records + 27 enum records + four built-in
-    // records + 158 function/parameter/range records = 241. Frozen adds four
-    // opaque records and frozen_new/frozen_share add three each; ScanStep
-    // adds five enum records and map_scan_within seven call records; release
-    // adds its function, T and value, three records; key_set_bytes adds its
-    // function and value parameter, two records. Count every declaration
-    // in the preorder, including owner-local ones.
-    assert_eq!(first.len(), 241);
-    assert_eq!(first.last().map(|record| record.1.as_str()), Some("value"));
+    assert_eq!(first[209].1, "frozen_new");
+    assert_eq!(first[210].1, "T");
+    assert_eq!(first[211].1, "value");
+    assert_eq!(first[212].1, "frozen_share");
+    assert_eq!(first[213].1, "T");
+    assert_eq!(first[214].1, "frozen");
+    assert_eq!(first[215].1, "map_count");
+    assert_eq!(first[218].1, "map_scan");
+    assert_eq!(first[224].1, "map_scan_within");
+    assert_eq!(first[231].1, "map_clear");
+    assert_eq!(first[234].1, "key_set_new");
+    assert_eq!(first[236].1, "key_set_insert");
+    assert_eq!(first[239].1, "key_set_bytes");
+    assert_eq!(first[240].1, "keys");
+    assert_eq!(first[241].1, "key_set_read_key");
+    assert_eq!(first[245].1, "free_empty");
+    assert_eq!(first[248].1, "release");
+    assert_eq!(first[249].1, "T");
+    assert_eq!(first[250].1, "value");
+    // The nullary constructor contributes one function record; each other
+    // decision-cell function contributes its function and cell parameter.
+    assert_eq!(first[251].1, "decision_cell_new");
+    assert_eq!(first[252].1, "decision_cell_share");
+    assert_eq!(first[254].1, "decision_cell_read");
+    assert_eq!(first[256].1, "claim_written");
+    assert_eq!(first[258].1, "claim_killed");
+    assert_eq!(first[260].1, "shared_close");
+    assert_eq!(first[261].1, "T");
+    assert_eq!(first[262].1, "shared");
+    // PRE-1: 54 opaque records + 31 enum records + four built-in records +
+    // 174 function/parameter/range records = 263. Frozen adds four opaque
+    // records and frozen_new/frozen_share add three each; ScanStep adds five
+    // enum records and map_scan_within seven call records; release adds its
+    // function, T and value, three records; key_set_bytes adds its function
+    // and value parameter, two records; DecisionCell adds two opaque records,
+    // DecisionState four enum records and the five decision-cell functions
+    // nine records; clear adds its function, W, T and window, four records;
+    // shared_close adds its function, T and shared, three records. Count every
+    // declaration in the preorder, including owner-local ones.
+    assert_eq!(first.len(), 263);
+    assert_eq!(first.last().map(|record| record.1.as_str()), Some("shared"));
     assert!(
         first
             .iter()
@@ -3013,8 +3327,9 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 241, so no prelude ordinal exceeds `u8`; what remains to
-/// show is that the last function's collision names its own preorder ordinal.
+/// inventory holds 260, past `u8` again once `clear` entered [OP-10]; the
+/// ordinal is a `u32`, and this shows that a late function's collision names
+/// its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
     let source = b"fn release() -> result: unit pure {\n  return unit;\n}\n";
@@ -3029,10 +3344,10 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
                 panic!("ordinary function collision: {issue:?}");
             };
             assert_eq!(conflicts.len(), 1);
-            // PRE-1: 52 opaque records + 27 enum records + Int, Float,
-            // Eq, Run + 155 preceding function/parameter/range records.
+            // PRE-1: 54 opaque records + 31 enum records + Int, Float,
+            // Eq, Run + 159 preceding function/parameter/range records.
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 238)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 248)
             );
         },
     );
@@ -3182,5 +3497,16 @@ fn uses_under_a_subtree_match_a_scan_of_every_use() {
                 .collect::<Vec<_>>();
             assert_eq!(indexed, scanned, "uses under {prefix:?}");
         }
+    });
+}
+
+#[test]
+fn match_constant_identifier_and_variant_label_have_separate_roles() {
+    with_one_resolution(b"const code: u8 = 1_u8;\n\nenum Flag {\n  A();\n}\n\nfn select(value: u8, flag: Flag) -> result: unit pure {\n  match value {\n    code => {\n    }\n    else => {\n    }\n  }\n  match flag {\n    A() => {\n    }\n  }\n  return unit;\n}\n", |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else { panic!("integer named const and enum label must resolve: {outcome:?}"); };
+        let value = resolved.lexical_uses().iter().find(|usage| usage.role() == LexicalUseRole::IntegerMatchValue).unwrap();
+        assert_eq!(value.spelling(), "code");
+        assert!(matches!(value.target(), ResolvedTarget::Source { class: DeclarationClass::NamedConst, .. }));
+        assert!(resolved.deferred_uses().iter().any(|usage| usage.role() == DeferredUseRole::ArmVariant && usage.spelling() == "A"));
     });
 }

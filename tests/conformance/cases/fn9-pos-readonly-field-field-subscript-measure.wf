@@ -1,0 +1,28 @@
+struct Cursor {
+  k: u64;
+  other: u64;
+}
+
+fn selected_length(table: &[Slots<u8, 8>], s: &Cursor) -> result: u64 reads(table), reads(s.k) contract {
+  requires s^.k < table^.len;
+  ensures result == table^[s^.k].len;
+} {
+  doc "FN-9 and ENT-2: the measure member of a formal place may use a tracked field offset in an ensures clause; its requirement proves formation and the return supplies that exact measure.";
+  return table^[s^.k].len;
+}
+
+fn from_contract(cursor: &Cursor, i: u64, rows: &[Slots<u8, 8>]) -> result: u8 reads(rows), reads(cursor.k) contract {
+  requires cursor^.k < rows^.len;
+} {
+  doc "CALL-6: substituting caller bindings with different names and parameter ordinals preserves the field selector in the returned relation, so a guard on the result proves the caller's nested element read.";
+  let size = selected_length(table: rows, s: cursor);
+  if i < size {
+    return rows^[cursor^.k][i];
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The declarations, postcondition and ordinary caller are checked without executing them.";
+  return std::process::exit_status(code: 0_u8);
+}

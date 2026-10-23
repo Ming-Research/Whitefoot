@@ -32,27 +32,14 @@ pub(crate) struct ObligationRecord {
 /// What one record asks, and the identity its answer is found by.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ObligationSubject {
+    /// [OP-5] the source redundancy of one `if` or `value_if` condition,
+    /// recorded at its complete condition `expr`.
+    Condition,
     /// One [ENT-6] obligation of a fixed family at the site: an [OP-4]
     /// subscript, an [OP-2] exact integer operation, an [OP-6] exact
     /// conversion, one of a [REF-4] formation's two conjuncts, or a
     /// submitted separation [EFF-5, OP-11, REF-2].
     Source {
-        family: ObligationFamily,
-        conjunct: u8,
-    },
-    /// An immutable indexed measure's formation at body entry, after requires.
-    PostconditionEntryPlace {
-        relation_ordinal: u32,
-        ordinal: u32,
-        family: ObligationFamily,
-        conjunct: u8,
-    },
-    /// A clause place's partial-operation judgment at one selected return.
-    /// Occurrence identity prevents another return's proof from answering it.
-    PostconditionPlace {
-        relation_ordinal: u32,
-        statement: NodePath,
-        ordinal: u32,
         family: ObligationFamily,
         conjunct: u8,
     },
@@ -78,17 +65,12 @@ pub(crate) enum ObligationSubject {
 /// outcome list of that kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecordAnswer {
+    Condition(usize),
     Obligation(usize),
     CallGoal(usize),
     LoopInvariant(usize),
     SourceProof(usize),
     Postcondition(usize),
-    /// A forwarded value's transported constructor information excludes this
-    /// clause's route; no place was formed or bound claimed proved.
-    UnselectedPostconditionPlace {
-        relation: usize,
-        occurrence: usize,
-    },
     /// [FN-9] the independently established requirements contradict at
     /// body entry, so no exit is reachable and every relation holds.
     Uninhabited,
@@ -99,6 +81,11 @@ impl RecordAnswer {
     /// outcome discharges nothing.
     pub(crate) fn discharged(self, entailment: &FunctionEntailment) -> bool {
         match self {
+            // [OP-5] a condition is discharged when neither truth is decided.
+            Self::Condition(index) => entailment
+                .conditions
+                .get(index)
+                .is_some_and(|outcome| outcome.decided.is_none()),
             Self::Obligation(index) => entailment
                 .obligations
                 .get(index)
@@ -128,14 +115,6 @@ impl RecordAnswer {
                             .all(|exit| exit.disposition == PostconditionDisposition::Discharged)
                 })
             }
-            Self::UnselectedPostconditionPlace {
-                relation,
-                occurrence,
-            } => entailment
-                .postconditions
-                .get(relation)
-                .and_then(|proof| proof.place_proofs.get(occurrence))
-                .is_some_and(|proof| proof.excluded_route.is_some() && proof.outcomes.is_empty()),
             Self::Uninhabited => true,
         }
     }
@@ -175,6 +154,8 @@ mod tests {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
+            held_parameters: Vec::new(),
+            held_calls: Vec::new(),
             requirement_places: Vec::new(),
             routed_requirements: Vec::new(),
             postconditions: Vec::new(),
@@ -229,6 +210,8 @@ mod tests {
             range_partitions: Vec::new(),
             written_before: Vec::new(),
             killed_by: Vec::new(),
+            lost_header: None,
+            selected_return: None,
         }
     }
 
@@ -239,8 +222,6 @@ mod tests {
             relation_ordinal: 0,
             summary: None,
             exits: Vec::new(),
-            place_proofs: Vec::new(),
-            entry_place_outcomes: Vec::new(),
             vacuous: false,
             aggregate: PostconditionAggregate {
                 discharged: false,
@@ -343,146 +324,5 @@ mod tests {
         assert!(answer_records(&signature, &entailment).1.is_empty());
         let body = function(Vec::new(), true);
         assert_eq!(answer_records(&body, &entailment).1, [path(&[5])]);
-    }
-
-    fn postcondition_place(statement: &[u32]) -> ObligationRecord {
-        ObligationRecord {
-            rule: SemanticRule::Op4,
-            site: path(&[9]),
-            subject: ObligationSubject::PostconditionPlace {
-                relation_ordinal: 0,
-                statement: path(statement),
-                ordinal: 0,
-                family: ObligationFamily::Bounds,
-                conjunct: 0,
-            },
-        }
-    }
-
-    /// The same written subscript at two returns owns two independent proof
-    /// outcomes; reversing record order cannot let one answer the other.
-    #[test]
-    fn postcondition_places_keep_exact_return_outcomes() {
-        let function = function(
-            vec![
-                postcondition_place(&[2]),
-                postcondition_place(&[1]),
-                relation(&[5]),
-            ],
-            true,
-        );
-        let mut postcondition = proof(&[5]);
-        postcondition.place_proofs = vec![
-            super::super::entailment::PostconditionPlaceProof {
-                statement: path(&[1]),
-                outcomes: vec![0],
-                excluded_route: None,
-            },
-            super::super::entailment::PostconditionPlaceProof {
-                statement: path(&[2]),
-                outcomes: vec![1],
-                excluded_route: None,
-            },
-        ];
-        let entailment = FunctionEntailment {
-            obligations: vec![bounds(&[9], true), bounds(&[9], false)],
-            postconditions: vec![postcondition],
-            ..FunctionEntailment::default()
-        };
-        let (answers, unrecorded) = answer_records(&function, &entailment);
-        assert!(unrecorded.is_empty());
-        assert_eq!(
-            answers,
-            [
-                Some(RecordAnswer::Obligation(1)),
-                Some(RecordAnswer::Obligation(0)),
-                Some(RecordAnswer::Postcondition(0))
-            ]
-        );
-        assert!(!answers[0].unwrap().discharged(&entailment));
-        assert!(answers[1].unwrap().discharged(&entailment));
-    }
-
-    /// A known excluded route has its own answer, while a selected return
-    /// that failed to submit its membership proof remains unanswered.
-    #[test]
-    fn excluded_route_is_not_a_subscript_proof_or_a_missing_query() {
-        let function = function(
-            vec![
-                postcondition_place(&[1]),
-                postcondition_place(&[2]),
-                relation(&[5]),
-            ],
-            true,
-        );
-        let mut postcondition = proof(&[5]);
-        postcondition.place_proofs = vec![
-            super::super::entailment::PostconditionPlaceProof {
-                statement: path(&[1]),
-                outcomes: Vec::new(),
-                excluded_route: Some(super::super::postcondition::PayloadRoute {
-                    variant: 0,
-                    field: 0,
-                    tag: 0,
-                }),
-            },
-            super::super::entailment::PostconditionPlaceProof {
-                statement: path(&[2]),
-                outcomes: Vec::new(),
-                excluded_route: None,
-            },
-        ];
-        let entailment = FunctionEntailment {
-            postconditions: vec![postcondition],
-            ..FunctionEntailment::default()
-        };
-        let (answers, unrecorded) = answer_records(&function, &entailment);
-        assert!(unrecorded.is_empty());
-        assert_eq!(
-            answers,
-            [
-                Some(RecordAnswer::UnselectedPostconditionPlace {
-                    relation: 0,
-                    occurrence: 0
-                }),
-                None,
-                Some(RecordAnswer::Postcondition(0))
-            ]
-        );
-        assert!(answers[0].unwrap().discharged(&entailment));
-    }
-
-    /// Entry storage and return storage are distinct proof occasions even
-    /// when they use the same written measure subscript.
-    #[test]
-    fn entry_measure_membership_cannot_take_a_return_proof() {
-        let entry = ObligationRecord {
-            rule: SemanticRule::Op4,
-            site: path(&[9]),
-            subject: ObligationSubject::PostconditionEntryPlace {
-                relation_ordinal: 0,
-                ordinal: 0,
-                family: ObligationFamily::Bounds,
-                conjunct: 0,
-            },
-        };
-        let function = function(vec![entry, postcondition_place(&[1]), relation(&[5])], true);
-        let mut postcondition = proof(&[5]);
-        postcondition.entry_place_outcomes = vec![1];
-        postcondition.place_proofs = vec![super::super::entailment::PostconditionPlaceProof {
-            statement: path(&[1]),
-            outcomes: vec![0],
-            excluded_route: None,
-        }];
-        let entailment = FunctionEntailment {
-            obligations: vec![bounds(&[9], true), bounds(&[9], false)],
-            postconditions: vec![postcondition],
-            ..FunctionEntailment::default()
-        };
-        let (answers, unrecorded) = answer_records(&function, &entailment);
-        assert!(unrecorded.is_empty());
-        assert_eq!(answers[0], Some(RecordAnswer::Obligation(1)));
-        assert!(!answers[0].unwrap().discharged(&entailment));
-        assert_eq!(answers[1], Some(RecordAnswer::Obligation(0)));
     }
 }

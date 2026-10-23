@@ -35,6 +35,25 @@ pub(crate) enum TargetLayoutFailure {
     UnsupportedHost,
     InvalidIr,
     Unrepresentable(TargetObject),
+    /// A runtime allocation failure retains its concrete payload and owning
+    /// IR function so the driver can recover the source call that requires it.
+    Allocation {
+        function: usize,
+        result: crate::IrValueId,
+        ty: IrType,
+        size: Option<u64>,
+        alignment: Option<u64>,
+        limit: AllocationLimit,
+    },
+}
+
+/// The domain whose existing qualification rejected an allocation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AllocationLimit {
+    Alignment { maximum: u64 },
+    AllocationSize { maximum: u64 },
+    AddressDomain { maximum: u64 },
+    LayoutCeiling(IrLayoutCeiling),
 }
 
 /// Physical discriminant width for dense semantic tags `0..variant_count`.
@@ -53,6 +72,12 @@ pub(crate) fn enum_tag_width(
     }
 }
 
+/// The one Windows target whitefootc emits and links for: x86-64 MinGW with
+/// the Universal C Runtime, linked by LLD (compiler/toolchain-resolution).
+/// This is clang's own spelling of the target, so the module's `target
+/// triple` and the `--target` every clang command passes are the same bytes.
+pub(crate) const WINDOWS_X86_64_TRIPLE: &str = "x86_64-w64-windows-gnu";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TargetLayout {
     triple: &'static str,
@@ -68,8 +93,10 @@ impl TargetLayout {
     ///
     /// Keeping selection explicit lets tests inspect a target which is not the
     /// machine running them. A spelling not listed here is unsupported rather
-    /// than being approximated by a nearby ABI: in particular, the Windows GNU
-    /// and MSVC targets do not share a mangling or runtime contract.
+    /// than being approximated by a nearby ABI: in particular, the one Windows
+    /// record is the MinGW target, named only by the exact spelling clang
+    /// prints for it, [`WINDOWS_X86_64_TRIPLE`]; the MSVC ABI has no record
+    /// because its stack-probe helper and C runtime contract differ.
     pub(crate) fn for_triple(triple: &str) -> Result<Self, TargetLayoutFailure> {
         match triple {
             "aarch64-apple-darwin" => Ok(Self {
@@ -78,7 +105,7 @@ impl TargetLayout {
                 data_layout: "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
             "x86_64-apple-darwin" => Ok(Self {
                 triple: "x86_64-apple-darwin",
@@ -86,7 +113,7 @@ impl TargetLayout {
                 data_layout: "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
             "aarch64-unknown-linux-gnu" => Ok(Self {
                 triple: "aarch64-unknown-linux-gnu",
@@ -94,7 +121,7 @@ impl TargetLayout {
                 data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
             "x86_64-unknown-linux-gnu" => Ok(Self {
                 triple: "x86_64-unknown-linux-gnu",
@@ -102,19 +129,21 @@ impl TargetLayout {
                 data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
-            "x86_64-pc-windows-msvc" => Ok(Self {
-                triple: "x86_64-pc-windows-msvc",
-                // The x86-64 MSVC ABI probes a large downward-growing frame
-                // through __chkstk before adjusting RSP. This is the symbol
-                // clang emits for the target, and the MSVC runtime supplies it;
-                // the GNU target's differently named helper is not compatible.
-                stack_probe: "__chkstk",
+            WINDOWS_X86_64_TRIPLE => Ok(Self {
+                triple: WINDOWS_X86_64_TRIPLE,
+                // The x86-64 MinGW target probes a large downward-growing
+                // frame through ___chkstk_ms before adjusting RSP, which
+                // compiler-rt's builtins (or libgcc) supply to every MinGW
+                // link. LLVM selects the helper by target on Windows; the
+                // record names it so the frame contract is stated, not
+                // inferred.
+                stack_probe: "___chkstk_ms",
                 data_layout: "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
                 address_index_max: i64::MAX as u64,
                 allocator_parameter_max: u64::MAX,
-                allocator_alignment: 8,
+                allocator_alignment: 16,
             }),
             _ => Err(TargetLayoutFailure::UnsupportedHost),
         }
@@ -129,22 +158,21 @@ impl TargetLayout {
         {
             return Self::for_triple("x86_64-apple-darwin");
         }
-        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
         {
             return Self::for_triple("aarch64-unknown-linux-gnu");
         }
-        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
         {
             return Self::for_triple("x86_64-unknown-linux-gnu");
         }
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_os = "windows",
-            target_env = "msvc",
-            target_vendor = "pc"
-        ))]
+        // The emitted program's ABI is the native toolchain's, not the one
+        // whitefootc itself was built for: every clang command names this
+        // triple ([`crate::Toolchain::command`]), so an MSVC-hosted or a
+        // GNU-hosted compiler emits and links the same MinGW (UCRT) program.
+        #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
         {
-            return Self::for_triple("x86_64-pc-windows-msvc");
+            return Self::for_triple(WINDOWS_X86_64_TRIPLE);
         }
         #[allow(unreachable_code)]
         Err(TargetLayoutFailure::UnsupportedHost)
@@ -158,10 +186,9 @@ impl TargetLayout {
         self.data_layout
     }
 
-    /// The `probe-stack` value every generated function carries: the
-    /// ABI-mandated helper an Apple or Windows target already names from its
-    /// own C translation units, and the target-independent spelling — an
-    /// inline page walk — on the supported Linux targets.
+    /// The target's preferred `probe-stack` value. Darwin emission also
+    /// requires the selected native consumer's helper capability; an unknown
+    /// or unsupported helper uses inline page probing instead.
     ///
     /// A frame larger than the guard region must touch each page on its way
     /// down. Without that, the frame's first store can land past the guard in
@@ -170,6 +197,37 @@ impl TargetLayout {
     /// frame past the page threshold, so an ordinary frame pays nothing.
     pub(super) const fn stack_probe(self) -> &'static str {
         self.stack_probe
+    }
+
+    /// The stack-probe attributes of every generated definition
+    /// (`emit_module` adds `uwtable` to them). The Darwin fallback states the
+    /// 4 KiB stride explicitly; other targets retain their existing attributes
+    /// independently of the Darwin capability.
+    pub(crate) fn stack_probe_attributes(self, darwin_helper: bool) -> &'static str {
+        match self.stack_probe() {
+            "__chkstk_darwin" if darwin_helper => "\"probe-stack\"=\"__chkstk_darwin\"",
+            "__chkstk_darwin" => {
+                "\"probe-stack\"=\"inline-asm\" \"stack-probe-size\"=\"4096\""
+            }
+            "___chkstk_ms" => "\"probe-stack\"=\"___chkstk_ms\"",
+            "inline-asm" => "\"probe-stack\"=\"inline-asm\"",
+            _ => unreachable!("the closed target records select a known stack probe"),
+        }
+    }
+
+    /// How many integer-class argument words the selected target's C calling
+    /// convention passes in registers: six on x86-64 System V, four on
+    /// x86-64 Windows and eight on AArch64; a call that passes more puts the
+    /// rest on the stack. Only a lowering's profitability choice reads it
+    /// (compiler/recursive-environment); no calling interface depends on it.
+    pub(super) fn integer_argument_registers(self) -> u64 {
+        if self.triple.starts_with("aarch64") {
+            8
+        } else if self.triple.contains("windows") {
+            4
+        } else {
+            6
+        }
     }
 
     pub(super) const fn address_index_max(self) -> u64 {
@@ -184,7 +242,12 @@ impl TargetLayout {
         }
     }
 
-    /// Minimum alignment guaranteed by the selected target's heap allocator.
+    /// Minimum alignment guaranteed by the selected target's heap allocator:
+    /// 16 bytes on every record, which is the largest alignment any language
+    /// type has ([OP-9]) and which the supported hosts' allocators return. The
+    /// runtime's `heap.c` asserts it through `max_align_t` where C's
+    /// fundamental alignment is 16; on Apple, whose `max_align_t` is smaller,
+    /// the heap alignment tests observe the pointers the allocator returns.
     /// Keeping this explicit checks wider element representations against the
     /// allocator promise rather than assuming the address ABI guarantees it.
     pub(super) const fn runtime_allocation_alignment(self) -> u64 {
@@ -1005,6 +1068,65 @@ impl TargetAggregateLayout {
     }
 }
 
+/// Native value extent used by immutable supplied-definition metadata.
+pub(crate) fn representation_layout(
+    target: TargetLayout,
+    program: &IrProgram,
+    ty: IrType,
+) -> Result<TargetAggregateLayout, TargetLayoutFailure> {
+    let layout = LayoutComputer::new(target, program.nominals(), program.elements()).layout(ty)?;
+    Ok(TargetAggregateLayout {
+        size: layout.size,
+        align: layout.align,
+    })
+}
+
+/// Declared field offsets, using the same layout walk as value emission.
+pub(crate) fn representation_fields(
+    target: TargetLayout,
+    program: &IrProgram,
+    fields: &[IrType],
+) -> Result<Vec<(IrType, u64)>, TargetLayoutFailure> {
+    LayoutComputer::new(target, program.nominals(), program.elements()).field_offsets(fields)
+}
+
+/// Payload offsets for either enum representation. Tags always begin at zero.
+pub(crate) fn representation_variant(
+    target: TargetLayout,
+    program: &IrProgram,
+    nominal: IrNominalId,
+    tag: u32,
+) -> Result<Vec<(IrType, u64)>, TargetLayoutFailure> {
+    let data = program
+        .nominal(nominal)
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    let IrNominalKind::Enum { variants } = data.kind() else {
+        return Err(TargetLayoutFailure::InvalidIr);
+    };
+    let selected = variants
+        .iter()
+        .position(|v| v.tag() == tag)
+        .ok_or(TargetLayoutFailure::InvalidIr)?;
+    let mut fields = vec![IrType::Integer {
+        width: 32,
+        signed: false,
+    }];
+    let union = is_union_enum(program.nominals(), program.elements(), nominal)?;
+    let start = if union {
+        1
+    } else {
+        for variant in &variants[..selected] {
+            fields.extend(variant.fields().iter().map(|f| f.ty()));
+        }
+        fields.len()
+    };
+    fields.extend(variants[selected].fields().iter().map(|f| f.ty()));
+    Ok(representation_fields(target, program, &fields)?
+        .into_iter()
+        .skip(start)
+        .collect())
+}
+
 /// Alignment the compiler-owned parallel runtime guarantees for the byte
 /// storage at the start of every worker slot.
 ///
@@ -1098,6 +1220,33 @@ pub(super) fn validate_program(
 ) -> Result<(), TargetLayoutFailure> {
     let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
 
+    // Allocation obligations run first so an unrepresentable payload retains
+    // the operation that requires it, rather than failing in the global type
+    // inventory without an origin. The complete materialization checks below
+    // remain mandatory, including representations not used by an allocation.
+    for (index, function) in program.functions().iter().enumerate() {
+        for block in function.blocks() {
+            for instruction in block.instructions() {
+                if let IrInstruction::Define {
+                    result,
+                    ty,
+                    operation,
+                } = instruction
+                    && allocation_payload(program, operation).is_some()
+                {
+                    validate_located_allocation(
+                        &mut layouts,
+                        program,
+                        function,
+                        index,
+                        *result,
+                        *ty,
+                        operation,
+                    )?;
+                }
+            }
+        }
+    }
     for nominal in program.nominals() {
         layouts.layout(IrType::Nominal(nominal.id()))?;
     }
@@ -1150,10 +1299,135 @@ fn validate_function(
                 continue;
             };
             layouts.layout(*ty)?;
-            validate_target_obligation(layouts, program, function, *ty, operation)?;
+            if allocation_payload(program, operation).is_none() {
+                validate_target_obligation(layouts, program, function, *ty, operation)?;
+            }
         }
     }
     Ok(())
+}
+
+fn validate_located_allocation(
+    layouts: &mut LayoutComputer<'_>,
+    program: &IrProgram,
+    function: &IrFunction,
+    function_index: usize,
+    result: crate::IrValueId,
+    ty: IrType,
+    operation: &IrOperation,
+) -> Result<(), TargetLayoutFailure> {
+    validate_target_obligation(layouts, program, function, ty, operation).map_err(|failure| {
+        let TargetLayoutFailure::Unrepresentable(object) = failure else {
+            return failure;
+        };
+        let Some(payload) = allocation_payload(program, operation) else {
+            return failure;
+        };
+        // A failed aggregate walk can leave recursion marks in its scratch
+        // computer. Use a fresh computer for the diagnostic, and widen only
+        // its arithmetic domain to recover an exact oversized layout when it
+        // still fits u64. These numbers never authorize target emission.
+        let actual = LayoutComputer::new(layouts.target, program.nominals(), program.elements())
+            .layout(payload)
+            .ok();
+        let maximum_alignment = match operation {
+            IrOperation::SharedNew { .. } | IrOperation::DecisionCellNew { .. } => {
+                crate::backend::SHARED_STATE_OFFSET
+            }
+            IrOperation::ConcurrentHashMapNew { .. } => 16,
+            _ => layouts.target.runtime_allocation_alignment(),
+        };
+        let ceiling = match operation {
+            IrOperation::SegmentsFill { layout_ceiling, .. }
+            | IrOperation::BufferFill { layout_ceiling, .. } => Some(*layout_ceiling),
+            IrOperation::WindowBlockNew { obligations, .. }
+            | IrOperation::WindowGrow { obligations, .. } => Some(obligations.layout_ceiling),
+            _ => None,
+        };
+        let limit = if actual.is_none() {
+            AllocationLimit::AddressDomain {
+                maximum: layouts.target.address_index_max(),
+            }
+        } else if object == TargetObject::Representation {
+            if let Some(ceiling) = ceiling {
+                AllocationLimit::LayoutCeiling(ceiling)
+            } else {
+                AllocationLimit::AddressDomain {
+                    maximum: layouts.target.address_index_max(),
+                }
+            }
+        } else if actual.is_some_and(|actual| {
+            let alignment = match operation {
+                IrOperation::SegmentsFill { .. }
+                | IrOperation::BufferFill { .. }
+                | IrOperation::WindowBlockNew { .. }
+                | IrOperation::WindowGrow { .. } => actual.align.max(8),
+                _ => actual.align,
+            };
+            alignment > maximum_alignment
+        }) {
+            AllocationLimit::Alignment {
+                maximum: maximum_alignment,
+            }
+        } else {
+            AllocationLimit::AllocationSize {
+                maximum: layouts.target.runtime_allocation_max(),
+            }
+        };
+        let actual = actual.or_else(|| {
+            let target = TargetLayout {
+                address_index_max: u64::MAX,
+                ..layouts.target
+            };
+            LayoutComputer::new(target, program.nominals(), program.elements())
+                .layout(payload)
+                .ok()
+        });
+        TargetLayoutFailure::Allocation {
+            function: function_index,
+            result,
+            ty: payload,
+            size: actual.map(|layout| layout.size),
+            alignment: actual.map(|layout| layout.align),
+            limit,
+        }
+    })
+}
+
+fn allocation_payload(program: &IrProgram, operation: &IrOperation) -> Option<IrType> {
+    let nominal = match operation {
+        IrOperation::BoxNew { nominal, .. }
+        | IrOperation::SegmentsFill { nominal, .. }
+        | IrOperation::BufferFill { nominal, .. }
+        | IrOperation::WindowBlockNew { nominal, .. }
+        | IrOperation::WindowGrow { nominal, .. }
+        | IrOperation::SharedNew { nominal }
+        | IrOperation::DecisionCellNew { nominal }
+        | IrOperation::ConcurrentHashMapNew { nominal, .. } => *nominal,
+        _ => return None,
+    };
+    let payload = match program.nominal(nominal)?.kind() {
+        IrNominalKind::Box { referent, .. } => *referent,
+        IrNominalKind::Shared { state, .. } => *state,
+        _ => return None,
+    };
+    match payload {
+        IrType::Buffer { element }
+        | IrType::Segments { element }
+        | IrType::Window {
+            element,
+            capacity: None,
+            ..
+        } => program.element(element),
+        IrType::Nominal(id) => match program.nominal(id)?.kind() {
+            IrNominalKind::Shared {
+                shape: IrShared::Map { entry },
+                ..
+            } => Some(*entry),
+            _ => Some(payload),
+        },
+        _ => Some(payload),
+    }
 }
 
 /// Qualifies the terms the emitter uses for `header + count * stride`: the
@@ -1279,12 +1553,12 @@ fn validate_target_obligation(
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
             }
-            let referent = match program
+            let (referent, release) = match program
                 .nominal(*nominal)
                 .ok_or(TargetLayoutFailure::InvalidIr)?
                 .kind()
             {
-                IrNominalKind::Box { referent, .. } => *referent,
+                IrNominalKind::Box { referent, release } => (*referent, *release),
                 _ => return Err(TargetLayoutFailure::InvalidIr),
             };
             if function.value_type(*value) != Some(referent) {
@@ -1293,7 +1567,14 @@ fn validate_target_obligation(
             let allocation = layouts
                 .layout(referent)
                 .map_err(|failure| as_object(failure, TargetObject::RuntimeSizedAllocation))?;
-            if allocation.size > layouts.target.runtime_allocation_max()
+            let complete_size = if release == crate::IrReleaseClass::Frozen {
+                allocation
+                    .size
+                    .checked_add(crate::backend::FROZEN_HEADER_BYTES)
+            } else {
+                Some(allocation.size)
+            };
+            if complete_size.is_none_or(|size| size > layouts.target.runtime_allocation_max())
                 || allocation.align > layouts.target.runtime_allocation_alignment()
             {
                 return Err(TargetLayoutFailure::Unrepresentable(
@@ -1303,7 +1584,7 @@ fn validate_target_obligation(
         }
         // [SHARE-1] an object is the runtime's header and then its state, in
         // one block the runtime takes from its pool.
-        IrOperation::SharedNew { nominal } => {
+        IrOperation::SharedNew { nominal } | IrOperation::DecisionCellNew { nominal } => {
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
             }
@@ -2198,6 +2479,42 @@ mod enum_tag_tests {
                     enum_tag_width(count, tag_only),
                     Err(TargetLayoutFailure::InvalidIr)
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod stack_probe_tests {
+    use super::TargetLayout;
+
+    #[test]
+    fn darwin_uses_the_helper_only_when_native_codegen_accepts_it() {
+        for triple in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
+            let target = TargetLayout::for_triple(triple).expect("supported Darwin target");
+            assert_eq!(
+                target.stack_probe_attributes(true),
+                "\"probe-stack\"=\"__chkstk_darwin\"",
+                "{triple} with a supported helper"
+            );
+            assert_eq!(
+                target.stack_probe_attributes(false),
+                "\"probe-stack\"=\"inline-asm\" \"stack-probe-size\"=\"4096\"",
+                "{triple} must retain 4 KiB page probing without the helper"
+            );
+        }
+    }
+
+    #[test]
+    fn non_darwin_attributes_do_not_depend_on_the_darwin_helper() {
+        for (triple, attributes) in [
+            ("aarch64-unknown-linux-gnu", "\"probe-stack\"=\"inline-asm\""),
+            ("x86_64-unknown-linux-gnu", "\"probe-stack\"=\"inline-asm\""),
+            ("x86_64-w64-windows-gnu", "\"probe-stack\"=\"___chkstk_ms\""),
+        ] {
+            let target = TargetLayout::for_triple(triple).expect("supported non-Darwin target");
+            for helper in [false, true] {
+                assert_eq!(target.stack_probe_attributes(helper), attributes, "{triple}");
             }
         }
     }

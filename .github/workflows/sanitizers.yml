@@ -1,0 +1,147 @@
+# Accepted programs under host sanitizers (compiler/sanitized-builds): every
+# program the corpus target builds and every running conformance case, each
+# case also built with the `--par` lowering, compiled with the emitted code and
+# the C runtime instrumented by AddressSanitizer with UndefinedBehaviorSanitizer
+# and by ThreadSanitizer. An accepted program has no memory error, undefined
+# behavior or data race, so any report is a soundness defect of the checker,
+# the compiler or the runtime, and fails its job whatever the case's own
+# verdict (compiler/Makefile, test-corpus-asan and test-corpus-tsan).
+#
+# The conformance walk is one sequential test, so each sanitizer splits it
+# into three shards beside a job for the rest of the corpus target.
+#
+# These checks run on the revisions gate.yml checks, decided the same way by
+# .github/gate-scope.sh: a push to main, a push to a branch with an open ready
+# pull request, the opening or reopening of a ready pull request, the event of
+# marking one ready, which skips when its head already has a successful manual
+# run of this workflow, and a manual run. Any other push, a draft pull
+# request's included, ends after the first job with every check skipped; the
+# author starts this workflow by hand once, after the review has passed
+# (AGENTS.md, "Checks").
+name: sanitizers
+
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+# As in io-hosts.yml: pushes to one branch share a group, and the opening or
+# reopening of a pull request, the event of marking one ready and a manual run
+# each have a group of their own. Each main commit gets its own group, as in
+# gate.yml: a shared main group would cancel the run of every merge but the
+# last of a quick succession, and the cancelled commit would show red on the
+# main line.
+concurrency:
+  group: sanitizers-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  scope:
+    name: Choose whether to check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          sparse-checkout: .github
+      # A failed query fails the run rather than quietly skipping the checks.
+      - name: Choose whether to check
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f .github/gate-scope.sh ]; then
+            echo "::error::.github/gate-scope.sh is missing from the checked-out head: the branch was cut from main before main gained it. Merge main into the branch and push again."
+            exit 1
+          fi
+          scope=$(sh .github/gate-scope.sh)
+          echo "$scope"
+          echo "$scope" >> "$GITHUB_OUTPUT"
+          echo "$scope" | sed -n 's/^reason=/sanitizers: /p' >> "$GITHUB_STEP_SUMMARY"
+
+  sanitized:
+    name: ${{ matrix.sanitizer }} ${{ matrix.part }}
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [asan, tsan]
+        part: [conformance 1/3, conformance 2/3, conformance 3/3, programs]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set the scratch root
+        run: |
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
+
+      # The LLVM major the gate pins, as /usr/bin/clang and ld.lld, with its
+      # sanitizer runtimes, which the apt.llvm.org installer leaves out.
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo apt-get install -y --no-install-recommends "libclang-rt-$version-dev"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+          nproc
+          grep -m 1 'model name' /proc/cpuinfo
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      # As in gate.yml: cases that prove programs die must not each wait for
+      # systemd-coredump.
+      - name: Decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          cat /proc/sys/kernel/core_pattern
+
+      - name: Sanitized corpus
+        env:
+          PART: ${{ matrix.part }}
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: |
+          case "$PART" in
+            conformance\ *)
+              export WHITEFOOT_CONFORMANCE_SHARD="${PART#conformance }"
+              filter=the_corpus_reaches_its_declared_verdict
+              stage=conformance
+              ;;
+            programs)
+              filter="--skip the_corpus_reaches_its_declared_verdict"
+              stage=programs
+              ;;
+          esac
+          make -C compiler test-corpus-${{ matrix.sanitizer }} \
+            SANITIZER_FILTER="$filter" SANITIZER_STAGE="$stage"
+
+      # run-check.pl appended every stage over its budget in
+      # .github/time-budgets.txt, or without one, to this record; the stages
+      # themselves kept their own statuses.
+      - name: Hold every stage to its time budget
+        if: always()
+        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"

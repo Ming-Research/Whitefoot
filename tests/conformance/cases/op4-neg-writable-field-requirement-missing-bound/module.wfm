@@ -1,3 +1,0 @@
-alias ExitStatus = std::process::ExitStatus;
-
-public fn main() -> status: ExitStatus pure doc "Runs the case.";

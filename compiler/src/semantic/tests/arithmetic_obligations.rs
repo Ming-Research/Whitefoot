@@ -40,6 +40,11 @@ fn assert_integer_domain(
     assert!(mechanical_fix.contains(route), "{mechanical_fix}");
 }
 
+/// The repair fragment for a goal over an element read, which a condition
+/// naming the same admitted expression establishes [ENT-3] although the
+/// read is no term [ENT-2].
+const ELEMENT_ROUTES: &str = "is not proved here: when facts that reach the operation imply it";
+
 fn named<'functions>(
     functions: &'functions [CheckedFunction],
     name: &str,
@@ -374,11 +379,12 @@ fn a_ground_obligation_discharges_in_range_and_rejects_on_inevitable_overflow() 
     });
 }
 
-/// ENT-2(b) admits the selected integer place, but a constant aggregate's
-/// initializer adds no element-value fact. The operation still needs its
-/// own domain proof, and a guard can name the admitted element directly.
+/// A subscripted class operand is outside ENT-2's term vocabulary: the
+/// relation is underivable, never ill-formed, and the rejection renders the
+/// subscripted operand exactly — the one-`let` rebinding fallback then
+/// makes the operand a term, mirroring the subscript-offset fallback.
 #[test]
-fn an_unbounded_constant_element_operand_is_underivable_and_rejects() {
+fn a_subscripted_class_operand_is_underivable_and_rejects() {
     let source = br#"const a: Array<u8, 2> =[7_u8, 7_u8];
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -388,23 +394,22 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics(source, |outcome| {
         let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("an element without a domain bound must reject: {outcome:?}");
+            panic!("a non-term class operand must reject: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
         assert_integer_domain(
             issue.kind(),
             "a[0_u64] +defined 1_u8",
             StaticObligationDisposition::Unproved,
-            "guard the operation with `if a[0_u64] +defined 1_u8`",
+            ELEMENT_ROUTES,
         );
     });
 }
 
 /// [TYPE-9] a `Box`'s content is its field `inner`, reached and rendered by
-/// that ordinary field step. Element-term admission alone supplies no
-/// numeric fact about the array initializer.
+/// that ordinary field step. The indexed operand remains no term.
 #[test]
-fn an_owning_box_index_renders_its_inner_field() {
+fn an_owning_box_index_renders_its_content_step_as_a_dereference() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let values = array_filled::<u8, 2>(value: 7_u8);
   let boxed = box_new::<Array<u8, 2>>(value: values);
@@ -414,14 +419,14 @@ fn an_owning_box_index_renders_its_inner_field() {
 "#;
     with_semantics(source, |outcome| {
         let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("the admitted element still needs its domain proof: {outcome:?}");
+            panic!("the indexed operand remains no term: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
         assert_integer_domain(
             issue.kind(),
             "boxed.inner[0_u64] +defined 1_u8",
             StaticObligationDisposition::Unproved,
-            "guard the operation with `if boxed.inner[0_u64] +defined 1_u8`",
+            ELEMENT_ROUTES,
         );
     });
 }
@@ -434,8 +439,8 @@ fn an_owning_box_index_renders_its_inner_field() {
 /// `p^.Some.value`." The residual therefore spells the indexed operand
 /// under its `^` step, which is what the writer wrote and the only
 /// spelling the writer can write. Resolving that step away is what [OWN-7]
-/// does to decide overlap, not what a diagnostic prints. The admitted
-/// element can now be bounded by a requirement on the reference parameter.
+/// does to decide overlap, not what a diagnostic prints. The operand is still
+/// no term, which is what the rejection states.
 #[test]
 fn a_reference_parameter_index_renders_under_its_deref_step() {
     let source = br#"fn increment(values: &Array<u8, 2>) -> result: u8 reads(values) {
@@ -448,14 +453,14 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics(source, |outcome| {
         let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("the admitted element still needs its domain proof: {outcome:?}");
+            panic!("the indexed operand remains no term: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
         assert_integer_domain(
             issue.kind(),
             "values^[0_u64] +defined 1_u8",
             StaticObligationDisposition::Unproved,
-            "add `requires values^[0_u64] +defined 1_u8;`",
+            ELEMENT_ROUTES,
         );
     });
 }

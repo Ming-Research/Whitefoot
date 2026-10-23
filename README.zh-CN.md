@@ -28,6 +28,8 @@ Whitefoot 是一门研究性质的系统编程语言，围绕三个特性设计�
 - 陷入死循环，或者算出错误的结果。契约（contract）描述的是写下来的东西，而不是本来想要的东西；
 - 被错误地编译。可信基包括 Whitefoot 编译器及其检查器、LLVM 和 clang、运行时和分配器、作为可信定义链接进来的 C 函数、libc 以及操作系统（[SCOPE-3](spec/kernel-spec.md#1-scope-and-conformance)）。
 
+[安全说法](docs/safety-claims.md)把上面的每一条说法，连同它依据的规范规则和检验它的一致性用例逐条列出，引用规范原文说明哪些不在保证之内，并给出可信基的规模。
+
 其他系统用别的方式证明同样的无运行时错误。SPARK 是 Ada 的一个子集，面向高完整性软件，它在一个独立于编译的分析中使用 SMT 求解器：无论程序是否已被证明，Ada 编译器都会把它构建出来。Wuffs 不用求解器也能检查类似的证明，但它是一门用来编写解析、解码和编码文件格式的库的语言，它的代码不能进行系统调用，也不能分配内存。
 
 ### 从内存到资源
@@ -59,7 +61,7 @@ Whitefoot 是一门研究性质的系统编程语言，围绕三个特性设计�
 
 这个循环原地保留缓冲区中的非空格字节。`invariant behind: kept <= i` 这一行声明了一个名为 `behind` 的不变式（invariant），说明为什么写入 `buf[kept]` 不会越界。编译器在第一次迭代之前和每次迭代之后证明它，再结合 `i < buf.len` 得出 `kept < buf.len`，所以这次写入被编译成一条普通的存储指令：
 
-```
+```whitefoot
 fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
   let kept = 0_u64;
   for (
@@ -82,7 +84,7 @@ fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
 
 每个函数都用 `reads(...)` 和 `writes(...)` 写明它读取和写入什么，编译器会对照函数体检查这个声明。所以它知道每次调用会访问哪些内存；当它证明两个调用访问的是不同的内存时，就可以让它们同时运行。这段源代码里没有任何地方要求并行：
 
-```
+```text
 fn quicksort(v: &[u64]) -> result: unit writes(v) {
   let n = v^.len;
   if n <= 1_u64 {
@@ -110,7 +112,7 @@ fn quicksort(v: &[u64]) -> result: unit writes(v) {
 
 Whitefoot 保留了 C 的简单结构，借用了部分 Rust 语法。程序由函数、结构体、枚举和数组组成。下面这个函数返回缓冲区中的下一个字节，并让游标（cursor）前进一位：
 
-```
+```whitefoot
 struct Cursor {
   position: u64;
 }
@@ -198,7 +200,9 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 
 ## 试一试
 
-你需要 Rust stable（版本不低于 [compiler/Cargo.toml](compiler/Cargo.toml) 中的 `rust-version`）和 clang：Linux 和 macOS 上是 `/usr/bin/clang`，Windows 上是 `PATH` 中的 `clang`。
+先读[入门指南](docs/guide/getting-started.md)，安装编译器并运行第一个程序。
+
+你需要 Rust stable（版本不低于 [compiler/Cargo.toml](compiler/Cargo.toml) 中的 `rust-version`）和 clang：Linux 和 macOS 上是 `/usr/bin/clang`，Windows 上是 `PATH` 中 [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) 发布包自带的 `clang`，因为编译器的目标是 `x86_64-w64-windows-gnu`。
 
 ```sh
 git clone https://github.com/Ming-Research/Whitefoot.git && cd Whitefoot
@@ -224,6 +228,7 @@ tests/conformance/cases/op4-neg-index-undischarged.wf:6:12: error[OP-4]: Undisch
 - `--par` 构建并行版本，`--par-ledger` 打印每一个并行决定及其理由。运行时由 `WF_WORKERS` 设置使用多少个工作线程，由 `WF_DRIVERS` 设置用多少个驱动线程运行 `spawn` 所启动的上下文，默认每个 CPU 一个；
 - `--stack-ledger` 报告每个函数的栈帧，以及每个递归环能容纳多少层；
 - `--emit-llvm` 输出 LLVM IR；
+- `--sanitize address` 在 AddressSanitizer 加 UndefinedBehaviorSanitizer 下构建程序和它的运行时，`--sanitize thread` 则在 ThreadSanitizer 下构建，只用于 Linux 和 macOS。它们需要 clang 的 sanitizer 运行时：Apple 的 clang 自带；Linux 上要另装，比如 Debian 和 Ubuntu 上 clang 22 对应的 `libclang-rt-22-dev`。被接受的程序不应让它们报告任何问题，所以一条报告就是编译器或运行时的缺陷；
 - `--diagnostic-format json` 把每次拒绝输出为一行一个的 JSON 对象；
 - `whitefootc --help` 列出其余选项。
 

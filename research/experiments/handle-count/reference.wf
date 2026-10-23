@@ -1,0 +1,74 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+
+const reference_name: Array<u8, 3> =[114_u8, 101_u8, 102_u8];
+
+fn reference_walk(keys: &Shared<ConcurrentHashMap<u64>>, clock: &Clock, deadline: Instant, index: u64) -> made: u64 reads(keys), writes(clock) waits {
+  doc "Until the deadline updates the context's own key of the shared map, in one atomic statement per operation and in batches of 1024, reaching the map through a reference parameter whose row only reads the handle; returns the operations made.";
+  let own = context_key(index: index);
+  let key = &own[0_u64..8_u64];
+  let count = 0_u64;
+  loop @run {
+    for @batch (turn in 0_u64..1024_u64) {
+      atomic slot = &keys^[key] {
+        match slot^ {
+          Some(value: seen) => {
+            let next = seen^ +wrap 1_u64;
+            set slot^ = Some<u64>(value: next);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    set count = count +wrap 1024_u64;
+    let at = std::time::now(clock: clock);
+    if std::time::instant_reached(deadline: deadline, instant: at) {
+      break @run;
+    }
+  }
+  return count;
+}
+
+fn reference_context(keys: Shared<ConcurrentHashMap<u64>>, totals: Shared<Totals>, gate: Shared<Gate>, clock: Clock, index: u64) -> result: unit pure waits {
+  doc "Waits at the gate, runs reference_walk with a reference to the context's own handle to the map, then adds its count to the totals once.";
+  let deadline = gate_pass(gate: &gate, clock: &clock);
+  let made = reference_walk(keys: &keys, clock: &clock, deadline: deadline, index: index);
+  tally(totals: &totals, done: made, state: 0_u64);
+  return unit;
+}
+
+fn reference_start(keys: &Shared<ConcurrentHashMap<u64>>, totals: &Shared<Totals>, clock: &Clock, millis: u64, contexts: u64) -> started: Instant reads(keys), reads(totals), writes(clock) waits {
+  doc "Spawns the contexts, opens the gate and returns the instant it opened, once every context has completed.";
+  let gate = gate_new(clock: clock);
+  for @start (index in 0_u64..contexts) {
+    let keys_handle = shared_share::<ConcurrentHashMap<u64>>(shared: keys);
+    let tally_handle = shared_share::<Totals>(shared: totals);
+    let gate_handle = shared_share::<Gate>(shared: &gate);
+    let ticks = std::time::clock_share(clock: clock);
+    spawn reference_context(keys: move keys_handle, totals: move tally_handle, gate: move gate_handle, clock: move ticks, index: index);
+  }
+  let started = gate_open(gate: &gate, clock: clock, millis: millis);
+  return started;
+}
+
+fn reference_main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "R: V with each context's atomic statements reaching the map through a read-only reference parameter, for which the base compiler already counts no handle; then checks that the map's values sum to the operations made.";
+  let bench = bench_begin(inputs: move inputs);
+  if bench.valid {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let keys = shared_map_new::<u64>(capacity: bench.contexts);
+  let totals = totals_new();
+  keys_seed(keys: &keys, contexts: bench.contexts);
+  let started = reference_start(keys: &keys, totals: &totals, clock: &bench.clock, millis: bench.millis, contexts: bench.contexts);
+  let ended = std::time::now(clock: &bench.clock);
+  if keys_verify(keys: &keys, totals: &totals, contexts: bench.contexts) {
+  } else {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return bench_end(bench: move bench, name: &reference_name[0_u64..3_u64], totals: &totals, started: started, ended: ended);
+}

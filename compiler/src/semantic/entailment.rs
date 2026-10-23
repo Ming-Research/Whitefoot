@@ -28,7 +28,7 @@ mod state;
 mod term;
 mod work;
 
-pub(crate) use flow::operation_facts;
+pub(crate) use flow::{matching_requirement, operation_facts};
 
 pub(crate) use state::DerivationId;
 #[cfg(test)]
@@ -40,8 +40,8 @@ use term::TermId;
 
 #[cfg(test)]
 pub(crate) use state::{
-    CountedRootAtom, DerivationNode, DerivationRootKind, FlowEvent, FlowEventId, FlowEventKind,
-    GoalSign, ImplicitBoundKind, JoinParent, PostconditionCallDetail,
+    CountedRootAtom, DerivationNode, DerivationRootKind, ExclusionConclusion, FlowEvent,
+    FlowEventId, FlowEventKind, GoalSign, ImplicitBoundKind, JoinParent, PostconditionCallDetail,
     PostconditionDeliveryJoinDetail, RangeSeparationOrdering, Relation, TransportedHeaderRelation,
 };
 /// The mathematical value of a checked integer constant [ENT-2].
@@ -75,8 +75,9 @@ use crate::{DeclarationId, NodePath};
 pub(crate) enum CallTransport {
     /// [CALL-1] A reference parameter whose declared row carries no `writes`
     /// of any path rooted at it. [EFF-2]'s both-ways check then lets no
-    /// `writes` occurrence project onto the actual's place, so the call is a
-    /// kill event for no fact supported by it.
+    /// `writes` occurrence project from this parameter: it contributes no
+    /// write, and a fact supported by the actual dies only through another
+    /// argument's projected write.
     ReadOnlyReference,
     /// [CALL-2] A value delivered at an `own` parameter. An affine or linear
     /// actual is a consuming use, which kills every fact whose support
@@ -206,6 +207,20 @@ impl EntailmentCallee {
 
 /// Program-level context the per-function analysis reads.
 pub(crate) struct EntailmentContext<'check> {
+    /// Source text for captured values; diagnostic rendering alone reads it.
+    pub(crate) source_spellings: &'check HashMap<crate::syntax::NodeId, String>,
+    pub(crate) postcondition_clauses:
+        &'check HashMap<(FunctionId, NodePath), super::postcondition::PostconditionClause>,
+    pub(crate) postcondition_sources:
+        &'check HashMap<NodePath, super::postcondition::PostconditionSource>,
+    /// Constructor type names for aggregate constants in diagnostic goals.
+    pub(crate) type_spellings: &'check HashMap<CheckedType, String>,
+    pub(crate) captured_places: &'check super::places::CapturedPlaceTable,
+    /// [OP-5, FN-2] whether this analysis judges the source redundancy of its
+    /// `if` conditions: a nongeneric body at its ordinary instance and a
+    /// generic body at its canonical symbolic instance, never a concrete
+    /// instance of a generic body or a bodyless contract hypothesis.
+    pub(crate) judge_conditions: bool,
     /// Existing resolved declarations, borrowed for source names in residuals.
     pub(crate) declarations: &'check [crate::DeclarationRecord],
     /// Callee projections indexed by [`FunctionId`].
@@ -233,7 +248,7 @@ pub(crate) struct EntailmentContext<'check> {
     pub(crate) verified_postconditions: &'check [Vec<&'check CheckedPostcondition>],
     pub(crate) verified_postcondition_proofs: &'check [Vec<&'check FunctionPostconditionProof>],
     /// [FN-9, TYPE-11, DIAG-2] each concrete function's component and, while
-    /// that component is being verified, the type-invariant postconditions
+    /// that component is being verified, all the postconditions
     /// it will publish, indexed by concrete [`FunctionId`]. A call to a
     /// member of the caller's own component receives exactly these, as
     /// induction hypotheses; empty outside the component schedule.
@@ -243,12 +258,12 @@ pub(crate) struct EntailmentContext<'check> {
     pub(crate) binding_names: &'check [String],
 }
 
-/// [DIAG-2] one function's component ordinal and the type-invariant
-/// postconditions [TYPE-11] its component is verifying, each with the
+/// [DIAG-2] one function's component ordinal and all the
+/// postconditions its component is verifying, each with the
 /// summary identity the component's atomic publication gives it.
 pub(crate) struct ComponentPostconditions<'check> {
     pub(crate) component: u32,
-    pub(crate) generated: Vec<(&'check CheckedPostcondition, VerifiedPostconditionSummary)>,
+    pub(crate) hypotheses: Vec<(&'check CheckedPostcondition, VerifiedPostconditionSummary)>,
 }
 
 impl EntailmentContext<'_> {
@@ -303,7 +318,7 @@ impl EntailmentContext<'_> {
     }
 
     /// [DIAG-2] the induction hypotheses a call from `caller` to `callee`
-    /// receives: the callee's type-invariant postconditions when the two
+    /// receives: all of the callee's postconditions when the two
     /// are members of one component being verified, and `None` otherwise.
     pub(crate) fn component_postconditions(
         &self,
@@ -441,6 +456,40 @@ pub(crate) struct ObligationOutcome {
     /// [ENT-5]; its repair names them [DIAG-1]. Every other occurrence
     /// retains none.
     pub(crate) killed_by: Vec<MeasureKillNote>,
+    /// Explanation only: a header relation withheld at an earlier join
+    /// which would discharge this failed bounds judgment on a private copy.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
+    /// [FN-9] for a subscript of a place a postcondition forms, the selected
+    /// return it was judged at and how its repair reads the bound [DIAG-1].
+    /// Every other occurrence retains none.
+    pub(crate) selected_return: Option<SelectedReturnBound>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LostHeaderRelationNote {
+    pub(crate) name: String,
+    pub(crate) relation: String,
+    pub(crate) conjunct: String,
+    pub(crate) incoming: NodePath,
+    pub(crate) calls: Vec<MeasureKillNote>,
+}
+
+/// [FN-9, DIAG-1] the selected return one subscript of a postcondition place
+/// was judged at, with the bound spelled for its repair.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SelectedReturnBound {
+    /// The `return_stmt` or propagating `let_stmt` that selects the clause.
+    pub(crate) statement: NodePath,
+    /// The bound spelled as a requirement, where every parameter denotes its
+    /// function-entry state [FN-8].
+    pub(crate) requirement: String,
+    /// The formal offsets, at this subscript or above it, that the body has
+    /// rebound by the return, each spelled as a code span: the place reads
+    /// them at function entry, a value no term names there [FN-9].
+    pub(crate) rebound: Vec<String>,
+    /// The length of a base the place reads at function entry though the
+    /// body may have changed it, spelled as the body spells it [MSR-3].
+    pub(crate) entry_lengths: Vec<String>,
 }
 
 /// [DIAG-1] one write whose kill of a measure's facts an undischarged bounds
@@ -960,6 +1009,8 @@ pub(crate) struct SourceProofOutcome {
     /// The direct INV-1 AUTO or PRF-1 certificate result in the source fact
     /// context, selected by `certificate_written`.
     pub(crate) check: SourceProofCheck,
+    /// Explanation only for an unproved blockless invariant target.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
 }
 
 impl SourceProofOutcome {
@@ -1017,9 +1068,12 @@ pub(crate) struct PostconditionExit {
     pub(crate) statement: NodePath,
     pub(crate) relation: state::Relation,
     pub(crate) residual: String,
+    pub(crate) clause: String,
     pub(crate) entry_images: Vec<PostconditionEntryImageOutcome>,
     pub(crate) disposition: PostconditionDisposition,
     pub(crate) derivation: Option<DerivationId>,
+    /// Explanation only for an unproved return relation.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
 }
 
 /// One nonempty all-exit aggregation. A failed aggregate has no derivation.
@@ -1027,17 +1081,6 @@ pub(crate) struct PostconditionExit {
 pub(crate) struct PostconditionAggregate {
     pub(crate) discharged: bool,
     pub(crate) derivation: Option<DerivationId>,
-}
-
-/// Independent place formation at one candidate return of an FN-9 clause.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PostconditionPlaceProof {
-    pub(crate) statement: NodePath,
-    /// Exact positions in the function's ordinary partial-operation outcomes.
-    pub(crate) outcomes: Vec<usize>,
-    /// The transported route known to be excluded at this return. This is
-    /// source-shape evidence, not a fabricated proof of any subscript bound.
-    pub(crate) excluded_route: Option<super::postcondition::PayloadRoute>,
 }
 
 /// The checked local FN-9 proof retained with one concrete function.
@@ -1052,9 +1095,6 @@ pub(crate) struct FunctionPostconditionProof {
     /// function-local derivation IDs.
     pub(crate) summary: Option<VerifiedPostconditionSummary>,
     pub(crate) exits: Vec<PostconditionExit>,
-    pub(crate) place_proofs: Vec<PostconditionPlaceProof>,
-    /// Entry-measure formation outcomes, before any entry-datum equality.
-    pub(crate) entry_place_outcomes: Vec<usize>,
     /// [TYPE-11] whether the relation is a routed one a type invariant
     /// generated, which holds vacuously where no exit selects it.
     pub(crate) vacuous: bool,
@@ -1120,9 +1160,10 @@ impl RelationProvenance {
 }
 
 /// Caller-local reference to one authorized S12 publication. Direct
-/// provenance names an earlier-component verified summary; formal-boundary
-/// provenance additionally names the retained FN-4 query and its verified
-/// actual premises. It carries no callee- or query-local [`DerivationId`].
+/// provenance names a verified summary or same-component induction hypothesis;
+/// formal-boundary provenance additionally names the retained FN-4 query and
+/// its available actual premises. It carries no callee- or query-local
+/// [`DerivationId`].
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct VerifiedPostconditionSummaryRef {
     pub(crate) summary: RelationProvenance,
@@ -1227,6 +1268,8 @@ pub(crate) struct CallGoalOutcome {
     /// call formed at an argument [REF-4], in goal order, for the repair
     /// [DIAG-1]. Discharged calls carry none.
     pub(crate) range_lengths: Vec<RangeLengthReading>,
+    /// Explanation only, computed after an unproved requirement.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
 }
 
 /// [REF-4] one range formed at a call whose `len` an unproved requirement
@@ -1276,9 +1319,24 @@ pub(crate) struct BooleanGoalDecomposition {
     pub(crate) members: Vec<(state::GoalId, state::GoalSign)>,
 }
 
+/// [OP-5] one condition's source redundancy judgment. An admitted condition
+/// has no decided truth; a decided one retains its rendered condition and the
+/// premises of the proofs that decided it, for the repair [DIAG-1].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConditionOutcome {
+    /// The complete condition `expr` the judgment cites.
+    pub(crate) node_path: NodePath,
+    pub(crate) decided: Option<bool>,
+    pub(crate) residual: String,
+    pub(crate) facts: Vec<String>,
+}
+
 /// Retained summary of one function's entailment analysis [DIAG-2].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FunctionEntailment {
+    /// [OP-5] one source redundancy judgment per `if` and `value_if`
+    /// condition, in deterministic walk order.
+    pub(crate) conditions: Vec<ConditionOutcome>,
     /// Operand intervals read from the ordinary closed state at each integer
     /// operation [ENT-3.S7], for the later range walk [RANGE-2]. `None` names
     /// a contradictory point, where the operation establishes no facts.
@@ -1342,6 +1400,12 @@ pub(crate) fn answer_records(
     function: &CheckedFunction,
     entailment: &FunctionEntailment,
 ) -> (Vec<Option<RecordAnswer>>, Vec<NodePath>) {
+    let mut conditions = Judgments::of(
+        entailment
+            .conditions
+            .iter()
+            .map(|outcome| (&outcome.node_path, &outcome.node_path)),
+    );
     let mut obligations = Judgments::of(entailment.obligations.iter().map(|outcome| {
         (
             (&outcome.node_path, outcome.family, outcome.conjunct),
@@ -1389,52 +1453,10 @@ pub(crate) fn answer_records(
         .map(|record| {
             let site = &record.site;
             match &record.subject {
+                ObligationSubject::Condition => conditions.take(&site).map(RecordAnswer::Condition),
                 ObligationSubject::Source { family, conjunct } => obligations
                     .take(&(site, *family, *conjunct))
                     .map(RecordAnswer::Obligation),
-                ObligationSubject::PostconditionEntryPlace { .. } if uninhabited => {
-                    Some(RecordAnswer::Uninhabited)
-                }
-                ObligationSubject::PostconditionEntryPlace {
-                    relation_ordinal,
-                    ordinal,
-                    family,
-                    conjunct,
-                } => entailment
-                    .postconditions
-                    .get(*relation_ordinal as usize)
-                    .and_then(|proof| proof.entry_place_outcomes.get(*ordinal as usize))
-                    .and_then(|index| obligations.take_index(&(site, *family, *conjunct), *index))
-                    .map(RecordAnswer::Obligation),
-                ObligationSubject::PostconditionPlace { .. } if uninhabited => {
-                    Some(RecordAnswer::Uninhabited)
-                }
-                ObligationSubject::PostconditionPlace {
-                    relation_ordinal,
-                    statement,
-                    ordinal,
-                    family,
-                    conjunct,
-                } => {
-                    let relation = *relation_ordinal as usize;
-                    entailment.postconditions.get(relation).and_then(|proof| {
-                        let (occurrence, place) = proof
-                            .place_proofs
-                            .iter()
-                            .enumerate()
-                            .find(|(_, place)| place.statement == *statement)?;
-                        if place.excluded_route.is_some() && place.outcomes.is_empty() {
-                            return Some(RecordAnswer::UnselectedPostconditionPlace {
-                                relation,
-                                occurrence,
-                            });
-                        }
-                        let index = *place.outcomes.get(*ordinal as usize)?;
-                        obligations
-                            .take_index(&(site, *family, *conjunct), index)
-                            .map(RecordAnswer::Obligation)
-                    })
-                }
                 ObligationSubject::CallRequirement {
                     requires_clause,
                     subject,
@@ -1468,6 +1490,7 @@ pub(crate) fn answer_records(
         .collect();
     let mut unrecorded = obligations
         .unanswered()
+        .chain(conditions.unanswered())
         .chain(call_goals.unanswered())
         .chain(loop_invariants.unanswered())
         .chain(source_proofs.unanswered())
@@ -1502,13 +1525,6 @@ impl<'judgment, Key: Eq + std::hash::Hash> Judgments<'judgment, Key> {
             .map(|(index, _)| index)
     }
 
-    /// Consume exactly the outcome owned by one clause/return occurrence.
-    fn take_index(&mut self, key: &Key, wanted: usize) -> Option<usize> {
-        let entries = self.by_key.get_mut(key)?;
-        let position = entries.iter().position(|(index, _)| *index == wanted)?;
-        entries.remove(position).map(|(index, _)| index)
-    }
-
     /// The sites of the judgments no record took.
     fn unanswered(&self) -> impl Iterator<Item = &'judgment NodePath> + '_ {
         self.by_key
@@ -1520,20 +1536,17 @@ impl<'judgment, Key: Eq + std::hash::Hash> Judgments<'judgment, Key> {
 /// What one term of a rejected obligation reads, which is what selects the
 /// routes its repair names [DIAG-1].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TermRead<'a> {
+pub(crate) enum TermRead {
     /// A constant, a const-generic parameter, the zero term, or a measure of
     /// a named constant.
     Constant,
-    /// A place or measure with its complete selector support. An integer
-    /// element may be named in a requirement but not an INV-1 certificate.
-    Place {
-        place: &'a super::places::ResolvedPlace,
-        integer: bool,
-    },
-    /// An operand that is no term at all [ENT-2], such as an element whose
-    /// selector is itself an element read: a `let` must bind its value.
+    /// A place, or a measure of one, rooted at this binding and reached by
+    /// field and Box-content selections alone, so a clause can spell it.
+    Binding(BindingId),
+    /// An operand that is no term at all [ENT-2], such as an element read:
+    /// no fact names its value until a `let` binds it.
     Unnamed,
-    /// A captured, computed or compiler-owned value without a source place.
+    /// A captured, computed, subscripted or compiler-owned value.
     Computed,
 }
 
@@ -1541,7 +1554,7 @@ impl FunctionEntailment {
     /// What each term of one obligation's normalized relations reads, in
     /// component order. A component without a left term relates an operand
     /// that is no term [ENT-2], which reads as [`TermRead::Unnamed`].
-    pub(crate) fn obligation_term_reads(&self, outcome: &ObligationOutcome) -> Vec<TermRead<'_>> {
+    pub(crate) fn obligation_term_reads(&self, outcome: &ObligationOutcome) -> Vec<TermRead> {
         outcome
             .components
             .iter()
@@ -1556,43 +1569,29 @@ impl FunctionEntailment {
             .collect()
     }
 
-    fn term_read(&self, term: TermId) -> TermRead<'_> {
+    fn term_read(&self, term: TermId) -> TermRead {
+        let spelled = |place: &super::places::ResolvedPlace| {
+            let steps = place.path.iter().all(|step| {
+                matches!(
+                    step,
+                    super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref
+                )
+            });
+            match place.root {
+                term::PlaceRoot::Binding(binding) if steps => TermRead::Binding(binding),
+                term::PlaceRoot::Constant(_) if steps => TermRead::Constant,
+                _ => TermRead::Computed,
+            }
+        };
         match self.inventory.terms.get(term.0 as usize) {
             Some(
                 term::TermKind::Zero
                 | term::TermKind::Constant(_)
                 | term::TermKind::ConstParameter(..),
             ) => TermRead::Constant,
-            Some(term::TermKind::Place(place, _))
-                if matches!(place.root, term::PlaceRoot::Constant(_))
-                    && place.path.iter().all(|step| {
-                        matches!(
-                            step,
-                            super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref
-                        )
-                    }) =>
-            {
-                TermRead::Constant
+            Some(term::TermKind::Place(place, _) | term::TermKind::Measure(_, place)) => {
+                spelled(place)
             }
-            Some(term::TermKind::Place(place, _)) => TermRead::Place {
-                place,
-                integer: true,
-            },
-            Some(term::TermKind::Measure(_, place))
-                if matches!(place.root, term::PlaceRoot::Constant(_))
-                    && place.path.iter().all(|step| {
-                        matches!(
-                            step,
-                            super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref
-                        )
-                    }) =>
-            {
-                TermRead::Constant
-            }
-            Some(term::TermKind::Measure(_, place)) => TermRead::Place {
-                place,
-                integer: false,
-            },
             _ => TermRead::Computed,
         }
     }
@@ -1619,6 +1618,21 @@ pub(crate) fn analyze_function_candidate(
     flow::analyze_candidate(function, context)
 }
 
+/// A rejection-only counterfactual: restoring a callee's withheld clauses at one
+/// call must discharge this exact obligation record without a contradictory state.
+/// The private walk's facts, derivations and summaries are discarded.
+pub(crate) fn unavailable_summary_discharges_record(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    call: &ConcreteCallOccurrence,
+    postconditions: &[(CheckedPostcondition, VerifiedPostconditionSummary)],
+    target: usize,
+) -> bool {
+    flow::unavailable_summary_discharges_record(
+        function, context, call, postconditions, target,
+    )
+}
+
 /// Checks one [FN-4] contract implication in a declaration-only proof
 /// context. The supplied function carries only alpha-renamed contract
 /// variables and the hypothetical premise set; [`flow`] submits both the
@@ -1642,10 +1656,9 @@ pub(crate) fn postcondition_schedule<'function>(
     functions: impl IntoIterator<Item = &'function CheckedFunction>,
 ) -> Option<PostconditionSchedule> {
     let functions = functions.into_iter().collect::<Vec<_>>();
-    if !functions
-        .iter()
-        .any(|function| !function.postconditions.is_empty())
-    {
+    if !functions.iter().any(|function| {
+        !function.postconditions.is_empty() || !function.range_facts.postconditions.is_empty()
+    }) {
         return Some(PostconditionSchedule::default());
     }
     let mut graph = vec![Vec::new(); functions.len()];
@@ -1680,10 +1693,10 @@ pub(crate) fn postcondition_schedule<'function>(
     }
     // [FN-9] a caller's component treats an instance of another module's
     // generic callable as calling every function-kind actual supplied to it,
-    // whether or not the instance's body calls them. Components only grow,
-    // so no circular proof is admitted, and an edit to that body cannot
-    // change which summaries the calling module's proofs may use. Within one
-    // module the rule adds nothing.
+    // whether or not the instance's body calls them. Interface-defined edges
+    // keep summary availability independent of edits to that body. Grouped
+    // member verification and return-order induction justify hypotheses in
+    // the resulting component [DIAG-2]. Within one module the rule adds nothing.
     let mut conservative = Vec::new();
     for (caller, callees) in graph.iter().enumerate() {
         for callee in callees {

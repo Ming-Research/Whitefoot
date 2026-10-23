@@ -2,7 +2,7 @@ use crate::semantic::check::CheckContext;
 use crate::semantic::check::FunctionContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
 use crate::semantic::entailment::integer_value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::FixedTerminal;
 use crate::syntax::NodeId;
@@ -16,19 +16,20 @@ use crate::{
 use super::super::goal::{GoalOperation, GoalProjection};
 use super::super::model::{
     BindingId, CheckedArrayRoot, CheckedExpression, CheckedIntegerOperation, CheckedMode,
-    CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedStatement, CheckedType,
-    CheckedValue, FunctionId, IntegerType,
+    CheckedNominalKind, CheckedParameter, CheckedPlaceStep, CheckedRangeRoot, CheckedSegmentSelect,
+    CheckedSegmentSource, CheckedStatement, CheckedType, CheckedValue, FunctionId, IntegerType,
 };
+use super::super::places::{PlaceRoot, ResolvedPlace};
 use super::super::postcondition::{
     CheckedPostcondition, CheckedPostconditionSelector, NormalizedRelation, ParameterDenotation,
-    PayloadRoute, PostconditionConstantOrigin, PostconditionFieldIdentity, PostconditionPlace,
-    PostconditionPlaceRoot, PostconditionReturnDatum, PostconditionReturnPlace,
-    PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
-    SelectedPostconditionReturn,
+    PayloadRoute, PlaceDenotation, PostconditionConstantOrigin, PostconditionFieldIdentity,
+    PostconditionFormedPlace, PostconditionPlace, PostconditionPlaceRoot, PostconditionReturnDatum,
+    PostconditionReturnPlace, PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate,
+    RelationTerm, SelectedPostconditionReturn,
 };
 use super::generics::GenericArgument;
 use super::publication;
-use super::requires::{ClauseKind, ExpandedClauseDatum, ExpandedClauseExpression};
+use super::requires::{ClauseKind, ClausePlaces, ExpandedClauseDatum, ExpandedClauseExpression};
 use super::{
     CheckStop, Checker, ControlCounters, ControlScope, FunctionSignature, LocalBinding,
     ParameterSignature,
@@ -37,9 +38,8 @@ use super::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectorAdmissionType {
     Fragment,
-    /// [FN-9] a `Result` or `Option` ordinal whose success payload supplies
-    /// data under [CALL-4]; only a routed clause may name it.
-    SuccessPayload,
+    /// [FN-9] an enum field supplying data under [CALL-4].
+    Payload,
     Symbolic,
     /// [CALL-4] one declared result of measured or aggregate type. Its value
     /// is no [ENT-2] term, so only the places its owned descendant
@@ -47,6 +47,52 @@ enum SelectorAdmissionType {
     /// place as its value and a measured place through its measures.
     Aggregate,
     Invalid,
+}
+
+fn postcondition_source(
+    tree: &super::super::tree::TreeView<'_>,
+    node: NodeId,
+) -> Option<super::super::postcondition::PostconditionSource> {
+    use super::super::postcondition::PostconditionSource;
+    let spelling = tree.source_spelling(node).ok()?;
+    let mut source = PostconditionSource {
+        spelling,
+        literal: false,
+        fields: Vec::new(),
+    };
+    if let Some(literal) = tree
+        .direct_token_with(node, crate::TerminalPredicate::Literal)
+        .ok()?
+    {
+        // A generic numeric identity such as `1_Num` is written over the
+        // type parameter, whatever its name, so it is not the concrete
+        // instance's literal [FORM-5].
+        source.literal =
+            !crate::syntax::terminal::is_generic_numeric_literal(tree.token_bytes(literal).ok()?);
+    } else if tree.has_fixed(node, FixedTerminal::Move).ok()? {
+        return postcondition_source(
+            tree,
+            tree.first_child_with(node, Production::Place).ok()??,
+        );
+    } else if let Some(list) = tree.first_child_with(node, Production::FieldinitList).ok()? {
+        source.fields = tree
+            .children_with(list, Production::Fieldinit)
+            .ok()?
+            .iter()
+            .map(|field| {
+                postcondition_source(
+                    tree,
+                    tree.first_child_with(*field, Production::Atom).ok()??,
+                )
+            })
+            .collect::<Option<Vec<_>>>()?;
+    } else if let [child] = tree.children(node).ok()? {
+        let child = postcondition_source(tree, *child)?;
+        source.spelling = child.spelling;
+        source.literal = child.literal;
+        source.fields = child.fields;
+    }
+    Some(source)
 }
 
 #[derive(Clone, Copy)]
@@ -73,6 +119,102 @@ pub(super) fn parameter_has_exit_state(
             .writes
             .iter()
             .any(|path| path.root == parameter.declaration)
+}
+
+/// [MSR-3, FN-9] the state the bases of one place a postcondition forms
+/// denote: every place of a parameter that has no exit state denotes its one
+/// state at entry, and a place of one that has denotes its entry image when
+/// it is written through `entry(parameter)`, whose subscripts' psuffix nodes
+/// `entry_suffixes` holds; a range element place is classified by the range
+/// parameter it indexes, as a container place is by its root. A place rooted
+/// at a named const and every other place of a written reference parameter
+/// are read where the return reads them.
+fn place_denotation(
+    function: &FunctionSignature,
+    bindings: &HashMap<DeclarationId, LocalBinding>,
+    place: &CheckedExpression,
+    entry_suffixes: &HashSet<crate::NodePath>,
+) -> PlaceDenotation {
+    let (binding, suffixes) = match place {
+        CheckedExpression::ContainerMeasure { root, .. }
+        | CheckedExpression::ReadStorage { root, .. } => (
+            root.binding(),
+            subscript_suffixes(&root.path).collect::<Vec<_>>(),
+        ),
+        CheckedExpression::RangeElementMeasure { place, .. }
+        | CheckedExpression::RangeIndex { place, .. } => (
+            Some(place.root.binding),
+            formation_suffixes(&place.root)
+                .into_iter()
+                .chain(std::iter::once(&place.obligation))
+                .chain(subscript_suffixes(&place.path))
+                .collect(),
+        ),
+        CheckedExpression::RangeMeasure { root, .. } => {
+            (Some(root.binding), formation_suffixes(root))
+        }
+        _ => return PlaceDenotation::Return,
+    };
+    let Some(binding) = binding else {
+        return PlaceDenotation::Return;
+    };
+    let Some(parameter) = function.parameters.iter().find(|parameter| {
+        bindings
+            .get(&parameter.declaration)
+            .is_some_and(|local| local.binding == binding)
+    }) else {
+        return PlaceDenotation::Return;
+    };
+    if !parameter_has_exit_state(function, parameter) {
+        PlaceDenotation::Entry
+    } else if suffixes
+        .iter()
+        .any(|suffix| entry_suffixes.contains(*suffix))
+    {
+        PlaceDenotation::EntryImage
+    } else {
+        PlaceDenotation::Return
+    }
+}
+
+/// The psuffix node of each subscript a page or segment selection in the
+/// clause evaluates: the container's, or the range element's, then the
+/// selector's.
+fn formation_suffixes(root: &CheckedRangeRoot) -> Vec<&crate::NodePath> {
+    let Some(CheckedExpression::BorrowSegment {
+        root: source,
+        segment,
+        ..
+    }) = root.formation.as_deref()
+    else {
+        return Vec::new();
+    };
+    let mut suffixes = match source {
+        CheckedSegmentSource::Storage(container) => {
+            subscript_suffixes(&container.path).collect::<Vec<_>>()
+        }
+        CheckedSegmentSource::Element(element) => {
+            let mut suffixes = formation_suffixes(&element.root);
+            suffixes.push(&element.obligation);
+            suffixes.extend(subscript_suffixes(&element.path));
+            suffixes
+        }
+    };
+    if let CheckedSegmentSelect::One(index) | CheckedSegmentSelect::Page(index) = segment {
+        suffixes.push(&index.obligation);
+    }
+    suffixes
+}
+
+/// The psuffix node of each subscript in one place path.
+fn subscript_suffixes(path: &[CheckedPlaceStep]) -> impl Iterator<Item = &crate::NodePath> {
+    path.iter().filter_map(|step| match step {
+        CheckedPlaceStep::Subscript(subscript) => Some(&subscript.obligation),
+        CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::Payload { .. }
+        | CheckedPlaceStep::BoxReferent(_)
+        | CheckedPlaceStep::Measure(_) => None,
+    })
 }
 
 /// [FN-9] a comparison's direction-normalized relation; no other
@@ -594,22 +736,17 @@ impl<'unit> Checker<'_, 'unit> {
         self.types.postcondition_selectors_from_source(signature)
     }
 
+    /// The clause's relation template, with the [ENT-2] clause (b) places
+    /// it forms at each return that selects it [FN-9].
     pub(super) fn check_postcondition_clause(
         &mut self,
         context: FunctionContext<'_, '_>,
         selector: &CheckedPostconditionSelector,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
-    ) -> Result<
-        (
-            RelationTemplate,
-            Vec<CheckedExpression>,
-            Vec<CheckedExpression>,
-        ),
-        CheckStop,
-    > {
-        let (expanded, places, entry_places) =
-            self.expand_postcondition_clause_with_places(context, selector, bindings, counters)?;
+    ) -> Result<(RelationTemplate, Vec<PostconditionFormedPlace>), CheckStop> {
+        let (expanded, places) =
+            self.expand_postcondition_clause(context, selector, bindings, counters)?;
         let clause = self
             .types
             .declarations
@@ -622,45 +759,154 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(clause, Production::ClauseExpr)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let relation = self.types.declarations.postcondition_relation(
-            expression,
-            expanded,
-            context.function,
-        )?;
-        Ok((relation, places, entry_places))
+        let relation = self
+            .types
+            .declarations
+            .postcondition_relation(expression, expanded.clone(), context.function)?;
+        let capture_sources = !self
+            .types
+            .postcondition_clauses
+            .keys()
+            .any(|(function, _)| *function == context.function.id);
+        if let Some(clause) = Self::postcondition_display_clause(&expanded) {
+            self.types.postcondition_clauses.insert(
+                (context.function.id, selector.block.clone()),
+                clause,
+            );
+        }
+        if !capture_sources {
+            return Ok((relation, places));
+        }
+        let tree = &self.types.declarations.tree;
+        for production in [
+            Production::Atom,
+            Production::Expr,
+            Production::Call,
+            Production::Place,
+        ] {
+            for node in tree
+                .descendants_with(context.function.node, production)
+                .unwrap_or_default()
+            {
+                if let (Ok(path), Some(source)) = (tree.path(node), postcondition_source(tree, node)) {
+                    self.types.postcondition_sources.insert(path.clone(), source);
+                }
+            }
+        }
+        for production in [Production::ReturnStmt, Production::LetStmt] {
+            for node in tree
+                .descendants_with(context.function.node, production)
+                .unwrap_or_default()
+            {
+                if let (Ok(path), Ok(expressions)) =
+                    (tree.path(node), tree.children_with(node, Production::Expr))
+                {
+                    let mut sources = expressions
+                        .into_iter()
+                        .map(|expression| postcondition_source(tree, expression))
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(sources) = sources.as_mut() {
+                        let source = if sources.len() == 1 {
+                            sources.pop()
+                        } else if sources.is_empty() {
+                            None
+                        } else {
+                            Some(super::super::postcondition::PostconditionSource {
+                                spelling: String::new(),
+                                literal: false,
+                                fields: std::mem::take(sources),
+                            })
+                        };
+                        if let Some(source) = source {
+                            self.types.postcondition_sources.insert(path.clone(), source);
+                        }
+                    }
+                }
+            }
+        }
+        Ok((relation, places))
     }
 
+    fn postcondition_display_clause(
+        expanded: &ExpandedClauseExpression,
+    ) -> Option<super::super::postcondition::PostconditionClause> {
+        use super::super::postcondition::PostconditionClause;
+        match expanded {
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, spelling, .. }) => {
+                Some(PostconditionClause::Literal {
+                    value: value.clone(),
+                    spelling: spelling.clone(),
+                })
+            }
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
+                declaration,
+                projections,
+                spelling: Some(spelling),
+                ..
+            }) => Some(PostconditionClause::NamedConst {
+                declaration: *declaration,
+                projections: projections.clone(),
+                spelling: spelling.clone(),
+            }),
+            ExpandedClauseExpression::Datum(datum) => Some(PostconditionClause::Datum(match datum {
+                ExpandedClauseDatum::Result {
+                    ordinal,
+                    projections,
+                    ty,
+                } => RelationDatum::Result {
+                    ordinal: *ordinal,
+                    projections: projections.clone(),
+                    ty: *ty,
+                },
+                ExpandedClauseDatum::Parameter {
+                    ordinal,
+                    projections,
+                    ty,
+                    denotation,
+                } => RelationDatum::Parameter {
+                    ordinal: *ordinal,
+                    projections: projections.clone(),
+                    ty: *ty,
+                    denotation: *denotation,
+                },
+                ExpandedClauseDatum::NamedConst {
+                    declaration,
+                    projections,
+                    ty,
+                    ..
+                } => RelationDatum::NamedConst {
+                    declaration: *declaration,
+                    projections: projections.clone(),
+                    ty: *ty,
+                },
+                ExpandedClauseDatum::Literal { value, origin, .. } => RelationDatum::Literal {
+                    value: value.clone(),
+                    origin: origin.clone(),
+                },
+            })),
+            ExpandedClauseExpression::Operation { row, arguments, .. } => {
+                Some(PostconditionClause::Operation {
+                    row: *row,
+                    arguments: arguments
+                        .iter()
+                        .map(Self::postcondition_display_clause)
+                        .collect::<Option<Vec<_>>>()?,
+                })
+            }
+            ExpandedClauseExpression::InvalidSelectorUse { .. } => None,
+        }
+    }
+
+    /// The clause's alpha-expanded expression, with the [ENT-2] clause (b)
+    /// places it forms: those of the definitions its expansion reaches, each
+    /// offset read through a definition expanded, then its own [FN-8].
     pub(super) fn expand_postcondition_clause(
         &mut self,
         context: FunctionContext<'_, '_>,
         selector: &CheckedPostconditionSelector,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
-    ) -> Result<ExpandedClauseExpression, CheckStop> {
-        self.expand_postcondition_clause_with_places(context, selector, bindings, counters)
-            .map(|(expression, _, _)| expression)
-    }
-
-    fn expand_postcondition_clause_with_places(
-        &mut self,
-        context: FunctionContext<'_, '_>,
-        selector: &CheckedPostconditionSelector,
-        bindings: &mut HashMap<DeclarationId, LocalBinding>,
-        counters: &mut ControlCounters<'_>,
-    ) -> Result<
-        (
-            ExpandedClauseExpression,
-            Vec<CheckedExpression>,
-            Vec<CheckedExpression>,
-        ),
-        CheckStop,
-    > {
-        use super::requires::{
-            ClauseDefinition, collect_clause_places, collect_clause_reads, definition_offset,
-            expand_definition_offsets,
-        };
-        let mut definitions: Vec<ClauseDefinition> = Vec::new();
-        let mut definition_offsets = HashMap::new();
+    ) -> Result<(ExpandedClauseExpression, Vec<PostconditionFormedPlace>), CheckStop> {
         let FunctionContext {
             check_context,
             function,
@@ -704,6 +950,7 @@ impl<'unit> Checker<'_, 'unit> {
         };
         {
             let mut expanded_bindings = HashMap::<BindingId, ExpandedClauseExpression>::new();
+            let mut clause_places = ClausePlaces::default();
             for (ordinal, parameter) in function.parameters.iter().enumerate() {
                 let local = bindings
                     .get(&parameter.declaration)
@@ -772,12 +1019,6 @@ impl<'unit> Checker<'_, 'unit> {
                     definition,
                     value,
                 )?;
-                self.types.validate_clause_alias_offsets(
-                    ClauseKind::Postcondition(record),
-                    definition,
-                    value,
-                    &definition_offsets,
-                )?;
                 self.types.validate_clause_copy_local(
                     check_context,
                     ClauseKind::Postcondition(record),
@@ -786,10 +1027,7 @@ impl<'unit> Checker<'_, 'unit> {
                     bindings,
                 )?;
                 let expanded = self.types.build_clause_expression(
-                    FunctionContext {
-                        check_context,
-                        function,
-                    },
+                    check_context,
                     expression,
                     value,
                     bindings,
@@ -802,21 +1040,7 @@ impl<'unit> Checker<'_, 'unit> {
                         .invalid_postcondition_relation(expression);
                 }
                 expanded_bindings.insert(*binding, expanded);
-                let mut places = Vec::new();
-                collect_clause_places(value, &mut places);
-                for place in &mut places {
-                    expand_definition_offsets(place, &definition_offsets, self.types)?;
-                }
-                let offset = definition_offset(value, &definition_offsets, self.types)?;
-                definition_offsets.insert(*binding, offset);
-                let mut uses = Vec::new();
-                collect_clause_reads(value, &mut uses);
-                uses.retain(|read| definitions.iter().any(|earlier| earlier.binding == *read));
-                definitions.push(ClauseDefinition {
-                    binding: *binding,
-                    places,
-                    uses,
-                });
+                clause_places.define(*binding, value, &self.types.captured_places);
             }
             let expression = self
                 .types
@@ -845,12 +1069,6 @@ impl<'unit> Checker<'_, 'unit> {
                 clause,
                 &condition.expression,
             )?;
-            self.types.validate_clause_alias_offsets(
-                ClauseKind::Postcondition(record),
-                clause,
-                &condition.expression,
-                &definition_offsets,
-            )?;
             if condition.mode != CheckedMode::Own || condition.expression.ty() != CheckedType::Bool
             {
                 return self.types.declarations.issue_node(
@@ -860,59 +1078,25 @@ impl<'unit> Checker<'_, 'unit> {
                 );
             }
             let expanded = self.types.build_clause_expression(
-                FunctionContext {
-                    check_context,
-                    function,
-                },
+                check_context,
                 expression,
                 &condition.expression,
                 bindings,
                 &expanded_bindings,
             )?;
-            let mut reached = std::collections::HashSet::new();
-            let mut pending = Vec::new();
-            collect_clause_reads(&condition.expression, &mut pending);
-            while let Some(read) = pending.pop() {
-                if let Some(definition) = definitions
-                    .iter()
-                    .find(|definition| definition.binding == read)
-                    && reached.insert(read)
-                {
-                    pending.extend(definition.uses.iter().copied());
-                }
-            }
-            let mut places = Vec::new();
-            for definition in &definitions {
-                if reached.contains(&definition.binding) {
-                    places.extend(definition.places.iter().cloned());
-                }
-            }
-            let own = places.len();
-            collect_clause_places(&condition.expression, &mut places);
-            for place in &mut places[own..] {
-                expand_definition_offsets(place, &definition_offsets, self.types)?;
-            }
-            // Integer entry images stay available only while their support
-            // remains live. A measure, however, follows [MSR-3]: a written
-            // reference's bare measure reads exit storage, while every other
-            // admitted measure is an immutable entry datum.
-            let (entry_places, places) = places.into_iter().partition(|place| {
-                let measure_binding = match place {
-                    CheckedExpression::ContainerMeasure { root, .. } => root.binding(),
-                    CheckedExpression::RangeElementMeasure { place, .. } => {
-                        Some(place.root.binding)
-                    }
-                    CheckedExpression::RangeMeasure { root, .. } => Some(root.binding),
-                    _ => return false,
-                };
-                !function.parameters.iter().any(|parameter| {
-                    parameter_has_exit_state(function, parameter)
-                        && bindings
-                            .get(&parameter.declaration)
-                            .is_some_and(|local| Some(local.binding) == measure_binding)
+            // [ENT-2, FN-9] each clause forms every place its expansion
+            // reaches, at every return that selects it, each over the state
+            // it denotes [MSR-3].
+            let entry_suffixes = self.types.declarations.entry_former_suffixes(contract)?;
+            let places = clause_places
+                .clause(&condition.expression, &mut HashSet::new())
+                .into_iter()
+                .map(|expression| PostconditionFormedPlace {
+                    denotation: place_denotation(function, bindings, &expression, &entry_suffixes),
+                    expression,
                 })
-            });
-            Ok((expanded, places, entry_places))
+                .collect();
+            Ok((expanded, places))
         }
     }
 
@@ -1073,6 +1257,28 @@ impl<'unit> Checker<'_, 'unit> {
                     ty: *ty,
                 })
             }
+            // [FN-9] a parameter or named-const datum carries field and
+            // Box-content projections only: a subscripted readonly field is an
+            // [ENT-2] clause (b) term a requirement may name, but no relation
+            // datum in this version, and only a measure member of a formal
+            // place reaches a relation through a subscript (the arm below).
+            ExpandedClauseExpression::Datum(
+                ExpandedClauseDatum::Parameter { projections, .. }
+                | ExpandedClauseDatum::NamedConst { projections, .. },
+            ) if projections.iter().any(|projection| {
+                matches!(
+                    projection,
+                    GoalProjection::Subscript(_)
+                        | GoalProjection::Page(_)
+                        | GoalProjection::FormalSubscript { .. }
+                        | GoalProjection::FormalPage { .. }
+                        | GoalProjection::FormalPlaceSubscript { .. }
+                        | GoalProjection::FormalPlacePage { .. }
+                )
+            }) =>
+            {
+                None
+            }
             ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
                 ordinal,
                 projections,
@@ -1085,30 +1291,16 @@ impl<'unit> Checker<'_, 'unit> {
                 denotation: *denotation,
             }),
             ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
-                projections,
-                ..
-            }) if projections.iter().any(|projection| {
-                matches!(
-                    projection,
-                    GoalProjection::Subscript(_)
-                        | GoalProjection::Page(_)
-                        | GoalProjection::FormalSubscript { .. }
-                        | GoalProjection::FormalPage { .. }
-                )
-            }) =>
-            {
-                None
-            }
-            ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
                 declaration,
                 projections,
                 ty,
+                ..
             }) => Some(RelationDatum::NamedConst {
                 declaration: *declaration,
                 projections: projections.clone(),
                 ty: *ty,
             }),
-            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, origin }) => {
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, origin, .. }) => {
                 Some(RelationDatum::Literal {
                     value: value.clone(),
                     origin: origin.clone(),
@@ -1480,6 +1672,70 @@ impl<'unit> DeclarationInventory<'unit> {
             .map_or(context.result_type, |(_, ty)| ty);
         Ok(Some((usage.origin.clone(), ty)))
     }
+    /// [MSR-3] entry state belongs only to a callable's postconditions,
+    /// including in templates no concrete function instance reaches.
+    pub(super) fn check_entry_positions(&self) -> Result<(), CheckStop> {
+        for base in self
+            .tree
+            .descendants_with(self.tree.root(), Production::Pbase)?
+        {
+            if !self.tree.has_fixed(base, FixedTerminal::Entry)? {
+                continue;
+            }
+            let mut ancestor = self.tree.parent(base)?;
+            let mut in_ensures = false;
+            while let Some(node) = ancestor {
+                match self.tree.production(node)? {
+                    Production::EnsuresClause => {
+                        in_ensures = true;
+                        break;
+                    }
+                    Production::FnDecl | Production::FnSig => break,
+                    _ => ancestor = self.tree.parent(node)?,
+                }
+            }
+            if !in_ensures {
+                return self.reject_entry_outside_postcondition(base);
+            }
+        }
+        Ok(())
+    }
+
+    /// [MSR-3] keeps a refused entry read at its complete former.
+    pub(super) fn reject_entry_outside_postcondition<T>(
+        &self,
+        base: NodeId,
+    ) -> Result<T, CheckStop> {
+        self.issue_node(
+            SemanticRule::Msr3,
+            base,
+            SemanticIssueKind::InvalidEntryFormer {
+                mechanical_fix: super::repairs::entry_outside_postcondition_repair(),
+            },
+        )
+    }
+
+    /// The psuffix nodes of every place written through `entry(parameter)`
+    /// in one `contract_block` [MSR-3].
+    pub(super) fn entry_former_suffixes(
+        &self,
+        contract: NodeId,
+    ) -> Result<HashSet<crate::NodePath>, CheckStop> {
+        let mut suffixes = HashSet::new();
+        for base in self.tree.descendants_with(contract, Production::Pbase)? {
+            if !self.tree.has_fixed(base, FixedTerminal::Entry)? {
+                continue;
+            }
+            let Some(place) = self.tree.parent(base)? else {
+                continue;
+            };
+            for suffix in self.tree.children_with(place, Production::Psuffix)? {
+                suffixes.insert(self.tree.path(suffix)?.clone());
+            }
+        }
+        Ok(suffixes)
+    }
+
     /// `entry` selects proof state, never an executable place expression.
     /// Its argument is a reference parameter the row writes [MSR-3]; range
     /// postconditions read that same entry storage [RANGE-1].
@@ -1512,8 +1768,27 @@ impl<'unit> DeclarationInventory<'unit> {
             if nested {
                 continue;
             }
+            // entry names only a declaration-boundary place: projection
+            // reads are checked by the ordinary FN-9 fragment judgment, and
+            // indexed selections are not part of its projection language.
+            for suffix in self.tree.children_with(base, Production::Psuffix)? {
+                if matches!(
+                    self.tree.place_suffix(suffix)?,
+                    crate::syntax::views::PlaceSuffix::Index { .. }
+                        | crate::syntax::views::PlaceSuffix::Range { .. }
+                ) {
+                    return self.issue_node(
+                        SemanticRule::Msr3,
+                        base,
+                        SemanticIssueKind::InvalidEntryFormer {
+                            mechanical_fix: "select a fragment integer or measure of a written reference parameter by fields and dereferences",
+                        },
+                    );
+                }
+            }
             // Clause uses remain provisional until selector admission. This
-            // whole-function position check runs outside an active clause.
+            // parameter check runs outside an active clause; positions have
+            // already been checked across the complete source tree.
             let path = self.tree.path(base)?;
             let usage = self
                 .resolved
@@ -1531,23 +1806,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 matches!(usage.target(), ResolvedTarget::Source { declaration, .. }
                     if declaration == parameter.declaration)
             });
-            let mut ancestor = self.tree.parent(base)?;
-            let mut in_ensures = false;
-            let mut in_range_clause = false;
-            while let Some(node) = ancestor {
-                if self.tree.production(node)? == Production::RangeClause {
-                    in_range_clause = true;
-                }
-                if self.tree.production(node)? == Production::EnsuresClause {
-                    in_ensures = true;
-                    break;
-                }
-                if node == function.node {
-                    break;
-                }
-                ancestor = self.tree.parent(node)?;
-            }
-            if !in_ensures || !parameter.is_some_and(|p| parameter_has_exit_state(function, p)) {
+            if !parameter.is_some_and(|p| parameter_has_exit_state(function, p)) {
                 return self.issue_node(
                     SemanticRule::Msr3,
                     base,
@@ -1555,33 +1814,6 @@ impl<'unit> DeclarationInventory<'unit> {
                         mechanical_fix: "use entry only on an exclusive parameter in ensures",
                     },
                 );
-            }
-            // [MSR-3] the ordinary former's projection comprises the steps
-            // inside it followed by those outside it. ENT-2(b)'s ordinary
-            // element terms do not widen this explicit entry boundary.
-            // Range postconditions retain their separate RANGE-1 places.
-            let mut suffixes = self.tree.children_with(base, Production::Psuffix)?;
-            if !in_range_clause {
-                let place = self
-                    .tree
-                    .parent(base)?
-                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                suffixes.extend(self.tree.children_with(place, Production::Psuffix)?);
-            }
-            for suffix in suffixes {
-                if matches!(
-                    self.tree.place_suffix(suffix)?,
-                    crate::syntax::views::PlaceSuffix::Index { .. }
-                        | crate::syntax::views::PlaceSuffix::Range { .. }
-                ) {
-                    return self.issue_node(
-                        SemanticRule::Msr3,
-                        base,
-                        SemanticIssueKind::InvalidEntryFormer {
-                            mechanical_fix: "select a fragment integer or measure of a written reference parameter by fields and dereferences",
-                        },
-                    );
-                }
             }
         }
         Ok(())
@@ -1600,19 +1832,28 @@ impl<'unit> DeclarationInventory<'unit> {
         selectors: &[CheckedPostconditionSelector],
         relations: &[RelationTemplate],
     ) -> Result<(), CheckStop> {
-        let mut routes: Vec<Option<BuiltinPreludeId>> = vec![None];
+        let route_key = |selector: &CheckedPostconditionSelector| {
+            Some((
+                selector.ordinal,
+                selector.variant,
+                selector.field.as_ref().map(|field| field.index),
+                selector.route,
+            ))
+        };
+        let mut routes = vec![None];
         for selector in selectors {
-            if let Some(variant) = selector.variant
-                && !routes.contains(&Some(variant))
-            {
-                routes.push(Some(variant));
+            if selector.is_routed() {
+                let route = route_key(selector);
+                if !routes.contains(&route) {
+                    routes.push(route);
+                }
             }
         }
         for route in routes {
             let published = selectors
                 .iter()
                 .zip(relations)
-                .filter(|(selector, _)| selector.variant.is_none() || selector.variant == route)
+                .filter(|(selector, _)| !selector.is_routed() || route_key(selector) == route)
                 .map(|(_, relation)| relation)
                 .collect::<Vec<_>>();
             // One clause is already a set: [CALL-6] asks whether the closure
@@ -1627,7 +1868,7 @@ impl<'unit> DeclarationInventory<'unit> {
             let rendered = selectors
                 .iter()
                 .zip(relations)
-                .filter(|(selector, _)| selector.variant.is_none() || selector.variant == route)
+                .filter(|(selector, _)| !selector.is_routed() || route_key(selector) == route)
                 .map(|(selector, _)| self.postcondition_clause_text(selector))
                 .collect::<Result<Vec<_>, _>>()?;
             return self.issue_node(
@@ -1756,7 +1997,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 .direct_token_with(*atom, crate::TerminalPredicate::Literal)?
         {
             let bytes = self.tree.token_bytes(literal)?;
-            if matches!(bytes, b"0_T" | b"1_T") {
+            if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                 let usage =
                     self.use_at(check_context, *atom, LexicalUseRole::GenericNumericSuffix)?;
                 let ResolvedTarget::Source {
@@ -1768,7 +2009,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 };
                 return Ok(PostconditionConstantOrigin::GenericNumericIdentity {
                     type_parameter: declaration,
-                    one: bytes == b"1_T",
+                    one: bytes.first() == Some(&b'1'),
                 });
             }
         }
@@ -1858,7 +2099,7 @@ impl<'unit> DeclarationInventory<'unit> {
         record: &PostconditionResolutionRecord,
         admission: SelectorAdmissionType,
         ordinal: u32,
-        success_variants: &[BuiltinPreludeId],
+        required_fields: &[String],
     ) -> Result<(), CheckStop> {
         let candidate = match record.class {
             PostconditionSelectorClass::Plain => {
@@ -1881,19 +2122,8 @@ impl<'unit> DeclarationInventory<'unit> {
             PostconditionSelectorClass::Variant => {
                 if !matches!(
                     admission,
-                    SelectorAdmissionType::SuccessPayload | SelectorAdmissionType::Symbolic
+                    SelectorAdmissionType::Payload | SelectorAdmissionType::Symbolic
                 ) {
-                    return self.issue_selector(
-                        record,
-                        SemanticIssueKind::invalid_postcondition_selector(),
-                    );
-                }
-                // [FN-9] the route names the success variant of the routed
-                // ordinal's own type: `Ok` of a Result, `Some` of an Option.
-                if !success_variants
-                    .iter()
-                    .any(|variant| record.variant_target == Some(ResolvedTarget::Prelude(*variant)))
-                {
                     return self.issue_selector(
                         record,
                         SemanticIssueKind::invalid_postcondition_selector(),
@@ -1903,15 +2133,15 @@ impl<'unit> DeclarationInventory<'unit> {
                     return self.issue_selector(
                         record,
                         SemanticIssueKind::InvalidPostconditionFields {
-                            required_fields: vec!["value".to_owned()],
+                            required_fields: required_fields.to_vec(),
                         },
                     );
                 };
-                if field.spelling != "value" {
+                if !required_fields.contains(&field.spelling) {
                     return self.issue_origin_node(
                         &field.origin,
                         SemanticIssueKind::InvalidPostconditionFields {
-                            required_fields: vec!["value".to_owned()],
+                            required_fields: required_fields.to_vec(),
                         },
                     );
                 }
@@ -1919,7 +2149,7 @@ impl<'unit> DeclarationInventory<'unit> {
                     return self.issue_origin_node(
                         &extra.origin,
                         SemanticIssueKind::InvalidPostconditionFields {
-                            required_fields: vec!["value".to_owned()],
+                            required_fields: required_fields.to_vec(),
                         },
                     );
                 }
@@ -2115,26 +2345,14 @@ impl<'unit> TypeContext<'unit> {
         let CheckedType::Nominal(result_nominal) = declared.ty else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
-        let CheckedNominalKind::Enum { variants } = &self.nominal(result_nominal)?.kind else {
+        let CheckedNominalKind::Enum { .. } = &self.nominal(result_nominal)?.kind else {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         };
-        let (routed_variant, routed_field) = match selector.route {
-            Some(route) => (Some(route.variant as usize), route.field as usize),
-            None => {
-                if self.success_payload_type(declared.ty).is_none() {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                }
-                let success = variants.iter().position(|variant| {
-                    matches!(
-                        variant.constructor,
-                        super::super::model::CheckedConstructor::Prelude(
-                            BuiltinPreludeId::OK | BuiltinPreludeId::SOME
-                        )
-                    )
-                });
-                (success, 0)
-            }
-        };
+        let route = selector
+            .route
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let routed_variant = Some(route.variant as usize);
+        let routed_field = route.field as usize;
         match value {
             CheckedExpression::ConstructEnum {
                 nominal,
@@ -2155,7 +2373,7 @@ impl<'unit> TypeContext<'unit> {
             _ => Ok(Some(value)),
         }
     }
-    /// [TYPE-11, ERR-3] whether a generated route names a field of the
+    /// [FN-9, TYPE-11, ERR-3] whether a route names a field of the
     /// `Err` variant of the routed ordinal's Result, which a propagated
     /// error exit returns.
     fn routes_error_variant(
@@ -2163,7 +2381,7 @@ impl<'unit> TypeContext<'unit> {
         function: &FunctionSignature,
         selector: &CheckedPostconditionSelector,
     ) -> Result<bool, CheckStop> {
-        let Some(route) = selector.route.filter(|_| selector.generated) else {
+        let Some(route) = selector.route else {
             return Ok(false);
         };
         let Some(CheckedType::Nominal(nominal)) = function
@@ -2187,35 +2405,6 @@ impl<'unit> TypeContext<'unit> {
         statement: &crate::NodePath,
         binding_info: &HashMap<BindingId, PostconditionBindingInfo>,
     ) -> Result<Option<PostconditionReturnPlace>, CheckStop> {
-        // [FN-9, ENT-2(b)] a returned integer element supplies its ordinary
-        // term, including an integer field below an element. Use the same
-        // admitted proof path as an operand read; CALL-4 still determines
-        // which projections a declaration's symbolic result may expose.
-        if let Some(place) = value.integer_element_proof_place() {
-            let root = match place.root {
-                crate::semantic::places::PlaceRoot::Binding(binding) => {
-                    PostconditionReturnPlaceRoot::Binding(binding)
-                }
-                crate::semantic::places::PlaceRoot::Constant(constant) => {
-                    PostconditionReturnPlaceRoot::NamedConst(self.constant(constant)?.declaration)
-                }
-            };
-            let Some(projections) = place
-                .path
-                .iter()
-                .map(GoalProjection::from_place_step)
-                .collect::<Option<Vec<_>>>()
-            else {
-                return Ok(None);
-            };
-            return Ok(Some(PostconditionReturnPlace {
-                root,
-                projections,
-                ty: value.ty(),
-                range_referent: false,
-                source: value.carrier().unwrap_or(statement).clone(),
-            }));
-        }
         let place = match value {
             CheckedExpression::Binding {
                 carrier,
@@ -2378,6 +2567,19 @@ impl<'unit> TypeContext<'unit> {
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?
                         .ty
                 }
+                CheckedPlaceStep::Payload { variant, field, .. } => {
+                    let CheckedType::Nominal(nominal) = ty else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+                        return Err(SemanticCompilerFailure::InvalidResolution.into());
+                    };
+                    variants
+                        .get(*variant as usize)
+                        .and_then(|variant| variant.fields.get(*field as usize))
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                        .ty
+                }
                 CheckedPlaceStep::BoxReferent(nominal) => {
                     if ty != CheckedType::Nominal(*nominal) {
                         return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -2448,27 +2650,39 @@ impl<'unit> TypeContext<'unit> {
             };
             place.projections.push(match segment {
                 super::super::model::CheckedSegmentSelect::One(index) => {
-                    GoalProjection::Subscript(index.captured.clone().goal_identity())
+                    GoalProjection::Subscript(index.captured.goal_identity())
                 }
                 super::super::model::CheckedSegmentSelect::Page(index) => {
-                    GoalProjection::Page(index.captured.clone().goal_identity())
+                    GoalProjection::Page(index.captured.goal_identity())
                 }
                 super::super::model::CheckedSegmentSelect::All(range) => {
-                    GoalProjection::Range(range.clone())
+                    GoalProjection::Range(*range)
                 }
             });
             place.ty = root.element_type;
             place.range_referent = true;
             return Ok(Some(place));
         }
-        let Some(info) = binding_info.get(&root.binding) else {
+        // [ENT-2] a range alias's places are its source's.
+        let ResolvedPlace {
+            root: PlaceRoot::Binding(binding),
+            path,
+            ..
+        } = root.proof_place()
+        else {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        };
+        if !path.is_empty() {
+            return Err(SemanticCompilerFailure::InvalidResolution.into());
+        }
+        let Some(info) = binding_info.get(&binding) else {
             return Ok(None);
         };
         if info.ty != root.element_type {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
         Ok(Some(PostconditionReturnPlace {
-            root: PostconditionReturnPlaceRoot::Binding(root.binding),
+            root: PostconditionReturnPlaceRoot::Binding(binding),
             projections: Vec::new(),
             ty: root.element_type,
             range_referent: true,
@@ -2552,33 +2766,81 @@ impl<'unit> TypeContext<'unit> {
             _ => false,
         })
     }
-    /// [FN-9] the success payload type of a `Result` or `Option` result type,
-    /// `Ok` or `Some`, when that type is one of the two.
-    fn success_payload_type(&self, ty: CheckedType) -> Option<CheckedType> {
-        let CheckedType::Nominal(nominal) = ty else {
-            return None;
-        };
-        match self
-            .prelude_types
-            .get(nominal.0 as usize)
-            .and_then(|entry| *entry)?
-        {
-            super::PreludeType::Result(value, _) | super::PreludeType::Option(value) => Some(value),
-            _ => None,
-        }
-    }
-    /// Whether one declared result type can carry a route in this version:
-    /// exactly `own Result<T, E>` or `own Option<T>` whose success payload T
-    /// supplies data under [CALL-4] [FN-9].
-    fn postcondition_route_carrier(
+    /// The resolved variant in this concrete enum instance. Source constructor
+    /// identities remain the declaration's identities after substitution.
+    fn postcondition_route_variant(
         &self,
         ty: CheckedType,
-        symbolic: bool,
-    ) -> Result<bool, CheckStop> {
-        match self.success_payload_type(ty) {
-            Some(payload) => self.type_supplies_data(payload, symbolic),
-            None => Ok(false),
-        }
+        target: Option<ResolvedTarget>,
+    ) -> Result<Option<(usize, &super::super::model::CheckedVariant)>, CheckStop> {
+        let CheckedType::Nominal(nominal) = ty else {
+            return Ok(None);
+        };
+        let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
+            return Ok(None);
+        };
+        Ok(variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| match (variant.constructor, target) {
+                (
+                    super::super::model::CheckedConstructor::Prelude(actual),
+                    Some(ResolvedTarget::Prelude(wanted)),
+                ) => actual == wanted,
+                (
+                    super::super::model::CheckedConstructor::Source(actual),
+                    Some(ResolvedTarget::Source { declaration, .. }),
+                ) => actual == declaration,
+                _ => false,
+            }))
+    }
+    /// A symbolic result type has no enum instance yet, but its route's
+    /// resolved variant still fixes the declared field names and positions.
+    fn postcondition_variant_fields(
+        &self,
+        target: Option<ResolvedTarget>,
+    ) -> Result<Vec<String>, CheckStop> {
+        let declaration = match target {
+            Some(ResolvedTarget::Source { declaration, .. }) => declaration,
+            Some(ResolvedTarget::Prelude(variant)) => {
+                let field = match variant {
+                    BuiltinPreludeId::OK | BuiltinPreludeId::SOME => Some("value"),
+                    BuiltinPreludeId::ERR => Some("error"),
+                    BuiltinPreludeId::NEXT => Some("next"),
+                    BuiltinPreludeId::NEEDS => Some("bytes"),
+                    _ => None,
+                };
+                return Ok(field.into_iter().map(str::to_owned).collect());
+            }
+            _ => return Ok(Vec::new()),
+        };
+        let declaration = self
+            .declarations
+            .resolved
+            .declaration(declaration)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let node = self
+            .declarations
+            .tree
+            .node_with_path(declaration.origin().node())
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let Some(list) = self
+            .declarations
+            .tree
+            .first_child_with(node, Production::VfieldList)?
+        else {
+            return Ok(Vec::new());
+        };
+        self.declarations
+            .tree
+            .children_with(list, Production::Vfield)?
+            .into_iter()
+            .map(|field| {
+                self.declarations
+                    .dependent_declaration_at(field, crate::DependentDeclarationRole::VariantField)
+                    .map(|field| field.spelling().to_owned())
+            })
+            .collect()
     }
     /// The table positions of the signatures `eligible` names, by the path
     /// of the function each one instantiates, in table order.
@@ -2867,7 +3129,6 @@ impl<'unit> TypeContext<'unit> {
             relation,
             selected_returns,
             places: Vec::new(),
-            entry_places: Vec::new(),
         })
     }
     #[allow(clippy::too_many_arguments)]
@@ -2968,8 +3229,8 @@ impl<'unit> TypeContext<'unit> {
                     });
                 }
                 // [TYPE-11, ERR-3] the propagated outcome holds the enclosing
-                // Result's `Err` variant, so a route a type invariant
-                // generates over that variant's field selects the edge, and
+                // Result's `Err` variant, so a route over that variant's
+                // field selects the edge, and
                 // the edge forwards the operand's error payload.
                 CheckedStatement::PropagateLet { node_path, .. }
                     if self.routes_error_variant(function, selector)? =>
@@ -3198,7 +3459,10 @@ impl<'unit> TypeContext<'unit> {
         }
         let mut carriers = Vec::new();
         for (ordinal, declared) in signature.results.iter().enumerate() {
-            if self.postcondition_route_carrier(declared.ty, symbolic)? {
+            if self
+                .postcondition_route_variant(declared.ty, record.variant_target)?
+                .is_some()
+            {
                 carriers.push(ordinal);
             }
         }
@@ -3276,42 +3540,49 @@ impl<'unit> TypeContext<'unit> {
             .get(ordinal as usize)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
 
-        let (admission, result_type) = match declared.ty {
-            ty if Checker::postcondition_fragment_type(ty, symbolic) => {
-                (SelectorAdmissionType::Fragment, ty)
-            }
-            // [FN-9] a `Result` or `Option` whose success payload supplies
-            // data under [CALL-4]; its routed payload datum supplies exactly
-            // the data an unrouted result ordinal of the payload type does.
-            ty if self.postcondition_route_carrier(ty, symbolic)? => (
-                SelectorAdmissionType::SuccessPayload,
-                self.success_payload_type(ty)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?,
-            ),
-            // [CALL-4] a result of measured or aggregate type supplies the
-            // places its owned descendant projections reach: every boxed
-            // construction record's `ensures result.inner.len`, a
-            // constructor's `ensures made.storage.len`, and an identifier's
-            // `ensures atom.index < table^.spans.inner.len`.
-            ty if self.type_supplies_data(ty, symbolic)? => (SelectorAdmissionType::Aggregate, ty),
-            CheckedType::Generic(_) if symbolic => (SelectorAdmissionType::Symbolic, declared.ty),
-            _ => (SelectorAdmissionType::Invalid, declared.ty),
+        let routed = record.class == PostconditionSelectorClass::Variant;
+        let selected_variant = self.postcondition_route_variant(declared.ty, record.variant_target)?;
+        let symbolic_enum = symbolic && matches!(declared.ty, CheckedType::Generic(_));
+        let required_fields: Vec<String> = if let Some((_, variant)) = selected_variant {
+            variant.fields.iter().map(|field| field.name.clone()).collect()
+        } else if symbolic_enum {
+            self.postcondition_variant_fields(record.variant_target)?
+        } else {
+            Vec::new()
         };
-        // [FN-9] the success variant a route may name: the declared type's
-        // own for a Result or an Option, and either for a symbolic ordinal
-        // whose enum is not yet known.
-        let success_variants: &[BuiltinPreludeId] = match self
-            .success_payload_type(declared.ty)
-            .and(match declared.ty {
-                CheckedType::Nominal(nominal) => self
-                    .prelude_types
-                    .get(nominal.0 as usize)
-                    .and_then(|entry| *entry),
-                _ => None,
-            }) {
-            Some(super::PreludeType::Option(_)) => &[BuiltinPreludeId::SOME],
-            Some(_) => &[BuiltinPreludeId::OK],
-            None => &[BuiltinPreludeId::OK, BuiltinPreludeId::SOME],
+        let selected_field = selected_variant.and_then(|(variant_index, variant)| {
+            let written = record.fields.first()?;
+            variant
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.name == written.spelling)
+                .map(|(field_index, field)| (variant_index, variant.tag, field_index, field.ty))
+        });
+        let (admission, result_type) = if routed {
+            match selected_field {
+                Some((_, _, _, ty)) if self.type_supplies_data(ty, symbolic)? => {
+                    (SelectorAdmissionType::Payload, ty)
+                }
+                // Retain the field-specific diagnostic for a missing or
+                // misspelled field of a valid enum variant.
+                None if selected_variant.is_some() => (SelectorAdmissionType::Payload, declared.ty),
+                _ if symbolic_enum => (SelectorAdmissionType::Symbolic, declared.ty),
+                _ => (SelectorAdmissionType::Invalid, declared.ty),
+            }
+        } else {
+            match declared.ty {
+                ty if Checker::postcondition_fragment_type(ty, symbolic) => {
+                    (SelectorAdmissionType::Fragment, ty)
+                }
+                ty if self.type_supplies_data(ty, symbolic)? => {
+                    (SelectorAdmissionType::Aggregate, ty)
+                }
+                CheckedType::Generic(_) if symbolic => {
+                    (SelectorAdmissionType::Symbolic, declared.ty)
+                }
+                _ => (SelectorAdmissionType::Invalid, declared.ty),
+            }
         };
         self.declarations.validate_postcondition_selector(
             record,
@@ -3321,66 +3592,47 @@ impl<'unit> TypeContext<'unit> {
                 admission
             },
             ordinal,
-            success_variants,
+            &required_fields,
         )?;
-
-        let (candidate, variant, field) = match record.class {
-            PostconditionSelectorClass::Plain => (
+        let route = selected_field
+            .map(|(variant, tag, field, _)| {
+                Ok::<_, SemanticCompilerFailure>(PayloadRoute {
+                    variant: u32::try_from(variant)
+                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                    field: u32::try_from(field)
+                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                    tag,
+                })
+            })
+            .transpose()?;
+        let (candidate, variant, field) = if routed {
+            let field = record
+                .fields
+                .first()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            (
+                &field.candidate,
+                record.variant_target,
+                Some(PostconditionFieldIdentity {
+                    index: u32::try_from(
+                        required_fields
+                            .iter()
+                            .position(|declared| declared == &field.spelling)
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    )
+                    .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                    origin: field.origin.clone(),
+                }),
+            )
+        } else {
+            (
                 record
                     .result_binders
                     .get(ordinal as usize)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?,
                 None,
                 None,
-            ),
-            PostconditionSelectorClass::Variant => {
-                let ResolvedTarget::Prelude(variant) = record
-                    .variant_target
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                else {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                };
-                let field = record
-                    .fields
-                    .first()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                (
-                    &field.candidate,
-                    Some(variant),
-                    Some(PostconditionFieldIdentity {
-                        declaration: if variant == BuiltinPreludeId::SOME {
-                            BuiltinPreludeId::SOME_VALUE
-                        } else {
-                            BuiltinPreludeId::OK_VALUE
-                        },
-                        origin: field.origin.clone(),
-                    }),
-                )
-            }
-        };
-
-        // [FN-9] a written route on a concrete ordinal names its success
-        // variant's one field; a symbolic ordinal's enum is not yet known.
-        let route = match (variant, declared.ty) {
-            (Some(wanted), CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                CheckedNominalKind::Enum { variants } => {
-                    let found = variants.iter().enumerate().find(|(_, candidate)| {
-                        candidate.constructor
-                            == super::super::model::CheckedConstructor::Prelude(wanted)
-                    });
-                    match found {
-                        Some((index, candidate)) => Some(PayloadRoute {
-                            variant: u32::try_from(index)
-                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                            field: 0,
-                            tag: candidate.tag,
-                        }),
-                        None => None,
-                    }
-                }
-                _ => None,
-            },
-            _ => None,
+            )
         };
         Ok(CheckedPostconditionSelector {
             function: signature.id,

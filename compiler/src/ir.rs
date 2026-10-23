@@ -292,94 +292,58 @@ pub(crate) fn type_derives_release(
     elements: &[IrType],
     ty: IrType,
 ) -> Option<bool> {
-    let nominal_kind = |id: IrNominalId| nominals.get(id.index()).map(IrNominal::kind);
-    let mut pending = vec![ty];
-    let mut visited = std::collections::HashSet::new();
-    while let Some(current) = pending.pop() {
-        if !visited.insert(current) {
-            continue;
-        }
-        match current {
-            // A runtime-capacity block is one heap object the owner frees
-            // [TYPE-9, STOR-3], so it always derives a release.
-            IrType::Buffer { .. }
-            | IrType::Segments { .. }
-            | IrType::Window {
-                capacity: None, ..
-            } => return Some(true),
-            // A key set's store is the runtime's, which its release frees
-            // [SHARE-1].
-            IrType::KeySet => return Some(true),
-            // A constant-capacity window reclaims nothing of its own; it
-            // still needs a walk when its slots hold values that derive one,
-            // and [PROV-6] visits those before the block is released.
-            IrType::Array { element, .. }
-            | IrType::Window {
-                element,
-                capacity: Some(_),
-                ..
-            } => {
-                pending.push(*elements.get(element.index())?);
-            }
-            // [PROV-6] an owned cell or frozen handle has a non-empty
-            // release action even when its content has none.
-            IrType::Nominal(id)
-                if matches!(
-                    nominal_kind(id),
-                    Some(IrNominalKind::Box {
-                        release: IrReleaseClass::General | IrReleaseClass::Frozen,
-                        ..
-                    })
-                ) =>
-            {
-                return Some(true);
-            }
-            IrType::Nominal(id)
-                if matches!(nominal_kind(id), Some(IrNominalKind::Box { .. })) =>
-            {
-                let Some(IrNominalKind::Box { referent, .. }) = nominal_kind(id) else {
-                    return None;
-                };
-                pending.push(*referent);
-            }
-            IrType::Nominal(id) => match nominal_kind(id)? {
+    crate::release::has_release(ty, crate::release::ReleaseQuery::Scope, |current| {
+        use crate::release::ReleaseShape;
+        Ok::<_, ()>(match current {
+            IrType::KeySet => ReleaseShape::KeySet,
+            IrType::Nominal(id) => match nominals.get(id.index()).ok_or(())?.kind() {
+                IrNominalKind::Box { .. } => ReleaseShape::Box,
+                IrNominalKind::Shared { .. } => ReleaseShape::Shared,
                 IrNominalKind::Struct { fields } => {
-                    pending.extend(fields.iter().map(IrField::ty));
+                    ReleaseShape::Owned(fields.iter().map(IrField::ty).collect())
                 }
-                IrNominalKind::Enum { variants } => {
-                    pending.extend(
-                        variants
-                            .iter()
-                            .flat_map(IrVariant::fields)
-                            .map(IrField::ty),
-                    );
-                }
-                // A handle's release releases a share of its object, and the
-                // last one its state [SHARE-1].
-                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
-                    return Some(true);
-                }
-                // Ordinary opaque values have empty release [PRE-1].
-                IrNominalKind::Opaque => {}
+                IrNominalKind::Enum { variants } => ReleaseShape::Owned(
+                    variants
+                        .iter()
+                        .flat_map(IrVariant::fields)
+                        .map(IrField::ty)
+                        .collect(),
+                ),
+                IrNominalKind::Opaque => ReleaseShape::Empty,
             },
-            IrType::Unit
+            IrType::Window {
+                shape: IrWindowShape::Paged,
+                ..
+            } => ReleaseShape::Paged,
+            IrType::Array { element, length } => ReleaseShape::Repeated {
+                element: *elements.get(element.index()).ok_or(())?,
+                statically_empty: length == 0,
+                runtime_backing: false,
+            },
+            IrType::Window {
+                element, capacity, ..
+            } => ReleaseShape::Repeated {
+                element: *elements.get(element.index()).ok_or(())?,
+                statically_empty: capacity == Some(0),
+                runtime_backing: capacity.is_none(),
+            },
+            IrType::Buffer { element } | IrType::Segments { element } => ReleaseShape::Repeated {
+                element: *elements.get(element.index()).ok_or(())?,
+                statically_empty: false,
+                runtime_backing: true,
+            },
+            IrType::Entries { element } | IrType::Run { element } | IrType::Range { element } => {
+                ReleaseShape::Borrowed(*elements.get(element.index()).ok_or(())?)
+            }
+            IrType::Address(_)
+            | IrType::RuntimeBoxPayload { .. }
+            | IrType::Unit
             | IrType::Bool
             | IrType::Integer { .. }
-            | IrType::Float { .. }
-            // [REF-4, TYPE-8] a range reference is a name for elements it
-            // does not own, so nothing of it is ever released.
-            | IrType::Run { .. }
-            | IrType::Range { .. }
-            // A synthesized payload capture borrows the source Box allocation
-            // and never carries ownership or cleanup authority.
-            | IrType::RuntimeBoxPayload { .. }
-            // The entries an entry binding names are its statement's record,
-            // which owns nothing [SHARE-2].
-            | IrType::Entries { .. }
-            | IrType::Address(_) => {}
-        }
-    }
-    Some(false)
+            | IrType::Float { .. } => ReleaseShape::Empty,
+        })
+    })
+    .ok()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -904,6 +868,67 @@ pub enum IrWorkEstimate {
     Quotient(Box<Self>, u64),
 }
 
+/// [SHARE-3] A wake test: a condition over one object target's state that
+/// the statement's guard implies, which the runtime evaluates for the watch
+/// after a statement writes the object (compiler/waiting-contexts/state-locks).
+///
+/// `values[0]` is the address of the target's state; every other value is a
+/// scalar's address in that state or an operand the registration captures,
+/// which atoms name by position. `program` combines the atoms in postfix
+/// order. A callback instead receives the state and captured scalar values
+/// in `values[1..]`, with no atom program. A guard that implies nothing
+/// checkable by either representation has no test.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrWakeTest {
+    pub(crate) values: Vec<IrValueId>,
+    pub(crate) atoms: Vec<IrWakeAtom>,
+    pub(crate) program: Vec<IrWakeCode>,
+    /// An ordinary, nonwaiting Bool function whose first argument is the
+    /// current state address and whose remaining arguments are captured
+    /// scalars. Mutually exclusive with the atom program.
+    pub(crate) callback: Option<u32>,
+}
+
+/// One comparison of a wake test: the scalar at `field`'s address against
+/// `operand`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IrWakeAtom {
+    pub(crate) field: usize,
+    pub(crate) comparison: IrWakeComparison,
+    pub(crate) operand: IrWakeOperand,
+}
+
+/// The right side of a wake atom, by position in [`IrWakeTest`]'s values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrWakeOperand {
+    /// A value of the scalar's type, captured when the watch registers.
+    Value(usize),
+    /// The address of another scalar of the same type in the same state.
+    Field(usize),
+}
+
+/// A wake atom's comparison, with the scalar on the left.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrWakeComparison {
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+}
+
+/// One postfix code of a wake test's program.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrWakeCode {
+    /// The value of the atom at this position.
+    Atom(u8),
+    /// Both of the two values before.
+    And,
+    /// Either of the two values before.
+    Or,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrOperation {
     Constant(IrConstant),
@@ -921,7 +946,10 @@ pub enum IrOperation {
     /// [WAIT-3] waits until every context this activation started has
     /// finished. It stands before every exit of an activation that starts
     /// one. Defines `Unit`.
-    ContextJoin,
+    ContextJoin {
+        /// Static presentation only; never a scheduling input.
+        site: crate::SourceDescription,
+    },
     /// [WAIT-3] starts `function`, a synthesized wrapper taking exactly
     /// `arguments` by value and returning the spawned call's result, in a
     /// context of its own whose result the starting activation keeps. Defines
@@ -936,6 +964,8 @@ pub enum IrOperation {
     /// the block, and otherwise at the block's end.
     ContextAwait {
         start: IrValueId,
+        /// Static presentation only; never a scheduling input.
+        site: crate::SourceDescription,
     },
     Integer {
         operation: IrIntegerOperation,
@@ -1108,6 +1138,16 @@ pub enum IrOperation {
         source: IrValueId,
         index: IrValueId,
     },
+    /// [OP-10] `clear`: every element of the window's old `len` takes its
+    /// compiler-derived release in ascending logical order [PROV-6], then
+    /// `len` becomes zero. The storage, `cap`, a Ring's `head` and a Paged's
+    /// pages are kept, and nothing is allocated. An element type whose release
+    /// action is empty visits no element, so the operation is the boundary
+    /// store alone; an already empty window, the shared empty header among
+    /// them [STOR-1], is not written at all.
+    RunClear {
+        run: IrValueId,
+    },
     /// [OP-13] one runtime-capacity window block and the cell that owns it:
     /// `[len | cap | head? | slots]` with an empty window
     /// (compiler/storage-representation). The value is the cell pointer.
@@ -1248,6 +1288,16 @@ pub enum IrOperation {
     SharedNew {
         nominal: IrNominalId,
     },
+    /// [PRE-1] an Open one-shot decision cell with one shared handle.
+    DecisionCellNew {
+        nominal: IrNominalId,
+    },
+    /// [SHARE-3] an independent cell observation or single-attempt claim.
+    /// `winner` is None for a read, 1 for Written and 2 for Killed.
+    DecisionCell {
+        object: IrValueId,
+        winner: Option<u32>,
+    },
     /// The address of the state of the shared object `object` names. Defines
     /// an address of the nominal's state type.
     SharedState {
@@ -1260,6 +1310,23 @@ pub enum IrOperation {
         nominal: IrNominalId,
         object: IrValueId,
     },
+    /// [SHARE-1] counts the handle `object` out of its object, for
+    /// `shared_close`. Defines a `Bool`, true when it was the last handle,
+    /// whose state then belongs to the caller.
+    SharedCountOut {
+        object: IrValueId,
+    },
+    /// [SHARE-1] returns the object `object` names, whose last handle was
+    /// counted out and whose state was moved out, to the runtime. Defines
+    /// `Unit`.
+    SharedFree {
+        object: IrValueId,
+    },
+    /// Native snapshot signal preparation before any atomic acquisition.
+    /// Erased when the composition uses no snapshot export.
+    SnapshotAtomicBegin,
+    /// Activates prepared captures after all atomic targets are released.
+    SnapshotAtomicEnd,
     /// [SHARE-2, SHARE-3] waits until this context holds the object alone.
     /// Defines `Unit`.
     SharedAcquire {
@@ -1273,14 +1340,20 @@ pub enum IrOperation {
         object: IrValueId,
     },
     /// [SHARE-3] a guard read false: gives up the hold and waits until a
-    /// statement that writes the object ends. Defines `Unit`.
+    /// statement that writes the object ends, leaving `test`, when there is
+    /// one, possibly true. Defines `Unit`.
     SharedWatch {
         object: IrValueId,
+        test: Option<IrWakeTest>,
+        /// Static description of the atomic statement whose guard waits.
+        site: crate::SourceDescription,
     },
     /// [SHARE-3] gives up this context's hold, after a statement that may
-    /// have written the object. Defines `Unit`.
+    /// have written the object when `wrote`, and otherwise after one whose
+    /// block writes nothing through it. Defines `Unit`.
     SharedUnlock {
         object: IrValueId,
+        wrote: bool,
     },
     /// [SHARE-1] a new shared map object of `nominal`, whose entries are
     /// `Option<V>`, sized for `capacity` keys and holding none. Defines its
@@ -1289,13 +1362,28 @@ pub enum IrOperation {
         nominal: IrNominalId,
         capacity: IrValueId,
     },
+    /// Fills target `index` of a type group's record: its object, its
+    /// table hold when it is a map, and, for an ordinary object, whether the
+    /// statement's block or guard may write it, so that the group's release
+    /// gives it up as written only then [SHARE-3]. Defines `Unit`.
     AtomicGroupTarget {
         record: IrRecord,
         index: u32,
         object: IrValueId,
         hold: Option<IrRecord>,
+        wrote: bool,
     },
+    /// [SHARE-2, SHARE-3] takes every target of a type group, as
+    /// `SharedTake` does, for a statement already holding an earlier group.
+    /// Defines `Unit`.
     AtomicGroupTake {
+        record: IrRecord,
+    },
+    /// [SHARE-2, SHARE-3] takes every target of the statement's first type
+    /// group: waits, as `SharedAcquire` does, until this context holds the
+    /// group's first object, suspending with nothing held, and then takes
+    /// the others. Defines `Unit`.
+    AtomicGroupAcquire {
         record: IrRecord,
     },
     AtomicGroupRelease {
@@ -1473,10 +1561,12 @@ pub enum IrOperation {
         record: IrRecord,
     },
     /// Watches the object `object` names for a statement that writes its
-    /// state outside its tables. Defines `Unit`.
+    /// state outside its tables and leaves `test`, when there is one,
+    /// possibly true. Defines `Unit`.
     WatchObject {
         record: IrRecord,
         object: IrValueId,
+        test: Option<IrWakeTest>,
     },
     /// Watches the table `table` for a statement that writes an entry of it
     /// or holds it whole. Defines `Unit`.
@@ -1489,6 +1579,8 @@ pub enum IrOperation {
     /// frame. Defines `Unit`.
     WatchPark {
         record: IrRecord,
+        /// Static description of the atomic statement whose guard waits.
+        site: crate::SourceDescription,
     },
     /// The first-element pointer used only by a synthesized split capture of
     /// a `Box<Array<T>>`. The source Box value remains the allocation-base
@@ -1751,6 +1843,23 @@ impl IrMatchTarget {
     }
 }
 
+/// One exact integer constant selection, retaining the scrutinee's integer
+/// representation rather than projecting an enum tag.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IrIntegerMatchTarget {
+    pub(crate) value: i128,
+    pub(crate) block: IrBlockId,
+}
+
+impl IrIntegerMatchTarget {
+    pub const fn value(self) -> i128 {
+        self.value
+    }
+    pub const fn block(self) -> IrBlockId {
+        self.block
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrTerminator {
     /// A checker-proved uninhabited function body. The function keeps its
@@ -1765,6 +1874,12 @@ pub enum IrTerminator {
         scrutinee: IrValueId,
         enum_type: IrEnumType,
         targets: Vec<IrMatchTarget>,
+    },
+    IntegerMatch {
+        scrutinee: IrValueId,
+        targets: Vec<IrIntegerMatchTarget>,
+        /// The checked else arm; None means complete type-domain coverage.
+        default: Option<IrBlockId>,
     },
     Return {
         value: IrValueId,
@@ -1946,6 +2061,8 @@ pub enum IrSourceArgument {
 /// reevaluated to produce this metadata, and it adds no executable read.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IrSourceCall {
+    /// Exact checked source occurrence, retained only for diagnostic location.
+    pub(crate) origin: crate::NodePath,
     pub(crate) result: IrValueId,
     pub(crate) arguments: Vec<IrSourceArgument>,
     /// A direct borrow result's checked candidate. Absence says nothing about
@@ -2009,7 +2126,7 @@ pub struct IrFunction {
     /// acquire invented source use or provenance records.
     pub(crate) source_calls: Vec<IrSourceCall>,
     /// Developer-only atomic acquisition lines, recorded during lowering.
-    pub(crate) lock_ledger: Vec<String>,
+    pub(crate) lock_ledger: Vec<crate::SourceDescription>,
     pub(crate) result: IrType,
     pub(crate) values: Vec<IrType>,
     pub(crate) blocks: Vec<IrBlock>,

@@ -11,15 +11,19 @@ use std::collections::{HashMap, HashSet};
 use std::mem::{size_of, size_of_val};
 use std::rc::Rc;
 
-use super::super::goal::{GoalExpression, GoalOperation};
+use super::super::goal::{GoalExpression, GoalOperation, GoalProjection};
 use super::super::model::{
     BindingId, CheckedBooleanOperation, CheckedLoopId, CheckedMeasure, CheckedValue, IntegerType,
 };
-use super::super::places::{CapturedRange, CapturedValue, ResolvedPlace};
+use super::super::places::{CapturedRange, CapturedValue};
 use super::VerifiedPostconditionSummaryRef;
 use super::affine::{AffineForm, AffineInequality};
 use super::term::{MeasureBound, TermId, TermKind, TermTable, ZERO, type_range};
 use crate::NodePath;
+
+#[path = "state_exclusions.rs"]
+mod exclusions;
+pub(crate) use exclusions::{Exclusion, ExclusionConclusion, ExclusionProof};
 
 /// One normalized source relation over interned terms.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -224,6 +228,7 @@ pub(crate) enum FlowEventKind {
     S13,
     /// [ENT-3.S16] a proved header or local invariant's exact L0 conclusion.
     S16,
+    S17,
     /// [MSR-3] one entry datum minted at body entry, per parameter measure a
     /// declared relation names.
     Entry,
@@ -314,6 +319,9 @@ pub(crate) struct PostconditionCallSubstitution {
 /// Parent IDs always precede their child in the arena.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum DerivationNode {
+    IntegerExclusion {
+        detail: Box<ExclusionProof>,
+    },
     LetOrigin {
         binding: BindingId,
         value: GoalId,
@@ -785,7 +793,7 @@ pub(crate) struct IndexCaptureSubstitution {
 }
 
 impl DerivationNode {
-    fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
+    pub(super) fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
         match self {
             Self::OriginTransport {
                 parent, origins, ..
@@ -795,6 +803,7 @@ impl DerivationNode {
             }
             Self::OriginEquality { detail } => detail.origins.iter().copied().for_each(visit),
             Self::OriginProjection { parent, .. } => visit(*parent),
+            Self::IntegerExclusion { detail } => detail.parents.iter().copied().for_each(visit),
             Self::LetOrigin { .. } => {}
             Self::TransportedHeaderRelation { detail } => detail.parents().for_each(visit),
             Self::UnsignedDivisionProduct {
@@ -899,7 +908,6 @@ impl DerivationNode {
         self.for_each_parent(&mut visit);
     }
 
-    #[cfg(test)]
     pub(crate) fn parent_ids(&self) -> Vec<DerivationId> {
         let mut parents = Vec::with_capacity(self.parent_count());
         self.for_each_retained_reference(|parent| parents.push(parent));
@@ -911,6 +919,7 @@ impl DerivationNode {
             Self::OriginTransport { origins, .. } => 1 + origins.len(),
             Self::OriginEquality { detail } => detail.origins.len(),
             Self::OriginProjection { .. } => 1,
+            Self::IntegerExclusion { detail } => detail.parents.len(),
             Self::LetOrigin { .. } => 0,
             Self::TransportedHeaderRelation { detail } => detail.parents().count(),
             Self::UnsignedDivisionProduct { .. }
@@ -976,6 +985,7 @@ impl DerivationNode {
 
     fn rank(&self) -> u8 {
         match self {
+            Self::IntegerExclusion { .. } => 51,
             Self::LetOrigin { .. } => 47,
             Self::OriginTransport { .. } => 48,
             Self::OriginEquality { .. } => 49,
@@ -1042,13 +1052,17 @@ pub(crate) struct DerivationMetrics {
     pub(crate) retained_bytes: usize,
 }
 
-/// Which mandatory checked-program query owns a retained root.
+/// Which checked-program query owns a retained root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DerivationRootKind {
     HeaderRelation {
         occurrence: u32,
     },
     LoopInduction {
+        occurrence: u32,
+    },
+    /// A successful optional [ENT-5] support-separation proof at a write.
+    FactPreservation {
         occurrence: u32,
     },
     BodyEntryContradiction,
@@ -1068,10 +1082,6 @@ pub(crate) enum DerivationRootKind {
     /// One successful visit of an optional pair-scoped [PAR-1] range query.
     PermissionSeparation {
         query: u32,
-        occurrence: u32,
-    },
-    /// An optional ENT-5 support-preservation query at a write event.
-    FactPreservation {
         occurrence: u32,
     },
     UnsignedDivisionProduct(u32),
@@ -1565,6 +1575,7 @@ impl DerivationLedger {
     }
 
     fn measure(&self) -> DerivationMetrics {
+        let mut exclusion_value_sets = HashSet::new();
         let mut metrics = DerivationMetrics::default();
         for root in &self.roots {
             match &self.nodes[root.node.0 as usize] {
@@ -1600,6 +1611,15 @@ impl DerivationLedger {
                 .nodes
                 .iter()
                 .map(|node| match node {
+                    DerivationNode::IntegerExclusion { detail } => {
+                        size_of::<ExclusionProof>()
+                            + detail.parents.capacity() * size_of::<DerivationId>()
+                            + if exclusion_value_sets.insert(detail.values.as_ptr()) {
+                                size_of_val(detail.values.as_ref())
+                            } else {
+                                0
+                            }
+                    }
                     DerivationNode::OriginTransport { origins, .. } => {
                         size_of_val(origins.as_ref())
                     }
@@ -1755,6 +1775,7 @@ fn compare_node_ties(left: &DerivationNode, right: &DerivationNode) -> std::cmp:
 
 fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.tie_component(index),
         DerivationNode::LetOrigin {
             binding,
             value,
@@ -2034,6 +2055,7 @@ fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
 
 fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.event,
         DerivationNode::LetOrigin { event, .. } => Some(*event),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
@@ -2059,6 +2081,7 @@ fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
 
 fn node_event_mut(node: &mut DerivationNode) -> Option<&mut FlowEventId> {
     match node {
+        DerivationNode::IntegerExclusion { detail } => detail.event.as_mut(),
         DerivationNode::LetOrigin { event, .. } => Some(event),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
@@ -2124,6 +2147,11 @@ fn remap_node(node: &mut DerivationNode, remap: &[Option<DerivationId>]) {
             }
         }
         DerivationNode::OriginProjection { parent, .. } => remap_id(parent, remap),
+        DerivationNode::IntegerExclusion { detail } => {
+            for parent in &mut detail.parents {
+                remap_id(parent, remap);
+            }
+        }
         DerivationNode::LetOrigin { .. } => {}
         DerivationNode::TransportedHeaderRelation { detail } => {
             for input in &mut detail.inputs {
@@ -2247,12 +2275,12 @@ fn remap_node(node: &mut DerivationNode, remap: &[Option<DerivationId>]) {
     }
 }
 
-/// One complete storage path read by a goal. A constant root is immutable,
-/// while its current selectors retain ordinary ENT-5 support. The measure
-/// qualifier preserves MSR-2's descriptor-versus-element boundary.
+/// One place read by a complete goal. `length` records ENT-5's fixed-length
+/// boundary: an element write does not invalidate a `len_of(P)` observation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct GoalSupport {
-    pub(crate) place: ResolvedPlace,
+    pub(crate) root: BindingId,
+    pub(crate) projections: Vec<GoalProjection>,
     /// Which [MSR-1] measure of the place this support belongs to, when the
     /// node is a measure node; `None` is the ordinary place node. Every
     /// measure of one place has the same support, P's descriptor storage
@@ -2286,15 +2314,19 @@ struct GoalRecord {
     projection: Option<Relation>,
     normalization: Option<GoalNormalization>,
     support: Vec<GoalSupport>,
+    metadata_complete: bool,
 }
 
 /// Per-function interning table for [ENT-2]'s finite goal universe.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct GoalTable {
+    pub(crate) integer_comparisons: WordHashMap<GoalId, (GoalExpression, i128, GoalSign)>,
     ids: HashMap<GoalExpression, GoalId>,
     views: WordHashMap<GoalId, Vec<GoalId>>,
     records: Vec<GoalRecord>,
     revision: usize,
+    /// The leading records fully prepared by recursive goal interning.
+    complete_prefix: usize,
 }
 
 impl GoalTable {
@@ -2349,6 +2381,7 @@ impl GoalTable {
             projection,
             normalization,
             support,
+            metadata_complete: false,
         });
         self.revision = self
             .revision
@@ -2413,6 +2446,30 @@ impl GoalTable {
                 .expression
                 .same_admission_view(expression)
         })
+    }
+
+    /// Looks up an exact admission view whose deterministic metadata and
+    /// reconstruction children have already been prepared. Incomplete
+    /// low-level records must still pass through ordinary recursive interning.
+    pub(crate) fn complete_id(&self, expression: &GoalExpression) -> Option<GoalId> {
+        self.id(expression)
+            .filter(|id| self.records[id.0 as usize].metadata_complete)
+    }
+
+    /// Marks a record complete after recursively interning its Boolean
+    /// operands and struct fields and supplying all of its deterministic
+    /// metadata. Completeness adds no proof rule or fact, so it changes no
+    /// semantic revision. The prefix permits constant-time checks that old
+    /// parents cannot gain a previously missing child after a cache hit.
+    pub(crate) fn mark_metadata_complete(&mut self, goal: GoalId) {
+        self.records[goal.0 as usize].metadata_complete = true;
+        while self
+            .records
+            .get(self.complete_prefix)
+            .is_some_and(|record| record.metadata_complete)
+        {
+            self.complete_prefix += 1;
+        }
     }
 
     /// [ENT-2] opaque identity ignores the written admission view, whose
@@ -2713,7 +2770,7 @@ impl BoundStore {
     }
 
     /// The terms with at least one cell, ascending.
-    fn live_terms(&self) -> Vec<TermId> {
+    pub(crate) fn live_terms(&self) -> Vec<TermId> {
         let count = self.terms.len();
         let mut live = vec![false; count];
         for row in 0..count {
@@ -2992,6 +3049,7 @@ struct ClosedViewKey {
     measure_replacements: usize,
     goals: usize,
     goal_revision: usize,
+    goal_count: usize,
     ledger: usize,
 }
 
@@ -3037,6 +3095,7 @@ pub(crate) struct KilledCell {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FactState {
+    pub(crate) exclusions: Vec<Exclusion>,
     /// What part of the bound matrix is already closed. Only a state closed
     /// over the current term universe may answer a query without closing
     /// again; a closed core lets the next closure start from its fresh part.
@@ -3050,7 +3109,8 @@ pub(crate) struct FactState {
     /// copies the cell and shares the view, so either copy's later change
     /// clears only its own. Every method that changes a relation, a signed goal or the
     /// contradiction clears it; its key names the term, goal and derivation
-    /// tables and their revisions, so a registered term or goal also misses.
+    /// tables and their revisions; appended complete goals retain the view
+    /// when none introduces a new contradiction.
     closed_view: std::cell::RefCell<Option<ClosedView>>,
     /// While the closure record is unknown and the state has only gained
     /// bound relations since a closed view was taken, that view, as the
@@ -3102,6 +3162,7 @@ impl Default for FactState {
 impl FactState {
     pub(crate) fn new() -> Self {
         Self {
+            exclusions: Vec::new(),
             closure: ClosureRecord::Unknown,
             ordinary_closure: ClosureRecord::Unknown,
             closed_view: std::cell::RefCell::new(None),
@@ -3841,15 +3902,26 @@ impl FactState {
         }
     }
 
-    /// Removes signed facts and ordinary-let origin expansions whose exact
-    /// goal support is invalidated by one ENT-5 event. The L0 matrix and its
-    /// closure record are unchanged: goal contradictions are recomputed by
-    /// every closure.
+    /// Removes signed facts, exclusions and ordinary-let origin expansions
+    /// whose exact goal support is invalidated by one ENT-5 event. Removing
+    /// an exclusion or an admission view also discards cached L0 closure:
+    /// that view may have strengthened an endpoint using the removed set.
     pub(crate) fn kill_goals(&mut self, mut killed: impl FnMut(GoalId) -> bool) {
         if self.all_derivable {
             return;
         }
         self.keep_view_as_seed(None);
+        let previous_exclusions = self.exclusions.len();
+        self.exclusions.retain(|fact| !killed(fact.expression));
+        let mut removed_exclusion = self.exclusions.len() != previous_exclusions;
+        for fact in &mut self.exclusions {
+            let previous_views = fact.views.len();
+            fact.views.retain(|view| !killed(view.expression));
+            removed_exclusion |= fact.views.len() != previous_views;
+        }
+        if removed_exclusion {
+            self.forget_closed_view();
+        }
         self.opaque.retain(|(goal, _)| !killed(*goal));
         self.opaque_proofs.retain(|(goal, _), _| !killed(*goal));
         self.opaque_sources.retain(|(goal, _), _| !killed(*goal));
@@ -3891,6 +3963,7 @@ fn compose_transitive_bounds(first: i128, second: i128) -> i128 {
 /// live facts and the implicit facts of every registered term.
 #[derive(Clone)]
 pub(crate) struct ClosedState {
+    exclusions: Vec<Exclusion>,
     all_derivable: bool,
     contradiction: Option<DerivationId>,
     /// Closed bounds and their proofs, indexed by the dense term identities
@@ -4003,7 +4076,7 @@ type ZeroBounds = (
 /// later bound makes dominated keeps its merge, which leaves a component
 /// larger than needed and every reading still exact. A replaced standing
 /// fact can weaken a bound and rebuilds the structure.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ImplicitStructure {
     consumed: usize,
     measure_replacements: usize,
@@ -4628,6 +4701,9 @@ impl ClosedState {
             } => {
                 self.distinct
                     .contains(&distinct_key(*left, *right, *difference))
+                    || self
+                        .exclusion_membership(*left, *right, *difference)
+                        .is_some()
                     || self.derives_bound(*left, *right, difference.saturating_sub(1))
                     || self.derives_bound(
                         *right,
@@ -4689,7 +4765,10 @@ impl ClosedState {
             GoalSign::Positive => self.derives(relation),
             GoalSign::Negative => self.derives(&relation.negated()),
         });
-        if projected || self.derives_normalized_goal(goal, sign, goals) {
+        if projected
+            || self.exclusion_goal(goal, sign, goals).is_some()
+            || self.derives_normalized_goal(goal, sign, goals)
+        {
             return true;
         }
         if literal_goal_sign(goals.expression(goal)).is_some_and(|truth| truth == sign) {
@@ -4836,7 +4915,10 @@ impl ClosedState {
                 difference,
             } => {
                 let pair = distinct_key(*left, *right, *difference);
-                let mut best = self.distinct_proofs.get(&pair).copied();
+                let mut best =
+                    self.distinct_proofs.get(&pair).copied().or_else(|| {
+                        self.exclusion_relation_proof(*left, *right, *difference, ledger)
+                    });
                 for (from, to, gap) in [
                     (*left, *right, difference.saturating_sub(1)),
                     (*right, *left, difference.saturating_neg().saturating_sub(1)),
@@ -4946,6 +5028,7 @@ impl ClosedState {
         }
         let direct = self
             .opaque_proof(goal, sign, goals)
+            .or_else(|| self.exclusion_goal_proof(goal, sign, goals, ledger))
             .or_else(|| self.goal_projection_proof(goal, sign, goals, ledger))
             .or_else(|| self.normalization_proof(goal, sign, goals, ledger));
         if direct.is_some() {
@@ -5092,25 +5175,25 @@ pub(crate) fn close(
         measure_replacements: terms.measure_replacements(),
         goals: std::ptr::from_ref(goals) as usize,
         goal_revision: goals.revision(),
+        goal_count: goals.records.len(),
         ledger: std::ptr::from_ref(ledger) as usize,
     };
-    if let Some(view) = state.closed_view.borrow().as_ref()
-        && view.key == key
-    {
+    let remembered = state.closed_view.borrow().as_ref().and_then(|view| {
+        (view.key == key || view_survives_appended_goals(view, &key, goals))
+            .then(|| Rc::clone(&view.closed))
+    });
+    if let Some(closed) = remembered {
+        // The appended suffix has now been checked; a later append need only
+        // inspect goals registered after this key.
+        state.closed_view.borrow_mut().as_mut().unwrap().key = key;
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::Remembered);
         #[cfg(test)]
         if tests::verifying_seeded_closures() {
-            tests::assert_seeded_closure_matches_complete(
-                state,
-                terms,
-                goals,
-                ledger,
-                &view.closed,
-            );
+            tests::assert_seeded_closure_matches_complete(state, terms, goals, ledger, &closed);
         }
         super::work::closure_cache_hit();
-        return Rc::clone(&view.closed);
+        return closed;
     }
     let closed = Rc::new(close_with_excluded_term(state, terms, goals, ledger, None));
     *state.closed_view.borrow_mut() = Some(ClosedView {
@@ -5118,6 +5201,43 @@ pub(crate) fn close(
         closed: Rc::clone(&closed),
     });
     closed
+}
+
+/// Appending complete goal trees changes neither L0 nor any old goal's
+/// metadata or reconstruction children. With an unchanged state, term table
+/// and ledger, old derivability and retained proofs therefore stay identical;
+/// only a new goal with both signs can change ENT-4's contradiction. Check
+/// that suffix without constructing proofs, and run ordinary closure if one
+/// exists, preserving its ordered minimum-depth contradiction selection. A
+/// new goal that an exclusion decides in either sign also runs it: only a
+/// fresh closure materializes that sign and its proof as an opaque fact, and
+/// a later snapshot or origin view reads the opaque facts and proofs.
+/// Already contradictory views also reclose after appending: a new goal may
+/// supply a better retained contradiction. Incomplete old trees and metadata
+/// changes cannot use this argument and keep the ordinary cache miss.
+fn view_survives_appended_goals(view: &ClosedView, key: &ClosedViewKey, goals: &GoalTable) -> bool {
+    let old = view.key;
+    if key.goal_count <= old.goal_count
+        || goals.complete_prefix < old.goal_count
+        || view.closed.contradictory()
+        || old.goal_revision - old.goal_count != key.goal_revision - key.goal_count
+        || old
+            != (ClosedViewKey {
+                goal_revision: old.goal_revision,
+                goal_count: old.goal_count,
+                ..*key
+            })
+    {
+        return false;
+    }
+    (old.goal_count..key.goal_count).all(|index| {
+        let goal = GoalId(u32::try_from(index).expect("ENT goal inventory fits u32"));
+        (!view.closed.derives_goal(goal, GoalSign::Positive, goals)
+            || !view.closed.derives_goal(goal, GoalSign::Negative, goals))
+            && [GoalSign::Positive, GoalSign::Negative]
+                .into_iter()
+                .all(|sign| view.closed.exclusion_goal(goal, sign, goals).is_none())
+    })
 }
 
 /// The tightest implicit bound on one ordered pair of Z and a term [ENT-4],
@@ -5283,6 +5403,10 @@ pub(crate) fn contradiction_without_proofs(
         super::work::probe(0, 0);
         return true;
     }
+    assert!(
+        state.exclusions.is_empty(),
+        "exclusion states require the complete proof-producing closure"
+    );
     let universe = closure_universe(state, terms, goals, None);
     if let Some(EdgeClosure {
         dense, distinct, ..
@@ -5458,6 +5582,7 @@ fn goal_contradiction_without_proofs(
     goals: &GoalTable,
 ) -> bool {
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: false,
         contradiction: None,
         matrix,
@@ -5494,7 +5619,7 @@ fn close_with_excluded_term(
     ledger: &mut DerivationLedger,
     excluded: Option<TermId>,
 ) -> ClosedState {
-    let closed = close_with_row_pruning::<true, false>(state, terms, goals, ledger, excluded);
+    let closed = exclusions::close_with_exclusions(state, terms, goals, ledger, excluded);
     super::work::closure(closed.matrix.dimension, closed.matrix.live);
     closed
 }
@@ -5511,6 +5636,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
 ) -> ClosedState {
     if state.all_derivable {
         return ClosedState {
+            exclusions: Vec::new(),
             all_derivable: true,
             contradiction: state.contradiction,
             matrix: DenseClosureBounds::new(0),
@@ -5547,6 +5673,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::Closed);
         let mut closed = ClosedState {
+            exclusions: Vec::new(),
             all_derivable: false,
             contradiction: None,
             matrix: DenseClosureBounds::values_from_store(term_count, &state.bounds, &universe),
@@ -5785,6 +5912,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         }
     }
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense_bounds,
@@ -6261,6 +6389,7 @@ fn close_by_edge_insertion(
         }
     }
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense,
@@ -6384,6 +6513,7 @@ fn close_from_view_seed(
         }
     }
     let closed = ClosedState {
+        exclusions: Vec::new(),
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense,
@@ -7210,7 +7340,9 @@ pub(crate) fn materialize_closure_before_kill(
     // A closed record covers the relations only: a signed goal can still
     // meet its opposite sign, whose contradiction the snapshot must promote.
     if state.all_derivable
-        || (state.closure.is_closed_over(terms.ids().count()) && state.opaque.is_empty())
+        || (state.closure.is_closed_over(terms.ids().count())
+            && state.opaque.is_empty()
+            && state.exclusions.is_empty())
     {
         return;
     }
@@ -7219,7 +7351,11 @@ pub(crate) fn materialize_closure_before_kill(
     // from those bounds cannot create a new survivor-to-survivor conclusion,
     // and every later query recreates the same implicit bounds. Origins are
     // transfer metadata rather than independently derivable facts.
-    if state.bounds.is_empty() && state.distinct.is_empty() && state.opaque.is_empty() {
+    if state.bounds.is_empty()
+        && state.distinct.is_empty()
+        && state.opaque.is_empty()
+        && state.exclusions.is_empty()
+    {
         return;
     }
     let event = ledger.event(FlowEventKind::Snapshot, None);
@@ -7382,6 +7518,7 @@ fn materialize_closure(
         .map(|(pair, proof)| (*pair, Candidates::One(*proof)))
         .collect();
     let mut materialized = FactState {
+        exclusions: state.exclusions.clone(),
         closure: ClosureRecord::closed(terms.ids().count()),
         ordinary_closure: ClosureRecord::closed(terms.ids().count()),
         closed_view: std::cell::RefCell::new(None),
@@ -7753,6 +7890,20 @@ fn join_at_once(
                 .filter(move |key| key.2 == 0 || states[*index].distinct.contains(key))
         })
         .collect::<Vec<_>>();
+    // One membership query per retained numeric view supplies the zero
+    // offset candidate; unrelated members of the set are never enumerated.
+    for &index in &contributing {
+        for fact in &closed[index].exclusions {
+            for view in &fact.views {
+                if let Some((term, offset)) = view.projection
+                    && zero_distinct_candidate(terms, term, ZERO)
+                    && fact.values.binary_search(&offset).is_ok()
+                {
+                    distinct_keys.push(distinct_key(term, ZERO, 0));
+                }
+            }
+        }
+    }
     distinct_keys.sort_unstable();
     distinct_keys.dedup();
     distinct_keys.retain(|pair| {
@@ -8023,6 +8174,7 @@ fn join_at_once(
         .chain(distinct_proofs.values().copied())
         .any(|proof| ledger.depends_on_postcondition_call(proof));
     FactState {
+        exclusions: exclusions::join_exclusions(states, &closed, &contributing, ledger, event),
         closure: ClosureRecord::closed(terms.ids().count()),
         ordinary_closure: ClosureRecord::closed(terms.ids().count()),
         closed_view: std::cell::RefCell::new(None),
@@ -8047,7 +8199,6 @@ fn join_at_once(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::semantic::goal::GoalProjection;
     use std::cell::Cell;
 
     #[derive(Clone, Copy, Debug)]
@@ -8238,7 +8389,7 @@ pub(crate) mod tests {
                         components: vec![0],
                     },
                     target_domain: CheckedTargetDomainObligation::ElementAddress,
-                    captured: captured.clone(),
+                    captured,
                 },
             ))],
             ty,
@@ -8255,7 +8406,7 @@ pub(crate) mod tests {
             arguments: vec![
                 GoalExpression::Datum(GoalDatum::Place {
                     root: BindingId(0),
-                    projections: vec![GoalProjection::Subscript(captured.clone())],
+                    projections: vec![GoalProjection::Subscript(captured)],
                     ty,
                     admission,
                 }),
@@ -8307,6 +8458,26 @@ pub(crate) mod tests {
                 plain_id
             );
         }
+    }
+
+    /// Complete metadata belongs to the exact admission view. A canonical
+    /// opaque alias cannot supply the other view's projection or normalization.
+    #[test]
+    fn complete_goal_lookup_requires_the_exact_prepared_admission_view() {
+        let (plain, indexed) = integer_goal_views();
+        let mut goals = GoalTable::default();
+        let plain_id = goals.intern(plain.clone(), None, None, vec![]);
+        assert_eq!(goals.complete_id(&plain), None);
+        goals.mark_metadata_complete(plain_id);
+        assert_eq!(goals.complete_id(&plain), Some(plain_id));
+        assert_eq!(goals.complete_id(&indexed), None);
+        let indexed_id = goals.intern(indexed.clone(), None, None, vec![]);
+        assert_ne!(plain_id, indexed_id);
+        assert_eq!(goals.canonical(plain_id), goals.canonical(indexed_id));
+        assert_eq!(goals.complete_id(&indexed), None);
+        goals.mark_metadata_complete(indexed_id);
+        assert_eq!(goals.complete_id(&indexed), Some(indexed_id));
+        assert_eq!(goals.complete_id(&plain), Some(plain_id));
     }
 
     #[test]
@@ -10631,6 +10802,155 @@ pub(crate) mod tests {
         ));
     }
 
+    /// Appending a harmless complete goal retains the exact closed view,
+    /// and advances the checked prefix for subsequent appended goals.
+    #[test]
+    fn a_remembered_closed_view_survives_harmless_appended_goals() {
+        use super::super::super::goal::GoalDatum;
+
+        let terms = TermTable::new();
+        let mut goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let state = FactState::new();
+        let first = close(&state, &terms, &goals, &mut ledger);
+        for truth in [true, false] {
+            let goal = goals.intern(
+                GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Bool(truth))),
+                None,
+                None,
+                vec![],
+            );
+            goals.mark_metadata_complete(goal);
+            let reused = close(&state, &terms, &goals, &mut ledger);
+            assert!(Rc::ptr_eq(&first, &reused));
+            assert_eq!(
+                state.closed_view.borrow().as_ref().unwrap().key.goal_count,
+                goals.records.len()
+            );
+            assert!(!reused.contradictory());
+        }
+    }
+
+    /// The new admission view shares an entering negative opaque fact, but
+    /// adds a positive projection. Keeping the old closure without checking
+    /// appended goals would miss this exact-goal contradiction.
+    #[test]
+    fn an_appended_goal_contradiction_recomputes_the_remembered_view() {
+        let (plain, indexed) = integer_goal_views();
+        let mut terms = TermTable::new();
+        let term = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(0)),
+            IntegerType::U8,
+        ));
+        let relation = Relation::Bound {
+            left: term,
+            right: ZERO,
+            bound: 1,
+        };
+        let mut goals = GoalTable::default();
+        let indexed = goals.intern(indexed, None, None, vec![]);
+        goals.mark_metadata_complete(indexed);
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        state.establish(&relation, &mut ledger, event);
+        state.establish_goal(indexed, GoalSign::Negative, &goals, &mut ledger, event);
+        let first = close(&state, &terms, &goals, &mut ledger);
+        assert!(!first.contradictory());
+
+        let plain = goals.intern(plain, Some(relation), None, vec![]);
+        goals.mark_metadata_complete(plain);
+        assert!(first.derives_goal(plain, GoalSign::Positive, &goals));
+        assert!(first.derives_goal(plain, GoalSign::Negative, &goals));
+        let second = close(&state, &terms, &goals, &mut ledger);
+        assert!(!Rc::ptr_eq(&first, &second));
+        assert!(second.contradictory());
+        let complete = close_with_excluded_term(&state, &terms, &goals, &mut ledger, None);
+        assert_eq!(second.contradiction_proof(), complete.contradiction_proof());
+        assert!(matches!(
+            ledger.nodes[second.contradiction_proof().unwrap().0 as usize],
+            DerivationNode::GoalContradiction { goal, .. } if goal == plain
+        ));
+    }
+
+    /// Filling metadata on an existing goal is not append-only growth: its
+    /// new projection may prove the opposite of an entering opaque sign.
+    /// A harmless appended goal must not hide that older metadata change
+    /// behind the suffix-only contradiction check.
+    #[test]
+    fn existing_goal_metadata_invalidates_a_remembered_closed_view() {
+        use super::super::super::goal::GoalDatum;
+
+        let (plain, _) = integer_goal_views();
+        let mut terms = TermTable::new();
+        let term = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(0)),
+            IntegerType::U8,
+        ));
+        let relation = Relation::Bound {
+            left: term,
+            right: ZERO,
+            bound: 1,
+        };
+        let mut goals = GoalTable::default();
+        let goal = goals.intern(plain.clone(), None, None, vec![]);
+        goals.mark_metadata_complete(goal);
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        state.establish(&relation, &mut ledger, event);
+        state.establish_goal(goal, GoalSign::Negative, &goals, &mut ledger, event);
+        let first = close(&state, &terms, &goals, &mut ledger);
+        assert!(!first.contradictory());
+        assert_eq!(goals.intern(plain, Some(relation), None, vec![]), goal);
+        let harmless = goals.intern(
+            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Bool(true))),
+            None,
+            None,
+            vec![],
+        );
+        goals.mark_metadata_complete(harmless);
+        assert!(first.derives_goal(harmless, GoalSign::Positive, &goals));
+        assert!(!first.derives_goal(harmless, GoalSign::Negative, &goals));
+        let second = close(&state, &terms, &goals, &mut ledger);
+        assert!(!Rc::ptr_eq(&first, &second));
+        assert!(second.contradictory());
+    }
+
+    /// Low-level interning can leave a parent's child absent. Appending that
+    /// child may contradict the old parent without contradicting any new
+    /// goal, so incomplete old trees must not use suffix-only checking.
+    #[test]
+    fn a_late_child_of_an_incomplete_goal_recomputes_the_remembered_view() {
+        use super::super::super::goal::GoalDatum;
+        use super::super::super::model::CheckedType;
+
+        let child = GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Bool(false)));
+        let parent = GoalExpression::Operation {
+            row: GoalOperation::Boolean(CheckedBooleanOperation::Not),
+            type_arguments: vec![],
+            const_arguments: vec![],
+            result: CheckedType::Bool,
+            arguments: vec![child.clone()],
+        };
+        let terms = TermTable::new();
+        let mut goals = GoalTable::default();
+        let parent = goals.intern(parent, None, None, vec![]);
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        state.establish_goal(parent, GoalSign::Negative, &goals, &mut ledger, event);
+        let first = close(&state, &terms, &goals, &mut ledger);
+        assert!(!first.contradictory());
+        let child = goals.intern(child, None, None, vec![]);
+        goals.mark_metadata_complete(child);
+        assert!(!first.derives_goal(child, GoalSign::Positive, &goals));
+        assert!(first.derives_goal(child, GoalSign::Negative, &goals));
+        let second = close(&state, &terms, &goals, &mut ledger);
+        assert!(!Rc::ptr_eq(&first, &second));
+        assert!(second.contradictory());
+    }
+
     /// A standing measure fact that replaces a different one can weaken an
     /// implicit bound a remembered view already used, so it ends the view
     /// seed and the next closure holds only the new fact.
@@ -11005,7 +11325,8 @@ pub(crate) mod tests {
                 None,
                 None,
                 vec![GoalSupport {
-                    place: ResolvedPlace::binding(BindingId(101)),
+                    root: BindingId(101),
+                    projections: Vec::new(),
                     measure: None,
                 }],
             );

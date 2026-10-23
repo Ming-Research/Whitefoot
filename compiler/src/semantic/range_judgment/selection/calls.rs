@@ -175,7 +175,7 @@ impl<'a> Terms<'a> {
         };
         for projection in projections {
             place.scalar = false;
-            ty = match projection.clone() {
+            ty = match *projection {
                 GoalProjection::Deref => {
                     let CheckedType::Nominal(nominal) = ty else {
                         return None;
@@ -222,19 +222,10 @@ impl<'a> Terms<'a> {
                         .ty
                 }
                 GoalProjection::Subscript(_) | GoalProjection::FormalSubscript { .. } => {
-                    if let GoalProjection::FormalSubscript {
-                        ordinal,
-                        projections,
-                    } = projection
+                    if let GoalProjection::FormalSubscript { ordinal } = projection
+                        && !term(self.arguments.get(*ordinal as usize)?, self.aliases)
                     {
-                        let selector = GoalExpression::Datum(GoalDatum::Parameter {
-                            ordinal: *ordinal,
-                            projections: projections.clone(),
-                            ty: CheckedType::Integer(crate::semantic::model::IntegerType::U64),
-                        });
-                        if !self.term(&selector) {
-                            return None;
-                        }
+                        return None;
                     }
                     // Original template captures are literals or consts;
                     // a parameter's source shape is checked before erasure.
@@ -260,7 +251,9 @@ impl<'a> Terms<'a> {
                 }
                 GoalProjection::Range(_)
                 | GoalProjection::Page(_)
-                | GoalProjection::FormalPage { .. } => return None,
+                | GoalProjection::FormalPage { .. }
+                | GoalProjection::FormalPlaceSubscript { .. }
+                | GoalProjection::FormalPlacePage { .. } => return None,
             };
         }
         Some(place)

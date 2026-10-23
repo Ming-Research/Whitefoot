@@ -1,0 +1,41 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Ledger {
+  total: u8;
+}
+
+fn settle(ledger: Shared<Ledger>) -> result: u8 pure waits {
+  match shared_close::<Ledger>(shared: move ledger) {
+    Some(value: last) => {
+      let Ledger(total: sum) = move last;
+      return sum;
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn add(ledger: Shared<Ledger>, amount: u8) -> result: u8 pure waits {
+  atomic state = &ledger {
+    set state^.total = state^.total +wrap amount;
+  }
+  return settle(ledger: move ledger);
+}
+
+fn main() -> status: ExitStatus pure waits {
+  let start = Ledger(total: 1_u8);
+  let ledger = shared_new::<Ledger>(value: move start);
+  let one = shared_share::<Ledger>(shared: &ledger);
+  let first = spawn add(ledger: move one, amount: 1_u8);
+  let two = shared_share::<Ledger>(shared: &ledger);
+  let second = spawn add(ledger: move two, amount: 2_u8);
+  let three = shared_share::<Ledger>(shared: &ledger);
+  let third = spawn add(ledger: move three, amount: 3_u8);
+  let own = settle(ledger: move ledger);
+  let pair = first +wrap second;
+  let workers = pair +wrap third;
+  let total = own +wrap workers;
+  return exit_status(code: total);
+}

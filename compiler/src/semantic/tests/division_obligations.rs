@@ -11,8 +11,8 @@ use crate::{
 use super::super::entailment::{
     DerivationNode, FunctionEntailment, ObligationFamily, Relation, TermKind,
 };
-use super::super::goal::{GoalDatum, GoalExpression, GoalOperation, GoalProjection};
-use super::super::model::{CheckedFunction, CheckedIntegerOperation};
+use super::super::goal::{GoalExpression, GoalOperation};
+use super::super::model::{CheckedFunction, CheckedIntegerOperation, MeasuredKind};
 use super::entailment::validate_derivations;
 use super::with_semantics;
 
@@ -799,9 +799,8 @@ fn a_fixed_run_indexed_defined_guard_discharges_the_same_structural_exact_operat
     // to write `FixedVector<u8, 1>`. A window's length is a descriptor word
     // rather than a fact of its type [WIN-1], so the subscript's [OP-4] domain
     // is stated as a requirement; the subject, one canonical index goal reused
-    // by the `+defined` guard and the exact addition, is unchanged. ENT-2(b)
-    // now represents that admitted element as a place datum. An `own`
-    // parameter carries no effect entry
+    // by the `+defined` guard and the exact addition, is unchanged, and the
+    // goal row is still `RunIndex`. An `own` parameter carries no effect entry
     // [EFF-1], so the row is `pure` where it declared a read.
     let source = br#"fn increment(values: Slots<u8, 1>) -> result: u8 pure contract {
   requires values.len >= 1_u64;
@@ -839,9 +838,12 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(matches!(
             arguments.as_slice(),
             [
-                GoalExpression::Datum(GoalDatum::Place { projections, .. }),
+                GoalExpression::Operation {
+                    row: GoalOperation::RunIndex { .. },
+                    ..
+                },
                 GoalExpression::Datum(_)
-            ] if matches!(projections.as_slice(), [GoalProjection::Subscript(_)])
+            ]
         ));
     });
 }
@@ -875,7 +877,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(matches!(
             issue.kind(),
             SemanticIssueKind::UndischargedIntegerDomainObligation {
-                disposition: StaticObligationDisposition::Refuted,
+                disposition: StaticObligationDisposition::Unproved,
                 ..
             }
         ));
@@ -885,17 +887,14 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_referenced_run_indexed_defined_guard_discharges_the_same_structural_exact_operation() {
     // The run reached through a reference parameter replaces the retiring
-    // store-resident `&Vector<'heap, u8>`. Its admitted integer element is
-    // an ENT-2(b) place datum, sharing identity with the exact operation.
+    // store-resident `&Vector<'heap, u8>`. A constant `Array` takes the
+    // `ArrayIndex` row where the window above takes `RunIndex` [MSR-1], so
+    // the two cases still pin two distinct index rows.
     let source = br#"fn increment(values: &Array<u8, 2>) -> result: u8 reads(values) {
   let spare = values^.len;
-  if 0_u64 < spare {
-    if values^[0_u64] +defined 1_u8 {
-      let result = values^[0_u64] + 1_u8;
-      return result;
-    } else {
-      return 0_u8;
-    }
+  if values^[0_u64] +defined 1_u8 {
+    let result = values^[0_u64] + 1_u8;
+    return result;
   } else {
     return 0_u8;
   }
@@ -925,9 +924,12 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(matches!(
             arguments.as_slice(),
             [
-                GoalExpression::Datum(GoalDatum::Place { projections, .. }),
+                GoalExpression::Operation {
+                    row: GoalOperation::ArrayIndex { .. },
+                    ..
+                },
                 GoalExpression::Datum(_)
-            ] if matches!(projections.as_slice(), [GoalProjection::Subscript(_)])
+            ]
         ));
     });
 }
@@ -937,8 +939,8 @@ fn a_range_reference_indexed_defined_guard_discharges_the_same_structural_exact_
     // The [REF-4] range reference `&[T]` replaces the retiring `Slice<T>`
     // view: the parameter kind is a reference kind and not a type, its one
     // measure is `len`, and its element is reached through `^` [REF-1].
-    // Its admitted integer element is an ENT-2(b) place datum, like the
-    // constant window and array, while its proof path stays range-rooted.
+    // Its measured kind is `Range`, which is the third index row this file
+    // pins beside the constant window and the constant array.
     let source = br#"fn increment(values: &[u8]) -> result: u8 reads(values) {
   let spare = values^.len;
   if 0_u64 < spare {
@@ -977,9 +979,15 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(matches!(
             arguments.as_slice(),
             [
-                GoalExpression::Datum(GoalDatum::Place { projections, .. }),
+                GoalExpression::Operation {
+                    row: GoalOperation::RunIndex {
+                        measured: MeasuredKind::Range,
+                        ..
+                    },
+                    ..
+                },
                 GoalExpression::Datum(_)
-            ] if matches!(projections.as_slice(), [GoalProjection::Subscript(_)])
+            ]
         ));
     });
 }
@@ -1050,69 +1058,6 @@ fn main() -> status: std::process::ExitStatus pure {
             } if residual == "values[offset] +defined 1_u8"
         ));
     });
-    let unchanged = std::str::from_utf8(source)
-        .expect("test source is UTF-8")
-        .replace("    set offset = 0_u64;\n", "");
-    with_semantics(unchanged.as_bytes(), |outcome| {
-        let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("the unchanged selector retains the guarded element goal: {outcome:?}");
-        };
-        validate_derivations(
-            &named(&checked.data.functions, "increment_after_index_write").entailment,
-        );
-    });
-}
-
-#[test]
-fn a_constant_element_goal_tracks_its_projected_selector_without_killing_siblings() {
-    let template = r#"struct Cursor {
-  index: u64;
-  sibling: u64;
-}
-
-const values: Array<u8, 2> =[0_u8, 0_u8];
-
-fn probe() -> result: u8 pure {
-  let cursor = Cursor(index: 1_u64, sibling: 0_u64);
-  if values[cursor.index] +defined 1_u8 {
-WRITE    return values[cursor.index] + 1_u8;
-  } else {
-    return 0_u8;
-  }
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    for (write, accepted) in [
-        ("    set cursor.index = 0_u64;\n", false),
-        ("", true),
-        ("    set cursor.sibling = 0_u64;\n", true),
-    ] {
-        let source = template.replace("WRITE", write);
-        with_semantics(source.as_bytes(), |outcome| {
-            if accepted {
-                let SemanticOutcome::Complete(checked) = outcome else {
-                    panic!("an unchanged selector keeps the selected element goal: {outcome:?}");
-                };
-                validate_derivations(&named(&checked.data.functions, "probe").entailment);
-            } else {
-                let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
-                    panic!("writing the selector must kill the old element goal: {outcome:?}");
-                };
-                assert_eq!(issue.rule(), SemanticRule::Op2);
-                assert!(matches!(
-                    issue.kind(),
-                    SemanticIssueKind::UndischargedIntegerDomainObligation {
-                        disposition: StaticObligationDisposition::Unproved,
-                        residual,
-                        ..
-                    } if residual == "values[cursor.index] +defined 1_u8"
-                ));
-            }
-        });
-    }
 }
 
 #[test]
