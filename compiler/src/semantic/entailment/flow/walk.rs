@@ -354,7 +354,17 @@ impl Analyzer<'_, '_> {
             Vec::new()
         };
         let destination = set_target_place(target);
-        let mut result = self.capture_result(node_path, value, state);
+        let retain_result = match target {
+            CheckedSetTarget::Place(place) if place.fields.is_empty() => {
+                self.input.needs_result(place.binding, value.ty())
+            }
+            _ => self.input.eager_result(value.ty()),
+        };
+        let mut result = if retain_result {
+            self.capture_result(node_path, value, state)
+        } else {
+            Vec::new()
+        };
         let affine_value = self
             .reasoning()
             .affine_expression_form(value, &mut state.affine);
@@ -362,8 +372,12 @@ impl Analyzer<'_, '_> {
         // continuation takes its debts, before the statement's own kills.
         let sealed = self.seal_set_before(node_path, target, value, state);
         let judgment = self.expression_effects_before_result(value, state);
-        self.reasoning()
-            .finish_result(value, &judgment, &mut result, state);
+        if retain_result || judgment.prepared_call.is_some() {
+            // DIAG-2 retains every established S12 root, even for an unread
+            // result. Its conditional state need not survive this statement.
+            self.reasoning()
+                .finish_result(value, &judgment, &mut result, state);
+        }
         let ExpressionJudgment {
             prepared_call: prepared,
             reached: value_reached,
@@ -591,6 +605,7 @@ impl Analyzer<'_, '_> {
             }
         }
         if commit_reached
+            && retain_result
             && !result.is_empty()
             && let CheckedSetTarget::Place(place) = target
             && place.fields.is_empty()
@@ -666,14 +681,21 @@ impl Analyzer<'_, '_> {
                 let constructed = self
                     .reasoning()
                     .mint_construct_placements(node_path, value, state);
-                let mut result = self.capture_result(node_path, value, state);
+                let retain_result = self.input.needs_result(*binding, value.ty());
+                let mut result = if retain_result {
+                    self.capture_result(node_path, value, state)
+                } else {
+                    Vec::new()
+                };
                 // [TYPE-11.S3] a continuation takes the moved or copied
                 // value's debts before the initializer's own kills.
                 let taken = self.sealed_continuation(value, *binding, state);
                 let judgment = self.expression_effects_before_result(value, state);
-                self.reasoning()
-                    .finish_result(value, &judgment, &mut result, state);
-                if !result.is_empty() {
+                if retain_result || judgment.prepared_call.is_some() {
+                    self.reasoning()
+                        .finish_result(value, &judgment, &mut result, state);
+                }
+                if retain_result && !result.is_empty() {
                     state.results.insert(*binding, result);
                 }
                 self.declare(*binding);
@@ -1313,7 +1335,13 @@ impl Analyzer<'_, '_> {
                 };
                 let mut results = returned
                     .iter()
-                    .map(|value| self.capture_result(node_path, value, state))
+                    .map(|value| {
+                        if self.input.needs_return_result(value.ty()) {
+                            self.capture_result(node_path, value, state)
+                        } else {
+                            Vec::new()
+                        }
+                    })
                     .collect::<Vec<_>>();
                 // [TYPE-11.S4] the return hands off each value it hands back,
                 // before a construction in it hands off its operands.
@@ -1348,7 +1376,12 @@ impl Analyzer<'_, '_> {
                 if !matches!(value, CheckedExpression::UserCall { .. }) {
                     self.input.collect_expression_kills(value, &mut events);
                 }
-                for result in &mut results {
+                for (returned, result) in returned.iter().zip(&mut results) {
+                    if !self.input.needs_return_result(returned.ty())
+                        && judgment.prepared_call.is_none()
+                    {
+                        continue;
+                    }
                     // Every ordinal sees the complete return expression's
                     // effects. A clause selects only its own Result context.
                     self.reasoning()
@@ -1385,12 +1418,23 @@ impl Analyzer<'_, '_> {
                     .last()
                     .is_some_and(|frame| value_carrier(frame.result_mode, frame.result_type, value))
                     .then(|| self.reasoning().mint_value_carrier(node_path, value, state));
-                let mut result = self.capture_result(node_path, value, state);
+                let retain_result = self
+                    .frames
+                    .gives
+                    .last()
+                    .is_none_or(|frame| self.input.needs_result(frame.binding, value.ty()));
+                let mut result = if retain_result {
+                    self.capture_result(node_path, value, state)
+                } else {
+                    Vec::new()
+                };
                 // [TYPE-11.S4] the given value is handed off.
                 self.seal_value_hand_off(value, node_path, state);
                 let judgment = self.expression_effects(value, state);
-                self.reasoning()
-                    .finish_result(value, &judgment, &mut result, state);
+                if retain_result || judgment.prepared_call.is_some() {
+                    self.reasoning()
+                        .finish_result(value, &judgment, &mut result, state);
+                }
                 // [TYPE-11] a give to a value initializer around an atomic
                 // block leaves the block.
                 if self
@@ -1440,7 +1484,7 @@ impl Analyzer<'_, '_> {
                         ProofFlowState::default()
                     });
                     let mut exit = state.clone();
-                    if !result.is_empty() {
+                    if retain_result && !result.is_empty() {
                         exit.results.insert(binding, result);
                     }
                     self.exit_scopes_to(&mut exit, scope_depth);

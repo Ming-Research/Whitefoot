@@ -11,7 +11,7 @@ alias close_directory = std::fs::close_directory;
 alias close_read = std::fs::close_read;
 alias exit_status = std::process::exit_status;
 alias host_bytes_len = std::text::host_bytes_len;
-alias host_copy_bytes = std::text::host_copy_bytes;
+alias host_copy_name_bytes = std::text::host_copy_name_bytes;
 alias open_file = std::fs::open_file;
 alias read_at = std::fs::read_at;
 alias write_once = std::io::write_once;
@@ -124,7 +124,7 @@ fn discard_open_result(factory: &HandleFactory, outcome: Result<ReadFile, IoErro
 }
 
 fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(files) waits {
-  doc "Copies two target-native argument names into frame-resident byte runs, opens them without following terminal links, and publishes their first bytes.";
+  doc "Copies the name bytes of two arguments, U+4241 and U+4242, into frame-resident byte runs, opens them without following terminal links, and publishes their first bytes.";
   let name_a = array_filled::<u8, 8>(value: 125_u8);
   let name_b = array_filled::<u8, 8>(value: 125_u8);
   let data_a = array_filled::<u8, 1>(value: 0_u8);
@@ -138,23 +138,28 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &Handle
         return exit_status(code: 20_u8);
       }
       let name_window_a = &name_a[0_u64..8_u64];
-      match host_copy_bytes(value: &text_a, destination: name_window_a, start: 0_u64, end: 2_u64) {
+      match host_copy_name_bytes(value: &text_a, destination: name_window_a, start: 0_u64, end: 3_u64) {
         Ok(value: name_end_a) => {
-          if name_end_a == 2_u64 {
+          if name_end_a == 3_u64 {
           } else {
             return exit_status(code: 21_u8);
           }
           let first_a = name_window_a^[0_u64];
-          if first_a == 65_u8 {
+          if first_a == 228_u8 {
           } else {
             return exit_status(code: 22_u8);
           }
           let second_a = name_window_a^[1_u64];
-          if second_a == 66_u8 {
+          if second_a == 137_u8 {
           } else {
             return exit_status(code: 23_u8);
           }
-          let after_a = name_window_a^[2_u64];
+          let third_a = name_window_a^[2_u64];
+          if third_a == 129_u8 {
+          } else {
+            return exit_status(code: 25_u8);
+          }
+          let after_a = name_window_a^[3_u64];
           if after_a == 125_u8 {
           } else {
             return exit_status(code: 24_u8);
@@ -167,23 +172,28 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &Handle
                 return exit_status(code: 20_u8);
               }
               let name_window_b = &name_b[0_u64..8_u64];
-              match host_copy_bytes(value: &text_b, destination: name_window_b, start: 0_u64, end: 2_u64) {
+              match host_copy_name_bytes(value: &text_b, destination: name_window_b, start: 0_u64, end: 3_u64) {
                 Ok(value: name_end_b) => {
-                  if name_end_b == 2_u64 {
+                  if name_end_b == 3_u64 {
                   } else {
                     return exit_status(code: 21_u8);
                   }
                   let first_b = name_window_b^[0_u64];
-                  if first_b == 66_u8 {
+                  if first_b == 228_u8 {
                   } else {
                     return exit_status(code: 22_u8);
                   }
                   let second_b = name_window_b^[1_u64];
-                  if second_b == 66_u8 {
+                  if second_b == 137_u8 {
                   } else {
                     return exit_status(code: 23_u8);
                   }
-                  let after_b = name_window_b^[2_u64];
+                  let third_b = name_window_b^[2_u64];
+                  if third_b == 130_u8 {
+                  } else {
+                    return exit_status(code: 25_u8);
+                  }
+                  let after_b = name_window_b^[3_u64];
                   if after_b == 125_u8 {
                   } else {
                     return exit_status(code: 24_u8);

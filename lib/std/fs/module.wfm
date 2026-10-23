@@ -92,7 +92,7 @@ public fn directory_next(source: &DirectorySource, destination: &[u8], start: u6
   requires end <= destination^.len;
   ensures start <= next;
   ensures next <= end;
-} doc "Writes the names of the next entries of source into destination from start toward end; next is the index after the bytes written, entries counts the names, and ListEnd reports that no entry remains.";
+} doc "Writes a record of the kind and name bytes of each of the next entries of source, other than . and .., into destination from start toward end [PRE-2]; next is the index after the records written, entries counts them, and ListEnd reports that no entry remains.";
 
 public fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) waits contract {
   requires start <= end;

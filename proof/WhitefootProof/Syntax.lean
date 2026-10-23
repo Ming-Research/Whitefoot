@@ -13,7 +13,8 @@ except where a production only groups others (`stmt`, `expr`'s factoring,
 `affine_term`), and folds `alias` items into one table.
 
 The tree is shaped for the proofs that follow: one plain inductive per syntactic
-class, statements nested by `List Stmt`, and no positions. The parser
+class, statements nested by `List Stmt`, and no source positions: a statement's
+position in its body, `Pos`, is its path through the nesting. The parser
 (`Parser.lean`) produces it and the interpreter (`Interpreter.lean`) runs it;
 `research/investigations/spec-proof/DESIGN.md` records why it has this shape.
 -/
@@ -112,6 +113,14 @@ inductive Stmt where
   | cont (label : Option String)
   | invariant (name : String) (rel : Relation)
   deriving Repr
+
+/-- A statement's position in its function's body: the path of indices that
+reaches it. The statement at index `i` of a block at `b` is at `b ++ [i]`; the
+body is the block at `[]`, an `if` at `q` has its `then` block at `q ++ [0]`
+and its `else` block at `q ++ [1]`, and a `loop` at `q` has its body at
+`q ++ [0]`. The interpreter's continuation and the checker's walk both carry
+it, so a point of a run names the statement whose facts the walk recorded. -/
+abbrev Pos := List Nat
 
 /-- A `param` of value mode [GRAM-2]. -/
 structure Param where

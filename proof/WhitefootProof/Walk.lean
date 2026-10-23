@@ -244,15 +244,14 @@ def setVar (env : Env) (st : State) (x : Var) (r : Rhs) : M State := do
 -- spec ENT-2 e7b64879f58fcb34
 -- spec FN-9 cda2ca4d680967a7
 /-- A return proves each postcondition [FN-9]: the result is the returned
-value and each parameter its entry value, which needs its entry image to be
-stable. -/
+value and each parameter the normalized relation carries is its entry value,
+which needs its entry image to be stable. -/
 def checkReturn (env : Env) (st : State) (ret : Val) : M Unit := do
   let gen ← get
   if !env.fn.ensures.isEmpty && ret.term.isNone then
     fail "FN-9" "a return whose value is no term or constant, which a postcondition cannot read"
   for r in env.fn.ensures do
-    let names := Affine.names r.lhs ++ Affine.names r.rhs
-    for n in names do
+    for n in relNames r do
       if n != env.fn.result then
         if let some (_, id) := env.params.find? (·.1 == n) then
           if !st.stable.contains id && !st.contra then
@@ -289,21 +288,26 @@ mutual
 -- spec ENT-5 5149b193b27e6bc9
 -- spec ENT-5 f4545a01b74455a1
 -- spec ENT-6 dbea7ca9eab89029
-/-- Walk a statement list from its entering state. The normal edges leaving a
-statement reach the next statement's entry, a cut point where they are joined;
-at the end of the list they pass on unjoined, so a merge-only continuation is
-replaced by its incoming edges [ENT-5]. -/
-def walkList (env : Env) (st : State) (ss : List Stmt) : M Out :=
+/-- Walk a statement list, starting at index `i` of the block at `blk`, from its
+entering state. The normal edges leaving a statement reach the next
+statement's entry, a cut point where they are joined; at the end of the list
+they pass on unjoined, so a merge-only continuation is replaced by its
+incoming edges [ENT-5]. Each statement's entering state is recorded, with the
+bindings in scope and the atoms minted so far, at its position. -/
+def walkList (env : Env) (st : State) (blk : Pos) (i : Nat) (ss : List Stmt) : M Out :=
   match ss with
   | [] => return { normal := [st] }
   | s :: rest => do
-    let (env', o) ← walkStmt env st s
+    let pos := blk ++ [i]
+    let snap : Snapshot := { vars := env.vars, state := st, atoms := (← get).atoms }
+    modify fun g => { g with points := g.points ++ [(pos, snap)] }
+    let (env', o) ← walkStmt env st pos s
     match rest with
     | [] => return o
     | _ :: _ =>
       match ← merge env' o.normal with
       | none => return o
-      | some st' => return o.seq (← walkList env' st' rest)
+      | some st' => return o.seq (← walkList env' st' blk (i + 1) rest)
 termination_by structural ss
 
 -- spec OP-5 a181a70ccdbfe485
@@ -359,8 +363,9 @@ termination_by structural ss
 -- spec ENT-5 012b5b11b1b67a36
 -- spec ENT-6 bb27ebd455ffc998
 -- spec SET-1 fb700bb42c90f36a
-/-- Walk one statement: returns the environment after it and its flow. -/
-def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
+/-- Walk one statement, at `pos`: returns the environment after it and its
+flow. -/
+def walkStmt (env : Env) (st : State) (pos : Pos) (s : Stmt) : M (Env × Out) :=
   match s with
   | .let_ x e => do
     let r ← evalRhs env st e
@@ -414,8 +419,8 @@ def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
         (o.cmp.all fun (op, a, b) => derivable st.l0 (relFacts (if sgn then op else op.negate) a b))
       if holds true then fail "OP-5" "the condition is always true"
       if holds false then fail "OP-5" "the condition is always false"
-    let ot ← walkList env (branchState env st o true) thn
-    let oe ← walkList env (branchState env st o false) els
+    let ot ← walkList env (branchState env st o true) (pos ++ [0]) 0 thn
+    let oe ← walkList env (branchState env st o false) (pos ++ [1]) 0 els
     let normal := (ot.normal ++ oe.normal).map (·.exit env.vars)
     return (env, { normal, breaks := ot.breaks ++ oe.breaks, conts := ot.conts ++ oe.conts })
   | .loop label invs body => do
@@ -432,7 +437,7 @@ def walkStmt (env : Env) (st : State) (s : Stmt) : M (Env × Out) :=
           head := head.setImage v.id (← typeAtom t)
     head := invs.foldl (fun s (_, r) => establishRel env s r) head
     let lc : LoopCtx := { id, label, headers := invs.map (·.2), outside := env.vars }
-    let o ← walkList { env with loops := lc :: env.loops } head body
+    let o ← walkList { env with loops := lc :: env.loops } head (pos ++ [0]) 0 body
     let inputs := (o.normal ++ (o.conts.filter (·.1 == id)).map (·.2)).map (·.exit env.vars)
     let gen ← get
     for s in inputs do
@@ -492,10 +497,12 @@ def establishRequire (env : Env) (st : State) (r : Relation) : State :=
 -- spec FN-9 13f9ec57ad442ca0
 -- spec FN-9 f224d0caa9568643
 /-- A postcondition's admitted shape [FN-9]: each side is a constant
-displacement of zero or one datum with coefficient one, and at most one side
-also carries one more parameter with coefficient one. -/
+displacement of zero or one datum with coefficient one, at most one side also
+carries one more parameter with coefficient one, and some side still carries
+the result once its coefficients are summed, so a result that cancels does
+not count. -/
 def ensuresShape (f : FnDecl) (r : Relation) : Judge Unit := do
-  if !(Affine.names r.lhs ++ Affine.names r.rhs).contains f.result then
+  if !(relNames r).contains f.result then
     rejectBy "FN-9" "a postcondition that names no result"
   let side (a : Affine) : Judge Nat :=
     match lin a with
@@ -578,7 +585,7 @@ def checkFn (p : Program) (f : FnDecl) : M Unit := do
     st := establishRequire env st r
   if !f.ensures.isEmpty && !returns f.body && !st.contra then
     fail "FN-9" s!"`{f.name}` has postconditions and no return to prove them at"
-  discard <| walkList env st f.body
+  discard <| walkList env st [] 0 f.body
 
 end Checker
 

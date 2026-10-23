@@ -2873,7 +2873,18 @@ The self-changing host handles are the host handles of this table. Through each,
 
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
-A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`. `open_file`, `open_directory`, `open_append` and `open_directory_write` open the entry their name denotes only when that entry is not a symbolic link; for an entry that is one, each returns `Err` and opens no object, the link's target included.
+The name bytes of a sequence of host code units, a path component or the text of a `HostString`, are its bytes on a POSIX host, and on a Windows host the WTF-8 encoding of its UTF-16 code units: each surrogate pair is the UTF-8 encoding of the scalar value it denotes, and each other code unit, an unpaired surrogate included, is the one to three bytes of the UTF-8 encoding form applied to its value. A sequence that is text therefore has its UTF-8 encoding as its name bytes on both hosts, and distinct sequences have distinct name bytes; `host_copy_name_bytes` copies a `HostString`'s.
+A name given with a root to a `std::fs` operation is the name bytes of a path component, and denotes an entry directly below that root exactly when that component is nonempty and other than `.` and `..`; an operation given a name that denotes no such entry, on a Windows host one that is the name bytes of no component included, returns `InvalidPath`. `open_file`, `open_directory`, `open_append` and `open_directory_write` open the entry their name denotes only when that entry is not a symbolic link; for an entry that is one, each returns `Err` and opens no object, the link's target included.
+`directory_next` writes into the window of destination from start toward end one record for each of the next entries of source's directory, other than its `.` and `..` entries, in the order the host's enumeration reports them: the entry's kind byte by the table below, the byte count of its name bytes as two bytes, low byte first, and its name bytes. The records follow one another from start; next is the index after the last of them and entries counts them. A call that returns `Ok` over a nonempty window writes at least one record, `ListEnd` reports that no entry remains to be written, and a nonempty window shorter than the host's enumeration needs returns `ListFailed`. Over an empty window the call returns `Ok`, writes nothing and leaves the enumeration where it was.
+
+| Kind byte | Entry on a POSIX host, by its `d_type` | Entry on a Windows host, by its attributes |
+|---|---|---|
+| 0 | `DT_UNKNOWN` | `FILE_ATTRIBUTE_DEVICE`, without `FILE_ATTRIBUTE_REPARSE_POINT` or `FILE_ATTRIBUTE_DIRECTORY` |
+| 1 | `DT_REG` | None of `FILE_ATTRIBUTE_REPARSE_POINT`, `FILE_ATTRIBUTE_DIRECTORY` and `FILE_ATTRIBUTE_DEVICE` |
+| 2 | `DT_DIR` | `FILE_ATTRIBUTE_DIRECTORY`, without `FILE_ATTRIBUTE_REPARSE_POINT` |
+| 3 | `DT_LNK` | `FILE_ATTRIBUTE_REPARSE_POINT` |
+| 4 | Every other value | None |
+
 `open_read` opens the file that the host's lookup of path from root selects, the host resolving its `..` components and symbolic links, so that file need not be below root.
 `HostPaths` is the authority to look up host paths, which the six host-path opens `open_host_read`, `open_host_read_bytes`, `open_host_directory_read`, `open_host_directory_read_bytes`, `open_host_directory` and `open_host_directory_bytes` take; no host function returns one. When the invocation [PROG-3] supplies `Inputs`, its `host_paths` field is `Some` containing a `HostPaths` on a POSIX host and on a Windows host, and `None` on every other host.
 A host-path open's path is a sequence of native code units: a byte on a POSIX host, and on a Windows host a UTF-16 code unit, whose native bytes are its two bytes, low byte first. It is the code units whose native bytes `host_copy_bytes` copies from its `HostString`, or those that the bytes of `path` from `start` to `end` denote in its encoding: with `NativeBytes` the bytes are the native bytes of the code units, unpaired UTF-16 surrogates included, and with `Utf8` they are UTF-8 text, whose code units are its bytes on a POSIX host and its UTF-16 encoding on a Windows host. For an empty path, a path holding a zero code unit, a window whose code units number at least the host's limit — `PATH_MAX` on a POSIX host and 32767 on a Windows host — a `NativeBytes` window of odd length on a Windows host, and a `Utf8` window that is not UTF-8 text, the open returns `InvalidPath`, a runtime-synthesized condition, and looks nothing up. Otherwise, on a POSIX host it looks the path up as POSIX `openat` does with base's directory as its starting directory: a path beginning with `/` starts at the host's root directory and ignores base, every other path starts at base, each `..` component selects the parent of the directory that the components before it reached after following their symbolic links, and every symbolic link the lookup reaches, its last component included, is followed. On a Windows host, where `\` and `/` are both separators, it looks the path up in the Win32 path dialect by the first matching row of the following table, and every symbolic link and junction the lookup reaches, its last component included, is followed.
@@ -3202,6 +3213,13 @@ public fn host_copy_bytes(value: &HostString, destination: &[u8], start: u64, en
   ensures when Ok(value: next): next <= end;
 } doc "Copies every byte of value into destination from start; Ok carries the index after the last byte copied, and CopyTooSmall carries the length the window needs when it is shorter.";
 
+public fn host_copy_name_bytes(value: &HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, CopyError> reads(value), writes(destination) contract {
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Copies the name bytes of value [PRE-2] into destination from start; Ok carries the index after the last byte copied, and CopyTooSmall carries the length the window needs when it is shorter.";
+
 public fn host_utf8_len(value: &HostString) -> result: Result<u64, Utf8Error> reads(value) doc "Returns the length in bytes of the UTF-8 text value denotes, or Utf8Invalid when it denotes none.";
 
 public fn host_copy_utf8(value: &HostString, destination: &[u8], start: u64, end: u64) -> result: Result<u64, Utf8CopyError> reads(value), writes(destination) contract {
@@ -3309,7 +3327,7 @@ public fn directory_next(source: &DirectorySource, destination: &[u8], start: u6
   requires end <= destination^.len;
   ensures start <= next;
   ensures next <= end;
-} doc "Writes the names of the next entries of source into destination from start toward end; next is the index after the bytes written, entries counts the names, and ListEnd reports that no entry remains.";
+} doc "Writes a record of the kind and name bytes of each of the next entries of source, other than . and .., into destination from start toward end [PRE-2]; next is the index after the records written, entries counts them, and ListEnd reports that no entry remains.";
 
 public fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) waits contract {
   requires start <= end;
