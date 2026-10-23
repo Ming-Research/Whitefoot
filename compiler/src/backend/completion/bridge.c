@@ -1689,9 +1689,12 @@ struct wf_driver {
     wf_context *run_head;
     wf_context *run_tail;
     _Atomic unsigned run_count;
-    /* Set while this driver is parked with nothing to run, and when a driver
-     * that made work ready woke it to look for some. */
+    /* Set when this driver parks with nothing to run, and kept through its
+     * later empty polls and waits until it is activated: by wf_run_take
+     * before it dequeues, by wf_drivers_wake_one when picked to search, or by
+     * wf_driver_acquire_reserved. */
     _Atomic unsigned idle;
+    /* Set when a driver that made work ready woke this one to look for some. */
     _Atomic unsigned searcher;
     wf_context *parked;
     /* Next parked record to inspect in a bounded borrowed pass. Updated by
@@ -1869,8 +1872,9 @@ static _Thread_local wf_driver *wf_driver_service;
 static _Thread_local unsigned wf_executor_index;
 static _Thread_local uint64_t wf_context_outside;
 static _Thread_local wf_context *wf_context_current;
-/* Set when suspension registered an external wake or a fairness yield.
- * Its wake gate is committed only after the native resume returns. */
+/* External registrations commit their gate after unwind. A fairness-only
+ * suspension has no external waiter and publishes directly after unwind. */
+enum { WF_SUSPEND_NONE, WF_SUSPEND_EXTERNAL, WF_SUSPEND_FAIR };
 static _Thread_local int wf_context_parked_away;
 static _Atomic unsigned wf_context_root_done;
 /* The context `wf__context_prepare` made and `wf__context_launch` starts. */
@@ -1885,8 +1889,10 @@ static _Atomic unsigned wf_drivers_notifying;
  * the count its last pass over its parked contexts saw. */
 static _Atomic uint64_t wf_context_foreign_publications;
 
-/* Drivers parked with nothing to run, and whether one has been woken to
- * look for work and has not looked yet: while one has, no other is woken. */
+/* Drivers logically idle (parked with nothing to run, and kept so through
+ * later empty polls until activated; see the driver's idle flag), and whether
+ * one has been woken to look for work and has not looked yet: while one has,
+ * no other is woken. */
 static _Atomic unsigned wf_drivers_idle;
 static _Atomic unsigned wf_drivers_searching;
 
@@ -1897,9 +1903,87 @@ static _Atomic unsigned wf_drivers_searching;
  * while it moves contexts between two queues. */
 static _Atomic uint64_t wf_drivers_changes;
 static _Atomic unsigned wf_drivers_moving;
-/* Includes displaced invocations. Publish/adopt disposition before decrement;
- * the stuck detector reads this before any role's idle/work counts. */
-static _Atomic unsigned wf_active_invocations;
+/* Physical executors, including displaced owners, retain their slot for the
+ * process lifetime. Single-writer generations never reset on role changes.
+ * SC stores/loads give the double collect one common order; release/acquire
+ * alone does not supply the cross-slot snapshot argument. */
+typedef struct {
+    _Alignas(64) _Atomic uint64_t sequence;
+} wf_invocation_slot;
+_Static_assert(sizeof(wf_invocation_slot) == 64u, "one invocation slot per cache line");
+static wf_invocation_slot wf_invocations[WF_EXECUTOR_LIMIT];
+
+static void wf_invocation_begin(void) {
+    if (wf_executor_index >= WF_EXECUTOR_LIMIT) wf_bridge_fail("invalid physical executor");
+    wf_invocation_slot *slot = &wf_invocations[wf_executor_index];
+    uint64_t sequence = atomic_load_explicit(&slot->sequence, memory_order_relaxed);
+    if ((sequence & 1u) || sequence >= UINT64_MAX - 1u)
+        wf_bridge_fail("invocation sequence exhausted or already active");
+    atomic_store_explicit(&slot->sequence, sequence + 1u, memory_order_seq_cst);
+}
+
+static void wf_invocation_end(void) {
+    wf_invocation_slot *slot = &wf_invocations[wf_executor_index];
+    uint64_t sequence = atomic_load_explicit(&slot->sequence, memory_order_relaxed);
+    atomic_store_explicit(&slot->sequence, sequence + 1u, memory_order_seq_cst);
+}
+
+static int wf_invocations_collect(uint64_t sequence[WF_EXECUTOR_LIMIT]) {
+    for (unsigned i = 0; i < WF_EXECUTOR_LIMIT; ++i) {
+        sequence[i] = atomic_load_explicit(&wf_invocations[i].sequence, memory_order_seq_cst);
+        if (sequence[i] & 1u) return 0;
+    }
+    return 1;
+}
+
+static int wf_invocations_unchanged(const uint64_t sequence[WF_EXECUTOR_LIMIT]) {
+    for (unsigned i = 0; i < WF_EXECUTOR_LIMIT; ++i)
+        if (atomic_load_explicit(&wf_invocations[i].sequence, memory_order_seq_cst)
+                != sequence[i]) return 0;
+    return 1;
+}
+
+__attribute__((unused)) static int wf_invocations_active(void) {
+    uint64_t sequence[WF_EXECUTOR_LIMIT];
+    return !wf_invocations_collect(sequence) || !wf_invocations_unchanged(sequence);
+}
+
+/* Cold scheduler transactions only. wf_prim_wait supplies the native mutex;
+ * its condition variable is unused. Never hold it over a clock, notification,
+ * host operation, coroutine resume or park. Lock order is quiescence before
+ * executor/run/ingress locks. The ordinary active-driver rotation skips it. */
+static wf_prim_wait wf_quiescence;
+static unsigned wf_quiescence_once;
+static void wf_quiescence_init(void) {
+    if (wf_prim_wait_init(&wf_quiescence)) wf_bridge_fail("cannot initialize scheduler quiescence");
+}
+static void wf_quiescence_lock(void) {
+    wf__sched_once(&wf_quiescence_once, wf_quiescence_init);
+    wf_prim_wait_lock(&wf_quiescence);
+}
+static void wf_quiescence_unlock(void) { wf_prim_wait_unlock(&wf_quiescence); }
+
+static void wf_driver_activate_locked(wf_driver *driver) {
+    if (atomic_exchange_explicit(&driver->idle, 0u, memory_order_seq_cst)) {
+        atomic_fetch_sub_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
+        atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
+    }
+}
+
+static void wf_driver_activate(wf_driver *driver) {
+    if (!atomic_load_explicit(&driver->idle, memory_order_seq_cst)) return;
+    wf_quiescence_lock();
+    wf_driver_activate_locked(driver);
+    wf_quiescence_unlock();
+}
+
+static void wf_driver_idle_locked(wf_driver *driver) {
+    if (!atomic_load_explicit(&driver->idle, memory_order_seq_cst)) {
+        atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
+        atomic_store_explicit(&driver->idle, 1u, memory_order_seq_cst);
+        atomic_fetch_add_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
+    }
+}
 
 typedef struct wf_executor {
     wf_prim_thread thread;
@@ -2000,6 +2084,9 @@ static wf_context *wf_run_take(wf_driver *driver) {
     if (atomic_load_explicit(&driver->run_count, memory_order_relaxed) == 0u) {
         return NULL;
     }
+    /* The queue may change between the count and lock. Activation must
+     * precede removing a context, even when an enqueue races this lookup. */
+    wf_driver_activate(driver);
     wf_spin_lock(&driver->run_lock);
     context = driver->run_head;
     if (context != NULL) {
@@ -2021,33 +2108,25 @@ static wf_context *wf_run_take(wf_driver *driver) {
 /* Wakes one parked driver to look for work, when some driver is parked and
  * none has been woken for that already. */
 static void wf_drivers_wake_one(void) {
-    unsigned count;
-    unsigned index;
-    unsigned expected = 0u;
-    if (atomic_load_explicit(&wf_drivers_idle, memory_order_seq_cst) == 0u
-        || atomic_load_explicit(&wf_drivers_searching, memory_order_relaxed) != 0u) {
-        return;
-    }
-    if (!atomic_compare_exchange_strong_explicit(
-            &wf_drivers_searching, &expected, 1u,
-            memory_order_seq_cst, memory_order_relaxed)) {
-        return;
-    }
-    count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
-    for (index = 0; index < count; index++) {
-        wf_driver *driver = wf_drivers[index];
-        if (driver == NULL || driver == wf_driver_service) {
-            continue;
-        }
-        if (atomic_exchange_explicit(&driver->idle, 0u, memory_order_seq_cst) != 0u) {
-            atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
-            atomic_fetch_sub_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
-            atomic_store_explicit(&driver->searcher, 1u, memory_order_relaxed);
-            wf_completion_notify_target(driver->runtime);
-            return;
+    if (!atomic_load_explicit(&wf_drivers_idle, memory_order_seq_cst)
+        || atomic_load_explicit(&wf_drivers_searching, memory_order_seq_cst)) return;
+    wf_driver *target = NULL;
+    wf_quiescence_lock();
+    if (!atomic_load_explicit(&wf_drivers_searching, memory_order_seq_cst)) {
+        unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
+        for (unsigned i = 0; i < count; ++i) {
+            wf_driver *driver = atomic_load_explicit(&wf_drivers[i], memory_order_acquire);
+            if (!driver || driver == wf_driver_service
+                || !atomic_load_explicit(&driver->idle, memory_order_seq_cst)) continue;
+            atomic_store_explicit(&wf_drivers_searching, 1u, memory_order_seq_cst);
+            atomic_store_explicit(&driver->searcher, 1u, memory_order_seq_cst);
+            wf_driver_activate_locked(driver);
+            target = driver;
+            break;
         }
     }
-    atomic_store_explicit(&wf_drivers_searching, 0u, memory_order_seq_cst);
+    wf_quiescence_unlock();
+    if (target) wf_completion_notify_target(target->runtime);
 }
 
 /* Makes a context ready on the driver it last ran on, waking that driver
@@ -2095,7 +2174,8 @@ static void wf_context_commit_wake(wf_context *context) {
  * another context is ready on this driver, the context goes to the back of
  * the run queue and answers 1, and its frame suspends as for any wait; the
  * driver resets the count whenever it resumes the context. A context alone on
- * its driver continues, since there is no one to yield to. */
+ * its driver continues only when no host wait or ingress needs service: a
+ * sleeper is not ready until a reap expires it. */
 static int wf_context_pass(wf_context *self, void *frame) {
     wf_driver *driver = wf_driver_self;
     if (driver == NULL) return 0;
@@ -2109,12 +2189,12 @@ static int wf_context_pass(wf_context *self, void *frame) {
     if (!displaced) {
         if (self->passes < WF_CONTEXT_YIELD_PASSES) return 0;
         self->passes = 0u;
-        if (atomic_load_explicit(&driver->run_count, memory_order_relaxed) == 0u) return 0;
+        if (atomic_load_explicit(&driver->run_count, memory_order_relaxed) == 0u
+            && atomic_load_explicit(&driver->host_waits, memory_order_seq_cst) == 0u
+            && atomic_load_explicit(&driver->ingress_count, memory_order_seq_cst) == 0u) return 0;
     }
     self->resume = frame;
-    wf_context_parked_away = 1;
-    wf_context_arm_wake(self);
-    wf_context_ready(self);
+    wf_context_parked_away = WF_SUSPEND_FAIR;
     return 1;
 }
 
@@ -2146,6 +2226,7 @@ static int wf_driver_steal(wf_driver *driver) {
         if (available == 0u) {
             continue;
         }
+        wf_quiescence_lock();
         atomic_fetch_add_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
         wf_spin_lock(&victim->run_lock);
         available = atomic_load_explicit(&victim->run_count, memory_order_relaxed);
@@ -2171,6 +2252,7 @@ static int wf_driver_steal(wf_driver *driver) {
         wf_spin_unlock(&victim->run_lock);
         if (moved == 0u) {
             atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+            wf_quiescence_unlock();
             continue;
         }
         atomic_fetch_add_explicit(&wf_driver_stats[driver->index].stolen_contexts,
@@ -2183,6 +2265,7 @@ static int wf_driver_steal(wf_driver *driver) {
         }
         atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
         atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+        wf_quiescence_unlock();
         return 1;
     }
     return 0;
@@ -2191,13 +2274,12 @@ static int wf_driver_steal(wf_driver *driver) {
 /* A driver woken to look for work has looked: another may be woken now,
  * and is when this one found work, since more may be waiting. */
 static void wf_driver_end_search(wf_driver *driver, int found) {
-    if (atomic_exchange_explicit(&driver->searcher, 0u, memory_order_relaxed) == 0u) {
-        return;
-    }
-    atomic_store_explicit(&wf_drivers_searching, 0u, memory_order_seq_cst);
-    if (found) {
-        wf_drivers_wake_one();
-    }
+    if (!atomic_load_explicit(&driver->searcher, memory_order_seq_cst)) return;
+    wf_quiescence_lock();
+    unsigned claimed = atomic_exchange_explicit(&driver->searcher, 0u, memory_order_seq_cst);
+    if (claimed) atomic_store_explicit(&wf_drivers_searching, 0u, memory_order_seq_cst);
+    wf_quiescence_unlock();
+    if (claimed && found) wf_drivers_wake_one();
 }
 
 static void wf_context_link(wf_context **list, wf_context *context) {
@@ -2898,7 +2980,7 @@ int wf__context_join_wait(uint64_t *group, void *frame, const char *site) {
         wf_bridge_fail("a join waited outside every context");
     }
     self->resume = frame;
-    wf_context_parked_away = 1;
+    wf_context_parked_away = WF_SUSPEND_EXTERNAL;
     wf_context_arm_wake(self);
     __atomic_store_n(&group[1], (uint64_t)(uintptr_t)self, __ATOMIC_SEQ_CST);
     for (;;) {
@@ -2913,7 +2995,7 @@ int wf__context_join_wait(uint64_t *group, void *frame, const char *site) {
         if (__atomic_compare_exchange_n(
                 &group[1], &expected, 0u, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
             self->resume = NULL;
-            wf_context_parked_away = 0;
+            wf_context_parked_away = WF_SUSPEND_NONE;
             atomic_store_explicit(&self->wake_gate, WF_WAKE_NONE, memory_order_relaxed);
             return 0;
         }
@@ -3763,7 +3845,7 @@ int wf__watch_park(void *watch_frame, void *frame, const char *site) {
     wf_context_note_wait(self, site);
     watch->state = WF_GUARD_PARKED;
     self->resume = frame;
-    wf_context_parked_away = 1;
+    wf_context_parked_away = WF_SUSPEND_EXTERNAL;
     wf_context_arm_wake(self);
     wf_spin_unlock(&wf_watch_lock);
     return 1;
@@ -4185,7 +4267,7 @@ static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int e
             }
             if (wf_shared_turn_refuses(shared, self, exempt)) {
                 self->resume = frame;
-                wf_context_parked_away = 1;
+                wf_context_parked_away = WF_SUSPEND_EXTERNAL;
                 wf_context_arm_wake(self);
                 wf_shared_park_locked(shared, self, write, exempt);
                 wf_spin_unlock(&shared->lock);
@@ -4208,7 +4290,7 @@ static int wf_shared_acquire_as(void *object, uint32_t write, void *frame, int e
         return 0;
     }
     self->resume = frame;
-    wf_context_parked_away = 1;
+    wf_context_parked_away = WF_SUSPEND_EXTERNAL;
     wf_context_arm_wake(self);
     wf_shared_park_locked(shared, self, write, exempt);
     wf_spin_unlock(&shared->lock);
@@ -4621,45 +4703,36 @@ int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test
     return wf__watch_park(watch, frame, site);
 }
 
-/* [WAIT-2] Called by a driver that has just announced its own idleness.
- * A true result supplies a consistent observation of no active invocation,
- * ready work, ingress, host wait or transfer, and acquires the completed
- * parks' writes, including their diagnostic sites. The caller checks root
- * completion separately; unfinished contexts then wait for guards or joins.
- * This is the report's publication boundary, not a hint for idle polling or
- * permission to tear down a completed invocation's remaining ingress.
- * A driver that makes a context ready is running, not idle,
- * and a helper's completion ends a counted host wait only when a running
- * driver harvests it.
+/* [WAIT-2] Called by a driver that has just announced its own idleness. A
+ * stuck snapshot requires all logical roles idle and every queue, host wait
+ * and ingress empty. A true result supplies a consistent observation of no
+ * active invocation, ready work, ingress, host wait or transfer, and acquires
+ * the completed parks' writes, including their diagnostic sites. The caller
+ * checks root completion separately; unfinished contexts then wait for guards
+ * or joins. This is the report's publication boundary, not a hint for idle
+ * polling or permission to tear down a completed invocation's remaining
+ * ingress. The cold mutex stabilizes idle admission and failed transfer
+ * probes. Persistent empty polls keep idle set, so a genuine deadlock
+ * eventually gives the detector a stable interval.
  *
- * The pass over the drivers is not one instant, so it is a double collect:
- * each driver's idleness is read before its counts, and its host waits before
- * its ready count (`wf_context_host_wait_ended`). Active invocations are read
- * first, including displaced computation; ingress stays counted until fully
- * adopted. Transfers remain moving until RESERVED is acquired. The answer
- * holds only if no invocation committed, no driver entered or left idleness
- * and no steal, probe or borrow ended or was under way between the
- * reads of `wf_drivers_changes` around the pass. Every slot of
- * the driver table is read, not only the counted ones, because a driver that
- * has just started may take contexts before the count includes it.
- *
- * Each parking invocation's writes precede its seq_cst active decrement;
- * intervening RMWs retain the release sequence acquired by the zero read.
- * Retained adoption precedes that decrement. Displaced adoption publishes
- * through ingress_lock and retires its seq_cst ingress count only after
- * adoption. The zero reads, idle publications and unchanged double collect
- * therefore acquire all completed parks, not just their count. */
-static int wf_all_contexts_inactive(const wf_driver *self) {
-    uint64_t before = atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst);
-    if (atomic_load_explicit(&wf_active_invocations, memory_order_seq_cst) != 0u) return 0;
+ * Both collections cover all physical slots, including unused spares and
+ * displaced owners. Equal even SC generations exclude native invocation
+ * activity throughout the intervening driver scan and acquire its preceding
+ * disposition publication. Ingress stays counted through adoption. Read a
+ * role's host waits before its ready count: service enqueues a completed wait
+ * before dropping host_waits. Borrowed detached work and RESERVED ownership
+ * stay covered by moving until requeued/acquired. The remaining cold change
+ * counter detects ingress adoption and role/queue transfers. No hot invocation
+ * updates that global counter. All table slots are read, including a role
+ * published before wf_driver_count is raised. Caller holds the cold mutex. */
+static int wf_contexts_stuck_since(const uint64_t sequence[WF_EXECUTOR_LIMIT], uint64_t before) {
     unsigned index;
     for (index = 0; index < WF_DRIVER_LIMIT; index++) {
         wf_driver *other = atomic_load_explicit(&wf_drivers[index], memory_order_seq_cst);
         if (other == NULL) {
             continue;
         }
-        if (other != self
-            && atomic_load_explicit(&other->idle, memory_order_seq_cst) == 0u) {
+        if (atomic_load_explicit(&other->idle, memory_order_seq_cst) == 0u) {
             return 0;
         }
         if (atomic_load_explicit(&other->ingress_count, memory_order_seq_cst) != 0u
@@ -4671,7 +4744,24 @@ static int wf_all_contexts_inactive(const wf_driver *self) {
     if (atomic_load_explicit(&wf_drivers_moving, memory_order_seq_cst) != 0u) {
         return 0;
     }
-    return atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst) == before;
+    return wf_invocations_unchanged(sequence)
+        && atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst) == before;
+}
+
+static int wf_contexts_stuck_locked(void) {
+    uint64_t before = atomic_load_explicit(&wf_drivers_changes, memory_order_seq_cst);
+    uint64_t sequence[WF_EXECUTOR_LIMIT];
+    return wf_invocations_collect(sequence) && wf_contexts_stuck_since(sequence, before);
+}
+
+/* The stuck snapshot under the cold mutex, for a caller that does not hold it:
+ * the report's recheck, and tests at controlled scope boundaries. */
+static int wf_all_contexts_inactive(const wf_driver *self) {
+    (void)self;
+    wf_quiescence_lock();
+    int stuck = wf_contexts_stuck_locked();
+    wf_quiescence_unlock();
+    return stuck;
 }
 
 static void wf_contexts_report_stuck(const wf_driver *self) {
@@ -4683,7 +4773,9 @@ static void wf_contexts_report_stuck(const wf_driver *self) {
      * reserved guard retry or claimant under the lock-order/admission rules.
      * The lock protects membership and reclamation and publishes each child's
      * first site initialization; wf_all_contexts_inactive acquires later site
-     * stores. Slot loads remain atomic; no waking path clears the site. */
+     * stores. Slot loads remain atomic; no waking path clears the site. The
+     * recheck takes the cold mutex under this lock: no section under the cold
+     * mutex enters the roster, so the order is one way. */
     if (!wf_all_contexts_inactive(self)
         || atomic_load_explicit(&wf_context_root_done, memory_order_acquire)) {
         wf_spin_unlock(&wf_contexts.lock);
@@ -4847,13 +4939,16 @@ static int wf_driver_assist(wf_driver *driver) {
         wf_driver *victim = atomic_load_explicit(&wf_drivers[index], memory_order_acquire);
         uint64_t outside;
         if (victim == NULL || victim == driver) continue;
+        wf_quiescence_lock();
         atomic_fetch_add_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
         atomic_fetch_add_explicit(&wf_driver_stats[driver->index].borrow_attempts,
             1u, memory_order_relaxed);
         if (!wf_driver_try_borrow(victim, &outside)) {
             atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+            wf_quiescence_unlock();
             continue;
         }
+        wf_quiescence_unlock();
         atomic_fetch_add_explicit(&wf_driver_stats[driver->index].borrows,
             1u, memory_order_relaxed);
         wf_context *ready = wf_driver_service_only(driver, victim, wf_file_monotonic_ns());
@@ -4865,8 +4960,10 @@ static int wf_driver_assist(wf_driver *driver) {
             wf_run_push(driver, ready);
             ready = next;
         }
+        wf_quiescence_lock();
         atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
         atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+        wf_quiescence_unlock();
         return moved;
     }
     return 0;
@@ -4889,11 +4986,14 @@ static uint32_t wf_driver_wait_ms(const wf_driver *driver) {
 
 /* Descriptor polling has no runtime-wake endpoint. A displaced invocation
  * can commit even when this role has only descriptor waits, so cap that
- * poll. Read active before ingress: observing the last invocation's decrement
- * must also expose its prior commit, never an unbounded zero-work gap. */
+ * poll. Collect before ingress and validate afterward: observing the last
+ * invocation's even sequence must expose its prior commit, and an intervening
+ * complete invocation must not produce an unbounded zero-work gap. */
 static int wf_driver_poll_wait_ms(const wf_driver *driver) {
-    unsigned active = atomic_load_explicit(&wf_active_invocations, memory_order_seq_cst);
+    uint64_t sequence[WF_EXECUTOR_LIMIT];
+    int inactive = wf_invocations_collect(sequence);
     if (atomic_load_explicit(&driver->ingress_count, memory_order_seq_cst)) return 0;
+    int active = !inactive || !wf_invocations_unchanged(sequence);
     uint32_t bound = wf_driver_wait_ms(driver);
     int timeout = driver->parked != NULL || active ? 1 : -1;
     if (bound != UINT32_MAX && (timeout < 0 || bound < (uint32_t)timeout))
@@ -4919,10 +5019,12 @@ static void wf_driver_reap(wf_driver *driver) {
     }
 }
 
-enum { WF_HAND_BACK_WAIT, WF_HAND_BACK_READY, WF_HAND_BACK_COMPLETE };
+enum { WF_HAND_BACK_WAIT, WF_HAND_BACK_READY, WF_HAND_BACK_COMPLETE, WF_HAND_BACK_FAIR };
 
 static void wf_context_adopt(wf_driver *driver, wf_context *context) {
-    if (context->disposition_wake) {
+    if (context->disposition == WF_HAND_BACK_FAIR) {
+        wf_context_ready(context);
+    } else if (context->disposition_wake) {
         wf_context_commit_wake(context);
     } else if (context->disposition == WF_HAND_BACK_COMPLETE) {
         if (context == &wf_context_root) {
@@ -4971,6 +5073,17 @@ static int wf_driver_adopt_ingress(wf_driver *driver) {
     return adopted;
 }
 
+/* A displaced publisher can lose the race with ingress adoption: the role
+ * may consume its first wake, see this slot still odd, and park with no host
+ * deadline. Wake again after the even publication so persistent quiescence
+ * gets another scan. Executor joins keep wake endpoints alive until this
+ * thread has completed the notification; executor zero cleans up only after
+ * its own invocation returns. No context access follows either publication. */
+static void wf_context_retire(wf_driver *driver, int retained) {
+    wf_invocation_end();
+    if (!retained) wf_completion_notify_target(driver->runtime);
+}
+
 /* Returns zero only when this physical executor lost its role. */
 static int wf_context_run(wf_driver *driver, wf_context *next) {
     void *frame = next->resume;
@@ -4984,8 +5097,8 @@ static int wf_context_run(wf_driver *driver, wf_context *next) {
     next->driver = driver;
     next->passes = 0u;
     wf_context_current = next;
-    wf_context_parked_away = 0;
-    atomic_fetch_add_explicit(&wf_active_invocations, 1u, memory_order_seq_cst);
+    wf_context_parked_away = WF_SUSPEND_NONE;
+    wf_invocation_begin();
     uint64_t outside = wf_driver_leave_service(driver);
     wf_context_outside = outside;
     wf__coro_resume(frame);
@@ -4994,15 +5107,15 @@ static int wf_context_run(wf_driver *driver, wf_context *next) {
         && (next->shared_turn != NULL || next->shared_holds != 0u)) {
         wf_bridge_fail("a context finished with a shared hold or a guard turn");
     }
-    next->disposition_wake = (unsigned)wf_context_parked_away;
-    next->disposition = wf_context_parked_away ? WF_HAND_BACK_WAIT
+    next->disposition_wake = wf_context_parked_away == WF_SUSPEND_EXTERNAL;
+    next->disposition = wf_context_parked_away == WF_SUSPEND_FAIR ? WF_HAND_BACK_FAIR
+        : wf_context_parked_away ? WF_HAND_BACK_WAIT
         : wf__coro_done(next->root) ? WF_HAND_BACK_COMPLETE
         : next->record != NULL ? WF_HAND_BACK_WAIT : WF_HAND_BACK_READY;
     int retained = wf_driver_return_service(driver, outside);
     if (retained) wf_context_adopt(driver, next);
     else wf_context_ingress(driver, next);
-    atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
-    atomic_fetch_sub_explicit(&wf_active_invocations, 1u, memory_order_seq_cst);
+    wf_context_retire(driver, retained);
     return retained;
 }
 
@@ -5058,10 +5171,12 @@ static int wf_context_drive(wf_driver *driver) {
             /* Announced before the last look, so a driver that makes a
              * context ready after that look sees this one parked and wakes
              * it. */
-            atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
-            atomic_store_explicit(&driver->idle, 1u, memory_order_seq_cst);
-            atomic_fetch_add_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
-            if (wf_all_contexts_inactive(driver)
+            wf_driver_end_search(driver, 0);
+            wf_quiescence_lock();
+            wf_driver_idle_locked(driver);
+            int stuck = wf_contexts_stuck_locked();
+            wf_quiescence_unlock();
+            if (stuck
                 && !atomic_load_explicit(&wf_context_root_done, memory_order_acquire)) {
                 wf_contexts_report_stuck(driver);
             }
@@ -5083,10 +5198,8 @@ static int wf_context_drive(wf_driver *driver) {
 #endif
                 if (ring_waited) (void)wf_bridge_progress();
             }
-            if (atomic_exchange_explicit(&driver->idle, 0u, memory_order_seq_cst) != 0u) {
-                atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
-                atomic_fetch_sub_explicit(&wf_drivers_idle, 1u, memory_order_seq_cst);
-            }
+            /* Empty timed polls retain logical idleness. Work activation
+             * happens before dequeuing on the next iteration. */
         }
     }
 }
@@ -5122,7 +5235,11 @@ static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
         || atomic_load_explicit(&wf_drivers_idle, memory_order_seq_cst)) return 0;
     /* Reserve only an already floor-attached, parked executor. There is no
      * thread creation, allocation or blocking engine lock in this path. */
-    if (atomic_flag_test_and_set_explicit(&wf_executor_lock, memory_order_acquire)) return 0;
+    wf_quiescence_lock();
+    if (atomic_flag_test_and_set_explicit(&wf_executor_lock, memory_order_acquire)) {
+        wf_quiescence_unlock();
+        return 0;
+    }
     wf_executor *spare = NULL;
     for (unsigned i = 0; i < wf_executor_count; ++i) {
         if (wf_executors[i].available) { spare = &wf_executors[i]; break; }
@@ -5131,6 +5248,7 @@ static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
         atomic_fetch_add_explicit(&wf_driver_stats[driver->index].reserve_misses,
             1u, memory_order_relaxed);
         wf_spin_unlock(&wf_executor_lock);
+        wf_quiescence_unlock();
         return 0;
     }
     atomic_fetch_add_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
@@ -5145,8 +5263,9 @@ static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
         atomic_store_explicit(&driver->service_token, reserved, memory_order_release);
         atomic_fetch_add_explicit(&wf_driver_stats[driver->index].reassignments,
             1u, memory_order_relaxed);
-        wf_completion_notify_target(&spare->wake);
         wf_spin_unlock(&wf_executor_lock);
+        wf_quiescence_unlock();
+        wf_completion_notify_target(&spare->wake);
         /* The replacement drops moving only after acquiring SERVICE. */
         return 1;
     }
@@ -5154,6 +5273,7 @@ static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
     atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
     atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
     wf_spin_unlock(&wf_executor_lock);
+    wf_quiescence_unlock();
     return 0;
 }
 
@@ -5195,6 +5315,7 @@ static void wf_executor_bind(wf_driver *driver) {
 }
 
 static void wf_driver_acquire_reserved(wf_driver *driver) {
+    wf_quiescence_lock();
     uint64_t reserved = atomic_load_explicit(&driver->service_token, memory_order_acquire);
     if ((reserved & WF_DRIVER_PHASE_MASK) != WF_DRIVER_RESERVED
         || ((reserved & WF_DRIVER_EXECUTOR_MASK) >> WF_DRIVER_EXECUTOR_SHIFT) != wf_executor_index
@@ -5204,8 +5325,10 @@ static void wf_driver_acquire_reserved(wf_driver *driver) {
         wf_bridge_fail("executor acquired another executor's reservation");
     driver->departure = reserved & ~WF_DRIVER_PHASE_MASK;
     wf_executor_bind(driver);
+    wf_driver_activate_locked(driver);
     atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
     atomic_fetch_sub_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+    wf_quiescence_unlock();
 }
 
 /* A displaced launcher is also reusable, but only that physical thread may
@@ -5347,7 +5470,10 @@ static void wf_drivers_begin(void) {
             wf_pool_give(driver, granted);
             wf_bridge_fail("cannot initialize a selected driver ring wake");
         }
-        wf_drivers[index] = driver;
+        wf_quiescence_lock();
+        atomic_store_explicit(&wf_drivers[index], driver, memory_order_seq_cst);
+        atomic_fetch_add_explicit(&wf_drivers_changes, 1u, memory_order_seq_cst);
+        wf_quiescence_unlock();
         wf_executor_init(2u * index, driver);
         if (wf_prim_thread_start(&wf_executors[2u * index].thread, wf_executor_main,
                 &wf_executors[2u * index], wf__floor_stack_bytes()) != 0)
@@ -5375,19 +5501,22 @@ uint64_t wf__context_driver_count(void) {
  * COMPLETE adoption publishes root_done before retiring its ingress count;
  * keep service and all wake endpoints alive through that interval too. */
 static int wf_drivers_quiescent(void) {
-    if (atomic_load_explicit(&wf_active_invocations, memory_order_seq_cst)
-        || atomic_load_explicit(&wf_drivers_moving, memory_order_seq_cst)) return 0;
-    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
-    for (unsigned i = 0; i < count; ++i) {
-        wf_driver *driver = atomic_load_explicit(&wf_drivers[i], memory_order_acquire);
-        if (atomic_load_explicit(&driver->ingress_count, memory_order_seq_cst)) return 0;
+    uint64_t sequence[WF_EXECUTOR_LIMIT];
+    wf_quiescence_lock();
+    int quiet = wf_invocations_collect(sequence)
+        && !atomic_load_explicit(&wf_drivers_moving, memory_order_seq_cst);
+    for (unsigned i = 0; quiet && i < WF_DRIVER_LIMIT; ++i) {
+        wf_driver *driver = atomic_load_explicit(&wf_drivers[i], memory_order_seq_cst);
+        if (driver && atomic_load_explicit(&driver->ingress_count, memory_order_seq_cst)) quiet = 0;
     }
-    return 1;
+    if (quiet) quiet = wf_invocations_unchanged(sequence);
+    wf_quiescence_unlock();
+    return quiet;
 }
 
 static void wf_drivers_end(void) {
     /* Root completion follows structured joins, but a publisher can still
-     * be dropping its active count. No role/wake/storage dies before it. */
+     * be publishing its even sequence. No role/wake/storage dies before it. */
     if (wf_monitor_started) {
         atomic_store_explicit(&wf_monitor_stopping, 1u, memory_order_release);
         wf_completion_notify_target(&wf_monitor_wake);
