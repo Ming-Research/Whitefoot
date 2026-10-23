@@ -1606,15 +1606,12 @@ impl Analyzer<'_, '_> {
                     .establish_operation_fact(state, term, result, low, event, &parents);
             }
         }
-        // [ENT-3.S7] an unsigned exact division or right shift at a binding
-        // or commit also captures its value images; a conditional payload
-        // captures none.
+        // [ENT-3.S7] an unsigned exact division or right shift at a binding,
+        // commit or returned value also captures its value images; a
+        // conditional payload captures none.
         if !matches!(shape.row, Row::Divide | Row::ShiftRight { wrap: false })
             || shape.operand.signed()
-            || matches!(
-                destination,
-                ValueImage::ResultPayload(_) | ValueImage::Returned { .. }
-            )
+            || matches!(destination, ValueImage::ResultPayload(_))
             || shape
                 .operands
                 .iter()

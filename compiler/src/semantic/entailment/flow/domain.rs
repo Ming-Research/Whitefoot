@@ -607,8 +607,10 @@ impl Vocabulary {
             // [MSR-4] a measure term's image is its own compiler-owned atom,
             // [MSR-3] a measure datum inherits the atom of the term it
             // denotes, and [MSR-6] gives one immutable image to a symbolic
-            // const parameter throughout the generic body.
+            // const parameter throughout the generic body. [FN-9] a
+            // returned value holds the image its return installed.
             TermKind::ConstParameter(..)
+            | TermKind::ReturnedValue { .. }
             | TermKind::Measure(..)
             | TermKind::TargetMeasure { .. }
             | TermKind::EntryDatum { .. }
@@ -623,8 +625,7 @@ impl Vocabulary {
             | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
-            | TermKind::CommitValue { .. }
-            | TermKind::ReturnedValue { .. } => None,
+            | TermKind::CommitValue { .. } => None,
         }
     }
 

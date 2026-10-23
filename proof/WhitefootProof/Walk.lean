@@ -155,7 +155,7 @@ def branchState (env : Env) (st : State) (o : Origins) (s : Bool) : State :=
 -- spec ENT-3 a03af111b84dab86
 -- spec ENT-3.S5 72b4d00bbf489a99
 -- spec ENT-3.S7 7d57baede0c7cae7
--- spec ENT-6 55c0b60bde3ccdce
+-- spec ENT-6 1b3c7bab80aa9d7e
 /-- Bind a `let`'s value [ENT-3.S5, ENT-3.S7, ENT-6]: the copy or literal
 equality, the operation row's facts, the image, the captured division, a
 matched product's bound and the origin link. -/
@@ -234,18 +234,31 @@ def setVar (env : Env) (st : State) (x : Var) (r : Rhs) : M State := do
   | _, some (f, args) => publish env st f args none none (·.write x.id)
   | _, none => return st.write x.id
 
--- spec FN-9 d7353c166ac00fae
-/-- A returned computed integer expression gives the return's returned value
-[FN-9, ENT-2]: a fresh compiler-owned term on which the facts a `let` of the
-same expression gives its binding are established, after the expression's own
-obligations, in the state where it is evaluated. A place, literal or constant
-already denotes its term, and a call's result denotes none. -/
-def returnedValue (env : Env) (st : State) (r : Rhs) : M (State × Val) := do
-  match r.val.ty, r.val.term, r.call with
-  | .int t, none, none => do
+-- spec FN-9 322881af1ae53903
+-- spec ENT-6 1b3c7bab80aa9d7e
+-- spec ENT-3.S7 af0f36d4c6e5d834
+/-- A returned computed integer expression, an integer operation row
+[ENT-3.S7], gives the return's returned value [FN-9, ENT-2]: a fresh
+compiler-owned term that receives what a `let` of the same expression gives
+its binding, after the expression's own obligations, in the state where it is
+evaluated: the row's facts, the image, the captured division and a matched
+product's bound. The term is an immutable datum with that image [ENT-6]. A
+place, subscript, literal or constant is no computed expression, and a call's
+result denotes no term. -/
+def returnedValue (env : Env) (st : State) (e : Expr) (r : Rhs) : M (State × Val) := do
+  let computed := match e with
+    | .infix .. | .op .. => true
+    | _ => false
+  match r.val.ty, computed with
+  | .int t, true => do
     let v := Term.commit (← freshId) t
-    return (st.add env (r.facts v), { r.val with term := some (v, 0) })
-  | _, _, _ => return (st, r.val)
+    let img ← match r.val.image with
+      | some f => pure f
+      | none => typeAtom t
+    let st := bindLet.capture (st.add env (r.facts v)) img r
+    return ({ st with data := st.data ++ [(v, img)] },
+      { r.val with term := some (v, 0), image := some img })
+  | _, _ => return (st, r.val)
 
 -- spec FN-1 e9ced632e8466aa3
 -- spec FN-9 474d75677adbf145
@@ -413,7 +426,7 @@ def walkStmt (env : Env) (st : State) (pos : Pos) (s : Stmt) : M (Env × Out) :=
     let st ← match r.call with
       | some (f, args) => publish env st f args none none id
       | none => pure st
-    let (st, v) ← returnedValue env st r
+    let (st, v) ← returnedValue env st e r
     checkReturn env st v
     return (env, {})
   | .if_ c thn els _ => do

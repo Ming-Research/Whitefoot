@@ -65,6 +65,7 @@ fn9-neg-entry-image-kill
 fn9-neg-result-beside-module-alias
 fn9-neg-return-call-result
 fn9-neg-return-computed-unrelated
+fn9-neg-return-subscript-element
 fn9-neg-unproved-selected-return
 fn9-neg-wrapped-negation-nonnegative
 fn9-pos-affine-parameter-bound

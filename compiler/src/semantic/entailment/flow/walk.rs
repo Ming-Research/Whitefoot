@@ -1291,6 +1291,22 @@ impl Analyzer<'_, '_> {
                 let affine_result = self
                     .reasoning()
                     .affine_pure_expression_form(value, &mut state.affine);
+                // [FN-9, ENT-6] each evaluated ordinal's image is formed from
+                // the entering values, as a `let` initializer's is.
+                let returned_images = returned
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, returned)| {
+                        let ordinal = u32::try_from(ordinal)
+                            .expect("a return writes fewer than u32::MAX results");
+                        if self.input.evaluated_return(node_path, ordinal) {
+                            self.reasoning()
+                                .affine_expression_form(returned, &mut state.affine)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
                 // [FN-9] the relation is queried "immediately before return
                 // transfer and edge cleanup": the returned value's own
                 // consume is that transfer, so it has not happened at the
@@ -1328,27 +1344,60 @@ impl Analyzer<'_, '_> {
                     self.reasoning()
                         .finish_result(value, &judgment, result, state);
                 }
-                // [FN-9, ENT-3] a returned computed integer expression gives
-                // the return's evaluated value, bound exactly as an ordinary
-                // `let` of that expression binds its binding: after the
-                // expression's own obligations, in the state it is evaluated
-                // in. Only an ordinal some clause reads through it is bound.
+                // [FN-9, ENT-3, ENT-6] a returned computed integer expression
+                // gives the return's evaluated value, bound exactly as an
+                // ordinary `let` of that expression binds its binding: after
+                // the expression's own obligations, in the state it is
+                // evaluated in, with the L0 image, the affine value image, a
+                // captured division and a matched product's bound. Only an
+                // ordinal some clause reads through it is bound.
                 if judgment.reached {
-                    for (ordinal, returned) in returned.iter().enumerate() {
+                    for (ordinal, (returned, image)) in
+                        returned.iter().zip(returned_images).enumerate()
+                    {
                         let ordinal = u32::try_from(ordinal)
                             .expect("a return writes fewer than u32::MAX results");
-                        if self.input.evaluated_return(node_path, ordinal) {
-                            let _ = self.establish_value_image(
-                                node_path,
-                                ValueImage::Returned {
-                                    statement: node_path,
-                                    ordinal,
-                                },
-                                returned,
-                                &mut state.facts,
-                                &mut None,
+                        let Some(ty) = fragment_type(returned.ty())
+                            .filter(|_| self.input.evaluated_return(node_path, ordinal))
+                        else {
+                            continue;
+                        };
+                        let division = self.establish_value_image(
+                            node_path,
+                            ValueImage::Returned {
+                                statement: node_path,
+                                ordinal,
+                            },
+                            returned,
+                            &mut state.facts,
+                            &mut None,
+                        );
+                        let term = self.vocabulary.returned_value_term(node_path, ordinal, ty);
+                        let image =
+                            image.unwrap_or_else(|| self.vocabulary.new_affine_atom(ty));
+                        state
+                            .affine
+                            .measure_atoms
+                            .get_mut()
+                            .insert(term, image.clone());
+                        if let Some(established) = division
+                            && let Some((dividend, divisor)) = self
+                                .reasoning()
+                                .unsigned_division_operand_forms(returned, &mut state.affine)
+                        {
+                            self.vocabulary.establish_unsigned_division_image(
+                                &image,
+                                &dividend,
+                                &divisor,
+                                established,
+                                &mut state.affine,
                             );
                         }
+                        self.establish_unsigned_division_product(
+                            &image,
+                            returned,
+                            &mut state.affine,
+                        );
                     }
                 }
 
