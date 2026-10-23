@@ -63,4 +63,4 @@ jobs:
           fi
           grep -F "example a disequality requirement the call refutes: the checker gives acceptance, expected a rejection citing FN-8" "$RUNNER_TEMP/out.txt"
           grep -F "example a disequality postcondition the return refutes: the checker gives acceptance, expected a rejection citing FN-9" "$RUNNER_TEMP/out.txt"
-          test "$(grep -c '^example ' "$RUNNER_TEMP/out.txt")" -eq 2
+          grep -F "conformance: 2 disagreements" "$RUNNER_TEMP/out.txt"
