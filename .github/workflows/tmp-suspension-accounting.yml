@@ -93,7 +93,7 @@ jobs:
               perl -0777 -pi -e 's/\n            && atomic_load_explicit\(&driver->host_waits, memory_order_seq_cst\) == 0u\n            && atomic_load_explicit\(&driver->ingress_count, memory_order_seq_cst\) == 0u\) return 0;/) return 0;/ or die "the pending check is gone\n"' "$f" ;;
             single-collect)
               # The stuck check does not validate its first collection.
-              perl -0777 -pi -e 's/return wf_invocations_unchanged\(sequence\)\n        && /return /g or die "the second collection is gone\n"' "$f" ;;
+              perl -0777 -pi -e 's/return wf_invocations_unchanged\(sequence\)\n        && /(void)sequence;\n    return /g or die "the second collection is gone\n"' "$f" ;;
             fair-through-gate)
               # A fairness suspension arms the external-wake gate again.
               perl -0777 -pi -e 's/(    wf_context_parked_away = WF_SUSPEND_FAIR;)/$1\n    wf_context_arm_wake(self);/ or die "the fair marker is gone\n"' "$f" ;;
