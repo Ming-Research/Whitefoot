@@ -5,7 +5,7 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-10-23 A guard written as a helper call filters wakes through a callback
+## 2026-10-20 A guard written as a helper call filters wakes through a callback
 
 Nodes: compiler/waiting-contexts/state-locks
 
