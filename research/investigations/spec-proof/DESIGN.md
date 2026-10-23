@@ -695,6 +695,24 @@ model, within the 25 s budget, on the fourth `proof.yml` run: the first failed
 in one lemma, the saturation step, and the third on normalizing steps that
 changed nothing.
 
+### The affine lemmas
+
+The affine proof part, `AffineSound.lean`, gives the affine forms of [ENT-6]
+their meaning under a valuation of the atoms and proves that `DIRECT`, the two
+integer tightenings, the residual check and `AUTO` answer "holds" only for an
+inequality that holds whenever the view is satisfied: not contradictory, every
+atom in its interval, every published premise and every L0 image holding.
+That the images hold, given the state's L0 relations, is left to the
+discharge proof, which has the L0 satisfaction. The soundness of a
+tightening does not depend on how its factor is chosen: dividing a holding
+inequality by any factor of every coefficient and rounding the bound down
+gives one that holds. The part adds 347 lines of Lean in one module and
+changes no model definition. The build of the model and harness took 16.2 s,
+10.1 s and 18.1 s on its three green runs, within the 25 s budget. The part
+took five engineer turns and four `proof.yml` runs to its review, one of which
+failed to compile: the toolchain's `Int.fdiv_eq_ediv` carries no sign
+hypothesis.
+
 ## Cost
 
 Precedents with measured sizes:
