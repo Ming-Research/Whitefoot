@@ -737,15 +737,14 @@ theorem stmt_set_index {b : String} {off : Atom} {e : Expr}
 theorem stmt_call {e : Expr} (h : Static.stmt p f c (.call e) = .ok r) :
     (∃ path targs as, e = .call path targs as) ∧ (∃ t, Static.exprTy p c.scope e = .ok t) ∧
       r = (c, { normal := true, breaks := [] }) := by
-  cases e with
-  | call path targs as =>
+  cases e
+  case call path targs as =>
     simp only [Static.stmt] at h
     obtain ⟨_, hd, h⟩ := bind_ok h
     exact ⟨⟨path, targs, as, rfl⟩, discard_ok hd, (Except.ok.inj h).symm⟩
-  | atom _ => simp only [Static.stmt, reject_bind] at h; exact absurd h reject_ne
-  | infix _ _ _ => simp only [Static.stmt, reject_bind] at h; exact absurd h reject_ne
-  | op _ _ => simp only [Static.stmt, reject_bind] at h; exact absurd h reject_ne
-  | bool _ => simp only [Static.stmt, reject_bind] at h; exact absurd h reject_ne
+  all_goals
+    simp only [Static.stmt, reject_bind] at h
+    exact absurd h reject_ne
 
 theorem stmt_ret {e : Expr} (h : Static.stmt p f c (.ret e) = .ok r) :
     Static.exprTy p c.scope e = .ok (Static.normTy p f.resultTy) ∧
@@ -875,6 +874,7 @@ theorem checkProgram_inv {p : Program} (h : Static.checkProgram p = .ok ()) :
     ∀ f ∈ p.fns, ∃ u, Static.checkFn p f = .ok u := by
   simp only [Static.checkProgram] at h
   obtain ⟨_, -, h⟩ := bind_ok h
+  obtain ⟨_, h, -⟩ := bind_ok h
   refine forIn_ok (P := fun (f : FnDecl) => ∃ u, Static.checkFn p f = .ok u) ?_ h
   intro f s hs
   obtain ⟨_, h1, hs⟩ := bind_ok hs
@@ -1085,9 +1085,11 @@ theorem findLoop_ok {p : Program} {f : FnDecl} {k : List Kont} :
         · simp only [KontOk] at hm ⊢
           exact hm
         · cases label with
-          | none => simp [Static.loopDepth]
+          | none => rfl
           | some l' =>
-            have hl' : l = some l' := by simpa [eq_comm] using hmatch
+            have hl' : l = some l' := by
+              simp at hmatch
+              first | exact hmatch.symm | exact hmatch
             rw [hl, hlo, hl']
             simp [Static.loopDepth, List.findIdx?_cons]
       · cases label with
@@ -1177,8 +1179,7 @@ theorem kont_entry {p : Program} {g : FnDecl} {fl : Static.Flow}
     KontOk p g (initCtx p g) true [] [.stmts [] 0 g.body] := by
   simp only [KontOk]
   refine ⟨true, fl, fun _ => rfl, hfl, BreaksOk.nil, fun c' hc' => ?_⟩
-  simp only [KontOk]
-  exact ⟨hn, hc'.1, rfl⟩
+  exact ⟨hn, hc'.1, by trivial⟩
 
 theorem enter_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {g : FnDecl} (hg : g ∈ p.fns)
     {args : List (String × Value)}
@@ -1364,10 +1365,8 @@ theorem branch_ok {p : Program} {g : Frame} {c : Static.Ctx} {ex : List Bool}
   simp only [KontOk]
   cases bv
   · refine ⟨true, b, fun _ => rfl, hb, hbr.right, fun c' hc' => ?_⟩
-    simp only [KontOk]
     exact ⟨c, hc', hE.length.symm, hK.weaken (by intro h; simp [h])⟩
   · refine ⟨true, a, fun _ => rfl, ha, hbr.left, fun c' hc' => ?_⟩
-    simp only [KontOk]
     exact ⟨c, hc', hE.length.symm, hK.weaken (by intro h; simp [h])⟩
 
 /-- One statement of the running frame. -/
@@ -1476,7 +1475,6 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
       decide (fb.breaks.headD 0 > 0) :: ex, hE, ?_⟩, hst⟩
     simp only [KontOk]
     refine ⟨true, fb, fun _ => rfl, hfb, hBO, fun c'' hc'' => ?_⟩
-    simp only [KontOk]
     exact ⟨_, c, fb, _, ex, rfl, hc'', rfl, rfl, hE.length.symm, hfb, rfl, hBO, hK⟩
   | brk label =>
     obtain ⟨hres, hr⟩ := stmt_brk hs
@@ -1516,7 +1514,6 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
     refine ⟨hp, ⟨hmem, hentry, ci, e :: ex0, hE', ?_⟩, hst⟩
     simp only [KontOk]
     refine ⟨true, fb, fun _ => rfl, hfb, hBO, fun c'' hc'' => ?_⟩
-    simp only [KontOk]
     exact ⟨ci, c0, fb, e, ex0, rfl, hc'', hsc0, hlo, rfl, hfb, he, hBO, hk0⟩
   | invariant n rel =>
     have hr := stmt_invariant hs
@@ -1567,7 +1564,6 @@ theorem step_ok {p : Program} {cfg : Config} (h : cfg.WellTyped p) : StepOk p (s
         refine ⟨hp, ⟨hmem, hentry, ci, e :: ex0, hE', ?_⟩, hst⟩
         simp only [KontOk]
         refine ⟨true, fb, fun _ => rfl, hfb, hBO, fun c'' hc'' => ?_⟩
-        simp only [KontOk]
         exact ⟨ci, c0, fb, e, ex0, rfl, hc'', hsc0, hlo, rfl, hfb, he, hBO, hk0⟩
 
 theorem runFrom_not_illFormed {p : Program} :
