@@ -32,7 +32,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
         rule: "FORM-2",
-        sentences: &["\n  mechanical_fix: remove the blank line inside this item [FORM-2]\n"],
+        sentences: &[
+            "\n  mechanical_fix: make the change below to reach the canonical layout; it gives the bytes FORM-2 requires between two terminals [FORM-2]: line 1 between `{` and `return`: write \"\\n  \" instead of \"\\n\\n  \"\n",
+        ],
         repaired: &[br#"fn value() -> result: u32 pure {
   return 0_u32;
 }
