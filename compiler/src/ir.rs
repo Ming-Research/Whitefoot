@@ -875,12 +875,18 @@ pub enum IrWorkEstimate {
 /// `values[0]` is the address of the target's state; every other value is a
 /// scalar's address in that state or an operand the registration captures,
 /// which atoms name by position. `program` combines the atoms in postfix
-/// order. A guard that implies nothing checkable has no test.
+/// order. A callback instead receives the state and captured scalar values
+/// in `values[1..]`, with no atom program. A guard that implies nothing
+/// checkable by either representation has no test.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IrWakeTest {
     pub(crate) values: Vec<IrValueId>,
     pub(crate) atoms: Vec<IrWakeAtom>,
     pub(crate) program: Vec<IrWakeCode>,
+    /// An ordinary, nonwaiting Bool function whose first argument is the
+    /// current state address and whose remaining arguments are captured
+    /// scalars. Mutually exclusive with the atom program.
+    pub(crate) callback: Option<u32>,
 }
 
 /// One comparison of a wake test: the scalar at `field`'s address against

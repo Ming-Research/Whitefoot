@@ -420,7 +420,7 @@ uint32_t wf__claim_killed(void *cell);
  * kind in both, as the acquire asked for it.  `wf__shared_watch`, called
  * holding the object after a guard read false, ends the hold and waits until
  * a statement that writes the object ends, leaving it in a state where
- * `test` (a `wf_wake_test` below, or NULL for none) may hold: it returns
+ * `test` (a `wf_wake_test` or `wf_wake_callback` below, or NULL for none) may hold: it returns
  * zero when one has ended since it registered the wait, and otherwise
  * nonzero, after which the frame suspends; either way the statement then
  * acquires the object again and re-reads its guard. */
@@ -628,6 +628,22 @@ typedef struct wf_wake_test {
     uint8_t program[WF_WAKE_PROGRAM];
     wf_wake_atom atoms[WF_WAKE_ATOMS];
 } wf_wake_test;
+
+/* A generated full-guard filter. The first byte tags this 24-byte descriptor
+ * rather than an atom program. The callback reads the held target state and
+ * immutable captures only: it never re-enters the runtime, waits, locks or
+ * allocates. Descriptor and capture block live in the waiting frame and stay
+ * unchanged until its watch is detached. Distinct descriptors are not grouped,
+ * even when they have the same callback and captures. */
+#define WF_WAKE_CALLBACK 255u
+#define WF_WAKE_CALLBACK_SIZE 24u
+typedef int (*wf_wake_evaluate)(const void *target_state, const void *captured_block);
+typedef struct wf_wake_callback {
+    uint8_t tag;
+    uint8_t reserved[7];
+    wf_wake_evaluate evaluate;
+    const void *captures;
+} wf_wake_callback;
 
 /* Diagnostic guard counters, off unless a build defines WF_GUARD_COUNTERS
  * to 1; a build without them compiles no counter code. */
