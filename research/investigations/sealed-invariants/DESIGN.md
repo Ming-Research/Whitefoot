@@ -524,8 +524,7 @@ the instance becomes an active fact of the range walk [RANGE-2]. When the
 anchor's other data are not terms — a place under a subscript that is no
 [ENT-2] term — and I has exactly one binder datum, the instance is
 established over the term the read binds (`let v = indexes[i].value;`
-gives `v < 16`, and `let n = stacks[i + 1].slots.len;` gives `n >= 1`).
-An instance is a fact like any other: a later write that
+gives `v < 16`). An instance is a fact like any other: a later write that
 overlaps its support kills it [ENT-5], and the same write adds the debt
 (T2), so the fact cannot be re-established until the debt is restored.
 The support of a measure member is the one descriptor word it names, so a

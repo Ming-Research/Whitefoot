@@ -1129,12 +1129,11 @@ impl Input<'_, '_> {
         let Some(read) = measure_read(expression) else {
             return self.read_place_path(expression);
         };
-        if read.term.is_none() {
-            return None;
-        }
-        let mut place = read.place;
-        place.path.push(PlaceStep::Measure(read.measure));
-        Some(place)
+        read.term.is_some().then(|| {
+            let mut place = read.place;
+            place.path.push(PlaceStep::Measure(read.measure));
+            place
+        })
     }
 
     /// [TYPE-11.S7] each binder datum the read `expression` selects at every

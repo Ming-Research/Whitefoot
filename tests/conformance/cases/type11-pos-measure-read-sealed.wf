@@ -38,7 +38,8 @@ fn shifted(stacks: &Slots<Stack, 4>, i: u64) -> result: u64 reads(stacks) contra
   requires i < 3_u64;
   requires stacks^.len == 4_u64;
 } {
-  let n = stacks^[i + 1_u64].slots.len;
+  let j = i + 1_u64;
+  let n = stacks^[j].slots.len;
   let share = 64_u64 / n;
   return share;
 }
