@@ -1,0 +1,17 @@
+interface Answer {
+  fn answer(env: &u64) -> result: u64 writes(env) contract {
+    ensures result == 3_u64;
+  };
+}
+
+fn zero(actual_env: &u64) -> output: u64 pure {
+  return 0_u64;
+}
+
+binding MissingAnswer : Answer {
+  answer = zero;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
