@@ -275,9 +275,12 @@ theorem joinImage_onlyGrows {t : IntTy} {fs : List Form} : OnlyGrows (joinImage 
     | (refine Fact.foldl_inv (fun acc : Form × Int × Int => acc.2.1 ≤ acc.2.2) _ _ _
           (Int.le_refl _) ?_
        intro acc xa _ hacc
+       obtain ⟨base, lo, hi⟩ := acc
+       obtain ⟨x, a⟩ := xa
        dsimp only at hacc ⊢
        split
-       · exact Int.add_le_add hacc (Int.le_trans (Int.min_le_left _ _) (Int.le_max_left _ _))
+       · try split
+         exact Int.add_le_add hacc (Int.le_trans (Int.min_le_left _ _) (Int.le_max_left _ _))
        · exact hacc)
 
 macro_rules
