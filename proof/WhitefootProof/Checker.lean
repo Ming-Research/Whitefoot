@@ -520,21 +520,23 @@ def ineqs (op : CmpOp) (a b : Form) : List Ineq :=
   | .eq => [Ineq.le a b, Ineq.le b a]
   | .ne => []
 
-/-- The right-hand L0 term of each component of a relation, for the bridge:
-the side a component bounds from above. -/
+/-- The affine components of a relation with the right-hand L0 term of each,
+for the bridge: the side a component bounds from above. A disequality has no
+affine component [ENT-6]: `DIRECT` and `AUTO` decide inequalities only, so it
+is proved by its L0 facts alone. -/
 def bridges (op : CmpOp) (a b : Form) (ta tb : Option (Term × Int)) :
-    List (Ineq × Option (Form × Term)) :=
+    Option (List (Ineq × Option (Form × Term))) :=
   let up (lhs : Form) (rhs : Option (Term × Int)) : Option (Form × Term) :=
     match rhs with
     | some (t, k) => if t == .z then none else some (lhs.sub (Form.const k), t)
     | none => none
   match op with
-  | .le => [(Ineq.le a b, up a tb)]
-  | .lt => [(Ineq.le (a.add (Form.const 1)) b, up (a.add (Form.const 1)) tb)]
-  | .ge => [(Ineq.le b a, up b ta)]
-  | .gt => [(Ineq.le (b.add (Form.const 1)) a, up (b.add (Form.const 1)) ta)]
-  | .eq => [(Ineq.le a b, up a tb), (Ineq.le b a, up b ta)]
-  | .ne => []
+  | .le => some [(Ineq.le a b, up a tb)]
+  | .lt => some [(Ineq.le (a.add (Form.const 1)) b, up (a.add (Form.const 1)) tb)]
+  | .ge => some [(Ineq.le b a, up b ta)]
+  | .gt => some [(Ineq.le (b.add (Form.const 1)) a, up (b.add (Form.const 1)) ta)]
+  | .eq => some [(Ineq.le a b, up a tb), (Ineq.le b a, up b ta)]
+  | .ne => none
 
 -- spec ENT-3.S16 7a32ea60acd3b2d3
 /-- A relation's L0 facts when its normalized source-term form `lhs - rhs`
@@ -571,7 +573,7 @@ def relQuery (goal : Option GExpr) (r : Relation) (looks : String → Option (Te
     let affine : Option (List (Ineq × Option (Form × Term))) := do
       let fa ← linImage looki la
       let fb ← linImage looki lb
-      return bridges r.op fa fb ta tb
+      bridges r.op fa fb ta tb
     { goal, l0, affine }
   | _, _ => { goal }
 

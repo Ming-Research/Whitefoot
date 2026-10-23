@@ -1,0 +1,66 @@
+# Temporary (spec-proof-discharge-sound): checks the draft proofs outside the
+# package and watches the two disequality examples fail on main's checker.
+# Removed before the full check.
+name: tmp-spec-proof-discharge-sound
+
+on:
+  push:
+    branches: [spec-proof-discharge-sound]
+
+jobs:
+  draft:
+    name: Draft proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Lean toolchain
+        working-directory: proof
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$RUNNER_TEMP/elan-init.sh"
+          sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/lake" --version
+      - name: Build the model
+        working-directory: proof
+        run: perl ../.github/run-check.pl tmp-build lake build WhitefootProof
+      - name: Probe
+        working-directory: proof
+        continue-on-error: true
+        run: perl ../.github/run-check.pl tmp-probe lake env lean Probe.lean
+      - name: Draft
+        working-directory: proof
+        run: perl ../.github/run-check.pl tmp-draft lake env lean Draft.lean
+
+  watch-fail:
+    name: Examples fail on main's checker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the pinned Lean toolchain
+        working-directory: proof
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$RUNNER_TEMP/elan-init.sh"
+          sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/lake" --version
+      - name: Restore main's checker
+        run: git show origin/main:proof/WhitefootProof/Checker.lean > proof/WhitefootProof/Checker.lean
+      - name: Conformance on main's checker
+        working-directory: proof
+        run: |
+          set +e
+          perl ../.github/run-check.pl tmp-watch lake exe conformance > "$RUNNER_TEMP/out.txt" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/out.txt"
+          if [ "$status" -eq 0 ]; then
+            echo "unexpected pass on main's checker"
+            exit 1
+          fi
+          grep -F "example a disequality requirement the call refutes: the checker gives acceptance, expected a rejection citing FN-8" "$RUNNER_TEMP/out.txt"
+          grep -F "example a disequality postcondition the return refutes: the checker gives acceptance, expected a rejection citing FN-9" "$RUNNER_TEMP/out.txt"
+          test "$(grep -c '^example ' "$RUNNER_TEMP/out.txt")" -eq 2
