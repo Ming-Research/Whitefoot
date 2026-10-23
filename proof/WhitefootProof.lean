@@ -9,3 +9,4 @@ import WhitefootProof.FactsSound
 import WhitefootProof.Affine
 import WhitefootProof.Checker
 import WhitefootProof.Walk
+import WhitefootProof.Points

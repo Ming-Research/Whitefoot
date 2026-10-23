@@ -335,7 +335,9 @@ count is in [the second slice](#the-second-slice-syntax-tree-parser-and-interpre
 It is built in slices, each a pull request through the same check: the
 check itself with the value part of [OP-2] (the first, with this record); the
 fragment's syntax, parser and interpreter, compared with the run cases; the
-checker, compared with the accepted and rejected cases; the proofs.
+checker, compared with the accepted and rejected cases; the model's defects
+the proofs need fixed and the points of a run the theorems are stated over
+([below](#model-defects-and-the-points-of-a-run)); the proofs.
 
 Prior criterion for the approach, written before the first slice is
 measured. Each slice records its model and proof lines and the turns and CI
@@ -372,7 +374,7 @@ Four choices shape the tree and the machine for the proofs that follow.
 
 | Choice | Selected | Alternatives | Why |
 |---|---|---|---|
-| Tree | one plain inductive per syntactic class, statements nested as `List Stmt`, names as strings, no positions | a tree carrying source spans; a control-flow graph; de Bruijn indices | the theorems reason by structural induction over statements, as the rules state them; [TYPE-6] forbids shadowing, so a name denotes one binding in scope and indices would add renaming lemmas without removing a case; positions serve diagnostics, which no theorem mentions |
+| Tree | one plain inductive per syntactic class, statements nested as `List Stmt`, names as strings, no source positions | a tree carrying source spans; a control-flow graph; de Bruijn indices | the theorems reason by structural induction over statements, as the rules state them; [TYPE-6] forbids shadowing, so a name denotes one binding in scope and indices would add renaming lemmas without removing a case; source spans serve diagnostics, which no theorem mentions, and a statement's place in a run is its path through the nesting ([Model defects and the points of a run](#model-defects-and-the-points-of-a-run)) |
 | Semantics | a small-step machine: call frames, each a continuation of statement lists, block scopes and loop markers | a big-step evaluator with fuel; a step relation with no executable function | `facts_hold` quantifies over reachable points, which is the reflexive-transitive closure of `step`; a big-step evaluator would need a second, separate reachability relation; an executable `step` is what the conformance cases run |
 | Outcomes | `done`, `stuck` in the five meaningless states, `illFormed`, `outOfSteps` | folding type and name failures into `stuck` | a type mismatch or an unresolved name is excluded by typing and resolution, judgments the checker decides without facts; keeping it apart lets `accepted_never_stuck` say exactly that no proof obligation is left undischarged; the fragment reaches no binding without a value, since every `let` has its value and `move` is outside it, so that state waits for a later fragment |
 | Contracts | read over the mathematical integers [FN-8] at the call and at the return | erased, as the specification erases them | a false requirement or postcondition is a state the rules give no meaning; the machine must reach it as `stuck` for the theorem to exclude it |
@@ -515,8 +517,17 @@ choose one, the prior criterion's count:
    that one premise followed by fixed interval substitution proves it"
    [MSR-4] without saying which endpoint is tried; the checker takes the bound
    interval substitution gives after subtracting the premise.
+7. [ENT-6] says an immutable datum "retains its captured image" but not what
+   a join keeps of it, while it states for bindings, measures and tracked
+   fields that a join keeps an image only when every non-contradictory input
+   holds the same one. The checker keeps a call datum's image, and a captured
+   division, only when every non-contradictory input holds it, as the
+   compiler does; read literally with [ENT-2]'s type bounds on every term,
+   the union would let a datum minted on one branch bound a binding on the
+   other. Found while fixing the model before the proofs
+   ([Model defects and the points of a run](#model-defects-and-the-points-of-a-run)).
 
-Six places, below the prior criterion's ten.
+Seven places, below the prior criterion's ten.
 
 Three simplifications are known and recorded here rather than counted: a
 state is contradictory in the checker when L0 derives `t - t <= -1` or both
@@ -556,6 +567,104 @@ expansion plus the links it may follow. The fix, with main's [SET-1]
 amendment merged in, took three more engineer turns and two more `proof.yml`
 runs, the first red on that program alone as expected.
 
+### Model defects and the points of a run
+
+Before the theorems can be proved, the model needed four changes, made in one
+pull request ahead of the proofs (board item `spec-proof-model-points`).
+
+Two defects let the checker accept a program that overflows at run time.
+Both were read from the source and confirmed by running the model and the
+compiler on the program below; the model accepted it and its run stopped at
+`y0 + 1_u8`, and the compiler rejected it citing [FN-9].
+
+```wf
+fn g(v: u8) -> r: u8 pure contract {
+  ensures r - r + v != v + 1_u8;
+} {
+  return v;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = array_filled::<u8, 1>(value: 255_u8);
+  let y = a[0_u64];
+  let y0 = y;
+  if y < 255_u8 {
+    set y = y + 1_u8;
+    let w = g(v: y);
+    set y = w;
+  }
+  let z = y0 + 1_u8;
+  return std::process::exit_status(code: z);
+}
+```
+
+- [FN-9] requires an operand to contain a result datum, and an operand is a
+  relation term, the side after its coefficients are summed. The model
+  looked for the result among the written names, so `r - r` counted. It
+  now reads the names the normalized sides carry, at the shape check, at a
+  return's entry-image check and where a call's publication skips a relation
+  that carries the result but has no destination.
+- A join took the union of the inputs' call datum images. On the then path
+  the publication above gives the datum of `y` a disequality with itself
+  that holds on every input, so it survives the join, the datum keeps its
+  `u8` bounds, and through its image they read as `y0 <= 254` on the else
+  path, where `y0` is 255. A join now keeps a call datum's image, and a
+  captured division, only when every non-contradictory input holds it, as
+  the compiler does; the text leaves this open (reading 7 above). For
+  divisions the change accepts the same programs, since a quotient atom
+  minted on one branch appears in no image after the join (deduced
+  from how a join forms images).
+
+The theorems quantify over every `Program`, not only those the parser
+produces, so the checker now also judges each literal's range [FORM-7], which
+only the parser judged; a literal such as `300_u8` would make the facts
+contradictory and every obligation dischargeable.
+
+The second theorem speaks of the facts at each point a run reaches, which
+needs points. A point is a function's name and a statement's position, its
+path through the nesting: the statement at index `i` of the block at `b` is at
+`b ++ [i]`, the body is the block at `[]`, and an `if` or `loop` at `q` has
+its blocks at `q ++ [0]` and, for `else`, `q ++ [1]`. The interpreter's
+statement continuations and loop markers carry the position, and the walk
+records, on entering each statement, the bindings in scope, the fact state
+and the atoms minted so far. `Points.lean` defines the theorems' premise
+(`main` exists, takes no parameter, and its requirements hold), the snapshot
+at a point (a contradictory one where the walk recorded none) and
+reachability (a run from `main` takes steps to a configuration whose running
+frame is about to run that statement). A path was chosen over a numbering of
+statements in walk order, which the interpreter would have to recompute, and
+over a source span, which no theorem needs and a tree built directly lacks.
+
+The conformance comparison checks the four changes. The program above,
+beside the cases, must be rejected citing [FN-9]; the comparison failed on it
+alone with the model before the fix. A tree with `300_u8`, built directly,
+must be rejected citing [FORM-7]. Every case the checker accepts is run from
+`main`, and each point the run reaches must have a snapshot whose bindings
+have the frame's names in its order, so the interpreter and the walk agree on
+every position and scope.
+
+With the changes the comparison still agrees with every case: the 39
+`accept` and 46 `run` cases in the fragment are accepted, the run cases
+reach their expected status, and the 86 `reject` cases whose rule is covered
+are rejected. No program was found that the union of call datum images lets
+through once [FN-9] reads normalized sides, so that change shows in no case;
+it brings the model to the compiler's join and lets the join's soundness be
+proved input by input. The point check made the conformance run take 5.1 s
+against 0.9 s on the main line's run of the same day, within its 10 s budget;
+the build took 15.9 s against 16.7 s.
+
+The slice adds 210 lines of Lean to the model and removes 80, 79 of the added
+lines in the new `Points.lean`, and adds 78 lines to the conformance harness
+and removes 5. It took two engineer turns and four `proof.yml` runs to its
+review: the run that watched the comparison fail on the program above, one
+that failed to compile for a missing import, and two green. The review found
+two defects: the out-of-range literal check and the point check had not been
+watched failing, and this section's place among the slices and its counts
+were missing. A temporary workflow then ran the harness three times on
+deliberately broken models, one per condition: the literal check removed, the
+walk recording no snapshot inside a block, and each snapshot dropping its
+newest binding; each run failed on the condition it targets.
+
 ### The L0 lemmas
 
 `FactsSound.lean` gives the L0 relation state its meaning and proves each
@@ -573,17 +682,18 @@ name on their own, and the join then adds those atoms' implicit type bounds.
 With `p2 : u8` live and valued 0, a taken input holding `z - (p1 + p2) <=
 -1000` and another holding `p1 - p1 != 3`, the join keeps the disequality, its
 closure bounds `p1` by 255, and any valuation agreeing on `p2` and on `p1 +
-p2` gives `p1` a value of at least 1000. Inferred from the definitions; the example was
-not run. The lemma therefore asks that the atoms of those terms lie in their
+p2` gives `p1` a value of at least 1000. Inferred from the definitions; the
+example was not run. The lemma therefore asks that the atoms of those terms lie in their
 types, which a valuation read off a running frame satisfies, and builds the
 new valuation atom by atom: the taken input's atoms keep their values and every
 other atom takes 0, a member of every fragment type. A second form needs no
 new valuation when every term already lies in its type.
 
-The module adds 618 lines of Lean and no coverage mark. It built in 2.3 s
-inside a 17.2 s build of the model, within the 25 s budget, on the fourth
-`proof.yml` run: the first failed in one lemma, the saturation step, and the
-third on normalizing steps that changed nothing.
+The module adds 618 lines of Lean and no coverage mark. Before the model
+changes above were merged in, it built in 2.3 s inside a 17.2 s build of the
+model, within the 25 s budget, on the fourth `proof.yml` run: the first failed
+in one lemma, the saturation step, and the third on normalizing steps that
+changed nothing.
 
 ## Cost
 
