@@ -267,8 +267,8 @@ struct ArmFacts {
 }
 
 /// [TYPE-11] an atomic block's type invariants, owed at each edge leaving
-/// the block: its end, a `return`, a `break` of a loop around it, a `give` to
-/// a value initializer around it, and an error propagation.
+/// the block: its end, a `return`, a `break` or `continue` of a loop around
+/// it, a `give` to a value initializer around it, and an error propagation.
 struct AtomicFrame {
     loop_depth: usize,
     give_depth: usize,
