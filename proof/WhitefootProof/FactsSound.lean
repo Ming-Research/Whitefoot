@@ -92,28 +92,21 @@ theorem mem_termUniverse {t : Term} {extra : List Term} {bs : List Bound}
     t ∈ (termUniverse extra bs ds).toList ↔
       t = .z ∨ t ∈ extra ∨ (∃ b ∈ bs, t = b.a ∨ t = b.b) ∨
         ∃ d ∈ ds, t = d.a ∨ t = d.b := by
-  first
-  | simp only [termUniverse, List.toList_toArray, List.mem_eraseDups, List.mem_append,
-      List.mem_cons, List.mem_flatMap, List.mem_singleton, List.not_mem_nil, or_false,
-      or_assoc, iff_self]
-  | simp [termUniverse, or_assoc]
+  simp only [termUniverse, List.toList_toArray, List.mem_eraseDups, List.mem_append,
+    List.mem_cons, List.mem_flatMap, List.not_mem_nil, or_false, or_assoc, iff_self]
 
 theorem L0.mem_terms {t : Term} {s : L0} :
     t ∈ s.terms ↔
       (∃ b ∈ s.bounds, t = b.a ∨ t = b.b) ∨ ∃ d ∈ s.diseqs, t = d.a ∨ t = d.b := by
-  first
-  | simp only [L0.terms, List.mem_eraseDups, List.mem_append, List.mem_flatMap,
-      List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false, iff_self]
-  | simp [L0.terms]
+  simp only [L0.terms, List.mem_eraseDups, List.mem_append, List.mem_flatMap,
+    List.mem_cons, List.not_mem_nil, or_false, iff_self]
 
 theorem not_and_not {x y : Bool} (h : (!x && !y) = true) : x = false ∧ y = false := by
   revert h
   cases x <;> cases y <;> decide
 
 theorem zero_mem_type (ty : IntTy) : ty.minVal ≤ 0 ∧ 0 ≤ ty.maxVal := by
-  first
-  | (cases ty <;> decide)
-  | (cases ty <;> simp [IntTy.minVal, IntTy.maxVal, IntTy.bits, IntTy.signed])
+  cases ty <;> decide
 
 /-! ## The closure matrix -/
 
@@ -238,21 +231,21 @@ theorem strengthen_sound {ν : TermVal} {T : Nat → Term} {idx : Term → Nat}
   have hm0 : Matrix.Sound ν T m := hm
   try dsimp only
   by_cases h1 : (m.get (idx d.a) (idx d.b) == some d.c) = true
-  · rw [if_pos h1]
+  · rw [ite_eq_left h1]
     try dsimp only
     have hm1 := step1 m hm0 (beq_iff_eq.mp h1)
     by_cases h2 : ((m.lower (idx d.a) (idx d.b) (d.c - 1)).get (idx d.b) (idx d.a) ==
         some (-d.c)) = true
-    · rw [if_pos h2]
+    · rw [ite_eq_left h2]
       exact step2 _ hm1 (beq_iff_eq.mp h2)
-    · rw [if_neg h2]
+    · rw [ite_eq_right h2]
       exact hm1
-  · rw [if_neg h1]
+  · rw [ite_eq_right h1]
     try dsimp only
     by_cases h2 : (m.get (idx d.b) (idx d.a) == some (-d.c)) = true
-    · rw [if_pos h2]
+    · rw [ite_eq_left h2]
       exact step2 _ hm0 (beq_iff_eq.mp h2)
-    · rw [if_neg h2]
+    · rw [ite_eq_right h2]
       exact hm0
 
 theorem saturate_sound {ν : TermVal} {T : Nat → Term} {n : Nat} {idx : Term → Nat}
@@ -269,11 +262,8 @@ theorem saturate_sound {ν : TermVal} {T : Nat → Term} {n : Nat} {idx : Term �
     have h2 := strengthen_sound hidx hd h1
     simp only [saturate]
     split
-    next m' changed heq =>
-      rw [heq] at h2
-      split
-      · exact saturate_sound hidx hd fuel m' h2
-      · exact h1
+    · exact saturate_sound hidx hd fuel _ h2
+    · exact h1
 
 /-- The last step of `close`: no diagonal entry of a sound matrix is negative,
 so the state is not contradictory, and every bound read off the matrix holds. -/
@@ -304,9 +294,9 @@ theorem sat_of_matrix (U : Array Term) (m : Matrix) (ds : List Diseq) (ν : Term
       obtain ⟨i, -, hb⟩ := List.mem_flatMap.mp hb
       obtain ⟨j, -, hj⟩ := List.mem_filterMap.mp hb
       by_cases hij : (i == j) = true
-      · rw [if_pos hij] at hj
+      · rw [ite_eq_left hij] at hj
         cases hj
-      · rw [if_neg hij] at hj
+      · rw [ite_eq_right hij] at hj
         obtain ⟨c, hc, rfl⟩ := Option.map_eq_some_iff.mp hj
         exact hm i j c hc
     · intro d hdm
@@ -344,7 +334,7 @@ theorem close_sat {live : List Term} {bs : List Bound} {ds : List Diseq} {ν : T
       · next ty hty =>
         obtain ⟨hlo, hhi⟩ := ht t htU ty hty
         have h0 := ν.val_z
-        simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hbt
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hbt
         rcases hbt with rfl | rfl
         · refine ⟨?_, htU, hz⟩
           show ν.val t - ν.val .z ≤ ty.maxVal
@@ -362,9 +352,7 @@ theorem close_sat {live : List Term} {bs : List Bound} {ds : List Diseq} {ν : T
       exact h))
   have h3 := saturate_sound (T := T) (n := U.size) (idx := idx)
     (fun d hdm => ⟨hidx _ (hds d hdm).1, hidx _ (hds d hdm).2⟩) hd (2 * ds.length + 1) _ h2
-  first
-  | exact sat_of_matrix U _ ds ν h3 hd
-  | (unfold close; exact sat_of_matrix U _ ds ν h3 hd)
+  exact sat_of_matrix U _ ds ν h3 hd
 
 /-- Adding facts that hold to a satisfied state keeps it satisfied, when every
 term of the new universe lies in its type. -/
@@ -375,7 +363,7 @@ theorem L0.add_sat {s : L0} {live : List Term} {bs : List Bound} {ds : List Dise
     (s.add live bs ds).Sat ν := by
   obtain ⟨hc, hsb, hsd⟩ := hs
   unfold L0.add
-  rw [if_neg (show ¬(s.contra = true) by simp [hc])]
+  rw [ite_eq_right (show ¬(s.contra = true) by simp [hc])]
   refine close_sat (fun b h => ?_) (fun d h => ?_) ht
   · rcases List.mem_append.mp h with h | h
     · exact hsb b h
@@ -466,7 +454,7 @@ theorem L0.kill_sat {s : L0} {dead : Nat → Bool} {ν ν' : TermVal} (hs : s.Sa
     (s.kill dead).Sat ν' := by
   obtain ⟨hc, hb, hd⟩ := hs
   unfold L0.kill
-  rw [if_neg (show ¬(s.contra = true) by simp [hc])]
+  rw [ite_eq_right (show ¬(s.contra = true) by simp [hc])]
   try dsimp only
   refine ⟨hc, fun b hm => ?_, fun d hm => ?_⟩
   · obtain ⟨hm, hk⟩ := List.mem_filter.mp hm
@@ -571,12 +559,12 @@ theorem TermVal.restrict_atom (ν : TermVal) (keep : List Term) (t : Term)
     (hv : (ν.restrict keep).val t = if t ∈ keep then ν.val t else 0) :
     (t ∈ keep → (ν.restrict keep).val t = ν.val t) ∧
       ((∀ u ∈ keep, ν.Typed u) → (ν.restrict keep).Typed t) := by
-  refine ⟨fun hk => by rw [hv, if_pos hk], fun h ty hty => ?_⟩
+  refine ⟨fun hk => by rw [hv, ite_eq_left hk], fun h ty hty => ?_⟩
   rw [hv]
   by_cases hk : t ∈ keep
-  · rw [if_pos hk]
+  · rw [ite_eq_left hk]
     exact h t hk ty hty
-  · rw [if_neg hk]
+  · rw [ite_eq_right hk]
     exact zero_mem_type ty
 
 theorem TermVal.restrict_val (ν : TermVal) (keep : List Term) :
@@ -600,14 +588,10 @@ theorem TermVal.restrict_typed (ν : TermVal) (keep : List Term)
     (h : ∀ u ∈ keep, ν.Typed u) : ∀ t, (ν.restrict keep).Typed t
   | .z => by
     intro ty hty
-    first
-    | cases hty
-    | simp [Term.ty?] at hty
+    cases hty
   | .sum _ _ => by
     intro ty hty
-    first
-    | cases hty
-    | simp [Term.ty?] at hty
+    cases hty
   | .place id t => (restrict_atom ν keep (.place id t) rfl).2 h
   | .commit id t => (restrict_atom ν keep (.commit id t) rfl).2 h
   | .datum id t => (restrict_atom ν keep (.datum id t) rfl).2 h
