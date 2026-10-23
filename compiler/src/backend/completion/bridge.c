@@ -1880,8 +1880,10 @@ static _Atomic unsigned wf_drivers_notifying;
  * the count its last pass over its parked contexts saw. */
 static _Atomic uint64_t wf_context_foreign_publications;
 
-/* Drivers parked with nothing to run, and whether one has been woken to
- * look for work and has not looked yet: while one has, no other is woken. */
+/* Drivers logically idle, parked or polling with nothing to run (a driver
+ * stays idle across empty polls until wf_run_take hands it work), and whether
+ * one has been woken to look for work and has not looked yet: while one has,
+ * no other is woken. */
 static _Atomic unsigned wf_drivers_idle;
 static _Atomic unsigned wf_drivers_searching;
 
