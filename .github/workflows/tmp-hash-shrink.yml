@@ -242,23 +242,34 @@ jobs:
           import re, sys
           from collections import deque
           lines = open(sys.argv[1]).read().split("\n")
-          start = next(i for i, l in enumerate(lines) if l.startswith("define") and "hash_map_remove$instance" in l)
-          end = next(i for i in range(start, len(lines)) if lines[i] == "}")
-          label, holder, edges, branches = "entry", None, {}, []
-          for i in range(start + 1, end):
+          # The removal's definition that holds the shrink call: the lowering
+          # emits an if as a two-case switch on an i1 with an unreachable default.
+          for start, line in enumerate(lines):
+              if not (line.startswith("define") and "hash_map_remove$instance" in line):
+                  continue
+              end = next(i for i in range(start, len(lines)) if lines[i] == "}")
+              if any("hash_map_shrink$instance" in l and "call" in l for l in lines[start:end]):
+                  break
+          else:
+              sys.exit("no removal holds a shrink call")
+          label, holder, edges, switches = "entry", None, {}, []
+          i = start + 1
+          while i < end:
               line = lines[i]
               m = re.match(r"^([A-Za-z0-9_.$-]+):", line)
               if m:
                   label = m.group(1)
-              edges.setdefault(label, set())
+              edges.setdefault(label, set()).update(re.findall(r"label %([A-Za-z0-9_.$-]+)", line))
               if "hash_map_shrink$instance" in line and "call" in line:
                   holder = label
-              targets = re.findall(r"label %([A-Za-z0-9_.$-]+)", line)
-              edges[label].update(targets)
-              b = re.match(r"^\s*br i1 [^,]+, label %([A-Za-z0-9_.$-]+), label %([A-Za-z0-9_.$-]+)\s*$", line)
-              if b:
-                  branches.append((i, b.group(1), b.group(2)))
-          assert holder, "no shrink call in the removal"
+              if re.match(r"^\s*switch i1 ", line):
+                  close = next(j for j in range(i, end) if lines[j].strip() == "]")
+                  cases = [re.search(r"label %([A-Za-z0-9_.$-]+)", lines[j]).group(1) for j in range(i + 1, close)]
+                  for j in range(i + 1, close):
+                      edges[label].update(re.findall(r"label %([A-Za-z0-9_.$-]+)", lines[j]))
+                  switches.append((close, cases))
+                  i = close
+              i += 1
           def distance(source):
               seen, queue = {source: 0}, deque([source])
               while queue:
@@ -268,21 +279,21 @@ jobs:
                           seen[nxt] = seen[node] + 1
                           queue.append(nxt)
               return seen.get(holder)
-          # The branch whose one side reaches the shrink call and the other
-          # does not, nearest to the call.
+          # The two-way branch whose one side reaches the shrink call and the
+          # other does not, nearest to the call.
           best = None
-          for i, yes, no in branches:
-              a, b = distance(yes), distance(no)
-              if (a is None) != (b is None):
-                  d = a if a is not None else b
+          for close, cases in switches:
+              reach = [distance(c) for c in cases]
+              if len(cases) == 2 and (reach[0] is None) != (reach[1] is None):
+                  d = min(r for r in reach if r is not None)
                   if best is None or d < best[0]:
-                      best = (d, i, a is not None)
+                      best = (d, close, ["1" if r is not None else "2000" for r in reach])
           assert best, "no branch guards the shrink call"
-          _, i, first = best
-          weights = "i32 1, i32 2000" if first else "i32 2000, i32 1"
-          lines[i] = lines[i].rstrip() + ", !prof !9999990"
-          lines.append(f'!9999990 = !{{!"branch_weights", {weights}}}')
-          print("weighted:", lines[i].strip(), "->", weights)
+          _, close, weights = best
+          text = "i32 0, " + ", ".join(f"i32 {w}" for w in weights)
+          lines[close] = lines[close].rstrip() + ", !prof !9999990"
+          lines.append(f'!9999990 = !{{!"branch_weights", {text}}}')
+          print("weighted:", " ".join(l.strip() for l in lines[close - 3:close + 1]), "->", text)
           open(sys.argv[2], "w").write("\n".join(lines) + "\n")
           EOF
           for arm in $(cat "$out/arms.txt"); do
