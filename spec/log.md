@@ -22,6 +22,12 @@ archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
 file added by a change that edits no rule. The earlier procedure archived the
 outgoing version with every amendment; git holds the rest of the history.
 
+## 2026-10-22 a `define` name in a range clause is expanded before its range terms are checked
+
+Rules: changed RANGE-1
+
+Summary: RANGE-1 gains one sentence after its list of range-term atoms: "A `define` name in a clause is replaced by its definition [FN-8] before the clause's range terms are checked." FN-8 already expands every definition into every later clause; RANGE-1 did not say whether that expansion precedes the atom-list check, and the compiler rejected a define-named subscript in an ensures range clause while accepting it, without effect, in a requires range clause. Now a linear define such as `i + 1_u64` is an exact range term on both sides, and a define multiplying two variables is rejected on both sides under the range-term rule. Selection ground: FN-8's expansion into every later clause, applied uniformly; no clause in the repository or in Firn, Halo, Snowghost and Whitefoot-kit uses a product define in a per-element clause, so no existing program changes verdict.
+
 ## 2026-10-22 the specification carries no version, and an amendment adds no archive
 
 Rules: none added, changed or retired; the first line of `spec/kernel-spec.md` is `# Kernel Specification` and names no version
