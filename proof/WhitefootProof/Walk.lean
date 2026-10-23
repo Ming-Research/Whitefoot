@@ -201,7 +201,7 @@ where
 
 -- spec FN-9 dc8c78b15eb05053
 -- spec FN-9 c41a9690f56f2e8f
--- spec ENT-2 0f07cfa9989a6ee8
+-- spec ENT-2 6cf8c7e39161964d
 -- spec ENT-3.S5 96db5232821f2958
 -- spec ENT-3.S5 031da783167c8ba8
 -- spec ENT-3.S5 34b6becc68fcb93b
@@ -234,6 +234,19 @@ def setVar (env : Env) (st : State) (x : Var) (r : Rhs) : M State := do
   | _, some (f, args) => publish env st f args none none (·.write x.id)
   | _, none => return st.write x.id
 
+-- spec FN-9 d7353c166ac00fae
+/-- A returned computed integer expression gives the return's returned value
+[FN-9, ENT-2]: a fresh compiler-owned term on which the facts a `let` of the
+same expression gives its binding are established, after the expression's own
+obligations, in the state where it is evaluated. A place, literal or constant
+already denotes its term, and a call's result denotes none. -/
+def returnedValue (env : Env) (st : State) (r : Rhs) : M (State × Val) := do
+  match r.val.ty, r.val.term, r.call with
+  | .int t, none, none => do
+    let v := Term.commit (← freshId) t
+    return (st.add env (r.facts v), { r.val with term := some (v, 0) })
+  | _, _, _ => return (st, r.val)
+
 -- spec FN-1 e9ced632e8466aa3
 -- spec FN-9 474d75677adbf145
 -- spec FN-9 d0581c5c92c83713
@@ -242,7 +255,7 @@ def setVar (env : Env) (st : State) (x : Var) (r : Rhs) : M State := do
 -- spec FN-9 51a8f7fdc09ba5c6
 -- spec ENT-2 261757f83e159d4f
 -- spec ENT-2 e7b64879f58fcb34
--- spec FN-9 cda2ca4d680967a7
+-- spec FN-9 4038b8af6f9fa239
 /-- A return proves each postcondition [FN-9]: the result is the returned
 value and each parameter the normalized relation carries is its entry value,
 which needs its entry image to be stable. -/
@@ -400,7 +413,8 @@ def walkStmt (env : Env) (st : State) (pos : Pos) (s : Stmt) : M (Env × Out) :=
     let st ← match r.call with
       | some (f, args) => publish env st f args none none id
       | none => pure st
-    checkReturn env st r.val
+    let (st, v) ← returnedValue env st r
+    checkReturn env st v
     return (env, {})
   | .if_ c thn els _ => do
     let r ← evalRhs env st c

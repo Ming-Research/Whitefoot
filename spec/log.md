@@ -22,6 +22,12 @@ archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
 file added by a change that edits no rule. The earlier procedure archived the
 outgoing version with every amendment; git holds the rest of the history.
 
+## 2026-10-23 a returned computed integer expression proves a postcondition as a `let` of it would
+
+Rules: changed FN-9, ENT-2
+
+Summary: FN-9 read a selected return's result datum only from a returned place, a returned construction's field operand, a literal, a named const or a forwarded payload, so `return value + 1_u64;` under `ensures result <= 1000000000000000000_u64;` with `requires value <= 999999999999999999_u64;` was rejected as a return no postcondition can read, while `let r = value + 1_u64; return r;` proved the same relation; the float-text module's rounding function stopped there. FN-9 now defines a computed integer expression, an integer `cvt` [ENT-3.S5] or a row of the [ENT-3.S7] table of one fragment-integer type, the forms an ordinary `let` relates to its operands, and a returned one gives the return's returned value, on which the return establishes, after the expression's obligations and in the state where it is evaluated, exactly the image a SET-1 commit value of the same right-hand side receives; every other returned expression, a call among them, is still rejected. ENT-2 adds the returned value to clause (f) beside the commit and given values, identified by the return statement, the result ordinal and the fragment type, with their lifetime. Each selected return is proved on its own, so several returns of one function need no join. Selection ground: the owner's ruling on the design card float-return-computed-value, option A, treats `return` as `let` already treats the same expression and adds no proof power, instead of keeping the narrower return shape, which left the writer to route around it with a named `let`; the value-initializer `give` already binds the same expressions to a given value by the same image.
+
 ## 2026-10-23 a name is the same bytes on every host, and a directory listing states its records and leaves out `.` and `..`
 
 Rules: changed PRE-2

@@ -623,7 +623,8 @@ impl Vocabulary {
             | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
-            | TermKind::CommitValue { .. } => None,
+            | TermKind::CommitValue { .. }
+            | TermKind::ReturnedValue { .. } => None,
         }
     }
 

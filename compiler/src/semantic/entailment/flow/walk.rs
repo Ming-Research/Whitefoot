@@ -1328,6 +1328,29 @@ impl Analyzer<'_, '_> {
                     self.reasoning()
                         .finish_result(value, &judgment, result, state);
                 }
+                // [FN-9, ENT-3] a returned computed integer expression gives
+                // the return's evaluated value, bound exactly as an ordinary
+                // `let` of that expression binds its binding: after the
+                // expression's own obligations, in the state it is evaluated
+                // in. Only an ordinal some clause reads through it is bound.
+                if judgment.reached {
+                    for (ordinal, returned) in returned.iter().enumerate() {
+                        let ordinal = u32::try_from(ordinal)
+                            .expect("a return writes fewer than u32::MAX results");
+                        if self.input.evaluated_return(node_path, ordinal) {
+                            let _ = self.establish_value_image(
+                                node_path,
+                                ValueImage::Returned {
+                                    statement: node_path,
+                                    ordinal,
+                                },
+                                returned,
+                                &mut state.facts,
+                                &mut None,
+                            );
+                        }
+                    }
+                }
 
                 // [TYPE-11] a return inside an atomic block leaves it.
                 self.judge_atomic_exit(node_path, state);

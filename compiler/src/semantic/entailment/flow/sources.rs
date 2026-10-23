@@ -38,14 +38,19 @@ use super::*;
 use std::rc::Rc;
 /// Which term one evaluated value's [ENT-3] image is established on: the
 /// place a `let` binder introduces, the compiler-owned commit value of one
-/// `set` or `give` occurrence, or a checked integer conversion's private success
-/// payload [ENT-2, ENT-5].
+/// `set` or `give` occurrence, the compiler-owned returned value of one
+/// result ordinal at a `return`, or a checked integer conversion's private
+/// success payload [ENT-2, ENT-5, FN-9].
 /// These destinations use the same admitted source image; a conditional
 /// payload interprets it only inside its own success context.
 #[derive(Clone, Copy)]
 pub(super) enum ValueImage<'a> {
     Binding(BindingId),
     Commit(&'a crate::NodePath),
+    Returned {
+        statement: &'a crate::NodePath,
+        ordinal: u32,
+    },
     ResultPayload(TermId),
 }
 
@@ -511,6 +516,10 @@ impl Vocabulary {
         match destination {
             ValueImage::Binding(binding) => self.writable_place_term(binding, &[], value.ty()),
             ValueImage::Commit(node_path) => self.commit_value_term(node_path, value),
+            ValueImage::Returned { statement, ordinal } => {
+                let ty = fragment_type(value.ty())?;
+                Some(self.returned_value_term(statement, ordinal, ty))
+            }
             ValueImage::ResultPayload(payload) => Some(payload),
         }
     }
@@ -538,6 +547,41 @@ impl Vocabulary {
     ) -> Option<TermId> {
         self.terms.interned(&commit_value_kind(node_path, value)?)
     }
+
+    /// [ENT-2, FN-9] the returned value of one result ordinal at one
+    /// `return`, interned on first use. A return whose expression formed no
+    /// image still names this fresh term, which then carries only its type's
+    /// standing bounds.
+    pub(super) fn returned_value_term(
+        &mut self,
+        statement: &crate::NodePath,
+        ordinal: u32,
+        ty: IntegerType,
+    ) -> TermId {
+        self.terms.intern(TermKind::ReturnedValue {
+            return_path: statement.components().to_vec(),
+            ordinal,
+            ty,
+        })
+    }
+}
+
+/// [ENT-3] whether one fragment-integer expression is a computed value that
+/// an ordinary `let` relates to its operands: an exact integer conversion
+/// [ENT-3.S5] or one row of the [ENT-3.S7] table. A `give` binds such an
+/// expression to its given value [GIVE-1] and a `return` to its returned
+/// value [FN-9]; a place, literal or named const is handled as itself.
+pub(crate) fn computed_integer_image(value: &CheckedExpression) -> bool {
+    fragment_type(value.ty()).is_some()
+        && (matches!(
+            value,
+            CheckedExpression::NumericConversion {
+                mode: CheckedConversionMode::Exact,
+                source: CheckedNumericType::Integer(_),
+                destination: CheckedNumericType::Integer(_),
+                ..
+            }
+        ) || operation_shape(value).is_some())
 }
 
 fn commit_value_kind(node_path: &crate::NodePath, value: &CheckedExpression) -> Option<TermKind> {
@@ -1567,7 +1611,10 @@ impl Analyzer<'_, '_> {
         // captures none.
         if !matches!(shape.row, Row::Divide | Row::ShiftRight { wrap: false })
             || shape.operand.signed()
-            || matches!(destination, ValueImage::ResultPayload(_))
+            || matches!(
+                destination,
+                ValueImage::ResultPayload(_) | ValueImage::Returned { .. }
+            )
             || shape
                 .operands
                 .iter()
@@ -1894,13 +1941,7 @@ impl Vocabulary {
                 value: CheckedValue::Integer { .. },
                 ..
             } => DeliveryCarrier::Evaluated,
-            CheckedExpression::NumericConversion {
-                mode: CheckedConversionMode::Exact,
-                source: CheckedNumericType::Integer(_),
-                destination: CheckedNumericType::Integer(_),
-                ..
-            } => DeliveryCarrier::Evaluated,
-            _ if operation_shape(value).is_some() => DeliveryCarrier::Evaluated,
+            _ if computed_integer_image(value) => DeliveryCarrier::Evaluated,
             _ => return None,
         };
         Some((carrier, fragment))

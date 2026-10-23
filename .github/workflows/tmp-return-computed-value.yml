@@ -1,0 +1,92 @@
+# Temporary: the focused checks of the returned computed value work (the
+# compiler build and lint, every unit test, since the change reaches the
+# checker's return judgment, every conformance case's verdict with each
+# failing case listed, and the repository-level static checks with the
+# change-log check against the branch's fork point). proof.yml runs the Lean
+# model on its own. Removed before the branch is ready.
+name: tmp-return-computed-value
+
+on:
+  push:
+    branches: [lang-return-computed-value]
+
+permissions:
+  contents: read
+
+jobs:
+  compiler:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo --version
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          cat /proc/sys/kernel/core_pattern
+      - name: Check formatting
+        continue-on-error: true
+        run: cargo fmt --manifest-path compiler/Cargo.toml --check
+      - name: Build the compiler
+        run: |
+          perl .github/run-check.pl rcv-build cargo build --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --bin whitefootc
+      - name: Lint the compiler as the gate does
+        if: always()
+        run: |
+          perl .github/run-check.pl rcv-lint cargo clippy --manifest-path compiler/Cargo.toml \
+            --all-targets --locked --offline -- -D warnings
+      - name: Run the new and changed postcondition tests
+        run: |
+          perl .github/run-check.pl rcv-focused cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --lib -- \
+            a_returned_computed_integer direct_range_measure_returns_prove_only_the_matching_postcondition \
+            a_direct_measured_call_return_reports_its_unsupported_result_datum \
+            a_measured_postcondition_cannot_omit_a_direct_call_return
+      - name: Run every unit test
+        if: always()
+        run: |
+          perl .github/run-check.pl rcv-unit cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --lib
+      - name: Reach every conformance verdict and list each failing case
+        if: always()
+        run: |
+          ulimit -c 0
+          set +e
+          perl .github/run-check.pl rcv-corpus cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --test corpus -- \
+            conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path \
+            --nocapture > "$RUNNER_TEMP/corpus.log" 2>&1
+          status=$?
+          set -e
+          grep -E '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
+          grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
+          exit "$status"
+
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Run the static checks and the change-log check
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+          base=$(git merge-base HEAD origin/main)
+          git log --oneline -1 "$base"
+          make --no-print-directory static DESIGN_REVIEW_BASE="$base"
+          perl .github/run-check.pl tmp-design-ready make --no-print-directory design-ready \
+            DESIGN_REVIEW_BASE="$base"
