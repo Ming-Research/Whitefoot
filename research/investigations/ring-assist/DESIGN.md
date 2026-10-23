@@ -674,6 +674,15 @@ harness needs a small change to export the setting and keep the report
 lines from `server.log`). `ring_reassignments` should be 0. A nonzero count
 is reported with its rate and attributed in the profile.
 
+Amendment, before the comparison on the head that merges: the counter check
+cannot be run. The Firn server handles no signal and has no `SHUTDOWN`
+command, so the harness stops it with `SIGTERM` and the runtime, which prints
+its report only at a normal exit, prints nothing. The criteria below are
+unchanged and the comparison reports throughput, with no counter. The unit
+cases cover the trigger's silence only in part: an idle ring reads as not
+pending, a first sighting of ring work hands nothing over, and a new context
+run starts a new sighting.
+
 ### 6.3 What rejects the recommendation
 
 - Any candidate latency run with `reserve_misses=0` and the computation still
