@@ -164,6 +164,13 @@ theorem OnlyGrows.of_map {α β : Type} (f : α → β) {m : M α} (hm : OnlyGro
   rw [map_eq_pure_bind]
   exact OnlyGrows.of_bind hm fun _ => OnlyGrows.of_pure _
 
+/-- Closes a goal with a lemma this module has proved so far: each one below
+adds itself once proved, so no proof can use its own statement. -/
+syntax "grows_lemma" : tactic
+
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact IntTy.minVal_le_maxVal _)
+
 /-- Takes apart a computation built from binds, matches, conditionals, loops
 and the functions this module has already proved to only grow the generator.
 Goals it cannot close, such as the interval of a delta atom, are left. -/
@@ -177,20 +184,7 @@ macro_rules
       | exact OnlyGrows.of_get
       | exact OnlyGrows.of_fail _ _
       | exact OnlyGrows.of_lift _
-      | exact freshId_onlyGrows
-      | exact typeAtom_onlyGrows
-      | exact evalAtom_onlyGrows
-      | exact evalRhs_onlyGrows
-      | exact joinImage_onlyGrows
-      | exact joinStates_onlyGrows
-      | exact merge_onlyGrows
-      | exact publish_onlyGrows
-      | exact bindLet_onlyGrows
-      | exact setVar_onlyGrows
-      | exact checkReturn_onlyGrows
-      | exact loopHead_onlyGrows
-      | exact entryState_onlyGrows
-      | exact IntTy.minVal_le_maxVal _
+      | grows_lemma
       | (refine OnlyGrows.of_bind (freshAtom_onlyGrows ?_) (fun _ => ?_))
       | (refine OnlyGrows.of_modify (fun _ => Gen.Grows.of_eq rfl rfl rfl))
       | (refine OnlyGrows.of_forIn _ _ (fun _ _ => ?_))
@@ -210,6 +204,9 @@ theorem freshId_onlyGrows : OnlyGrows freshId :=
     cases h
     exact ⟨⟨Nat.le_succ _, [], rfl, fun _ h => by simp at h⟩, rfl⟩⟩
 
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact freshId_onlyGrows)
+
 theorem freshAtom_run (lo hi : Int) (g : Gen) :
     (freshAtom lo hi).run g =
       .ok (Form.atom g.next, { g with next := g.next + 1, atoms := (g.next, lo, hi) :: g.atoms }) :=
@@ -224,6 +221,9 @@ theorem freshAtom_onlyGrows {lo hi : Int} (hlh : lo ≤ hi) : OnlyGrows (freshAt
 theorem typeAtom_onlyGrows {t : IntTy} : OnlyGrows (typeAtom t) :=
   freshAtom_onlyGrows (IntTy.minVal_le_maxVal t)
 
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact typeAtom_onlyGrows)
+
 theorem evalAtom_onlyGrows' (env : Env) (st : State) : ∀ a : Atom, OnlyGrows (evalAtom env st a)
   | .int t v => by rw [evalAtom]; grows
   | .unit => by rw [evalAtom]; grows
@@ -236,9 +236,15 @@ theorem evalAtom_onlyGrows' (env : Env) (st : State) : ∀ a : Atom, OnlyGrows (
 theorem evalAtom_onlyGrows {env : Env} {st : State} {a : Atom} : OnlyGrows (evalAtom env st a) :=
   evalAtom_onlyGrows' env st a
 
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact evalAtom_onlyGrows)
+
 theorem evalRhs_onlyGrows {env : Env} {st : State} {e : Expr} : OnlyGrows (evalRhs env st e) := by
   unfold evalRhs
   grows
+
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact evalRhs_onlyGrows)
 
 /-- A fold that never raises its accumulator ends at or below where it
 started. -/
@@ -265,14 +271,23 @@ theorem joinImage_onlyGrows {t : IntTy} {fs : List Form} : OnlyGrows (joinImage 
     | (rcases x with ⟨_, _, _⟩; exact Int.le_max_left _ _)
     | skip
 
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact joinImage_onlyGrows)
+
 theorem joinStates_onlyGrows {env : Env} {inputs : List State} :
     OnlyGrows (joinStates env inputs) := by
   unfold joinStates
   grows
 
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact joinStates_onlyGrows)
+
 theorem merge_onlyGrows {env : Env} {ss : List State} : OnlyGrows (merge env ss) := by
   unfold merge
   grows
+
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact merge_onlyGrows)
 
 theorem publish_onlyGrows {env : Env} {st : State} {f : FnDecl} {args : List (String × Val)}
     {dest : Option (Term × Form)} {skip : Option Nat} {kill : State → State} :
@@ -280,29 +295,47 @@ theorem publish_onlyGrows {env : Env} {st : State} {f : FnDecl} {args : List (St
   unfold publish
   grows
 
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact publish_onlyGrows)
+
 theorem bindLet_onlyGrows {env : Env} {st : State} {x : Var} {r : Rhs} :
     OnlyGrows (bindLet env st x r) := by
   unfold bindLet
   grows
+
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact bindLet_onlyGrows)
 
 theorem setVar_onlyGrows {env : Env} {st : State} {x : Var} {r : Rhs} :
     OnlyGrows (setVar env st x r) := by
   unfold setVar
   grows
 
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact setVar_onlyGrows)
+
 theorem checkReturn_onlyGrows {env : Env} {st : State} {ret : Val} :
     OnlyGrows (checkReturn env st ret) := by
   unfold checkReturn
   grows
+
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact checkReturn_onlyGrows)
 
 theorem loopHead_onlyGrows {env : Env} {st : State} {killed : List String}
     {invs : List (String × Relation)} : OnlyGrows (loopHead env st killed invs) := by
   unfold loopHead
   grows
 
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact loopHead_onlyGrows)
+
 theorem entryState_onlyGrows {p : Program} {f : FnDecl} : OnlyGrows (entryState p f) := by
   unfold entryState
   grows
+
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact entryState_onlyGrows)
 
 /-! ### Each function, as a statement about one run -/
 
@@ -522,6 +555,7 @@ set_option hygiene false in
 macro_rules
   | `(tactic| region_incl) => `(tactic| first
       | exact False.elim
+      | exact id
       | exact incl_point_inBlock
       | exact incl_below_inBlock
       | exact incl_inBlock_succ
