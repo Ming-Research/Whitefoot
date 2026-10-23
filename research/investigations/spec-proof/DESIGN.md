@@ -535,18 +535,26 @@ is covered are rejected, 35 of the fragment's 119 by the parser and the rest by
 the checker. Two disagreements appeared on the way, both errors of the model
 and both fixed in it: a relation between two terms whose difference is one
 term was read as no L0 fact, and the `\u{H}` escapes of a doc text item were
-not checked [FORM-5, FORM-7]. The slice adds 2,723 lines of Lean in five
-modules, 503 of them coverage marks, and adds 52 lines to the parser and 32
+not checked [FORM-5, FORM-7]. The slice adds 2,730 lines of Lean in five
+modules, 504 of them coverage marks, and adds 52 lines to the parser and 70
 to the conformance harness. With it the build of the model and harness took
 10.2 s and 16.5 s on two runs, against 7.7 s on the main line's run of the
 same day; on the slower run every module took 1.5 to 1.8 times as long, the
 unchanged lexer included. The build's provisional budget rises from 15 s to
 25 s, 1.5 times that first 16.5 s run rounded up to 5 s.
 
-The five modules hold 1,575 lines of code by the second slice's count. The
+The five modules hold 1,576 lines of code by the second slice's count. The
 slice took seven engineer turns and eight `proof.yml` runs to its review: two
 failed to compile, one showed the two disagreements above, two exceeded the
-build budget on the slower host, and a re-run of one of those passed.
+build budget on the slower host, and a re-run of one of those passed. The
+review found one defect: [OP-5]'s redundancy query bounded its steps by the
+goal's own size, so a condition true only through two definition links went
+unproved and the checker accepted a program the rule rejects. A program
+beside the cases in the conformance harness now checks that rejection; it
+failed before the fix, and the fix bounds the query by the goal's complete
+expansion plus the links it may follow. The fix, with main's [SET-1]
+amendment merged in, took three more engineer turns and two more `proof.yml`
+runs, the first red on that program alone as expected.
 
 ## Cost
 
