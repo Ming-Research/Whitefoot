@@ -1,7 +1,7 @@
 # Temporary (one-object-core): the gate's four correctness groups on Linux for
 # the one-object atomic statement, which a draft pull request's gate skips,
-# the new tests watched failing on the code they guard against, and main's
-# compiler on the two rebound-binding cases. Removed before the full check.
+# and the new tests watched failing on the code they guard against. Removed
+# before the full check.
 name: tmp-one-object
 
 on:
@@ -96,80 +96,22 @@ jobs:
       - name: Fetch locked compiler dependencies
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
 
-      # A lowering that ignores the statement's invariants: the ledger test
-      # must fail and name all four of its invariant witnesses.
-      - name: ledger test without the invariant condition
+      # A checker that judges a rebound binding's leaving edge as before: the
+      # affine rebound-binding case must be accepted, and the pinned repair
+      # test must fail at the pair that rebinds its binding.
+      - name: rebound-binding rule switched off
         run: |
-          sed -i 's/^        if target.uses_invariants {$/        if false \&\& target.uses_invariants {/' compiler/src/lowering/builder/atomic.rs
-          grep -n 'if false && target.uses_invariants {' compiler/src/lowering/builder/atomic.rs
-          set +e
-          perl .github/run-check.pl tmp/watch-ledger cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses
-          status=$?
-          set -e
-          git checkout -- compiler/src/lowering/builder/atomic.rs
-          test "$status" -ne 0
-
-      # The reviewed head's runtime, which kept a cleared map's values until
-      # the map's own hold was given up, and a range walk that judges a
-      # leaving edge over the binding's current value: both closes in the
-      # clear case must return None, so it exits 0 rather than 3 + 4, and the
-      # rebound binding's range case must be accepted.
-      - name: new cases against the replaced runtime and a broken range walk
-        run: |
-          git checkout 8bd22795401d22478aaa1d2863c5d2a85a9fbd8f -- compiler/src/backend/keyed_table.c
-          sed -i 's/CheckedRangeRoot::Binding(binding) => bindings.get(&binding).cloned(),/CheckedRangeRoot::Binding(binding) => state.values.get(\&binding).or(bindings.get(\&binding)).cloned(),/' compiler/src/semantic/range_judgment/walk/type_invariants.rs
-          grep -n 'state.values.get(&binding).or(bindings.get(&binding)).cloned()' compiler/src/semantic/range_judgment/walk/type_invariants.rs
+          sed -i 's/^            if let Some(rebound) = &rebound {$/            if let Some(rebound) = rebound.as_ref().filter(|_| false) {/' compiler/src/semantic/entailment/flow/walk.rs
+          grep -n 'rebound.as_ref().filter(|_| false)' compiler/src/semantic/entailment/flow/walk.rs
           perl .github/run-check.pl tmp/watch-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
-          compiler/target/gate/whitefootc -o "$RUNNER_TEMP/clear" tests/conformance/cases/share-pos-map-clear-ends-held-handles.wf
           set +e
-          "$RUNNER_TEMP/clear"
-          clear_status=$?
-          compiler/target/gate/whitefootc --check tests/conformance/cases/type11-neg-range-atomic-rebound-binder.wf
-          range_status=$?
+          compiler/target/gate/whitefootc --check tests/conformance/cases/type11-neg-atomic-rebound-binder.wf
+          case_status=$?
+          perl .github/run-check.pl tmp/watch-repairs cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib driver::pinned_repairs::each_pinned_repair_is_carried_out_by_its_programs > "$RUNNER_TEMP/repairs.log" 2>&1
+          repairs_status=$?
           set -e
-          echo "the clear case exits $clear_status; the range case's check exits $range_status"
-          test "$clear_status" -eq 0
-          test "$range_status" -eq 0
-
-  # Main's compiler on the two rebound-binding cases, to tell whether main
-  # already accepts the affine one: the job prints each verdict and fails
-  # only when main's compiler cannot be built.
-  main-probe:
-    name: main-probe
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: true
-
-      - name: Set the scratch root
-        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
-
-      - name: Install the host toolchain
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          rustup default stable
-          cargo --version
-
-      - name: main's compiler on the rebound-binding cases
-        run: |
-          cp tests/conformance/cases/type11-neg-atomic-rebound-binder.wf "$RUNNER_TEMP/affine.wf"
-          cp tests/conformance/cases/type11-neg-range-atomic-rebound-binder.wf "$RUNNER_TEMP/range.wf"
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          git checkout --detach origin/main
-          git submodule update --init
-          git log -1 --format='main at %H'
-          cargo fetch --locked --manifest-path compiler/Cargo.toml
-          perl .github/run-check.pl tmp/main-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
-          set +e
-          compiler/target/gate/whitefootc --check "$RUNNER_TEMP/affine.wf"
-          echo "main's check of the affine case exits $?"
-          compiler/target/gate/whitefootc --check "$RUNNER_TEMP/range.wf"
-          echo "main's check of the range case exits $?"
-          exit 0
+          cat "$RUNNER_TEMP/repairs.log"
+          echo "the affine case's check exits $case_status; the pinned repair test exits $repairs_status"
+          test "$case_status" -eq 0
+          test "$repairs_status" -ne 0
+          grep -n 'atomic-block-rebinds-its-binding.wf' "$RUNNER_TEMP/repairs.log"

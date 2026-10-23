@@ -1069,6 +1069,66 @@ targets or `shared_map_new` is rewritten for one object with its verdict
 kept: two objects a statement held together become two fields of one state,
 and an entry target becomes a subscript or a borrow inside the block.
 
+### A rebound binding at a leaving edge
+
+The affine counterpart of the rebound-binding case found a soundness defect
+in TYPE-11, older than one object per statement. TYPE-11 owed each type
+invariant at an edge leaving the block over the binding's referent, as an
+invariant stated at that edge, and a place written through a rebound binding
+names its current target [ENT-2]. So the block of
+`type11-neg-atomic-rebound-binder`
+
+```wf
+atomic a = &state {
+  let top = a^.high;
+  // The state's low now equals its high: the invariant is broken.
+  set a^.low = top;
+  // From here a names the local value, and no term names the state.
+  set a = &fresh;
+  set a^.low = 0_u64;
+  set a^.high = 1_u64;
+}
+```
+
+had its invariant judged over `fresh`, which is in order, and was accepted,
+while the statement left the shared state with `low == high`. main's compiler
+at cb5be3621, run in CI on both cases, accepted it too and already refused
+the range form, `type11-neg-range-atomic-rebound-binder`: the range walk
+judges the invariant over the binding's value at the block's entry, which is
+the state.
+
+Three rules were weighed:
+
+- Each affine type invariant is unproved at every edge leaving a block in
+  which some `set` rebinds the binding, reachable or not. FN-9 already treats
+  a reference parameter the body rebinds this way: no term of the body names
+  the storage it received, so a relation over its exit state is unproved at
+  every return. It refuses a block that rebinds its binding and leaves the
+  state in order, which can name its other value through a reference
+  variable of its own.
+- Refusing every `set` that rebinds an atomic statement's binding. It also
+  refuses statements whose state has no invariant, such as the guard read
+  through an alias of a rebound binding that
+  `fn8-pos-guard-through-alias-of-rebound-atomic-binder` accepts, and makes
+  the binding the one reference variable that cannot be rebound [REF-1].
+- A proof root for the statement's state, which a rebinding leaves naming
+  the state, so the leaving edge proves the state's last value and a block
+  that rebinds and keeps the state in order is accepted. The state's storage
+  then has two identities in the proof, and the binding is treated apart
+  from a rebound reference parameter, as the entry referents that
+  `language/checks-and-proofs/proof-identity` refuses would treat it.
+
+The first is chosen, following the design card one-object-rebound-binder on
+the board item one-object-core: it reuses the rule that already covers the
+other reference variable whose rebinding leaves its storage unnamed, and
+adds no identity to the proof. TYPE-11 states it, RANGE-3 now names the
+statement's state where it named the binding's referent, the checker records
+each affine invariant of such a block unproved at every leaving edge without
+judging it, and the repair names the rebinding `set`, asks for the binding to
+stay on the state and for the other value to be named through a reference
+variable of its own. The Lean model under `proof/` leaves atomic statements
+outside its fragment, so the model has no case for this rule.
+
 ### Firn under one object
 
 A keyspace holds `data: Shared<Data>`, `Data` being the keys' map followed by

@@ -123,7 +123,7 @@ use super::{
     LoopInvariantProof, MeasureKillNote, ObligationFamily, ObligationOutcome,
     PostconditionAggregate, PostconditionDisposition, PostconditionEntryImage,
     PostconditionEntryImageOutcome, PostconditionExit, RangeEndpointReading, RangeLengthReading,
-    SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
+    ReboundBinding, SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
     VerifiedPostconditionSummaryRef, fragment_type, overflow_conjuncts_for_values,
 };
 
@@ -273,6 +273,9 @@ struct AtomicFrame {
     loop_depth: usize,
     give_depth: usize,
     invariants: Vec<crate::semantic::goal::CheckedCallRequirement>,
+    /// The first `set` of the block that rebinds the statement's binding;
+    /// in such a block each invariant is unproved at every leaving edge.
+    rebound: Option<ReboundBinding>,
 }
 
 /// A value initializer collecting give-edge states for its continuation.

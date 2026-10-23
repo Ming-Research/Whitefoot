@@ -3626,20 +3626,30 @@ pub(super) fn entry_datum_kind(
 }
 
 /// Whether some `set` among `statements`, nested blocks included, rebinds
-/// the reference variable `binding` [REF-1]: a whole-place `set` of a
-/// reference variable rebinds it.
+/// the reference variable `binding` [REF-1].
 fn body_rebinds(statements: &[CheckedStatement], binding: BindingId) -> bool {
-    statements.iter().any(|statement| match statement {
+    first_rebinding(statements, binding).is_some()
+}
+
+/// The first `set` among `statements`, in source order and nested blocks
+/// included, that rebinds the reference variable `binding` [REF-1]: a
+/// whole-place `set` of a reference variable rebinds it.
+pub(super) fn first_rebinding(
+    statements: &[CheckedStatement],
+    binding: BindingId,
+) -> Option<&crate::NodePath> {
+    statements.iter().find_map(|statement| match statement {
         CheckedStatement::Set {
+            node_path,
             target: CheckedSetTarget::Place(place),
             ..
-        } => place.binding == binding && place.fields.is_empty(),
+        } => (place.binding == binding && place.fields.is_empty()).then_some(node_path),
         CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
-            arms.iter().any(|arm| body_rebinds(&arm.body, binding))
+            arms.iter().find_map(|arm| first_rebinding(&arm.body, binding))
         }
         CheckedStatement::Loop { body, .. }
         | CheckedStatement::CountedRange { body, .. }
-        | CheckedStatement::Atomic { body, .. } => body_rebinds(body, binding),
+        | CheckedStatement::Atomic { body, .. } => first_rebinding(body, binding),
         CheckedStatement::Let { .. }
         | CheckedStatement::DestructuringLet { .. }
         | CheckedStatement::PropagateLet { .. }
@@ -3650,6 +3660,6 @@ fn body_rebinds(statements: &[CheckedStatement], binding: BindingId) -> bool {
         | CheckedStatement::Return { .. }
         | CheckedStatement::Give { .. }
         | CheckedStatement::Break { .. }
-        | CheckedStatement::Continue { .. } => false,
+        | CheckedStatement::Continue { .. } => None,
     })
 }

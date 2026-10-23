@@ -1027,6 +1027,20 @@ pub(super) fn atomic_exit_invariant(case: &GoalCase<'_>) -> String {
     }
 }
 
+/// [TYPE-11] a type invariant of an object's state at an edge that leaves an
+/// atomic block whose `set` on `line` rebinds the binding: after it no place
+/// names the state [ENT-2], so no write and no `invariant` proves it there.
+pub(super) fn atomic_exit_rebound_invariant(
+    case: &GoalCase<'_>,
+    binding: &str,
+    line: u64,
+) -> String {
+    format!(
+        "`{}` is not proved where the block leaves the object's state, because the `set` on line {line} rebinds `{binding}` and no place names the state after it: keep `{binding}` bound to the state, and name the other value through a reference variable of its own",
+        case.text
+    )
+}
+
 /// [FN-9] a normal-result relation at one selected return; `called` says
 /// whether the returned value reads a value a user call returned.
 pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static str {

@@ -223,8 +223,39 @@ impl Judging<'_, '_, '_> {
             written_before: written.written_before(disposition == CallGoalDisposition::Discharged),
             range_lengths,
             lost_header,
+            rebound_binding: None,
         });
         (disposition, derivation)
+    }
+
+    /// [TYPE-11] an atomic block's invariant at an edge leaving a block in
+    /// which a `set` rebinds its binding: unproved without a judgment, since
+    /// after the rebinding no term names the state [ENT-2].
+    pub(super) fn record_rebound_atomic_goal(
+        &mut self,
+        node_path: &crate::NodePath,
+        (requires_clause, subject): (crate::NodePath, Option<u32>),
+        goal: ConcreteGoal,
+        rebound: ReboundBinding,
+        written: &ProofFlowState,
+    ) {
+        let rendered_goal = self.input.render_concrete_goal(&goal.root);
+        self.output.call_goals.push(CallGoalOutcome {
+            node_path: node_path.clone(),
+            callee: self.input.function.id,
+            requires_clause,
+            subject,
+            goal,
+            rendered_goal,
+            argument_count: 0,
+            disposition: CallGoalDisposition::Unproved,
+            evidence: Vec::new(),
+            derivation: None,
+            written_before: written.written_before(false),
+            range_lengths: Vec::new(),
+            lost_header: None,
+            rebound_binding: Some(rebound),
+        });
     }
 
     /// [OWN-7] the separations at this call or set commit: mandatory effect

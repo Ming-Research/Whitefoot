@@ -211,18 +211,30 @@ impl Judging<'_, '_, '_> {
 impl Analyzer<'_, '_> {
     /// [TYPE-11] the type invariants of the atomic block being walked, owed
     /// at `site`, an edge that leaves it; judged as a requirement the body
-    /// owes itself there.
+    /// owes itself there. In a block that rebinds its binding each is
+    /// unproved, as a rebound reference parameter's exit relation is at every
+    /// return [FN-9], since no term names the state.
     fn judge_atomic_exit(&mut self, site: &crate::NodePath, state: &ProofFlowState) {
-        let Some(invariants) = self
+        let Some((invariants, rebound)) = self
             .frames
             .atomic
             .as_ref()
-            .map(|frame| frame.invariants.clone())
+            .map(|frame| (frame.invariants.clone(), frame.rebound.clone()))
         else {
             return;
         };
         let function = self.input.function.id;
         for invariant in invariants {
+            if let Some(rebound) = &rebound {
+                self.judging().record_rebound_atomic_goal(
+                    site,
+                    (invariant.requires_clause.clone(), invariant.subject),
+                    invariant.goal.clone(),
+                    rebound.clone(),
+                    state,
+                );
+                continue;
+            }
             self.judging().judge_call_goal(
                 function,
                 site,
@@ -1497,10 +1509,19 @@ impl Analyzer<'_, '_> {
                         event,
                     );
                 }
+                // [TYPE-11, ENT-2] once a `set` of the block, reachable or
+                // not, rebinds the binding, a place written through it names
+                // its new target and no term of the block names the state.
+                let rebound = super::postconditions::first_rebinding(body, target.binding)
+                    .map(|rebinding| ReboundBinding {
+                        name: self.input.binding_name(target.binding),
+                        rebinding: rebinding.clone(),
+                    });
                 let enclosing = self.frames.atomic.replace(AtomicFrame {
                     loop_depth: self.frames.loops.len(),
                     give_depth: self.frames.gives.len(),
                     invariants: invariants.clone(),
+                    rebound,
                 });
                 let mut continues = true;
                 for statement in body {

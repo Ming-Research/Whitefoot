@@ -3668,6 +3668,64 @@ fn main() -> status: std::process::ExitStatus pure waits {
 "#],
     },
     RepairPair {
+        name: "atomic-block-rebinds-its-binding.wf",
+        rejected: br#"struct Ordered {
+  low: u64;
+  high: u64;
+  invariant ordered(pair): pair.low < pair.high;
+}
+
+fn update(state: Shared<Ordered>) -> result: u64 pure waits {
+  let fresh = Ordered(low: 0_u64, high: 1_u64);
+  let top = 0_u64;
+  atomic a = &state {
+    set top = a^.high;
+    set a = &fresh;
+    set a^.high = top;
+  }
+  return top;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = Ordered(low: 0_u64, high: 1_u64);
+  let state = shared_new::<Ordered>(value: move initial);
+  let top = update(state: move state);
+  let code = cvt.wrap::<u64, u8>(top);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: UndischargedTypeInvariant\n",
+            "\n  mechanical_fix: `a^.low < a^.high` is not proved where the block leaves the object's state, because the `set` on line 12 rebinds `a` and no place names the state after it: keep `a` bound to the state, and name the other value through a reference variable of its own\n",
+        ],
+        repaired: &[br#"struct Ordered {
+  low: u64;
+  high: u64;
+  invariant ordered(pair): pair.low < pair.high;
+}
+
+fn update(state: Shared<Ordered>) -> result: u64 pure waits {
+  let fresh = Ordered(low: 0_u64, high: 1_u64);
+  let top = 0_u64;
+  atomic a = &state {
+    set top = a^.high;
+    let other = &fresh;
+    set other^.high = top;
+  }
+  return top;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = Ordered(low: 0_u64, high: 1_u64);
+  let state = shared_new::<Ordered>(value: move initial);
+  let top = update(state: move state);
+  let code = cvt.wrap::<u64, u8>(top);
+  return std::process::exit_status(code: code);
+}
+"#],
+    },
+    RepairPair {
         name: "bound-function-exceeds-the-formal-row.wf",
         rejected: br#"interface Disposer {
   fn release(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit pure;

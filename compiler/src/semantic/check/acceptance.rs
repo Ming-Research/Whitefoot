@@ -979,6 +979,9 @@ impl<'unit> TypeContext<'unit> {
                         == Some(Production::Call)
                     {
                         repairs::construction_invariant(&case)
+                    } else if let Some(rebound) = &outcome.rebound_binding {
+                        let (_, line) = self.declarations.tree.source_line(&rebound.rebinding)?;
+                        repairs::atomic_exit_rebound_invariant(&case, &rebound.name, line)
                     } else {
                         repairs::atomic_exit_invariant(&case)
                     },
