@@ -11,6 +11,12 @@ Nodes: compiler/build-inputs
 
 Summary: Open amendments of the specification kept merging main to renumber the title line, re-archive the outgoing version and retitle their change log entry each time another amendment merged first: 112 of 307 merges of main over 62 amendments in two weeks, measured in the [version-churn investigation](../research/investigations/spec-version-churn/README.md#measurement). The version was a counter every branch took at the same three places while its order was fixed only at the merge, and nothing read it, since the compiler's identity of the specification is the SHA-256 of its bytes. The first line of the specification is now `# Kernel Specification`, an amendment adds one entry at the top of the change log and no archive, and an entry's version is derived from its place in the log, so an entry directly above v0.9 is v0.10. The build-inputs node now records that decision. Refused: renumbering by script, assigning the number by a commit to main after the merge, a date or time in the title line or in archive names, naming an amendment by the date and title of its entry, and one amendment in flight at a time.
 
+## 2026-10-22 The kernel owns clearing a window while keeping its storage
+
+Nodes: language/data-model/kernel-minimality
+
+Summary: A program that reuses one byte buffer per batch could not empty it without one boundary operation per element or a transfer of every element into another window, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. The kernel therefore owns `clear` over every droppable element type: it runs each element's derived release, sets the length to zero and keeps the storage, capacity, ring origin and pages, so an element type that needs no release is reset independently of length. Clearing leaves the list of operations that begin as source libraries, and clearing as a source library over `take_back` is recorded as rejected.
+
 ## 2026-10-21 A column for a model with too few runs takes the larger of the row's largest class and its own runs
 
 Nodes: compiler/verification
