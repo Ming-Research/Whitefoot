@@ -7,16 +7,22 @@
 //! `not` down to the comparisons, and keeps a comparison of a scalar field of
 //! the object (an integer, a `Bool` or a tag-only enum, reached through
 //! fields alone) against a constant, a local the registration captures, or
-//! another such field of the same object. Every other part, including a
-//! comparison over another target, becomes `true`, which only weakens the
-//! test. A guard reads no state it may change and a local stays as it was
+//! another such field of the same object. A helper whose checked body is a
+//! single return is expanded into that derivation with scoped arguments.
+//! Every other part, including a comparison over another target, becomes
+//! `true`, which only weakens the atom test. If that leaves a helper guard
+//! without a test, `callback` audits its complete call closure and lowers the
+//! original guard over the live state and scalar captures. A guard reads no
+//! state it may change and a local stays as it was
 //! while the frame is parked, so a test false on the state a write leaves
 //! implies the guard false there.
 
 use super::{IrBuilder, lower_type};
+mod callback;
 use crate::semantic::{
-    BindingId, CheckedBooleanOperation, CheckedExpression, CheckedIntegerOperation,
-    CheckedPlaceStep, CheckedValue,
+    BindingId, CheckedBodyDisposition, CheckedBooleanOperation, CheckedExpression,
+    CheckedIntegerOperation, CheckedMode, CheckedPlaceStep, CheckedStatement, CheckedValue,
+    FunctionId,
 };
 use crate::{
     IrConstant, IrOperation, IrType, IrValueId, IrWakeAtom, IrWakeCode, IrWakeComparison,
@@ -61,6 +67,79 @@ enum Side<'guard> {
     Other,
 }
 
+/// Binding IDs are local to a function. Each helper's parameter maps to an
+/// expression in the caller's scope, never to a bare binding ID in this one.
+#[derive(Clone, Copy)]
+struct ScopedExpression<'guard> {
+    expression: &'guard CheckedExpression,
+    scope: usize,
+}
+
+struct Argument<'guard> {
+    binding: BindingId,
+    mode: CheckedMode,
+    actual: ScopedExpression<'guard>,
+}
+
+/// Scope zero is the guard's own function; every other scope holds exactly
+/// one expanded helper's formal-to-actual substitution.
+struct Scope<'guard> {
+    arguments: Vec<Argument<'guard>>,
+}
+
+fn argument<'scope, 'guard>(
+    scopes: &'scope [Scope<'guard>],
+    scope: usize,
+    binding: BindingId,
+) -> Option<&'scope Argument<'guard>> {
+    scopes
+        .get(scope)?
+        .arguments
+        .iter()
+        .find(|argument| argument.binding == binding)
+}
+
+/// Resolve only a forwarded reference or a field-only borrow. In particular,
+/// another target's referent must not become a captured registration value.
+fn reference_path(
+    expression: ScopedExpression<'_>,
+    binding: BindingId,
+    scopes: &[Scope<'_>],
+) -> Option<Vec<u32>> {
+    match expression.expression {
+        CheckedExpression::Binding { binding: read, .. } => {
+            reference_binding(*read, expression.scope, binding, scopes)
+        }
+        CheckedExpression::BorrowAddressed { root, .. } => {
+            let mut path = reference_binding(root.binding()?, expression.scope, binding, scopes)?;
+            for step in &root.path {
+                let CheckedPlaceStep::Field(field) = step else {
+                    return None;
+                };
+                path.push(*field);
+            }
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
+fn reference_binding(
+    read: BindingId,
+    scope: usize,
+    binding: BindingId,
+    scopes: &[Scope<'_>],
+) -> Option<Vec<u32>> {
+    if scope == 0 {
+        return (read == binding).then(Vec::new);
+    }
+    let argument = argument(scopes, scope, read)?;
+    if argument.mode != CheckedMode::Reference {
+        return None;
+    }
+    reference_path(argument.actual, binding, scopes)
+}
+
 const fn negated(comparison: IrWakeComparison) -> IrWakeComparison {
     match comparison {
         IrWakeComparison::Equal => IrWakeComparison::NotEqual,
@@ -98,13 +177,36 @@ const fn comparison(operation: CheckedIntegerOperation) -> Option<IrWakeComparis
 
 /// The fields a read `p^.f.g` of the target `binding` selects, or `None`
 /// for any other expression.
-fn field_path(expression: &CheckedExpression, binding: BindingId) -> Option<Vec<u32>> {
-    match expression {
-        CheckedExpression::DerefAddressed { binding: read, .. } if *read == binding => {
-            Some(Vec::new())
+fn field_path(
+    expression: ScopedExpression<'_>,
+    binding: BindingId,
+    scopes: &[Scope<'_>],
+) -> Option<Vec<u32>> {
+    match expression.expression {
+        CheckedExpression::Binding {
+            binding: read,
+            consume_root: false,
+            ..
+        } if expression.scope != 0 =>
+        {
+            let argument = argument(scopes, expression.scope, *read)?;
+            if argument.mode != CheckedMode::Own {
+                return None;
+            }
+            field_path(argument.actual, binding, scopes)
+        }
+        CheckedExpression::DerefAddressed { binding: read, .. } => {
+            reference_binding(*read, expression.scope, binding, scopes)
         }
         CheckedExpression::ProjectValue { value, field, .. } => {
-            let mut path = field_path(value, binding)?;
+            let mut path = field_path(
+                ScopedExpression {
+                    expression: value,
+                    ..expression
+                },
+                binding,
+                scopes,
+            )?;
             path.push(*field);
             Some(path)
         }
@@ -180,7 +282,7 @@ fn weakened(condition: Condition<'_>, budget: usize) -> Condition<'_> {
     }
 }
 
-impl IrBuilder<'_> {
+impl<'program> IrBuilder<'program> {
     /// The scalar types an atom compares, which the runtime loads by width.
     fn wake_scalar(&self, ty: IrType) -> bool {
         match ty {
@@ -210,20 +312,37 @@ impl IrBuilder<'_> {
 
     fn wake_side<'guard>(
         &self,
-        expression: &'guard CheckedExpression,
+        expression: ScopedExpression<'guard>,
         binding: BindingId,
         targets: &[BindingId],
+        scopes: &[Scope<'guard>],
     ) -> Result<Side<'guard>, LoweringFailure> {
-        let Ok(ty) = lower_type(self.erasure, expression.ty()) else {
+        if expression.scope != 0
+            && let CheckedExpression::Binding {
+                binding: read,
+                consume_root: false,
+                ..
+            } = expression.expression
+        {
+            let Some(argument) = argument(scopes, expression.scope, *read) else {
+                return Ok(Side::Other);
+            };
+            return if argument.mode == CheckedMode::Own {
+                self.wake_side(argument.actual, binding, targets, scopes)
+            } else {
+                Ok(Side::Other)
+            };
+        }
+        let Ok(ty) = lower_type(self.erasure, expression.expression.ty()) else {
             return Ok(Side::Other);
         };
         if !self.wake_scalar(ty) {
             return Ok(Side::Other);
         }
-        if let Some(path) = field_path(expression, binding) {
+        if let Some(path) = field_path(expression, binding, scopes) {
             return Ok(Side::Field(path, ty));
         }
-        let captured = match expression {
+        let captured = match expression.expression {
             CheckedExpression::Constant(value) | CheckedExpression::NamedConstant { value, .. } => {
                 matches!(value, CheckedValue::Integer { .. } | CheckedValue::Bool(_))
             }
@@ -232,11 +351,13 @@ impl IrBuilder<'_> {
                 binding: local,
                 consume_root: false,
                 ..
-            } if !targets.contains(local) => self.captured_scalar(*local, ty)?,
+            } if expression.scope == 0 && !targets.contains(local) => {
+                self.captured_scalar(*local, ty)?
+            }
             _ => false,
         };
         Ok(if captured {
-            Side::Value(expression, ty)
+            Side::Value(expression.expression, ty)
         } else {
             Side::Other
         })
@@ -246,19 +367,20 @@ impl IrBuilder<'_> {
     fn wake_comparison<'guard>(
         &self,
         compared: IrWakeComparison,
-        left: &'guard CheckedExpression,
-        right: &'guard CheckedExpression,
+        sides: [ScopedExpression<'guard>; 2],
         positive: bool,
         binding: BindingId,
         targets: &[BindingId],
+        scopes: &[Scope<'guard>],
     ) -> Result<Condition<'guard>, LoweringFailure> {
         let compared = if positive {
             compared
         } else {
             negated(compared)
         };
-        let left = self.wake_side(left, binding, targets)?;
-        let right = self.wake_side(right, binding, targets)?;
+        let [left, right] = sides;
+        let left = self.wake_side(left, binding, targets, scopes)?;
+        let right = self.wake_side(right, binding, targets, scopes)?;
         Ok(match (left, right) {
             (Side::Field(field, ty), Side::Value(value, operand)) if ty == operand => {
                 Condition::Atom(Atom {
@@ -289,18 +411,103 @@ impl IrBuilder<'_> {
     /// when `positive` is false, implies.
     fn wake_condition<'guard>(
         &self,
-        guard: &'guard CheckedExpression,
+        guard: ScopedExpression<'guard>,
         positive: bool,
         binding: BindingId,
         targets: &[BindingId],
-    ) -> Result<Condition<'guard>, LoweringFailure> {
-        match guard {
+        scopes: &mut Vec<Scope<'guard>>,
+        active: &mut Vec<FunctionId>,
+    ) -> Result<Condition<'guard>, LoweringFailure>
+    where
+        'program: 'guard,
+    {
+        match guard.expression {
+            CheckedExpression::Binding {
+                binding: read,
+                consume_root: false,
+                ..
+            } if guard.scope != 0 => {
+                let Some(argument) = argument(scopes, guard.scope, *read) else {
+                    return Ok(Condition::True);
+                };
+                if argument.mode != CheckedMode::Own {
+                    return Ok(Condition::True);
+                }
+                self.wake_condition(argument.actual, positive, binding, targets, scopes, active)
+            }
+            CheckedExpression::UserCall {
+                function,
+                arguments,
+                ..
+            } => {
+                if active.contains(function) {
+                    return Ok(Condition::True);
+                }
+                let functions = self.checked_functions;
+                let Some(callee) = functions.get(function.0 as usize) else {
+                    return Ok(Condition::True);
+                };
+                if callee.waiting.waits
+                    || !matches!(callee.body_disposition, CheckedBodyDisposition::Inhabited)
+                    || callee.parameters.len() != arguments.len()
+                {
+                    return Ok(Condition::True);
+                }
+                let Some([CheckedStatement::Return { value, drops, .. }]) = callee.body.as_deref()
+                else {
+                    return Ok(Condition::True);
+                };
+                if !drops.is_empty() {
+                    return Ok(Condition::True);
+                }
+                let scope = scopes.len();
+                scopes.push(Scope {
+                    arguments: callee
+                        .parameters
+                        .iter()
+                        .zip(arguments)
+                        .map(|(formal, actual)| Argument {
+                            binding: formal.binding,
+                            mode: formal.mode,
+                            actual: ScopedExpression {
+                                expression: actual,
+                                scope: guard.scope,
+                            },
+                        })
+                        .collect(),
+                });
+                active.push(*function);
+                let condition = self.wake_condition(
+                    ScopedExpression {
+                        expression: value,
+                        scope,
+                    },
+                    positive,
+                    binding,
+                    targets,
+                    scopes,
+                    active,
+                );
+                active.pop();
+                scopes.pop();
+                condition
+            }
             CheckedExpression::BooleanOperation {
                 operation: CheckedBooleanOperation::Not,
                 arguments,
                 ..
             } => match arguments.as_slice() {
-                [inner] => self.wake_condition(inner, !positive, binding, targets),
+                [inner] => self.wake_condition(
+                    ScopedExpression {
+                        expression: inner,
+                        ..guard
+                    },
+                    !positive,
+                    binding,
+                    targets,
+                    scopes,
+                    active,
+                ),
                 _ => Ok(Condition::True),
             },
             CheckedExpression::BooleanOperation {
@@ -311,7 +518,19 @@ impl IrBuilder<'_> {
             } => {
                 let parts = arguments
                     .iter()
-                    .map(|argument| self.wake_condition(argument, positive, binding, targets))
+                    .map(|argument| {
+                        self.wake_condition(
+                            ScopedExpression {
+                                expression: argument,
+                                ..guard
+                            },
+                            positive,
+                            binding,
+                            targets,
+                            scopes,
+                            active,
+                        )
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 let conjunction = matches!(operation, CheckedBooleanOperation::And) == positive;
                 Ok(if conjunction {
@@ -325,9 +544,23 @@ impl IrBuilder<'_> {
                 arguments,
                 ..
             } => match (comparison(*operation), arguments.as_slice()) {
-                (Some(compared), [left, right]) => {
-                    self.wake_comparison(compared, left, right, positive, binding, targets)
-                }
+                (Some(compared), [left, right]) => self.wake_comparison(
+                    compared,
+                    [
+                        ScopedExpression {
+                            expression: left,
+                            ..guard
+                        },
+                        ScopedExpression {
+                            expression: right,
+                            ..guard
+                        },
+                    ],
+                    positive,
+                    binding,
+                    targets,
+                    scopes,
+                ),
                 _ => Ok(Condition::True),
             },
             CheckedExpression::ValueEquality {
@@ -339,11 +572,27 @@ impl IrBuilder<'_> {
                     } else {
                         IrWakeComparison::NotEqual
                     };
-                    self.wake_comparison(compared, left, right, positive, binding, targets)
+                    self.wake_comparison(
+                        compared,
+                        [
+                            ScopedExpression {
+                                expression: left,
+                                ..guard
+                            },
+                            ScopedExpression {
+                                expression: right,
+                                ..guard
+                            },
+                        ],
+                        positive,
+                        binding,
+                        targets,
+                        scopes,
+                    )
                 }
                 _ => Ok(Condition::True),
             },
-            _ => Ok(match self.wake_side(guard, binding, targets)? {
+            _ => Ok(match self.wake_side(guard, binding, targets, scopes)? {
                 Side::Field(field, IrType::Bool) => Condition::Atom(Atom {
                     field,
                     comparison: if positive {
@@ -368,15 +617,28 @@ impl IrBuilder<'_> {
         state: IrValueId,
         targets: &[BindingId],
     ) -> Result<Option<IrWakeTest>, LoweringFailure> {
-        let condition = self.wake_condition(guard, true, binding, targets)?;
+        let condition = self.wake_condition(
+            ScopedExpression {
+                expression: guard,
+                scope: 0,
+            },
+            true,
+            binding,
+            targets,
+            &mut vec![Scope {
+                arguments: Vec::new(),
+            }],
+            &mut Vec::new(),
+        )?;
         let condition = weakened(simplified(condition), ATOMS);
         if matches!(condition, Condition::True) {
-            return Ok(None);
+            return self.wake_callback(guard, binding, state, targets);
         }
         let mut test = IrWakeTest {
             values: vec![state],
             atoms: Vec::new(),
             program: Vec::new(),
+            callback: None,
         };
         self.wake_program(&condition, state, &mut test)?;
         Ok(Some(test))
@@ -457,9 +719,8 @@ impl IrBuilder<'_> {
 
 #[cfg(test)]
 mod tests {
-    //! The weakening no source guard reaches today, since a guard has at
-    //! most two atoms [GRAM-5]; a guard of a later grammar, or one the
-    //! derivation meets through future forms, takes this path.
+    //! Weakening the conditions reached by expanding helpers, whose bodies
+    //! may together contribute more atoms than the written guard [GRAM-5].
 
     use super::{Atom, Condition, Operand, atoms, simplified, weakened};
     use crate::IrWakeComparison;
