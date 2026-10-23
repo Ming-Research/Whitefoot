@@ -10,6 +10,35 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/checker-facts
 
 Summary: Per-branch ensures for own enums established route states wherever evidence arose, so programs writing no such ensures paid for snapshots, closures and joins of states nothing read; constructing one variant stored a context for every field of the other variants, and the Halo VM test host's check grew from about 2 s to about 630 s. The checker now collects, alongside binding types, which values a later match, error propagation, routed ensures or nested routed requirement reads, and omits conditional-state computations with no reachable reader; a read value keeps every version and every source through copies, assignments and `give`, and a routed call still establishes the root that diagnostics require. Establishing states at every evidence site regardless of readers is rejected because the omitted work feeds no proof and no required diagnostic root. Interleaved hosted-runner timings, recorded in the "Validation and outstanding evidence" section of research/investigations/enum-route-check-cost/DESIGN.md: Halo VM module 1.025x and Firn 0.978x against the revision before per-branch ensures, Halo VM test host 1.005x against wf-d837678c6905.
+## 2026-10-20 A guard written as a helper call filters wakes through a callback
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Summary: A wait guard written as a call to a helper function, such as `atomic m = &meta when reply_covered(...)`, gave the wake derivation no atom, so each write to the object could wake a waiter whose guard was still false, which woke, reacquired, found it false and parked again; a counted program test measured eight such wakes for a helper guard and none for the same comparison written inline (`tests/programs/helper_guard_false_wakes.wf`). When the atom derivation yields no test for a guard containing a helper call, the guard now compiles to a read-only, nonwaiting, nonlocking, nonallocating, nonrecursive function over the written object's state and the values captured at registration, kept with its captures in the waiter's frame and called by the writer under the hold it already has; a guard the audit cannot cover, or one reading another target, still contributes true, and atom tests are still preferred. A helper whose body is a single `return` of an expression over its parameters is also expanded into atom tests, which the earlier derivation dropped as an unknown call. The existing rejection of the releaser running each waiter's guard is narrowed to every guard, and a rejection of field-read footprints is added, because a write flag names the whole object. The cost of the callbacks against the wakes they remove is unmeasured and reopens the decision.
+
+## 2026-10-22 Definitions are substituted into every clause before its range terms are checked
+
+Nodes: language/checks-and-proofs/requires-entry-contract
+
+Summary: The changed decision substitutes a define into every clause before that clause's range terms are checked, so the range-term restriction holds independently of abbreviation spelling (a linear index admitted, a product of two parameters refused, in requires and ensures alike), instead of refusing a range term because it uses a define name.
+
+## 2026-10-22 A manual gate run can add macOS, so a release is qualified once per release
+
+Nodes: compiler/verification
+
+Summary: With the gate on Linux alone, no downstream release could be made, because the release workflow requires a successful gate run with macOS jobs on the released commit and no gate run had any. The gate's manual trigger now takes a `macos` input that runs every group on macOS as well as Linux, and the final job requires every group green on each platform the run was asked for; every other trigger still runs Linux alone. A release is qualified by one such run started on the commit before the release is dispatched, so the macOS queue is entered once per release and not once per pull request, and a fault only macOS shows, such as an unused import that clippy reports on macOS alone, reaches the main line and surfaces when a release is qualified. Linux alone for every other run stays provisional, reopened when the hosted macOS runners no longer hold merges back. Refused: a release from a gate run without macOS jobs, macOS on every push to the main line, a release workflow that runs the macOS groups itself, and a daily scheduled macOS run of the main line in addition.
+
+## 2026-10-22 A layout rejection lists every differing gap of its source in its repair
+
+Nodes: compiler/diagnostic-repairs, compiler/formatting-command
+
+Summary: A FORM-2 rejection reported one differing gap per compile, so a writer fixing a file with several layout faults spent a round on each; in a writer trial three of fifteen programs spent four to five rounds that way. The rejection still reports only the first gap, as the specification fixes for the canonical stage, and its repair now lists every differing gap of the rejected source, the first twenty with the line, the terminals around the gap and the bytes to write instead of the bytes found, and the count of the rest. The list comes from a walk over the rejected source's terminals that compares each gap with the one canonical-gap function the renderer emits from, so it cannot disagree with rendering; the walk has a work ceiling of its own, and reaching it leaves the rejection without a list. The formatting request's reason is restated: a writer without it applies the listed changes by hand.
+
+## 2026-10-22 The specification carries no version and an amendment adds no archive
+
+Nodes: compiler/build-inputs
+
+Summary: Open amendments of the specification kept merging main to renumber the title line, re-archive the outgoing version and retitle their change log entry each time another amendment merged first: 112 of 307 merges of main over 62 amendments in two weeks, measured in the [version-churn investigation](../research/investigations/spec-version-churn/README.md#measurement). The version was a counter every branch took at the same three places while its order was fixed only at the merge, and nothing read it, since the compiler's identity of the specification is the SHA-256 of its bytes. The first line of the specification is now `# Kernel Specification`, an amendment adds one entry at the top of the change log and no archive, and an entry's version is derived from its place in the log, so an entry directly above v0.9 is v0.10. The build-inputs node now records that decision. Refused: renumbering by script, assigning the number by a commit to main after the merge, a date or time in the title line or in archive names, naming an amendment by the date and title of its entry, and one amendment in flight at a time.
 
 ## 2026-10-22 The kernel owns clearing a window while keeping its storage
 
