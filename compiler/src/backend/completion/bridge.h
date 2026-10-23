@@ -187,7 +187,8 @@ uint64_t wf__completion_monotonic_ns(void);
  * base-position cell Darwin's facility requires; Linux keeps the whole cursor
  * in the descriptor and leaves the cell untouched.  The native record the
  * batch holds differs by platform and is decoded by the ordinary linked
- * library, not here. */
+ * library, not here; the engine reads only the records' names, to read again
+ * within the operation a batch that held only `.` and `..` [PRE-2]. */
 void wf__completion_directory_next_submit(
     int descriptor,
     void *buffer,
