@@ -271,6 +271,29 @@ impl Analyzer<'_, '_> {
         expression: &CheckedExpression,
         state: &mut ProofFlowState,
     ) -> ExpressionJudgment {
+        let judgment = self.expression_effects_before_result(expression, state);
+        self.judge_expression_window_bounds(expression, state);
+        judgment
+    }
+
+    fn judge_expression_window_bounds(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &mut ProofFlowState,
+    ) {
+        if let CheckedExpression::UserCall { call, .. } = expression {
+            self.judging().judge_window_bounds(call, state);
+        }
+    }
+
+    /// A direct result destination publishes its S12 relations after its
+    /// own commit. Its window bounds must see those relations too, before
+    /// any subsequent source statement can add facts.
+    fn expression_effects_before_result(
+        &mut self,
+        expression: &CheckedExpression,
+        state: &mut ProofFlowState,
+    ) -> ExpressionJudgment {
         let mut judgment = self.judge_expression(expression, state);
         let mut events = Vec::new();
         self.input.collect_expression_kills(expression, &mut events);
@@ -332,7 +355,7 @@ impl Analyzer<'_, '_> {
         // [TYPE-11.S3, TYPE-11.S4] the right-hand side is handed off, or a
         // continuation takes its debts, before the statement's own kills.
         let sealed = self.seal_set_before(node_path, target, value, state);
-        let judgment = self.expression_effects(value, state);
+        let judgment = self.expression_effects_before_result(value, state);
         self.reasoning()
             .finish_result(value, &judgment, &mut result, state);
         let ExpressionJudgment {
@@ -569,6 +592,7 @@ impl Analyzer<'_, '_> {
         {
             state.results.insert(place.binding, result);
         }
+        self.judge_expression_window_bounds(value, state);
     }
 
     pub(super) fn walk_statement(
@@ -636,7 +660,7 @@ impl Analyzer<'_, '_> {
                 // [TYPE-11.S3] a continuation takes the moved or copied
                 // value's debts before the initializer's own kills.
                 let taken = self.sealed_continuation(value, *binding, state);
-                let judgment = self.expression_effects(value, state);
+                let judgment = self.expression_effects_before_result(value, state);
                 self.reasoning()
                     .finish_result(value, &judgment, &mut result, state);
                 if !result.is_empty() {
@@ -776,6 +800,7 @@ impl Analyzer<'_, '_> {
                         );
                     }
                 }
+                self.judge_expression_window_bounds(value, state);
                 true
             }
             // [GRAM-4, CALL-4] `let (a, b) = f(...);`. The call is judged once;
@@ -803,7 +828,7 @@ impl Analyzer<'_, '_> {
                         self.sealed_part_continuation(value, step, *binding, state)
                     })
                     .collect::<Vec<_>>();
-                let judgment = self.expression_effects(value, state);
+                let judgment = self.expression_effects_before_result(value, state);
                 let mut destinations = Vec::with_capacity(bindings.len());
                 for ((binding, ty, _), sealed) in bindings.iter().zip(sealed) {
                     self.declare(*binding);
@@ -850,6 +875,7 @@ impl Analyzer<'_, '_> {
                         state,
                     );
                 }
+                self.judge_expression_window_bounds(value, state);
                 true
             }
             CheckedStatement::PropagateLet {

@@ -243,6 +243,26 @@ impl Judging<'_, '_, '_> {
         site: &crate::NodePath,
         state: &mut ProofFlowState,
     ) -> bool {
+        self.judge_event_preservations(site, state, false)
+    }
+
+    /// [OP-10] ask the captured selection bound in the call's exit state,
+    /// after its ordinary kills and exit postconditions. Later guards may
+    /// not restore a reference that this event invalidates [REF-2].
+    pub(super) fn judge_window_bounds(
+        &mut self,
+        site: &crate::NodePath,
+        state: &mut ProofFlowState,
+    ) {
+        self.judge_event_preservations(site, state, true);
+    }
+
+    fn judge_event_preservations(
+        &mut self,
+        site: &crate::NodePath,
+        state: &mut ProofFlowState,
+        post_call: bool,
+    ) -> bool {
         let pending: Vec<_> = self
             .input
             .function
@@ -250,7 +270,15 @@ impl Judging<'_, '_, '_> {
             .iter()
             .enumerate()
             .filter(|(query, _)| !self.output.judged_separations.contains(query))
-            .filter(|(_, separation)| separation.site.components().starts_with(site.components()))
+            .filter(|(_, separation)| {
+                if post_call {
+                    separation.occasion == CheckedSeparationOccasion::WindowBound
+                        && separation.site == *site
+                } else {
+                    separation.occasion != CheckedSeparationOccasion::WindowBound
+                        && separation.site.components().starts_with(site.components())
+                }
+            })
             .map(|(query, separation)| (query, separation.clone()))
             .collect();
         let mut all_discharged = true;
@@ -336,8 +364,11 @@ impl Judging<'_, '_, '_> {
                     .prove_index_outside_range(index, range, state),
                 CheckedCallSeparationPositions::RangeWithinLength(range) => {
                     separation.window.as_ref().and_then(|window| {
-                        self.reasoning()
-                            .range_within_length_proof(window, range, state)
+                        if separation.occasion == CheckedSeparationOccasion::WindowBound {
+                            self.reasoning().range_bound_proof(window, range, state)
+                        } else {
+                            self.reasoning().range_within_length_proof(window, range, state)
+                        }
                     })
                 }
             };
@@ -389,6 +420,9 @@ impl Judging<'_, '_, '_> {
                         u32::try_from(query).expect("atomic-target separation queries exceed u32"),
                     )
                 }
+                (None, CheckedSeparationOccasion::WindowBound) => {
+                    unreachable!("window bounds always belong to a reference use")
+                }
                 (None, CheckedSeparationOccasion::Call) => ObligationFamily::CallSeparation(
                     u32::try_from(query).expect("call-separation queries exceed u32"),
                 ),
@@ -400,6 +434,16 @@ impl Judging<'_, '_, '_> {
             refuted: false,
             contradictory: proof.is_some_and(|proof| proof.route == Some(ProofRoute::Contradiction)),
             residual: (!discharged).then(|| match separation.positions.first() {
+                Some(CheckedCallSeparationPositions::Live(_))
+                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
+                        "{} requires its captured index below {}.len after the call",
+                        separation.left_spelling, separation.right_spelling
+                    ),
+                Some(CheckedCallSeparationPositions::RangeWithinLength(_))
+                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
+                        "{} requires its captured end at or below {}.len after the call",
+                        separation.left_spelling, separation.right_spelling
+                    ),
                 Some(CheckedCallSeparationPositions::Indices(..)) => format!(
                     "{} and {} require their captured indices to be distinct",
                     separation.left_spelling, separation.right_spelling
