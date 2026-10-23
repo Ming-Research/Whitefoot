@@ -665,6 +665,54 @@ deliberately broken models, one per condition: the literal check removed, the
 walk recording no snapshot inside a block, and each snapshot dropping its
 newest binding; each run failed on the condition it targets.
 
+### The L0 lemmas
+
+`FactsSound.lean` gives the L0 relation state its meaning and proves each
+operation keeps it. A valuation gives Z 0 and a sum the sum of its sides; a
+state is satisfied when it is not contradictory and every stored bound and
+disequality holds. The closure is sound because each matrix step, the
+transitive one and the disequality strengthening alike, lowers an entry only
+to a value the valuation already bounds, so every entry stays a true bound and
+no diagonal entry turns negative; the proof needs neither the matrix's shape
+nor the closure's fixed point. Queries, kills and additions follow directly.
+
+The join needs a stronger premise than "the terms the taken input and the live
+list name lie in their types". A sum term names atoms that another input can
+name on their own, and the join then adds those atoms' implicit type bounds.
+With `p2 : u8` live and valued 0, a taken input holding `z - (p1 + p2) <=
+-1000` and another holding `p1 - p1 != 3`, the join keeps the disequality, its
+closure bounds `p1` by 255, and any valuation agreeing on `p2` and on `p1 +
+p2` gives `p1` a value of at least 1000. Inferred from the definitions; the
+example was not run. The lemma therefore asks that the atoms of those terms lie in their
+types, which a valuation read off a running frame satisfies, and builds the
+new valuation atom by atom: the taken input's atoms keep their values and every
+other atom takes 0, a member of every fragment type. A second form needs no
+new valuation when every term already lies in its type.
+
+The module adds 618 lines of Lean and no coverage mark. Before the model
+changes above were merged in, it built in 2.3 s inside a 17.2 s build of the
+model, within the 25 s budget, on the fourth `proof.yml` run: the first failed
+in one lemma, the saturation step, and the third on normalizing steps that
+changed nothing.
+
+### The affine lemmas
+
+The affine proof part, `AffineSound.lean`, gives the affine forms of [ENT-6]
+their meaning under a valuation of the atoms and proves that `DIRECT`, the two
+integer tightenings, the residual check and `AUTO` answer "holds" only for an
+inequality that holds whenever the view is satisfied: not contradictory, every
+atom in its interval, every published premise and every L0 image holding.
+That the images hold, given the state's L0 relations, is left to the
+discharge proof, which has the L0 satisfaction. The soundness of a
+tightening does not depend on how its factor is chosen: dividing a holding
+inequality by any factor of every coefficient and rounding the bound down
+gives one that holds. The part adds 347 lines of Lean in one module and
+changes no model definition. The build of the model and harness took 16.2 s,
+10.1 s and 18.1 s on its three green runs, within the 25 s budget. The part
+took five engineer turns and four `proof.yml` runs to its review, one of which
+failed to compile: the toolchain's `Int.fdiv_eq_ediv` carries no sign
+hypothesis.
+
 ## Cost
 
 Precedents with measured sizes:
