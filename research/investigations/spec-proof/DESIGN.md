@@ -738,12 +738,14 @@ stated for every value of the result type rather than through a stored
 context, since a `set` or `if` destination resumes in a state that does not
 exist until the value arrives.
 
-The module adds 1,643 lines of Lean, changes no model definition and adds no
-coverage mark. The build of the model and harness took 23.4 s and 24.1 s on
-its first green runs, within the 25 s budget, with the module itself 6.5 s.
-It took three engineer turns and three `proof.yml` runs: the first draft was
-written without a local Lean and failed to compile in about 30 places, the
-second in 9.
+The module adds 1,642 lines of Lean, changes no model definition and adds no
+coverage mark. The build of the model and harness took 21.9 s to 23.4 s on
+its three green `proof.yml` runs, within the 25 s budget, with the module
+itself 6.0 s to 6.5 s. The part took seven engineer turns and five
+`proof.yml` runs to its review. The first turn only studied the question and
+ended on an API error; the first draft was written without a local Lean and
+failed to compile in about 30 places, the second run in 9, and the two later
+runs changed only warnings and this record.
 
 ## Cost
 
