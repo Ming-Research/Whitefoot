@@ -173,8 +173,23 @@ jobs:
           for arm in split pr420 pr420split; do
             git worktree add --detach "$out/arms/$arm" "$GITHUB_SHA"
           done
+          # Whitefoot#420 predates the integer match terminator; its successor
+          # list gets that terminator's targets and default, nothing else.
           for arm in pr420 pr420split; do
             git -C "$out/arms/$arm" merge --no-edit origin/claude/cold-branch-weights || echo "$arm" >> "$out/failed.txt"
+            python3 - "$out/arms/$arm/compiler/src/backend/emitter/branch_weights.rs" <<'EOF' || echo "$arm" >> "$out/failed.txt"
+          import sys
+          path = sys.argv[1]
+          text = open(path).read()
+          old = "                IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),\n"
+          new = ("                IrTerminator::IntegerMatch { targets, default, .. } => targets\n"
+                 "                    .iter()\n"
+                 "                    .map(|target| target.block().index())\n"
+                 "                    .chain(default.iter().map(|block| block.index()))\n"
+                 "                    .collect(),\n") + old
+          assert text.count(old) == 1
+          open(path, "w").write(text.replace(old, new))
+          EOF
           done
           for arm in split pr420split; do
             python3 - "$out/arms/$arm/lib/std/collections/hash_map/hash-map.wf" <<'EOF'
@@ -222,29 +237,52 @@ jobs:
           done
           # weighted: split with a 1:2000 branch weight on the branch whose
           # side holds the shrink call, as an unlikely marker would lower.
+          awk '/^define .*hash_map_remove\$instance/{p=1} p{print} p&&/^}/{p=0}' "$out/split.ll"
           python3 - "$out/split.ll" "$out/weighted.ll" <<'EOF'
           import re, sys
+          from collections import deque
           lines = open(sys.argv[1]).read().split("\n")
           start = next(i for i, l in enumerate(lines) if l.startswith("define") and "hash_map_remove$instance" in l)
           end = next(i for i in range(start, len(lines)) if lines[i] == "}")
-          label, holder = None, None
-          for i in range(start, end):
-              m = re.match(r"^([A-Za-z0-9_.$-]+):", lines[i])
+          label, holder, edges, branches = "entry", None, {}, []
+          for i in range(start + 1, end):
+              line = lines[i]
+              m = re.match(r"^([A-Za-z0-9_.$-]+):", line)
               if m:
                   label = m.group(1)
-              if "hash_map_shrink$instance" in lines[i] and "call" in lines[i]:
+              edges.setdefault(label, set())
+              if "hash_map_shrink$instance" in line and "call" in line:
                   holder = label
+              targets = re.findall(r"label %([A-Za-z0-9_.$-]+)", line)
+              edges[label].update(targets)
+              b = re.match(r"^\s*br i1 [^,]+, label %([A-Za-z0-9_.$-]+), label %([A-Za-z0-9_.$-]+)\s*$", line)
+              if b:
+                  branches.append((i, b.group(1), b.group(2)))
           assert holder, "no shrink call in the removal"
-          hits = 0
-          for i in range(start, end):
-              m = re.match(r"^(\s*br i1 [^,]+, label %([^,]+), label %(\S+))$", lines[i])
-              if m and holder in (m.group(2), m.group(3)):
-                  weights = "i32 1, i32 2000" if m.group(2) == holder else "i32 2000, i32 1"
-                  lines[i] = m.group(1) + ", !prof !9999990"
-                  lines.append(f'!9999990 = !{{!"branch_weights", {weights}}}')
-                  print("weighted:", lines[i].strip(), "->", weights)
-                  hits += 1
-          assert hits == 1, hits
+          def distance(source):
+              seen, queue = {source: 0}, deque([source])
+              while queue:
+                  node = queue.popleft()
+                  for nxt in edges.get(node, ()):
+                      if nxt not in seen:
+                          seen[nxt] = seen[node] + 1
+                          queue.append(nxt)
+              return seen.get(holder)
+          # The branch whose one side reaches the shrink call and the other
+          # does not, nearest to the call.
+          best = None
+          for i, yes, no in branches:
+              a, b = distance(yes), distance(no)
+              if (a is None) != (b is None):
+                  d = a if a is not None else b
+                  if best is None or d < best[0]:
+                      best = (d, i, a is not None)
+          assert best, "no branch guards the shrink call"
+          _, i, first = best
+          weights = "i32 1, i32 2000" if first else "i32 2000, i32 1"
+          lines[i] = lines[i].rstrip() + ", !prof !9999990"
+          lines.append(f'!9999990 = !{{!"branch_weights", {weights}}}')
+          print("weighted:", lines[i].strip(), "->", weights)
           open(sys.argv[2], "w").write("\n".join(lines) + "\n")
           EOF
           for arm in $(cat "$out/arms.txt"); do
