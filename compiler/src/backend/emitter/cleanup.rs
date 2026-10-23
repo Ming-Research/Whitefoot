@@ -236,7 +236,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__shared_unlock", "void", &["ptr", "i32"]),
         ("wf__shared_unlock_unwritten", "void", &["ptr", "i32"]),
         ("wf__shared_take", "void", &["ptr", "i32"]),
-        ("wf__shared_watch", "i32", &["ptr", "i32", "ptr", "ptr"]),
+        ("wf__shared_watch", "i32", &["ptr", "i32", "ptr", "ptr", "ptr"]),
         ("wf__map_new", "ptr", &["i64", "i64", "i64"]),
         (
             "wf__keyed_table_count",
@@ -301,7 +301,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__watch_object", "void", &["ptr", "ptr", "ptr"]),
         ("wf__watch_cancel", "void", &["ptr", "ptr", "i32"]),
         ("wf__watch_table", "void", &["ptr", "ptr"]),
-        ("wf__watch_park", "i32", &["ptr", "ptr"]),
+        ("wf__watch_park", "i32", &["ptr", "ptr", "ptr"]),
     ];
     for (name, result, parameters) in declarations {
         module.declare(Signature::new(

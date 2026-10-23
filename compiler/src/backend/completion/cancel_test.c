@@ -321,7 +321,7 @@ static void guard_races(void) {
     CHECK(guard.used == 1u && view->shared.watched == 1u);
     wf__shared_unlock(view, 1u);
     fire_elsewhere(&source);
-    CHECK(wf__watch_park(&guard, &frame) == 0);
+    CHECK(wf__watch_park(&guard, &frame, "waits for a native cancellation guard") == 0);
     CHECK(guard.used == 0u && view->shared.watched == 0u);
     CHECK(view->shared.watching == NULL);
     CHECK(wf_run_take(&wf_driver_root) == NULL);
@@ -359,7 +359,7 @@ static void guard_races(void) {
         wf__watch_object(current, ordinary, NULL);
         wf__shared_unlock(ordinary, 1u);
         wf__shared_unlock(view, 1u);
-        CHECK(wf__watch_park(current, &frame) == 1);
+        CHECK(wf__watch_park(current, &frame, "waits for a native cancellation guard") == 1);
         wf_context_commit_wake(wf_context_current);
     }
     wf_context_current = &wf_context_root;
@@ -387,6 +387,9 @@ static void guard_races(void) {
     wf__shared_unlock_unwritten(ordinary, 1u);
     wf__shared_unlock_unwritten(view, 1u);
     CHECK(wf_shared_reservation(&view->shared) == NULL && other.shared_turn == NULL);
+    CHECK(other.roster == &wf_contexts);
+    wf_context_roster_remove(&other);
+    CHECK(wf_contexts.head == &wf_context_root && wf_context_root.roster_next == NULL);
     wf_context_current = &wf_context_root;
     wf_driver_self = &wf_driver_root;
     CHECK(guard.used == 0u && other_guard.used == 0u);
@@ -420,7 +423,7 @@ static void guard_races(void) {
     wf__watch_object(&guard, ordinary, NULL);
     wf__shared_unlock(ordinary, 1u);
     wf__shared_unlock(view, 1u);
-    CHECK(wf__watch_park(&guard, &frame) == 1);
+    CHECK(wf__watch_park(&guard, &frame, "waits for a native cancellation guard") == 1);
     wf_context_commit_wake(wf_context_current);
     wake_race race = { .source = &source, .ordinary = ordinary };
     pthread_t fire_thread, write_thread;
@@ -477,7 +480,7 @@ static void guard_races(void) {
         wf__watch_object(&guard, ordinary, &word_is_one);
         wf__shared_unlock_unwritten(ordinary, 1u);
         wf__shared_unlock_unwritten(view, 1u);
-        CHECK(wf__watch_park(&guard, &frame) == 1);
+        CHECK(wf__watch_park(&guard, &frame, "waits for a native cancellation guard") == 1);
         wf_context_commit_wake(wf_context_current);
         wf_context_current = &writer;
         wf_driver_self = &firing_driver;
@@ -591,7 +594,7 @@ static void flag_races(void) {
      * where a link that read the flag only before it would park for good. */
     wf__watch_cancel(&guard, view, 0u);
     wf__shared_unlock_unwritten(ordinary, 1u);
-    CHECK(wf__watch_park(&guard, &frame) == 0);
+    CHECK(wf__watch_park(&guard, &frame, "waits for a native cancellation guard") == 0);
     CHECK(guard.used == 0u && ((wf_shared *)ordinary)->watched == 0u);
     CHECK(view->flag_watchers.count == 0u && view->flag_watchers.links == NULL);
     CHECK(wf_run_take(&wf_driver_root) == NULL);
@@ -625,7 +628,7 @@ static void flag_races(void) {
     fire_elsewhere(&source);
     CHECK(guard.used == 0u && ((wf_shared *)ordinary)->watched == 0u);
     CHECK(view->flag_watchers.count == 0u && view->flag_watchers.links == NULL);
-    CHECK(wf__watch_park(&guard, &frame) == 0);
+    CHECK(wf__watch_park(&guard, &frame, "waits for a native cancellation guard") == 0);
     CHECK(wf_run_take(&wf_driver_root) == NULL);
     CHECK(wf__shared_acquire(ordinary, 1u, &frame) == 0);
     CHECK(wf__cancel_flag(view) == 1u);

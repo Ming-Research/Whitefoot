@@ -945,7 +945,10 @@ pub enum IrOperation {
     /// [WAIT-3] waits until every context this activation started has
     /// finished. It stands before every exit of an activation that starts
     /// one. Defines `Unit`.
-    ContextJoin,
+    ContextJoin {
+        /// Static presentation only; never a scheduling input.
+        site: crate::SourceDescription,
+    },
     /// [WAIT-3] starts `function`, a synthesized wrapper taking exactly
     /// `arguments` by value and returning the spawned call's result, in a
     /// context of its own whose result the starting activation keeps. Defines
@@ -960,6 +963,8 @@ pub enum IrOperation {
     /// the block, and otherwise at the block's end.
     ContextAwait {
         start: IrValueId,
+        /// Static presentation only; never a scheduling input.
+        site: crate::SourceDescription,
     },
     Integer {
         operation: IrIntegerOperation,
@@ -1346,6 +1351,8 @@ pub enum IrOperation {
     SharedWatch {
         object: IrValueId,
         test: Option<IrWakeTest>,
+        /// Static description of the atomic statement whose guard waits.
+        site: crate::SourceDescription,
     },
     /// [SHARE-3] gives up this context's hold, after a statement that may
     /// have written the object when `wrote`, and otherwise after one whose
@@ -1530,6 +1537,8 @@ pub enum IrOperation {
     /// frame. Defines `Unit`.
     WatchPark {
         record: IrRecord,
+        /// Static description of the atomic statement whose guard waits.
+        site: crate::SourceDescription,
     },
     /// The first-element pointer used only by a synthesized split capture of
     /// a `Box<Array<T>>`. The source Box value remains the allocation-base
@@ -2075,7 +2084,7 @@ pub struct IrFunction {
     /// acquire invented source use or provenance records.
     pub(crate) source_calls: Vec<IrSourceCall>,
     /// Developer-only atomic acquisition lines, recorded during lowering.
-    pub(crate) lock_ledger: Vec<String>,
+    pub(crate) lock_ledger: Vec<crate::SourceDescription>,
     pub(crate) result: IrType,
     pub(crate) values: Vec<IrType>,
     pub(crate) blocks: Vec<IrBlock>,

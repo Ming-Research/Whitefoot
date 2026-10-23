@@ -3053,6 +3053,7 @@ mod tests {
             let declarations = DeclarationInventory {
                 resolved,
                 ledger_line_starts: Default::default(),
+                target_ledger_sources: Default::default(),
                 no_heap: false,
                 tree: TreeView::new(resolved.syntax()).unwrap(),
             };
@@ -3351,6 +3352,7 @@ mod tests {
             let declarations = DeclarationInventory {
                 resolved,
                 ledger_line_starts: Default::default(),
+                target_ledger_sources: Default::default(),
                 no_heap: false,
                 tree: TreeView::new(resolved.syntax()).unwrap(),
             };

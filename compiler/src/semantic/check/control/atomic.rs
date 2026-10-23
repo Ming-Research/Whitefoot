@@ -155,14 +155,20 @@ impl Checker<'_, '_> {
                 }));
         }
         let invariants = self.atomic_invariants(state, binding);
+        let target_path = self.types.declarations.tree.path(place)?.clone();
+        let ledger_site = self
+            .types
+            .declarations
+            .lock_ledger_site(declaration.origin().coordinate());
+        self.types
+            .declarations
+            .target_ledger_sources
+            .borrow_mut()
+            .insert(target_path.clone(), ledger_site);
         let mut target = CheckedTarget {
-            node_path: self.types.declarations.tree.path(place)?.clone(),
+            node_path: target_path,
             ledger_name: declaration.spelling().to_owned(),
             ledger_state: self.types.checked_type_name(state)?,
-            ledger_site: self
-                .types
-                .declarations
-                .lock_ledger_site(declaration.origin().coordinate()),
             binding,
             handle: Box::new(handle.expression),
             kept_by_place: false,

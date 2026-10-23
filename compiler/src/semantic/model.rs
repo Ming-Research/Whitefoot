@@ -1065,8 +1065,6 @@ pub(crate) struct CheckedTarget {
     /// Source presentation for the non-normative lowering lock ledger.
     pub(crate) ledger_name: String,
     pub(crate) ledger_state: String,
-    /// The target binder's exact one-based `path:line:column` location.
-    pub(crate) ledger_site: String,
     pub(crate) binding: BindingId,
     pub(crate) handle: Box<CheckedExpression>,
     /// [SHARE-1] whether the handle place keeps the object live until the
@@ -3591,7 +3589,12 @@ pub(crate) struct CheckedProgramData {
     /// and expression carriers, rendered as one-based `path:line:column`.
     /// Lowering uses these only to present its non-normative lock ledger;
     /// they retain no lock timing, permission or acceptance judgment.
-    pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, String>,
+    pub(crate) lock_ledger_sources: std::collections::HashMap<NodePath, crate::SourceDescription>,
+    /// Exact target-binder locations, kept out of the analyzed function body.
+    pub(crate) target_ledger_sources: std::collections::HashMap<NodePath, crate::SourceDescription>,
+    /// Presentation-only descriptions of guard waits and planned context joins.
+    /// Source coordinates are resolved while the canonical tree is retained.
+    pub(crate) wait_report_sources: std::collections::HashMap<NodePath, crate::SourceDescription>,
 }
 
 impl CheckedProgramData {

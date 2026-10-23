@@ -86,6 +86,8 @@ printf '@echo off\r\n"%%~2"\r\n>"%%~1" echo %%errorlevel%%\r\n' > "$work/tools/r
 # only column-zero fences of exactly three backticks, and stops at any other
 # fence form (tildes, four or more backticks, indentation, a list or quote
 # marker) rather than skipping a block the guide's convention allows.
+# guide-steps.py reads the same convention for the Linux and macOS sections;
+# the item wf-guide-reader-single makes this run use it too.
 python -I - "$guide" "$work" <<'PYGUIDE'
 import pathlib, re, sys
 guide, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])

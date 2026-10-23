@@ -13,7 +13,7 @@ fn context_awaits(function: &IrFunction) -> Vec<(usize, usize, IrValueId)> {
                 .enumerate()
                 .filter_map(move |(index, instruction)| match instruction {
                     IrInstruction::Define {
-                        operation: IrOperation::ContextAwait { start },
+                        operation: IrOperation::ContextAwait { start, .. },
                         ..
                     } => Some((block, index, *start)),
                     _ => None,

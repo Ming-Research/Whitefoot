@@ -493,7 +493,7 @@ static void w_step(test_frame *frame) {
             while (!atomic_load(&g_wrote))
                 relax(&spins);
         }
-        if (wf__watch_park(f->watch, frame)) {
+        if (wf__watch_park(f->watch, frame, "waits for a native shared-object guard")) {
             w_parks += 1;
             return;
         }
@@ -663,9 +663,9 @@ static void turn_w_step(test_frame *f) {
         wf__watch_table(g->watch, turn_table);
         wf__shared_unlock(turn_object, 1);
         wf__table_unlock_entry(entry, present);
-        parked = wf__watch_park(g->watch, f);
+        parked = wf__watch_park(g->watch, f, "waits for a native shared-object guard");
     } else {
-        parked = wf__shared_watch(turn_object, 1, f, NULL);
+        parked = wf__shared_watch(turn_object, 1, f, NULL, "waits for a native shared-object guard");
     }
     if (!parked)
         fail("a guard with no intervening writer did not park (parks, case)", turn_parks, turn_case);
@@ -798,7 +798,7 @@ static void age_w_step(test_frame *f) {
     wf__watch_begin(g->watch);
     wf__watch_object(g->watch, age_object, NULL);
     wf__shared_unlock(age_object, 1);
-    if (!wf__watch_park(g->watch, f))
+    if (!wf__watch_park(g->watch, f, "waits for a native shared-object guard"))
         fail("age watcher did not park (parks)", age_parks, 0);
 }
 
@@ -886,7 +886,7 @@ static void cancel_w_step(test_frame *f) {
     wf__shared_unlock(cancel_state, 1u);
     f->statements = 1;
     cancel_parks += 1u;
-    if (!wf__watch_park(g->watch, f))
+    if (!wf__watch_park(g->watch, f, "waits for a native shared-object guard"))
         fail("a cancellation guard did not initially park (parks)", cancel_parks, 0);
 }
 
@@ -989,7 +989,7 @@ static void wake_w_step(test_frame *f) {
     }
     wake_parks += 1u;
     const wf_wake_test *test = id == 1u ? &wake_two : (id == 2u ? &wake_one : &wake_one_copy);
-    if (!wf__shared_watch(wake_object, 1u, f, test))
+    if (!wf__shared_watch(wake_object, 1u, f, test, "waits for a native shared-object guard"))
         fail("a watch no write followed did not park (watcher, parks)", id, wake_parks);
 }
 
@@ -1137,7 +1137,8 @@ static void callback_w_step(test_frame *f) {
         return;
     }
     callback_parks += 1u;
-    if (!wf__shared_watch(callback_object, 1u, f, &frame->filter))
+    if (!wf__shared_watch(callback_object, 1u, f, &frame->filter,
+                          "waits for a native shared-object guard"))
         fail("a callback watch without a write did not park (id, parks)", id, callback_parks);
 }
 
@@ -1269,7 +1270,7 @@ static void rescan_w_step(test_frame *f) {
     rescan_parks[id] += 1u;
     const wf_wake_test *test =
         rescan_late && id == 2u ? &rescan_y : (id == 1u ? &rescan_x_first : &rescan_x_second);
-    if (!wf__shared_watch(rescan_object, 1u, f, test))
+    if (!wf__shared_watch(rescan_object, 1u, f, test, "waits for a native shared-object guard"))
         fail("a rescan watch's park answered at once (watcher, parks)", id, rescan_parks[id]);
 }
 
@@ -1477,7 +1478,7 @@ static void borrowed_a_step(test_frame *f) {
         return;
     }
     borrowed_a_parks += 1u;
-    if (!wf__shared_watch(borrowed_x, 1u, f, &borrowed_a_test))
+    if (!wf__shared_watch(borrowed_x, 1u, f, &borrowed_a_test, "waits for a native shared-object guard"))
         fail("A's park answered at once (parks, expected)", borrowed_a_parks, 0);
 }
 
@@ -1528,7 +1529,7 @@ static void borrowed_o_step(test_frame *f) {
     wf__watch_object(g->watch, borrowed_x, &borrowed_o_test);
     wf__shared_unlock_unwritten(borrowed_x, 1u);
     wf__shared_unlock_unwritten(borrowed_e, 1u);
-    if (!wf__watch_park(g->watch, f))
+    if (!wf__watch_park(g->watch, f, "waits for a native shared-object guard"))
         fail("O's first park answered at once (A's parks, expected)", borrowed_a_parks, 1);
 }
 
@@ -1679,7 +1680,7 @@ static void root_step(test_frame *f) {
             launch(f, p_step);
         }
     }
-    if (wf__context_join_wait(f->group, f)) {
+    if (wf__context_join_wait(f->group, f, "waits to join a native test context")) {
         return;
     }
     if (root_phase == 4) {
@@ -1693,7 +1694,7 @@ static void root_step(test_frame *f) {
         }
         root_phase = 5;
         cancel_phase_begin(f);
-        if (wf__context_join_wait(f->group, f))
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context"))
             return;
     }
     if (root_phase == 5) {
@@ -1701,7 +1702,7 @@ static void root_step(test_frame *f) {
             fail("cancelled reserved watches did not exit (finished, refused)", cancel_finished, cancel_r_parked);
         root_phase = 6;
         launch(f, cancel_fresh_step);
-        if (wf__context_join_wait(f->group, f))
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context"))
             return;
     }
     if (root_phase == 6) {
@@ -1715,7 +1716,7 @@ static void root_step(test_frame *f) {
         }
         root_phase = 7;
         wake_phase_begin(f, 0);
-        if (wf__context_join_wait(f->group, f)) return;
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 7) {
         wake_phase_end();
@@ -1725,7 +1726,7 @@ static void root_step(test_frame *f) {
         }
         root_phase = 8;
         wake_phase_begin(f, 1);
-        if (wf__context_join_wait(f->group, f)) return;
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 8) {
         wake_phase_end();
@@ -1735,7 +1736,7 @@ static void root_step(test_frame *f) {
         }
         root_phase = 9;
         rescan_phase_begin(f, 0);
-        if (wf__context_join_wait(f->group, f)) return;
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 9) {
         rescan_phase_end();
@@ -1745,7 +1746,7 @@ static void root_step(test_frame *f) {
         }
         root_phase = 10;
         rescan_phase_begin(f, 1);
-        if (wf__context_join_wait(f->group, f)) return;
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 10) {
         rescan_phase_end();
@@ -1755,7 +1756,7 @@ static void root_step(test_frame *f) {
         }
         root_phase = 11;
         borrowed_phase_begin(f);
-        if (wf__context_join_wait(f->group, f)) return;
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 11) {
         borrowed_phase_end();
@@ -1765,7 +1766,7 @@ static void root_step(test_frame *f) {
         }
         root_phase = 12;
         callback_phase_begin(f);
-        if (wf__context_join_wait(f->group, f)) return;
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 12) {
         callback_phase_end();
@@ -1776,7 +1777,7 @@ static void root_step(test_frame *f) {
         object_phase_end();
         root_phase = 2;
         guard_phase_begin(f);
-        if (wf__context_join_wait(f->group, f)) {
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) {
             return;
         }
     }
@@ -1784,7 +1785,7 @@ static void root_step(test_frame *f) {
         guard_phase_end();
         root_phase = 3;
         turn_phase_begin(f);
-        if (wf__context_join_wait(f->group, f))
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context"))
             return;
     }
     for (;;) {
@@ -1796,12 +1797,12 @@ static void root_step(test_frame *f) {
         if (++turn_case == TURN_CASES)
             break;
         turn_phase_begin(f);
-        if (wf__context_join_wait(f->group, f))
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context"))
             return;
     }
     root_phase = 4;
     age_phase_begin(f);
-    if (!wf__context_join_wait(f->group, f))
+    if (!wf__context_join_wait(f->group, f, "waits to join a native test context"))
         fail("newly launched age cases did not suspend their join (phase)", root_phase, 0);
 }
 
