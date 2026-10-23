@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/verification
 
 Summary: With the gate on Linux alone, no downstream release could be made, because the release workflow requires a successful gate run with macOS jobs on the released commit and no gate run had any. The gate's manual trigger now takes a `macos` input that runs every group on macOS as well as Linux, and the final job requires every group green on each platform the run was asked for; every other trigger still runs Linux alone. A release is qualified by one such run started on the commit before the release is dispatched, so the macOS queue is entered once per release and not once per pull request, and a fault only macOS shows, such as an unused import that clippy reports on macOS alone, reaches the main line and surfaces when a release is qualified. Linux alone for every other run stays provisional, reopened when the hosted macOS runners no longer hold merges back. Refused: a release from a gate run without macOS jobs, macOS on every push to the main line, a release workflow that runs the macOS groups itself, and a daily scheduled macOS run of the main line in addition.
+## 2026-10-22 The kernel owns clearing a window while keeping its storage
+
+Nodes: language/data-model/kernel-minimality
+
+Summary: A program that reuses one byte buffer per batch could not empty it without one boundary operation per element or a transfer of every element into another window, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. The kernel therefore owns `clear` over every droppable element type: it runs each element's derived release, sets the length to zero and keeps the storage, capacity, ring origin and pages, so an element type that needs no release is reset independently of length. Clearing leaves the list of operations that begin as source libraries, and clearing as a source library over `take_back` is recorded as rejected.
 
 ## 2026-10-21 A column for a model with too few runs takes the larger of the row's largest class and its own runs
 
