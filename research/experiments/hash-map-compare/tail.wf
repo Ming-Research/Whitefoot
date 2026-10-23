@@ -290,7 +290,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   }
   let shrinks = box_slots_new::<u64>(capacity: shrink_words);
   let map = grown(size: size, keys: &keys);
-  let held = hash_map_capacity::<u64, u64, ceiling>(map: &map);
+  let known = hash_map_capacity::<u64, u64, ceiling>(map: &map);
   let found = 0_u64;
   let longest = 0_u64;
   for (step in 0_u64..size) {
@@ -315,13 +315,13 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       set longest = elapsed;
     }
     let after = hash_map_capacity::<u64, u64, ceiling>(map: &map);
-    if after != held {
+    if after != known {
       let left = hash_map_len::<u64, u64, ceiling>(map: &map);
-      record(shrinks: &shrinks, value: held);
+      record(shrinks: &shrinks, value: known);
       record(shrinks: &shrinks, value: after);
       record(shrinks: &shrinks, value: left);
       record(shrinks: &shrinks, value: elapsed);
-      set held = after;
+      set known = after;
     }
   }
   let half = size / 2_u64;
