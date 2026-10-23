@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/downstream-releases
 
 Summary: A decision is added: the acceptance of a bundled release installs the Linux and macOS archives with the commands of their section of the getting started guide and builds and runs the guide's programs with the installed compiler, as the Windows decision already does for the Windows archive, instead of extracting the archive by the acceptance's own command. Only the download (replaced by a copy of the candidate) and, on macOS, `xcode-select --install` (the hosted image already holds the Command Line Tools) differ from what a reader runs. The guide's `apt-get` line becomes the only source of the Linux libraries the toolchain links against that the stock image does not already hold, so a library the guide forgets to list is missing in the clean container, except `libstdc++6`, `zlib1g` and `liblzma5`, which the stock image holds before the line runs.
+## 2026-10-22 A manual gate run can add macOS, so a release is qualified once per release
+
+Nodes: compiler/verification
+
+Summary: With the gate on Linux alone, no downstream release could be made, because the release workflow requires a successful gate run with macOS jobs on the released commit and no gate run had any. The gate's manual trigger now takes a `macos` input that runs every group on macOS as well as Linux, and the final job requires every group green on each platform the run was asked for; every other trigger still runs Linux alone. A release is qualified by one such run started on the commit before the release is dispatched, so the macOS queue is entered once per release and not once per pull request, and a fault only macOS shows, such as an unused import that clippy reports on macOS alone, reaches the main line and surfaces when a release is qualified. Linux alone for every other run stays provisional, reopened when the hosted macOS runners no longer hold merges back. Refused: a release from a gate run without macOS jobs, macOS on every push to the main line, a release workflow that runs the macOS groups itself, and a daily scheduled macOS run of the main line in addition.
 
 ## 2026-10-22 A layout rejection lists every differing gap of its source in its repair
 
