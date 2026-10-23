@@ -44,6 +44,8 @@ theorem bind_ok {ε α β : Type} {x : Except ε α} {g : α → Except ε β} {
 theorem reject_ne {α : Type} {r m : String} {b : α} : rejectBy r m ≠ (.ok b : Judge α) := by
   simp [rejectBy]
 
+theorem ok_bind {ε α β : Type} (a : α) (g : α → Except ε β) : (Except.ok a >>= g) = g a := rfl
+
 theorem reject_bind {α β : Type} {r m : String} (g : α → Judge β) :
     (rejectBy r m >>= g) = rejectBy r m := rfl
 
@@ -55,7 +57,7 @@ theorem ite_reject {α : Type} {c : Prop} {_ : Decidable c} {r m : String} {x : 
   · rw [if_neg hc] at h
     exact ⟨hc, h⟩
 
-theorem discard_ok {ε α : Type} {x : Except ε α} {u : PUnit} (h : Functor.discard x = .ok u) :
+theorem discard_ok {ε α : Type} {x : Except ε α} {u : Unit} (h : Functor.discard x = .ok u) :
     ∃ a, x = .ok a := by
   cases x with
   | error e => cases h
@@ -63,9 +65,9 @@ theorem discard_ok {ε α : Type} {x : Except ε α} {u : PUnit} (h : Functor.di
 
 /-- Every element of a list passes the body of a `for` loop that succeeds, when
 the body only ever goes on to the next element. -/
-theorem forIn_ok {ε α : Type} {body : α → PUnit → Except ε (ForInStep PUnit)} {P : α → Prop}
-    (hb : ∀ a s, body a PUnit.unit = .ok s → P a ∧ s = .yield PUnit.unit) :
-    ∀ {l : List α} {u : PUnit}, forIn l PUnit.unit body = .ok u → ∀ a ∈ l, P a
+theorem forIn_ok {ε α : Type} {body : α → Unit → Except ε (ForInStep Unit)} {P : α → Prop}
+    (hb : ∀ a s, body a () = .ok s → P a ∧ s = .yield ()) :
+    ∀ {l : List α} {u : Unit}, forIn l () body = .ok u → ∀ a ∈ l, P a
   | [], _, _, a, ha => by simp at ha
   | x :: xs, u, h, a, ha => by
     rw [List.forIn_cons] at h
@@ -252,31 +254,38 @@ theorem tdiv_mem {t : IntTy} {n d : Int} (hn : t.Mem n) (hd : t.Mem d)
   obtain ⟨hn1, hn2⟩ := hn
   obtain ⟨hd1, hd2⟩ := hd
   have hM : 1 ≤ t.maxVal := by cases t <;> simp [IntTy.maxVal, IntTy.signed, IntTy.bits]
+  have hm : t.minVal = 0 ∨ t.minVal = -t.maxVal - 1 := by
+    cases t <;> simp [IntTy.minVal, IntTy.maxVal, IntTy.signed, IntTy.bits]
+  have hov' : t.minVal = 0 ∨ n ≠ t.minVal ∨ d ≠ -1 := by
+    rcases hov with hs | hov
+    · left
+      cases t <;> simp_all [IntTy.minVal, IntTy.signed]
+    · exact .inr hov
   unfold IntTy.Mem
-  cases hsg : t.signed
-  · have hm : t.minVal = 0 := by cases t <;> simp_all [IntTy.minVal, IntTy.signed]
-    rcases n with a | a <;> rcases d with b | b <;>
-      simp only [Int.tdiv, Int.ofNat_eq_coe, Int.negSucc_eq, Nat.succ_eq_add_one] at * <;>
-      (try have h1 := Nat.div_le_self a b) <;> omega
-  · have hm : t.minVal = -t.maxVal - 1 := by
-      cases t <;> simp_all [IntTy.minVal, IntTy.maxVal, IntTy.signed, IntTy.bits]
-    simp only [Bool.true_eq_false, false_or] at hov
-    rcases n with a | a <;> rcases d with b | b
-    · have h1 := Nat.div_le_self a b
-      simp only [Int.tdiv, Int.ofNat_eq_coe] at *
-      omega
-    · have h1 := Nat.div_le_self a (b + 1)
-      simp only [Int.tdiv, Int.ofNat_eq_coe, Int.negSucc_eq, Nat.succ_eq_add_one] at *
-      omega
-    · have h1 := Nat.div_le_self (a + 1) b
-      simp only [Int.tdiv, Int.ofNat_eq_coe, Int.negSucc_eq, Nat.succ_eq_add_one] at *
-      omega
-    · have h1 := Nat.div_le_self (a + 1) (b + 1)
-      have h2 : b = 0 → (a + 1) / (b + 1) = a + 1 := by intro hb; subst hb; simp
-      have h3 : 1 ≤ b → (a + 1) / (b + 1) ≤ (a + 1) / 2 := fun hb =>
-        Nat.div_le_div_left (by omega) (by omega)
-      simp only [Int.tdiv, Int.ofNat_eq_coe, Int.negSucc_eq, Nat.succ_eq_add_one] at *
-      omega
+  rcases n with a | a <;> rcases d with b | b
+  · have h1 := Nat.div_le_self a b
+    simp only [Int.tdiv]
+    generalize a / b = q at *
+    simp only [Int.ofNat_eq_natCast] at *
+    omega
+  · have h1 := Nat.div_le_self a (b + 1)
+    simp only [Int.tdiv, Nat.succ_eq_add_one]
+    generalize a / (b + 1) = q at *
+    simp only [Int.ofNat_eq_natCast, Int.negSucc_eq] at *
+    omega
+  · have h1 := Nat.div_le_self (a + 1) b
+    simp only [Int.tdiv, Nat.succ_eq_add_one]
+    generalize (a + 1) / b = q at *
+    simp only [Int.ofNat_eq_natCast, Int.negSucc_eq] at *
+    omega
+  · have h1 := Nat.div_le_self (a + 1) (b + 1)
+    have h2 : b = 0 → (a + 1) / (b + 1) = a + 1 := by intro hb; subst hb; simp
+    have h3 : 1 ≤ b → (a + 1) / (b + 1) ≤ (a + 1) / 2 := fun hb =>
+      Nat.div_le_div_left (by omega) (by omega)
+    simp only [Int.tdiv, Nat.succ_eq_add_one]
+    generalize (a + 1) / (b + 1) = q at *
+    simp only [Int.ofNat_eq_natCast, Int.negSucc_eq] at *
+    omega
 
 theorem tmod_mem {t : IntTy} {n d : Int} (hn : t.Mem n) : t.Mem (n.tmod d) := by
   obtain ⟨hn1, hn2⟩ := hn
@@ -285,16 +294,24 @@ theorem tmod_mem {t : IntTy} {n d : Int} (hn : t.Mem n) : t.Mem (n.tmod d) := by
   unfold IntTy.Mem
   rcases n with a | a <;> rcases d with b | b
   · have h1 := Nat.mod_le a b
-    simp only [Int.tmod, Int.ofNat_eq_coe] at *
+    simp only [Int.tmod]
+    generalize a % b = q at *
+    simp only [Int.ofNat_eq_natCast] at *
     omega
   · have h1 := Nat.mod_le a (b + 1)
-    simp only [Int.tmod, Int.ofNat_eq_coe, Nat.succ_eq_add_one] at *
+    simp only [Int.tmod, Nat.succ_eq_add_one]
+    generalize a % (b + 1) = q at *
+    simp only [Int.ofNat_eq_natCast] at *
     omega
   · have h1 := Nat.mod_le (a + 1) b
-    simp only [Int.tmod, Int.ofNat_eq_coe, Int.negSucc_eq, Nat.succ_eq_add_one] at *
+    simp only [Int.tmod, Nat.succ_eq_add_one]
+    generalize (a + 1) % b = q at *
+    simp only [Int.ofNat_eq_natCast, Int.negSucc_eq] at *
     omega
   · have h1 := Nat.mod_le (a + 1) (b + 1)
-    simp only [Int.tmod, Int.ofNat_eq_coe, Int.negSucc_eq, Nat.succ_eq_add_one] at *
+    simp only [Int.tmod, Nat.succ_eq_add_one]
+    generalize (a + 1) % (b + 1) = q at *
+    simp only [Int.ofNat_eq_natCast, Int.negSucc_eq] at *
     omega
 
 theorem divExact_mem {op : DivOp} {t : IntTy} {n d r : Int} (hn : t.Mem n) (hd : t.Mem d)
@@ -328,7 +345,7 @@ theorem literalOk_mem {t : IntTy} {v : Int} {u : Unit} (h : Static.literalOk t v
 theorem getD_mem {l : List Int} {k : Int} (h : k < l.length) (h0 : 0 ≤ k) :
     l.getD k.toNat 0 ∈ l := by
   have hk : k.toNat < l.length := by omega
-  rw [List.getD_eq_getElem?_getD, getElem?_eq_getElem hk]
+  rw [List.getD_eq_getElem?_getD, getElem?_pos l k.toNat hk, Option.getD_some]
   exact List.getElem_mem hk
 
 theorem evalAtom_ok {E : Env} {sc : Static.Scope} (hE : EnvTyped E sc) :
@@ -358,7 +375,7 @@ theorem evalAtom_ok {E : Env} {sc : Static.Scope} (hE : EnvTyped E sc) :
         have hot' : ot = .int .u64 := by simpa using hot
         subst hot'
         obtain ⟨es, rfl, -, hmem⟩ := hbt.array
-        simp only [evalAtom, hvb]
+        simp only [evalAtom, hvb, ok_bind]
         refine Ok.bind ih fun i hi => ?_
         obtain ⟨k, rfl, hk⟩ := hi.int
         have hk0 : 0 ≤ k := by
@@ -436,24 +453,23 @@ theorem evalInfix_ok {op : InfixOp} {ta tb t : Ty} {va vb : Value}
         simp only [evalInfix, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte]
         exact trivial
       · simp [Static.infixTy, hss, rejectBy] at h
-  · cases ta <;> cases tb <;> try exact absurd h reject_ne
-    · rename_i s s'
-      by_cases hss : s = s'
-      · subst hss
-        obtain ⟨x, rfl, hx⟩ := ha.int
-        obtain ⟨y, rfl, hy⟩ := hb.int
-        simp [Static.infixTy] at h
-        subst h
-        simp only [evalInfix, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte]
-        exact trivial
-      · simp [Static.infixTy, hss, rejectBy] at h
-    · obtain ⟨x, rfl⟩ := ha.bool
-      obtain ⟨y, rfl⟩ := hb.bool
-      cases c <;> try exact absurd h reject_ne
-      all_goals
-        simp [Static.infixTy] at h
-        subst h
-        exact trivial
+  · cases c <;> cases ta <;> cases tb <;> try exact absurd h reject_ne
+    all_goals first
+      | (rename_i s s'
+         by_cases hss : s = s'
+         · subst hss
+           obtain ⟨x, rfl, hx⟩ := ha.int
+           obtain ⟨y, rfl, hy⟩ := hb.int
+           simp [Static.infixTy] at h
+           subst h
+           simp only [evalInfix, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte]
+           exact trivial
+         · simp [Static.infixTy, hss, rejectBy] at h)
+      | (obtain ⟨x, rfl⟩ := ha.bool
+         obtain ⟨y, rfl⟩ := hb.bool
+         simp [Static.infixTy] at h
+         subst h
+         exact trivial)
 
 theorem evalOp_ok {o : TableOp} {ts : List Ty} {t : Ty} {vs : List Value}
     (h : Static.opTy o ts = .ok t) (hv : ValsTyped vs ts) : Ok (·.Typed t) (evalOp o vs) := by
@@ -479,21 +495,24 @@ theorem evalOp_ok {o : TableOp} {ts : List Ty} {t : Ty} {vs : List Value}
     | bnot =>
       cases t1 <;> try exact absurd h reject_ne
       obtain ⟨x, rfl⟩ := hv1.bool
-      cases h
+      simp [Static.opTy] at h
+      subst h
       exact trivial
-    | band => exact absurd h reject_ne
-    | bor => exact absurd h reject_ne
-    | bxor => exact absurd h reject_ne
+    | band => cases t1 <;> exact absurd h reject_ne
+    | bor => cases t1 <;> exact absurd h reject_ne
+    | bxor => cases t1 <;> exact absurd h reject_ne
   rcases hv with _ | ⟨hv3, hv⟩
   · rename_i v1 t1 v2 t2
-    cases o <;> try exact absurd h reject_ne
+    cases o <;> cases t1 <;> cases t2 <;> try exact absurd h reject_ne
     all_goals
-      cases t1 <;> cases t2 <;> try exact absurd h reject_ne
       obtain ⟨x, rfl⟩ := hv1.bool
       obtain ⟨y, rfl⟩ := hv2.bool
-      cases h
+      simp [Static.opTy] at h
+      subst h
       exact trivial
-  · cases o <;> exact absurd h reject_ne
+  · rename_i v1 t1 v2 t2 v3 t3 vs ts
+    cases o <;> cases t1 <;> cases t2 <;>
+      first | exact absurd h reject_ne | (cases t3 <;> exact absurd h reject_ne)
 
 theorem namedArgs_ok {names : List String} {as : List (String × Atom)} {u : Unit}
     (h : Static.namedArgs names as = .ok u) : as.map (·.1) = names := by
@@ -508,10 +527,10 @@ theorem argTypes_cons {sc : Static.Scope} {p : Program} {a : Atom} {t : Ty}
     Static.atomTy sc a = .ok (Static.normTy p t) ∧ Static.argTypes sc p rest = .ok () := by
   simp only [Static.argTypes, reject_bind, pure_bind] at h
   obtain ⟨ta, hta, h⟩ := bind_ok h
-  obtain ⟨hne, h⟩ := ite_reject h
+  obtain ⟨hne, h2⟩ := ite_reject h
   have heq : ta = Static.normTy p t := by simpa using hne
-  subst heq
-  exact ⟨hta, h⟩
+  rw [heq] at hta
+  exact ⟨hta, h2⟩
 
 theorem atomTy_one {sc : Static.Scope} {p : Program} {as : List (String × Atom)} {name : String}
     {t : Ty} {u v : Unit} (hn : Static.namedArgs [name] as = .ok u)
@@ -526,20 +545,16 @@ theorem evalExpr_ok {p : Program} {E : Env} {sc : Static.Scope} (hE : EnvTyped E
     {e : Expr} {t : Ty} (h : Static.exprTy p sc e = .ok t)
     (hcall : ∀ path targs as g, e = .call path targs as → p.callee? path ≠ some (.fn g)) :
     Ok (·.Typed t) (evalExpr p E e) := by
-  cases e with
-  | atom a => exact evalAtom_ok hE h
-  | infix a op b =>
+  rcases e with a | ⟨a, op, b⟩ | ⟨o, as⟩ | ⟨path, targs, as⟩ | b
+  · exact evalAtom_ok hE h
+  ·
     obtain ⟨ta, ha, h⟩ := bind_ok h
     obtain ⟨tb, hb, h⟩ := bind_ok h
     exact Ok.bind (evalAtom_ok hE ha) fun va hva =>
       Ok.bind (evalAtom_ok hE hb) fun vb hvb => evalInfix_ok h hva hvb
-  | op o as =>
-    obtain ⟨ts, hts, h⟩ := bind_ok h
+  · obtain ⟨ts, hts, h⟩ := bind_ok h
     exact Ok.bind (mapM_atoms_ok hE hts) fun vs hvs => evalOp_ok h hvs
-  | bool b =>
-    cases h
-    exact trivial
-  | call path targs as =>
+  · 
     simp only [Static.exprTy] at h
     cases hc : p.callee? path with
     | none =>
@@ -576,6 +591,8 @@ theorem evalExpr_ok {p : Program} {E : Env} {sc : Static.Scope} (hE : EnvTyped E
         intro w hw
         rw [(List.mem_replicate.mp hw).2]
         exact hz
+  · cases h
+    exact trivial
 
 theorem evalAffine_ok {E : Env} {sc : Static.Scope} (hE : EnvTyped E sc) {rule : String} :
     ∀ {a : Affine} {u : Unit}, Static.affineOk rule sc a = .ok u →
@@ -699,10 +716,10 @@ theorem stmt_set_var {x : String} {e : Expr} (h : Static.stmt p f c (.set (.var 
   obtain ⟨-, h⟩ := ite_reject h
   obtain ⟨t, ht, h⟩ := bind_ok h
   obtain ⟨te, hte, h⟩ := bind_ok h
-  obtain ⟨hne, h⟩ := ite_reject h
+  obtain ⟨hne, h2⟩ := ite_reject h
   have heq : te = t := by simpa using hne
-  subst heq
-  exact ⟨te, ht, hte, (Except.ok.inj h).symm⟩
+  rw [heq] at hte
+  exact ⟨t, ht, hte, (Except.ok.inj h2).symm⟩
 
 theorem stmt_set_index {b : String} {off : Atom} {e : Expr}
     (h : Static.stmt p f c (.set (.index b off) e) = .ok r) :
@@ -712,10 +729,10 @@ theorem stmt_set_index {b : String} {off : Atom} {e : Expr}
   obtain ⟨-, h⟩ := ite_reject h
   obtain ⟨t, ht, h⟩ := bind_ok h
   obtain ⟨te, hte, h⟩ := bind_ok h
-  obtain ⟨hne, h⟩ := ite_reject h
+  obtain ⟨hne, h2⟩ := ite_reject h
   have heq : te = t := by simpa using hne
-  subst heq
-  exact ⟨te, ht, hte, (Except.ok.inj h).symm⟩
+  rw [heq] at hte
+  exact ⟨t, ht, hte, (Except.ok.inj h2).symm⟩
 
 theorem stmt_call {e : Expr} (h : Static.stmt p f c (.call e) = .ok r) :
     (∃ path targs as, e = .call path targs as) ∧ (∃ t, Static.exprTy p c.scope e = .ok t) ∧
@@ -735,10 +752,10 @@ theorem stmt_ret {e : Expr} (h : Static.stmt p f c (.ret e) = .ok r) :
       r = (c, { normal := false, breaks := [] }) := by
   simp only [Static.stmt, reject_bind, pure_bind] at h
   obtain ⟨te, hte, h⟩ := bind_ok h
-  obtain ⟨hne, h⟩ := ite_reject h
+  obtain ⟨hne, h2⟩ := ite_reject h
   have heq : te = Static.normTy p f.resultTy := by simpa using hne
-  subst heq
-  exact ⟨hte, (Except.ok.inj h).symm⟩
+  rw [heq] at hte
+  exact ⟨hte, (Except.ok.inj h2).symm⟩
 
 theorem stmt_if {cond : Expr} {thn els : List Stmt} {he : Bool}
     (h : Static.stmt p f c (.if_ cond thn els he) = .ok r) :
@@ -756,8 +773,9 @@ theorem stmt_if {cond : Expr} {thn els : List Stmt} {he : Bool}
 
 theorem stmt_loop {label : Option String} {invs : List (String × Relation)} {body : List Stmt}
     (h : Static.stmt p f c (.loop label invs body) = .ok r) :
-    ∃ fb, Static.stmts p f { c with loops := label :: c.loops,
-        invariants := invs.map (·.1) ++ c.invariants } true body = .ok fb ∧
+    ∃ fb, Static.stmts p f
+        { c with loops := label :: c.loops, invariants := invs.map (·.1) ++ c.invariants }
+        true body = .ok fb ∧
       r = (c, { normal := decide (fb.breaks.headD 0 > 0), breaks := fb.breaks.drop 1 }) := by
   cases label with
   | none =>
@@ -819,13 +837,14 @@ theorem checkFn_inv {p : Program} {f : FnDecl} {u : Unit} (h : Static.checkFn p 
   obtain ⟨-, h⟩ := ite_reject h
   obtain ⟨-, h⟩ := ite_reject h
   obtain ⟨_, hreq, h⟩ := bind_ok h
-  have hR : RelsOk "FN-8" (paramScope p f) f.requires :=
-    forIn_ok (P := fun r => (∃ u, Static.affineOk "FN-8" (paramScope p f) r.lhs = .ok u) ∧
-        ∃ u, Static.affineOk "FN-8" (paramScope p f) r.rhs = .ok u)
-      (fun r s hs => by
-        obtain ⟨_, h1, hs⟩ := bind_ok hs
-        obtain ⟨_, h2, hs⟩ := bind_ok hs
-        exact ⟨⟨⟨_, h1⟩, ⟨_, h2⟩⟩, by cases hs; rfl⟩) hreq
+  have hR : RelsOk "FN-8" (paramScope p f) f.requires := by
+    refine forIn_ok (P := fun (r : Relation) =>
+        (∃ u, Static.affineOk "FN-8" (paramScope p f) r.lhs = .ok u) ∧
+        ∃ u, Static.affineOk "FN-8" (paramScope p f) r.rhs = .ok u) ?_ hreq
+    intro r s hs
+    obtain ⟨_, h1, hs⟩ := bind_ok hs
+    obtain ⟨_, h2, hs⟩ := bind_ok hs
+    exact ⟨⟨⟨_, h1⟩, ⟨_, h2⟩⟩, by cases hs; rfl⟩
   have tail : ∀ {u : Unit}, (Static.stmts p f (initCtx p f) true f.body >>= fun fl =>
       if fl.normal = true then rejectBy "FN-1" s!"the body of `{f.name}` falls through"
       else pure PUnit.unit) = .ok u →
@@ -837,14 +856,15 @@ theorem checkFn_inv {p : Program} {f : FnDecl} {u : Unit} (h : Static.checkFn p 
   rcases hrt : Static.normTy p f.resultTy with t | _ | _ | ⟨_, _⟩ | _
   · rw [hrt] at h
     obtain ⟨_, hens, h⟩ := bind_ok h
-    have hE : RelsOk "FN-9" ((f.result, .int t) :: paramScope p f) f.ensures :=
-      forIn_ok (P := fun r =>
+    have hE : RelsOk "FN-9" ((f.result, .int t) :: paramScope p f) f.ensures := by
+      refine forIn_ok (P := fun (r : Relation) =>
           (∃ u, Static.affineOk "FN-9" ((f.result, .int t) :: paramScope p f) r.lhs = .ok u) ∧
           ∃ u, Static.affineOk "FN-9" ((f.result, .int t) :: paramScope p f) r.rhs = .ok u)
-        (fun r s hs => by
-          obtain ⟨_, h1, hs⟩ := bind_ok hs
-          obtain ⟨_, h2, hs⟩ := bind_ok hs
-          exact ⟨⟨⟨_, h1⟩, ⟨_, h2⟩⟩, by cases hs; rfl⟩) hens
+        ?_ hens
+      intro r s hs
+      obtain ⟨_, h1, hs⟩ := bind_ok hs
+      obtain ⟨_, h2, hs⟩ := bind_ok hs
+      exact ⟨⟨⟨_, h1⟩, ⟨_, h2⟩⟩, by cases hs; rfl⟩
     exact ⟨hR, .inr ⟨t, rfl, hE⟩, tail h⟩
   all_goals
     rw [hrt] at h
@@ -855,10 +875,10 @@ theorem checkProgram_inv {p : Program} (h : Static.checkProgram p = .ok ()) :
     ∀ f ∈ p.fns, ∃ u, Static.checkFn p f = .ok u := by
   simp only [Static.checkProgram] at h
   obtain ⟨_, -, h⟩ := bind_ok h
-  exact forIn_ok (P := fun f => ∃ u, Static.checkFn p f = .ok u)
-    (fun f s hs => by
-      obtain ⟨_, h1, hs⟩ := bind_ok hs
-      exact ⟨⟨_, h1⟩, by cases hs; rfl⟩) h
+  refine forIn_ok (P := fun (f : FnDecl) => ∃ u, Static.checkFn p f = .ok u) ?_ h
+  intro f s hs
+  obtain ⟨_, h1, hs⟩ := bind_ok hs
+  exact ⟨⟨_, h1⟩, by cases hs; rfl⟩
 
 theorem accepts_static {p : Program} (h : p.accepts = true) : Static.checkProgram p = .ok () := by
   unfold Program.accepts at h
@@ -903,11 +923,11 @@ theorem addBreaks_getD : ∀ (a b : List Nat) (j : Nat),
   | [], b, j => by simp [Static.addBreaks]
   | _ :: _, [], j => by simp [Static.addBreaks]
   | _ :: _, _ :: _, 0 => by simp [Static.addBreaks]
-  | _ :: xs, _ :: ys, j + 1 => by simp [Static.addBreaks, addBreaks_getD xs ys j]
+  | _ :: xs, _ :: ys, j + 1 => by simpa [Static.addBreaks] using addBreaks_getD xs ys j
 
 theorem breakAt_getD : ∀ j : Nat, (Static.breakAt j).getD j 0 = 1
   | 0 => by simp [Static.breakAt]
-  | j + 1 => by simp [Static.breakAt, breakAt_getD j]
+  | j + 1 => by simpa [Static.breakAt] using breakAt_getD j
 
 theorem drop1_getD (l : List Nat) (j : Nat) : (l.drop 1).getD j 0 = l.getD (j + 1) 0 := by
   cases l <;> simp
@@ -1060,8 +1080,10 @@ theorem findLoop_ok {p : Program} {f : FnDecl} {k : List Kont} :
       simp only [KontOk] at h
       obtain ⟨ci, c0, fb, e, ex0, rfl, ⟨hl, new, hs⟩, hsc, hlo, -, -, -, -, hk⟩ := h
       by_cases hmatch : (label.isNone || label == l) = true
-      · refine ⟨l, blk, body, d, k, c, e :: ex0, by simp [findLoop, hmatch], ?_, ⟨[], rfl⟩, ?_⟩
-        · exact KontOk.weaken hm (fun _ => rfl)
+      · refine ⟨l, blk, body, d, k, c, e :: ex0, by simp only [findLoop, hmatch, ↓reduceIte],
+          ?_, ⟨[], rfl⟩, ?_⟩
+        · simp only [KontOk] at hm ⊢
+          exact hm
         · cases label with
           | none => simp [Static.loopDepth]
           | some l' =>
@@ -1080,7 +1102,7 @@ theorem findLoop_ok {p : Program} {f : FnDecl} {k : List Kont} :
             rw [List.contains_cons] at this
             simpa [Ne.symm hne] using this
           have hr0 : Static.resolveLoop c0.loops (some l') = .ok () := by
-            simp [Static.resolveLoop, hc0]
+            simp only [Static.resolveLoop, hc0, ↓reduceIte]
           obtain ⟨l2, blk2, body2, d2, rest2, cm, exm, hf, hm2, ⟨new', hs'⟩, hd⟩ := ih hk hr0
           refine ⟨l2, blk2, body2, d2, rest2, cm, exm, ?_, hm2, ⟨new ++ new', ?_⟩, ?_⟩
           · simp only [findLoop, hmatch, Bool.false_eq_true, ↓reduceIte]
@@ -1154,7 +1176,7 @@ theorem kont_entry {p : Program} {g : FnDecl} {fl : Static.Flow}
     (hfl : Static.stmts p g (initCtx p g) true g.body = .ok fl) (hn : fl.normal = false) :
     KontOk p g (initCtx p g) true [] [.stmts [] 0 g.body] := by
   simp only [KontOk]
-  refine ⟨true, fl, id, hfl, BreaksOk.nil, fun c' hc' => ?_⟩
+  refine ⟨true, fl, fun _ => rfl, hfl, BreaksOk.nil, fun c' hc' => ?_⟩
   simp only [KontOk]
   exact ⟨hn, hc'.1, rfl⟩
 
@@ -1288,7 +1310,7 @@ theorem commitTo_var {g : Frame} {sc : Static.Scope} (hE : EnvTyped g.env sc) {x
     Ok (fun g' => g' = { g with env := g'.env } ∧ EnvTyped g'.env sc) (commitTo g (.var x) v) := by
   obtain ⟨old, hold, hot⟩ := hE.lookup hl
   obtain ⟨E', hput, hE'⟩ := hE.put hl hv
-  simp only [commitTo, write, hold, hot.sameTy hv, ↓reduceIte, hput]
+  simp only [commitTo, write, hold, ok_bind, hot.sameTy hv, ↓reduceIte, pure_bind, hput]
   exact ⟨rfl, hE'⟩
 
 /-- Writing one element of an `Array` binding. -/
@@ -1320,7 +1342,7 @@ theorem commitTo_index {g : Frame} {sc : Static.Scope} (hE : EnvTyped g.env sc) 
         · exact hmem z hz
         · exact hw
       obtain ⟨E', hput, hE'⟩ := hE.put hb hnew
-      simp only [write, hvb, beq_self_eq_true, ↓reduceIte, hput]
+      simp only [write, hvb, ok_bind, beq_self_eq_true, ↓reduceIte, pure_bind, hput]
       exact ⟨rfl, hE'⟩
     · exact absurd h reject_ne
   | int _ => exact absurd h reject_ne
@@ -1341,10 +1363,10 @@ theorem branch_ok {p : Program} {g : Frame} {c : Static.Ctx} {ex : List Bool}
   refine ⟨⟨hmem, hentry, c, ex, hE, ?_⟩, rfl, rfl⟩
   simp only [KontOk]
   cases bv
-  · refine ⟨true, b, id, hb, hbr.right, fun c' hc' => ?_⟩
+  · refine ⟨true, b, fun _ => rfl, hb, hbr.right, fun c' hc' => ?_⟩
     simp only [KontOk]
     exact ⟨c, hc', hE.length.symm, hK.weaken (by intro h; simp [h])⟩
-  · refine ⟨true, a, id, ha, hbr.left, fun c' hc' => ?_⟩
+  · refine ⟨true, a, fun _ => rfl, ha, hbr.left, fun c' hc' => ?_⟩
     simp only [KontOk]
     exact ⟨c, hc', hE.length.symm, hK.weaken (by intro h; simp [h])⟩
 
@@ -1364,7 +1386,8 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
   cases s with
   | let_ x e =>
     obtain ⟨t, het, hr⟩ := stmt_let hs
-    obtain ⟨rfl, rfl⟩ := Prod.mk.inj hr
+    obtain ⟨hc, rfl⟩ := Prod.mk.inj hr
+    subst c'
     have hK := KontOk.next (blk := blk) (i := i) hfr' hb ht ⟨rfl, [(x, t)], rfl⟩
     have hF : ∀ v, v.Typed t →
         FrameOk p { f with env := (x, v) :: f.env, kont := .stmts blk (i + 1) ss :: k } :=
@@ -1375,7 +1398,8 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
     cases tg with
     | var x =>
       obtain ⟨t, hl, het, hr⟩ := stmt_set_var hs
-      obtain ⟨rfl, rfl⟩ := Prod.mk.inj hr
+      obtain ⟨hc, rfl⟩ := Prod.mk.inj hr
+      subst c'
       have hK := KontOk.next (blk := blk) (i := i) hfr' hb ht (.refl c)
       have hW : ∀ v, v.Typed t → Ok (fun g' => FrameOk p g' ∧ g'.fn = f.fn ∧ g'.dest = f.dest)
           (commitTo { f with kont := .stmts blk (i + 1) ss :: k } (.var x) v) := fun v hv =>
@@ -1389,7 +1413,8 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
           ⟨hp, hF, by rw [hfn, hd]; exact hst⟩) ⟨hW, hst⟩
     | index b off =>
       obtain ⟨t, hat, het, hr⟩ := stmt_set_index hs
-      obtain ⟨rfl, rfl⟩ := Prod.mk.inj hr
+      obtain ⟨hc, rfl⟩ := Prod.mk.inj hr
+      subst c'
       have hK := KontOk.next (blk := blk) (i := i) hfr' hb ht (.refl c)
       have hW : ∀ v, v.Typed t → Ok (fun g' => FrameOk p g' ∧ g'.fn = f.fn ∧ g'.dest = f.dest)
           (commitTo { f with kont := .stmts blk (i + 1) ss :: k } (.index b off) v) := fun v hv =>
@@ -1403,7 +1428,8 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
           ⟨hp, hF, by rw [hfn, hd]; exact hst⟩) ⟨hW, hst⟩
   | call e =>
     obtain ⟨-, ⟨t, het⟩, hr⟩ := stmt_call hs
-    obtain ⟨rfl, rfl⟩ := Prod.mk.inj hr
+    obtain ⟨hc, rfl⟩ := Prod.mk.inj hr
+    subst c'
     have hK := KontOk.next (blk := blk) (i := i) hfr' hb ht (.refl c)
     have hF : FrameOk p { f with kont := .stmts blk (i + 1) ss :: k } :=
       ⟨hmem, hentry, c, ex, hE, hK⟩
@@ -1416,7 +1442,8 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
       ⟨rfl, hmem, hentry, hst⟩
   | if_ cond thn els he =>
     obtain ⟨a, b, het, ha, hb', hr⟩ := stmt_if hs
-    obtain ⟨rfl, rfl⟩ := Prod.mk.inj hr
+    obtain ⟨hc, rfl⟩ := Prod.mk.inj hr
+    subst c'
     have hK := KontOk.next (blk := blk) (i := i) hfr' hb ht (.refl c)
     have hW : ∀ v, v.Typed .bool → Ok (fun g' => FrameOk p g' ∧ g'.fn = f.fn ∧ g'.dest = f.dest)
         (branch { f with kont := .stmts blk (i + 1) ss :: k } v pos thn els) := fun v hv =>
@@ -1428,7 +1455,8 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
         ⟨hp, hF, by rw [hfn, hd]; exact hst⟩) ⟨hW, hst⟩
   | loop label invs body =>
     obtain ⟨fb, hfb, hr⟩ := stmt_loop hs
-    obtain ⟨rfl, rfl⟩ := Prod.mk.inj hr
+    obtain ⟨hc, rfl⟩ := Prod.mk.inj hr
+    subst c'
     have hK := KontOk.next (blk := blk) (i := i) hfr' hb ht (.refl c)
     have hBO : BreaksOk fb.breaks (decide (fb.breaks.headD 0 > 0) :: ex) := by
       intro j e t hd hpos
@@ -1447,12 +1475,13 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
       { c with loops := label :: c.loops, invariants := invs.map (·.1) ++ c.invariants },
       decide (fb.breaks.headD 0 > 0) :: ex, hE, ?_⟩, hst⟩
     simp only [KontOk]
-    refine ⟨true, fb, id, hfb, hBO, fun c'' hc'' => ?_⟩
+    refine ⟨true, fb, fun _ => rfl, hfb, hBO, fun c'' hc'' => ?_⟩
     simp only [KontOk]
     exact ⟨_, c, fb, _, ex, rfl, hc'', rfl, rfl, hE.length.symm, hfb, rfl, hBO, hK⟩
   | brk label =>
     obtain ⟨hres, hr⟩ := stmt_brk hs
-    obtain ⟨rfl, rfl⟩ := Prod.mk.inj hr
+    obtain ⟨hc, rfl⟩ := Prod.mk.inj hr
+    subst c'
     obtain ⟨l, blk', body, d, rest, cm, exm, hfind, hm, ⟨new, hsc⟩, hdrop⟩ :=
       findLoop_ok (ht c (.refl c)) hres
     simp only [KontOk] at hm
@@ -1469,7 +1498,8 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
     exact ⟨hp, ⟨hmem, hentry, c0, ex0, hE.restore, hk0⟩, hst⟩
   | cont label =>
     obtain ⟨hres, hr⟩ := stmt_cont hs
-    obtain ⟨rfl, rfl⟩ := Prod.mk.inj hr
+    obtain ⟨hc, rfl⟩ := Prod.mk.inj hr
+    subst c'
     obtain ⟨l, blk', body, d, rest, cm, exm, hfind, hm, ⟨new, hsc⟩, -⟩ :=
       findLoop_ok (ht c (.refl c)) hres
     simp only [KontOk] at hm
@@ -1485,15 +1515,16 @@ theorem stepStmt_ok {p : Program} (hp : Static.checkProgram p = .ok ()) {f : Fra
     rw [hlen] at hE'
     refine ⟨hp, ⟨hmem, hentry, ci, e :: ex0, hE', ?_⟩, hst⟩
     simp only [KontOk]
-    refine ⟨true, fb, id, hfb, hBO, fun c'' hc'' => ?_⟩
+    refine ⟨true, fb, fun _ => rfl, hfb, hBO, fun c'' hc'' => ?_⟩
     simp only [KontOk]
     exact ⟨ci, c0, fb, e, ex0, rfl, hc'', hsc0, hlo, rfl, hfb, he, hBO, hk0⟩
   | invariant n rel =>
     have hr := stmt_invariant hs
-    obtain ⟨rfl, rfl⟩ := Prod.mk.inj hr
+    obtain ⟨hc, rfl⟩ := Prod.mk.inj hr
+    subst c'
     have hK := KontOk.next (blk := blk) (i := i) hfr' hb ht ⟨rfl, [], rfl⟩
     simp only [stepStmt]
-    exact ⟨hp, ⟨hmem, hentry, _, ex, hE, hK⟩, hst⟩
+    exact ⟨hp, ⟨hmem, hentry, { c with invariants := n :: c.invariants }, ex, hE, hK⟩, hst⟩
 
 /-- One step from a well-typed state. -/
 theorem step_ok {p : Program} {cfg : Config} (h : cfg.WellTyped p) : StepOk p (step p cfg) := by
@@ -1511,7 +1542,7 @@ theorem step_ok {p : Program} {cfg : Config} (h : cfg.WellTyped p) : StepOk p (s
       | stmts blk i ss =>
         simp only [KontOk] at hK
         obtain ⟨a', fr, ha', hfr, hb, ht⟩ := hK
-        have ha : a' = true := ha' rfl
+        have ha : a' = true := ha' trivial
         subst ha
         cases ss with
         | nil =>
@@ -1535,7 +1566,7 @@ theorem step_ok {p : Program} {cfg : Config} (h : cfg.WellTyped p) : StepOk p (s
         rw [hlen] at hE'
         refine ⟨hp, ⟨hmem, hentry, ci, e :: ex0, hE', ?_⟩, hst⟩
         simp only [KontOk]
-        refine ⟨true, fb, id, hfb, hBO, fun c'' hc'' => ?_⟩
+        refine ⟨true, fb, fun _ => rfl, hfb, hBO, fun c'' hc'' => ?_⟩
         simp only [KontOk]
         exact ⟨ci, c0, fb, e, ex0, rfl, hc'', hsc0, hlo, rfl, hfb, he, hBO, hk0⟩
 
