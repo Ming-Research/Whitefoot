@@ -1264,6 +1264,19 @@ noise floor is recorded for Firn on the hosted runners; the width of the `T`
 interval is reported. `E` is read the same way and is reported with its interval
 whatever the verdict on `D`; it carries no verdict of its own.
 
+First attempt (run 39904694496): no measurement was made. The merge of main that
+brought in `dc2bd2f33` adds the PRE-1 record `clear` (specification v0.164),
+which the earlier timing runs, built before that merge, did not have. The pinned
+Firn library declares its own `clear` (`json/text/module.wfm:13`), and the merged
+compiler rejects that as a collision with a prelude declaration [TYPE-6]. The
+adaptation step had no fix for that rejection, stopped after 0 fixes, and the
+build and round steps were skipped, while the job still ended green. That green
+says nothing about any ratio. The adaptation now also renames, whole-word in all
+`.wf` and `.wfm` files, a spelling whose declaration collides with a prelude
+declaration, as it already does for `held`; a rename changes no compiler's work,
+and all columns check the same adapted source. The design, the verdict rules and
+the validity rules above are unchanged.
+
 ### Reviews
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
