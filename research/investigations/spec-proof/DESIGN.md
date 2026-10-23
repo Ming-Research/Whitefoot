@@ -573,7 +573,7 @@ name on their own, and the join then adds those atoms' implicit type bounds.
 With `p2 : u8` live and valued 0, a taken input holding `z - (p1 + p2) <=
 -1000` and another holding `p1 - p1 != 3`, the join keeps the disequality, its
 closure bounds `p1` by 255, and any valuation agreeing on `p2` and on `p1 +
-p2` gives `p1` the value 1000. Inferred from the definitions; the example was
+p2` gives `p1` a value of at least 1000. Inferred from the definitions; the example was
 not run. The lemma therefore asks that the atoms of those terms lie in their
 types, which a valuation read off a running frame satisfies, and builds the
 new valuation atom by atom: the taken input's atoms keep their values and every
