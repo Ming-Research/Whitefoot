@@ -126,6 +126,8 @@ structure FnDecl where
   params : List Param
   result : String
   resultTy : Ty
+  /-- Whether the declaration writes a `contract_block`. -/
+  contract : Bool
   requires : List Relation
   ensures : List Relation
   body : List Stmt
