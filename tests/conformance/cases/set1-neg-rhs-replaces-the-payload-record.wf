@@ -3,7 +3,7 @@ struct NumberState {
 }
 
 fn change_record(cell: &Option<NumberState>) -> result: u64 reads(cell), writes(cell.Some.value) {
-  doc "Replacing the selected inline record changes its contents while preserving the captured payload place.";
+  doc "Replacing the selected inline record payload ends the arm's variant fact.";
   match &cell^ {
     None() => {
       return 0_u64;
@@ -16,7 +16,7 @@ fn change_record(cell: &Option<NumberState>) -> result: u64 reads(cell), writes(
 }
 
 fn write_record_field(cell: &Option<NumberState>) -> result: unit writes(cell) {
-  doc "The target's trailing inline field remains valid when its right-hand side replaces the record payload contents.";
+  doc "SET-1 evaluates the target after the right-hand side, whose payload write ended the variant fact, so the payload selection is refused.";
   match &cell^ {
     None() => {
       return unit;
@@ -29,7 +29,6 @@ fn write_record_field(cell: &Option<NumberState>) -> result: unit writes(cell) {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "The final field value must be the outer commit's 11, after the record replacement's 41.";
   let record = NumberState(number: 7_u64);
   let cell = Some<NumberState>(value: record);
   let changed = write_record_field(cell: &cell);
