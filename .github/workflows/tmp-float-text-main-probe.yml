@@ -8,6 +8,7 @@ on:
     branches: [claude/float-text]
     paths:
       - .github/workflows/tmp-float-text-main-probe.yml
+      - lib/std/float_text/**
   workflow_dispatch:
 
 permissions:
