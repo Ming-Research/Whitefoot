@@ -25,7 +25,7 @@ use super::super::references::RequiredReferent;
 /// names.
 const WIN3_NO_SLOT_MOVE: &str = "use take_back, remove_at, or swap [OP-10, OP-11]";
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
-use super::{MutationTarget, PlaceUseOptions, ResolvedPlaceSet};
+use super::{MutationTarget, PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 
 /// The declared type of a written place and whether the place is a run of
 /// elements of that type, as `Checker::selected_place_shape` reads it.
@@ -1000,7 +1000,10 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         liveness?;
-        if !copy && !read_out {
+        // [OWN-13] a match through a reference reads an affine element in
+        // place and binds its payloads as references; it takes no owner.
+        let inspected = self.inspects_referent(source_place, options)?;
+        if !copy && !read_out && !inspected {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
@@ -1099,6 +1102,19 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(self.body.take_commit_element_read_out(&place))
     }
 
+    /// [OWN-13] whether a place use reads its referent through a reference
+    /// without taking it: a match scrutinee spelled through `^`, which
+    /// leaves the scrutinee live and binds each payload as a reference.
+    fn inspects_referent(
+        &self,
+        place: NodeId,
+        options: PlaceUseOptions,
+    ) -> Result<bool, CheckStop> {
+        Ok(!options.explicit_move
+            && options.context == PlaceUseContext::InspectReferent
+            && self.types.declarations.tree.place_has_dereference(place)?)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn check_index_use(
         &mut self,
@@ -1186,7 +1202,10 @@ impl<'unit> Checker<'_, 'unit> {
         // [SET-2] replacement and are read in place through borrowed match:
         // a subscript read would mint a second owner of the stored value, so
         // both the bare and the `move` spelling reject here.
-        if !element_read_out && !self.types.is_copy_type(check_context, selected_type)? {
+        if !element_read_out
+            && !self.types.is_copy_type(check_context, selected_type)?
+            && !self.inspects_referent(place, options)?
+        {
             if options.explicit_move {
                 // [WIN-3] there is no take operation and no hole: the move
                 // out of the slot is refused at the place, and the three

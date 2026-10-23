@@ -1,0 +1,18 @@
+const names: Array<u8, 1> = "a";
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "A local map's entry is an own-mode place: a match on it would move a Box out of the map, which only a match through a reference avoids.";
+  let table = map_new::<Box<u64>>(capacity: 1_u64);
+  let a = &names[0_u64..1_u64];
+  let first = box_new::<u64>(value: 7_u64);
+  set table[a] = Some<Box<u64>>(value: move first);
+  let code = 0_u8;
+  match table[a] {
+    Some(value: held) => {
+      set code = 1_u8;
+    }
+    None() => {
+    }
+  }
+  return std::process::exit_status(code: code);
+}

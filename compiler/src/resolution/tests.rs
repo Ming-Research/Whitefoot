@@ -3138,8 +3138,8 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // construction functions [OP-13], then the window operations in written
     // order, `grow_paged` and `paged_page_len` among them [OP-10, OP-13], then
     // `swap` [OP-11],
-    // `shared_new`, `shared_map_new`, `shared_share`, `shared_read`,
-    // `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`,
+    // `shared_new`, `shared_share`, `shared_read`, `shared_read_share`,
+    // `frozen_new`, `frozen_share`, `map_new`, `map_count`,
     // `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`,
     // `key_set_insert`, `key_set_bytes` and `key_set_read_key` [SHARE-1] and
     // `free_empty` [OP-14], `release` and the five decision-cell functions

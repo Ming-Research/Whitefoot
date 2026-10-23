@@ -1,4 +1,4 @@
-fn nothing_of<T: drop>(handle: &Shared<T>) -> result: Option<T> reads(handle) {
+fn nothing_of<T: drop>(handle: &Shared<T>) -> result: Option<T> pure {
   return None<T>();
 }
 
