@@ -14,7 +14,10 @@
 //! values to the start; the wrapper runs later, in its own context.
 
 use crate::semantic::{BindingId, CheckedExpression, CheckedProjectedDrop, CheckedStatement};
-use crate::{IrConstant, IrOperation, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath};
+use crate::{
+    IrConstant, IrOperation, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath,
+    SourceDescription,
+};
 
 use super::IrBuilder;
 
@@ -62,18 +65,51 @@ impl IrBuilder<'_> {
     /// The plan awaits every bound context before any statement that may
     /// leave its block, so none is pending here; one that were would be
     /// awaited here rather than outlived by the frame its result lands in.
-    pub(super) fn join_contexts(&mut self) -> Result<(), LoweringFailure> {
+    pub(super) fn join_contexts(&mut self, exit: &NodePath) -> Result<(), LoweringFailure> {
         let pending = self
             .pending_contexts
             .iter()
-            .map(|pending| pending.start)
+            .map(|pending| (pending.start, pending.site.clone()))
             .collect::<Vec<_>>();
-        for start in pending {
+        for (start, site) in pending {
             let ty = self.bound_result_type(start)?;
-            self.define(ty, IrOperation::ContextAwait { start })?;
+            self.define(ty, IrOperation::ContextAwait { start, site })?;
         }
         if !self.context_starts.is_empty() {
-            self.define(IrType::Unit, IrOperation::ContextJoin)?;
+            let mut starts = self
+                .context_starts
+                .iter()
+                .filter(|start| !self.context_awaits.iter().any(|(bound, _)| bound == *start))
+                .collect::<Vec<_>>();
+            starts.sort_by(|left, right| left.components().cmp(right.components()));
+            let starts = starts
+                .into_iter()
+                .filter_map(|start| self.wait_report_sources.get(start).cloned())
+                .collect::<Vec<_>>();
+            let site = self
+                .wait_report_sources
+                .get(exit)
+                .cloned()
+                .unwrap_or_else(|| SourceDescription::literal("<unknown site>"));
+            let mut description = SourceDescription::literal("waits at ");
+            description.append(&site);
+            description.push_text(
+                " to join contexts (implicit join before leaving this activation; spawn sites in this activation: ",
+            );
+            if starts.is_empty() {
+                description.push_text("source unavailable");
+            }
+            for (index, start) in starts.iter().enumerate() {
+                if index != 0 {
+                    description.push_text(", ");
+                }
+                description.append(start);
+            }
+            description.push_text(")");
+            self.define(
+                IrType::Unit,
+                IrOperation::ContextJoin { site: description },
+            )?;
         }
         Ok(())
     }
@@ -116,6 +152,7 @@ impl IrBuilder<'_> {
             pending.result,
             IrOperation::ContextAwait {
                 start: pending.start,
+                site: pending.site,
             },
         )?;
         if self.bindings.insert(pending.binding, value).is_some() {
@@ -154,6 +191,13 @@ impl IrBuilder<'_> {
             start,
             result,
             before: before.map(|before| index.saturating_add(before as usize)),
+            site: self
+                .wait_report_sources
+                .get(node_path)
+                .cloned()
+                .unwrap_or_else(|| {
+                    SourceDescription::literal("waits to join a spawned context (source unavailable)")
+                }),
         });
         Ok(())
     }
@@ -276,6 +320,8 @@ pub(super) struct PendingContext {
     /// The index in its block of the statement it is awaited before, or
     /// `None` for the block's end.
     before: Option<usize>,
+    /// Presentation retained independently of the join schedule.
+    site: SourceDescription,
 }
 
 /// The wrapper's symbol stem. `wf_` precedes it and FORM-3 starts no IDENT
