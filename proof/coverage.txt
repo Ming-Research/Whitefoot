@@ -369,7 +369,8 @@ outside ENT-2 1c6b51640b6f402e target-instance measure terms of counted loops: a
 outside ENT-2 4fd62e453b881146 target-instance measure terms of counted loops: a later phase
 outside ENT-2 52d059d866b63af6 target-instance measure terms of counted loops: a later phase
 outside ENT-2 221af93483810669 target-instance measure terms of counted loops: a later phase
-outside ENT-2 1e61a87444ca6378 references and range references: a later phase
+outside ENT-2 d8e60ae35862aeab watches and cancellation: outside the first phase
+outside ENT-2 d0312eeaf6dbe22b references and range references: a later phase
 outside ENT-2 54f4679908d34cd3 references and range references: a later phase
 outside ENT-2 3d5ace94062081a6 references and range references: a later phase
 outside ENT-2 5792a65c042b36f5 references and range references: a later phase
