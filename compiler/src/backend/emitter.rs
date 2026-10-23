@@ -128,6 +128,11 @@ impl LlvmModule {
         Ok(())
     }
 
+    /// Renders the text again after a change to the model.
+    pub(crate) fn rerender(&mut self) {
+        self.text = self.model.render();
+    }
+
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut bytes = vec![u8::from(self.threaded_layout)];
         bytes.extend(self.model.encode());
@@ -698,9 +703,10 @@ fn emit_module(
     }
     text.attribute_group(
         0,
-        target
-            .stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
-            .to_owned(),
+        format!(
+            "{} uwtable",
+            target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
+        ),
     );
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
@@ -2906,6 +2912,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedRetain { nominal, object } => {
                 self.emit_shared_retain(result, ty, *nominal, *object)
             }
+            IrOperation::SharedCountOut { object } => {
+                self.emit_shared_count_out(result, ty, *object)
+            }
+            IrOperation::SharedFree { object } => self.emit_shared_free(result, *object),
             IrOperation::SnapshotAtomicBegin => self.emit_snapshot_atomic(result, true),
             IrOperation::SnapshotAtomicEnd => self.emit_snapshot_atomic(result, false),
             IrOperation::SharedAcquire { object } => {

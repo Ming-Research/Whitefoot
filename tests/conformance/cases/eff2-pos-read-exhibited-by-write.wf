@@ -1,0 +1,13 @@
+struct Pair {
+  left: u64;
+  right: u64;
+}
+
+fn clear(p: &Pair) -> result: unit reads(p), writes(p.left) {
+  set p^.left = 0_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

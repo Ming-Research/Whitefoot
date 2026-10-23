@@ -29,8 +29,8 @@ use super::solver::{
     AtomId, AtomKind, Capacity, Linear, Literal, Problem, Relation, Rule, Verdict,
 };
 use super::world::{
-    AtomDef, ContainerId, FactId, Guarded, Stored, VersionDef, VersionId, World,
-    projections_overlap,
+    AtomDef, ContainerId, FactId, Guarded, RangeBarrier, RangeFrame, Stored, VersionDef, VersionId,
+    World, projections_overlap,
 };
 
 /// What one place of a clause denotes in a frame.
@@ -43,6 +43,8 @@ pub(super) enum PlaceView {
         version: VersionId,
         generation: u32,
         prefix: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
+        barrier: Option<RangeBarrier>,
         offset: Linear,
         length: Linear,
     },
@@ -55,6 +57,7 @@ pub(super) enum PlaceView {
     },
     /// An indexable value below an outer container element.
     Element {
+        barrier: Option<RangeBarrier>,
         version: VersionId,
         indices: Vec<Linear>,
         projection: Vec<CheckedRangeProjection>,
@@ -68,6 +71,7 @@ pub(super) enum PlaceView {
 pub(super) struct Frame {
     pub(super) places: BTreeMap<CheckedRangePlace, PlaceView>,
     pub(super) values: BTreeMap<CheckedRangeRoot, Linear>,
+    pub(super) value_reads: BTreeMap<CheckedRangeRoot, Vec<ReadProvenance>>,
     pub(super) aggregates: BTreeMap<CheckedRangeRoot, VersionId>,
 }
 
@@ -90,6 +94,7 @@ impl Frame {
                         version,
                         indices,
                         projection,
+                        ..
                     } => {
                         let mut path = projection.clone();
                         path.push(CheckedRangeProjection::Measure(CheckedMeasure::Length));
@@ -117,6 +122,7 @@ pub(super) struct Fact {
 
 /// One clause formed at one tuple.
 pub(super) struct Formed {
+    pub(super) reads: Vec<Vec<ReadProvenance>>,
     /// Descriptor equalities needed by fixed-length substitutions in this instance.
     pub(super) type_facts: BTreeSet<Literal>,
     /// Each bound variable's range, the clause's guards, and the definedness
@@ -135,6 +141,7 @@ struct Former<'world> {
     bounds: Vec<Literal>,
     guards: Vec<Literal>,
     fixed_lengths: BTreeSet<CheckedRangePlace>,
+    reads: Vec<ReadProvenance>,
 }
 
 impl Former<'_> {
@@ -157,7 +164,17 @@ impl Former<'_> {
             CheckedRangeTerm::Iteration(position) => {
                 self.iterations.get(*position as usize).cloned()
             }
-            CheckedRangeTerm::Value(root) => self.frame.values.get(root).cloned(),
+            CheckedRangeTerm::Value(root) => {
+                self.reads.extend(
+                    self.frame
+                        .value_reads
+                        .get(root)
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                );
+                self.frame.values.get(root).cloned()
+            }
             CheckedRangeTerm::ValueProjection {
                 root,
                 indices,
@@ -170,7 +187,15 @@ impl Former<'_> {
                     .collect::<Option<Vec<_>>>()?;
                 let version = *self.frame.aggregates.get(root)?;
                 let implicit: Vec<_> = (0..values.len() as u32).collect();
-                Some(self.projected_read(version, values, projection, *element, &implicit, Some(0)))
+                Some(self.projected_read(
+                    version,
+                    values,
+                    projection,
+                    *element,
+                    &implicit,
+                    Some(0),
+                    None,
+                ))
             }
             CheckedRangeTerm::Measure { place, measure, .. } => {
                 if *measure == CheckedMeasure::Length
@@ -179,7 +204,17 @@ impl Former<'_> {
                     return Some(length);
                 }
                 match (self.frame.places.get(place)?, measure) {
-                    (PlaceView::Run { length, .. }, CheckedMeasure::Length) => Some(length.clone()),
+                    (
+                        PlaceView::Run {
+                            length, barrier, ..
+                        },
+                        CheckedMeasure::Length,
+                    ) => {
+                        let length = length.clone();
+                        let barrier = barrier.clone();
+                        self.record_read(&length, barrier.as_ref());
+                        Some(length)
+                    }
                     (
                         PlaceView::Run {
                             container,
@@ -196,17 +231,21 @@ impl Former<'_> {
                             version,
                             indices,
                             projection,
+                            barrier,
                         },
                         measure,
                     ) => {
                         let mut path = projection.clone();
                         path.push(CheckedRangeProjection::Measure(*measure));
-                        Some(self.world.read(
+                        let barrier = barrier.clone();
+                        let value = self.world.read(
                             *version,
                             indices.clone(),
                             path,
                             Some(super::super::model::IntegerType::U64),
-                        ))
+                        );
+                        self.record_read(&value, barrier.as_ref());
+                        Some(value)
                     }
                     _ => None,
                 }
@@ -227,6 +266,7 @@ impl Former<'_> {
                         version,
                         mut indices,
                         mut projection,
+                        barrier,
                     } => {
                         projection.push(CheckedRangeProjection::Index(indices.len() as u32));
                         indices.push(row);
@@ -238,6 +278,7 @@ impl Former<'_> {
                             super::super::model::IntegerType::U64,
                             &[],
                             None,
+                            barrier.as_ref(),
                         ))
                     }
                     _ => None,
@@ -261,6 +302,8 @@ impl Former<'_> {
                         PlaceView::Run {
                             version,
                             prefix,
+                            projection: mut path,
+                            barrier,
                             offset,
                             length,
                             ..
@@ -269,23 +312,26 @@ impl Former<'_> {
                     ) => {
                         let index = values.first()?;
                         let length = self.fixed_length(place).unwrap_or(length);
+                        self.record_read(&length, barrier.as_ref());
                         self.within(index, &length);
-                        let projection =
-                            super::world::shift_projection(projection, 0, prefix.len());
-                        let implicit: Vec<_> = implicit_indices
+                        let guarded = guarded_from.map(|at| at + path.len());
+                        path.extend(super::world::shift_projection(projection, 0, prefix.len()));
+                        let mut implicit: Vec<_> = implicit_indices
                             .iter()
                             .map(|index| *index + prefix.len() as u32)
                             .collect();
+                        implicit.push(prefix.len() as u32);
                         let mut selected = prefix;
                         selected.push(offset.plus(index)?);
                         selected.extend_from_slice(&values[1..]);
                         Some(self.projected_read(
                             version,
                             selected,
-                            &projection,
+                            &path,
                             *element,
                             &implicit,
-                            *guarded_from,
+                            guarded,
+                            barrier.as_ref(),
                         ))
                     }
                     (
@@ -311,6 +357,7 @@ impl Former<'_> {
                             *element,
                             implicit_indices,
                             *guarded_from,
+                            None,
                         ))
                     }
                     (
@@ -318,6 +365,7 @@ impl Former<'_> {
                             version,
                             indices: prefix,
                             projection: mut path,
+                            barrier,
                         },
                         _,
                     ) => {
@@ -341,11 +389,15 @@ impl Former<'_> {
                         }
                         let mut indices = prefix;
                         indices.extend(values);
-                        Some(
-                            self.projected_read(
-                                version, indices, &path, *element, &implicit, guarded,
-                            ),
-                        )
+                        Some(self.projected_read(
+                            version,
+                            indices,
+                            &path,
+                            *element,
+                            &implicit,
+                            guarded,
+                            barrier.as_ref(),
+                        ))
                     }
                     _ => None,
                 }
@@ -360,6 +412,14 @@ impl Former<'_> {
         }
     }
 
+    fn record_read(&mut self, value: &Linear, barrier: Option<&RangeBarrier>) {
+        self.reads
+            .extend(value.terms.iter().map(|(atom, _)| ReadProvenance {
+                atom: *atom,
+                frames: barrier.map_or_else(Vec::new, |barrier| barrier.frames.clone()),
+            }));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn projected_read(
         &mut self,
@@ -369,6 +429,7 @@ impl Former<'_> {
         element: super::super::model::IntegerType,
         implicit_indices: &[u32],
         guarded_from: Option<usize>,
+        barrier: Option<&RangeBarrier>,
     ) -> Linear {
         let mut depth = projection
             .iter()
@@ -392,6 +453,7 @@ impl Former<'_> {
                     length_path,
                     Some(super::super::model::IntegerType::U64),
                 );
+                self.record_read(&length, barrier);
                 self.within(&indices[position], &length);
                 depth = position + 1;
             }
@@ -404,6 +466,7 @@ impl Former<'_> {
                 let tag = self
                     .world
                     .read(version, indices[..depth].to_vec(), tag_path, None);
+                self.record_read(&tag, barrier);
                 let guards = if guarded_from.is_some_and(|start| at >= start) {
                     &mut self.guards
                 } else {
@@ -416,8 +479,11 @@ impl Former<'_> {
                 ));
             }
         }
-        self.world
-            .read(version, indices, projection.to_vec(), Some(element))
+        let value = self
+            .world
+            .read(version, indices, projection.to_vec(), Some(element));
+        self.record_read(&value, barrier);
+        value
     }
 
     fn within(&mut self, index: &Linear, length: &Linear) {
@@ -461,6 +527,7 @@ pub(super) fn vacuous(world: &mut World, clause: &CheckedRangeClause, frame: &Fr
         bounds: Vec::new(),
         guards: Vec::new(),
         fixed_lengths: BTreeSet::new(),
+        reads: Vec::new(),
     };
     clause.binders.iter().any(|binder| {
         let Some(start) = former.term(&binder.start) else {
@@ -491,6 +558,7 @@ pub(super) fn form(
         bounds: Vec::new(),
         guards: Vec::new(),
         fixed_lengths: BTreeSet::new(),
+        reads: Vec::new(),
     };
     let mut premises = Vec::new();
     for (position, binder) in clause.binders.iter().enumerate() {
@@ -518,8 +586,12 @@ pub(super) fn form(
     // different variants each hold where their own variant is held.
     premises.append(&mut former.bounds);
     let mut conclusions = Vec::new();
+    let mut reads = Vec::new();
+    let prerequisite_reads = former.reads.clone();
     for conclusion in &clause.conclusions {
+        former.reads = prerequisite_reads.clone();
         let literal = former.relation(conclusion)?;
+        reads.push(former.reads.clone());
         let mut guards = std::mem::take(&mut former.bounds);
         guards.append(&mut former.guards);
         let mut seen: BTreeSet<Literal> = premises.iter().cloned().collect();
@@ -537,6 +609,7 @@ pub(super) fn form(
     premises.retain(|literal| seen.insert(literal.clone()));
     Some(Formed {
         type_facts: frame.type_facts(former.world, &former.fixed_lengths),
+        reads,
         premises,
         conditions,
         conclusions,
@@ -628,8 +701,185 @@ pub(super) use super::super::range_facts::MAX_RANGE_ATOMS as MAX_ATOMS;
 /// The largest number of instances one fact contributes to one problem.
 pub(super) use super::super::range_facts::MAX_RANGE_INSTANCES as MAX_INSTANCES;
 
+/// Source-path provenance belongs to one formed query, not to an interned read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ReadProvenance {
+    pub(super) atom: AtomId,
+    pub(super) frames: Vec<RangeFrame>,
+}
+
+/// A call-footprint precision loss and the conditions that keep it relevant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct CallFootprintCandidate {
+    pub(super) guards: Vec<Literal>,
+    /// Every group must hold; the literals within one group are alternatives.
+    pub(super) conditions: Vec<Vec<Literal>>,
+    pub(super) restore: Literal,
+}
+
+/// Trace a query dependency's read to a widened call. Later writes contribute
+/// OWN-7 separation conditions and joins contribute their selected arm guards.
+/// Restoring equalities is confined to a counterfactual diagnostic query.
+pub(super) fn call_footprint_losses(
+    world: &mut World,
+    reads: &[ReadProvenance],
+    owed: &[Literal],
+) -> Vec<CallFootprintCandidate> {
+    let mut used = BTreeSet::new();
+    for literal in owed {
+        collect_literal(literal, &mut used);
+    }
+    let mut losses = Vec::new();
+    for read in reads.iter().filter(|read| used.contains(&read.atom)) {
+        let AtomDef::Read {
+            version,
+            indices,
+            projection,
+        } = world.atoms[read.atom as usize].def.clone()
+        else {
+            continue;
+        };
+        let ty = world.atoms[read.atom as usize].ty;
+        let mut pending = vec![(version, Vec::new(), Vec::new())];
+        while let Some((version, guards, conditions)) = pending.pop() {
+            // An unresolved formal offset can widen only the write that
+            // actually retained it. Optimistically remove that write in the
+            // diagnostic query; this is never a definition for acceptance.
+            let unresolved_previous = match &world.versions[version as usize].def {
+                VersionDef::Write {
+                    previous, indices, ..
+                } if indices.iter().any(|index| {
+                    index
+                        .terms
+                        .iter()
+                        .any(|(atom, _)| world.unresolved_call_offsets.contains(atom))
+                }) =>
+                {
+                    Some(*previous)
+                }
+                VersionDef::Havoc {
+                    previous, indices, ..
+                } if indices
+                    .iter()
+                    .any(|index| index.has_offset_in(&world.unresolved_call_offsets)) =>
+                {
+                    Some(*previous)
+                }
+                _ => None,
+            };
+            if let Some(previous) = unresolved_previous {
+                let before = world.read(previous, indices.clone(), projection.clone(), ty);
+                losses.push(CallFootprintCandidate {
+                    guards: guards.clone(),
+                    conditions: conditions.clone(),
+                    restore: Literal::new(Linear::atom(read.atom), Relation::Equal, before),
+                });
+                pending.push((previous, guards, conditions));
+                continue;
+            }
+            if let Some(loss) = world.call_footprint_losses.get(&version).cloned()
+                && loss.frames.len() == read.frames.len()
+                && loss.frames.iter().zip(&read.frames).all(|(written, read)| {
+                    written.prefix == read.prefix
+                        && written.projection == read.projection
+                        && written.offset == read.offset
+                        && written.start == read.start
+                        && written.end == read.end
+                        && written.captured.start.provably_same(read.captured.start)
+                        && written.captured.end.provably_same(read.captured.end)
+                })
+            {
+                let VersionDef::Havoc { previous, .. } = &world.versions[version as usize].def
+                else {
+                    continue;
+                };
+                let before = world.read(*previous, indices.clone(), projection.clone(), ty);
+                let mut loss_candidate = CallFootprintCandidate {
+                    guards: guards.clone(),
+                    conditions: conditions.clone(),
+                    restore: Literal::new(Linear::atom(read.atom), Relation::Equal, before),
+                };
+                if !projections_overlap(&projection, &loss.projection) {
+                    losses.push(loss_candidate);
+                } else {
+                    let conditions: Vec<_> = loss
+                        .indices
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(position, index)| index.separations(indices.get(position)))
+                        .collect();
+                    if !conditions.is_empty() {
+                        loss_candidate.conditions.push(conditions);
+                        losses.push(loss_candidate);
+                    }
+                }
+            }
+            let mut conditions = conditions;
+            match &world.versions[version as usize].def {
+                VersionDef::Write {
+                    previous,
+                    indices: written,
+                    projection: path,
+                    ..
+                } => {
+                    if projections_overlap(path, &projection) {
+                        let separate: Vec<_> = written
+                            .iter()
+                            .zip(&indices)
+                            .map(|(at, index)| {
+                                Literal::new(index.clone(), Relation::NotEqual, at.clone())
+                            })
+                            .collect();
+                        if separate.is_empty() {
+                            continue;
+                        }
+                        conditions.push(separate);
+                    }
+                    pending.push((*previous, guards, conditions));
+                }
+                VersionDef::Havoc {
+                    previous,
+                    indices: written,
+                    projection: path,
+                } => {
+                    if projections_overlap(path, &projection) {
+                        let separate: Vec<_> = written
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(position, index)| index.separations(indices.get(position)))
+                            .collect();
+                        if separate.is_empty() {
+                            continue;
+                        }
+                        conditions.push(separate);
+                    }
+                    pending.push((*previous, guards, conditions));
+                }
+                VersionDef::Forget {
+                    previous,
+                    projections,
+                } if projections
+                    .iter()
+                    .all(|path| !projections_overlap(path, &projection)) =>
+                {
+                    pending.push((*previous, guards, conditions));
+                }
+                VersionDef::Join { join, versions } => {
+                    for (arm, version) in versions.iter().enumerate() {
+                        let mut arm_guards = guards.clone();
+                        arm_guards.extend(world.joins[*join as usize][arm].iter().cloned());
+                        pending.push((*version, arm_guards, conditions.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    losses
+}
+
 /// One obligation's problem under construction, over world atoms.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Query {
     /// Each substituted descriptor equality belongs to the query once, across
     /// its owed clause, automatic instances and written instances.
@@ -654,6 +904,34 @@ pub(super) struct Query {
 }
 
 impl Query {
+    /// Counterfactual definitions are never used by the accepting query.
+    /// Each choice states: guards and every separation group imply restore.
+    pub(super) fn restore_call_footprints(
+        &mut self,
+        world: &mut World,
+        reads: &[ReadProvenance],
+        owed: &[Literal],
+    ) -> bool {
+        let candidates = call_footprint_losses(world, reads, owed);
+        let found = !candidates.is_empty();
+        for candidate in candidates {
+            let mut alternatives: Vec<Vec<Literal>> = candidate
+                .guards
+                .iter()
+                .map(|guard| vec![super::world::negated(guard)])
+                .collect();
+            alternatives.extend(
+                candidate
+                    .conditions
+                    .iter()
+                    .map(|conditions| conditions.iter().map(super::world::negated).collect()),
+            );
+            alternatives.push(vec![candidate.restore]);
+            self.choices.push(alternatives);
+        }
+        found
+    }
+
     // An included set is a negated exclusion. Source never states one: it
     // arises only when a path condition is negated, so it is counted as the
     // exclusion it negates.
@@ -844,8 +1122,16 @@ pub(super) fn judge(
                 };
                 for (version, indices, projection) in &ground {
                     let expected = match view {
-                        PlaceView::Run { prefix, .. } => {
-                            super::world::shift_projection(&trigger.projection, 0, prefix.len())
+                        PlaceView::Run {
+                            prefix, projection, ..
+                        } => {
+                            let mut path = projection.clone();
+                            path.extend(super::world::shift_projection(
+                                &trigger.projection,
+                                0,
+                                prefix.len(),
+                            ));
+                            path
                         }
                         PlaceView::Element {
                             indices: prefix,
@@ -1151,6 +1437,29 @@ fn expand(
                             )]);
                         }
                     }
+                    VersionDef::Havoc {
+                        previous,
+                        indices: written,
+                        projection: footprint,
+                    } => {
+                        let old = world.read(previous, indices.clone(), projection.clone(), ty);
+                        let unchanged = Literal::new(value.clone(), Relation::Equal, old);
+                        if !projections_overlap(&projection, &footprint) {
+                            alternatives.push(vec![unchanged]);
+                        } else {
+                            let separate: Vec<_> = written
+                                .iter()
+                                .enumerate()
+                                .flat_map(|(position, written)| {
+                                    written.separations(indices.get(position))
+                                })
+                                .collect();
+                            alternatives.push(separate.iter().map(super::world::negated).collect());
+                            for condition in separate {
+                                alternatives.push(vec![condition, unchanged.clone()]);
+                            }
+                        }
+                    }
                     VersionDef::Write {
                         previous,
                         indices: written,
@@ -1452,6 +1761,7 @@ mod aggregate_tests {
             bounds: Vec::new(),
             guards: Vec::new(),
             fixed_lengths: BTreeSet::new(),
+            reads: Vec::new(),
         };
         assert_eq!(
             former.term(&CheckedRangeTerm::ConstGeneric { declaration, ty }),
@@ -1532,6 +1842,8 @@ mod aggregate_tests {
                 version: world.new_version(VersionDef::Initial),
                 generation: 0,
                 prefix: Vec::new(),
+                projection: Vec::new(),
+                barrier: None,
                 offset: Linear::constant(0),
                 length: length.clone(),
             },
@@ -1616,6 +1928,7 @@ mod aggregate_tests {
         fact.frame.places.insert(
             place.clone(),
             PlaceView::Element {
+                barrier: None,
                 version,
                 indices: indices.clone(),
                 projection: projection.clone(),
@@ -1674,6 +1987,8 @@ mod aggregate_tests {
                 version: world.new_version(VersionDef::Initial),
                 generation: 0,
                 prefix: Vec::new(),
+                projection: Vec::new(),
+                barrier: None,
                 offset: Linear::constant(0),
                 length: source_length,
             },
@@ -1707,6 +2022,7 @@ mod aggregate_tests {
         fact.frame.places.insert(
             place.clone(),
             PlaceView::Element {
+                barrier: None,
                 version: world.new_version(VersionDef::Initial),
                 indices: vec![Linear::constant(0)],
                 projection: Vec::new(),
@@ -1821,6 +2137,8 @@ mod aggregate_tests {
                 version,
                 generation: 0,
                 prefix: Vec::new(),
+                projection: Vec::new(),
+                barrier: None,
                 offset: Linear::constant(0),
                 length: Linear::constant(1),
             },
@@ -1921,6 +2239,8 @@ mod aggregate_tests {
                 version: world.new_version(VersionDef::Initial),
                 generation: 0,
                 prefix: Vec::new(),
+                projection: Vec::new(),
+                barrier: None,
                 offset: Linear::constant(0),
                 length: length.clone(),
             },

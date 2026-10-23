@@ -133,22 +133,17 @@ fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> 
 } {
   doc "Appends as much of one static message as the destination range reference still holds.";
   let spare = destination^.len;
-  let admitted = filled <= spare;
   let length = text^.len;
-  if admitted {
-    for @append (at in filled..spare) {
-      let taken = at -wrap filled;
-      let done = taken >= length;
-      if done {
-        return at;
-      }
-      let byte = text^[taken];
-      set destination^[at] = byte;
+  for @append (at in filled..spare) {
+    let taken = at -wrap filled;
+    let done = taken >= length;
+    if done {
+      return at;
     }
-    return spare;
-  } else {
-    return filled;
+    let byte = text^[taken];
+    set destination^[at] = byte;
   }
+  return spare;
 }
 
 fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) -> result: u64 reads(source), writes(destination) {
@@ -475,7 +470,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);

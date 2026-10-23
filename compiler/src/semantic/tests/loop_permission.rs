@@ -601,14 +601,12 @@ fn shifted(n: u64) -> result: Box<Array<u64>> pure contract {
   requires n <= 1000000_u64;
 } {
   let values = box_array_filled::<u64>(count: n, value: 0_u64);
-  if n <= values.inner.len {
-    let last = n - 1_u64;
-    for (i in 0_u64..n) {
-      let lo = last - i;
-      let w = &values.inner[lo..n];
-      let hi = i + 1_u64;
-{write}    }
-  }
+  let last = n - 1_u64;
+  for (i in 0_u64..n) {
+    let lo = last - i;
+    let w = &values.inner[lo..n];
+    let hi = i + 1_u64;
+{write}  }
   return move values;
 }
 
@@ -628,8 +626,8 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_partition_of_a_range_formed_inside_the_body_is_not_a_proved_range() {
     for write in [
-        "      let painted = bump(output: &w^[i..hi], mark: 1_u64);\n",
-        "      let u = &w^[i..hi];\n      let painted = bump(output: u, mark: 1_u64);\n",
+        "    let painted = bump(output: &w^[i..hi], mark: 1_u64);\n",
+        "    let u = &w^[i..hi];\n    let painted = bump(output: u, mark: 1_u64);\n",
     ] {
         let source = SHIFTING_ORIGIN_SOURCE.replace("{write}", write);
         assert!(
@@ -1622,7 +1620,7 @@ fn appending_beside_an_affine_element_write_still_denies() {
 #[test]
 fn a_measure_read_beside_a_shifted_element_read_still_denies() {
     let source = br#"fn update(a: &Array<u64, 4>) -> result: unit writes(a) {
-  for (i in 0_u64..3_u64) {
+  for (i in 0_u64..4_u64) {
     let next = i + 1_u64;
     if next < a^.len {
       let value = a^[next];
@@ -2439,8 +2437,8 @@ fn a_give_in_the_body_is_denied_by_condition_four() {
     let source = b"fn scan_until(src: &Array<u64, 64>, needle: u64) -> result: u64 reads(src) {
   let count = src^.len;
   let acc = 0_u64;
-  let always = True();
-  let answer = if always {
+  let searching = needle != 0_u64;
+  let answer = if searching {
     for @scan (i in 0_u64..count) {
       let v = src^[i];
       set acc = acc +wrap v;
@@ -2473,8 +2471,8 @@ fn main() -> status: std::process::ExitStatus pure {
     let contained = b"fn scan_until(src: &Array<u64, 64>, needle: u64) -> result: u64 reads(src) {
   let count = src^.len;
   let acc = 0_u64;
-  let always = True();
-  let answer = if always {
+  let searching = needle != 0_u64;
+  let answer = if searching {
     for @scan (i in 0_u64..count) {
       let v = src^[i];
       set acc = acc +wrap v;
@@ -2566,10 +2564,9 @@ fn main() -> status: std::process::ExitStatus pure {
   let size = values.len;
   let total = 0_u64;
   for @sum (i in 0_u64..16_u64) {
-    let bounded = imin(i, 7_u64);
-    let inside = bounded < size;
+    let inside = i < size;
     if inside {
-      let picked = values[bounded];
+      let picked = values[i];
     }
     set total = total +wrap i;
   }

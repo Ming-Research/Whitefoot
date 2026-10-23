@@ -16,8 +16,6 @@ fn main() -> status: std::process::ExitStatus pure {
   place_back(window: &slots.inner, value: 7_u8);
   place_back(window: &slots.inner, value: 9_u8);
   let length = length_of(source: &slots);
-  if length == 2_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
-  return std::process::exit_status(code: 1_u8);
+  let code = cvt::<u64, u8>(length);
+  return std::process::exit_status(code: code);
 }

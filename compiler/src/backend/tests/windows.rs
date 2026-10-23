@@ -180,21 +180,34 @@ fn empty_fixed_windows_initialize_descriptors_before_return() {
   third: u32;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let slots = slots_new::<Frame, 64>();
   let ring = ring_new::<Frame, 64>();
-  if slots.len != 0_u64 {
-    return std::process::exit_status(code: 1_u8);
+  let report = array_filled::<u8, 3>(value: 255_u8);
+  set report[0_u64] = cvt::<u64, u8>(slots.len);
+  set report[1_u64] = cvt::<u64, u8>(ring.len);
+  set report[2_u64] = cvt::<u64, u8>(ring.head);
+  let report_bytes = &report[0_u64..3_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 1_u8);
+    }
   }
-  if ring.len != 0_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
-  if ring.head != 0_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
 }
 "#;
+    // The program writes the three header words the constructors initialize,
+    // `slots.len`, `ring.len` and `ring.head`, one byte each.
     let module = compile(source);
     assert!(
         module
@@ -205,7 +218,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_empty_window_headers(&module, "ring_new", 2, 64);
     let output = compile_and_run(&module);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    assert!(output.stdout.is_empty(), "{output:?}");
+    assert_eq!(output.stdout, [0_u8, 0, 0], "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 
@@ -536,10 +549,7 @@ fn main() -> status: std::process::ExitStatus pure {
     let byte_choice = emitted_body(&module, "byte_choice");
     let prefix_destination = byte_choice
         .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix(&format!("{prefix_zero}, ptr "))
-        })
+        .find_map(|line| line.trim().strip_prefix(&format!("{prefix_zero}, ptr ")))
         .expect("the prefix has its own zero initializer");
     assert_ne!(prefix_destination, "%wf.result", "{byte_choice}");
     assert!(
@@ -596,19 +606,20 @@ fn main() -> status: std::process::ExitStatus pure {
 /// must preserve mathematical coordinates without overflowing an intermediate.
 #[test]
 fn zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once() {
-    let source = br#"fn main() -> status: std::process::ExitStatus pure {
+    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let report = array_filled::<u8, 7>(value: 255_u8);
   let value = array_filled::<u64, 0>(value: 0_u64);
   let slots = slots_new::<Array<u64, 0>, 2>();
   place_back(window: &slots, value: value);
   place_back(window: &slots, value: value);
   let last = take_back(window: &slots);
-  if slots.len != 1_u64 {
-    return std::process::exit_status(code: 1_u8);
-  }
+  set report[0_u64] = cvt::<u64, u8>(slots.len);
   let first = take_back(window: &slots);
-  if slots.len != 0_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
+  set report[1_u64] = cvt::<u64, u8>(slots.len);
   let ring = ring_new::<Array<u64, 0>, 2>();
   place_back(window: &ring, value: value);
   place_back(window: &ring, value: value);
@@ -618,19 +629,13 @@ fn zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once() {
   }
   place_back(window: &ring, value: front);
   let back = take_back(window: &ring);
-  if ring.len != 1_u64 {
-    return std::process::exit_status(code: 4_u8);
-  }
-  if ring.head != 1_u64 {
-    return std::process::exit_status(code: 5_u8);
-  }
+  set report[2_u64] = cvt::<u64, u8>(ring.len);
+  set report[3_u64] = cvt::<u64, u8>(ring.head);
   let remainder = take_front(window: &ring);
   if ring.head != 0_u64 {
     return std::process::exit_status(code: 6_u8);
   }
-  if ring.len != 0_u64 {
-    return std::process::exit_status(code: 7_u8);
-  }
+  set report[4_u64] = cvt::<u64, u8>(ring.len);
   let large = box_ring_new::<Array<u64, 0>>(capacity: 9223372036854775809_u64);
   place_front(window: &large.inner, value: value);
   if large.inner.head != 9223372036854775808_u64 {
@@ -640,9 +645,7 @@ fn zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once() {
   if large.inner.head != 9223372036854775807_u64 {
     return std::process::exit_status(code: 9_u8);
   }
-  if large.inner.len != 2_u64 {
-    return std::process::exit_status(code: 10_u8);
-  }
+  set report[5_u64] = cvt::<u64, u8>(large.inner.len);
   let large_first = take_front(window: &large.inner);
   if large.inner.head != 9223372036854775808_u64 {
     return std::process::exit_status(code: 11_u8);
@@ -651,9 +654,7 @@ fn zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once() {
   if large.inner.head != 0_u64 {
     return std::process::exit_status(code: 12_u8);
   }
-  if large.inner.len != 0_u64 {
-    return std::process::exit_status(code: 13_u8);
-  }
+  set report[6_u64] = cvt::<u64, u8>(large.inner.len);
   let single = ring_new::<Array<u64, 0>, 1>();
   place_front(window: &single, value: value);
   if single.head != 0_u64 {
@@ -663,7 +664,19 @@ fn zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once() {
   if single.head != 0_u64 {
     return std::process::exit_status(code: 15_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  let report_bytes = &report[0_u64..7_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 7_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 16_u8);
+    }
+  }
 }
 "#;
     for (overlap, facts) in [
@@ -697,7 +710,12 @@ fn zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once() {
         let retained = super::owned_places::retain_calls(&module);
         let output = super::compile_and_run(&retained);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
-        assert!(output.stdout.is_empty(), "{output:?}");
+        // The measures each take leaves behind, in program order: `slots.len`
+        // after the first and second `take_back` (1, 0); `ring.len` and
+        // `ring.head` after the wrapped `take_back` (1, 1); `ring.len` after
+        // the last `take_front` (0); `large.inner.len` after the two front
+        // placements and after both front takes (2, 0).
+        assert_eq!(output.stdout, [1_u8, 0, 1, 1, 0, 2, 0], "{output:?}");
         assert!(output.stderr.is_empty(), "{output:?}");
     }
 }
@@ -719,7 +737,11 @@ fn empty_length(values: &[std::io::OutputStream]) -> result: u64 reads(values) {
   return values^.len;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let initial_slots = slots_new::<std::io::OutputStream, 0>();
   let initial_ring = ring_new::<std::io::OutputStream, 0>();
   let value = EmptyWindows(before: 17_u8, slots: move initial_slots, ring: move initial_ring, after: 29_u64);
@@ -733,22 +755,29 @@ fn main() -> status: std::process::ExitStatus pure {
   if after != 29_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  if ring.head != 0_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  if ring.len != 0_u64 {
-    return std::process::exit_status(code: 7_u8);
-  }
+  let report = array_filled::<u8, 3>(value: 255_u8);
+  set report[0_u64] = cvt::<u64, u8>(ring.head);
+  set report[1_u64] = cvt::<u64, u8>(ring.len);
   let length = empty_length(values: &slots[0_u64..0_u64]);
   if length != 0_u64 {
     return std::process::exit_status(code: 4_u8);
   }
   let array = slots_into_array::<std::io::OutputStream, 0>(values: move slots);
   let restored = slots_from_array::<std::io::OutputStream, 0>(values: move array);
-  if restored.len != 0_u64 {
-    return std::process::exit_status(code: 5_u8);
+  set report[2_u64] = cvt::<u64, u8>(restored.len);
+  let report_bytes = &report[0_u64..3_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 3_u8);
+    }
   }
-  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let module = with_ir(source, |program| {
@@ -811,7 +840,10 @@ void *wf_observe_window_allocate(uint64_t size) {
 "#;
     let output = super::compile_link_and_run(&observed, Some(observer), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    assert!(output.stdout.is_empty(), "{output:?}");
+    // The recovered ring's stored `head` and `len` header words, then the
+    // restored slots' `len`, one byte each: all three empty descriptors
+    // survive the trip through the nonempty ring storage as zero.
+    assert_eq!(output.stdout, [0_u8, 0, 0], "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 
@@ -821,18 +853,43 @@ void *wf_observe_window_allocate(uint64_t size) {
 #[test]
 fn an_above_u64_zero_count_reaches_target_qualification() {
     for generic in ["", "<T>"] {
-        let source = format!(
-            "struct Giant {{\n  words: Array<u64, 2305843009213693952>;\n}}\n\nfn allocate{generic}(count: u64) -> result: unit pure contract {{\n  requires count <= 0_u64;\n}} {{\n  let cells = box_slots_new::<Giant>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
-        );
-        with_ir(source.as_bytes(), |program| {
-            let host = TargetLayout::host().expect("the test host is supported");
-            assert_eq!(
-                validate_program(host, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    TargetObject::Representation
-                ))
+        for invoked in [false, true] {
+            let call = if !invoked {
+                ""
+            } else if generic.is_empty() {
+                "  let result = allocate(count: 0_u64);\n"
+            } else {
+                "  let result = allocate::<u8>(count: 0_u64);\n"
+            };
+            let source = format!(
+                "struct Giant {{\n  words: Array<u64, 2305843009213693952>;\n}}\n\nfn allocate{generic}(count: u64) -> result: unit pure contract {{\n  requires count <= 0_u64;\n}} {{\n  let cells = box_slots_new::<Giant>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n{call}  return std::process::exit_status(code: 0_u8);\n}}\n"
             );
-        });
+            with_ir(source.as_bytes(), |program| {
+                let host = TargetLayout::host().expect("the test host is supported");
+                let failure = validate_program(host, program);
+                if !invoked && !generic.is_empty() {
+                    // The uninstantiated generic has no allocating IR body;
+                    // its otherwise-unused nominal still must be qualified.
+                    assert_eq!(
+                        failure,
+                        Err(TargetLayoutFailure::Unrepresentable(
+                            TargetObject::Representation
+                        ))
+                    );
+                } else {
+                    assert!(matches!(
+                        failure,
+                        Err(TargetLayoutFailure::Allocation {
+                            ty: crate::IrType::Nominal(_),
+                            size: None,
+                            alignment: None,
+                            limit: crate::target::AllocationLimit::AddressDomain { .. },
+                            ..
+                        })
+                    ));
+                }
+            });
+        }
     }
 }
 
@@ -863,14 +920,43 @@ fn a_runtime_window_and_a_cell_must_fit_the_selected_allocator_alignment() {
 
             let one_alignment_step_short =
                 host.with_runtime_allocation_limits_for_test(byte_domain, 4);
-            assert_eq!(
+            assert!(matches!(
                 validate_program(one_alignment_step_short, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    TargetObject::RuntimeSizedAllocation
-                ))
-            );
+                Err(TargetLayoutFailure::Allocation {
+                    ty: crate::IrType::Integer {
+                        width: 64,
+                        signed: false,
+                    },
+                    size: Some(8),
+                    alignment: Some(8),
+                    limit: crate::target::AllocationLimit::Alignment { maximum: 4 },
+                    ..
+                })
+            ));
         });
     }
+}
+
+#[test]
+fn a_frozen_payload_reserves_its_complete_runtime_header() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {\n  let value = frozen_new::<u64>(value: 7_u64);\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    with_ir(source, |program| {
+        let host = TargetLayout::host().expect("supported target");
+        // wf_frozen's two header words and its existing alignment padding
+        // occupy 16 bytes; its eight-byte payload makes a 24-byte request.
+        let exact = host.with_runtime_allocation_limits_for_test(24, 8);
+        assert_eq!(validate_program(exact, program), Ok(()));
+        let short = host.with_runtime_allocation_limits_for_test(23, 8);
+        assert!(matches!(
+            validate_program(short, program),
+            Err(TargetLayoutFailure::Allocation {
+                size: Some(8),
+                alignment: Some(8),
+                limit: crate::target::AllocationLimit::AllocationSize { maximum: 23 },
+                ..
+            })
+        ));
+    });
 }
 
 #[test]
@@ -1202,13 +1288,15 @@ fn range_references_cross_helpers_without_transferring_ownership() {
     // second comparison remains for either proved window bound.
     assert_eq!(fill.matches("icmp ult i64").count(), 1);
     assert_eq!(fold.matches("icmp ult i64").count(), 1);
-    // The case has six status exits: the four length checks before the two
-    // calls, the checksum branch and the success exit.
+    // The case has four status exits: the two length checks before the fill
+    // call, the checksum branch and the success exit. The two checks before
+    // the fold call were decided by the fill's length facts and left with
+    // the [OP-5] redundancy rule.
     assert!(!main.contains("call void @wf_trap"));
     assert_eq!(
         main.matches("call void @wf_std.process.exit_status")
             .count(),
-        6
+        4
     );
     // Every exit leaves the scope that owns exactly the two `Box` fields.
     // Check each return edge independently so one edge cannot leak while
@@ -1217,7 +1305,7 @@ fn range_references_cross_helpers_without_transferring_ownership() {
         .split("ret void")
         .filter(|block| block.contains("call void @wf_std.process.exit_status"))
         .collect::<Vec<_>>();
-    assert_eq!(exits.len(), 6);
+    assert_eq!(exits.len(), 4);
     for exit in exits {
         assert_eq!(
             exit.matches("call void @wf__heap_give").count(),
@@ -1225,7 +1313,7 @@ fn range_references_cross_helpers_without_transferring_ownership() {
             "{exit}"
         );
     }
-    assert_eq!(main.matches("call void @wf__heap_give").count(), 12);
+    assert_eq!(main.matches("call void @wf__heap_give").count(), 8);
     assert!(main.contains("call i8 @wf_fill"));
     assert!(main.contains("call i64 @wf_fold"));
 
@@ -1273,10 +1361,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let right = box_array_filled::<u64>(count: 2_u64, value: 0_u64);
   let pool = Pool(left: move left, right: move right, count: 0_u64);
   let code = 0_u8;
-  let apply = True();
-  if apply {
-    update(pool: &pool);
-  }
+  update(pool: &pool);
   let observed = observe(pool: &pool);
   if observed != 14_u64 {
     set code = 1_u8;
@@ -1511,7 +1596,7 @@ fn chunk_summary_instances_preserve_window_abi_and_avoid_allocation() {
 }
 
 #[test]
-fn a_projected_window_target_is_formed_once_before_rhs() {
+fn a_projected_window_target_is_formed_once_after_rhs() {
     let source = br#"struct Columns {
   left: Box<Array<u16>>;
   right: Box<Array<u16>>;
@@ -1553,8 +1638,8 @@ fn main() -> status: std::process::ExitStatus pure {
     // are in `update`'s destination-form body (compiler/src/backend/abi.rs).
     let update = emitted_body(&llvm, "update");
     // The length read projects the field once for the explicit control. The
-    // target captures the complete element address once before the RHS, and
-    // the store uses that address without rereading its parent [SET-1].
+    // target forms the complete element address once after the RHS, and the
+    // store uses that address without rereading its parent [SET-1].
     //
     // STOR-1 places the descriptor in the one heap object. Capture therefore
     // loads the Box pointer from its field slot, then forms an address into
@@ -1579,7 +1664,10 @@ fn main() -> status: std::process::ExitStatus pure {
         .next_back()
         .expect("captured pointer definition")
         .trim();
-    assert!(guard < captured && captured < rhs && rhs < store);
+    assert!(guard < rhs && rhs < captured && captured < store);
+    // Only the length read projects the field before the RHS; the target's
+    // projection is formed after it.
+    assert_eq!(update[..rhs].matches(&columns).count(), 1);
     // Bounded copies of Columns load both Box fields too. Count reads of
     // the captured field address, whose result the target chain below uses;
     // the two Columns GEPs above still forbid reevaluating that projection.
@@ -1600,29 +1688,29 @@ fn main() -> status: std::process::ExitStatus pure {
         1,
         "the target's Box pointer is loaded once: {update}"
     );
-    let address = update[captured..rhs]
+    let address = update[captured..store]
         .lines()
         .find_map(|line| {
             line.trim()
                 .strip_suffix(&format!(" = getelementptr i8, ptr {pointer}, i64 0"))
         })
-        .expect("the captured pointer forms the array address before the RHS");
+        .expect("the captured pointer forms the array address after the RHS");
     let element_projection = format!(
         " = getelementptr inbounds {{ i64, [0 x i16] }}, ptr {address}, i64 0, i32 1, i64 "
     );
     assert_eq!(update.matches(&element_projection).count(), 1);
-    let element = update[captured..rhs]
+    let element = update[captured..store]
         .lines()
         .find(|line| line.contains(&element_projection))
         .and_then(|line| line.trim().split_once(" = ").map(|(result, _)| result))
-        .expect("the element address uses the captured array address before the RHS");
-    let target = update[captured..rhs]
+        .expect("the element address uses the captured array address after the RHS");
+    let target = update[captured..store]
         .lines()
         .find_map(|line| {
             line.trim()
                 .strip_suffix(&format!(" = getelementptr i8, ptr {element}, i64 0"))
         })
-        .expect("the complete typed target is captured before the RHS");
+        .expect("the complete typed target is formed after the RHS");
     assert_eq!(update.matches("store i16").count(), 1);
     assert!(
         update[store..]
@@ -1634,8 +1722,6 @@ fn main() -> status: std::process::ExitStatus pure {
             .unwrap()
             .ends_with(&format!("ptr {target}"))
     );
-    assert!(!update[rhs..store].contains("load ptr, ptr "));
-    assert!(!update[rhs..store].contains(&columns));
     assert!(!update.contains("call void @wf_trap"));
 
     let output = compile_and_run(&llvm);

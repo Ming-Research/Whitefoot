@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn choose(x: u64) -> r: u64 pure contract {
+  requires x < 8_u64;
+} {
+  doc "The named condition expands to its comparison origin.";
+  let test = x < 9_u64;
+  if test {
+    return x;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The checker judges every body.";
+  return exit_status(code: 0_u8);
+}
