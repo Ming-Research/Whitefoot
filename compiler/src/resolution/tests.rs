@@ -3181,55 +3181,61 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[136].1, "place_back");
     assert_eq!(first[171].1, "grow_paged");
     assert_eq!(first[175].1, "paged_page_len");
-    assert_eq!(first[186].1, "swap");
-    assert_eq!(first[190].1, "shared_new");
-    assert_eq!(first[193].1, "shared_map_new");
-    assert_eq!(first[196].1, "shared_share");
-    assert_eq!(first[199].1, "shared_read");
-    assert_eq!(first[202].1, "shared_read_share");
+    // v0.164 inserts `clear` with W, T and window after `take_front`: four
+    // records. Every later ordinal shifts by four.
+    assert_eq!(first[186].1, "clear");
+    assert_eq!(first[187].1, "W");
+    assert_eq!(first[188].1, "T");
+    assert_eq!(first[189].1, "window");
+    assert_eq!(first[190].1, "swap");
+    assert_eq!(first[194].1, "shared_new");
+    assert_eq!(first[197].1, "shared_map_new");
+    assert_eq!(first[200].1, "shared_share");
+    assert_eq!(first[203].1, "shared_read");
+    assert_eq!(first[206].1, "shared_read_share");
     // Each frozen function contributes its function, T and value parameter:
     // three records each. Frozen adds four opaque records, and ScanStep adds
     // five enum records before these functions.
-    assert_eq!(first[205].1, "frozen_new");
-    assert_eq!(first[206].1, "T");
-    assert_eq!(first[207].1, "value");
-    assert_eq!(first[208].1, "frozen_share");
-    assert_eq!(first[209].1, "T");
-    assert_eq!(first[210].1, "frozen");
-    assert_eq!(first[211].1, "map_count");
-    assert_eq!(first[214].1, "map_scan");
-    assert_eq!(first[220].1, "map_scan_within");
-    assert_eq!(first[227].1, "map_clear");
-    assert_eq!(first[230].1, "key_set_new");
-    assert_eq!(first[232].1, "key_set_insert");
-    assert_eq!(first[235].1, "key_set_bytes");
-    assert_eq!(first[236].1, "keys");
-    assert_eq!(first[237].1, "key_set_read_key");
-    assert_eq!(first[241].1, "free_empty");
-    assert_eq!(first[244].1, "release");
-    assert_eq!(first[245].1, "T");
-    assert_eq!(first[246].1, "value");
+    assert_eq!(first[209].1, "frozen_new");
+    assert_eq!(first[210].1, "T");
+    assert_eq!(first[211].1, "value");
+    assert_eq!(first[212].1, "frozen_share");
+    assert_eq!(first[213].1, "T");
+    assert_eq!(first[214].1, "frozen");
+    assert_eq!(first[215].1, "map_count");
+    assert_eq!(first[218].1, "map_scan");
+    assert_eq!(first[224].1, "map_scan_within");
+    assert_eq!(first[231].1, "map_clear");
+    assert_eq!(first[234].1, "key_set_new");
+    assert_eq!(first[236].1, "key_set_insert");
+    assert_eq!(first[239].1, "key_set_bytes");
+    assert_eq!(first[240].1, "keys");
+    assert_eq!(first[241].1, "key_set_read_key");
+    assert_eq!(first[245].1, "free_empty");
+    assert_eq!(first[248].1, "release");
+    assert_eq!(first[249].1, "T");
+    assert_eq!(first[250].1, "value");
     // The nullary constructor contributes one function record; each other
     // decision-cell function contributes its function and cell parameter.
-    assert_eq!(first[247].1, "decision_cell_new");
-    assert_eq!(first[248].1, "decision_cell_share");
-    assert_eq!(first[250].1, "decision_cell_read");
-    assert_eq!(first[252].1, "claim_written");
-    assert_eq!(first[254].1, "claim_killed");
-    assert_eq!(first[256].1, "shared_close");
-    assert_eq!(first[257].1, "T");
-    assert_eq!(first[258].1, "shared");
+    assert_eq!(first[251].1, "decision_cell_new");
+    assert_eq!(first[252].1, "decision_cell_share");
+    assert_eq!(first[254].1, "decision_cell_read");
+    assert_eq!(first[256].1, "claim_written");
+    assert_eq!(first[258].1, "claim_killed");
+    assert_eq!(first[260].1, "shared_close");
+    assert_eq!(first[261].1, "T");
+    assert_eq!(first[262].1, "shared");
     // PRE-1: 54 opaque records + 31 enum records + four built-in records +
-    // 170 function/parameter/range records = 259. Frozen adds four opaque
+    // 174 function/parameter/range records = 263. Frozen adds four opaque
     // records and frozen_new/frozen_share add three each; ScanStep adds five
     // enum records and map_scan_within seven call records; release adds its
     // function, T and value, three records; key_set_bytes adds its function
     // and value parameter, two records; DecisionCell adds two opaque records,
     // DecisionState four enum records and the five decision-cell functions
-    // nine records; shared_close adds its function, T and shared, three
-    // records. Count every declaration in the preorder, including owner-local
-    // ones.
-    assert_eq!(first.len(), 259);
+    // nine records; clear adds its function, W, T and window, four records;
+    // shared_close adds its function, T and shared, three records. Count every
+    // declaration in the preorder, including owner-local ones.
+    assert_eq!(first.len(), 263);
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("shared"));
     assert!(
         first
@@ -3242,8 +3248,9 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 256, so no prelude ordinal exceeds `u8`; this still
-/// shows that a late function's collision names its own preorder ordinal.
+/// inventory holds 260, past `u8` again once `clear` entered [OP-10]; the
+/// ordinal is a `u32`, and this shows that a late function's collision names
+/// its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
     let source = b"fn release() -> result: unit pure {\n  return unit;\n}\n";
@@ -3259,9 +3266,9 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             // PRE-1: 54 opaque records + 31 enum records + Int, Float,
-            // Eq, Run + 155 preceding function/parameter/range records.
+            // Eq, Run + 159 preceding function/parameter/range records.
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 244)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 248)
             );
         },
     );

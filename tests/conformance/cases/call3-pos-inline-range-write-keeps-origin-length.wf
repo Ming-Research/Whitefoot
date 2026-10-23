@@ -1,7 +1,7 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn clear(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract {
+fn wipe(part: &[Slots<u64, 8>], at: u64) -> result: unit writes(part) contract {
   requires at < part^.len;
 } {
   doc "Replaces one element of the range with an empty run.";
@@ -20,7 +20,7 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &rows, value: move first);
   place_back(window: &rows, value: move second);
   place_back(window: &rows, value: move third);
-  clear(part: &rows[0_u64..2_u64], at: 0_u64);
+  wipe(part: &rows[0_u64..2_u64], at: 0_u64);
   let last = rows[2_u64].len;
   let cleared = rows[0_u64].len;
   if last == 0_u64 {

@@ -335,3 +335,22 @@ fn ordered_map_mutations_match_sorted_oracle_and_preserve_every_owner_in_both_lo
     // original 64-allocation public mutation and traversal chain.
     execute_container_program("ordered-map", &sources, 103, 0, false);
 }
+
+#[test]
+fn clear_reuses_storage_and_releases_every_element_in_both_lowering_modes() {
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/clear-program.wf",
+        include_bytes!("../../../tests/programs/containers/clear-program.wf"),
+    )];
+    // [OP-10] clear allocates nothing and refills reuse the kept storage, so
+    // the 64 KiB byte buffer is one allocation; a clear that replaced its
+    // storage, or a refill that allocated, adds an event. Each element Box is
+    // released exactly once: by clear for the elements it ends, by scope
+    // release for the refills; a clear that skipped its release walk leaves
+    // the first boxes unreleased, and one that released twice is a double
+    // release. Boxed Slots: one backing and 32 + 32 boxes. Wrapped boxed
+    // Ring: one backing and six boxes. Boxed Paged of an 808-byte element,
+    // B = 4 [OP-13]: the cell and three pages, and 10 + 10 boxes. With the
+    // byte buffer: 1 + 65 + 7 + 24 = 97.
+    execute_container_program("clear", &sources, 97, 0, false);
+}
