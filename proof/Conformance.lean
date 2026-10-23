@@ -87,7 +87,30 @@ fn main() -> status: std::process::ExitStatus pure {
   let r = f(x: 1_u8);
   return std::process::exit_status(code: r);
 }
-", some "OP-5")
+", some "OP-5"),
+  -- The postcondition names the result only in `r - r`, which cancels: its
+  -- normalized relation terms carry no result datum, so it is rejected
+  -- [FN-9]. Accepted, the published disequality of the call datum with
+  -- itself would hold on every input, survive the join, and give `y0` the
+  -- bound 254 on the else path too, where `y0 + 1_u8` overflows.
+  ("a postcondition whose result cancels", "fn g(v: u8) -> r: u8 pure contract {
+  ensures r - r + v != v + 1_u8;
+} {
+  return v;
+}
+fn main() -> status: std::process::ExitStatus pure {
+  let a = array_filled::<u8, 1>(value: 255_u8);
+  let y = a[0_u64];
+  let y0 = y;
+  if y < 255_u8 {
+    set y = y + 1_u8;
+    let w = g(v: y);
+    set y = w;
+  }
+  let z = y0 + 1_u8;
+  return std::process::exit_status(code: z);
+}
+", some "FN-9")
 ]
 
 def describe : Outcome → String
