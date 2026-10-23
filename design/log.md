@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 A name below a directory is the same bytes on every host, and a listing leaves out `.` and `..`
+
+Nodes: language/system-interface, language/system-interface/directory-enumeration
+
+Summary: A program that names `config.txt` to `open_file`, or skips the one-byte `.` among listed names, worked on POSIX and failed on Windows, where the runtime took and gave UTF-16 code units; `tests/programs/wfgrep.wf` opened `.` and `..` of every directory there and reported them unreadable. The root gains a decision: a name below a directory, taken by a single-name operation or given by a listing, is name bytes, a POSIX host's bytes and on Windows the WTF-8 encoding of the UTF-16 code units, with a function copying a host string into them, so a text name is its UTF-8 on both hosts and no host name is lost, with the native code units, an encoding chosen per call and UTF-8 only refused. The enumeration node's decision that self and parent entries are reported unfiltered is replaced: a listing leaves them out and a successful batch over a nonempty window holds an entry, since a name given with a root never denotes them and the extra host call is the one a caller makes anyway to reach the end; the host operation makes that call before it completes, so the waiting frame suspends once and both reads run where the operation runs; the old decision, an empty successful batch and a second read submitted from the finish are refused.
+
 ## 2026-10-22 A deadlock report names where every waiting context waits
 
 Nodes: compiler/waiting-contexts, compiler/incremental-compilation
