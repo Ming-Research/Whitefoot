@@ -713,6 +713,31 @@ took five engineer turns and four `proof.yml` runs to its review, one of which
 failed to compile: the toolchain's `Int.fdiv_eq_ediv` carries no sign
 hypothesis.
 
+### The generator lemmas
+
+`GenGrows.lean` proves that the checker's walk only grows its generator, the
+state that numbers atoms and records snapshots: the counter never falls, every
+atom registered on the way has a number between the old and the new counter
+and a nonempty interval, and the snapshot table only gains entries at its end,
+at points below the block walked and each recorded once. A function's final
+table therefore holds each point at most once. The delta atom a join
+registers needs its own proof that its interval is nonempty: its ends are the
+least lower and the greatest upper end of the inputs' constant intervals, and
+each input's interval stays nonempty through the fold that builds it. To state
+the lemmas over named functions, the loop head's state and a function's entry
+state move out of the walk into `Checker.loopHead` and `Checker.entryState`,
+with no change of behavior; the model's run over the conformance cases is
+unchanged.
+
+The part adds 740 lines of Lean in one module and no coverage mark. The
+module alone built in 14.8 s, and the build of the model and harness took
+26.9 s on the first `proof.yml` run that compiled it, against 16.5 s and 16.9 s on the
+main line's runs of the same day; the build's provisional budget rises from
+25 s to 45 s, 1.5 times that run rounded up to 5 s. Four earlier runs failed
+to compile: a tactic macro could not resolve lemma names defined after it,
+then, once it could, a lemma's proof referred to itself, and two proofs
+needed steps the tactic did not take.
+
 ## Cost
 
 Precedents with measured sizes:
