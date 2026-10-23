@@ -1,6 +1,9 @@
 # Qualify exact bundled archives before compiler-release publishes them, or
 # qualify an existing release by tag. Failed checks and unverified macOS host
-# isolation both leave the reusable workflow's qualified output false.
+# isolation both leave the reusable workflow's qualified output false. The
+# Windows archive, when the release has one, runs in a Windows Server Core
+# container that holds no other compiler; a release made before the Windows
+# archive existed is qualified on the other two.
 # The workflow revision supplies the maintained runner and witness, even when
 # the candidate predates them; unsupported witness behavior fails qualification
 # without changing expectations. Candidate bytes and manifest identity stay fixed.
@@ -48,6 +51,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       commit: ${{ steps.verify.outputs.commit }}
+      windows: ${{ steps.verify.outputs.windows }}
     steps:
       - name: Download the unpublished candidate from this workflow run
         if: inputs.artifact_name != ''
@@ -67,7 +71,8 @@ jobs:
           [[ "$RELEASE_TAG" =~ ^wf-(exp-)?[0-9a-f]{12}-bundled$ ]]
           mkdir -p candidate
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir candidate \
-            --pattern 'whitefootc-*-bundled.tar.gz' --pattern whitefoot-language.tar.gz \
+            --pattern 'whitefootc-*-bundled.tar.gz' --pattern 'whitefootc-*-bundled.zip' \
+            --pattern whitefoot-language.tar.gz \
             --pattern whitefoot-release.json --pattern SHA256SUMS
 
       - name: Verify metadata and every external checksum
@@ -91,9 +96,14 @@ jobs:
           requested = os.environ['SOURCE_COMMIT']
           assert not requested or commit == requested, (commit, requested)
           expected = {'whitefoot-release.json', 'whitefoot-language.tar.gz'}
-          for platform in ('linux-x86_64', 'macos-arm64'):
+          for platform, suffix in (('linux-x86_64', 'tar.gz'), ('macos-arm64', 'tar.gz'),
+                                   ('windows-x86_64', 'zip')):
+              if platform not in release['assets']:
+                  # Only releases made before the Windows archive lack it.
+                  assert platform == 'windows-x86_64', platform
+                  continue
               name = release['assets'][platform]
-              assert name == f'whitefootc-{platform}-bundled.tar.gz', (platform, name)
+              assert name == f'whitefootc-{platform}-bundled.{suffix}', (platform, name)
               expected.add(name)
           assert release['assets']['language'] == 'whitefoot-language.tar.gz'
           covered = set()
@@ -115,6 +125,7 @@ jobs:
           print((root / 'SHA256SUMS').read_text())
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'commit={commit}\n')
+              output.write('windows=' + ('true' if 'windows-x86_64' in release['assets'] else 'false') + '\n')
           PY
 
       - name: Keep the verified inputs for both hosts
@@ -173,7 +184,7 @@ jobs:
           docker run --rm --platform linux/amd64 \
             --mount "type=bind,src=$PWD/candidate/whitefootc-linux-x86_64-bundled.tar.gz,dst=/input/package.tar.gz,readonly" \
             --mount "type=bind,src=$PWD/tests/package-fixtures,dst=/input/fixtures,readonly" \
-            --mount "type=bind,src=$PWD/.github/toolchain/check-package.sh,dst=/input/check-package.sh,readonly" \
+            --mount "type=bind,src=$PWD/.github/toolchain,dst=/input/toolchain,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/package-$MODE,dst=/output" \
             --env "MODE=$MODE" ubuntu:24.04 /bin/bash -c '
               set -euo pipefail
@@ -184,7 +195,7 @@ jobs:
               if [ "$MODE" = linux-wrong-major ]; then
                 apt-get install -y --no-install-recommends clang-18
               fi
-              bash /input/check-package.sh /input/package.tar.gz /input/fixtures /output "$MODE"
+              bash /input/toolchain/check-package.sh /input/package.tar.gz /input/fixtures /output "$MODE"
             ' > "$RUNNER_TEMP/package-$MODE/logs/container.txt" 2>&1 || status=$?
           cat "$RUNNER_TEMP/package-$MODE/logs/container.txt"
           exit "$status"
@@ -261,29 +272,82 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  windows:
+    name: Windows x86-64 in a clean container
+    needs: prepare
+    if: needs.prepare.outputs.windows == 'true'
+    # A process-isolated Windows container needs the image's Windows build to
+    # match the host's: Windows Server 2022 with the ltsc2022 Server Core image.
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-acceptance-inputs
+          path: candidate
+
+      - name: Qualify the package in a Server Core container
+        run: |
+          set -euo pipefail
+          test -f .github/toolchain/check-package-windows.sh
+          test -f tests/package-fixtures/waiting.wf
+          test -f tests/package-fixtures/stack-exhaustion.wf
+          test -f docs/guide/getting-started.md
+          bash .github/toolchain/check-package-windows.sh \
+            "$PWD/candidate/whitefootc-windows-x86_64-bundled.zip" \
+            "$PWD/tests/package-fixtures" "$RUNNER_TEMP/package-windows" \
+            mcr.microsoft.com/windows/servercore:ltsc2022
+
+      - name: Record Windows qualification
+        if: success()
+        env:
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          echo "Windows x86-64 candidate $COMMIT: installation by the getting started guide's Windows commands, the guide's programs, inventory, coroutine IR, ordinary/full-LTO/cached builds, stack exhaustion, import and component-removal checks passed in a Server Core container that holds no other compiler." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Windows command, inventory and import logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-acceptance-windows-x86_64
+          path: ${{ runner.temp }}/package-windows/logs/
+          if-no-files-found: warn
+          retention-days: 7
+
   qualification:
     name: Exact archive qualification result
     if: always()
-    needs: [prepare, linux, macos]
+    needs: [prepare, linux, macos, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       qualified: ${{ steps.result.outputs.qualified }}
     steps:
-      - name: Require both Linux modes and verified macOS isolation
+      - name: Require both Linux modes, verified macOS isolation and the Windows container
         id: result
         env:
           PREPARE: ${{ needs.prepare.result }}
           LINUX: ${{ needs.linux.result }}
           MACOS: ${{ needs.macos.result }}
           ISOLATION: ${{ needs.macos.outputs.isolation }}
+          HAS_WINDOWS: ${{ needs.prepare.outputs.windows }}
+          WINDOWS: ${{ needs.windows.result }}
         run: |
+          # A release without a Windows archive has no Windows job to wait for.
+          windows_ok=false
+          if [ "$HAS_WINDOWS" != true ] || [ "$WINDOWS" = success ]; then
+            windows_ok=true
+          fi
           qualified=false
-          if [ "$PREPARE" = success ] && [ "$LINUX" = success ] && [ "$MACOS" = success ] && [ "$ISOLATION" = verified ]; then
+          if [ "$PREPARE" = success ] && [ "$LINUX" = success ] && [ "$MACOS" = success ] && [ "$ISOLATION" = verified ] && [ "$windows_ok" = true ]; then
             qualified=true
           fi
           echo "qualified=$qualified" >> "$GITHUB_OUTPUT"
-          echo "Exact bundled archive qualification: $qualified (inputs=$PREPARE; Linux=$LINUX; macOS=$MACOS; isolation=$ISOLATION)." >> "$GITHUB_STEP_SUMMARY"
-          if [ "$PREPARE" != success ] || [ "$LINUX" != success ] || [ "$MACOS" != success ]; then
+          echo "Exact bundled archive qualification: $qualified (inputs=$PREPARE; Linux=$LINUX; macOS=$MACOS; isolation=$ISOLATION; Windows archive=$HAS_WINDOWS, result=$WINDOWS)." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PREPARE" != success ] || [ "$LINUX" != success ] || [ "$MACOS" != success ] || [ "$windows_ok" != true ]; then
             exit 1
           fi

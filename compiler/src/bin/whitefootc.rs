@@ -11,17 +11,18 @@ use whitefoot::{
     COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_STOP_SIGNALS_SOURCE,
     COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE, CallGrain,
     CheckOutcome, CheckVerdict, CompilationFailure, CompilerLimits, DISPATCH_LEDGER_PREFIX,
-    DiagnosticFormat, FLOOR_STACK_BYTES, FORK_CAPSULE_HEADER, FORK_CAPSULE_SOURCE,
-    FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, LOCK_LEDGER_PREFIX,
-    ModuleEntry, ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM,
-    ORDINARY_VALUES_SOURCE, OverlapLowering, RESTRICTED_CHILD_COMPILE_ARGUMENTS, RecursionBudget,
-    SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
-    SCHED_PRIM_HEADER, SNAPSHOT_EXPORT_HEADER, SNAPSHOT_EXPORT_SOURCE, Sanitizer, SourceInput,
-    WINDOWS_RUNTIME_HEADER, build_module_entry_for_emission, check, check_module_program,
+    DiagnosticFormat, FLOOR_STACK_BYTES, FORK_CAPSULE_HEADER, FORK_CAPSULE_SOURCE, FormatGrammar,
+    FormattedFile, FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE,
+    LOCK_LEDGER_PREFIX, ModuleEntry, ModuleProgramFailure, ORDINARY_VALUES_HEADER,
+    ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE, OverlapLowering,
+    RESTRICTED_CHILD_COMPILE_ARGUMENTS, RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE,
+    SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SNAPSHOT_EXPORT_HEADER,
+    SNAPSHOT_EXPORT_SOURCE, Sanitizer, SourceInput, WINDOWS_RUNTIME_HEADER,
+    build_module_entry_for_emission, canonical_format, check, check_module_program,
     check_with_cache, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
-    form_module_program_graph, module_verdict, prepare_toolchain, render_driver_failure,
-    render_module_interface, resolved_toolchain, running_compiler_identity, split_module,
-    stack_ledger,
+    form_module_program_graph, format_module_program, module_verdict, prepare_toolchain,
+    render_driver_failure, render_module_interface, resolved_toolchain, running_compiler_identity,
+    split_module, stack_ledger,
 };
 
 // `HOST_LINK_LIBRARIES` is here rather than above because its one reader is
@@ -41,7 +42,7 @@ use whitefoot::{
 };
 
 const USAGE: &str = "usage: whitefootc [--emit-llvm] [--par] [--par-call-grain auto|off] [--par-sequential-refusal] [--par-recursive-frontier auto|N|off] [--no-overlap] [--par-ledger] \
-[--stack-ledger] [--dispatch-ledger] [--lock-ledger] [--diagnostic-format text|json] [--check] [--cache DIR [--fragments module|function] | --full-lto] [--sanitize address|thread] [--report] [-o OUTPUT] (SOURCE... | --graph modules.wfg [--entry NAME | --function pkg::module::name | --check-module pkg::module | --check-interface pkg::module | --check-modules | --render-interface pkg::module | --compare-interface pkg::module --against OTHER/modules.wfg])";
+[--stack-ledger] [--dispatch-ledger] [--lock-ledger] [--diagnostic-format text|json] [--check | --format] [--cache DIR [--fragments module|function] | --full-lto] [--sanitize address|thread] [--report] [-o OUTPUT] (SOURCE... | --graph modules.wfg [--entry NAME | --function pkg::module::name | --check-module pkg::module | --check-interface pkg::module | --check-modules | --render-interface pkg::module | --compare-interface pkg::module --against OTHER/modules.wfg])";
 
 // The compiler walks typed source and lowering trees recursively. Windows
 // gives the process's primary thread a 1 MiB stack by default, which is small
@@ -212,21 +213,21 @@ const TARGET_COMPILE_ARGUMENTS: &[&str] = &[];
 /// The linker a link-time-optimized link runs on this host, and the
 /// argument prefix naming the directory where a ThinLTO link of fragments
 /// keeps the optimized objects it produces: the host's own linker on macOS,
-/// whose LTO support ships with its toolchain, and LLD elsewhere. On Linux,
-/// LLD's default layout gives the code segment a virtual address that differs
-/// from its file offset, which perf 6.17's DWARF unwinder resolves wrongly;
-/// `-z separate-code` page-aligns it so the unwinder finds the right frames.
+/// whose LTO support ships with its toolchain, and LLD elsewhere. On Windows
+/// that is LLD's MinGW driver, which takes the GNU driver's spelling of the
+/// cache option. On Linux, LLD's default layout gives the code segment a
+/// virtual address that differs from its file offset, which perf 6.17's DWARF
+/// unwinder resolves wrongly; `-z separate-code` page-aligns it so the
+/// unwinder finds the right frames.
 #[cfg(target_os = "macos")]
 const LTO_LINKER: &[&str] = &[];
 #[cfg(target_os = "macos")]
 const THIN_LINK_CACHE: &str = "-Wl,-cache_path_lto,";
 #[cfg(target_os = "windows")]
 const LTO_LINKER: &[&str] = &["-fuse-ld=lld"];
-#[cfg(target_os = "windows")]
-const THIN_LINK_CACHE: &str = "-Wl,/lldltocache:";
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 const LTO_LINKER: &[&str] = &["-fuse-ld=lld", "-Wl,-z,separate-code"];
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "macos"))]
 const THIN_LINK_CACHE: &str = "-Wl,--thinlto-cache-dir=";
 
 /// The libraries this host's link needs. The ordinary Windows library uses
@@ -330,11 +331,30 @@ fn run(arguments: &[String]) -> Result<(), Stop> {
     let cache = options.cache.as_deref().map(open_cache).transpose()?;
     let mut report = BuildReport::default();
     if let Some(graph) = &options.graph {
+        if options.format {
+            let files =
+                format_module_program(graph, CompilerLimits::default()).map_err(|failure| {
+                    match failure {
+                        ModuleProgramFailure::Compilation(failure) => Stop::Compilation(failure),
+                        ModuleProgramFailure::Discovery(failure) => {
+                            Stop::invocation(failure.to_string())
+                        }
+                    }
+                })?;
+            return rewrite_formatted_files(&files);
+        }
         let Some(module) = run_module_program(&options, graph, cache.as_ref(), &mut report)? else {
             return Ok(());
         };
         return finish(&options, &module, cache.as_ref(), &mut report);
     }
+    let destinations = if options.format {
+        Some(resolve_format_destinations(
+            options.sources.iter().map(PathBuf::as_path),
+        )?)
+    } else {
+        None
+    };
     let mut paths = Vec::with_capacity(options.sources.len());
     let mut bytes = Vec::with_capacity(options.sources.len());
     for (index, source) in options.sources.iter().enumerate() {
@@ -348,6 +368,20 @@ fn run(arguments: &[String]) -> Result<(), Stop> {
         .zip(&bytes)
         .map(|((logical, display), bytes)| SourceInput::from_host_path(logical, display, bytes))
         .collect();
+    if let Some(destinations) = destinations {
+        let rendered = canonical_format(&inputs, FormatGrammar::Program, CompilerLimits::default())
+            .map_err(Stop::Compilation)?;
+        let files = rendered
+            .into_iter()
+            .zip(destinations.iter().zip(bytes))
+            .map(|(rendered, (path, original))| FormattedFile {
+                path: path.clone(),
+                original,
+                bytes: rendered.bytes,
+            })
+            .collect::<Vec<_>>();
+        return rewrite_formatted_destinations(&files, &destinations);
+    }
     let overlap = options.overlap();
     let module = if options.par_ledger {
         // The permission ledger is developer output. It goes to stdout, which
@@ -393,6 +427,175 @@ fn run(arguments: &[String]) -> Result<(), Stop> {
         module
     };
     finish(&options, &module, cache.as_ref(), &mut report)
+}
+
+/// A sibling temporary file owned until it is renamed over its source.
+/// Dropping removes an uncommitted temporary unless retained for recovery.
+struct StagedFormat {
+    temporary: PathBuf,
+    destination: PathBuf,
+    /// A failed rollback leaves the original bytes here for recovery.
+    retain: bool,
+}
+
+impl Drop for StagedFormat {
+    fn drop(&mut self) {
+        if self.retain {
+            return;
+        }
+        // Windows does not remove a read-only temporary if replacement failed.
+        #[cfg(target_os = "windows")]
+        if let Ok(metadata) = std::fs::metadata(&self.temporary) {
+            let mut permissions = metadata.permissions();
+            if permissions.readonly() {
+                permissions.set_readonly(false);
+                let _ = std::fs::set_permissions(&self.temporary, permissions);
+            }
+        }
+        let _ = std::fs::remove_file(&self.temporary);
+    }
+}
+
+/// A source's replacement and its original bytes staged for rollback.
+struct StagedRewrite {
+    formatted: StagedFormat,
+    backup: StagedFormat,
+}
+
+/// Resolves every destination before any source is staged, retaining the
+/// target of a source symlink and refusing aliases of the same target even
+/// when their bytes need no change.
+fn resolve_format_destinations<'path>(
+    paths: impl IntoIterator<Item = &'path Path>,
+) -> Result<Vec<PathBuf>, Stop> {
+    let mut seen = std::collections::BTreeMap::new();
+    let mut destinations = Vec::new();
+    for path in paths {
+        let destination = std::fs::canonicalize(path).map_err(|error| {
+            Stop::invocation(format!(
+                "cannot resolve formatting destination {}: {error}",
+                path.display()
+            ))
+        })?;
+        if let Some(first) = seen.insert(destination.clone(), path) {
+            return Err(Stop::invocation(format!(
+                "--format names the same file more than once: {} and {} resolve to {}",
+                first.display(),
+                path.display(),
+                destination.display()
+            )));
+        }
+        destinations.push(destination);
+    }
+    Ok(destinations)
+}
+
+/// Resolves all module-program records before staging, using the same
+/// destination check that ordinary source arguments pass before parsing.
+fn rewrite_formatted_files(files: &[FormattedFile]) -> Result<(), Stop> {
+    let destinations = resolve_format_destinations(files.iter().map(|file| file.path.as_path()))?;
+    rewrite_formatted_destinations(files, &destinations)
+}
+
+/// Stages changed renderings and their original bytes at the resolved,
+/// distinct destinations in file order. A failed replacement restores earlier
+/// sources in reverse order. Unchanged files retain their timestamps.
+fn rewrite_formatted_destinations(
+    files: &[FormattedFile],
+    destinations: &[PathBuf],
+) -> Result<(), Stop> {
+    let mut staged = Vec::new();
+    for (source, destination) in files
+        .iter()
+        .zip(destinations)
+        .filter(|(source, _)| source.original != source.bytes)
+    {
+        let metadata = std::fs::metadata(destination).map_err(|error| {
+            Stop::output(format!("cannot read {}: {error}", destination.display()))
+        })?;
+        let modified = metadata.modified().map_err(|error| {
+            Stop::output(format!("cannot read {}: {error}", destination.display()))
+        })?;
+        let formatted = stage_formatted_file(destination, &source.bytes, &metadata, None)?;
+        let backup =
+            stage_formatted_file(destination, &source.original, &metadata, Some(modified))?;
+        staged.push(StagedRewrite { formatted, backup });
+    }
+    for index in 0..staged.len() {
+        let source = &staged[index].formatted;
+        if let Err(error) = std::fs::rename(&source.temporary, &source.destination) {
+            let mut message = format!("cannot write {}: {error}", source.destination.display());
+            restore_formatted_files(&mut staged[..index], &mut message);
+            return Err(Stop::output(message));
+        }
+    }
+    Ok(())
+}
+
+/// Retains a backup whose restoration fails, and names it in the diagnostic
+/// so cleanup never removes the only remaining copy of the original bytes.
+fn restore_formatted_files(staged: &mut [StagedRewrite], message: &mut String) {
+    for source in staged.iter_mut().rev() {
+        let backup = &mut source.backup;
+        if let Err(error) = std::fs::rename(&backup.temporary, &backup.destination) {
+            backup.retain = true;
+            message.push_str(&format!(
+                "; cannot restore {}: {error}; original bytes retained at {}",
+                backup.destination.display(),
+                backup.temporary.display()
+            ));
+        }
+    }
+}
+
+fn stage_formatted_file(
+    path: &Path,
+    bytes: &[u8],
+    metadata: &std::fs::Metadata,
+    modified: Option<std::time::SystemTime>,
+) -> Result<StagedFormat, Stop> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
+
+    let (staged, mut file) = loop {
+        let serial = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
+        let mut name = path.file_name().unwrap_or(path.as_os_str()).to_os_string();
+        name.push(format!(
+            ".whitefootc-format-{}-{serial}.tmp",
+            std::process::id()
+        ));
+        let temporary = path.with_file_name(name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => {
+                break (
+                    StagedFormat {
+                        temporary,
+                        destination: path.to_path_buf(),
+                        retain: false,
+                    },
+                    file,
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(Stop::output(format!(
+                    "cannot stage {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+    };
+    file.write_all(bytes)
+        .and_then(|()| file.set_permissions(metadata.permissions()))
+        .and_then(|()| modified.map_or(Ok(()), |modified| file.set_modified(modified)))
+        .map_err(|error| Stop::output(format!("cannot stage {}: {error}", path.display())))?;
+    // Windows requires the temporary's writer to be closed before rename.
+    drop(file);
+    Ok(staged)
 }
 
 /// Reads a module program's graph and every registered module's records
@@ -1535,6 +1738,8 @@ struct Options {
     lock_ledger: bool,
     /// Check the sources through complete source acceptance and stop.
     check: bool,
+    /// Rewrite only the canonical rendering, without semantic checking.
+    format: bool,
     /// The module program's graph file [MOD-1], instead of source records.
     graph: Option<PathBuf>,
     /// The graph entry to build [MOD-9].
@@ -1586,6 +1791,7 @@ impl Options {
         let mut dispatch_ledger = false;
         let mut lock_ledger = false;
         let mut check = false;
+        let mut format = false;
         let mut graph = None;
         let mut entry = None;
         let mut function = None;
@@ -1675,6 +1881,7 @@ impl Options {
                     }
                 }
                 "--check" => check = true,
+                "--format" => format = true,
                 "--check-modules" => check_modules = true,
                 "--report" => report = true,
                 "--render-interface" | "--compare-interface" => {
@@ -1771,6 +1978,39 @@ impl Options {
             }
             cursor += 1;
         }
+        if format {
+            let incompatible = [
+                (emit_llvm, "--emit-llvm"),
+                (check, "--check"),
+                (output.is_some(), "-o"),
+                (par, "--par"),
+                (call_grain.is_some(), "--par-call-grain"),
+                (sequential_refusal, "--par-sequential-refusal"),
+                (recursive_frontier.is_some(), "--par-recursive-frontier"),
+                (no_overlap, "--no-overlap"),
+                (par_ledger, "--par-ledger"),
+                (stack_ledger, "--stack-ledger"),
+                (dispatch_ledger, "--dispatch-ledger"),
+                (lock_ledger, "--lock-ledger"),
+                (entry.is_some(), "--entry"),
+                (function.is_some(), "--function"),
+                (check_module.is_some(), "--check-module/--check-interface"),
+                (check_modules, "--check-modules"),
+                (report, "--report"),
+                (cache.is_some(), "--cache"),
+                (fragments.is_some(), "--fragments"),
+                (full_lto, "--full-lto"),
+                (sanitize.is_some(), "--sanitize"),
+                (
+                    render_interface.is_some(),
+                    "--render-interface/--compare-interface",
+                ),
+                (against.is_some(), "--against"),
+            ];
+            if let Some((_, option)) = incompatible.iter().find(|(present, _)| *present) {
+                return Err(format!("--format is incompatible with {option}"));
+            }
+        }
         if graph.is_some() != sources.is_empty() {
             return Err(USAGE.to_owned());
         }
@@ -1845,6 +2085,7 @@ impl Options {
             return Err("--entry and --function each select one entry: write one".to_owned());
         }
         if graph.is_some()
+            && !format
             && !check
             && !check_modules
             && render_interface.is_none()
@@ -1914,6 +2155,7 @@ impl Options {
             dispatch_ledger,
             lock_ledger,
             check,
+            format,
             graph,
             entry,
             function,
@@ -2059,6 +2301,593 @@ mod tests {
     fn parse(arguments: &[&str]) -> Result<Options, String> {
         let owned: Vec<String> = arguments.iter().map(|value| (*value).to_owned()).collect();
         Options::parse(&owned)
+    }
+
+    /// Each formatting test owns an isolated source tree; cleanup also covers
+    /// a panic, without making parallel test invocations share filenames.
+    struct FormatDirectory(PathBuf);
+
+    impl FormatDirectory {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+            let serial = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir()
+                .join(format!("whitefootc-format-{}-{serial}", std::process::id()));
+            std::fs::create_dir(&root).expect("create the formatting test directory");
+            Self(root)
+        }
+
+        fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {
+            let path = self.0.join(name);
+            std::fs::write(&path, bytes).expect("write the formatting fixture");
+            path
+        }
+    }
+
+    impl Drop for FormatDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn run_sources(option: &str, paths: &[&Path]) -> Result<(), Stop> {
+        let arguments = std::iter::once(option.to_owned())
+            .chain(paths.iter().map(|path| path.to_string_lossy().into_owned()))
+            .collect::<Vec<_>>();
+        super::run(&arguments)
+    }
+
+    fn run_graph_format(graph: &Path) -> Result<(), Stop> {
+        super::run(&[
+            "--graph".to_owned(),
+            graph.to_string_lossy().into_owned(),
+            "--format".to_owned(),
+        ])
+    }
+
+    #[test]
+    fn formatting_repairs_all_layout_faults_before_checking() {
+        let directory = FormatDirectory::new();
+        let source = directory.write("layout.wf", b"const answer: u64 = 7_u64;  \nfn main() -> result: u64 pure {\n\n    return\n    answer;  \n}\n");
+        let before = run_sources("--check", &[&source])
+            .expect_err("the original layout is refused")
+            .render(DiagnosticFormat::Text);
+        assert!(before.contains("FORM-2"), "{before}");
+        run_sources("--format", &[&source]).expect("every layout fault is formatted together");
+        assert_eq!(
+            std::fs::read(&source).unwrap(),
+            b"const answer: u64 = 7_u64;\n\nfn main() -> result: u64 pure {\n  return answer;\n}\n"
+        );
+        run_sources("--check", &[&source]).expect("the rewritten program is accepted");
+    }
+
+    #[test]
+    fn formatting_stops_before_type_checking() {
+        let directory = FormatDirectory::new();
+        let source = directory.write(
+            "type.wf",
+            b"fn value() -> result: u8 pure {\n    return 7_u64;\n}\n",
+        );
+        run_sources("--format", &[&source]).expect("a type error does not prevent derivation");
+        assert_eq!(
+            std::fs::read(&source).unwrap(),
+            b"fn value() -> result: u8 pure {\n  return 7_u64;\n}\n"
+        );
+        let failure = run_sources("--check", &[&source])
+            .expect_err("formatting does not repair a type error")
+            .render(DiagnosticFormat::Text);
+        assert!(failure.contains("FN-1"), "{failure}");
+        assert!(!failure.contains("FORM-2"), "{failure}");
+    }
+
+    #[test]
+    fn formatting_grammar_failure_matches_check_and_preserves_every_file() {
+        let directory = FormatDirectory::new();
+        let good_bytes = b"const answer: u64 = 7_u64;  \n";
+        let bad_bytes = b"fn broken() -> result: u64 pure {\n  return;\n}\n";
+        let good = directory.write("first.wf", good_bytes);
+        let bad = directory.write("second.wf", bad_bytes);
+        for paths in [vec![bad.as_path()], vec![good.as_path(), bad.as_path()]] {
+            let checked = run_sources("--check", &paths).expect_err("the grammar is invalid");
+            let formatted = run_sources("--format", &paths).expect_err("the grammar is invalid");
+            for format in [DiagnosticFormat::Text, DiagnosticFormat::Json] {
+                assert_eq!(formatted.render(format), checked.render(format));
+            }
+            assert!(checked.render(DiagnosticFormat::Text).contains("GRAM-"));
+            assert_eq!(std::fs::read(&good).unwrap(), good_bytes);
+            assert_eq!(std::fs::read(&bad).unwrap(), bad_bytes);
+        }
+    }
+
+    #[test]
+    fn graph_formatting_rewrites_graph_interface_and_implementation() {
+        let directory = FormatDirectory::new();
+        let graph = directory.write("modules.wfg", b"pkg:[];  \n\n");
+        let interface = directory.write(
+            "module.wfm",
+            b"public fn value() -> result: u64 pure\ndoc \"Returns a value.\";  \n",
+        );
+        let implementation = directory.write(
+            "value.wf",
+            b"fn value() -> result: u64 pure {\n\n    return\n    7_u64;  \n}\n",
+        );
+        run_graph_format(&graph).expect("all records use their derivation's rendering");
+        assert_eq!(std::fs::read(&graph).unwrap(), b"pkg: [];\n");
+        assert_eq!(
+            std::fs::read(&interface).unwrap(),
+            b"public fn value() -> result: u64 pure doc \"Returns a value.\";\n"
+        );
+        assert_eq!(
+            std::fs::read(&implementation).unwrap(),
+            b"fn value() -> result: u64 pure {\n  return 7_u64;\n}\n"
+        );
+        super::run(&[
+            "--graph".to_owned(),
+            graph.to_string_lossy().into_owned(),
+            "--check".to_owned(),
+        ])
+        .expect("the formatted module program passes its ordinary check");
+    }
+
+    #[test]
+    fn graph_formatting_failure_preserves_all_records() {
+        let directory = FormatDirectory::new();
+        let originals: &[(&str, &[u8])] = &[
+            ("modules.wfg", b"pkg:[];  \n"),
+            (
+                "module.wfm",
+                b"public fn value() -> result: u64 pure doc \"Returns a value.\";  \n",
+            ),
+            (
+                "value.wf",
+                b"fn value() -> result: u64 pure {\n  return;\n}\n",
+            ),
+        ];
+        for &(name, bytes) in originals {
+            directory.write(name, bytes);
+        }
+        let failure = run_graph_format(&directory.0.join("modules.wfg"))
+            .expect_err("one malformed implementation prevents all writes")
+            .render(DiagnosticFormat::Text);
+        assert!(failure.contains("GRAM-"), "{failure}");
+        for &(name, bytes) in originals {
+            assert_eq!(std::fs::read(directory.0.join(name)).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn graph_formatting_formation_failures_match_check_without_writes() {
+        let cases: &[(&str, &[u8], bool, &str)] = &[
+            (
+                "layout before graph rule",
+                b"pkg:[pkg::absent];  \n",
+                true,
+                "FORM-2",
+            ),
+            (
+                "canonical graph rule",
+                b"pkg: [pkg::absent];\n",
+                true,
+                "MOD-1",
+            ),
+            (
+                "layout before missing interface",
+                b"pkg:[];  \n",
+                false,
+                "FORM-2",
+            ),
+            ("canonical missing interface", b"pkg: [];\n", false, "MOD-2"),
+            (
+                "layout before missing package",
+                b"package other = \"missing\";  \n\npkg: [];\n",
+                true,
+                "FORM-2",
+            ),
+            (
+                "canonical missing package",
+                b"package other = \"missing\";\n\npkg: [];\n",
+                true,
+                "MOD-11",
+            ),
+            (
+                "layout before unbound package",
+                b"pkg:[unknown];  \n",
+                true,
+                "FORM-2",
+            ),
+            (
+                "canonical unbound package",
+                b"pkg: [unknown];\n",
+                true,
+                "MOD-11",
+            ),
+        ];
+        for &(case, graph_bytes, with_interface, rule) in cases {
+            let directory = FormatDirectory::new();
+            let graph = directory.write("modules.wfg", graph_bytes);
+            let source_bytes = b"fn value() -> result: u64 pure {\n    return 7_u64;\n}\n";
+            let source = directory.write("value.wf", source_bytes);
+            let interface_bytes =
+                b"public fn value() -> result: u64 pure doc \"Returns a value.\";\n";
+            if with_interface {
+                directory.write("module.wfm", interface_bytes);
+            }
+            let checked = super::run(&[
+                "--graph".to_owned(),
+                graph.to_string_lossy().into_owned(),
+                "--check".to_owned(),
+            ])
+            .expect_err(case);
+            let formatted = run_graph_format(&graph).expect_err(case);
+            for format in [DiagnosticFormat::Text, DiagnosticFormat::Json] {
+                assert_eq!(formatted.render(format), checked.render(format), "{case}");
+            }
+            let diagnostic = checked.render(DiagnosticFormat::Text);
+            assert!(diagnostic.contains(rule), "{case}: {diagnostic}");
+            assert_eq!(std::fs::read(&graph).unwrap(), graph_bytes, "{case}");
+            assert_eq!(std::fs::read(&source).unwrap(), source_bytes, "{case}");
+            if with_interface {
+                assert_eq!(
+                    std::fs::read(directory.0.join("module.wfm")).unwrap(),
+                    interface_bytes,
+                    "{case}"
+                );
+            }
+            assert_eq!(
+                std::fs::read_dir(&directory.0).unwrap().count(),
+                if with_interface { 3 } else { 2 },
+                "{case}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            // Hosted Unix runners execute without root's read-permission bypass.
+            // A regular implementation exists but cannot be read during discovery.
+            let directory = FormatDirectory::new();
+            let graph_bytes = b"pkg: [];\n";
+            let graph = directory.write("modules.wfg", graph_bytes);
+            let interface_bytes =
+                b"public fn value() -> result: u64 pure doc \"Returns a value.\";  \n";
+            let interface = directory.write("module.wfm", interface_bytes);
+            let source_bytes = b"fn value() -> result: u64 pure {\n    return 7_u64;\n}\n";
+            let source = directory.write("value.wf", source_bytes);
+            let permissions = std::fs::metadata(&source).unwrap().permissions();
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000))
+                .expect("remove the implementation's read permission");
+            let checked = super::run(&[
+                "--graph".to_owned(),
+                graph.to_string_lossy().into_owned(),
+                "--check".to_owned(),
+            ])
+            .expect_err("source discovery cannot read the implementation");
+            let formatted = run_graph_format(&graph)
+                .expect_err("unreadable implementation prevents every formatting write");
+            std::fs::set_permissions(&source, permissions)
+                .expect("restore permissions before checking original source bytes");
+            for failure in [&checked, &formatted] {
+                assert!(matches!(
+                    failure,
+                    Stop::Driver {
+                        category: "Invocation",
+                        ..
+                    }
+                ));
+                let diagnostic = failure.render(DiagnosticFormat::Text);
+                assert!(
+                    diagnostic.contains(&format!("cannot read {}:", source.display())),
+                    "{diagnostic}"
+                );
+                assert!(!diagnostic.contains("MOD-"), "{diagnostic}");
+            }
+            for format in [DiagnosticFormat::Text, DiagnosticFormat::Json] {
+                assert_eq!(formatted.render(format), checked.render(format));
+            }
+            assert_eq!(std::fs::read(&graph).unwrap(), graph_bytes);
+            assert_eq!(std::fs::read(&interface).unwrap(), interface_bytes);
+            assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+            let mut names = std::fs::read_dir(&directory.0)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>();
+            names.sort();
+            assert_eq!(
+                names,
+                ["module.wfm", "modules.wfg", "value.wf"].map(std::ffi::OsString::from)
+            );
+        }
+    }
+
+    #[test]
+    fn formatting_rejects_duplicate_source_arguments_before_derivation() {
+        let directory = FormatDirectory::new();
+        let original = b"const answer: u64 = 7_u64;  \n";
+        let source = directory.write("source.wf", original);
+        let child = directory.0.join("child");
+        std::fs::create_dir(&child).unwrap();
+        let dot = directory.0.join(".").join("source.wf");
+        let parent = child.join("..").join("source.wf");
+        for alias in [&source, &dot, &parent] {
+            let failure = run_sources("--format", &[&source, alias])
+                .expect_err("one destination cannot occur twice in a formatting request");
+            assert!(matches!(
+                &failure,
+                Stop::Driver {
+                    category: "Invocation",
+                    ..
+                }
+            ));
+            let diagnostic = failure.render(DiagnosticFormat::Text);
+            assert!(
+                diagnostic.contains("--format names the same file more than once"),
+                "{diagnostic}"
+            );
+            assert_eq!(std::fs::read(&source).unwrap(), original);
+            assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 2);
+        }
+    }
+
+    #[test]
+    fn formatting_rejects_duplicate_destinations_even_when_unchanged() {
+        let directory = FormatDirectory::new();
+        let bytes = b"const answer: u64 = 7_u64;\n";
+        let source = directory.write("source.wf", bytes);
+        let files = [source.clone(), directory.0.join(".").join("source.wf")].map(|path| {
+            whitefoot::FormattedFile {
+                path,
+                original: bytes.to_vec(),
+                bytes: bytes.to_vec(),
+            }
+        });
+        let failure = super::rewrite_formatted_files(&files)
+            .expect_err("even unchanged module-program records need distinct destinations")
+            .render(DiagnosticFormat::Text);
+        assert!(
+            failure.contains("--format names the same file more than once"),
+            "{failure}"
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn formatting_a_symlink_replaces_its_target_and_preserves_the_link() {
+        let inputs = FormatDirectory::new();
+        let targets = FormatDirectory::new();
+        let original = b"const answer: u64 = 7_u64;  \n";
+        let target = targets.write("target.wf", original);
+        let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(123_456);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&target)
+            .unwrap()
+            .set_modified(modified)
+            .expect("set the original target timestamp");
+        let target_before = std::fs::metadata(&target).unwrap().modified().unwrap();
+        let link = inputs.0.join("source.wf");
+        std::os::unix::fs::symlink(&target, &link)
+            .expect("create a source symlink across directories");
+        let link_before = std::fs::symlink_metadata(&link)
+            .unwrap()
+            .modified()
+            .unwrap();
+        run_sources("--format", &[&link]).expect("format the target through the source symlink");
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
+        assert_eq!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .modified()
+                .unwrap(),
+            link_before
+        );
+        let canonical = b"const answer: u64 = 7_u64;\n";
+        assert_eq!(std::fs::read(&target).unwrap(), canonical);
+        assert_eq!(std::fs::read(&link).unwrap(), canonical);
+        assert_ne!(
+            std::fs::metadata(&target).unwrap().modified().unwrap(),
+            target_before
+        );
+        assert_eq!(std::fs::read_dir(&inputs.0).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(&targets.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn formatting_a_fixed_point_preserves_its_modification_time() {
+        let directory = FormatDirectory::new();
+        let bytes = b"fn value() -> result: u64 pure {\n  return 7_u64;\n}\n";
+        let source = directory.write("canonical.wf", bytes);
+        let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(123_456);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&source)
+            .unwrap()
+            .set_modified(modified)
+            .expect("set a distinguishable source timestamp");
+        let before = std::fs::metadata(&source).unwrap().modified().unwrap();
+        run_sources("--format", &[&source]).expect("the fixed point formats successfully");
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+        assert_eq!(
+            std::fs::metadata(&source).unwrap().modified().unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn formatting_staging_failure_leaves_sources_and_directory_unchanged() {
+        let directory = FormatDirectory::new();
+        let original = b"const answer: u64 = 7_u64;  \n";
+        let source = directory.write("first.wf", original);
+        // The original component fits the filesystem limit, but its sibling
+        // staging name exceeds it after the formatter's unique suffix.
+        let second = directory.write(&format!("{}.wf", "x".repeat(240)), original);
+        let files = [
+            whitefoot::FormattedFile {
+                path: source.clone(),
+                original: original.to_vec(),
+                bytes: b"const answer: u64 = 7_u64;\n".to_vec(),
+            },
+            whitefoot::FormattedFile {
+                path: second.clone(),
+                original: original.to_vec(),
+                bytes: b"const answer: u64 = 7_u64;\n".to_vec(),
+            },
+        ];
+        let failure = super::rewrite_formatted_files(&files)
+            .expect_err("the second sibling cannot be staged after the first pair is staged")
+            .render(DiagnosticFormat::Text);
+        assert!(failure.contains("cannot stage"), "{failure}");
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert_eq!(std::fs::read(&second).unwrap(), original);
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn formatting_late_replacement_failure_restores_original_bytes_and_time() {
+        let directory = FormatDirectory::new();
+        let original = b"const answer: u64 = 7_u64;  \n";
+        let source = directory.write("first.wf", original);
+        let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(123_456);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&source)
+            .unwrap()
+            .set_modified(modified)
+            .expect("set an original timestamp to restore");
+        let before = std::fs::metadata(&source).unwrap().modified().unwrap();
+        let blocked = directory.0.join("second.wf");
+        std::fs::create_dir(&blocked).expect("a directory cannot be replaced by a source file");
+        let files = [
+            whitefoot::FormattedFile {
+                path: source.clone(),
+                original: original.to_vec(),
+                bytes: b"const answer: u64 = 7_u64;\n".to_vec(),
+            },
+            whitefoot::FormattedFile {
+                path: blocked.clone(),
+                original: b"\n\n".to_vec(),
+                bytes: b"\n".to_vec(),
+            },
+        ];
+        let failure = super::rewrite_formatted_files(&files)
+            .expect_err("the second replacement fails after the first has succeeded")
+            .render(DiagnosticFormat::Text);
+        assert!(
+            failure.contains(&format!(
+                "cannot write {}:",
+                blocked.canonicalize().unwrap().display()
+            )),
+            "{failure}"
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert_eq!(
+            std::fs::metadata(&source).unwrap().modified().unwrap(),
+            before
+        );
+        assert!(blocked.is_dir());
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn formatting_failed_restore_retains_and_names_the_original_backup() {
+        let directory = FormatDirectory::new();
+        let original = b"const answer: u64 = 7_u64;  \n";
+        let source = directory.write("original.wf", original);
+        let metadata = std::fs::metadata(&source).unwrap();
+        let blocked = directory.0.join("blocked.wf");
+        std::fs::create_dir(&blocked).expect("a directory refuses a file restoration");
+        let formatted = super::stage_formatted_file(&source, b"\n", &metadata, None).unwrap();
+        let mut backup = super::stage_formatted_file(
+            &source,
+            original,
+            &metadata,
+            Some(metadata.modified().unwrap()),
+        )
+        .unwrap();
+        backup.destination = blocked;
+        let recovery = backup.temporary.clone();
+        let mut staged = [super::StagedRewrite { formatted, backup }];
+        let mut message = "replacement failed".to_owned();
+        super::restore_formatted_files(&mut staged, &mut message);
+        assert!(message.contains("cannot restore"), "{message}");
+        assert!(
+            message.contains(&format!(
+                "original bytes retained at {}",
+                recovery.display()
+            )),
+            "{message}"
+        );
+        drop(staged);
+        assert_eq!(std::fs::read(&recovery).unwrap(), original);
+        // Only the original, blocked directory and retained recovery file remain.
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn formatting_accepts_only_sources_or_a_graph_and_diagnostic_options() {
+        assert!(
+            parse(&["--format", "first.wf", "second.wf"])
+                .unwrap()
+                .format
+        );
+        assert!(
+            parse(&["--graph", "modules.wfg", "--format"])
+                .unwrap()
+                .format
+        );
+        assert!(
+            parse(&["--format", "--diagnostic-format", "json", "value.wf"])
+                .unwrap()
+                .format
+        );
+        assert!(super::USAGE.contains("--format"));
+        let incompatible: &[(&str, Option<&str>)] = &[
+            ("--emit-llvm", None),
+            ("--check", None),
+            ("-o", Some("output")),
+            ("--par", None),
+            ("--no-overlap", None),
+            ("--par-ledger", None),
+            ("--stack-ledger", None),
+            ("--dispatch-ledger", None),
+            ("--lock-ledger", None),
+            ("--par-call-grain", Some("auto")),
+            ("--par-sequential-refusal", None),
+            ("--par-recursive-frontier", Some("auto")),
+            ("--entry", Some("main")),
+            ("--function", Some("pkg::value")),
+            ("--check-module", Some("pkg")),
+            ("--check-interface", Some("pkg")),
+            ("--check-modules", None),
+            ("--report", None),
+            ("--cache", Some("cache")),
+            ("--fragments", Some("module")),
+            ("--full-lto", None),
+            ("--sanitize", Some("address")),
+            ("--render-interface", Some("pkg")),
+            ("--compare-interface", Some("pkg")),
+            ("--against", Some("old/modules.wfg")),
+        ];
+        for &(option, value) in incompatible {
+            let mut arguments = vec!["--graph", "modules.wfg", "--format", option];
+            arguments.extend(value);
+            let error = parse(&arguments)
+                .err()
+                .expect("a competing mode is refused");
+            assert!(
+                error.contains("--format is incompatible with"),
+                "{arguments:?}: {error}"
+            );
+            assert!(error.contains(option), "{arguments:?}: {error}");
+        }
     }
 
     /// The ordinary linked library uses one platform link set independent of

@@ -1,0 +1,21 @@
+fn measures(window: &Ring<u8, 2>) -> (length: u64, capacity: u64, origin: u64) reads(window.len), reads(window.cap), reads(window.head) {
+  let length_ref = &window^.len;
+  let capacity_ref = &window^.cap;
+  let origin_ref = &window^.head;
+  return length_ref^, capacity_ref^, origin_ref^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let ring = ring_new::<u8, 2>();
+  let (length, capacity, origin) = measures(window: &ring);
+  if length != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if capacity != 2_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if origin != 0_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

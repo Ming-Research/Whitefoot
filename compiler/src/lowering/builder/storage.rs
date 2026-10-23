@@ -298,7 +298,7 @@ fn collect_steps(
 }
 
 impl IrBuilder<'_> {
-    /// Resolve a mutation's complete address once, before its right-hand side.
+    /// Resolve a mutation's complete address once, after its right-hand side.
     pub(super) fn addressed_target(
         &mut self,
         target: &CheckedSetTarget,

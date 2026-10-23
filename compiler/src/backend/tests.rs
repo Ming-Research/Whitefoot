@@ -31,6 +31,7 @@ mod floating;
 mod frames;
 mod frozen;
 mod generics;
+mod heap_alignment;
 mod heap_programs;
 mod indexed_reductions;
 mod integer_absolute;

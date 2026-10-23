@@ -803,7 +803,7 @@ variant_names! {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, OperationFamily,
         RangeArithmetic, RangeOrdinaryGoal, RangeOperationIntervals,
-        RangeLoopNesting, PageLengthPostcondition,
+        RangeLoopNesting, RangeCallFootprint, PageLengthPostcondition,
     }
 }
 
@@ -931,11 +931,12 @@ impl Report for SemanticIssueKind {
             ConstArgumentOutOfRange { parameter_type, value };
             ConstRuntimeArithmeticMode { mechanical_fix };
             TypeMismatch { expected, found, mechanical_fix };
+            BorrowOfDerivedMeasure { mechanical_fix };
             UnadmittedOperandShape { expected, mechanical_fix };
             BehaviorArgumentMismatch { expected, mechanical_fix };
             UnforwardedGroupApplication { mechanical_fix };
             ImmutableSetTarget;
-            InvalidSetTarget { root_class, required_classes };
+            InvalidSetTarget { root_class, required_classes, mechanical_fix };
             ImmutableWrittenArgument { binding, mechanical_fix };
             LinearValueNotConsumed { binding, obligation, mechanical_fix };
             LinearValuePartiallyConsumed { obligation, residual, mechanical_fix };
@@ -950,6 +951,7 @@ impl Report for SemanticIssueKind {
             ReservedPseudoField { spelling, mechanical_fix };
             ReadonlyWriteTarget { spelling, mechanical_fix };
             FrozenForbiddenPart { part, mechanical_fix };
+            SharedStateHoldsOwnHandle { part, handle, mechanical_fix };
             FrozenContentConsume { mechanical_fix };
             MoveOfCopy { binding, ty, reason, mechanical_fix };
             BareAffineUse { binding, ty, reason, mechanical_fix };
@@ -1067,7 +1069,7 @@ impl Report for ResolutionIssue {
         report_variants!(ResolutionIssueKind, kind, fields;
             ContractShape(shape);
             MisplacedHeapDeclaration { admitted };
-            ReservedName { spelling, declaration_role, class, inventory_ordinal };
+            ReservedName { spelling, declaration_role, class, inventory_ordinal, mechanical_fix };
             MatchBinderFreshness { spelling, paired_field, earlier_binder, arm_entry_conflicts };
             DeclarationCollision { spelling, conflicts, mechanical_fix };
             InvisibleUse { spelling, role, admissible, origins, mechanical_fix };

@@ -2617,8 +2617,8 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// [SET-1] the one-target commit: the right-hand side is
-    /// evaluated once and completely, then the one target is written by the
-    /// same commit a target list uses.
+    /// evaluated once and completely, then the one target is evaluated and
+    /// written by the same commit a target list uses.
     ///
     /// [WIN-3] assigning over an owned place releases the old value, so the
     /// displaced owner is read at the commit and released after the write.
@@ -2630,8 +2630,11 @@ impl<'program> IrBuilder<'program> {
         value: &CheckedExpression,
         displaces_live_value: bool,
     ) -> Result<(), LoweringFailure> {
-        let target = self.prepare_target(target, displaces_live_value)?;
+        // [SET-1] the right-hand side is evaluated first, and the target is
+        // then resolved in the state it left, so no address, bound, or slot
+        // computed for the target is carried across the right-hand side.
         let value = self.expression(value)?;
+        let target = self.prepare_target(target, displaces_live_value)?;
         let displaced = self.displaced_releases(&target)?;
         self.write_target(&target, value)?;
         self.append_drops(displaced)

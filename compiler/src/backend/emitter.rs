@@ -2816,6 +2816,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 source,
                 index,
             } => self.emit_run_transfer(result, ty, *destination, *source, *index),
+            IrOperation::RunClear { run } => self.emit_run_clear(result, ty, *run),
             IrOperation::WindowBlockNew {
                 nominal,
                 capacity,
@@ -2913,6 +2914,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedRetain { nominal, object } => {
                 self.emit_shared_retain(result, ty, *nominal, *object)
             }
+            IrOperation::SharedCountOut { object } => {
+                self.emit_shared_count_out(result, ty, *object)
+            }
+            IrOperation::SharedFree { object } => self.emit_shared_free(result, *object),
             IrOperation::SnapshotAtomicBegin => self.emit_snapshot_atomic(result, true),
             IrOperation::SnapshotAtomicEnd => self.emit_snapshot_atomic(result, false),
             IrOperation::SharedAcquire { object } => {
