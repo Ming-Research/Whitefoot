@@ -1,0 +1,26 @@
+# Temporary (wf-gate-budget-noise): removed before the branch is ready.
+# The quick workflow for the second recompute of .github/time-budgets.txt: the
+# repository invariants (the budget file as run-check.pl reads it, the prose
+# check over the research record, the personal-path check) on the new table.
+name: tmp-recompute-budgets-2
+
+on:
+  push:
+    branches: [wf-gate-budget-recompute-2]
+    paths:
+      - '.github/workflows/tmp-recompute-budgets-2.yml'
+      - '.github/time-budgets.txt'
+      - 'research/investigations/test-economy/time-budgets.md'
+
+jobs:
+  invariants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Repository invariants
+        run: perl .github/run-check.pl repository-invariants make repository-invariants
