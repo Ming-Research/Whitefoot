@@ -5,10 +5,11 @@
 # rather than coming from the 2026-10-13 ruling; it can affect only stages
 # whose measured maximum is below about 9 s. .github/recompute-time-budgets.py
 # applies the rule to the stage times in CI logs; the Linux columns were last
-# recomputed on 2026-10-21 over the 50 most recent runs of each stage and class
-# (research/investigations/test-economy/time-budgets.md, "Recomputing the Linux
-# budgets"). A cell with fewer than 20 runs of its class keeps its value, except
-# in a column the owner added (see xeon-8573c below).
+# recomputed on 2026-10-23 over the 50 most recent runs of each stage and class,
+# the unit group's three rows apart (below) (research/investigations/
+# test-economy/time-budgets.md, "Recomputing the Linux budgets"). A cell with
+# fewer than 20 runs of its class keeps its value, except in a column the owner
+# added (see xeon-8573c below).
 # A model with fewer than 20 runs has no column unless the owner adds one. An
 # unmapped model uses the stage's largest Linux class budget and is reported by
 # name. Unsampled rows
@@ -36,8 +37,8 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 # .github/recompute-time-budgets.py. With fewer, the value is the larger of the
 # row's largest recomputed class value and, where a run on this CPU was found,
 # that run's time by the rule above (one compute-regression run for the compute
-# rows; no run for the others). Only performance-baseline-compiler rises above
-# the largest class. Evidence:
+# rows, 13 and 8 runs for the two sanitizer programs rows, none for the others).
+# Only performance-baseline-compiler rises above the largest class. Evidence:
 # research/investigations/test-economy/time-budgets.md.
 # performance-candidate-compiler is 145 s for every Linux class, set by the
 # owner on 2026-10-13 (it was 130 s).
@@ -46,7 +47,7 @@ cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
 label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  macos  windows
 
 # gate.yml, static group
-check/static                    95         80         80         95          125    -
+check/static                    85         80         80         85          125    -
 repository-invariants           30         30         25         30          30     -
 spec-archives                   10         10         10         10          10     -
 readme-translation              10         10         10         10          10     -
@@ -57,7 +58,7 @@ design-lint                     10         10         10         10          15 
 safety-claims                   10         10         10         10          10     -
 conformance                     10         10         10         10          10     -
 performance-instrument          10         10         10         10          10     -
-compiler/lint                   65         45         55         65          75     -
+compiler/lint                   55         50         55         55          75     -
 
 # gate.yml, unit group: the library in test mode, then its cases. Recomputed on
 # 2026-10-21 by the rule above from every attempt of the gate runs created from
@@ -70,14 +71,14 @@ compiler/test-unit              195        175        120        160         175
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
-check/corpus                    400        385        265        360         360    -
-compiler/test-build-corpus      150        140        105        140         175    -
-compiler/test-corpus            255        245        165        225         205    -
+check/corpus                    450        400        285        405         360    -
+compiler/test-build-corpus      155        135        105        145         175    -
+compiler/test-corpus            300        275        185        260         205    -
 
 # gate.yml, runtime group. The epyc-9v45 value was owner-set to 20 s on
 # 2026-10-13 (15 s failed eleven runs that did not touch the runtime, at most
-# 16.84 s); the 2026-10-21 recomputation gives 25 s.
-check/runtime                   30         30         25         30          30     -
+# 16.84 s); the 2026-10-21 and 2026-10-23 recomputations give 25 s.
+check/runtime                   35         35         25         30          30     -
 
 # io-hosts.yml, completion-linux
 linux-runtime                   50         50         50         50          -      -
@@ -90,23 +91,22 @@ linux-runtime-tsan              10         10         10         10          -  
 # checker), the build of its model, proofs and conformance harness, and its run
 # over the conformance cases. Provisional until 20 runs are recorded: 1.5 times
 # the first run of the stage's current content, rounded up to 5 s, under the
-# 10 s floor (coverage 1.8 s, build 8.8 s, conformance run 0.7 s).
+# 10 s floor (coverage 2.6 s, build 16.5 s, conformance run 0.9 s).
 proof-coverage                  10         10         10         10          -      -
-proof-build                     15         15         15         15          -      -
+proof-build                     25         25         25         25          -      -
 proof-conformance               10         10         10         10          -      -
 
 # sanitizers.yml: the corpus target under one sanitizer, building its test
 # binary, as one conformance shard of three or the rest of the target.
 # Provisional until 20 runs are recorded on a class: 1.5 times the first run's
-# slowest job (conformance 276 s, programs 315 s, on epyc-7763). The two
-# conformance rows of epyc-7763 follow the rule since 2026-10-21 (39 and 50
-# runs); epyc-9v74 and epyc-9v45 have 10 to 16 runs of them and keep 415 s,
-# and xeon-8573c, with 5, takes the epyc-7763 value (its own runs give less).
-# The programs rows have fewer than 20 runs on every class and stay as they were.
-compiler/corpus-asan-conformance 320        415        415        320         -      -
-compiler/corpus-asan-programs   475        475        475        475         -      -
-compiler/corpus-tsan-conformance 335        415        415        335         -      -
-compiler/corpus-tsan-programs   475        475        475        475         -      -
+# slowest job (conformance 276 s, programs 315 s, on epyc-7763). Every class with
+# 20 or more runs follows the rule since 2026-10-23. xeon-8573c, with 13 and 8
+# runs of the two programs rows, takes the row's largest class value (its own
+# runs give less).
+compiler/corpus-asan-conformance 415        325        235        290         -      -
+compiler/corpus-asan-programs   420        380        260        420         -      -
+compiler/corpus-tsan-conformance 320        330        270        315         -      -
+compiler/corpus-tsan-programs   405        380        280        405         -      -
 
 # map-sanitizers.yml, on changes to the concurrent map's runtime or test
 map-asan                        30         30         30         30          20     -

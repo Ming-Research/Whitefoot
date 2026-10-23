@@ -57,6 +57,7 @@ impl ProgramChild {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0000_0200); // CREATE_NEW_PROCESS_GROUP
         }
+        #[allow(clippy::disallowed_methods, reason = "the managed process owns its child")]
         let mut child = command.spawn()?;
         fn drain(
             reader: impl Read + Send + 'static,
@@ -116,12 +117,14 @@ impl ProgramChild {
             return;
         }
         #[cfg(unix)]
+        #[allow(clippy::disallowed_methods, reason = "stops the managed process group")]
         let _ = Command::new("/bin/kill")
             .args(["-KILL", "--", &format!("-{}", self.child.id())])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
         #[cfg(windows)]
+        #[allow(clippy::disallowed_methods, reason = "stops the managed process group")]
         let _ = Command::new("taskkill")
             .args(["/T", "/F", "/PID", &self.child.id().to_string()])
             .stdout(Stdio::null())
