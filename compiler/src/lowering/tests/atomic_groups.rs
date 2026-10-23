@@ -87,3 +87,83 @@ fn the_first_group_parks_and_a_later_group_does_not() {
         assert_eq!(group_takes(program), [(true, 2), (false, 3)]);
     });
 }
+
+#[test]
+fn a_proof_only_object_target_is_acquired_and_released_without_a_write() {
+    let source = br#"struct Counter {
+  count: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = Counter(count: 0_u64);
+  let counter = shared_new::<Counter>(value: initial);
+  atomic cell = &counter {
+    invariant nonnegative: 0_u64 <= cell^.count;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let mut acquired = Vec::new();
+        let mut released = Vec::new();
+        for instruction in function(program, "main")
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+        {
+            match instruction {
+                IrInstruction::Define {
+                    operation: IrOperation::SharedAcquire { object },
+                    ..
+                } => acquired.push(*object),
+                IrInstruction::Define {
+                    operation: IrOperation::SharedUnlock { object, wrote },
+                    ..
+                } => released.push((*object, *wrote)),
+                _ => {}
+            }
+        }
+        assert_eq!(acquired.len(), 1, "proof erasure must not erase the take");
+        assert_eq!(released, [(acquired[0], false)]);
+    });
+}
+
+#[test]
+fn a_proof_only_key_set_target_keeps_its_descriptor_and_hold() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/share2-pos-binding-named-only-in-invariant-stmt.wf"
+    );
+    with_ir(source, |program| {
+        let mut filled = Vec::new();
+        let mut acquired = Vec::new();
+        let mut released = Vec::new();
+        for instruction in function(program, "main")
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+        {
+            match instruction {
+                IrInstruction::Define {
+                    operation: IrOperation::EntriesFill { hold, .. },
+                    ..
+                } => filled.push(*hold),
+                IrInstruction::Define {
+                    operation: IrOperation::TableHoldTake { record },
+                    ..
+                } => acquired.push(*record),
+                IrInstruction::Define {
+                    operation: IrOperation::TableHoldRelease { record, .. },
+                    ..
+                } => released.push(*record),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            filled.len(),
+            1,
+            "the target still forms its Entries descriptor"
+        );
+        assert_eq!(acquired, filled);
+        assert_eq!(released, acquired);
+    });
+}

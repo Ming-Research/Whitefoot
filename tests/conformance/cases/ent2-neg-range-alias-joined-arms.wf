@@ -1,0 +1,17 @@
+fn probe(r: &[u64], s: &[u64], pick: Bool) -> result: u64 reads(r), reads(s) contract {
+  requires r^.len >= 2_u64;
+} {
+  doc "ENT-2, REF-1, OP-4: a value-if that gives r on one arm and s on the other is no range alias, since its arms may deliver different formations, so q is identified through itself and r's requirement does not discharge the read.";
+  let q = if pick {
+    give r;
+  } else {
+    give s;
+  }
+  let second = q^[1_u64];
+  return second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "No call is needed to exercise the proof identity.";
+  return std::process::exit_status(code: 0_u8);
+}

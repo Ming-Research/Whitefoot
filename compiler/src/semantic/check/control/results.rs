@@ -83,6 +83,7 @@ impl<'unit> Checker<'_, 'unit> {
                         read_only_state: false,
                         reference: None,
                         refinement_witnesses: Vec::new(),
+                        handle_watch: None,
                         call_value: false,
                     },
                 )
@@ -167,7 +168,7 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Type2,
                 node,
-                SemanticIssueKind::ContainerConstruction {
+                SemanticIssueKind::OpaqueDestructuring {
                     nominal: written,
                     mechanical_fix,
                 },
@@ -199,9 +200,14 @@ impl<'unit> Checker<'_, 'unit> {
             return self.types.declarations.issue_node(
                 SemanticRule::Own1,
                 node,
-                SemanticIssueKind::BareAffineUse {
-                    mechanical_fix: "destructure an own-mode value; a borrow owns nothing to take apart",
-                },
+                self.ownership_issue(
+                    context.check_context,
+                    place,
+                    value.expression.ty(),
+                    false,
+                    Some(value.mode),
+                    Some("destructure an own-mode value; a borrow owns nothing to take apart".to_owned()),
+                )?,
             );
         }
         let CheckedType::Nominal(nominal) = value.expression.ty() else {
@@ -325,6 +331,7 @@ impl<'unit> Checker<'_, 'unit> {
                         read_only_state: false,
                         reference: None,
                         refinement_witnesses: Vec::new(),
+                        handle_watch: None,
                         call_value: false,
                     },
                 )
@@ -484,7 +491,7 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }
@@ -508,23 +515,48 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         let CheckedType::Nominal(result_nominal) = value.expression.ty() else {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                false,
+            );
         };
         let Some(PreludeType::Result(ok_type, error_type)) =
             self.types.prelude_type(result_nominal)
         else {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                false,
+            );
         };
         let CheckedType::Nominal(return_nominal) = function.result else {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                true,
+            );
         };
         let Some(PreludeType::Result(_, return_error_type)) =
             self.types.prelude_type(return_nominal)
         else {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                true,
+            );
         };
         if error_type != return_error_type {
-            return self.types.declarations.invalid_propagation(propagate);
+            return self.invalid_propagation(
+                propagate,
+                function.result,
+                value.expression.ty(),
+                true,
+            );
         }
         let error_drops =
             self.types
@@ -543,6 +575,7 @@ impl<'unit> Checker<'_, 'unit> {
                     read_only_state: false,
                     reference: None,
                     refinement_witnesses: Vec::new(),
+                    handle_watch: None,
                     call_value: false,
                 },
             )
@@ -567,6 +600,31 @@ impl<'unit> Checker<'_, 'unit> {
             },
             value.effects,
         ))
+    }
+
+    fn invalid_propagation<ResultValue>(
+        &self,
+        node: NodeId,
+        enclosing_return: CheckedType,
+        operand: CheckedType,
+        operand_is_result: bool,
+    ) -> Result<ResultValue, CheckStop> {
+        let enclosing_return_type = self.types.checked_type_name(enclosing_return)?;
+        let operand_type = self.types.checked_type_name(operand)?;
+        let mechanical_fix = super::super::repairs::writer_operations::propagation_repair(
+            &enclosing_return_type,
+            &operand_type,
+            operand_is_result,
+        );
+        self.types.declarations.issue_node(
+            SemanticRule::Err3,
+            node,
+            SemanticIssueKind::InvalidPropagation {
+                enclosing_return_type,
+                operand_type,
+                mechanical_fix,
+            },
+        )
     }
 }
 
@@ -734,7 +792,7 @@ impl<'unit> TypeContext<'unit> {
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<String, CheckStop> {
-        use super::super::repairs::{CellContent, cell_taken_apart};
+        use super::super::repairs::{CellContent, cell_taken_apart, fresh_repair_name};
         let binder = match self
             .declarations
             .tree
@@ -757,10 +815,14 @@ impl<'unit> TypeContext<'unit> {
             None => None,
         };
         // A range reference selects a run, never one cell [REF-4].
-        let content = match self.place_selected_kind(check_context, place, bindings) {
-            Ok(Some(super::super::types::SelectedPlaceType::Value(ty))) => self.box_content(ty)?,
+        let operand = match self.place_selected_kind(check_context, place, bindings) {
+            Ok(Some(super::super::types::SelectedPlaceType::Value(ty))) => Some(ty),
             Ok(_) | Err(CheckStop::Unsupported(_)) => None,
             Err(stop) => return Err(stop),
+        };
+        let content = match operand {
+            Some(ty) => self.box_content(ty)?,
+            None => None,
         };
         let consumed = self
             .declarations
@@ -770,24 +832,62 @@ impl<'unit> TypeContext<'unit> {
         // place. A runtime-capacity content is never a binding's value,
         // whatever its elements [TYPE-9].
         let content = match content {
-            Some(
-                CheckedType::Buffer { .. }
-                | CheckedType::Segments { .. }
-                | CheckedType::Window { capacity: None, .. },
-            ) => Some(if consumed.owned {
+            Some(CheckedType::Window { capacity: None, .. }) => Some(if consumed.owned {
                 CellContent::RuntimeCapacity
             } else {
                 CellContent::InPlace
             }),
+            Some(CheckedType::Buffer { .. } | CheckedType::Segments { .. }) => {
+                Some(if consumed.owned {
+                    CellContent::FixedRuntimeCapacity
+                } else {
+                    CellContent::InPlace
+                })
+            }
             Some(ty) if self.is_copy_type(check_context, ty)? => Some(CellContent::Copy),
-            Some(_) if consumed.owned => Some(CellContent::Owned),
+            Some(ty) if consumed.owned => Some(
+                if self.linear_release_obligation(check_context, ty)?.is_some() {
+                    CellContent::Linear
+                } else {
+                    CellContent::Owned
+                },
+            ),
             Some(_) => Some(CellContent::InPlace),
-            None => None,
+            None => match operand {
+                Some(ty)
+                    if consumed.owned
+                        && self.linear_release_obligation(check_context, ty)?.is_some() =>
+                {
+                    Some(CellContent::LinearOperand)
+                }
+                _ => None,
+            },
+        };
+        // Reserve complete inventories rather than ownership-live bindings:
+        // moved locals still occupy their names, and a new let must not
+        // collide with later locals, aliases or top-level declarations.
+        let fresh_binder = if content == Some(CellContent::Linear) && binder.is_none() {
+            fresh_repair_name("content", |name| {
+                self.declarations
+                    .resolved
+                    .declarations()
+                    .iter()
+                    .any(|declaration| declaration.spelling() == name)
+                    || self
+                        .declarations
+                        .resolved
+                        .prelude_declarations()
+                        .iter()
+                        .any(|declaration| declaration.spelling() == name)
+            })
+        } else {
+            String::new()
         };
         Ok(cell_taken_apart(
             content,
             &consumed.spelling,
             binder.as_deref(),
+            &fresh_binder,
         ))
     }
 }
@@ -886,13 +986,6 @@ impl<'unit> DeclarationInventory<'unit> {
         };
         Ok(self.tree.place_has_dereference(place)?)
     }
-    fn invalid_propagation<ResultValue>(&self, node: NodeId) -> Result<ResultValue, CheckStop> {
-        self.issue_node(
-            SemanticRule::Err3,
-            node,
-            SemanticIssueKind::InvalidPropagation,
-        )
-    }
     /// [TYPE-7]'s implicit read at return position: a live borrow-mode
     /// binding used where the written `rtype` requires its referent
     /// value is rejected citing TYPE-7, and [FN-1] forms no candidate for
@@ -963,7 +1056,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 SemanticRule::Type7,
                 expression_node,
                 SemanticIssueKind::MissingDereference {
-                    mechanical_fix: "write `holder^`",
+                    mechanical_fix: "write `holder^`".to_owned(),
                 },
             );
         }

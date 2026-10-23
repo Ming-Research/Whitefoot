@@ -1,12 +1,11 @@
-# Nothing unapproved reaches main.
+# Nothing unlogged reaches main.
 #
 # On a draft branch the agent changes the design tree and the specification
 # freely. `make design-ready` fails while either differs from its base without
-# a new owner-approved entry in its change log (`design/log.md`,
-# `spec/log.md`), which the agent writes only after the owner approves. A draft
-# shows the job as skipped, so work in progress never turns it red; it runs
-# where its answer decides something: a pull request that is ready for
-# review, and main.
+# a new entry in its change log (`design/log.md`, `spec/log.md`) that names
+# every changed node or rule. A draft shows the job as skipped, so work in
+# progress never turns it red; it runs where its answer decides something: a
+# pull request that is ready for review, and main.
 name: design-readiness
 
 on:
@@ -16,8 +15,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Each main commit gets its own group, as in gate.yml: a shared main group
+# would cancel the run of every merge but the last of a quick succession, and
+# the cancelled commit would show red on the main line.
 concurrency:
-  group: design-readiness-${{ github.event.pull_request.number || github.ref }}
+  group: design-readiness-${{ github.event.pull_request.number || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -52,5 +54,5 @@ jobs:
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
-      - name: Require owner approval of tree and specification changes
+      - name: Require a change-log entry for tree and specification changes
         run: make design-ready

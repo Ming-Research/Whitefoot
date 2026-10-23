@@ -216,7 +216,7 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 49] = [
+    let declarations: [(&str, &str, &[&str]); 51] = [
         ("wf__frozen_new", "ptr", &["i64"]),
         ("wf__frozen_share", "void", &["ptr"]),
         ("wf__frozen_release", "i32", &["ptr"]),
@@ -230,6 +230,8 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__shared_release", "i32", &["ptr"]),
         ("wf__shared_free", "void", &["ptr"]),
         ("wf__shared_acquire", "i32", &["ptr", "i32", "ptr"]),
+        ("wf_snapshot_atomic_begin", "void", &[]),
+        ("wf_snapshot_atomic_end", "void", &[]),
         ("wf__shared_unlock", "void", &["ptr", "i32"]),
         ("wf__shared_unlock_unwritten", "void", &["ptr", "i32"]),
         ("wf__shared_take", "void", &["ptr", "i32"]),
@@ -507,20 +509,10 @@ fn emit_run_drop_helper(
 fn cleanup_run_types(program: &IrProgram) -> Result<Vec<IrType>, BackendFailure> {
     let mut needed = Vec::new();
     for ty in program_types(program)? {
-        let (IrType::Array { element, .. }
-        | IrType::Window { element, .. }
-        | IrType::Buffer { element }) = ty
-        else {
-            continue;
-        };
-        let element = program.element(element).ok_or(BackendFailure::InvalidIr)?;
         if matches!(
             ty,
-            IrType::Window {
-                shape: IrWindowShape::Paged,
-                ..
-            }
-        ) || type_requires_cleanup(program, element)?
+            IrType::Array { .. } | IrType::Window { .. } | IrType::Buffer { .. }
+        ) && type_requires_cleanup(program, ty)?
         {
             needed.push(ty);
         }
@@ -765,6 +757,14 @@ fn emit_cleanup_jobs(
     mut jobs: Vec<CleanupJob>,
 ) -> Result<(), BackendFailure> {
     while let Some(job) = jobs.pop() {
+        match &job {
+            CleanupJob::Value { ty, .. } | CleanupJob::Place { ty, .. }
+                if !type_requires_cleanup(program, *ty)? =>
+            {
+                continue;
+            }
+            _ => {}
+        }
         match job {
             CleanupJob::FreePointer { pointer, referent } => {
                 let bytes = allocation_bytes(program, output, temporary, referent, &pointer)?;
@@ -1017,18 +1017,8 @@ fn emit_cleanup_jobs(
                                     });
                                 }
                                 match referent {
-                                    IrType::Window { element, .. } | IrType::Buffer { element } => {
-                                        let element = program
-                                            .element(*element)
-                                            .ok_or(BackendFailure::InvalidIr)?;
-                                        if matches!(
-                                            referent,
-                                            IrType::Window {
-                                                shape: IrWindowShape::Paged,
-                                                ..
-                                            }
-                                        ) || type_requires_cleanup(program, element)?
-                                        {
+                                    IrType::Window { .. } | IrType::Buffer { .. } => {
+                                        if type_requires_cleanup(program, *referent)? {
                                             let symbol = run_drop_helper(program, *referent)?
                                                 .ok_or(BackendFailure::InvalidIr)?;
                                             output.symbol(&symbol);

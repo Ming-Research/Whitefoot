@@ -17,10 +17,10 @@ use whitefoot::{
     COMPLETION_BRIDGE_HEADER, COMPLETION_BRIDGE_SOURCE, COMPLETION_CONTRACT_HEADER,
     COMPLETION_FILE_ADAPTER_HEADER, COMPLETION_FILE_ADAPTER_SOURCE, COMPLETION_FILE_POSIX_HEADER,
     COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE, COMPLETION_SOCKET_ADDRESS_HEADER,
-    COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE,
-    HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM,
-    ORDINARY_VALUES_SOURCE, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER,
-    SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, WINDOWS_RUNTIME_HEADER,
+    COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER,
+    CONCURRENT_MAP_SOURCE, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ORDINARY_VALUES_HEADER,
+    ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE, SCHED_CORE_HEADER, SCHED_CORE_SOURCE,
+    SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, WINDOWS_RUNTIME_HEADER,
 };
 
 #[cfg(unix)]
@@ -46,6 +46,56 @@ pub(crate) const COMPILE_ARGUMENTS: &[&str] = &[];
 pub(crate) const LINK_LIBRARIES: &[&str] = whitefoot::HOST_LINK_LIBRARIES;
 #[cfg(windows)]
 pub(crate) const LINK_LIBRARIES: &[&str] = &["-lws2_32", "-lshell32"];
+
+/// The sanitizer this test process builds every program with, named by
+/// `WHITEFOOT_TEST_SANITIZER` (`address` or `thread`), or none
+/// (compiler/sanitized-builds). It is read once, so every runtime object and
+/// every link of one process agree.
+#[allow(dead_code)]
+pub(crate) fn sanitizer() -> Option<whitefoot::Sanitizer> {
+    static SELECTED: OnceLock<Option<whitefoot::Sanitizer>> = OnceLock::new();
+    *SELECTED.get_or_init(|| {
+        let word = std::env::var("WHITEFOOT_TEST_SANITIZER").ok()?;
+        Some(whitefoot::Sanitizer::parse(&word).unwrap_or_else(|| {
+            panic!("WHITEFOOT_TEST_SANITIZER names address or thread, not {word:?}")
+        }))
+    })
+}
+
+/// The arguments this process's sanitizer adds to every compile and link.
+fn sanitizer_arguments() -> &'static [&'static str] {
+    sanitizer().map_or(&[], whitefoot::Sanitizer::clang_arguments)
+}
+
+/// `module` as this process links it: admitted to the selected sanitizer's
+/// instrumentation, or unchanged without one.
+#[allow(dead_code)]
+pub(crate) fn sanitized(module: whitefoot::LlvmModule) -> whitefoot::LlvmModule {
+    match sanitizer() {
+        Some(selected) => module.sanitized(selected),
+        None => module,
+    }
+}
+
+/// Stops a sanitized run before it links an emitted unit whose definitions
+/// the sanitizer would skip, so no path that builds a program can leave its
+/// code unchecked without failing.
+#[allow(dead_code)]
+pub(crate) fn require_sanitized(unit: &str) {
+    let Some(selected) = sanitizer() else {
+        return;
+    };
+    if let Some(group) = unit
+        .lines()
+        .find(|line| line.starts_with("attributes #0 = {"))
+    {
+        assert!(
+            group.contains(selected.function_attribute()),
+            "a {} run links an emitted unit built without it: {group}",
+            selected.name()
+        );
+    }
+}
 
 static DEFAULT_OBJECTS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
 static C11_OBJECTS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
@@ -110,6 +160,16 @@ const SOURCES: &[(&str, &str)] = &[
     ("completion/contract.h", COMPLETION_CONTRACT_HEADER),
     ("completion/file_adapter.h", COMPLETION_FILE_ADAPTER_HEADER),
     ("completion/bridge.h", COMPLETION_BRIDGE_HEADER),
+    (
+        "completion/snapshot_export.h",
+        whitefoot::SNAPSHOT_EXPORT_HEADER,
+    ),
+    ("completion/fork_capsule.h", whitefoot::FORK_CAPSULE_HEADER),
+    (
+        "completion/snapshot_export.c",
+        whitefoot::SNAPSHOT_EXPORT_SOURCE,
+    ),
+    ("completion/fork_capsule.c", whitefoot::FORK_CAPSULE_SOURCE),
     ("completion/file_posix.h", COMPLETION_FILE_POSIX_HEADER),
     (
         "completion/socket_address.h",
@@ -131,6 +191,10 @@ const SOURCES: &[(&str, &str)] = &[
     ("completion/stop_signals.c", COMPLETION_STOP_SIGNALS_SOURCE),
     ("completion/linux_io_uring.c", NATIVE_SOURCE),
     ("concurrent_map.h", CONCURRENT_MAP_HEADER),
+    (
+        "concurrent_map_layout.h",
+        whitefoot::CONCURRENT_MAP_LAYOUT_HEADER,
+    ),
     ("concurrent_map.c", CONCURRENT_MAP_SOURCE),
     ("keyed_table.c", KEYED_TABLE_SOURCE),
 ];
@@ -148,6 +212,8 @@ const UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_posix.c",
     "completion/completion_bridge.c",
+    "completion/snapshot_export.c",
+    "completion/fork_capsule.c",
     "completion/stop_signals.c",
     "completion/linux_io_uring.c",
     "keyed_table.c",
@@ -188,6 +254,15 @@ fn compile_objects(c_standard: Option<&str>) -> Vec<Vec<u8>> {
             let mut command = Command::new(CLANG);
             if let Some(standard) = c_standard {
                 command.arg(format!("-std={standard}"));
+            }
+            // Before the restricted child arguments, whose -fno-sanitize=all
+            // keeps that closure uninstrumented.
+            command.args(sanitizer_arguments());
+            if matches!(
+                *name,
+                "completion/snapshot_export.c" | "completion/fork_capsule.c"
+            ) {
+                command.args(whitefoot::RESTRICTED_CHILD_COMPILE_ARGUMENTS);
             }
             command
                 .args(COMPILE_ARGUMENTS)
@@ -243,7 +318,8 @@ pub(crate) fn append_runtime_objects(
         .arg("-I")
         .arg(directory.join("completion"))
         .arg("-I")
-        .arg(directory);
+        .arg(directory)
+        .args(sanitizer_arguments());
     let paths = objects
         .iter()
         .enumerate()

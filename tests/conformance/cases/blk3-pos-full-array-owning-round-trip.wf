@@ -52,8 +52,8 @@ fn main() -> status: ExitStatus pure {
   if old_tag != 11_u64 {
     return exit_status(code: 2_u8);
   }
-  let held = old_owner.inner;
-  if held != 11_u64 {
+  let observed_state = old_owner.inner;
+  if observed_state != 11_u64 {
     return exit_status(code: 3_u8);
   }
   let full = open::<Record, 3>(values: move values);
@@ -73,8 +73,6 @@ fn main() -> status: ExitStatus pure {
   let complete = seal::<Record, 0>(values: move zero);
   let zero_again = open::<Record, 0>(values: move complete);
   let remaining = zero_again.len;
-  if remaining != 0_u64 {
-    return exit_status(code: 7_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(remaining);
+  return exit_status(code: code);
 }

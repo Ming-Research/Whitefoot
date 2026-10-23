@@ -149,6 +149,22 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
 }
 
 impl FunctionEmitter<'_, '_> {
+    pub(super) fn emit_snapshot_atomic(
+        &mut self,
+        result: IrValueId,
+        begin: bool,
+    ) -> Result<(), BackendFailure> {
+        if snapshot::required(self.program) {
+            self.emit_unit_call(result, if begin {
+                "wf_snapshot_atomic_begin"
+            } else {
+                "wf_snapshot_atomic_end"
+            }, "")
+        } else {
+            self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+        }
+    }
+
     pub(super) fn emit_atomic_group_target(
         &mut self,
         result: IrValueId,
@@ -1126,17 +1142,39 @@ impl FunctionEmitter<'_, '_> {
     ) -> Result<(), BackendFailure> {
         let prefix = labels(prefix, result);
         self.names(&[entry, "llvm.coro.save"]);
+        let snapshot = snapshot::required(self.program);
+        let before = if snapshot && retries {
+            self.names(&["wf_snapshot_atomic_begin"]);
+            "  call void @wf_snapshot_atomic_begin()\n"
+        } else {
+            ""
+        };
+        let after = if snapshot && !retries {
+            // The native watch has released its single object before it
+            // returns either answer. Activation therefore occurs outside
+            // every hold and before a parked frame can move executors.
+            self.names(&["wf_snapshot_atomic_end"]);
+            "  call void @wf_snapshot_atomic_end()\n"
+        } else {
+            ""
+        };
         writeln!(
             self.output,
             "  br label %{prefix}.try\n\
-             {prefix}.try:\n  \
+             {prefix}.try:\n{before}  \
              %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
              %{prefix}.parked = call i32 @{entry}({arguments})\n  \
-             %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
+             {after}%{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
              {prefix}.suspend:"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
+        if snapshot && retries {
+            // This attempt acquired nothing. Restore this executor's mask
+            // before suspension; the retry arms whichever executor resumes.
+            self.names(&["wf_snapshot_atomic_end"]);
+            writeln!(self.output, "  call void @wf_snapshot_atomic_end()")?;
+        }
         let resumed = if retries {
             format!("{prefix}.try")
         } else {
@@ -1145,6 +1183,62 @@ impl FunctionEmitter<'_, '_> {
         self.emit_suspension(&format!("%{prefix}.saved"), &prefix, &resumed)?;
         self.output.open_block(format!("{prefix}.done"));
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+    }
+
+    /// [SHARE-1] `shared_close`'s count: the runtime counts one handle out
+    /// with an acquire-release decrement and says whether it was the last.
+    pub(super) fn emit_shared_count_out(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        object: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if ty != IrType::Bool || !self.is_object_handle(object)? {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let prefix = labels("close", result);
+        self.names(&["wf__shared_release"]);
+        writeln!(
+            self.output,
+            "  %{prefix}.count = call i32 @wf__shared_release(ptr {})\n  {} = icmp ne i32 %{prefix}.count, 0",
+            self.value_name(object),
+            self.value_name(result),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// [SHARE-1] returns an object whose last handle was counted out, its
+    /// state already moved out, to the runtime.
+    pub(super) fn emit_shared_free(
+        &mut self,
+        result: IrValueId,
+        object: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if !self.is_object_handle(object)? {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.names(&["wf__shared_free"]);
+        writeln!(
+            self.output,
+            "  call void @wf__shared_free(ptr {})",
+            self.value_name(object)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+    }
+
+    /// Whether `object` is a handle to a shared object, not to a table.
+    fn is_object_handle(&self, object: IrValueId) -> Result<bool, BackendFailure> {
+        let Some(IrType::Nominal(nominal)) = self.value_type(object) else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            self.nominal(nominal)?.kind(),
+            IrNominalKind::Shared {
+                shape: IrShared::Object,
+                ..
+            }
+        ))
     }
 
     /// Takes the object for a statement already holding an entry of one of

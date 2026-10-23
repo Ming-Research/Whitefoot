@@ -1,0 +1,22 @@
+fn zero(i: u64) -> result: Option<u64> pure contract {
+  ensures when Some(value: r): r == i;
+  ensures when Some(value: r): r == 0_u64;
+} {
+  if i == 0_u64 {
+    return Some<u64>(value: i);
+  }
+  return None<u64>();
+}
+
+fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> result: Option<u64> reads(rows) contract {
+  ensures when Some(value: r): r <= rows^[i].len;
+} {
+  if rows^[0_u64].len > 0_u64 {
+    return None<u64>();
+  }
+  return zero(i: i);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

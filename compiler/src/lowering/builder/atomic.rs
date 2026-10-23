@@ -106,9 +106,12 @@ impl IrBuilder<'_> {
                 .push(index);
         }
         let mut guard_roots = Vec::new();
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(guard) = guard {
             expression_bindings(guard, &mut guard_roots);
         }
+        let mut body_roots = Vec::new();
+        block_bindings(body, &mut body_roots);
         let ledger_site = self
             .lock_ledger_sources
             .get(site)
@@ -131,6 +134,10 @@ impl IrBuilder<'_> {
                     Some(target.ledger_site.clone())
                 } else if guard_roots.iter().any(|root| root.binding == target.binding) {
                     Some(guard_site.clone())
+                } else if !body_roots.iter().any(|root| root.binding == target.binding) {
+                    // Proof-only targets have no executable first use to
+                    // trigger a lazy take, but the statement still holds them.
+                    Some(target.ledger_site.clone())
                 } else {
                     None
                 }
@@ -175,7 +182,7 @@ impl IrBuilder<'_> {
                         referent: IrAddressed::Nominal(nominal),
                     },
                 )?;
-                let object = if target.borrowed {
+                let object = if target.kept_by_place {
                     loaded
                 } else {
                     self.define(
@@ -270,7 +277,7 @@ impl IrBuilder<'_> {
                     object,
                     nominal,
                     state: field,
-                    owned: !target.borrowed,
+                    owned: !target.kept_by_place,
                     wrote: !target.reads,
                     lock,
                 });
@@ -714,6 +721,7 @@ impl IrBuilder<'_> {
                 self.current = Some(done);
             }
         }
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicEnd)?;
         Ok(())
     }
     fn lower_guard(
@@ -741,6 +749,7 @@ impl IrBuilder<'_> {
             drops: Vec::new(),
         })?;
         self.current = Some(acquire);
+        self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(last) = read.last().copied().max(eager) {
             self.take_groups_through(region, last, &direct, true)?;
         }
@@ -905,6 +914,35 @@ impl IrBuilder<'_> {
     }
     pub(super) fn atomic_depth(&self) -> usize {
         self.atomics.len()
+    }
+}
+/// Executable uses throughout a block, reusing the same direct-expression
+/// walk that triggers lazy acquisition while lowering each statement.
+fn block_bindings(statements: &[CheckedStatement], roots: &mut Vec<Root>) {
+    for statement in statements {
+        statement_bindings(statement, roots);
+        match statement {
+            CheckedStatement::Loop { body, .. }
+            | CheckedStatement::CountedRange { body, .. } => block_bindings(body, roots),
+            CheckedStatement::Match { arms, .. }
+            | CheckedStatement::ValueMatchLet { arms, .. } => {
+                for arm in arms {
+                    block_bindings(&arm.body, roots);
+                }
+            }
+            CheckedStatement::Let { .. }
+            | CheckedStatement::DestructuringLet { .. }
+            | CheckedStatement::PropagateLet { .. }
+            | CheckedStatement::Evaluate { .. }
+            | CheckedStatement::DropExpression { .. }
+            | CheckedStatement::Set { .. }
+            | CheckedStatement::Proof(_)
+            | CheckedStatement::Return { .. }
+            | CheckedStatement::Give { .. }
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. }
+            | CheckedStatement::Atomic { .. } => {}
+        }
     }
 }
 /// The places a statement's own expressions reach, not those of the blocks

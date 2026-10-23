@@ -46,8 +46,8 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
 
 fn stored_byte(records: &Slots<u8, 8192>, index: u64) -> result: u8 reads(records) {
   doc "Reads one record byte, delivering zero for a position the record table does not hold.";
-  let held = records^.len;
-  let inside = index < held;
+  let observed = records^.len;
+  let inside = index < observed;
   if inside {
     let value = records^[index];
     return value;
@@ -237,11 +237,6 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           } else {
             break @stored_entry;
           }
-          let addressable = name_end <= entries_room;
-          if addressable {
-          } else {
-            break @stored_entry;
-          }
           set at = name_end;
           let dotted = 0_u8;
           let single = name_count == 1_u64;
@@ -355,11 +350,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
                       let body_at = slot -wrap 2_u64;
                       let inside = body_at < stored;
                       if inside {
-                        let room_now = child.len;
-                        let readable = body_at < room_now;
-                        if readable {
-                          set byte = child[body_at];
-                        }
+                        set byte = child[body_at];
                       }
                     }
                     place_back(window: records, value: byte);
@@ -460,14 +451,11 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     }
     let swap_room = order.len;
     let best_readable = best < swap_room;
-    let selected_writable = selected < swap_room;
     if best_readable {
-      if selected_writable {
-        let standing = order[selected];
-        let winner = order[best];
-        set order[best] = standing;
-        set order[selected] = winner;
-      }
+      let standing = order[selected];
+      let winner = order[best];
+      set order[best] = standing;
+      set order[selected] = winner;
     }
     set selected = selected +wrap 1_u64;
   }
@@ -511,7 +499,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);

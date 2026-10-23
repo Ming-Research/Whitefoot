@@ -102,6 +102,34 @@ pub(crate) struct RelationTemplate {
     pub(crate) normalized: NormalizedRelation,
 }
 
+/// Expanded clause syntax retained only for rejection rendering, before
+/// relation admission folds arithmetic into displacement constants.
+#[derive(Clone, Debug)]
+pub(crate) enum PostconditionClause {
+    Datum(RelationDatum),
+    Literal {
+        value: CheckedValue,
+        spelling: Option<String>,
+    },
+    NamedConst {
+        declaration: DeclarationId,
+        projections: Vec<GoalProjection>,
+        spelling: String,
+    },
+    Operation {
+        row: super::goal::GoalOperation,
+        arguments: Vec<Self>,
+    },
+}
+
+/// Diagnostic source occurrences for returned expressions and constructor fields.
+#[derive(Clone, Debug)]
+pub(crate) struct PostconditionSource {
+    pub(crate) spelling: String,
+    pub(crate) literal: bool,
+    pub(crate) fields: Vec<Self>,
+}
+
 /// One FN-9 side: a datum displaced by a mathematical integer constant,
 /// optionally adding one bare own integer parameter with coefficient one.
 /// At most one side of a relation carries that additional parameter.
@@ -367,4 +395,30 @@ pub(crate) struct CheckedPostcondition {
     pub(crate) const_substitutions: Vec<(DeclarationId, u64)>,
     pub(crate) relation: RelationTemplate,
     pub(crate) selected_returns: Vec<SelectedPostconditionReturn>,
+    /// The [ENT-2] clause (b) places the clause forms, each owing its
+    /// subscripts' [OP-4] obligations at every selected return [FN-9].
+    pub(crate) places: Vec<PostconditionFormedPlace>,
+}
+
+/// One [ENT-2] clause (b) place a postcondition forms at each of its
+/// selected returns [FN-9].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PostconditionFormedPlace {
+    pub(crate) expression: super::model::CheckedExpression,
+    /// Which state each base the place indexes is read in [MSR-3].
+    pub(crate) denotation: PlaceDenotation,
+}
+
+/// [MSR-3, FN-9] the state the bases of one postcondition place denote.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PlaceDenotation {
+    /// The state the return reads: the exit state of a reference parameter
+    /// the row writes, a named const, or a range.
+    Return,
+    /// The one state of a parameter that has no exit state: a by-value
+    /// parameter, or a reference the row only reads.
+    Entry,
+    /// The entry state `entry(parameter)` names, of a reference parameter
+    /// the row writes.
+    EntryImage,
 }

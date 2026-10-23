@@ -1,11 +1,13 @@
 //! Program results and host-visible parallel behavior. Compiler permissions,
 //! private IR and controlled worker observations live in backend tests.
 
-use std::process::Output;
+use std::process::{Command, Output};
 
 use super::support::{
     build_program, build_program_from_fragments, compile_program, compile_program_with_overlap,
+    fixture_directory,
 };
+use crate::support::run_command;
 use whitefoot::{FragmentGranularity, module_requires_parallel_runtime};
 
 /// The recursive corpus program publishes one byte sequence whatever the
@@ -83,7 +85,7 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         if mode == OverlapLowering::Off {
             assert!(!module_requires_parallel_runtime(&module));
         }
-        let program = build_program(&module);
+        let program = build_program(&crate::support::sanitized(module));
         for &width in workers {
             let output = program.run_with_workers(width);
             assert!(output.status.success(), "{mode:?}/{width:?}: {output:?}");
@@ -170,7 +172,7 @@ fn tree_window_and_deep_spine_preserve_their_independent_results() {
                 },
             )
             .expect("pinned-budget tree must compile");
-            let pinned = build_program(&module);
+            let pinned = build_program(&crate::support::sanitized(module));
             for workers in ["1", "4"] {
                 let output = pinned.run_with_workers(Some(workers));
                 assert_eq!(
@@ -233,9 +235,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let n = 200000_u64;
   let last = n - 1_u64;
   let values = box_array_filled::<u64>(count: n, value: 0_u64);
-  if n <= values.inner.len {
-    shifted_inline(values: &values, n: n);
-  }
+  shifted_inline(values: &values, n: n);
   if last < values.inner.len {
     let once = values.inner[last];
     if once == n {
@@ -426,6 +426,79 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
     }
 }
 
+/// [SHARE-1, SHARE-2] sixteen contexts hold the only handles to one counter
+/// and add to it through statements that count no handle of their own, since
+/// no block writes or moves the handle place it was read from. Each context
+/// releases its handle while the others' statements run, and every statement
+/// makes and releases another object, which can reuse a released object's
+/// storage. The counter must live until its last handle is released: an
+/// earlier release loses increments to those objects or faults, and the
+/// program's status names a wrong highest count.
+#[test]
+fn shared_objects_outlive_statements_while_other_contexts_release_handles() {
+    run_on_one_driver_and_on_four("shared_handle_release.wf", 3);
+}
+
+/// [SHARE-1, PROV-6] objects whose states are linear, on one driver and on
+/// four: two running contexts take `nodrop` tickets out of one queue, three
+/// take turns with one `nodrop` pen outside their atomic statements, and the
+/// handle whose `shared_close` is last receives each state and consumes it.
+/// Statements that did not hold the object alone would lose a stroke or
+/// redeem a ticket twice, and a close that took the state early would lose a
+/// count; the program's status names the first wrong count.
+#[test]
+fn linear_states_pass_between_running_contexts() {
+    run_on_one_driver_and_on_four("linear_shared_states.wf", 3);
+}
+
+/// [SHARE-1, PROV-6] three running contexts take turns with one `WriteFile`
+/// parked in the one-slot window that is a shared object's linear state, on
+/// one driver and on four: each turn takes the file out in an atomic
+/// statement, appends a five-byte record in two host writes outside every
+/// statement, and puts it back, and the handle that ends last receives the
+/// file and closes it. The program's status covers what it can count itself;
+/// this test reads the log it left, which is the independent oracle for the
+/// rest: two contexts holding the file at once would interleave the halves of
+/// their records, and a lost turn or a turn counted twice changes a count.
+#[test]
+fn contexts_take_turns_appending_to_one_parked_file() {
+    let program = build_program(&compile_program("linear_shared_file_turns.wf"));
+    for drivers in ["1", "4"] {
+        for round in 0..3 {
+            let directory = fixture_directory();
+            let mut command = Command::new(program.executable());
+            command
+                .current_dir(directory.path())
+                .env_remove("WF_WORKERS")
+                .env_remove("WF_IO_NO_NATIVE_RING")
+                .env("WF_DRIVERS", drivers);
+            let output = run_command(&mut command);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "drivers {drivers}, round {round}: {output:?}"
+            );
+            let log = std::fs::read(directory.path().join("aof")).expect("the program's log");
+            assert_eq!(
+                log.len(),
+                (100 + 200 + 300) * 5,
+                "drivers {drivers}, round {round}: a record is five bytes"
+            );
+            let mut counts = [0usize; 3];
+            for record in log.chunks(5) {
+                let letter = record[0];
+                assert!(
+                    matches!(letter, b'a'..=b'c')
+                        && record == [letter, b'(', letter, b')', b'\n'],
+                    "drivers {drivers}, round {round}: a record that two writers shared: {record:?}"
+                );
+                counts[usize::from(letter - b'a')] += 1;
+            }
+            assert_eq!(counts, [100, 200, 300], "drivers {drivers}, round {round}");
+        }
+    }
+}
+
 /// Runs one program on one driver and on four, `rounds` times each, and
 /// requires status 0, which each program gives only when every count it
 /// checks is the one every order of its atomic statements gives.
@@ -512,6 +585,18 @@ fn guards_on_map_entries_wake_on_every_write_on_one_driver_and_on_four() {
 #[test]
 fn a_map_swapped_whole_keeps_its_identity_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_resets.wf", 2);
+}
+
+/// [SHARE-1, SHARE-2] a shared map whose values are unit serves as a set of
+/// byte-string keys: four contexts mark, unmark and test their own rows, then
+/// a count, a scan and a clear see exactly the marked keys, on one driver and
+/// on four. The entry's presence tag of `Option<unit>` is the only state the
+/// runtime keeps, so a tag read at the wrong offset, width or empty value
+/// would report a wrong membership (status 1 or 5), count (2), scan length
+/// (3), scanned keys (4) or clear (6, 7).
+#[test]
+fn a_map_of_unit_values_holds_a_set_of_keys_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("unit_set.wf", 2);
 }
 
 /// [SHARE-3] statements whose blocks meet several objects in opposite

@@ -33,7 +33,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use super::super::entailment::TermRead;
+use super::super::entailment::{SelectedReturnBound, TermRead};
 use super::super::goal::{
     EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
 };
@@ -42,7 +42,39 @@ use super::super::model::{
     CheckedFunction, CheckedIntegerOperation, CheckedStatement, FunctionId, expression_children,
 };
 use super::super::permission::visit_read_bindings;
+use super::super::places::{CapturedTerm, CapturedValue};
 use crate::NodePath;
+
+/// [MSR-1] observe the measure that has no declared field to reference.
+pub(super) fn derived_measure_borrow(place: &str) -> String {
+    format!("read the measure by value with `let n = {place};`")
+}
+
+/// [MSR-3] an entry former outside a postcondition cannot select entry state.
+pub(super) const fn entry_outside_postcondition_repair() -> &'static str {
+    "if this expression should read the current value, replace this `entry(...)` former with the place inside its parentheses; entry-state reads belong only in an ensures clause on a reference parameter whose declared row writes it"
+}
+
+pub(super) mod writer_operations;
+pub(super) mod writer_ownership;
+pub(super) mod writer_references;
+
+/// The first suggested name whose spelling the caller's inventory leaves free.
+pub(in crate::semantic) fn fresh_repair_name(stem: &str, taken: impl Fn(&str) -> bool) -> String {
+    std::iter::once(stem.to_owned())
+        .chain((1_u32..).map(|suffix| format!("{stem}{suffix}")))
+        .find(|name| !taken(name))
+        .expect("an unbounded candidate sequence has a free name")
+}
+
+/// The executable builder's signature route does not reject checked source.
+pub(crate) const fn executable_runner_repair() -> &'static str {
+    "select a function taking no parameters or one std::process::Inputs and returning std::process::ExitStatus or unit"
+}
+
+pub(crate) const fn executable_caller_repair() -> &'static str {
+    "satisfy the generated caller refusal reported above"
+}
 
 /// [OP-16] name the first excluded part, without suggesting that copy alone
 /// grants equality or that comparing storage bytes implements value equality.
@@ -320,7 +352,7 @@ impl<'a> Reads<'a> {
             } => GoalTerms::Parameters,
             _ => GoalTerms::Computed,
         };
-        let results = call_results(self.function, self.editable);
+        let results = call_results(self.function, self.editable, self.written);
         GoalReads {
             terms,
             referenced: self.referenced,
@@ -335,13 +367,21 @@ impl<'a> Reads<'a> {
 /// The bindings of `function` whose value a call to one of the `editable`
 /// functions returned, directly or through local computation from such a
 /// value: the values a callee's `ensures` the writer can add can bound
-/// [FN-9]. A prelude function's contract is not the writer's to change. The
-/// closure ignores control flow, which only widens it.
-fn call_results(function: &CheckedFunction, editable: &HashSet<FunctionId>) -> BTreeSet<BindingId> {
+/// [FN-9]. A prelude function's contract is not the writer's to change. A
+/// binding written on a path to the failed goal no longer identifies the
+/// returned value, so it cannot seed or propagate this diagnostic trace.
+/// This conservatively also omits a copy made before such a write: the kill
+/// roots record paths, not the relative order of the copy and the write.
+fn call_results(
+    function: &CheckedFunction,
+    editable: &HashSet<FunctionId>,
+    written: &[BindingId],
+) -> BTreeSet<BindingId> {
     let mut definitions = Vec::new();
     if let Some(body) = &function.body {
         collect_definitions(body, None, editable, &mut definitions);
     }
+    definitions.retain(|definition| written.binary_search(&definition.binding).is_err());
     let mut results: BTreeSet<BindingId> = definitions
         .iter()
         .filter(|definition| definition.call)
@@ -488,7 +528,7 @@ pub(super) fn returns_call_result(
     statement: &NodePath,
     editable: &HashSet<FunctionId>,
 ) -> bool {
-    let results = call_results(function, editable);
+    let results = call_results(function, editable, &[]);
     function
         .body
         .as_deref()
@@ -853,6 +893,40 @@ fn range_length_routes(
     }
 }
 
+/// Existing capture provenance selects only diagnostic wording. A computed
+/// opaque index has no such repair: only a written binding's old value
+/// explains this loss of a source spelling.
+pub(super) fn unnameable_element_index(goal: &GoalExpression) -> Option<CapturedValue> {
+    match goal {
+        GoalExpression::Operation { arguments, .. } => {
+            arguments.iter().find_map(unnameable_element_index)
+        }
+        GoalExpression::Datum(datum) => {
+            let projections = match datum {
+                GoalDatum::Parameter { projections, .. }
+                | GoalDatum::NamedConst { projections, .. }
+                | GoalDatum::Place { projections, .. }
+                | GoalDatum::EvaluatedValue { projections, .. } => projections,
+                GoalDatum::Literal(_) => return None,
+            };
+            projections.iter().find_map(|projection| match projection {
+                GoalProjection::Subscript(index) | GoalProjection::Page(index)
+                    if matches!(index.term, CapturedTerm::Superseded(_)) =>
+                {
+                    Some(*index)
+                }
+                _ => None,
+            })
+        }
+    }
+}
+
+pub(super) fn requirement_after_index_write(goal: &str, index: &str) -> String {
+    format!(
+        "`{goal}` reads an element selected by the old value of `{index}`, which was rewritten after the reference was formed; before forming that reference, save the index in a fresh binding (for example `let {index}0 = {index};`), form the reference through the saved binding, establish the requirement through that reference before the write, and keep the saved binding unchanged so those facts survive the write"
+    )
+}
+
 /// [FN-8] an ordinary call's requirement. `ranges` are the ranges formed at
 /// the call whose `len` the goal reads, and `shape` is the goal's shape
 /// over them.
@@ -937,6 +1011,48 @@ pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static 
     }
 }
 
+/// A private counterfactual proved which withheld declaration this proof needs.
+pub(super) fn unavailable_summary(
+    instance: &str,
+    summary: &str,
+    call_site: &str,
+    rule: &str,
+    failed: &str,
+    declared_site: Option<&str>,
+    failed_site: &str,
+) -> String {
+    let declaration = declared_site
+        .map(|site| format!(" declared at {site}"))
+        .unwrap_or_default();
+    format!(
+        "the call to `{instance}` at {call_site} cannot supply its summary `{summary}` because that callee's [{rule}] obligation `{failed}`{declaration} fails at {failed_site}; repair that obligation in `{instance}` so it proves the summary needed by this proof; for a loop-computed bound, carry the needed bound in a loop-header `invariant`"
+    )
+}
+
+/// The indexed row captures the parameter before its body's assignment.
+pub(super) fn rewritten_effect_index(
+    row: &str,
+    parameter: &str,
+    write: &str,
+    line: u64,
+    access: &str,
+    call: Option<&str>,
+    move_before_write: bool,
+) -> String {
+    let operation = match call {
+        Some(call) => format!("the call `{call}`"),
+        None => format!("the access `{access}`"),
+    };
+    let route = if move_before_write {
+        format!("either by moving {operation} before that write, or by leaving")
+    } else {
+        "by leaving".to_owned()
+    };
+    format!(
+        "the row `{row}` uses `{parameter}`'s value at the call, but `{write}` at line {line} rewrites it before {operation}; where this access is the row mismatch to repair, keep the row {route} `{parameter}` unchanged, binding the new value in a fresh local, and using that local for the work that needs the new value"
+    )
+}
+
 /// [FN-9, ERR-3] a relation at a propagated error exit, which returns the
 /// propagated outcome with the state the body has reached there.
 pub(super) fn propagated_postcondition(disposition: Disposition) -> &'static str {
@@ -945,7 +1061,7 @@ pub(super) fn propagated_postcondition(disposition: Disposition) -> &'static str
             "the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies"
         }
         Disposition::Unproved => {
-            "the postcondition is not proved where this `propagate` leaves the function: establish it before the `propagate`, writing the places it relates or proving it with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition every exit satisfies"
+            "the postcondition is not proved where this `propagate` leaves the function: when its related places admit these writes, establish it before the `propagate` by writing values that satisfy it into those places; or, for a bound on a writable integer place without a subscript, when available facts prove a suitable value's bound, bind that value with an ordinary `let`, prove the bound over that binding with an `invariant` (adding `use` steps only when AUTO does not already prove its target), and assign the binding to the place before the `propagate`, keeping every place the relation reads unchanged through the early return; or state a postcondition every exit satisfies"
         }
     }
 }
@@ -1136,21 +1252,147 @@ pub(super) fn bounds_after_kill(
     )
 }
 
+/// [DIAG-1] an optional header transport which the ordinary join withheld.
+pub(super) fn lost_header_relation(
+    note: &crate::semantic::entailment::LostHeaderRelationNote,
+    line: u64,
+    calls: &[KillingCall],
+    clauses: &[Option<String>],
+) -> String {
+    let path = if calls.is_empty() {
+        format!("the incoming path at line {line}")
+    } else {
+        calls
+            .iter()
+            .map(|call| format!("the path through `{}` at line {}", call.callee, call.line))
+            .collect::<Vec<_>>()
+            .join(" and ")
+    };
+    let preservation = calls
+        .iter()
+        .zip(clauses)
+        .map(|(call, clause)| match clause {
+            Some(clause) => format!("where `{}` preserves that measure, state `{clause}` in its contract", call.callee),
+            None => format!("where `{}` preserves the measures in this relation, state their equality to their entry values in its `ensures`", call.callee),
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!(
+        "header invariant `{}` (`{}`) was not kept at the join: {path} did not prove `{}`; make that path preserve the relation{}",
+        note.name,
+        note.relation,
+        note.conjunct,
+        if preservation.is_empty() {
+            String::new()
+        } else {
+            format!(": {preservation}")
+        },
+    )
+}
+
 /// [OP-4] a subscript of a place a contract clause forms [ENT-2, FN-8]. The
 /// place is formed at body entry in the state the requirements written before
 /// it build, so an earlier requirement establishes the bound; a clause
 /// evaluates nothing, so no guard can skip it.
-pub(super) fn clause_bounds(case: &GoalCase<'_>, constant_offset: bool) -> String {
+pub(super) fn clause_bounds(
+    case: &GoalCase<'_>,
+    constant_offset: bool,
+    existing: Option<&str>,
+) -> String {
     match case.disposition {
         Disposition::Refuted => format!(
             "`{}` is false where this place is formed: {}",
             case.text,
             refuted_index(constant_offset, true)
         ),
-        Disposition::Unproved => format!(
-            "add `requires {};` to the `contract` of `{}` ahead of the requirement that forms this place, which each caller then establishes",
-            case.text, case.function
+        Disposition::Unproved => match existing {
+            Some(clause) => format!(
+                "move the existing `{}` and any `define` declarations it needs ahead of the requirement that forms this place, keeping those definitions before their uses; it already states `{}`",
+                clause.trim(), case.text
+            ),
+            None => format!(
+                "add `requires {};` to the `contract` of `{}` ahead of the requirement that forms this place, which each caller then establishes",
+                case.text, case.function
+            ),
+        },
+    }
+}
+
+/// [OP-4] a subscript of a place a postcondition forms [ENT-2, FN-9]. The
+/// place is formed at every return that selects the clause, in the state that
+/// return leaves with, so a requirement or the facts before each such return
+/// establish the bound.
+pub(super) fn postcondition_bounds(
+    case: &GoalCase<'_>,
+    constant_offset: bool,
+    return_line: u64,
+    bound: &SelectedReturnBound,
+    held: bool,
+) -> String {
+    // [FN-9, MSR-3] a place reads its formal offsets, and the bases it
+    // denotes at entry, at function entry. Once the body rebinds an offset,
+    // the clause is unavailable at the return whatever bounds it, so the
+    // value the body computes needs its own name; `held` says the contract
+    // already requires the bound, which then needs nothing more. A base
+    // length the body changes is established only by facts about its entry
+    // value.
+    if let Some((rebound, values, them)) = entry_values(&bound.rebound) {
+        let alternative = match (case.disposition, held) {
+            (Disposition::Refuted, _) => {
+                format!(", and {}", refuted_index(constant_offset, false))
+            }
+            // The contract already requires the bound; only the rebinding
+            // keeps it from the place.
+            (Disposition::Unproved, true) => String::new(),
+            (Disposition::Unproved, false) => format!(
+                ", and add `requires {};` to the `contract` of `{}`, which each caller then establishes",
+                bound.requirement, case.function
+            ),
+        };
+        return format!(
+            "`{}` reads {rebound} at {values}, and a clause reading {them} is unavailable at the `return` on line {return_line}, where the body has rebound {them}: give the new value its own name instead of rebinding {rebound}{alternative}",
+            case.text
+        );
+    }
+    match (case.disposition, entry_values(&bound.entry_lengths)) {
+        (Disposition::Refuted, None) => format!(
+            "`{}` is false at the `return` on line {return_line}, which selects this postcondition: {}",
+            case.text,
+            refuted_index(constant_offset, false)
         ),
+        (Disposition::Refuted, Some((lengths, values, _))) => format!(
+            "`{}` is false at the `return` on line {return_line}, which selects this postcondition, with {lengths} at {values}: {}",
+            case.text,
+            refuted_index(constant_offset, false)
+        ),
+        (Disposition::Unproved, None) => format!(
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it before the `return` on line {return_line} and every other `return` that selects this postcondition",
+            bound.requirement, case.function
+        ),
+        (Disposition::Unproved, Some((lengths, values, them))) => format!(
+            "add `requires {};` to the `contract` of `{}`, which each caller then establishes, or establish it with {lengths} at {values} before the `return` on line {return_line} and every other `return` that selects this postcondition, which a test made after the body changes {them} does not",
+            bound.requirement, case.function
+        ),
+    }
+}
+
+/// A list of code spans read at function entry, joined for a sentence, with
+/// the noun and pronoun that agree with it.
+fn entry_values(spans: &[String]) -> Option<(String, &'static str, &'static str)> {
+    match spans {
+        [] => None,
+        [one] => Some((one.clone(), "its function-entry value", "it")),
+        [rest @ .., last] => Some((
+            format!(
+                "{} and {last}",
+                rest.iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            "their function-entry values",
+            "them",
+        )),
     }
 }
 
@@ -1434,8 +1676,14 @@ pub(super) enum CellContent {
     /// A value without copy other than a runtime-capacity shape, which moves
     /// out and frees the cell [WIN-3].
     Owned,
+    /// A linear content must be consumed after moving it out.
+    Linear,
+    /// The written Box name does not select a cell, but the operand is linear.
+    LinearOperand,
     /// A runtime-capacity shape, which never leaves its cell [TYPE-9].
     RuntimeCapacity,
+    /// A runtime Array or segmented run is outside free_empty's shape set.
+    FixedRuntimeCapacity,
     /// A content not read as a copy, in a cell a reference or an element
     /// reaches, which nothing moves out of [OWN-1, WIN-3], so it is used in
     /// place.
@@ -1445,27 +1693,86 @@ pub(super) enum CellContent {
 /// [TYPE-2, TYPE-9] a destructuring `let` naming `Box`. `cell` is the
 /// consumed place as a read of it is written and `binder` the name the
 /// statement binds, when it binds one. `content` is `None` when the place
-/// selects no cell the checker can type.
+/// selects no cell the checker can type. `fresh_binder` supplies a free name
+/// only for linear content when the statement binds none.
 pub(super) fn cell_taken_apart(
     content: Option<CellContent>,
     cell: &str,
     binder: Option<&str>,
+    fresh_binder: &str,
 ) -> String {
     const INNER: &str = "a cell's content is its member `inner` [TYPE-9]";
     match (content, binder) {
+        (Some(CellContent::Linear), name) => {
+            let name = name.unwrap_or(fresh_binder);
+            format!("{INNER}: replace this statement with `let {name} = move {cell}.inner;`, which frees the cell [WIN-3], then move `{name}` into a function that consumes it or return it")
+        }
+        (Some(CellContent::LinearOperand), _) => format!(
+            "the operand is a linear value, not a cell whose content this statement can select: replace this statement by moving `{cell}` whole into a function that consumes it or returning it"
+        ),
+        (Some(CellContent::RuntimeCapacity), None) => format!(
+            "{INNER}, and a runtime-capacity content never leaves it: replace this statement by taking every element out and consuming it, establish `{cell}.inner.len == 0_u64`, and call `free_empty(window: move {cell})` [OP-14]"
+        ),
+        (Some(CellContent::FixedRuntimeCapacity), None) => format!(
+            "{INNER}, and this runtime-capacity content never leaves it: replace this statement by moving `{cell}` whole into a function that consumes it or returning it"
+        ),
         (Some(CellContent::Copy), Some(name)) => {
             format!("{INNER}: replace this statement with `let {name} = {cell}.inner;`")
         }
         (Some(CellContent::Owned), Some(name)) => format!(
             "{INNER}: replace this statement with `let {name} = move {cell}.inner;`, which frees the cell [WIN-3]"
         ),
-        (Some(CellContent::RuntimeCapacity), Some(name)) => format!(
+        (Some(CellContent::RuntimeCapacity | CellContent::FixedRuntimeCapacity), Some(name)) => format!(
             "{INNER}, and a runtime-capacity content never leaves it: remove this statement, and write `{cell}.inner` where `{name}` is used and `move {cell}` where `{name}` is moved [OP-14]"
         ),
         (Some(CellContent::InPlace), Some(name)) => format!(
             "{INNER}, and nothing moves out of a cell a reference or an element reaches [OWN-1, WIN-3]: when `{name}` is never moved, remove this statement and write `{cell}.inner` where `{name}` is used"
         ),
         (None, _) | (_, None) => format!("{INNER}: remove this statement"),
+    }
+}
+
+/// [TYPE-2, TYPE-9, TYPE-11] wording shared by the checking sites.
+pub(super) const CONTAINER_CONSTRUCTION: &str = "build it with a construction function [OP-13]";
+pub(super) const INLINE_RUNTIME_STORAGE: &str = "wrap it in a Box, or write the constant-capacity form";
+pub(super) const INLINE_SEGMENTS_OR_PAGED: &str = "wrap it in a Box and pass a reference to its content";
+pub(super) const INVARIANT_FIELD_READONLY: &str = "write the field `public readonly`, so that code outside the declaring module reads it and only that module writes it, or make it private";
+
+/// The consumption forms the type and its module visibility admit.
+pub(super) enum LinearValueKind {
+    Whole,
+    Host,
+    Enum,
+    Struct,
+    Window,
+}
+
+/// [PROV-6] a scope exit names the binding that must leave by consumption.
+pub(super) fn linear_scope_exit_repair(kind: LinearValueKind, name: &str) -> String {
+    let whole = format!("move `{name}` whole into a function that consumes it, or return it");
+    match kind {
+        LinearValueKind::Whole => whole,
+        LinearValueKind::Host => format!(
+            "when its module provides a consuming close or finish function, move `{name}` whole into it; for a `ReadFile`, call `std::fs::close_read` with `file: move {name}` and a `HandleFactory` reference as `factory`, declaring that reference's write effect and marking the function `waits`; otherwise {whole}"
+        ),
+        LinearValueKind::Enum => format!(
+            "{whole}; or take it apart with `match move {name}` and consume every linear payload in each arm"
+        ),
+        LinearValueKind::Struct => format!(
+            "{whole}; or destructure the whole struct with `let N(f: a, ...) = move {name};`, replacing `N` and `f` with its declared struct and field names and consuming every linear field"
+        ),
+        LinearValueKind::Window => format!(
+            "{whole}; or take every element out and consume it, prove its length is zero, and call `free_empty(window: move {name})`"
+        ),
+    }
+}
+
+/// [EFF-5] one argument's joined places have no separating position.
+pub(super) const fn joined_argument_overlap(unnamed_positions: bool) -> &'static str {
+    if unnamed_positions {
+        "these two entries of the callee's row may reach overlapping places through one argument, and no fact names the positions this call passes for them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
+    } else {
+        "these two entries of the callee's row may reach overlapping places through one argument, and no position this call passes separates them: replace the callee's row entries at or below their common path with one `writes` entry of that path"
     }
 }
 

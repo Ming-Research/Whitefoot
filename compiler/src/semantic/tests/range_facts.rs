@@ -531,7 +531,6 @@ fn certified_fill(callee: &str, extra: &str) -> Vec<u8> {
     format!(
         "{callee}fn fill(out: &[u64]) -> result: unit writes(out) {{
   let n = out^.len;
-  let off = False();
   for (
     k in 0_u64..n,
     apart(i, j) {{
@@ -568,8 +567,10 @@ fn fill_verdict(source: &[u8]) -> LoopVerdict {
 fn a_read_the_certificate_skipped_keeps_the_loop_sequential() {
     // The read of out^[0_u64] sits in an arm the entry state excludes, so
     // the certificate's walk never records it while the permission survey
-    // sees it: PAR-2 admits only reads the certificate placed.
-    let dead = "    if off {\n      let x = out^[0_u64];\n      let y = x +wrap 1_u64;\n    }\n";
+    // sees it: PAR-2 admits only reads the certificate placed. The arm is
+    // the payload arm of a `match` on a value constructed as `None`; an `if`
+    // on a Bool the state fixes is a decided condition [OP-5].
+    let dead = "    let off = None<u64>();\n    match off {\n      Some(value: on) => {\n        let x = out^[0_u64];\n        let y = x +wrap 1_u64;\n      }\n      None() => {\n      }\n    }\n";
     let LoopVerdict::Denied(denial) = fill_verdict(&certified_fill("", dead)) else {
         panic!("an unplaced read of the certified root must deny");
     };
@@ -635,7 +636,10 @@ fn main() -> status: std::process::ExitStatus pure {
 /// A loop whose write to `cells` waits behind a chain of `flags` flags,
 /// each set an iteration after the one before, so each dry walk of the
 /// header reaches one more of them. `header` opens the loop; an ordinary
-/// `loop` ends its body with a `break`.
+/// `loop` ends its body by leaving once the last flag is set, so its body
+/// reaches the header again. An unconditional `break` would leave after one
+/// iteration, where every flag is still false and each test of one is a
+/// decided condition [OP-5].
 fn flag_chain(flags: usize, header: &str) -> Vec<u8> {
     let mut lets = String::new();
     let mut steps = format!(
@@ -664,9 +668,9 @@ fn flag_chain(flags: usize, header: &str) -> Vec<u8> {
 ",
     );
     let close = if header.starts_with("  loop") {
-        "    break;\n"
+        format!("    if f{flags} {{\n      break;\n    }}\n")
     } else {
-        ""
+        String::new()
     };
     format!(
         "fn zeros(cells: &[u64]) -> result: u64 reads(cells) contract {{
@@ -748,7 +752,7 @@ fn guarded_reads(reads: u64, paired: bool) -> Vec<u8> {
         (
             ", other: &[u64], spare: &[u64]) -> result: u64 reads(cells), reads(other), reads(spare)",
             "requires forall known(k in 0_u64..cells^.len, j in 0_u64..spare^.len): cells^[k] == spare^[j];
-  requires forall held(k in 0_u64..other^.len): other^[k] == 0_u64;",
+  requires forall observed_state(k in 0_u64..other^.len): other^[k] == 0_u64;",
             "  if 0_u64 < spare^.len {
     let seen = spare^[0_u64];
   }
@@ -860,9 +864,7 @@ fn the_instance_ceiling_counts_both_rounds_without_recounting_duplicates() {
             )
             .replacen(
                 "  let got = zeros(",
-                "  if 0_u64 < next^.len {
-    let hop = next^[0_u64];
-  }
+                "  let hop = next^[0_u64];
   let got = zeros(",
                 1,
             );
@@ -1100,7 +1102,7 @@ fn field_range_measure_source(before: &str, start: &str, measure: &str) -> Vec<u
 }}
 
 fn forward(rows: &[Slots<u8, 8>]) -> result: unit {effect} contract {{
-  requires forall held(k in {start}..rows^.len): rows^[k].{measure} <= 4_u64;
+  requires forall observed_state(k in {start}..rows^.len): rows^[k].{measure} <= 4_u64;
 }} {{
 {before}  need_rows(rows: rows);
   return unit;
@@ -1173,7 +1175,7 @@ fn field_range_formation(declarations: &str, element: &str, suffix: &str) -> Vec
     };
     field_range_program(&format!(
         "{declarations}fn inspect(rows: &[{element}]) -> result: unit pure contract {{
-  requires forall held(k in 0_u64..rows^.len): rows^[k]{suffix} == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k]{suffix} == 0_u64;
 }} {{
   return unit;
 }}
@@ -1349,7 +1351,7 @@ fn forward(numbers: &[Record<u64>], flags: &[Record<Bool>]) -> result: unit pure
 fn field_range_generic_cannot_select_undeclared_field() {
     let source = field_range_program(
         "fn inspect<T>(rows: &[T]) -> result: unit pure contract {
-  requires forall held(k in 0_u64..rows^.len): rows^[k].missing == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k].missing == 0_u64;
 } {
   return unit;
 }
@@ -1373,7 +1375,7 @@ fn need_zero(rows: &[Pair]) -> result: unit pure contract {
 }
 
 fn forward(rows: &[Pair]) -> result: unit writes(rows) contract {
-  requires forall held(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
 } {
   if 0_u64 < rows^.len {
     let made = Pair(f: 0_u64, g: 7_u64);
@@ -1402,7 +1404,7 @@ fn need_zero(rows: &[Pair]) -> result: unit pure contract {
 }
 
 fn forward(rows: &[Pair], replacement: Pair) -> result: unit writes(rows) contract {
-  requires forall held(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
 } {
   if 0_u64 < rows^.len {
     set rows^[0_u64] = replacement;
@@ -1430,7 +1432,7 @@ fn need_segments(rows: &Segments<Pair>) -> result: unit pure contract {
 }
 
 fn forward(rows: &Segments<Pair>) -> result: unit writes(rows) contract {
-  requires forall held(d in 0_u64..rows^.len, k in 0_u64..rows^[d].len): rows^[d][k].f == 0_u64;
+  requires forall observed_state(d in 0_u64..rows^.len, k in 0_u64..rows^[d].len): rows^[d][k].f == 0_u64;
 } {
   if 0_u64 < rows^.len {
     let first = &rows^[0_u64];
@@ -1706,9 +1708,9 @@ fn check(order: &[Flow]) -> result: unit writes(order) contract {
       give b;
     }
   }
-  let held = Holder(value: saved);
+  let observed_state = Holder(value: saved);
   let target = Payload(slot: 9_u32);
-  set target = held.value;
+  set target = observed_state.value;
   set order^[0_u64] = Flow::Open(block: target);
   need(order: order);
   return unit;
@@ -1772,7 +1774,7 @@ fn field_range_give_join_tracks_each_arms_copy() {
 
 #[test]
 fn field_range_copy_join_keeps_nested_alias_overrides() {
-    let source = String::from_utf8(field_range_copy_join_source("  let held = Holder(value: item);\n  if flag {\n    set item.slot = 9_u32;\n    set held.value = item;\n  }\n  set rows^[0_u64] = held.value;\n")).unwrap()
+    let source = String::from_utf8(field_range_copy_join_source("  let observed_state = Holder(value: item);\n  if flag {\n    set item.slot = 9_u32;\n    set observed_state.value = item;\n  }\n  set rows^[0_u64] = observed_state.value;\n")).unwrap()
         .replace("fn need(", "struct Holder {\n  value: Entry;\n}\n\nfn need(");
     field_range_verdict(source.as_bytes(), Some(SemanticRule::Range3));
 }
@@ -1912,8 +1914,8 @@ fn a_bound_written_through_a_reference_inside_an_atomic_statement() {
         "pure waits",
         "  let n = 0_u64;
   let w = &n;
-  atomic held = &state {
-    set w^ = held^.value;
+  atomic observed_state = &state {
+    set w^ = observed_state^.value;
   }
   need(xs: xs, n: n);
 ",
@@ -2088,7 +2090,7 @@ fn inspect(rows: &[Row]) -> result: u64 reads(rows) {
 fn a_ring_is_not_an_element_projection_base() {
     let source = field_range_program(
         "fn inspect(rows: &Ring<u64, 8>) -> result: unit pure contract {
-  requires forall held(k in 0_u64..rows^.len): rows^[k] == 0_u64;
+  requires forall observed_state(k in 0_u64..rows^.len): rows^[k] == 0_u64;
 } {
   return unit;
 }

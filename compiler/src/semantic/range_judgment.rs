@@ -50,8 +50,7 @@ pub(crate) enum RangeIssue {
     /// rejection: the derivation left the checker's `i128` arithmetic,
     /// where the specified arithmetic is exact [RANGE-3], or a loop nest was
     /// deeper, or a header's written set took more walks to settle, than the
-    /// checker follows, where RANGE-2 forgets only what the body can write; or
-    /// atomic targets may alias and the walk cannot represent that relation.
+    /// checker follows, where RANGE-2 forgets only what the body can write.
     Unsupported {
         node: NodePath,
         feature: super::UnsupportedSemanticFeature,
@@ -247,12 +246,13 @@ pub(crate) fn judge_program(
                 .deferred
                 .iter()
                 .any(|(_, answer)| *answer != walk::DeferredAnswer::Proved);
-            let issues = match walker.imprecise.take() {
-                Some(node) if !walker.issues.is_empty() || unproved => {
-                    vec![RangeIssue::Unsupported {
-                        node,
-                        feature: super::UnsupportedSemanticFeature::RangeLoopNesting,
-                    }]
+            let imprecise = walker
+                .imprecise
+                .take()
+                .map(|node| (node, super::UnsupportedSemanticFeature::RangeLoopNesting));
+            let issues = match imprecise {
+                Some((node, feature)) if !walker.issues.is_empty() || unproved => {
+                    vec![RangeIssue::Unsupported { node, feature }]
                 }
                 _ => walker.issues,
             };

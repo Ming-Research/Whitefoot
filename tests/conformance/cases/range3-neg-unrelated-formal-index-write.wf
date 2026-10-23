@@ -1,0 +1,25 @@
+fn idle(rows: &[u64], lo: u64, hi: u64) -> result: unit pure {
+  return unit;
+}
+
+fn need_impossible(rows: &[u64]) -> result: unit pure contract {
+  requires forall impossible(k in 0_u64..1_u64): 1_u64 <= 0_u64;
+} {
+  return unit;
+}
+
+fn probe<fn op(rows: &[u64], lo: u64, hi: u64) -> result: unit writes(rows[lo])>(rows: &[u64]) -> result: unit writes(rows) contract {
+  requires rows^.len == 1_u64;
+  requires forall initial(k in 0_u64..rows^.len): rows^[k] <= 7_u64;
+} {
+  doc "The formal write boundary remains wider than its selected pure actual; the later false fact reads no written storage.";
+  op(rows: rows, lo: 0_u64, hi: 1_u64);
+  need_impossible(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let rows = array_filled::<u64, 1>(value: 0_u64);
+  probe::<fn idle>(rows: &rows[0_u64..1_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

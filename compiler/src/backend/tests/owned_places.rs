@@ -13,7 +13,7 @@
 //!   owners is [OP-11] `swap`, and the read-and-commit is [OP-12]'s atomic
 //!   in-place update `set p = f(move p, args...);`. The capture, adjacency and
 //!   release properties those two also carried are kept by
-//!   `an_element_target_is_captured_before_the_rhs_changes_its_index`,
+//!   `an_element_target_is_located_after_the_rhs_changes_its_index`,
 //!   `zero_sized_aggregate_assignment_preserves_adjacent_fields` and
 //!   `box_assignment_updates_the_owner_and_releases_each_cell_once`.
 //! - `general_and_extent_boxes_keep_distinct_cleanup_actions` and
@@ -35,7 +35,7 @@
 //!   so no refusal arm exists to preserve effects across.
 //!   `nested_and_residual_cleanup_preserve_release_graph_order` keeps the
 //!   release-order coverage.
-//! - `indexed_targets_are_captured_before_disjoint_rhs_effects`,
+//! - `indexed_targets_are_located_after_disjoint_rhs_effects`,
 //!   `aggregate_loop_carries_and_element_swaps_preserve_both_owners` and
 //!   `loop_owner_sources_cover_later_iterations_and_counted_exhaustion` each
 //!   lost their multi-target commit `set (a, b) = e, f;` with [LIV-2] and kept
@@ -320,8 +320,8 @@ fn loop_owner_sources_cover_later_iterations_and_counted_exhaustion() {
   for (iteration in 0_u64..count) {
     swap(first: &first, second: &second);
   }
-  let held = first.inner;
-  return held;
+  let observed_state = first.inner;
+  return observed_state;
 }
 
 fn once(first: Box<u64>, second: Box<u64>) -> result: u64 pure {
@@ -335,8 +335,8 @@ fn once(first: Box<u64>, second: Box<u64>) -> result: u64 pure {
       break;
     }
   }
-  let held = first.inner;
-  return held;
+  let observed_state = first.inner;
+  return observed_state;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -559,10 +559,8 @@ fn main() -> status: std::process::ExitStatus pure {
   if distinct.payload[15_u64] != 43_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  if watch != 5_u64 {
-    return std::process::exit_status(code: 5_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let watch_code = cvt::<u64, u8>(watch);
+  return std::process::exit_status(code: watch_code);
 }
 "#;
     let module = super::emit_lowered(source, super::OverlapLowering::Off);
@@ -588,7 +586,12 @@ fn main() -> status: std::process::ExitStatus pure {
         calls.contains(&false),
         "exercise an independent result destination"
     );
-    assert_success(&retain_calls(&module));
+    // The exit status is the caller's `watch` after both calls, which must
+    // still read the 5 it was initialized with.
+    let output = compile_and_run(&retain_calls(&module));
+    assert_eq!(output.status.code(), Some(5), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
 }
 
 #[test]
@@ -614,28 +617,26 @@ fn choose(left: Row, right: Row, watch: &u64) -> result: Row reads(watch) {
   return move left;
 }
 
-fn relay(held: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
+fn relay(observed_state: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
   let row = Row(value: offered);
   let fresh = Holder(row: move row);
-  return choose(left: move fresh.row, right: move held, watch: watch);
+  return choose(left: move fresh.row, right: move observed_state, watch: watch);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let watch = 29_u64;
   let first_input = Row(value: 29_u64);
   let second_input = Row(value: 31_u64);
-  let first = relay(held: move first_input, watch: &watch, offered: 11_u64);
-  let second = relay(held: move second_input, watch: &watch, offered: 17_u64);
+  let first = relay(observed_state: move first_input, watch: &watch, offered: 11_u64);
+  let second = relay(observed_state: move second_input, watch: &watch, offered: 17_u64);
   if first.value != 11_u64 {
     return std::process::exit_status(code: 1_u8);
   }
   if second.value != 99_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  if watch != 29_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let watch_code = cvt::<u64, u8>(watch);
+  return std::process::exit_status(code: watch_code);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -645,8 +646,12 @@ fn main() -> status: std::process::ExitStatus pure {
         // (compiler/result-registers); the caller's destination cannot alias
         // an input here. The destination-sized form is
         // `destination_results_keep_snapshots_of_inputs_their_caller_aliases`.
-        // Retained calls keep each call boundary observable.
-        assert_success(&retain_calls(&module));
+        // Retained calls keep each call boundary observable. The exit status
+        // is the caller's `watch` after both relays, still 29.
+        let output = compile_and_run(&retain_calls(&module));
+        assert_eq!(output.status.code(), Some(29), "{overlap:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{overlap:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{overlap:?}: {output:?}");
     }
 }
 
@@ -684,28 +689,26 @@ fn choose(left: Row, right: Row, watch: &u64) -> result: Row reads(watch) {
   return move left;
 }
 
-fn relay(held: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
+fn relay(observed_state: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
   let row = Row(value: offered, b: 1_u64, c: 2_u64, d: 3_u64);
   let fresh = Holder(row: move row);
-  return choose(left: move fresh.row, right: move held, watch: watch);
+  return choose(left: move fresh.row, right: move observed_state, watch: watch);
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   let watch = 29_u64;
   let first_input = Row(value: 29_u64, b: 4_u64, c: 5_u64, d: 6_u64);
   let second_input = Row(value: 31_u64, b: 7_u64, c: 8_u64, d: 9_u64);
-  let first = relay(held: move first_input, watch: &watch, offered: 11_u64);
-  let second = relay(held: move second_input, watch: &watch, offered: 17_u64);
+  let first = relay(observed_state: move first_input, watch: &watch, offered: 11_u64);
+  let second = relay(observed_state: move second_input, watch: &watch, offered: 17_u64);
   if first.value != 11_u64 {
     return std::process::exit_status(code: 1_u8);
   }
   if second.value != 99_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  if watch != 29_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let watch_code = cvt::<u64, u8>(watch);
+  return std::process::exit_status(code: watch_code);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -731,14 +734,21 @@ fn main() -> status: std::process::ExitStatus pure {
             pointer(2),
             "{overlap:?}: the result destination is right's backing: {call}"
         );
-        assert_success(&module);
-        assert_success(&retain_calls(&module));
+        // The exit status is the caller's `watch` after both relays, still 29.
+        for program in [module.clone(), retain_calls(&module)] {
+            let output = compile_and_run(&program);
+            assert_eq!(output.status.code(), Some(29), "{overlap:?}: {output:?}");
+            assert!(output.stdout.is_empty(), "{overlap:?}: {output:?}");
+            assert!(output.stderr.is_empty(), "{overlap:?}: {output:?}");
+        }
     }
 }
 
 /// A [SET-1] commit over a zero-extent aggregate field leaves its adjacent
 /// fields alone. The displaced value is released there [WIN-3]; the read-out
-/// that handed it back retired with [SET-2].
+/// that handed it back retired with [SET-2]. The empty field's own `len` is
+/// its type's extent 0 with no storage behind it, so the program no longer
+/// reads it.
 #[test]
 fn zero_sized_aggregate_assignment_preserves_adjacent_fields() {
     let source = br#"struct Envelope {
@@ -752,27 +762,42 @@ fn install_empty(target: &Envelope, value: Array<u64, 0>) -> result: unit writes
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let empty = array_filled::<u64, 0>(value: 0_u64);
   let envelope = Envelope(before: 17_u64, empty: empty, after: 29_u64);
   let replacement = array_filled::<u64, 0>(value: 43_u64);
   install_empty(target: &envelope, value: replacement);
-  if envelope.before != 17_u64 {
-    return std::process::exit_status(code: 1_u8);
+  let report = array_filled::<u8, 2>(value: 255_u8);
+  set report[0_u64] = cvt::<u64, u8>(envelope.before);
+  set report[1_u64] = cvt::<u64, u8>(envelope.after);
+  let report_bytes = &report[0_u64..2_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 1_u8);
+    }
   }
-  if envelope.after != 29_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
-  let size = envelope.empty.len;
-  if size != 0_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
-        assert_success(&retain_calls(&module));
+        // The program writes the adjacent fields `before` and `after` after
+        // the zero-extent commit, one byte each; the harness compares them
+        // with the constructed 17 and 29.
+        let output = compile_and_run(&retain_calls(&module));
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+        assert_eq!(output.stdout, [17_u8, 29], "{overlap:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{overlap:?}: {output:?}");
     }
 }
 
@@ -997,17 +1022,20 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 }
 
-/// [SET-1] resolves and evaluates its target before the right-hand side, so a
-/// call that writes the index binding still commits to the slot the statement
-/// named. Slots and both fixed- and runtime-capacity Arrays share this rule.
+/// [SET-1] evaluates the right-hand side before it resolves the target, so a
+/// call that writes the index binding commits to the slot that binding names
+/// afterwards. Slots and both fixed- and runtime-capacity Arrays share this
+/// rule.
 ///
 /// The two-target half of this case retired with [LIV-2]: `set (a, b) = e, f;`
 /// has no v0.60 production, [SET-1] writes exactly one place, and the
 /// `finish` helper that supplied the second right-hand side went with it.
 #[test]
-fn indexed_targets_are_captured_before_disjoint_rhs_effects() {
+fn indexed_targets_are_located_after_disjoint_rhs_effects() {
     let module = compile(
-        br#"fn advance(offset: &u64, trace: &u64) -> result: u64 writes(offset), writes(trace) {
+        br#"fn advance(offset: &u64, trace: &u64) -> result: u64 writes(offset), writes(trace) contract {
+  ensures offset^ == 1_u64;
+} {
   set offset^ = 1_u64;
   let shifted = trace^ *wrap 10_u64;
   set trace^ = shifted +wrap 1_u64;
@@ -1020,45 +1048,33 @@ fn main() -> status: std::process::ExitStatus pure {
   place_back(window: &left, value: 5_u64);
   let offset = 0_u64;
   let trace = 0_u64;
-  invariant single_target_bound: offset < left.len;
   set left[offset] = advance(offset: &offset, trace: &trace);
-  if left[0_u64] != 41_u64 {
+  if left[0_u64] != 3_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  if left[1_u64] != 5_u64 {
+  if left[1_u64] != 41_u64 {
     return std::process::exit_status(code: 2_u8);
-  }
-  if offset != 1_u64 {
-    return std::process::exit_status(code: 3_u8);
   }
   if trace != 1_u64 {
     return std::process::exit_status(code: 4_u8);
   }
   let fixed = array_filled::<u64, 2>(value: 7_u64);
   set offset = 0_u64;
-  invariant fixed_target_bound: offset < fixed.len;
   set fixed[offset] = advance(offset: &offset, trace: &trace);
-  if fixed[0_u64] != 41_u64 {
+  if fixed[0_u64] != 7_u64 {
     return std::process::exit_status(code: 5_u8);
   }
-  if fixed[1_u64] != 7_u64 {
+  if fixed[1_u64] != 41_u64 {
     return std::process::exit_status(code: 6_u8);
-  }
-  if offset != 1_u64 {
-    return std::process::exit_status(code: 7_u8);
   }
   let runtime = box_array_filled::<u64>(count: 2_u64, value: 11_u64);
   set offset = 0_u64;
-  invariant runtime_target_bound: offset < runtime.inner.len;
   set runtime.inner[offset] = advance(offset: &offset, trace: &trace);
-  if runtime.inner[0_u64] != 41_u64 {
+  if runtime.inner[0_u64] != 11_u64 {
     return std::process::exit_status(code: 8_u8);
   }
-  if runtime.inner[1_u64] != 11_u64 {
+  if runtime.inner[1_u64] != 41_u64 {
     return std::process::exit_status(code: 9_u8);
-  }
-  if offset != 1_u64 {
-    return std::process::exit_status(code: 10_u8);
   }
   if trace != 111_u64 {
     return std::process::exit_status(code: 11_u8);
@@ -1071,21 +1087,23 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_success(&retain_calls(&module));
 }
 
-/// The same capture over an aggregate element: the commit lands in the slot
-/// the statement named, not in the slot the right-hand side's write of the
-/// index binding would name afterwards.
+/// The same order over an aggregate element: the commit lands in the slot the
+/// right-hand side's write of the index binding names afterwards, not in the
+/// slot the binding named when the statement began.
 ///
 /// The displaced row's read-out retired with [SET-2]; [WIN-3] releases the old
 /// element at the commit instead.
 #[test]
-fn an_element_target_is_captured_before_the_rhs_changes_its_index() {
+fn an_element_target_is_located_after_the_rhs_changes_its_index() {
     let module = compile(
         br#"struct Row {
   left: u64;
   right: u64;
 }
 
-fn replacement(offset: &u64) -> result: Row writes(offset) {
+fn replacement(offset: &u64) -> result: Row writes(offset) contract {
+  ensures offset^ == 1_u64;
+} {
   set offset^ = 1_u64;
   return Row(left: 19_u64, right: 23_u64);
 }
@@ -1097,22 +1115,18 @@ fn main() -> status: std::process::ExitStatus pure {
   let second = Row(left: 11_u64, right: 13_u64);
   place_back(window: &rows, value: second);
   let offset = 0_u64;
-  invariant target_bound: offset < rows.len;
   set rows[offset] = replacement(offset: &offset);
-  if rows[0_u64].left != 19_u64 {
+  if rows[0_u64].left != 3_u64 {
     return std::process::exit_status(code: 3_u8);
   }
-  if rows[0_u64].right != 23_u64 {
+  if rows[0_u64].right != 5_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  if rows[1_u64].left != 11_u64 {
+  if rows[1_u64].left != 19_u64 {
     return std::process::exit_status(code: 5_u8);
   }
-  if rows[1_u64].right != 13_u64 {
+  if rows[1_u64].right != 23_u64 {
     return std::process::exit_status(code: 6_u8);
-  }
-  if offset != 1_u64 {
-    return std::process::exit_status(code: 7_u8);
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -1184,14 +1198,17 @@ fn main() -> status: std::process::ExitStatus pure {
   if table.rows[1_u64].right != 201_u64 {
     return std::process::exit_status(code: 8_u8);
   }
-  if table.tag != 41_u64 {
-    return std::process::exit_status(code: 9_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let tag_code = cvt::<u64, u8>(table.tag);
+  return std::process::exit_status(code: tag_code);
 }
 "#,
     );
-    assert_success(&module);
+    // The exit status is `table.tag` after the element swap and the
+    // copy-place exchange beside it, still the constructed 41.
+    let output = compile_and_run(&module);
+    assert_eq!(output.status.code(), Some(41), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
 }
 
 /// OP-11 excludes partial overlap while admitting an exactly equal target.
@@ -1329,15 +1346,19 @@ fn main() -> status: std::process::ExitStatus pure {
   if table.bytes[0_u64] != 23_u8 {
     return std::process::exit_status(code: 5_u8);
   }
-  if table.tag != 29_u64 {
-    return std::process::exit_status(code: 6_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let tag_code = cvt::<u64, u8>(table.tag);
+  return std::process::exit_status(code: tag_code);
 }
 "#,
     );
-    assert_success(&module);
-    assert_success(&retain_calls(&module));
+    // The exit status is `table.tag` as written through the sibling
+    // reference, 29.
+    for program in [module.clone(), retain_calls(&module)] {
+        let output = compile_and_run(&program);
+        assert_eq!(output.status.code(), Some(29), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
 }
 
 #[test]
@@ -1357,8 +1378,8 @@ fn choose(left: Cell, right: Cell, flag: Bool) -> result: u64 pure {
     let second = move right;
     give move second;
   }
-  let held = selected.value.inner;
-  return held;
+  let observed_state = selected.value.inner;
+  return observed_state;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -1495,8 +1516,8 @@ fn hold_triple() -> result: u8 pure {
   let tail = box_new::<u64>(value: 66_u64);
   let triple = Triple(first: move first, selected: move selected, tail: move tail);
   let retained = move triple.selected;
-  let held = retained.inner;
-  if held != 55_u64 {
+  let observed_state = retained.inner;
+  if observed_state != 55_u64 {
     return 1_u8;
   }
   return 0_u8;
@@ -1712,6 +1733,12 @@ void *wf_test_reallocate(void *allocation, uint64_t old_bytes, uint64_t size) {{
 /// checks that the removed owner leaves before A5, the remaining owners leave
 /// in logical order, and the outer cell leaves last. The runtime shape drains
 /// explicitly; a boxed inline shape leaves a wrapped partial window to cleanup.
+/// The checker proves the wrapped ring's length and capacity and the drained
+/// length, so the full program folds them into its exit status, zero when
+/// they are 3, 3 and 0, and the trace keeps standard output. The fixed-shape
+/// variant keeps its two zero tests on the freshly boxed ring: the checker
+/// does not carry the facts about a value's fields through `box_new`, so it
+/// cannot decide them (`wf-box-field-facts`).
 #[test]
 fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
     let source = include_str!("../../../../tests/programs/runtime_ring_wrap.wf");
@@ -1755,6 +1782,10 @@ fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
 /// The arena half of this case retired with [STOR-4]: there is one heap
 /// [STOR-8] and one cell release [STOR-3], so the same helper over a second
 /// store class has no successor to contrast against.
+///
+/// The zero test on the freshly boxed window's length stays: the checker does
+/// not carry the facts about a value's fields through `box_new`, so it cannot
+/// decide it (`wf-box-field-facts`).
 #[test]
 fn boxed_window_bounded_append_preserves_storage_and_elements() {
     let source = br#"struct Checked {
@@ -1950,8 +1981,8 @@ fn main() -> status: std::process::ExitStatus pure {
   if owner.inner.left != 37_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  let held = &owner.inner.right;
-  write(value: held, fresh: 43_u64);
+  let observed_state = &owner.inner.right;
+  write(value: observed_state, fresh: 43_u64);
   if owner.inner.right != 43_u64 {
     return std::process::exit_status(code: 3_u8);
   }
@@ -1986,8 +2017,8 @@ fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<Slots<u64, 2>>(value: move values);
   let size = owner.inner.len;
   if size > 0_u64 {
-    let held = &owner.inner;
-    let observed = first(values: held);
+    let observed_state = &owner.inner;
+    let observed = first(values: observed_state);
     if observed == 29_u64 {
       return std::process::exit_status(code: 0_u8);
     }
@@ -2133,7 +2164,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 
 #[test]
 fn discarded_struct_results_release_nested_cells_once() {
-    for statement in ["make();", "let held = make();"] {
+    for statement in ["make();", "let observed = make();"] {
         let source = format!(
             r#"struct Inner {{
   value: Box<u64>;

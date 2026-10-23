@@ -1140,6 +1140,13 @@ impl<'unit> Checker<'_, 'unit> {
         // call graph by the ordinary effect walk.
         declared_effects.allocates |=
             HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&template.name.as_str());
+        let waits = self.types.declarations.tree.direct_token_with(
+            template.node,
+            crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
+        )?.is_some();
+        let held_parameters = self.form_held_parameters(
+            template.node, &parameters, waits, &declared_effects,
+        )?;
         // [MOD-3] functions of different modules may share a name, so a
         // module other than the root prefixes its path; a source bundle's
         // root-module symbols keep their plain names.
@@ -1164,10 +1171,13 @@ impl<'unit> Checker<'_, 'unit> {
                 .generic_parameters
                 .iter()
                 .all(|parameter| matches!(parameter, GenericParameter::Type { .. }))
-                || !generic_host_abi_type(result_mode, result)
+                || !self.fixed_host_abi_type(result_mode, result)?
                 || parameters
                     .iter()
-                    .any(|parameter| !generic_host_abi_type(parameter.mode, parameter.ty)))
+                    .map(|parameter| self.fixed_host_abi_type(parameter.mode, parameter.ty))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .iter()
+                    .any(|admitted| !admitted))
         {
             return Err(SemanticCompilerFailure::UnsupportedGenericHostAbi.into());
         }
@@ -1208,15 +1218,8 @@ impl<'unit> Checker<'_, 'unit> {
             effects_node: effects,
             declared_effects,
             contract_reads: None,
-            waits: self
-                .types
-                .declarations
-                .tree
-                .direct_token_with(
-                    template.node,
-                    crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
-                )?
-                .is_some(),
+            waits,
+            held_parameters,
             formal_parameter: None,
             substitution,
         })
@@ -1433,11 +1436,25 @@ impl<'unit> Checker<'_, 'unit> {
                 .get(*index)
                 .filter(|checked| checked.function.declaration == *declaration)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            self.types.entailment_rejection_after_range(
-                &checked.function,
-                &ranges[*index].discharged,
-                &ranges[*index].inconclusive,
-            )?;
+            self.types
+                .entailment_rejection_after_range(
+                    &checked.function,
+                    &ranges[*index].discharged,
+                    &ranges[*index].inconclusive,
+                )
+                .map_err(|stop| {
+                    self.types.explain_unavailable_summary(
+                        stop,
+                        &checked.function,
+                        &range_functions,
+                        &super::summary_repairs::SummaryRepairInputs {
+                            callees,
+                            contract_queries: &self.analysis.contract_queries,
+                            binding_names: &checked.binding_names,
+                            judge_conditions: true,
+                        },
+                    )
+                })?;
         }
         if let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
             matches!(
@@ -1851,12 +1868,19 @@ impl<'unit> Checker<'_, 'unit> {
                     }
                     if let GenericBound::Class(required) = bound {
                         let spelling = self.types.declarations.declaration_spelling(declaration)?;
+                        let bound_site = if self.types.declarations.tree.production(node)?
+                            == Production::Call
+                        {
+                            node
+                        } else {
+                            source
+                        };
                         self.types.check_linearity_bound(
                             check_context,
                             &spelling,
                             required,
                             ty,
-                            source,
+                            bound_site,
                         )?;
                     }
                 }
@@ -1928,6 +1952,19 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
+    /// [FN-2] whether `function` is a concrete instance of a declaration
+    /// with type, const or function parameters, whose source judgments were
+    /// made once at its symbolic instance [OP-5].
+    pub(super) fn is_generic_instance(
+        &self,
+        function: &super::super::model::CheckedFunction,
+    ) -> bool {
+        self.templates_by_declaration
+            .get(&function.declaration)
+            .and_then(|index| self.function_templates.get(*index))
+            .is_some_and(|template| !template.generic_parameters.is_empty())
+    }
+
     /// The written integer type of one const `gparam` [MSR-6].
     ///
     /// A const generic is declared by exactly one function or nominal
@@ -2675,7 +2712,7 @@ pub(super) fn summary_entailment(
 /// symbolic instance. Nominal references are pointer slots irrespective of
 /// their fields or type arguments; owned aggregates and generic bare types
 /// need a representation protocol that the host boundary does not yet carry.
-fn generic_host_abi_type(mode: super::super::model::CheckedMode, ty: CheckedType) -> bool {
+pub(super) fn generic_host_abi_type(mode: super::super::model::CheckedMode, ty: CheckedType) -> bool {
     use super::super::model::CheckedMode;
     match mode {
         CheckedMode::Own => matches!(

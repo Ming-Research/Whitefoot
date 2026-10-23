@@ -1,0 +1,23 @@
+{
+  "llvm_version": "22.1.8",
+  "llvm_tag": "llvmorg-22.1.8",
+  "checksum_source": "https://github.com/llvm/llvm-project/releases/expanded_assets/llvmorg-22.1.8",
+  "platforms": {
+    "linux-x86_64": {
+      "asset": "LLVM-22.1.8-Linux-X64.tar.xz",
+      "sha256": "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384"
+    },
+    "macos-arm64": {
+      "asset": "LLVM-22.1.8-macOS-ARM64.tar.xz",
+      "sha256": "f260f4f7c0d430828a81ae8a3826a1d63fc0963ec2459489308cc23b1f7eab4f"
+    }
+  },
+  "windows": {
+    "source": "https://github.com/mstorsjo/llvm-mingw",
+    "tag": "20260616",
+    "asset": "llvm-mingw-20260616-ucrt-x86_64.zip",
+    "sha256": "b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35",
+    "llvm_version": "22.1.8",
+    "checksum_source": "gh release view 20260616 -R mstorsjo/llvm-mingw --json assets"
+  }
+}

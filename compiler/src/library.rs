@@ -43,6 +43,10 @@ pub(crate) const RECORDS: &[(&str, &str)] = &[
         include_str!("../../lib/std/process/module.wfm"),
     ),
     (
+        "std/snapshot/module.wfm",
+        include_str!("../../lib/std/snapshot/module.wfm"),
+    ),
+    (
         "std/collections/vector/module.wfm",
         include_str!("../../lib/std/collections/vector/module.wfm"),
     ),
@@ -103,6 +107,7 @@ pub(crate) const MODULES: &[(&str, &[&str])] = &[
     ("fs", &["io", "text"]),
     ("net", &["io", "time"]),
     ("process", &["io", "text", "fs", "time"]),
+    ("snapshot", &["time"]),
     ("collections::vector", &[]),
     ("collections::deque", &[]),
     ("collections::slab", &[]),
@@ -239,7 +244,9 @@ pub(crate) fn records(
 /// The host modules [PRE-2], by their paths below the standard library: the
 /// modules whose functions have no Whitefoot definition, the build supplying
 /// each from the runtime units.
-pub(crate) const HOST_MODULES: &[&str] = &["time", "io", "text", "fs", "net", "process"];
+pub(crate) const HOST_MODULES: &[&str] = &[
+    "time", "io", "text", "fs", "net", "process", "snapshot",
+];
 
 /// Reports whether a standard library module at `path` is a host module.
 pub(crate) fn is_host_module(path: &[String]) -> bool {
@@ -254,6 +261,7 @@ pub(crate) const SELF_CHANGING_HOST_HANDLES: &[(&str, &str)] = &[
     ("time", "Clock"),
     ("time", "WallClock"),
     ("process", "MemoryMeter"),
+    ("io", "HandleFactory"),
 ];
 
 /// Reports whether the declaration `name` of the host module at `path` is a
@@ -280,6 +288,35 @@ pub(crate) fn record_module(logical: &str) -> Option<(Vec<String>, crate::Source
 #[cfg(test)]
 mod tests {
     use super::{GRAPH, HOST_MODULES, RECORDS, SELF_CHANGING_HOST_HANDLES};
+
+    /// Selecting the snapshot interface also selects time's ordinary owners,
+    /// without pulling unrelated host modules into the source bundle.
+    #[test]
+    fn snapshot_selects_its_declared_time_dependency() {
+        let inputs = [crate::SourceInput::new(
+            "witness.wf",
+            b"alias SnapshotJob = std::snapshot::Job;\n",
+        )];
+        let (records, modules) = super::bundle_part(&inputs).expect("a library selection");
+        assert_eq!(
+            records
+                .iter()
+                .map(crate::SourceInput::display_path)
+                .collect::<Vec<_>>(),
+            [
+                "witness.wf",
+                "std/time/module.wfm",
+                "std/snapshot/module.wfm"
+            ]
+        );
+        let snapshot = modules
+            .iter()
+            .find(|module| module.is_at(crate::Package::Standard, &["snapshot".to_owned()]))
+            .expect("the snapshot module is registered");
+        assert_eq!(snapshot.dependencies().len(), 1);
+        let time = &modules[snapshot.dependencies()[0].index()];
+        assert!(time.is_at(crate::Package::Standard, &["time".to_owned()]));
+    }
 
     fn library_root() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../lib/std")

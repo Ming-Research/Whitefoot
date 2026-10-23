@@ -172,8 +172,8 @@ fn conditional_call_inside_atomic_keeps_ordinary_lowering() {
   return unit;
 }
 
-fn both(held: Shared<u64>, out: &u64, go: Bool) -> result: unit writes(out) waits {
-  atomic state = &held {
+fn both(observed_state: Shared<u64>, out: &u64, go: Bool) -> result: unit writes(out) waits {
+  atomic state = &observed_state {
     if go {
       fill(v: state);
     }
@@ -310,7 +310,7 @@ fn conditional_call_refusals_keep_the_branch_and_name_the_reason() {
         (
             "else if",
             "",
-            "  if go {\n    fill(v: a);\n  } else if go {\n    fill(v: a);\n  }",
+            "  let n = a^.len;\n  if go {\n    fill(v: a);\n  } else if n > 0_u64 {\n    fill(v: a);\n  }",
             None,
         ),
         (
@@ -369,16 +369,16 @@ fn conditional_call_refusals_keep_the_branch_and_name_the_reason() {
 
 #[test]
 fn conditional_call_recursion_keeps_its_offer_and_budget_family() {
-    let source = br#"fn walk(t: &[u64]) -> result: unit writes(t) {
+    let source = br#"fn walk(t: &[u64], go: Bool) -> result: unit writes(t) {
   let n = t^.len;
   if n > 1_u64 {
     let m = n / 2_u64;
     let left = &t^[0_u64..m];
     let right = &t^[m..n];
-    if m > 0_u64 {
-      walk(t: left);
+    if go {
+      walk(t: left, go: go);
     }
-    walk(t: right);
+    walk(t: right, go: go);
     return unit;
   }
   if n == 1_u64 {
@@ -390,7 +390,8 @@ fn conditional_call_recursion_keeps_its_offer_and_budget_family() {
 fn main() -> status: std::process::ExitStatus pure {
   let cells = array_filled::<u64, 4>(value: 0_u64);
   let whole = &cells[0_u64..4_u64];
-  walk(t: whole);
+  let go = True();
+  walk(t: whole, go: go);
   let first = cells[0_u64] +wrap cells[1_u64];
   let second = cells[2_u64] +wrap cells[3_u64];
   let total = first +wrap second;
@@ -581,7 +582,7 @@ fn last_byte(v: u64) -> result: u8 pure {
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "A pure call handed out while a pure call written as an if condition runs.";
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1592,7 +1593,7 @@ fn the_bootstrap_selects_one_world_once() {
 /// refuse an offer and execute its ordinary-call fallback.
 #[test]
 fn windows_parallel_emission_requires_external_runtime_symbols() {
-    let windows = TargetLayout::for_triple("x86_64-pc-windows-msvc")
+    let windows = TargetLayout::for_triple(crate::target::WINDOWS_X86_64_TRIPLE)
         .expect("the supported Windows target must have a system row");
     let module = super::system::with_ir_layout(
         OVERLAPPING_FOLD,
@@ -2211,10 +2212,8 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 4_u8);
   }
   set first.left = 41_u64;
-  if second.left != 33_u64 {
-    return std::process::exit_status(code: 5_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let second_code = cvt::<u64, u8>(second.left);
+  return std::process::exit_status(code: second_code);
 }
 "#;
 
@@ -2244,7 +2243,7 @@ fn owned_pair_results_survive_ordinary_join_and_forced_refusal() {
     assert!(thunk.contains(&format!("store {result} %result, ptr %slot")));
     assert!(main.contains(&format!(" = call {result} @wf_make(i64 ")));
     assert!(main.contains(&format!(" = phi {result} [ ")));
-    run_owned_lane_cases(OWNED_PAIR_RESULTS, &module, 0, 1, 0, 0, 1);
+    run_owned_lane_cases(OWNED_PAIR_RESULTS, &module, 33, 1, 0, 0, 1);
 }
 
 /// Both Empty and a partial window of Box owners cross argument and result
@@ -2614,7 +2613,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_waiting_helper_is_never_handed_out() {
     let source = br#"fn write_byte(inputs: std::process::Inputs) -> result: u64 pure waits {
-  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   std::fs::close_directory(factory: &factory, directory: move cwd);
