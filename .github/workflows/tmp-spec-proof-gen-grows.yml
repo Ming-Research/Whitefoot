@@ -1,0 +1,33 @@
+# Temporary (spec-proof-gen-grows): builds the model up to the walk, then the
+# generator lemmas on their own so their build time shows apart, then the
+# whole package and the conformance comparison. Removed before the full check.
+name: tmp-spec-proof-gen-grows
+
+on:
+  push:
+    branches: [spec-proof-gen-grows]
+
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Lean toolchain
+        working-directory: proof
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$RUNNER_TEMP/elan-init.sh"
+          sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build the model up to the walk
+        working-directory: proof
+        run: perl ../.github/run-check.pl tmp-walk lake build WhitefootProof.Walk
+      - name: Build the generator lemmas
+        working-directory: proof
+        run: perl ../.github/run-check.pl tmp-gen-grows lake build WhitefootProof.GenGrows
+      - name: Build the package and the axiom check
+        working-directory: proof
+        run: perl ../.github/run-check.pl tmp-build lake build
+      - name: Conformance cases in the fragment
+        working-directory: proof
+        run: perl ../.github/run-check.pl tmp-conformance lake exe conformance
