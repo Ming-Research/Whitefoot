@@ -1,6 +1,8 @@
 # Temporary (wf-docs-getting-started): runs the guide reader, guide-steps.py,
-# against a stand-in compiler, and against each doctored input it must refuse.
-# Removed before the full check.
+# against a stand-in compiler, and against each doctored input it must refuse;
+# runs the Linux acceptance on an already built candidate with a guide that
+# forgets a library; and runs the repository's static and design checks, which
+# a draft pull request's gate skips. Removed before the full check.
 name: tmp-guide-steps
 
 on:
@@ -8,7 +10,9 @@ on:
     paths:
       - .github/workflows/tmp-guide-steps.yml
       - .github/toolchain/guide-steps.py
+      - .github/toolchain/check-package.sh
       - docs/guide/getting-started.md
+      - design/**
 
 permissions:
   contents: read
@@ -139,3 +143,92 @@ jobs:
               grep -F "$needle" "$root/verify.txt"
               echo "refused as intended: $needle" ;;
           esac
+
+  static:
+    name: static and design checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+
+      - name: Select the design review base
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
+          git log --oneline -1 "$design_review_base"
+
+      - run: make static
+
+      - run: make design-ready
+
+  missing-library:
+    name: guide lists ${{ matrix.case }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [intact, without-libc-dev, without-libxml2]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The candidate the compiler-release dry run built and qualified at
+      # f274bc63; the acceptance scripts come from this checkout.
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-bundled-candidate
+          path: candidate
+          run-id: 39901641548
+          github-token: ${{ github.token }}
+
+      - name: Run linux-absent with the guide's apt-get line as doctored
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          set -euo pipefail
+          mkdir -p guide out/logs
+          cp docs/guide/getting-started.md guide/
+          case "$CASE" in
+            without-libc-dev)
+              sed -i 's/^sudo apt-get install libc6-dev libgcc-13-dev /sudo apt-get install /' guide/getting-started.md ;;
+            without-libxml2)
+              sed -i 's/^\(sudo apt-get install .*\) libxml2 /\1 /' guide/getting-started.md ;;
+          esac
+          grep -n '^sudo apt-get install' guide/getting-started.md
+          status=0
+          docker run --rm --platform linux/amd64 \
+            --mount "type=bind,src=$PWD/candidate,dst=/input/candidate,readonly" \
+            --mount "type=bind,src=$PWD/tests/package-fixtures,dst=/input/fixtures,readonly" \
+            --mount "type=bind,src=$PWD/.github/toolchain,dst=/input/toolchain,readonly" \
+            --mount "type=bind,src=$PWD/guide,dst=/input/guide,readonly" \
+            --mount "type=bind,src=$PWD/out,dst=/output" \
+            --env MODE=linux-absent ubuntu:24.04 /bin/bash -c '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends python3 strace
+              bash /input/toolchain/check-package.sh \
+                /input/candidate/whitefootc-linux-x86_64-bundled.tar.gz /input/fixtures \
+                /output "$MODE" /input/guide/getting-started.md
+            ' > out/logs/container.txt 2>&1 || status=$?
+          tail -n 25 out/logs/container.txt
+          if [ "$CASE" = intact ]; then
+            test "$status" -eq 0
+          else
+            test "$status" -ne 0
+            grep -E 'guide-steps: guide block 6 \(line [0-9]+\) printed' out/logs/container.txt
+            echo "refused as intended: $CASE"
+          fi
