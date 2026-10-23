@@ -7,6 +7,8 @@
 //! scalars' addresses from the state's, and its operand is the captured
 //! value extended to 64 bits as the scalar is. Bytes no comparison uses are
 //! zero, so two watches of one condition register equal tests.
+//! A full-guard callback uses the separate 24-byte tagged descriptor and a
+//! frame-resident block of captured scalars; it is never bucket-coalesced.
 
 use std::fmt::Write;
 
@@ -32,11 +34,15 @@ pub(super) fn wake_test_name(result: IrValueId) -> String {
 }
 
 /// The entry-block reservation of that storage.
-pub(super) fn wake_test_storage(result: IrValueId) -> String {
+pub(super) fn wake_test_storage(result: IrValueId, callback: bool) -> String {
     format!(
         "  {} = alloca [{} x i8], align 8\n",
         wake_test_name(result),
-        crate::backend::WAKE_TEST_SIZE
+        if callback {
+            24
+        } else {
+            crate::backend::WAKE_TEST_SIZE
+        }
     )
 }
 
@@ -142,6 +148,9 @@ impl FunctionEmitter<'_, '_> {
         let Some(test) = test else {
             return Ok("ptr null".to_owned());
         };
+        if let Some(function) = test.callback {
+            return self.emit_wake_callback(result, test, function);
+        }
         if test.program.is_empty()
             || test.program.len() > WAKE_PROGRAM
             || test.atoms.is_empty()
@@ -215,4 +224,138 @@ impl FunctionEmitter<'_, '_> {
         }
         Ok(format!("ptr {storage}"))
     }
+
+    /// Each capture occupies one eight-byte slot. Its typed store/load keeps
+    /// signedness and Bool representation unchanged; unused bytes are never
+    /// read by the adapter or used to coalesce registrations.
+    fn emit_wake_callback(
+        &mut self,
+        result: IrValueId,
+        test: &IrWakeTest,
+        function: u32,
+    ) -> Result<String, BackendFailure> {
+        let callee = self
+            .program
+            .functions()
+            .get(function as usize)
+            .ok_or(BackendFailure::InvalidIr)?;
+        if !test.atoms.is_empty()
+            || !test.program.is_empty()
+            || callee.result() != IrType::Bool
+            || callee.waits()
+            || callee.parameters().len() != test.values.len()
+            || test.values.is_empty()
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let storage = wake_test_name(result);
+        let captures = format!("{storage}.captures");
+        for (index, (value, (_, expected))) in
+            test.values.iter().zip(callee.parameters()).enumerate()
+        {
+            if self.value_type(*value) != Some(*expected) {
+                return Err(BackendFailure::InvalidIr);
+            }
+            if index == 0 {
+                if !matches!(expected, IrType::Address(_)) {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                continue;
+            }
+            let llvm = self.output.type_name(self.program, *expected)?;
+            if !matches!(llvm.as_str(), "i1" | "i8" | "i16" | "i32" | "i64") {
+                return Err(BackendFailure::InvalidIr);
+            }
+            self.wake_store(
+                &captures,
+                (index as u64 - 1) * 8,
+                &format!("{llvm} {}", self.value_name(*value)),
+                8,
+            )?;
+        }
+        let adapter = callback_symbol(callee.name());
+        self.output.symbol(adapter.clone());
+        self.wake_store(&storage, 0, &byte_array(&[255, 0, 0, 0, 0, 0, 0, 0]), 8)?;
+        self.wake_store(&storage, 8, &format!("ptr @{adapter}"), 8)?;
+        self.wake_store(&storage, 16, &format!("ptr {captures}"), 8)?;
+        Ok(format!("ptr {storage}"))
+    }
+}
+
+fn callback_symbol(name: &str) -> String {
+    format!("{}.wake_filter", source_symbol(name))
+}
+
+/// The C runtime returns an int, whereas source Bool returns an i1. Keep the
+/// adapter and its references in the normal emission graph so fragment
+/// linkage sees both the address stored by the waiter and the thunk it calls.
+pub(super) fn callbacks(
+    program: &IrProgram,
+    sequential: &HashSet<u32>,
+) -> Result<Module, BackendFailure> {
+    let callbacks = program
+        .functions()
+        .iter()
+        .flat_map(|function| function.blocks())
+        .flat_map(|block| block.instructions())
+        .filter_map(|instruction| match instruction {
+            IrInstruction::Define {
+                operation:
+                    IrOperation::SharedWatch {
+                        test: Some(test), ..
+                    }
+                    | IrOperation::WatchObject {
+                        test: Some(test), ..
+                    },
+                ..
+            } => test.callback,
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let mut module = Module::default();
+    for ordinal in callbacks {
+        let function = program
+            .functions()
+            .get(ordinal as usize)
+            .ok_or(BackendFailure::InvalidIr)?;
+        if function.waits() || function.result() != IrType::Bool {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let mut body = FunctionBody::default();
+        body.open_block("entry".to_owned());
+        let mut arguments = vec!["ptr %state".to_owned()];
+        for (index, (_, ty)) in function.parameters().iter().enumerate().skip(1) {
+            let llvm = body.type_name(program, *ty)?;
+            if !matches!(llvm.as_str(), "i1" | "i8" | "i16" | "i32" | "i64") {
+                return Err(BackendFailure::InvalidIr);
+            }
+            writeln!(
+                body,
+                "  %capture.at.{index} = getelementptr inbounds i8, ptr %captures, i64 {}\n  %capture.{index} = load {llvm}, ptr %capture.at.{index}, align 8",
+                (index - 1) * 8
+            )?;
+            arguments.push(format!("{llvm} %capture.{index}"));
+        }
+        // An otherwise eligible source helper may have optional overlap
+        // lowering. Its sequential closure removes all scheduler entry.
+        let callee = if sequential.contains(&ordinal) {
+            sequential_clone_symbol(function.name())
+        } else {
+            source_symbol(function.name())
+        };
+        body.symbol(callee.clone());
+        writeln!(
+            body,
+            "  %ready = call i1 @{callee}({})\n  %result = zext i1 %ready to i32\n  ret i32 %result",
+            arguments.join(", ")
+        )?;
+        let signature = Signature::new(
+            callback_symbol(function.name()),
+            "i32",
+            vec![Parameter::named("ptr", "%state"), Parameter::named("ptr", "%captures")],
+        );
+        module.define(signature.define(body, "")?);
+        module.text("\n");
+    }
+    Ok(module)
 }
