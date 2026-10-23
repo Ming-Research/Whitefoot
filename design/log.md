@@ -10,6 +10,12 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: language/checks-and-proofs/requires-entry-contract
 
 Summary: The changed decision substitutes a define into every clause before that clause's range terms are checked, so the range-term restriction holds independently of abbreviation spelling (a linear index admitted, a product of two parameters refused, in requires and ensures alike), instead of refusing a range term because it uses a define name.
+## 2026-10-22 A layout rejection lists every differing gap of its source in its repair
+
+Nodes: compiler/diagnostic-repairs, compiler/formatting-command
+
+Summary: A FORM-2 rejection reported one differing gap per compile, so a writer fixing a file with several layout faults spent a round on each; in a writer trial three of fifteen programs spent four to five rounds that way. The rejection still reports only the first gap, as the specification fixes for the canonical stage, and its repair now lists every differing gap of the rejected source, the first twenty with the line, the terminals around the gap and the bytes to write instead of the bytes found, and the count of the rest. The list comes from a walk over the rejected source's terminals that compares each gap with the one canonical-gap function the renderer emits from, so it cannot disagree with rendering; the walk has a work ceiling of its own, and reaching it leaves the rejection without a list. The formatting request's reason is restated: a writer without it applies the listed changes by hand.
+
 ## 2026-10-22 The specification carries no version and an amendment adds no archive
 
 Nodes: compiler/build-inputs
