@@ -141,6 +141,50 @@ jobs:
           fi
           grep -E 'driver-service-test:[0-9]+: ' "$RUNNER_TEMP/mutant.log"
 
+  # Diagnostic: run one deadlock-report program on one driver and, when it does
+  # not stop by itself, print every thread's backtrace. Removed with the file.
+  hang:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          sudo apt-get install -y gdb
+      - name: Build the compiler and a deadlocking program
+        run: |
+          perl .github/run-check.pl tmp-hang-build cargo build --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --bin whitefootc || \
+            (cargo fetch --locked --manifest-path compiler/Cargo.toml && \
+             perl .github/run-check.pl tmp-hang-build cargo build --manifest-path compiler/Cargo.toml \
+               --profile gate --locked --bin whitefootc)
+          compiler/target/gate/whitefootc tests/programs/deadlock_loop_join.wf -o "$RUNNER_TEMP/loop_join" --par
+      - name: Run it and look at the threads if it hangs
+        run: |
+          for drivers in 1 4; do
+            echo "== WF_DRIVERS=$drivers"
+            WF_DRIVERS=$drivers "$RUNNER_TEMP/loop_join" > "$RUNNER_TEMP/out.txt" 2> "$RUNNER_TEMP/err.txt" &
+            pid=$!
+            for i in $(seq 1 15); do
+              if ! kill -0 "$pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+              echo "::warning::still running after 15 s, WF_DRIVERS=$drivers"
+              sudo gdb -p "$pid" -batch -ex 'thread apply all bt' 2>&1 | tail -120
+              kill -9 "$pid" || true
+            fi
+            wait "$pid" || echo "exit status $?"
+            echo "-- stdout"; cat "$RUNNER_TEMP/out.txt"
+            echo "-- stderr"; cat "$RUNNER_TEMP/err.txt"
+          done
+
   static:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

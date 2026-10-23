@@ -221,6 +221,9 @@ static void fair_yield_boundaries(void) {
     fixture_begin();
     service_frame frame = {0};
     wf_context peer = {.driver = &wf_driver_root};
+    /* The token a resumed invocation carries is global to the thread; leave
+     * it as later cases expect it. */
+    uint64_t outside_before = wf_context_outside;
     wf_context_outside = WF_DRIVER_EPOCH_STEP | WF_DRIVER_OUTSIDE;
     atomic_store(&wf_driver_root.service_token, wf_context_outside);
     wf_context_current = &wf_context_root;
@@ -279,6 +282,7 @@ static void fair_yield_boundaries(void) {
     atomic_store(&wf_driver_root.host_waits, 0u);
     atomic_store(&wf_driver_root.ingress_count, 0u);
     wf_context_parked_away = WF_SUSPEND_NONE;
+    wf_context_outside = outside_before;
     fixture_end();
 }
 
