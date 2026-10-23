@@ -3,11 +3,14 @@
 # conformance case's verdict with each failing case listed, the documentation
 # examples main's check reads through the branch's compiler, and the
 # programs main's merges brought in: the HashMap's container and snapshot
-# programs, the window clear program and the contexts taking turns with a
-# parked file), the trial compile of the downstream programs with the
-# branch's compiler and main's at the merge of its surviving window
-# references, and the repository-level static checks and the change-log check
-# against the branch's fork point. Removed before the branch is ready.
+# programs, the window clear program, the contexts taking turns with a
+# parked file, the context, traversal, host path and file replacement
+# programs), the trial compile of the downstream programs with the branch's
+# compiler and main's at the merge of its enum route demand, the probes of
+# the instances a call's return and its received results establish, each
+# checked with main's compiler, the branch's before that fix and the
+# branch's head, and the repository-level static checks and the change-log
+# check against the branch's fork point. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -71,7 +74,9 @@ jobs:
           perl .github/run-check.pl sealed-main-programs cargo test --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --test corpus -- \
             programs::containers:: programs::snapshot_export:: \
-            programs::parallel::contexts_take_turns_appending_to_one_parked_file --nocapture
+            programs::parallel::contexts_take_turns_appending_to_one_parked_file \
+            programs::contexts:: programs::traversal:: programs::host_paths:: \
+            programs::wfgrep_hosts:: conformance::file_replacement:: --nocapture
   # The repository-level static checks the gate's static group runs, which
   # a draft skips: the specification's archive, prose and references, and
   # the design tree's form against the branch's fork point, which prints the
@@ -133,7 +138,7 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Build the branch's compiler and the base's
         run: |
-          git fetch --depth=1 origin 9825e7e7c417d9091ac2866283a57f4fc81fb656
+          git fetch --depth=1 origin c79d523bbe10789c796e5d19c53e5c69275e635c
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
           if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
             # A decided condition counts as discharged in both compilers,
@@ -272,3 +277,284 @@ jobs:
             cat "$work"/logs/*."$side".tasks | sed -n 's/.* \[\([^]]*\)\] .*/\1/p' | sort | uniq -c \
               | sed "s/^/$side tasks by rule: /"
           done
+
+  # The probes the review asked for: each program below checked with main's
+  # compiler at the merge base, the branch's before the instances at a call's
+  # written referents and received results, and the branch's head, printing
+  # each verdict with its first error and the opening of each rejection. Each
+  # probe shares the stack struct, a helper that takes and replaces its last
+  # value through a reference, and a constructor; the name says what follows.
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [main, before-fix, head]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the compiler
+        run: |
+          tree="$GITHUB_WORKSPACE"
+          case "${{ matrix.compiler }}" in
+            main) revision=c79d523bbe10789c796e5d19c53e5c69275e635c ;;
+            before-fix) revision=99059f0c61f4cd8c7864a74bbe80568b22d0fd19 ;;
+            *) revision= ;;
+          esac
+          if [ -n "$revision" ]; then
+            git fetch --depth=1 origin "$revision"
+            git worktree add "$RUNNER_TEMP/compiler" FETCH_HEAD
+            tree="$RUNNER_TEMP/compiler"
+          fi
+          git -C "$tree" log -1 --format='compiler %H'
+          cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+          perl .github/run-check.pl probe-build cargo build \
+            --manifest-path "$tree/compiler/Cargo.toml" \
+            --profile gate --locked --offline --bin whitefootc
+          echo "WHITEFOOTC=$tree/compiler/target/gate/whitefootc" >> "$GITHUB_ENV"
+      - name: Check each probe
+        run: |
+          mkdir -p "$RUNNER_TEMP/probes"
+          cd "$RUNNER_TEMP/probes"
+          cat > stack.wf <<'EOF'
+          struct Stack {
+            slots: Slots<u64, 8>;
+            invariant nonempty(stack): stack.slots.len >= 1_u64;
+          }
+
+          fn replace_last(stack: &Stack, value: u64) -> result: unit writes(stack.slots.last), writes(stack.slots.next), writes(stack.slots.len) {
+            let old = take_back(window: &stack^.slots);
+            place_back(window: &stack^.slots, value: value);
+            return unit;
+          }
+
+          fn fresh(first: u64) -> made: Stack pure {
+            let slots = slots_new::<u64, 8>();
+            place_back(window: &slots, value: first);
+            let stack = Stack(slots: move slots);
+            return move stack;
+          }
+
+          EOF
+          probe() {
+            cat stack.wf - > "$1.wf"
+            if "$WHITEFOOTC" --check "$1.wf" > "$1.log" 2>&1; then
+              verdict=accept
+            else
+              verdict="reject: $(grep -m1 -E 'error\[' "$1.log" || head -1 "$1.log")"
+              { echo "::group::$1"; head -30 "$1.log"; echo "::endgroup::"; } >> rejections.txt
+            fi
+            printf '%-44s %s\n' "$1" "$verdict" >> verdicts.txt
+          }
+          probe p01-window-reference-after-written-call <<'EOF'
+          fn probe(stack: &Stack) -> result: u64 writes(stack) {
+            let first = &stack^.slots[0_u64];
+            replace_last(stack: stack, value: 7_u64);
+            return first^;
+          }
+          EOF
+          probe p02-requirement-after-written-call <<'EOF'
+          fn first_slot(window: &Slots<u64, 8>) -> result: u64 reads(window) contract {
+            requires window^.len > 0_u64;
+          } {
+            let got = window^[0_u64];
+            return got;
+          }
+
+          fn probe(stack: &Stack) -> result: u64 writes(stack) {
+            replace_last(stack: stack, value: 7_u64);
+            let got = first_slot(window: &stack^.slots);
+            return got;
+          }
+          EOF
+          probe p03-index-after-written-call <<'EOF'
+          fn probe(stack: &Stack) -> result: u64 writes(stack) {
+            replace_last(stack: stack, value: 9_u64);
+            let got = stack^.slots[0_u64];
+            return got;
+          }
+          EOF
+          probe p04-control-length-read-then-index <<'EOF'
+          fn probe(stack: &Stack) -> result: u64 writes(stack) {
+            replace_last(stack: stack, value: 9_u64);
+            let n = stack^.slots.len;
+            let got = stack^.slots[0_u64];
+            return got;
+          }
+          EOF
+          probe p05-control-index-at-entry <<'EOF'
+          fn probe(stack: &Stack) -> result: u64 reads(stack) {
+            let got = stack^.slots[0_u64];
+            return got;
+          }
+          EOF
+          probe p06-let-result-then-index <<'EOF'
+          fn probe() -> result: u64 pure {
+            let stack = fresh(first: 3_u64);
+            let got = stack.slots[0_u64];
+            return got;
+          }
+          EOF
+          probe p07-set-result-then-index <<'EOF'
+          fn probe(stack: &Stack) -> result: u64 writes(stack) {
+            set stack^ = fresh(first: 5_u64);
+            let got = stack^.slots[0_u64];
+            return got;
+          }
+          EOF
+          probe p08-destructured-result-then-index <<'EOF'
+          fn split(first: u64) -> (stack: Stack, extra: u64) pure {
+            let made = fresh(first: first);
+            return move made, 1_u64;
+          }
+
+          fn probe() -> result: u64 pure {
+            let (stack, extra) = split(first: 4_u64);
+            let got = stack.slots[0_u64];
+            let sum = got +wrap extra;
+            return sum;
+          }
+          EOF
+          probe p09-option-parameter-match-then-index <<'EOF'
+          fn probe(maybe: Option<Stack>) -> result: u64 pure {
+            match move maybe {
+              Some(value: stack) => {
+                let got = stack.slots[0_u64];
+                return got;
+              }
+              None() => {
+                return 0_u64;
+              }
+            }
+          }
+          EOF
+          probe p10-option-result-match-then-index <<'EOF'
+          fn maybe_fresh(first: u64) -> made: Option<Stack> pure {
+            let stack = fresh(first: first);
+            return Some<Stack>(value: move stack);
+          }
+
+          fn probe() -> result: u64 pure {
+            let maybe = maybe_fresh(first: 3_u64);
+            match move maybe {
+              Some(value: stack) => {
+                let got = stack.slots[0_u64];
+                return got;
+              }
+              None() => {
+                return 0_u64;
+              }
+            }
+          }
+          EOF
+          probe p11-propagated-result-then-index <<'EOF'
+          fn fallible(first: u64) -> made: Result<Stack, u32> pure {
+            let stack = fresh(first: first);
+            return Ok<Stack, u32>(value: move stack);
+          }
+
+          fn probe() -> result: Result<u64, u32> pure {
+            let stack = propagate fallible(first: 3_u64);
+            let got = stack.slots[0_u64];
+            return Ok<u64, u32>(value: got);
+          }
+          EOF
+          probe p12-construction-then-index <<'EOF'
+          fn probe() -> result: u64 pure {
+            let slots = slots_new::<u64, 8>();
+            place_back(window: &slots, value: 3_u64);
+            let stack = Stack(slots: move slots);
+            let got = stack.slots[0_u64];
+            return got;
+          }
+          EOF
+          probe p13-field-referent-window-after-call <<'EOF'
+          struct Deep {
+            stack: Stack;
+            invariant two(deep): deep.stack.slots.len >= 2_u64;
+          }
+
+          fn probe(deep: Deep) -> result: u64 pure {
+            let first = &deep.stack.slots[0_u64];
+            replace_last(stack: &deep.stack, value: 7_u64);
+            return first^;
+          }
+          EOF
+          probe p14-ancestor-window-after-call-rejects <<'EOF'
+          struct Deep {
+            stack: Stack;
+            invariant two(deep): deep.stack.slots.len >= 2_u64;
+          }
+
+          fn probe(deep: Deep) -> result: u64 pure {
+            let second = &deep.stack.slots[1_u64];
+            replace_last(stack: &deep.stack, value: 7_u64);
+            return second^;
+          }
+          EOF
+          probe p15-nested-written-call-then-index <<'EOF'
+          fn touch(stack: &Stack) -> result: u64 writes(stack.slots.last), writes(stack.slots.next), writes(stack.slots.len) {
+            let old = take_back(window: &stack^.slots);
+            place_back(window: &stack^.slots, value: 1_u64);
+            return old;
+          }
+
+          fn add_one(value: u64) -> result: u64 pure {
+            let next = value +wrap 1_u64;
+            return next;
+          }
+
+          fn probe(stack: &Stack) -> result: u64 writes(stack) {
+            let sum = add_one(value: touch(stack: stack));
+            let got = stack^.slots[0_u64];
+            let total = got +wrap sum;
+            return total;
+          }
+          EOF
+          probe p16-reference-match-then-index <<'EOF'
+          fn probe(maybe: &Option<Stack>) -> result: u64 reads(maybe) {
+            match &maybe^ {
+              Some(value: stack) => {
+                let got = stack^.slots[0_u64];
+                return got;
+              }
+              None() => {
+                return 0_u64;
+              }
+            }
+          }
+          EOF
+          probe p17-written-payload-referent-then-index <<'EOF'
+          fn probe(maybe: &Option<Stack>) -> result: u64 writes(maybe) {
+            match &maybe^ {
+              Some(value: stack) => {
+                replace_last(stack: stack, value: 2_u64);
+                let got = stack^.slots[0_u64];
+                return got;
+              }
+              None() => {
+                return 0_u64;
+              }
+            }
+          }
+          EOF
+          probe p18-written-element-referent-then-index <<'EOF'
+          fn probe(stacks: &Array<Stack, 4>, i: u64) -> result: u64 writes(stacks) contract {
+            requires i < 4_u64;
+          } {
+            replace_last(stack: &stacks^[i], value: 2_u64);
+            let got = stacks^[i].slots[0_u64];
+            return got;
+          }
+          EOF
+          echo "compiler ${{ matrix.compiler }}:"
+          cat verdicts.txt
+          cat rejections.txt 2>/dev/null || true
