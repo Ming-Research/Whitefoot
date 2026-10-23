@@ -139,8 +139,8 @@ pub(in crate::semantic::check) struct MutationTarget {
     /// [REF-1, OWN-7].
     pub(in crate::semantic::check) place: ResolvedPlaceSet,
     /// The reference binding the target is reached through, when it is
-    /// `p^` or a path below one [SET-1]. Its [REF-2] validity is
-    /// rechecked after the right-hand side.
+    /// `p^` or a path below one [SET-1]. Its [REF-2] validity is judged
+    /// at target evaluation, after the right-hand side.
     pub(in crate::semantic::check) through_reference: Option<DeclarationId>,
     /// Whether the target uses the element-position judgment [MSR-2].
     pub(in crate::semantic::check) element: bool,
@@ -154,12 +154,12 @@ pub(in crate::semantic::check) struct MutationTarget {
 }
 
 impl Checker<'_, '_> {
-    /// Re-establish writability at the commit [SET-1, LIV-1].
+    /// Establish writability at the commit [SET-1, LIV-1].
     ///
     /// The loan state this re-read v0.59 is gone with the loans. What [SET-1]
-    /// still rechecks after the right-hand side is the one fact the
-    /// right-hand side can destroy: a target reached through a reference
-    /// needs that reference still valid at the commit [REF-2].
+    /// judges at target evaluation, after the right-hand side, is that a
+    /// target reached through a reference is reached through a reference
+    /// still valid there [REF-2].
     pub(super) fn revalidate_mutation_access(
         &mut self,
         through_reference: Option<DeclarationId>,
