@@ -1,0 +1,32 @@
+# Temporary (wf-gate-budget-noise): removed before the branch is ready.
+# The concurrency group of sanitizers.yml after the change, with this branch
+# standing in for main: two pushes in a row, both run to the end. A second job
+# runs the repository invariants on the changed workflow files.
+name: tmp-concurrency-new
+
+on:
+  push:
+    branches: [wf-gate-main-concurrency]
+
+concurrency:
+  group: tmp-new-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/wf-gate-main-concurrency' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: true
+
+jobs:
+  hold:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: sleep 100
+
+  invariants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Repository invariants
+        run: perl .github/run-check.pl repository-invariants make repository-invariants
