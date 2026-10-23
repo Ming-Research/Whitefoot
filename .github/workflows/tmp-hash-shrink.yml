@@ -1,0 +1,151 @@
+# Temporary (board item wf-need-firn-hash-shrink); remove before the branch is ready.
+# Focused checks of the HashMap shrink: the container, snapshot and heap
+# alignment tests that use the map, the design tree's lint and readiness, and
+# runs that watch each new or changed hash-map test fail on a broken library:
+# the merge base's library, which never shrinks, and for the scan-shrink test
+# also a scan that treats its cursor as a bucket index.
+name: tmp-hash-shrink
+
+on:
+  push:
+    branches: [claude/hash-shrink]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: tmp-hash-shrink-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  WHITEFOOT_CHECK_TIMEOUT: 1800
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    name: focused tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo sysctl -w kernel.core_pattern=core
+          rustup default stable
+          grep -m 1 'model name' /proc/cpuinfo
+      - name: Build the test targets
+        run: |
+          perl .github/run-check.pl ths-fetch cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl ths-build cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run
+      - name: Container programs
+        run: perl .github/run-check.pl ths-containers cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus -- programs::containers
+      - name: Snapshot export and canonical corpus
+        if: ${{ !cancelled() }}
+        run: perl .github/run-check.pl ths-corpus cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus -- programs::snapshot_export canonical_corpus
+      - name: Heap alignment of a stored map
+        if: ${{ !cancelled() }}
+        run: perl .github/run-check.pl ths-heap cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib heap_alignment
+
+  watch-fail:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    name: tests fail on a broken library
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the merge base's library and this commit's
+        run: bash research/experiments/hash-map-compare/arms.sh "$GITHUB_SHA" "" "$RUNNER_TEMP/out"
+      - name: Build a scan that reads its cursor as a bucket index
+        run: |
+          arm="$RUNNER_TEMP/out/arms/mutant"
+          git worktree add --detach "$arm" "$GITHUB_SHA"
+          python3 - "$arm/lib/std/collections/hash_map/hash-map.wf" <<'EOF'
+          import sys
+          path = sys.argv[1]
+          text = open(path).read()
+          for old, new in [("let start = ishr.wrap(cursor, shift);", "let start = cursor;"),
+                           ("return ishl.wrap(end, shift);", "return end;")]:
+              assert text.count(old) == 1, old
+              text = text.replace(old, new)
+          open(path, "w").write(text)
+          EOF
+          git -C "$arm" diff --stat
+          make -C "$arm/compiler" build
+      - name: Run each test alone under each library
+        run: |
+          out="$RUNNER_TEMP/out"
+          python3 - "$out" <<'EOF'
+          import os, subprocess, sys
+          out = sys.argv[1]
+          source = open("tests/programs/containers/hash-map-program.wf").read()
+          head = source[:source.index("fn main() -> status: ExitStatus pure {")]
+          compilers = {arm: f"{out}/arms/{arm}/compiler/target/gate/whitefootc" for arm in ("base", "candidate", "mutant")}
+          # Each test with the arms that must fail it; every test must pass on the candidate.
+          cases = {
+              "hash_map_test_growth": ["base"],
+              "hash_map_test_shrink_million": ["base"],
+              "hash_map_test_shrink_oscillation": ["base"],
+              "hash_map_test_shrink_empty_reuse": ["base"],
+              "hash_map_test_shrink_regrow": ["base"],
+              "hash_map_test_owned_shrink": ["base"],
+              "hash_map_test_scan_shrink": ["base", "mutant"],
+              "hash_map_test_scan": ["mutant"],
+          }
+          wrong = 0
+          for name, failing in cases.items():
+              program = f"{out}/{name}.wf"
+              with open(program, "w") as f:
+                  f.write(head + "fn main() -> status: ExitStatus pure {\n"
+                          f"  let failures = {name}();\n"
+                          "  if failures != 0_u64 {\n    return exit_status(code: 1_u8);\n  }\n"
+                          "  return exit_status(code: 0_u8);\n}\n")
+              for arm in ["candidate"] + failing:
+                  image = f"{out}/{name}-{arm}"
+                  subprocess.run([compilers[arm], program, "-o", image], check=True)
+                  status = subprocess.run([image]).returncode
+                  expected = 0 if arm == "candidate" else 1
+                  verdict = "as expected" if status == expected else "WRONG"
+                  wrong += status != expected
+                  print(f"{name} {arm}: exit {status}, expected {expected}, {verdict}", flush=True)
+          sys.exit(1 if wrong else 0)
+          EOF
+
+  design-tree:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    name: design tree lint
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+      - name: Tree lint and readiness against the merge base with main
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          git log --oneline -1 "$base"
+          perl .github/run-check.pl ths-design-lint make design-lint DESIGN_REVIEW_BASE="$base"
+          perl .github/run-check.pl ths-design-ready make design-ready DESIGN_REVIEW_BASE="$base"
