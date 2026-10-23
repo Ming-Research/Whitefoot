@@ -1257,7 +1257,8 @@ static void callback_w_step(test_frame *f) {
         return;
     }
     callback_parks += 1u;
-    if (!wf__shared_watch(callback_object, 1u, f, &frame->filter))
+    if (!wf__shared_watch(callback_object, 1u, f, &frame->filter,
+                          "waits for a native shared-object guard"))
         fail("a callback watch without a write did not park (id, parks)", id, callback_parks);
 }
 
@@ -2119,7 +2120,7 @@ static void root_step(test_frame *f) {
         }
         root_phase = 16;
         callback_phase_begin(f);
-        if (wf__context_join_wait(f->group, f)) return;
+        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 16) {
         callback_phase_end();

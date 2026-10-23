@@ -183,10 +183,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
     let llvm = compile(source);
     let main = emitted_function(&llvm, "main");
     let watch = call_line(main, "wf__shared_watch");
-    let (_, test) = watch
-        .rsplit_once(", ptr ")
-        .expect("test is the last watch argument");
-    let test = test.trim_end_matches(')');
+    let test = watch_test(&llvm, watch);
     assert!(test.starts_with("%wf.wake.v"), "{watch}");
     assert!(
         main.contains(&format!("{test} = alloca [24 x i8], align 8")),
