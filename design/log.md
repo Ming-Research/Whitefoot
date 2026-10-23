@@ -10,6 +10,11 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/checker-facts
 
 Summary: Per-branch ensures for own enums established route states wherever evidence arose, so programs writing no such ensures paid for snapshots, closures and joins of states nothing read; constructing one variant stored a context for every field of the other variants, and the Halo VM test host's check grew from about 2 s to about 630 s. The checker now collects, alongside binding types, which values a later match, error propagation, routed ensures or nested routed requirement reads, and omits conditional-state computations with no reachable reader; a read value keeps every version and every source through copies, assignments and `give`, and a routed call still establishes the root that diagnostics require. Establishing states at every evidence site regardless of readers is rejected because the omitted work feeds no proof and no required diagnostic root. Interleaved hosted-runner timings, recorded in the "Validation and outstanding evidence" section of research/investigations/enum-route-check-cost/DESIGN.md: Halo VM module 1.025x and Firn 0.978x against the revision before per-branch ensures, Halo VM test host 1.005x against wf-d837678c6905.
+## 2026-10-23 The Linux and macOS packages are qualified by the getting started guide's own commands
+
+Nodes: compiler/downstream-releases
+
+Summary: A decision is added: the acceptance of a bundled release installs the Linux and macOS archives with the commands of their section of the getting started guide and builds and runs the guide's programs with the installed compiler, as the Windows decision already does for the Windows archive, instead of extracting the archive by the acceptance's own command. Only the download (replaced by a copy of the candidate) and, on macOS, `xcode-select --install` (the hosted image already holds the Command Line Tools) differ from what a reader runs. The guide's `apt-get` line becomes the only source of the Linux libraries the toolchain links against that the stock image does not already hold, so a library the guide forgets to list is missing in the clean container, except `libstdc++6`, `zlib1g` and `liblzma5`, which the stock image holds before the line runs.
 
 ## 2026-10-13 A window reference survives a call when its formation bounds are re-proved after it
 
