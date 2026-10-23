@@ -1825,6 +1825,51 @@ int64_t wf__windows_completion_file_write_worker(
     return (int64_t)written;
 }
 
+size_t wf__windows_wtf8_write(
+    const unsigned char *native,
+    size_t units,
+    unsigned char *destination
+) {
+    size_t index = 0;
+    size_t written = 0;
+    while (index < units) {
+        uint32_t scalar = (uint32_t)native[2 * index]
+            | ((uint32_t)native[2 * index + 1] << 8);
+        size_t length;
+        index += 1;
+        if (scalar >= 0xd800u && scalar <= 0xdbffu && index < units) {
+            uint32_t low = (uint32_t)native[2 * index]
+                | ((uint32_t)native[2 * index + 1] << 8);
+            if (low >= 0xdc00u && low <= 0xdfffu) {
+                scalar = 0x10000u + ((scalar - 0xd800u) << 10) + (low - 0xdc00u);
+                index += 1;
+            }
+        }
+        length = scalar < 0x80u ? 1u : scalar < 0x800u ? 2u
+            : scalar < 0x10000u ? 3u : 4u;
+        if (destination != NULL) {
+            unsigned char *out = destination + written;
+            if (length == 1u) {
+                out[0] = (unsigned char)scalar;
+            } else if (length == 2u) {
+                out[0] = (unsigned char)(0xc0u | (scalar >> 6));
+                out[1] = (unsigned char)(0x80u | (scalar & 0x3fu));
+            } else if (length == 3u) {
+                out[0] = (unsigned char)(0xe0u | (scalar >> 12));
+                out[1] = (unsigned char)(0x80u | ((scalar >> 6) & 0x3fu));
+                out[2] = (unsigned char)(0x80u | (scalar & 0x3fu));
+            } else {
+                out[0] = (unsigned char)(0xf0u | (scalar >> 18));
+                out[1] = (unsigned char)(0x80u | ((scalar >> 12) & 0x3fu));
+                out[2] = (unsigned char)(0x80u | ((scalar >> 6) & 0x3fu));
+                out[3] = (unsigned char)(0x80u | (scalar & 0x3fu));
+            }
+        }
+        written += length;
+    }
+    return written;
+}
+
 static int wf_windows_directory_record_valid(
     const unsigned char *record_bytes,
     size_t remaining,
@@ -1868,7 +1913,9 @@ static int wf_windows_directory_record_valid(
             return 0;
         }
     }
-    *raw_extent = WF_WINDOWS_DIRECTORY_RAW_HEADER + name_bytes;
+    *raw_extent = WF_WINDOWS_DIRECTORY_RAW_HEADER + wf__windows_wtf8_write(
+        record_bytes + WF_WINDOWS_DIRECTORY_NATIVE_HEADER, name_bytes / 2, NULL
+    );
     return *raw_extent <= (size_t)USHRT_MAX;
 }
 
@@ -1910,8 +1957,7 @@ static int64_t wf_windows_directory_batch_worker(
     if (count == 0) {
         return 0;
     }
-    if (count < WF_WINDOWS_DIRECTORY_NATIVE_HEADER
-            + WF_WINDOWS_COMPONENT_MAX_BYTES
+    if (count < WF_WINDOWS_DIRECTORY_RAW_HEADER + WF_WINDOWS_NAME_MAX_BYTES
         || count > (uint64_t)INT64_MAX) {
         wf_windows_record_error(
             count > (uint64_t)INT64_MAX
@@ -1927,9 +1973,25 @@ static int64_t wf_windows_directory_batch_worker(
         );
         return -1;
     }
-    query_capacity = count < WF_WINDOWS_DIRECTORY_SCRATCH_BYTES
-        ? (ULONG)count
-        : (ULONG)WF_WINDOWS_DIRECTORY_SCRATCH_BYTES;
+    /* A record's WTF-8 name can be longer than its UTF-16 one, so the query
+     * asks for at most what fits once rewritten: a native record of n name
+     * bytes takes at least 64 + n bytes and its raw record at most
+     * 5 + 3n/2, a ratio largest at the longest name. A count of at least one
+     * longest raw record leaves room for one longest native record. */
+    {
+        uint64_t fitting = count
+            / (WF_WINDOWS_DIRECTORY_RAW_HEADER + WF_WINDOWS_NAME_MAX_BYTES)
+            * (WF_WINDOWS_DIRECTORY_NATIVE_HEADER
+               + WF_WINDOWS_COMPONENT_MAX_BYTES)
+            + count
+            % (WF_WINDOWS_DIRECTORY_RAW_HEADER + WF_WINDOWS_NAME_MAX_BYTES)
+            * (WF_WINDOWS_DIRECTORY_NATIVE_HEADER
+               + WF_WINDOWS_COMPONENT_MAX_BYTES)
+            / (WF_WINDOWS_DIRECTORY_RAW_HEADER + WF_WINDOWS_NAME_MAX_BYTES);
+        query_capacity = fitting < WF_WINDOWS_DIRECTORY_SCRATCH_BYTES
+            ? (ULONG)fitting
+            : (ULONG)WF_WINDOWS_DIRECTORY_SCRATCH_BYTES;
+    }
     event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (event == NULL) {
         wf_windows_record_error(GetLastError());
@@ -2012,7 +2074,6 @@ static int64_t wf_windows_directory_batch_worker(
         size_t native_extent;
         size_t raw_extent;
         size_t name_bytes = (size_t)record->file_name_length;
-        size_t index;
         (void)wf_windows_directory_record_valid(
             scratch.bytes + source,
             transferred - source,
@@ -2021,26 +2082,20 @@ static int64_t wf_windows_directory_batch_worker(
         );
         destination[required] = (uint8_t)(raw_extent & 0xffu);
         destination[required + 1] = (uint8_t)((raw_extent >> 8) & 0xffu);
-        destination[required + 2] = (uint8_t)(name_bytes & 0xffu);
-        destination[required + 3] =
-            (uint8_t)((name_bytes >> 8) & 0xffu);
+        destination[required + 2] = (uint8_t)(
+            (raw_extent - WF_WINDOWS_DIRECTORY_RAW_HEADER) & 0xffu
+        );
+        destination[required + 3] = (uint8_t)(
+            ((raw_extent - WF_WINDOWS_DIRECTORY_RAW_HEADER) >> 8) & 0xffu
+        );
         destination[required + 4] = wf_windows_directory_kind(
             record->file_attributes
         );
-        for (index = 0; index < name_bytes; index += sizeof(uint16_t)) {
-            uint16_t unit;
-            memcpy(
-                &unit,
-                scratch.bytes + source
-                    + WF_WINDOWS_DIRECTORY_NATIVE_HEADER + index,
-                sizeof(unit)
-            );
-            destination[required + WF_WINDOWS_DIRECTORY_RAW_HEADER + index] =
-                (uint8_t)(unit & UINT16_C(0xff));
-            destination[
-                required + WF_WINDOWS_DIRECTORY_RAW_HEADER + index + 1
-            ] = (uint8_t)(unit >> 8);
-        }
+        (void)wf__windows_wtf8_write(
+            scratch.bytes + source + WF_WINDOWS_DIRECTORY_NATIVE_HEADER,
+            name_bytes / 2,
+            destination + required + WF_WINDOWS_DIRECTORY_RAW_HEADER
+        );
         required += raw_extent;
         if (record->next_entry_offset == 0) {
             break;

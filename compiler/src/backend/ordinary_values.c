@@ -93,6 +93,28 @@ void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value,
     result->ok.value = start + bytes;
 }
 
+/* The name bytes of a host string [PRE-2]: its bytes on POSIX, and on Windows
+ * the WTF-8 spelling of its UTF-16 code units, which loses none of them. */
+void wf__body_host_copy_name_bytes(wf_copy_result *result, const wf_value *value,
+                                   wf_view *destination, uint64_t start, uint64_t end) {
+#if defined(_WIN32)
+    const unsigned char *units = wf_value_pointer(value);
+    const uint64_t bytes = wf__windows_wtf8_write(units, (size_t)value->words[1], NULL);
+    memset(result, 0, sizeof(*result));
+    if (bytes > end - start) {
+        result->tag = 1;
+        result->err.error.required = bytes;
+        return;
+    }
+    if (bytes != 0)
+        (void)wf__windows_wtf8_write(units, (size_t)value->words[1],
+                                     wf_window(destination, start));
+    result->ok.value = start + bytes;
+#else
+    wf__body_host_copy_bytes(result, value, destination, start, end);
+#endif
+}
+
 /* The XSI entry writes into caller storage and reports EINVAL for an unknown
  * code. In contrast, glibc's strerror_l unknown-code path allocates a hidden
  * thread-local string. _GNU_SOURCE selects the GNU strerror_r declaration,
@@ -335,20 +357,29 @@ static void wf_host_code_description(wf_copy_result *result, uint32_t code,
 #endif
 }
 
-/* UTF-8 validation examines the invocation backing or a window in place. */
-static int wf_utf8_valid(const unsigned char *text, uint64_t length) {
+/* UTF-8 validation examines the invocation backing or a window in place.
+ * With surrogates set it validates WTF-8 instead: UTF-8 that also spells a
+ * lone UTF-16 surrogate code unit as the three bytes ED A0..BF xx, while a
+ * lead surrogate followed by a trail one must be spelled as their pair's
+ * four-byte scalar, so each code unit sequence has exactly one spelling. */
+static int wf_text_valid(const unsigned char *text, uint64_t length, int surrogates) {
     uint64_t at = 0;
+    int after_lead = 0;
     while (at < length) {
         unsigned first = text[at++];
         unsigned continuation;
         unsigned lower = 0x80, upper = 0xbf;
-        if (first < 0x80) continue;
+        int lead = 0;
+        if (first < 0x80) {
+            after_lead = 0;
+            continue;
+        }
         if (first >= 0xc2 && first <= 0xdf) {
             continuation = 1;
         } else if (first >= 0xe0 && first <= 0xef) {
             continuation = 2;
             if (first == 0xe0) lower = 0xa0;
-            if (first == 0xed) upper = 0x9f;
+            if (first == 0xed && !surrogates) upper = 0x9f;
         } else if (first >= 0xf0 && first <= 0xf4) {
             continuation = 3;
             if (first == 0xf0) lower = 0x90;
@@ -356,6 +387,11 @@ static int wf_utf8_valid(const unsigned char *text, uint64_t length) {
         } else return 0;
         if (length - at < continuation || text[at] < lower || text[at] > upper)
             return 0;
+        if (first == 0xed && text[at] >= 0xa0) {
+            if (text[at] >= 0xb0 && after_lead) return 0;
+            lead = text[at] < 0xb0;
+        }
+        after_lead = lead;
         at++;
         while (--continuation != 0) {
             if (text[at] < 0x80 || text[at] > 0xbf) return 0;
@@ -363,6 +399,10 @@ static int wf_utf8_valid(const unsigned char *text, uint64_t length) {
         }
     }
     return 1;
+}
+
+static int wf_utf8_valid(const unsigned char *text, uint64_t length) {
+    return wf_text_valid(text, length, 0);
 }
 
 void wf__body_host_utf8_len(wf_utf8_result *result, const wf_value *value) {
@@ -615,8 +655,12 @@ static void wf_factory_return(wf_value *factory) {
     }
 }
 
+/* WF_NAME_BYTES bounds a name in name bytes [PRE-2]; WF_COMPONENT_BYTES
+ * bounds the native component a name becomes. They differ only on Windows,
+ * where a name is WTF-8 and its component UTF-16. */
 #if defined(_WIN32)
 #define WF_COMPONENT_BYTES WF_WINDOWS_COMPONENT_MAX_BYTES
+#define WF_NAME_BYTES WF_WINDOWS_NAME_MAX_BYTES
 #define WF_OPEN_DIRECTORY_FLAGS 0
 #define WF_OPEN_COMPONENT_DIRECTORY_FLAGS 1
 #define WF_OPEN_COMPONENT_FILE_FLAGS 1
@@ -626,11 +670,13 @@ static void wf_factory_return(wf_value *factory) {
 #define WF_OPEN_APPEND_CLASS WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE
 #elif defined(__APPLE__)
 #define WF_COMPONENT_BYTES 1023u
+#define WF_NAME_BYTES WF_COMPONENT_BYTES
 #define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
 #define WF_OPEN_COMPONENT_DIRECTORY_FLAGS (O_DIRECTORY | O_NOFOLLOW)
 #define WF_OPEN_COMPONENT_FILE_FLAGS (O_NOFOLLOW | O_NONBLOCK)
 #else
 #define WF_COMPONENT_BYTES 255u
+#define WF_NAME_BYTES WF_COMPONENT_BYTES
 #define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
 #define WF_OPEN_COMPONENT_DIRECTORY_FLAGS (O_DIRECTORY | O_NOFOLLOW)
 #define WF_OPEN_COMPONENT_FILE_FLAGS (O_NOFOLLOW | O_NONBLOCK)
@@ -1071,8 +1117,9 @@ static void *wf_host_copy_block(wf_host_operation *operation, uint64_t bytes) {
 }
 
 #if defined(_WIN32)
-/* The UTF-16 code units of UTF-8 text: one for each scalar below U+10000,
- * which a lead byte below 0xf0 starts, and two for each other. */
+/* The UTF-16 code units of UTF-8 or WTF-8 text: one for each scalar or
+ * surrogate below U+10000, which a lead byte below 0xf0 starts, and two for
+ * each other scalar. */
 static uint64_t wf_utf8_utf16_units(const unsigned char *text, uint64_t length) {
     uint64_t units = 0, at;
     for (at = 0; at < length; at++) {
@@ -1081,7 +1128,8 @@ static uint64_t wf_utf8_utf16_units(const unsigned char *text, uint64_t length) 
     return units;
 }
 
-/* Encodes UTF-8 text as UTF-16 code units. */
+/* Encodes UTF-8 or WTF-8 text as UTF-16 code units; a WTF-8 surrogate
+ * decodes to the code unit it spells. */
 static void wf_utf8_to_utf16(const unsigned char *text, uint64_t length, uint16_t *units) {
     uint64_t at = 0, out = 0;
     while (at < length) {
@@ -1377,44 +1425,47 @@ void wf__body_open_host_directory_bytes(wf_directory_result *result, wf_value *f
 
 /* `.` and `..` name the directory itself and its parent, never an entry
  * directly below the root, so a component operation refuses them [PRE-2]:
- * a write half must not reach the directory above it. unit_bytes is 1 for
- * POSIX bytes and 2 for Windows UTF-16 code units. */
-static int wf_component_is_dots(const unsigned char *text, uint64_t length,
-                                uint64_t unit_bytes) {
-    uint64_t units = length / unit_bytes;
-    uint64_t index;
-    if (units == 0 || units > 2) return 0;
-    for (index = 0; index < length; index++) {
-        unsigned char expected = (index % unit_bytes) == 0 ? '.' : 0;
-        if (text[index] != expected) return 0;
-    }
-    return 1;
+ * a write half must not reach the directory above it. They are the same
+ * name bytes on every host. */
+static int wf_name_is_dots(const unsigned char *text, uint64_t length) {
+    return (length == 1 && text[0] == '.')
+        || (length == 2 && text[0] == '.' && text[1] == '.');
 }
 
+/* Copies a name, given in name bytes [PRE-2], into component as the native
+ * component it names, terminated. */
 static int wf_component(unsigned char *component, const wf_view *name,
                          uint64_t start, uint64_t end) {
     uint64_t length = end - start;
     uint64_t index;
     const unsigned char *text = wf_window(name, start);
-    if (length == 0 || length > WF_COMPONENT_BYTES) return 0;
+    if (length == 0 || length > WF_NAME_BYTES) return 0;
+    if (wf_name_is_dots(text, length)) return 0;
 #if defined(_WIN32)
-    if ((length & 1) != 0) return 0;
-    for (index = 0; index < length; index += 2) {
-        uint16_t unit;
-        memcpy(&unit, text + index, 2);
-        /* A colon selects a data stream rather than a file component. */
-        if (unit == 0 || unit == '/' || unit == '\\' || unit == ':') return 0;
+    {
+        /* A name is WTF-8 here, and its component the UTF-16 code units it
+         * spells. Every byte below 0x80 is the code unit of the same value. */
+        uint16_t units[WF_COMPONENT_BYTES / 2];
+        uint64_t count;
+        for (index = 0; index < length; index++)
+            /* A colon selects a data stream rather than a file component. */
+            if (text[index] == 0 || text[index] == '/' || text[index] == '\' ||
+                text[index] == ':')
+                return 0;
+        if (!wf_text_valid(text, length, 1)) return 0;
+        count = wf_utf8_utf16_units(text, length);
+        if (count > WF_COMPONENT_BYTES / 2) return 0;
+        wf_utf8_to_utf16(text, length, units);
+        memcpy(component, units, (size_t)count * 2);
+        component[count * 2] = 0;
+        component[count * 2 + 1] = 0;
     }
-    if (wf_component_is_dots(text, length, 2)) return 0;
-    component[length] = 0;
-    component[length + 1] = 0;
 #else
     for (index = 0; index < length; index++)
         if (text[index] == 0 || text[index] == '/') return 0;
-    if (wf_component_is_dots(text, length, 1)) return 0;
+    memcpy(component, text, (size_t)length);
     component[length] = 0;
 #endif
-    memcpy(component, text, (size_t)length);
     return 1;
 }
 
@@ -2531,70 +2582,79 @@ int wf__body_directory_next_start(wf_list_result *result, wf_value *source,
     return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
+/* A host batch's native records are rewritten in place into the portable
+ * records [PRE-2], which are never longer: one kind byte, the name's byte
+ * count as a little-endian u16, and the name bytes. `.` and `..` are left
+ * out; when they were all the host gave, the host is asked again, so a
+ * successful batch over a nonempty window holds an entry. */
 void wf__body_directory_next_finish(wf_list_result *result, wf_value *source,
                                     wf_view *destination, uint64_t start, uint64_t end,
                                     wf_host_operation *operation) {
     int64_t amount;
     int error;
-    uint64_t cursor = 0, written = 0, entries = 0;
+    uint64_t cursor, written, entries;
     unsigned char *window = wf_window(destination, start);
-    (void)source;
-    wf__completion_file_join(&operation->record, &amount, &error);
-    memset(result, 0, sizeof(*result));
-    result->next = start;
-    if (amount < 0) {
-        result->result.tag = 1;
-        result->result.err.error.tag = 1;
-        wf_error(&result->result.err.error.error, error, 2);
-    } else if (amount == 0 && end != start) {
-        result->result.tag = 1;
-    }
-    if (amount <= 0) return;
-    if ((uint64_t)amount > end - start) abort();
-    while (cursor < (uint64_t)amount) {
-        uint16_t extent;
-        uint64_t named, index;
-        unsigned kind, portable;
-        unsigned char *entry = window + cursor;
-        if ((uint64_t)amount - cursor < WF_DIRENT_NAME) abort();
-        memcpy(&extent, entry + WF_DIRENT_RECORD, sizeof(extent));
-        if (extent <= WF_DIRENT_NAME || extent > (uint64_t)amount - cursor) abort();
-        kind = entry[WF_DIRENT_KIND];
+    for (;;) {
+        wf__completion_file_join(&operation->record, &amount, &error);
+        memset(result, 0, sizeof(*result));
+        result->next = start;
+        if (amount < 0) {
+            result->result.tag = 1;
+            result->result.err.error.tag = 1;
+            wf_error(&result->result.err.error.error, error, 2);
+        } else if (amount == 0 && end != start) {
+            result->result.tag = 1;
+        }
+        if (amount <= 0) return;
+        if ((uint64_t)amount > end - start) abort();
+        cursor = 0;
+        written = 0;
+        entries = 0;
+        while (cursor < (uint64_t)amount) {
+            uint16_t extent;
+            uint64_t named, index;
+            unsigned kind, portable;
+            unsigned char *entry = window + cursor;
+            if ((uint64_t)amount - cursor < WF_DIRENT_NAME) abort();
+            memcpy(&extent, entry + WF_DIRENT_RECORD, sizeof(extent));
+            if (extent <= WF_DIRENT_NAME || extent > (uint64_t)amount - cursor) abort();
+            kind = entry[WF_DIRENT_KIND];
 #if defined(WF_DIRENT_NAME_LENGTH)
-        {
-            uint16_t length;
-            memcpy(&length, entry + WF_DIRENT_NAME_LENGTH, sizeof(length));
-            named = length;
-        }
+            {
+                uint16_t length;
+                memcpy(&length, entry + WF_DIRENT_NAME_LENGTH, sizeof(length));
+                named = length;
+            }
 #else
-        for (named = 0; named < extent - WF_DIRENT_NAME; named++)
-            if (entry[WF_DIRENT_NAME + named] == 0) break;
-        if (named == extent - WF_DIRENT_NAME) abort();
+            for (named = 0; named < extent - WF_DIRENT_NAME; named++)
+                if (entry[WF_DIRENT_NAME + named] == 0) break;
+            if (named == extent - WF_DIRENT_NAME) abort();
 #endif
-        if (named == 0 || named > WF_COMPONENT_BYTES ||
-            named > extent - WF_DIRENT_NAME || named + 3 > end - start - written)
-            abort();
-#if defined(_WIN32)
-        if ((named & 1) != 0) abort();
-        for (index = 0; index < named; index += 2) {
-            uint16_t unit;
-            memcpy(&unit, entry + WF_DIRENT_NAME + index, 2);
-            if (unit == 0 || unit == '/' || unit == '\\') abort();
-        }
-#else
-        for (index = 0; index < named; index++)
-            if (entry[WF_DIRENT_NAME + index] == 0 || entry[WF_DIRENT_NAME + index] == '/')
+            if (named == 0 || named > WF_NAME_BYTES ||
+                named > extent - WF_DIRENT_NAME || named + 3 > end - start - written)
                 abort();
+            for (index = 0; index < named; index++) {
+                unsigned char byte = entry[WF_DIRENT_NAME + index];
+#if defined(_WIN32)
+                if (byte == '\\') abort();
 #endif
-        portable = kind == 0 ? 0 : kind == WF_DIRENT_REGULAR ? 1 :
-            kind == WF_DIRENT_DIRECTORY ? 2 : kind == WF_DIRENT_SYMLINK ? 3 : 4;
-        window[written] = (unsigned char)portable;
-        window[written + 1] = (unsigned char)named;
-        window[written + 2] = (unsigned char)(named >> 8);
-        memmove(window + written + 3, entry + WF_DIRENT_NAME, (size_t)named);
-        written += named + 3;
-        cursor += extent;
-        entries++;
+                if (byte == 0 || byte == '/') abort();
+            }
+            cursor += extent;
+            if (wf_name_is_dots(entry + WF_DIRENT_NAME, named)) continue;
+            portable = kind == 0 ? 0 : kind == WF_DIRENT_REGULAR ? 1 :
+                kind == WF_DIRENT_DIRECTORY ? 2 : kind == WF_DIRENT_SYMLINK ? 3 : 4;
+            window[written] = (unsigned char)portable;
+            window[written + 1] = (unsigned char)named;
+            window[written + 2] = (unsigned char)(named >> 8);
+            memmove(window + written + 3, entry + WF_DIRENT_NAME, (size_t)named);
+            written += named + 3;
+            entries++;
+        }
+        if (entries != 0) break;
+        operation->position = 0;
+        wf__completion_directory_next_submit(wf_descriptor(source), window, end - start,
+                                             &operation->position, &operation->record);
     }
     result->next = start + written;
     result->entries = entries;

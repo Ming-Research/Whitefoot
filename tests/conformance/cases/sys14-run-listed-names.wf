@@ -1,0 +1,312 @@
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectoryWrite = std::fs::DirectoryWrite;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+
+const folder_name: Array<u8, 7> =[108_u8, 105_u8, 115_u8, 116_u8, 105_u8, 110_u8, 103_u8];
+
+const plain_name: Array<u8, 5> =[97_u8, 46_u8, 116_u8, 120_u8, 116_u8];
+
+const accented_name: Array<u8, 2> =[195_u8, 169_u8];
+
+const inner_name: Array<u8, 3> =[115_u8, 117_u8, 98_u8];
+
+fn make_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], byte: u8) -> result: u8 reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_append(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      let outcome = 0_u8;
+      let bytes = array_filled::<u8, 1>(value: byte);
+      match std::fs::append_once(factory: factory, file: &file, source: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64) {
+        Ok(value: next) => {
+          if next != 1_u64 {
+            set outcome = 2_u8;
+          }
+        }
+        Err(error: problem) => {
+          set outcome = 3_u8;
+        }
+      }
+      match std::fs::close_write(factory: factory, file: move file) {
+        Ok(value: done) => {
+        }
+        Err(error: problem) => {
+          set outcome = 4_u8;
+        }
+      }
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 1_u8;
+    }
+  }
+}
+
+fn make_folder(factory: &HandleFactory, root: &DirectoryWrite) -> result: u8 reads(root), writes(factory) waits {
+  match std::fs::open_directory_write(factory: factory, root: root, name: &folder_name[0_u64..7_u64], start: 0_u64, end: 7_u64) {
+    Ok(value: folder) => {
+      let outcome = make_file(factory: factory, root: &folder, name: &plain_name[0_u64..5_u64], byte: 97_u8);
+      if outcome == 0_u8 {
+        set outcome = make_file(factory: factory, root: &folder, name: &accented_name[0_u64..2_u64], byte: 101_u8);
+      }
+      if outcome == 0_u8 {
+        match std::fs::open_directory_write(factory: factory, root: &folder, name: &inner_name[0_u64..3_u64], start: 0_u64, end: 3_u64) {
+          Ok(value: inner) => {
+            std::fs::close_directory_write(factory: factory, directory: move inner);
+          }
+          Err(error: problem) => {
+            set outcome = 5_u8;
+          }
+        }
+      }
+      std::fs::close_directory_write(factory: factory, directory: move folder);
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 6_u8;
+    }
+  }
+}
+
+fn same_name(entries: &[u8], at: u64, count: u64, expected: &[u8]) -> result: Bool reads(entries), reads(expected) {
+  let wanted = expected^.len;
+  if count != wanted {
+    return False();
+  }
+  let room = entries^.len;
+  let index = 0_u64;
+  loop @compare {
+    let done = index >= wanted;
+    if done {
+      return True();
+    }
+    let position = at +wrap index;
+    let readable = position < room;
+    if readable {
+    } else {
+      return False();
+    }
+    let expected_readable = index < wanted;
+    if expected_readable {
+    } else {
+      return False();
+    }
+    let listed = entries^[position];
+    let written = expected^[index];
+    if listed != written {
+      return False();
+    }
+    set index = index +wrap 1_u64;
+  }
+}
+
+fn first_byte(factory: &HandleFactory, root: &DirectoryRead, entries: &[u8], start: u64, end: u64) -> result: u8 reads(root), reads(entries), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= entries^.len;
+} {
+  match std::fs::open_file(factory: factory, root: root, name: entries, start: start, end: end) {
+    Ok(value: opened) => {
+      let bytes = array_filled::<u8, 1>(value: 0_u8);
+      let outcome = 0_u8;
+      match std::fs::read_at(factory: factory, file: &opened, destination: &bytes[0_u64..1_u64], file_offset: 0_u64, start: 0_u64, end: 1_u64) {
+        Ok(value: next) => {
+          if next == 1_u64 {
+            set outcome = bytes[0_u64];
+          }
+        }
+        Err(error: problem) => {
+        }
+      }
+      std::fs::close_read(factory: factory, file: move opened);
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 0_u8;
+    }
+  }
+}
+
+fn list_folder(factory: &HandleFactory, folder: &DirectoryRead) -> result: u8 reads(folder), writes(factory) waits {
+  let entries = array_filled::<u8, 4096>(value: 0_u8);
+  let plain_seen = 0_u64;
+  let accented_seen = 0_u64;
+  let inner_seen = 0_u64;
+  let status = 0_u8;
+  match std::fs::open_directory_source(factory: factory, directory: folder) {
+    Ok(value: list) => {
+      loop @batches {
+        let window = &entries[0_u64..4096_u64];
+        let (outcome, produced, reported) = std::fs::directory_next(source: &list, destination: window, start: 0_u64, end: 4096_u64);
+        let ended = 0_u8;
+        match outcome {
+          Ok(value: done) => {
+          }
+          Err(error: stop) => {
+            match stop {
+              ListEnd() => {
+                set ended = 1_u8;
+              }
+              ListFailed(error: problem) => {
+                set ended = 2_u8;
+              }
+            }
+          }
+        }
+        if ended == 1_u8 {
+          break @batches;
+        }
+        if ended == 2_u8 {
+          set status = 20_u8;
+          break @batches;
+        }
+        if reported == 0_u64 {
+          set status = 21_u8;
+          break @batches;
+        }
+        let at = 0_u64;
+        let seen = 0_u64;
+        loop @records {
+          let header_end = at +wrap 3_u64;
+          let complete = header_end <= produced;
+          if complete {
+          } else {
+            break @records;
+          }
+          let kind_readable = at < 4096_u64;
+          if kind_readable {
+          } else {
+            break @records;
+          }
+          let length_low_at = at +wrap 1_u64;
+          let length_low_readable = length_low_at < 4096_u64;
+          if length_low_readable {
+          } else {
+            break @records;
+          }
+          let length_high_at = at +wrap 2_u64;
+          let length_high_readable = length_high_at < 4096_u64;
+          if length_high_readable {
+          } else {
+            break @records;
+          }
+          let kind = entries[at];
+          let length_low_byte = entries[length_low_at];
+          let length_high_byte = entries[length_high_at];
+          let length_low = cvt::<u8, u64>(length_low_byte);
+          let length_high = cvt::<u8, u64>(length_high_byte);
+          let length_high_shifted = ishl.wrap(length_high, 8_u32);
+          let name_count = ior(length_low, length_high_shifted);
+          let name_at = header_end;
+          let name_end = name_at +wrap name_count;
+          let bounded = name_end <= produced;
+          if bounded {
+          } else {
+            set status = 22_u8;
+            break @records;
+          }
+          let ordered = name_at <= name_end;
+          let inside = name_end <= 4096_u64;
+          if ordered {
+          } else {
+            set status = 22_u8;
+            break @records;
+          }
+          if inside {
+          } else {
+            set status = 22_u8;
+            break @records;
+          }
+          let names = &entries[0_u64..4096_u64];
+          let is_plain = same_name(entries: names, at: name_at, count: name_count, expected: &plain_name[0_u64..5_u64]);
+          let is_accented = same_name(entries: names, at: name_at, count: name_count, expected: &accented_name[0_u64..2_u64]);
+          let is_inner = same_name(entries: names, at: name_at, count: name_count, expected: &inner_name[0_u64..3_u64]);
+          if is_plain {
+            set plain_seen = plain_seen +wrap 1_u64;
+            if kind != 1_u8 {
+              set status = 23_u8;
+            }
+            let content = first_byte(factory: factory, root: folder, entries: names, start: name_at, end: name_end);
+            if content != 97_u8 {
+              set status = 24_u8;
+            }
+          } else {
+            if is_accented {
+              set accented_seen = accented_seen +wrap 1_u64;
+              if kind != 1_u8 {
+                set status = 25_u8;
+              }
+              let content = first_byte(factory: factory, root: folder, entries: names, start: name_at, end: name_end);
+              if content != 101_u8 {
+                set status = 26_u8;
+              }
+            } else {
+              if is_inner {
+                set inner_seen = inner_seen +wrap 1_u64;
+                if kind != 2_u8 {
+                  set status = 27_u8;
+                }
+              } else {
+                set status = 28_u8;
+              }
+            }
+          }
+          set at = name_end;
+          set seen = seen +wrap 1_u64;
+        }
+        if seen != reported {
+          set status = 29_u8;
+        }
+        if at != produced {
+          set status = 30_u8;
+        }
+        if status != 0_u8 {
+          break @batches;
+        }
+      }
+      std::fs::close_directory_source(factory: factory, source: move list);
+    }
+    Err(error: problem) => {
+      return 31_u8;
+    }
+  }
+  if status != 0_u8 {
+    return status;
+  }
+  if plain_seen != 1_u64 {
+    return 32_u8;
+  }
+  if accented_seen != 1_u64 {
+    return 33_u8;
+  }
+  if inner_seen != 1_u64 {
+    return 34_u8;
+  }
+  return 0_u8;
+}
+
+fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite) -> result: u8 reads(reader), reads(writer), writes(factory) waits {
+  doc "Creates a folder holding a.txt, a file whose name is the UTF-8 of U+00E9 and a subdirectory, lists the folder, and opens each listed file by the name bytes the listing gave. The listing must report exactly those three names with their kinds, never . or .., and an Ok batch must hold an entry.";
+  let made = make_folder(factory: factory, root: writer);
+  if made != 0_u8 {
+    return made;
+  }
+  match std::fs::open_directory(factory: factory, root: reader, name: &folder_name[0_u64..7_u64], start: 0_u64, end: 7_u64) {
+    Ok(value: folder) => {
+      let outcome = list_folder(factory: factory, folder: &folder);
+      std::fs::close_directory(factory: factory, directory: move folder);
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 35_u8;
+    }
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: directory, stdout: unused_out, stderr: unused_errors, handles: factory, stdin: unused_input, clock: unused_clock, wall_clock: unused_wall, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  let outcome = exercise(factory: &factory, reader: &reader, writer: &writer);
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  return std::process::exit_status(code: outcome);
+}
