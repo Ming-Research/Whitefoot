@@ -35,12 +35,21 @@ fn spell(destination: &[u8], value: u64) -> result: unit writes(destination) {
   return unit;
 }
 
-fn released(store: &Shared<ConcurrentHashMap<u64>>, meter: &MemoryMeter) -> code: u8 reads(store), writes(meter) {
-  doc "Compare released reserve bytes with the decrease in heap holding.";
-  let before = std::process::heap_in_use(meter: meter);
-  let freed = std::process::release_map_reserve::<u64>(map: store, meter: meter);
-  let after = std::process::heap_in_use(meter: meter);
-  let again = std::process::release_map_reserve::<u64>(map: store, meter: meter);
+fn released(store: &Shared<ConcurrentHashMap<u64>>, meter: &MemoryMeter) -> code: u8 reads(store), writes(meter) waits {
+  doc "Compare released reserve bytes with the decrease in heap holding, each release made in a statement on the map's object. The first statement reads the heap before and after the release, once it holds the map, so that entering the statement is not part of the decrease.";
+  let before = 0_u64;
+  let freed = 0_u64;
+  let after = 0_u64;
+  atomic t = &store^ {
+    let entered = map_count::<u64>(map: t);
+    set before = std::process::heap_in_use(meter: meter);
+    set freed = std::process::release_map_reserve::<u64>(map: t, meter: meter);
+    set after = std::process::heap_in_use(meter: meter);
+  }
+  let again = 1_u64;
+  atomic t = &store^ {
+    set again = std::process::release_map_reserve::<u64>(map: t, meter: meter);
+  }
   if freed == 0_u64 {
     return 1_u8;
   }
@@ -64,7 +73,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory_read);
   let name = array_filled::<u8, 8>(value: 0_u8);
-  let small = shared_map_new::<u64>(capacity: 0_u64);
+  let small_table = map_new::<u64>(capacity: 0_u64);
+  let small = shared_new::<ConcurrentHashMap<u64>>(value: move small_table);
   let small_next = 0_u64;
   loop @small_churn {
     if small_next == 20000_u64 {
@@ -96,7 +106,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   if small_count != 4_u64 {
     return exit_status(code: 15_u8);
   }
-  let medium = shared_map_new::<u64>(capacity: 0_u64);
+  let medium_table = map_new::<u64>(capacity: 0_u64);
+  let medium = shared_new::<ConcurrentHashMap<u64>>(value: move medium_table);
   let medium_next = 0_u64;
   loop @medium_churn {
     if medium_next == 200000_u64 {
@@ -128,7 +139,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   if medium_count != 2000_u64 {
     return exit_status(code: 25_u8);
   }
-  let large = shared_map_new::<u64>(capacity: 0_u64);
+  let large_table = map_new::<u64>(capacity: 0_u64);
+  let large = shared_new::<ConcurrentHashMap<u64>>(value: move large_table);
   let large_next = 0_u64;
   loop @large_churn {
     if large_next == 400000_u64 {

@@ -3,7 +3,8 @@ alias exit_status = std::process::exit_status;
 
 const names: Array<u8, 8> =[97_u8, 98_u8, 99_u8, 100_u8, 101_u8, 102_u8, 103_u8, 104_u8];
 
-struct Totals {
+struct Store {
+  table: ConcurrentHashMap<u64>;
   total: u64;
   resets: u64;
 }
@@ -16,19 +17,19 @@ fn prefixes() -> keys: KeySet pure {
   return move keys;
 }
 
-fn bump_keys(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> result: unit pure waits {
+fn bump_keys(store: Shared<Store>) -> result: unit pure waits {
   doc "Adds one to the entries under the eight prefixes, a thousand times each, and to the total in the same statement.";
   for @round (index in 0_u64..1000_u64) {
     for @key (at in 1_u64..9_u64) {
       let key = &names[0_u64..at];
-      atomic slot = &store_map[key], s = &store {
-        match slot^ {
+      atomic s = &store {
+        match s^.table[key] {
           Some(value: seen) => {
             let next = seen^ +wrap 1_u64;
-            set slot^ = Some<u64>(value: next);
+            set s^.table[key] = Some<u64>(value: next);
           }
           None() => {
-            set slot^ = Some<u64>(value: 1_u64);
+            set s^.table[key] = Some<u64>(value: 1_u64);
           }
         }
         set s^.total = s^.total +wrap 1_u64;
@@ -38,12 +39,12 @@ fn bump_keys(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -
   return unit;
 }
 
-fn reset(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> result: unit pure waits {
+fn reset(store: Shared<Store>) -> result: unit pure waits {
   doc "Replaces the table with an empty one and zeroes the total, in one statement, two hundred times.";
   for @again (index in 0_u64..200_u64) {
-    let fresh = shared_map_new::<u64>(capacity: 0_u64);
-    atomic t = &store_map, f = &fresh, s = &store {
-      swap(first: t, second: f);
+    let fresh = map_new::<u64>(capacity: 0_u64);
+    atomic s = &store {
+      swap(first: &s^.table, second: &fresh);
       set s^.total = 0_u64;
       set s^.resets = s^.resets +wrap 1_u64;
     }
@@ -51,14 +52,14 @@ fn reset(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> re
   return unit;
 }
 
-fn trade(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> result: unit pure waits {
+fn trade(store: Shared<Store>) -> result: unit pure waits {
   doc "Exchanges the state's table with a map of its own a hundred times, adjusting the total by what each table held, in one statement.";
-  let mine = shared_map_new::<u64>(capacity: 0_u64);
+  let mine = map_new::<u64>(capacity: 0_u64);
   let observed = 0_u64;
   let keys = prefixes();
   for @again (index in 0_u64..100_u64) {
-    atomic t = &store_map, m = &mine, s = &store {
-      let all = &t^[keys];
+    atomic s = &store {
+      let all = &s^.table[keys];
       let sum = 0_u64;
       for @key (at in 0_u64..all^.len) {
         match all^[at] {
@@ -69,7 +70,7 @@ fn trade(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> re
           }
         }
       }
-      swap(first: t, second: m);
+      swap(first: &s^.table, second: &mine);
       let lowered = s^.total -wrap sum;
       set s^.total = lowered +wrap observed;
       set observed = sum;
@@ -78,13 +79,14 @@ fn trade(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> re
   return unit;
 }
 
-fn watch_sums(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>, mismatches: Shared<u64>) -> result: unit pure waits {
+fn watch_sums(store: Shared<Store>, mismatches: Shared<u64>) -> result: unit pure waits {
   doc "Reads all eight entries and the total in one statement, three hundred times, and counts each time they disagree.";
   let keys = prefixes();
   for @look (index in 0_u64..300_u64) {
     let sum = 0_u64;
     let counted = 0_u64;
-    atomic all = &store_map[keys], s = &store {
+    atomic s = &store {
+      let all = &s^.table[keys];
       for @key (at in 0_u64..all^.len) {
         match all^[at] {
           Some(value: seen) => {
@@ -105,39 +107,36 @@ fn watch_sums(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>, 
   return unit;
 }
 
-fn run(store: &Shared<Totals>, store_map: &Shared<ConcurrentHashMap<u64>>, mismatches: &Shared<u64>) -> result: unit reads(store), reads(mismatches), reads(store_map) waits {
+fn run(store: &Shared<Store>, mismatches: &Shared<u64>) -> result: unit reads(store), reads(mismatches) waits {
   for @start (index in 0_u64..4_u64) {
-    let handle = shared_share::<Totals>(shared: store);
-    let handle_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
-    spawn bump_keys(store: move handle, store_map: move handle_map);
+    let handle = shared_share::<Store>(shared: store);
+    spawn bump_keys(store: move handle);
   }
-  let resetting = shared_share::<Totals>(shared: store);
-  let resetting_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
-  spawn reset(store: move resetting, store_map: move resetting_map);
-  let trading = shared_share::<Totals>(shared: store);
-  let trading_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
-  spawn trade(store: move trading, store_map: move trading_map);
+  let resetting = shared_share::<Store>(shared: store);
+  spawn reset(store: move resetting);
+  let trading = shared_share::<Store>(shared: store);
+  spawn trade(store: move trading);
   for @watch (index in 0_u64..2_u64) {
-    let handle = shared_share::<Totals>(shared: store);
-    let handle_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
+    let handle = shared_share::<Store>(shared: store);
     let seen = shared_share::<u64>(shared: mismatches);
-    spawn watch_sums(store: move handle, store_map: move handle_map, mismatches: move seen);
+    spawn watch_sums(store: move handle, mismatches: move seen);
   }
   return unit;
 }
 
 fn main() -> status: ExitStatus pure waits {
-  doc "A shared map is swapped with a fresh map and exchanged with another while other contexts lock its entries one key at a time: four contexts add to eight entries and a total, one swaps the map with an empty one and zeroes the total two hundred times, one exchanges it with a map of its own and moves the total by the difference a hundred times, and two compare the entries' sum with the total. A statement that locked the map contents it read before the replacement or the exchange would add to displaced map contents and leave the sum and the total apart. Every order of the statements keeps them equal, so the status is 0 and names the first disagreement otherwise.";
-  let store_map = shared_map_new::<u64>(capacity: 0_u64);
-  let state = Totals(total: 0_u64, resets: 0_u64);
-  let store = shared_new::<Totals>(value: state);
+  doc "A shared state's map is swapped with a fresh map and exchanged with another while other contexts lock its entries one key at a time: four contexts add to eight entries and a total, one swaps the map with an empty one and zeroes the total two hundred times, one exchanges it with a map of its own and moves the total by the difference a hundred times, and two compare the entries' sum with the total. A statement that locked the map contents it read before the replacement or the exchange would add to displaced map contents and leave the sum and the total apart. Every order of the statements keeps them equal, so the status is 0 and names the first disagreement otherwise.";
+  let table = map_new::<u64>(capacity: 0_u64);
+  let state = Store(table: move table, total: 0_u64, resets: 0_u64);
+  let store = shared_new::<Store>(value: move state);
   let mismatches = shared_new::<u64>(value: 0_u64);
-  run(store: &store, store_map: &store_map, mismatches: &mismatches);
+  run(store: &store, mismatches: &mismatches);
   let keys = prefixes();
   let sum = 0_u64;
   let total = 1_u64;
   let resets = 0_u64;
-  atomic all = &store_map[keys], s = &store {
+  atomic s = &store {
+    let all = &s^.table[keys];
     for @key (at in 0_u64..all^.len) {
       match all^[at] {
         Some(value: seen) => {

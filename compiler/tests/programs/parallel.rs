@@ -531,9 +531,9 @@ fn key_sets_built_on_compute_workers_keep_their_contents() {
 }
 
 /// [SHARE-1, SHARE-2, SHARE-3] eight contexts adding to the entries under
-/// eight keys of a shared map, and to a separate total object's state in the same
-/// statement, while two others hold all eight entries through a key set and
-/// compare their sum with the total, reach the counts every order of their
+/// eight keys of the map of one shared state, and to the state's total in the
+/// same statement, while two others hold all eight entries through a key set
+/// and compare their sum with the total, reach the counts every order of their
 /// statements gives, on one driver and on four. An entry not locked alone
 /// loses increments (status 2), a statement that took its entries and the
 /// total apart lets a reader see the sum and the total disagree (status 5),
@@ -553,9 +553,12 @@ fn conditional_metadata_keeps_only_held_commits_on_one_driver_and_on_four() {
 }
 
 /// A value read under a read-only whole-map hold must not lock its cell:
-/// that hold's release only opens the map gate. The old lowering left the
-/// first read's cell locked and the second read spun forever, so the shared
-/// program harness's deadline fails this case even with one context/driver.
+/// that hold's release only opens the map gate. Each reading statement of
+/// the program also counts the map, which makes its hold a whole-map one
+/// where a read of one entry under a stable key would take that entry's
+/// lock alone. The old lowering left the first read's cell locked and the
+/// second read spun forever, so the shared program harness's deadline fails
+/// this case even with one context/driver.
 #[test]
 fn whole_map_value_reads_release_before_the_next_statement() {
     let program = build_program(&compile_program("map_value_reads.wf"));
@@ -566,7 +569,7 @@ fn whole_map_value_reads_release_before_the_next_statement() {
 /// [SHARE-3] guards that read entries of a map: four pairs pass values
 /// through one entry each, a sender waiting for its entry to be empty and a
 /// taker for it to hold a value, and two contexts wait on a guard reading an
-/// entry and a separate closed flag together, on one driver and on four. A
+/// entry and the state's closed flag together, on one driver and on four. A
 /// guard that missed a write to the map it read would wait for ever, and a
 /// value passed twice or lost leaves the total wrong (status 1).
 #[test]
@@ -574,9 +577,10 @@ fn guards_on_map_entries_wake_on_every_write_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("map_watch.wf", 2);
 }
 
-/// [SHARE-1, SHARE-3] a shared map exchanged with
-/// another while other statements lock its entries one key at a time keeps
-/// its entries' sum equal to the state's total, on one driver and on four. A
+/// [SHARE-1, SHARE-3] the map of a shared state swapped with a fresh map and
+/// exchanged with another while other statements lock its entries one key at
+/// a time keeps its entries' sum equal to the state's total, on one driver
+/// and on four. A
 /// statement that locked the table it read before the replacement would add
 /// to entries detached from the held map (status 1 or 3), and a hold whose
 /// entries an exchange moved away still locked would leave the next
@@ -599,10 +603,11 @@ fn a_map_of_unit_values_holds_a_set_of_keys_on_one_driver_and_on_four() {
     run_on_one_driver_and_on_four("unit_set.wf", 2);
 }
 
-/// [SHARE-3] statements whose blocks meet several objects in opposite
-/// orders, and a statement that reaches a unit only on one path, end and
-/// keep every count on one driver and on four: each statement takes the
-/// objects in type order and equal-type objects by identity, so none waits for another in a cycle
+/// [SHARE-3] statements whose blocks meet the parts of one state in opposite
+/// orders (a map and a count, two maps), and a statement that reaches a part
+/// only on one path, end and keep every count on one driver and on four: each
+/// statement takes the parts it reaches in field order, each at its first use
+/// together with the parts before it, so none waits for another in a cycle
 /// (compiler/waiting-contexts/state-locks).
 #[test]
 fn objects_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
@@ -646,11 +651,12 @@ fn meta_commit_output(output: &Output) -> (u64, u64) {
     )
 }
 
-/// [SHARE-1, SHARE-2, SHARE-3] two atomic statements that name different keys
-/// of one shared map and the same Meta object, and reach Meta only after a
-/// computation, compute at the same time on two drivers and exclude one
-/// another only at the commit to Meta (compiler/waiting-contexts/state-locks,
-/// which takes a shared object at its first use in the block). The program
+/// [SHARE-1, SHARE-2, SHARE-3] two atomic statements on one shared state that
+/// name different keys of its map, the state's first field, and reach its
+/// metadata part only after a computation, compute at the same time on two
+/// drivers and exclude one another only at the commit to the metadata part
+/// (compiler/waiting-contexts/state-locks, which takes a part of the state at
+/// its first use in the block, with the parts before it in field order). The program
 /// also fails a log whose sequence numbers are not 0 and 1 in log order, a
 /// replayed log that differs from the final table (statuses 1 to 3), and a
 /// run shorter than one computation (status 5), which a skipped computation
@@ -667,8 +673,8 @@ fn meta_commit_output(output: &Output) -> (u64, u64) {
 /// it takes at least 2 C, and (2) is shorter than the best control run by
 /// more than C / 2, half of the difference C an overlap leaves. A repeat
 /// cannot hide a lock held through the computation: every run of it takes at
-/// least 2 C and fails (1). The control takes its sequence number from Meta
-/// before its computation, so Meta is held through it, and every control run
+/// least 2 C and fails (1). The control takes its sequence number from the
+/// metadata part before its computation, so that part is held through it, and every control run
 /// must take at least 1.8 C (the program's own status 4 floor); on two drivers
 /// this shows that the criterion separates the two lock timings.
 ///

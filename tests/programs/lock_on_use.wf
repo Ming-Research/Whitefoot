@@ -11,18 +11,22 @@ struct Meta {
   commits: u64;
 }
 
+struct Space {
+  keys: ConcurrentHashMap<Entry>;
+  meta: Meta;
+}
+
 struct Keyspace {
-  keys: Shared<ConcurrentHashMap<Entry>>;
-  meta: Shared<Meta>;
+  state: Shared<Space>;
   logging: Bool;
 }
 
 fn set_key(space: &Keyspace, key: &[u8], timed: Bool) -> result: unit reads(space), reads(key) waits {
   let logged = space^.logging;
   let kept = bor(logged, timed);
-  atomic slot = &space^.keys[key], m = &space^.meta {
+  atomic s = &space^.state {
     let stores = 1_u64;
-    match slot^ {
+    match s^.keys[key] {
       Some(value: seen) => {
         set stores = seen^.stores +wrap 1_u64;
       }
@@ -31,13 +35,13 @@ fn set_key(space: &Keyspace, key: &[u8], timed: Bool) -> result: unit reads(spac
     }
     let sequence = 0_u64;
     if kept {
-      let next = m^.commit_sequence +wrap 1_u64;
-      set m^.commit_sequence = next;
-      set m^.commits = m^.commits +wrap 1_u64;
+      let next = s^.meta.commit_sequence +wrap 1_u64;
+      set s^.meta.commit_sequence = next;
+      set s^.meta.commits = s^.meta.commits +wrap 1_u64;
       set sequence = next;
     }
     let record = Entry(stores: stores, sequence: sequence);
-    set slot^ = Some<Entry>(value: record);
+    set s^.keys[key] = Some<Entry>(value: record);
   }
   return unit;
 }
@@ -52,9 +56,8 @@ fn write_key(space: Keyspace, key_byte: u8, timed: Bool) -> result: unit pure wa
 }
 
 fn share_keyspace(space: &Keyspace, logging: Bool) -> result: Keyspace reads(space) {
-  let keys = shared_share::<ConcurrentHashMap<Entry>>(shared: &space^.keys);
-  let meta = shared_share::<Meta>(shared: &space^.meta);
-  let shared = Keyspace(keys: move keys, meta: move meta, logging: logging);
+  let state = shared_share::<Space>(shared: &space^.state);
+  let shared = Keyspace(state: move state, logging: logging);
   return move shared;
 }
 
@@ -76,8 +79,8 @@ fn check_key(space: &Keyspace, key_byte: u8, kept: Bool) -> result: u8 reads(spa
   let bytes = array_filled::<u8, 1>(value: key_byte);
   let key = &bytes[0_u64..1_u64];
   let wrong = 0_u8;
-  atomic slot = &space^.keys[key] {
-    match slot^ {
+  atomic s = &space^.state {
+    match s^.keys[key] {
       Some(value: seen) => {
         if seen^.stores != 200_u64 {
           set wrong = 1_u8;
@@ -102,19 +105,20 @@ fn check_key(space: &Keyspace, key_byte: u8, kept: Bool) -> result: u8 reads(spa
 }
 
 fn main() -> status: ExitStatus pure waits {
-  doc "Four contexts write two hundred times each to distinct keys in one shared map. Logging and timing cover all four Boolean combinations. One atomic statement updates an entry and uses the separate metadata object only when either flag is true. The commit sequence and count must be six hundred, every key must have two hundred writes, and only held writes may publish a positive commit sequence.";
-  let keys = shared_map_new::<Entry>(capacity: 4_u64);
+  doc "Four contexts write two hundred times each to distinct keys in one map of a shared state. Logging and timing cover all four Boolean combinations. One atomic statement updates an entry and uses the state's separate metadata part only when either flag is true. The commit sequence and count must be six hundred, every key must have two hundred writes, and only held writes may publish a positive commit sequence.";
+  let keys = map_new::<Entry>(capacity: 4_u64);
   let initial = Meta(commit_sequence: 0_u64, commits: 0_u64);
-  let meta = shared_new::<Meta>(value: initial);
+  let contents = Space(keys: move keys, meta: initial);
+  let state = shared_new::<Space>(value: move contents);
   let no = False();
   let yes = True();
-  let space = Keyspace(keys: move keys, meta: move meta, logging: no);
+  let space = Keyspace(state: move state, logging: no);
   write_together(space: &space);
   let commits = 0_u64;
   let sequence = 0_u64;
-  atomic m = &space.meta {
-    set commits = m^.commits;
-    set sequence = m^.commit_sequence;
+  atomic s = &space.state {
+    set commits = s^.meta.commits;
+    set sequence = s^.meta.commit_sequence;
   }
   if commits != 600_u64 {
     return exit_status(code: 1_u8);
@@ -123,8 +127,8 @@ fn main() -> status: ExitStatus pure waits {
     return exit_status(code: 2_u8);
   }
   let count = 0_u64;
-  atomic all = &space.keys {
-    set count = map_count::<Entry>(map: all);
+  atomic s = &space.state {
+    set count = map_count::<Entry>(map: &s^.keys);
   }
   if count != 4_u64 {
     return exit_status(code: 3_u8);

@@ -184,14 +184,15 @@ fn release_map(store: Shared<ConcurrentHashMap<u64>>) -> result: unit pure {
 fn measure_map(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
   doc "Two waves of 200000 distinct three-byte keys with inline u64 values: new chunks, then free-list reuse. Each node needs at least 32 bytes: an eight-byte length, three key bytes and an eight-byte value, rounded to the runtime's 16-byte grain. The presized cell array needs 8388608 bytes. Removing every entry must return exactly to the empty-map reading, a zero-byte tolerance with its table still live; clearing a refilled map exercises draining, and dropping the map must return exactly to the pre-map reading.";
   let before = std::process::heap_in_use(meter: meter);
-  let store = shared_map_new::<u64>(capacity: 200000_u64);
+  let table = map_new::<u64>(capacity: 200000_u64);
+  let store = shared_new::<ConcurrentHashMap<u64>>(value: move table);
   let empty = std::process::heap_in_use(meter: meter);
   for @wave (wave in 0_u64..2_u64) {
     for @insert (index in 0_u64..200000_u64) {
       let bytes = map_key(index: index);
       let key = &bytes[0_u64..3_u64];
-      atomic slot = &store[key] {
-        set slot^ = Some<u64>(value: index);
+      atomic t = &store {
+        set t^[key] = Some<u64>(value: index);
       }
     }
     let observed = std::process::heap_in_use(meter: meter);
@@ -222,8 +223,8 @@ fn measure_map(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
       for @remove (index in 0_u64..200000_u64) {
         let bytes = map_key(index: index);
         let key = &bytes[0_u64..3_u64];
-        atomic slot = &store[key] {
-          set slot^ = None<u64>();
+        atomic t = &store {
+          set t^[key] = None<u64>();
         }
       }
       let removed = std::process::heap_in_use(meter: meter);
@@ -249,8 +250,8 @@ fn measure_map(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
   }
   let bytes = map_key(index: 0_u64);
   let key = &bytes[0_u64..3_u64];
-  atomic slot = &store[key] {
-    set slot^ = Some<u64>(value: 73_u64);
+  atomic t = &store {
+    set t^[key] = Some<u64>(value: 73_u64);
   }
   release_map(store: move store);
   let after = std::process::heap_in_use(meter: meter);
@@ -262,7 +263,8 @@ fn measure_map(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
 
 fn measure_key_set(meter: &MemoryMeter) -> result: u8 writes(meter) waits {
   doc "Guards exact retained-byte reporting against the independent heap meter for unused capacity, insertion growth, every successful bounded scan, and explicit release in one context. Before key_set_bytes exists this fails name resolution; omitting a storage-growth grant from its answer fails the growth equality, and caching a released grant fails the release equality.";
-  let store = shared_map_new::<u8>(capacity: 40_u64);
+  let table = map_new::<u8>(capacity: 40_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move table);
   atomic map = &store {
     for @populate (k in 0_u64..40_u64) {
       let bytes = array_filled::<u8, 65536>(value: 0_u8);
