@@ -57,7 +57,8 @@ jobs:
         run: |
           perl .github/run-check.pl tmp-programs cargo test --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --test corpus -- \
-            programs::contexts:: programs::parallel:: --nocapture
+            programs::contexts:: programs::parallel:: --nocapture \
+            --skip a_deadlock_report --skip a_program_that_can_take_no_step
 
   # Each mutation breaks one condition of the change in the runtime source and
   # builds the driver-service test from it, running only the named test
@@ -141,20 +142,14 @@ jobs:
           fi
           grep -E 'driver-service-test:[0-9]+: ' "$RUNNER_TEMP/mutant.log"
 
-  # Diagnostic: the three deadlock-report program tests alone, one at a time,
-  # on this branch and on main, to see whether they take longer here. Removed
-  # with the file.
+  # The three deadlock-report program tests, one at a time: each builds a
+  # program cold and takes 30 to 60 s alone, on main as well, so they do not
+  # fit beside the other cases in one process on a four-core runner.
   deadlock:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        ref: [branch, main]
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ matrix.ref == 'main' && 'main' || github.sha }}
       - name: Install the host toolchain
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
@@ -175,7 +170,7 @@ jobs:
                       a_program_that_can_take_no_step_stops_with_a_report_on_every_driver_count; do
             perl .github/run-check.pl "tmp-deadlock-$name" cargo test --manifest-path compiler/Cargo.toml \
               --profile gate --locked --offline --test corpus -- "programs::contexts::$name" \
-              --test-threads=1 --nocapture || true
+              --test-threads=1 --nocapture
           done
 
   static:
