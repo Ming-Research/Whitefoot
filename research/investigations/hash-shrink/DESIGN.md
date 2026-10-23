@@ -331,9 +331,17 @@ candidate this branch's, twin a byte copy of the base. Its grow-only cells
 no-slowdown criterion: a candidate interval wholly on the slower side is a
 regression of any size. Its removal cells change by design (removal to empty
 now shrinks) and are reported, not judged against that criterion. The
-removal tail (the one-shot card's reopen condition: a repeatable p99
-regression at threshold crossing or full drain) needs per-removal timings,
-which the instrument does not yet record.
+removal tail, the one-shot card's reopen condition, is the instrument's
+`tail.wf`: it drains 10,000 and 1,000,000 pairs, timing every removal alone,
+so each drain crosses the threshold at every halving down to empty. Its 99th
+percentile carries the paired criterion; a candidate interval wholly on the
+slower side, against a twin that contains 1, reopens one-shot migration. The
+maximum, the removal that migrates the largest map, is reported as a number:
+it is expected to be far above the base's, since the base never migrates on
+removal. A shrinking removal is about one in 50,000 removals of the
+1,000,000-pair drain, below the 99th and 99.9th percentiles, so the library
+percentiles measure the ordinary removal path, and Firn's `SPOP` latency,
+measured in Firn's item, carries the hold as a request sees it.
 
 ## Owner decisions
 
