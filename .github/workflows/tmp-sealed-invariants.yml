@@ -5,8 +5,8 @@
 # programs main's merges brought in: the HashMap's container and snapshot
 # programs, the window clear program and the contexts taking turns with a
 # parked file), the trial compile of the downstream programs with the
-# branch's compiler and main's at the merge of its function-kind frame
-# discharge, and the repository-level static checks and the change-log check
+# branch's compiler and main's at the merge of its surviving window
+# references, and the repository-level static checks and the change-log check
 # against the branch's fork point. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
@@ -133,7 +133,7 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Build the branch's compiler and the base's
         run: |
-          git fetch --depth=1 origin 495749d0b747fca19b4eadcedb38523a36e21685
+          git fetch --depth=1 origin 9825e7e7c417d9091ac2866283a57f4fc81fb656
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
           if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
             # A decided condition counts as discharged in both compilers,
