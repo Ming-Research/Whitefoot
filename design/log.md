@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 An implementation that leaves a place unwritten discharges an interface's frame equality
+
+Nodes: language/contracts, compiler/generic-validation-scope
+
+Summary: A supplied actual may now satisfy each formal `ensures` by its frame or by its stronger own `ensures`: an equality between the exit and entry values of one integer place, or of one measure of a place, is discharged when the actual's declared row writes nothing overlapping that place, so Halo's reads-only host function binds its interface unchanged. Aliasing between the framed place and another parameter's write is left to each call, whose contract-read footprint already separates the framed place (kernel specification FN-4, EFF-5). The compiler decision records how the frame query identifies the exit and entry datums in an isolated zero-premise query and retains the actual and unwritten place as its authority. Refused: implementations declaring wider rows than their bodies, stubs performing a dummy write, a binding-time requirement of a formal access covering the framed place, and discharging frame equalities only for actuals that write nothing.
+
 ## 2026-10-20 A guard written as a helper call filters wakes through a callback
 
 Nodes: compiler/waiting-contexts/state-locks
