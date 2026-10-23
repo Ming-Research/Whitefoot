@@ -14,7 +14,7 @@ alias close_directory_source = std::fs::close_directory_source;
 alias close_read = std::fs::close_read;
 alias directory_next = std::fs::directory_next;
 alias exit_status = std::process::exit_status;
-alias host_copy_bytes = std::text::host_copy_bytes;
+alias host_copy_name_bytes = std::text::host_copy_name_bytes;
 alias open_directory = std::fs::open_directory;
 alias open_directory_source = std::fs::open_directory_source;
 alias open_file = std::fs::open_file;
@@ -1078,37 +1078,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
             break @stored_entry;
           }
           set at = name_end;
-          let dotted = 0_u8;
-          let single = name_count == 1_u64;
-          if single {
-            let first_readable = name_at < entries_room;
-            if first_readable {
-              let first = entries^[name_at];
-              if first == 46_u8 {
-                set dotted = 1_u8;
-              }
-            }
-          }
-          let paired = name_count == 2_u64;
-          if paired {
-            let second_at = name_at +wrap 1_u64;
-            let first_readable = name_at < entries_room;
-            let second_readable = second_at < entries_room;
-            if first_readable {
-              if second_readable {
-                let first = entries^[name_at];
-                let second = entries^[second_at];
-                if first == 46_u8 {
-                  if second == 46_u8 {
-                    set dotted = 1_u8;
-                  }
-                }
-              }
-            }
-          }
-          let not_dotted = dotted == 0_u8;
-          let component_fits = name_count <= 1023_u64;
-          let usable = band(not_dotted, component_fits);
+          let usable = name_count <= 1023_u64;
           if usable {
             let kept = keep_entry(records: &records_cell, starts: &starts_cell, entries: entries, kind: kind, length_low: name_length_low, length_high: name_length_high, name_at: name_at, name_count: name_count);
             if kept {
@@ -1497,7 +1467,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     match arg_get(args: args, position: 1_u64) {
       Ok(value: text) => {
         let pattern_room = pattern^.len;
-        match host_copy_bytes(value: &text, destination: pattern, start: 0_u64, end: pattern_room) {
+        match host_copy_name_bytes(value: &text, destination: pattern, start: 0_u64, end: pattern_room) {
           Ok(value: copied) => {
             set pattern_length = copied;
           }
@@ -1513,7 +1483,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
     match arg_get(args: args, position: 2_u64) {
       Ok(value: text) => {
         let name_room = root_name^.len;
-        match host_copy_bytes(value: &text, destination: root_name, start: 0_u64, end: name_room) {
+        match host_copy_name_bytes(value: &text, destination: root_name, start: 0_u64, end: name_room) {
           Ok(value: copied) => {
             set root_length = copied;
           }
