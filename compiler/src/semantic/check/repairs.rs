@@ -42,7 +42,13 @@ use super::super::model::{
     CheckedFunction, CheckedIntegerOperation, CheckedStatement, FunctionId, expression_children,
 };
 use super::super::permission::visit_read_bindings;
+use super::super::places::{CapturedTerm, CapturedValue};
 use crate::NodePath;
+
+/// [MSR-1] observe the measure that has no declared field to reference.
+pub(super) fn derived_measure_borrow(place: &str) -> String {
+    format!("read the measure by value with `let n = {place};`")
+}
 
 /// [MSR-3] an entry former outside a postcondition cannot select entry state.
 pub(super) const fn entry_outside_postcondition_repair() -> &'static str {
@@ -887,6 +893,40 @@ fn range_length_routes(
     }
 }
 
+/// Existing capture provenance selects only diagnostic wording. A computed
+/// opaque index has no such repair: only a written binding's old value
+/// explains this loss of a source spelling.
+pub(super) fn unnameable_element_index(goal: &GoalExpression) -> Option<CapturedValue> {
+    match goal {
+        GoalExpression::Operation { arguments, .. } => {
+            arguments.iter().find_map(unnameable_element_index)
+        }
+        GoalExpression::Datum(datum) => {
+            let projections = match datum {
+                GoalDatum::Parameter { projections, .. }
+                | GoalDatum::NamedConst { projections, .. }
+                | GoalDatum::Place { projections, .. }
+                | GoalDatum::EvaluatedValue { projections, .. } => projections,
+                GoalDatum::Literal(_) => return None,
+            };
+            projections.iter().find_map(|projection| match projection {
+                GoalProjection::Subscript(index) | GoalProjection::Page(index)
+                    if matches!(index.term, CapturedTerm::Superseded(_)) =>
+                {
+                    Some(*index)
+                }
+                _ => None,
+            })
+        }
+    }
+}
+
+pub(super) fn requirement_after_index_write(goal: &str, index: &str) -> String {
+    format!(
+        "`{goal}` reads an element selected by the old value of `{index}`, which was rewritten after the reference was formed; before forming that reference, save the index in a fresh binding (for example `let {index}0 = {index};`), form the reference through the saved binding, establish the requirement through that reference before the write, and keep the saved binding unchanged so those facts survive the write"
+    )
+}
+
 /// [FN-8] an ordinary call's requirement. `ranges` are the ranges formed at
 /// the call whose `len` the goal reads, and `shape` is the goal's shape
 /// over them.
@@ -969,6 +1009,48 @@ pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static 
             "the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"
         }
     }
+}
+
+/// A private counterfactual proved which withheld declaration this proof needs.
+pub(super) fn unavailable_summary(
+    instance: &str,
+    summary: &str,
+    call_site: &str,
+    rule: &str,
+    failed: &str,
+    declared_site: Option<&str>,
+    failed_site: &str,
+) -> String {
+    let declaration = declared_site
+        .map(|site| format!(" declared at {site}"))
+        .unwrap_or_default();
+    format!(
+        "the call to `{instance}` at {call_site} cannot supply its summary `{summary}` because that callee's [{rule}] obligation `{failed}`{declaration} fails at {failed_site}; repair that obligation in `{instance}` so it proves the summary needed by this proof; for a loop-computed bound, carry the needed bound in a loop-header `invariant`"
+    )
+}
+
+/// The indexed row captures the parameter before its body's assignment.
+pub(super) fn rewritten_effect_index(
+    row: &str,
+    parameter: &str,
+    write: &str,
+    line: u64,
+    access: &str,
+    call: Option<&str>,
+    move_before_write: bool,
+) -> String {
+    let operation = match call {
+        Some(call) => format!("the call `{call}`"),
+        None => format!("the access `{access}`"),
+    };
+    let route = if move_before_write {
+        format!("either by moving {operation} before that write, or by leaving")
+    } else {
+        "by leaving".to_owned()
+    };
+    format!(
+        "the row `{row}` uses `{parameter}`'s value at the call, but `{write}` at line {line} rewrites it before {operation}; where this access is the row mismatch to repair, keep the row {route} `{parameter}` unchanged, binding the new value in a fresh local, and using that local for the work that needs the new value"
+    )
 }
 
 /// [FN-9, ERR-3] a relation at a propagated error exit, which returns the
@@ -1167,6 +1249,44 @@ pub(super) fn bounds_after_kill(
         "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, {narrowing}state equality of the entry and exit values of `{measure}` in {its} `ensures`; or {}",
         case.text,
         case.guard("access", SKIP)
+    )
+}
+
+/// [DIAG-1] an optional header transport which the ordinary join withheld.
+pub(super) fn lost_header_relation(
+    note: &crate::semantic::entailment::LostHeaderRelationNote,
+    line: u64,
+    calls: &[KillingCall],
+    clauses: &[Option<String>],
+) -> String {
+    let path = if calls.is_empty() {
+        format!("the incoming path at line {line}")
+    } else {
+        calls
+            .iter()
+            .map(|call| format!("the path through `{}` at line {}", call.callee, call.line))
+            .collect::<Vec<_>>()
+            .join(" and ")
+    };
+    let preservation = calls
+        .iter()
+        .zip(clauses)
+        .map(|(call, clause)| match clause {
+            Some(clause) => format!("where `{}` preserves that measure, state `{clause}` in its contract", call.callee),
+            None => format!("where `{}` preserves the measures in this relation, state their equality to their entry values in its `ensures`", call.callee),
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!(
+        "header invariant `{}` (`{}`) was not kept at the join: {path} did not prove `{}`; make that path preserve the relation{}",
+        note.name,
+        note.relation,
+        note.conjunct,
+        if preservation.is_empty() {
+            String::new()
+        } else {
+            format!(": {preservation}")
+        },
     )
 }
 

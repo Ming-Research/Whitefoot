@@ -6,7 +6,10 @@
 # A correctness job here fails loudly rather than recording a fallback:
 # `completion-linux` requires io_uring, and `completion-windows` exercises both
 # IOCP and the native compute pool through the production compiler, reporting
-# exact backend failures instead of marking them expected-to-fail. The bench
+# exact backend failures instead of marking them expected-to-fail. The Windows
+# job builds with the pinned llvm-mingw release for x86_64-w64-windows-gnu, the
+# one Windows target the compiler emits and the Windows package ships
+# (design/compiler/toolchain-resolution). The bench
 # jobs that record performance live in `io-bench.yml` and run on demand.
 #
 # These checks run on the revisions gate.yml checks, decided the same way by
@@ -37,8 +40,11 @@ permissions:
 # group, created a few seconds after the pull request, could cancel the push
 # run of a newer head and leave it unchecked, and a push that skips must not
 # cancel a manual run.
+# Each main commit gets its own group, as in gate.yml: a shared main group
+# would cancel the run of every merge but the last of a quick succession, and
+# the cancelled commit would show red on the main line.
 concurrency:
-  group: io-hosts-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}
+  group: io-hosts-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 env:
@@ -172,7 +178,12 @@ jobs:
     needs: scope
     if: needs.scope.outputs.run == 'true'
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
+    env:
+      # The C compiler for the runtime units and the test images: clang from
+      # llvm-mingw, naming the target explicitly as every whitefootc clang
+      # command does.
+      WINDOWS_CLANG: clang --target=x86_64-w64-windows-gnu
     defaults:
       run:
         shell: bash
@@ -181,9 +192,39 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Install the pinned llvm-mingw
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          root=$(bash .github/toolchain/fetch-llvm-mingw.sh .github/toolchain/llvm-assets.json \
+            "$RUNNER_TEMP/llvm-mingw-archives" "$RUNNER_TEMP/llvm-mingw" | tail -n 1)
+          echo "LLVM_MINGW_ROOT=$root" >> "$GITHUB_ENV"
+          # Only llvm-mingw's bin goes ahead of everything else on PATH.
+          cygpath -w "$root/bin" >> "$GITHUB_PATH"
+
+      # Every later step that says `clang` must reach llvm-mingw's, not the
+      # image's own LLVM.
+      - name: Require llvm-mingw's clang to be the job's clang
+        run: |
+          set -euo pipefail
+          ours="$(cygpath -u "$LLVM_MINGW_ROOT")/bin/clang"
+          resolved="$(which clang)"
+          if [ "$resolved" != "$ours" ]; then
+            echo "clang resolves to $resolved, not llvm-mingw's $ours" >&2
+            exit 1
+          fi
+          clang --version | tee "$RUNNER_TEMP/clang-version.txt"
+          grep -F 'clang version 22.1.8' "$RUNNER_TEMP/clang-version.txt"
+          installed="$(sed -n 's/^InstalledDir: //p' "$RUNNER_TEMP/clang-version.txt" | tr -d '\r')"
+          if [ "$(cygpath -u "$installed")" != "$(cygpath -u "$LLVM_MINGW_ROOT")/bin" ]; then
+            echo "clang's InstalledDir $installed is not llvm-mingw's bin" >&2
+            exit 1
+          fi
+
       - name: Record the host
         run: |
           clang --version
+          rustc -vV
           systeminfo | grep -E '^(OS Name|OS Version|System Type|Total Physical Memory)' || true
 
       # The Windows steps run without run-check.pl, so no time budget holds
@@ -195,9 +236,24 @@ jobs:
             choco install make --yes --no-progress
           fi
           make --version
-          make -C compiler -j2 completion-windows-cross WINDOWS_CC=clang SHELL=bash \
+          make -C compiler -j2 completion-windows-cross WINDOWS_CC="$WINDOWS_CLANG" \
+            WINDOWS_LLVM_CC="$WINDOWS_CLANG" SHELL=bash \
             COMPLETION_TMP="$(cygpath -u "$RUNNER_TEMP")/completion"
 
+      # A MinGW UCRT image imports the C runtime through api-ms-win-crt-* or
+      # ucrtbase and never Visual C++'s runtime; an image the Visual Studio
+      # toolchain linked imports VCRUNTIME140.
+      - name: Require the test images to be MinGW UCRT images
+        run: |
+          set -euo pipefail
+          for image in "$(cygpath -u "$RUNNER_TEMP")"/completion/*.exe; do
+            llvm-readobj --coff-imports "$image" | sed -n 's/^ *Name: //p' | tr -d '\r' | sort -u > "$image.imports"
+            echo "--- $(basename "$image") ---"; cat "$image.imports"
+            if grep -i -E '^(vcruntime|msvcp)' "$image.imports"; then
+              echo "$image imports the Visual C++ runtime" >&2; exit 1
+            fi
+            grep -i -E '^(api-ms-win-crt-|ucrtbase)' "$image.imports" > /dev/null
+          done
 
       - name: Exercise native deque reuse and live counters
         run: |
@@ -208,7 +264,8 @@ jobs:
         run: |
           WF_WORKERS=2 "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" host
           "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" wake
-          make -C compiler sched-split-policy-cases WINDOWS_CC=clang SHELL=bash \
+          make -C compiler sched-split-policy-cases WINDOWS_CC="$WINDOWS_CLANG" \
+            WINDOWS_LLVM_CC="$WINDOWS_CLANG" SHELL=bash \
             COMPLETION_TMP="$(cygpath -u "$RUNNER_TEMP")/completion" \
             SCHED_POLICY_EXE="$(cygpath -u "$RUNNER_TEMP")/completion/windows-sched-cpu-levels.exe"
           for mode in fit oversubscribed unknown-count mixed; do
@@ -364,3 +421,35 @@ jobs:
         run: |
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
             --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: programs::driver_count:: programs::host_paths:: conformance::file_replacement:: native_windows::
+
+      # The driver itself on this target: the module names the MinGW triple,
+      # and an ordinary link, a cached ThinLTO link of function fragments (the
+      # MinGW driver's --thinlto-cache-dir) and a full-LTO link each produce a
+      # UCRT image that runs.
+      - name: Drive whitefootc's own links for the MinGW target
+        timeout-minutes: 8
+        env:
+          CARGO_BUILD_JOBS: 2
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --bin whitefootc
+          wfc=compiler/target/gate/whitefootc.exe
+          out="$(cygpath -u "$RUNNER_TEMP")/driver"
+          mkdir -p "$out"
+          "$wfc" --emit-llvm -o "$out/geometry_vectors.ll" tests/programs/geometry_vectors.wf
+          grep -F 'target triple = "x86_64-w64-windows-gnu"' "$out/geometry_vectors.ll"
+          check_imports() {
+            llvm-readobj --coff-imports "$1" | sed -n 's/^ *Name: //p' | tr -d '\r' | sort -u > "$1.imports"
+            echo "--- $(basename "$1") imports ---"; cat "$1.imports"
+            if grep -i -E '^(vcruntime|msvcp)' "$1.imports"; then
+              echo "$1 imports the Visual C++ runtime" >&2; exit 1
+            fi
+            grep -i -E '^(api-ms-win-crt-|ucrtbase)' "$1.imports" > /dev/null
+          }
+          "$wfc" -o "$out/plain.exe" tests/programs/geometry_vectors.wf
+          "$out/plain.exe"; check_imports "$out/plain.exe"
+          "$wfc" --cache "$out/cache" --fragments function -o "$out/thin.exe" tests/programs/geometry_vectors.wf
+          "$out/thin.exe"; check_imports "$out/thin.exe"
+          test -n "$(ls -A "$out/cache")"
+          "$wfc" --full-lto -o "$out/full.exe" tests/programs/geometry_vectors.wf
+          "$out/full.exe"; check_imports "$out/full.exe"

@@ -1,0 +1,30 @@
+struct Progress {
+  n: u64;
+}
+
+fn raised(factory: &std::io::HandleFactory, wanted: u64) -> result: Bool reads(factory) {
+  doc "Reports whether the soft open-files limit has reached wanted, a reading whose row only reads the factory.";
+  let reached = False();
+  match std::process::open_files_limit(factory: factory) {
+    Ok(value: limits) => {
+      set reached = limits.soft >= wanted;
+    }
+    Err(error: problem) => {
+    }
+  }
+  return reached;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "A guard that waits for the open-files limit to reach a value through a helper whose row only reads the factory reads a self-changing host handle.";
+  let std::process::Inputs(cwd: directory, handles: factory, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let initial = Progress(n: 0_u64);
+  let state = shared_new::<Progress>(value: initial);
+  atomic g = &state when raised(factory: &factory, wanted: 4096_u64) {
+    set g^.n = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

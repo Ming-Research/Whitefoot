@@ -1016,7 +1016,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn indexed_set_checks_before_rhs_and_updates_the_run() {
+fn indexed_set_has_no_bounds_branch_and_updates_the_run() {
     let source = br#"fn replacement() -> result: u8 pure {
   return 9_u8;
 }
@@ -1036,17 +1036,17 @@ fn main() -> status: std::process::ExitStatus pure {
     let llvm = compile(source);
     let main = emitted_function(&llvm, "main");
     // The discharged target carries no bounds branch [OP-4]; SET-1's order
-    // remains: the RHS call is emitted after target formation and the store
+    // remains: the RHS call is emitted before target formation and the store
     // after the RHS.
     //
     // KEPT AS WRITTEN for the lowering port: the RHS call and the element
     // store are matched by their emitted spellings.
     let rhs = main
         .find("call i8 @wf_replacement")
-        .expect("RHS must be emitted after target evaluation");
+        .expect("RHS must be emitted");
     assert!(
-        !main[..rhs].contains("call void @wf_trap"),
-        "no bounds trap edge precedes the RHS"
+        !main.contains("call void @wf_trap"),
+        "the discharged target has no bounds trap edge"
     );
     let store = main[rhs..]
         .find("store i8")
@@ -1152,7 +1152,7 @@ fn a_long_loop_over_a_dynamically_indexed_run_keeps_the_frame_bounded() {
 }
 
 #[test]
-fn nested_struct_run_update_uses_the_element_address_prepared_before_the_rhs() {
+fn nested_struct_run_update_uses_the_element_address_prepared_after_the_rhs() {
     let source = br#"struct Inner {
   values: Slots<u8, 2>;
   sibling: u16;
@@ -1168,7 +1168,7 @@ fn replacement() -> result: u8 pure {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1217,8 +1217,8 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
         .find("call i8 @wf_replacement")
         .expect("RHS must follow projected target evaluation");
     assert!(
-        !main[..rhs].contains("call void @wf_trap"),
-        "no bounds trap edge precedes the RHS"
+        !main.contains("call void @wf_trap"),
+        "the discharged target has no bounds trap edge"
     );
     assert_eq!(main.matches("call i8 @wf_replacement").count(), 1);
     let replacement = main[..rhs]
@@ -1245,9 +1245,9 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
     let prepared = main
         .find(&format!("{address} = getelementptr "))
         .expect("the complete element address is prepared once");
-    assert!(prepared < rhs && rhs < store);
+    assert!(rhs < prepared && prepared < store);
     assert!(
-        !main[rhs..store].contains("store %wf.t"),
+        !main[prepared..store].contains("store %wf.t"),
         "the element write must not rebuild its enclosing structs"
     );
 

@@ -75,8 +75,9 @@ use crate::{DeclarationId, NodePath};
 pub(crate) enum CallTransport {
     /// [CALL-1] A reference parameter whose declared row carries no `writes`
     /// of any path rooted at it. [EFF-2]'s both-ways check then lets no
-    /// `writes` occurrence project onto the actual's place, so the call is a
-    /// kill event for no fact supported by it.
+    /// `writes` occurrence project from this parameter: it contributes no
+    /// write, and a fact supported by the actual dies only through another
+    /// argument's projected write.
     ReadOnlyReference,
     /// [CALL-2] A value delivered at an `own` parameter. An affine or linear
     /// actual is a consuming use, which kills every fact whose support
@@ -206,6 +207,14 @@ impl EntailmentCallee {
 
 /// Program-level context the per-function analysis reads.
 pub(crate) struct EntailmentContext<'check> {
+    /// Source text for captured values; diagnostic rendering alone reads it.
+    pub(crate) source_spellings: &'check HashMap<crate::syntax::NodeId, String>,
+    pub(crate) postcondition_clauses:
+        &'check HashMap<(FunctionId, NodePath), super::postcondition::PostconditionClause>,
+    pub(crate) postcondition_sources:
+        &'check HashMap<NodePath, super::postcondition::PostconditionSource>,
+    /// Constructor type names for aggregate constants in diagnostic goals.
+    pub(crate) type_spellings: &'check HashMap<CheckedType, String>,
     pub(crate) captured_places: &'check super::places::CapturedPlaceTable,
     /// [OP-5, FN-2] whether this analysis judges the source redundancy of its
     /// `if` conditions: a nongeneric body at its ordinary instance and a
@@ -447,10 +456,22 @@ pub(crate) struct ObligationOutcome {
     /// [ENT-5]; its repair names them [DIAG-1]. Every other occurrence
     /// retains none.
     pub(crate) killed_by: Vec<MeasureKillNote>,
+    /// Explanation only: a header relation withheld at an earlier join
+    /// which would discharge this failed bounds judgment on a private copy.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
     /// [FN-9] for a subscript of a place a postcondition forms, the selected
     /// return it was judged at and how its repair reads the bound [DIAG-1].
     /// Every other occurrence retains none.
     pub(crate) selected_return: Option<SelectedReturnBound>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LostHeaderRelationNote {
+    pub(crate) name: String,
+    pub(crate) relation: String,
+    pub(crate) conjunct: String,
+    pub(crate) incoming: NodePath,
+    pub(crate) calls: Vec<MeasureKillNote>,
 }
 
 /// [FN-9, DIAG-1] the selected return one subscript of a postcondition place
@@ -988,6 +1009,8 @@ pub(crate) struct SourceProofOutcome {
     /// The direct INV-1 AUTO or PRF-1 certificate result in the source fact
     /// context, selected by `certificate_written`.
     pub(crate) check: SourceProofCheck,
+    /// Explanation only for an unproved blockless invariant target.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
 }
 
 impl SourceProofOutcome {
@@ -1045,9 +1068,12 @@ pub(crate) struct PostconditionExit {
     pub(crate) statement: NodePath,
     pub(crate) relation: state::Relation,
     pub(crate) residual: String,
+    pub(crate) clause: String,
     pub(crate) entry_images: Vec<PostconditionEntryImageOutcome>,
     pub(crate) disposition: PostconditionDisposition,
     pub(crate) derivation: Option<DerivationId>,
+    /// Explanation only for an unproved return relation.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
 }
 
 /// One nonempty all-exit aggregation. A failed aggregate has no derivation.
@@ -1242,6 +1268,8 @@ pub(crate) struct CallGoalOutcome {
     /// call formed at an argument [REF-4], in goal order, for the repair
     /// [DIAG-1]. Discharged calls carry none.
     pub(crate) range_lengths: Vec<RangeLengthReading>,
+    /// Explanation only, computed after an unproved requirement.
+    pub(crate) lost_header: Option<LostHeaderRelationNote>,
 }
 
 /// [REF-4] one range formed at a call whose `len` an unproved requirement
@@ -1588,6 +1616,21 @@ pub(crate) fn analyze_function_candidate(
     context: &EntailmentContext<'_>,
 ) -> FunctionEntailment {
     flow::analyze_candidate(function, context)
+}
+
+/// A rejection-only counterfactual: restoring a callee's withheld clauses at one
+/// call must discharge this exact obligation record without a contradictory state.
+/// The private walk's facts, derivations and summaries are discarded.
+pub(crate) fn unavailable_summary_discharges_record(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    call: &ConcreteCallOccurrence,
+    postconditions: &[(CheckedPostcondition, VerifiedPostconditionSummary)],
+    target: usize,
+) -> bool {
+    flow::unavailable_summary_discharges_record(
+        function, context, call, postconditions, target,
+    )
 }
 
 /// Checks one [FN-4] contract implication in a declaration-only proof

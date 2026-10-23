@@ -1,11 +1,13 @@
 //! Program results and host-visible parallel behavior. Compiler permissions,
 //! private IR and controlled worker observations live in backend tests.
 
-use std::process::Output;
+use std::process::{Command, Output};
 
 use super::support::{
     build_program, build_program_from_fragments, compile_program, compile_program_with_overlap,
+    fixture_directory,
 };
+use crate::support::run_command;
 use whitefoot::{FragmentGranularity, module_requires_parallel_runtime};
 
 /// The recursive corpus program publishes one byte sequence whatever the
@@ -435,6 +437,66 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
 #[test]
 fn shared_objects_outlive_statements_while_other_contexts_release_handles() {
     run_on_one_driver_and_on_four("shared_handle_release.wf", 3);
+}
+
+/// [SHARE-1, PROV-6] objects whose states are linear, on one driver and on
+/// four: two running contexts take `nodrop` tickets out of one queue, three
+/// take turns with one `nodrop` pen outside their atomic statements, and the
+/// handle whose `shared_close` is last receives each state and consumes it.
+/// Statements that did not hold the object alone would lose a stroke or
+/// redeem a ticket twice, and a close that took the state early would lose a
+/// count; the program's status names the first wrong count.
+#[test]
+fn linear_states_pass_between_running_contexts() {
+    run_on_one_driver_and_on_four("linear_shared_states.wf", 3);
+}
+
+/// [SHARE-1, PROV-6] three running contexts take turns with one `WriteFile`
+/// parked in the one-slot window that is a shared object's linear state, on
+/// one driver and on four: each turn takes the file out in an atomic
+/// statement, appends a five-byte record in two host writes outside every
+/// statement, and puts it back, and the handle that ends last receives the
+/// file and closes it. The program's status covers what it can count itself;
+/// this test reads the log it left, which is the independent oracle for the
+/// rest: two contexts holding the file at once would interleave the halves of
+/// their records, and a lost turn or a turn counted twice changes a count.
+#[test]
+fn contexts_take_turns_appending_to_one_parked_file() {
+    let program = build_program(&compile_program("linear_shared_file_turns.wf"));
+    for drivers in ["1", "4"] {
+        for round in 0..3 {
+            let directory = fixture_directory();
+            let mut command = Command::new(program.executable());
+            command
+                .current_dir(directory.path())
+                .env_remove("WF_WORKERS")
+                .env_remove("WF_IO_NO_NATIVE_RING")
+                .env("WF_DRIVERS", drivers);
+            let output = run_command(&mut command);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "drivers {drivers}, round {round}: {output:?}"
+            );
+            let log = std::fs::read(directory.path().join("aof")).expect("the program's log");
+            assert_eq!(
+                log.len(),
+                (100 + 200 + 300) * 5,
+                "drivers {drivers}, round {round}: a record is five bytes"
+            );
+            let mut counts = [0usize; 3];
+            for record in log.chunks(5) {
+                let letter = record[0];
+                assert!(
+                    matches!(letter, b'a'..=b'c')
+                        && record == [letter, b'(', letter, b')', b'\n'],
+                    "drivers {drivers}, round {round}: a record that two writers shared: {record:?}"
+                );
+                counts[usize::from(letter - b'a')] += 1;
+            }
+            assert_eq!(counts, [100, 200, 300], "drivers {drivers}, round {round}");
+        }
+    }
 }
 
 /// Runs one program on one driver and on four, `rounds` times each, and

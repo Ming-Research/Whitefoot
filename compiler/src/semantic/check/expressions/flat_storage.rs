@@ -1612,6 +1612,10 @@ impl<'unit> Checker<'_, 'unit> {
             SemanticIssueKind::InvalidSetTarget {
                 root_class: "a reference whose declared row does not write this path".to_owned(),
                 required_classes: super::SET1_WRITABLE_ROOTS,
+                mechanical_fix: self
+                    .rewritten_index_repair(context, node, place, bindings, None)
+                    .ok()
+                    .flatten(),
             },
         )
     }

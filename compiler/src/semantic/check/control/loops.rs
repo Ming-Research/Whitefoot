@@ -452,7 +452,7 @@ impl<'unit> Checker<'_, 'unit> {
             SemanticIssueKind::InvalidReferenceUse {
                 binder: self.types.declarations.declaration_spelling(declaration)?,
                 event: event.phrase(),
-                mechanical_fix: super::super::references::REF2_FORM_AGAIN,
+                mechanical_fix: super::super::references::REF2_FORM_AGAIN.to_owned(),
             },
         )
     }
@@ -604,7 +604,6 @@ impl<'unit> Checker<'_, 'unit> {
                     compiler_updated: true,
                     read_only_state: false,
                     reference: None,
-                    commit_target: None,
                     refinement_witnesses: Vec::new(),
                     handle_watch: None,
                     call_value: false,

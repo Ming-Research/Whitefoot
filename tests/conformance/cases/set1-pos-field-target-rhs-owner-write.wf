@@ -9,13 +9,13 @@ fn update_state(env: &NumberState) -> result: u64 writes(env) {
 }
 
 fn set_outer(env: &NumberState) -> result: unit writes(env) {
-  doc "An ordinary inline field target stays in the same storage when its right-hand side writes the owner contents.";
+  doc "An ordinary inline field target is evaluated after its right-hand side writes the owner contents.";
   set env^.number = update_state(env: env);
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "The captured field target must commit 11 after the right-hand-side call stores 41.";
+  doc "The field target, evaluated after the right-hand-side call stores 41, must commit 11.";
   let env = NumberState(number: 7_u64);
   let changed = set_outer(env: &env);
   if env.number == 11_u64 {
