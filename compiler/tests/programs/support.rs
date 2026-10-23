@@ -18,8 +18,11 @@ use whitefoot::{
 
 use crate::support::{
     CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects,
-    append_runtime_objects_with_guard_counters, require_sanitized, sanitized, sanitizer,
+    append_runtime_objects_with_guard_counters, require_sanitized, sanitized,
 };
+// Only `build_app`, which exists on Linux alone, selects a sanitizer.
+#[cfg(target_os = "linux")]
+use crate::support::sanitizer;
 pub(super) use crate::support::{ProgramChild, output_within, run_command};
 
 static NEXT_EXECUTION: AtomicU64 = AtomicU64::new(0);

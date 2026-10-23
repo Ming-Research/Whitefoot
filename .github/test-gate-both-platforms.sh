@@ -184,4 +184,30 @@ gate
 [ "$listings" -eq 4 ] || fail "h2: expected 4 listings, got $listings"
 want h2 '^MISSING unit (macos-15): no gate job$'
 
+# (i) GATE_PLATFORMS names the platforms a run was asked for, as gate.yml sets
+# it: with Linux alone, a run that has no macOS job passes and says nothing of
+# macOS, while a missing Linux job still fails.
+newcase i1
+jobs "$FAKE_DIR/jobs.1" 'static (macos-15)=absent' 'unit (macos-15)=absent' 'corpus (macos-15)=absent'
+gate GATE_PLATFORMS=ubuntu-24.04
+[ "$status" -eq 0 ] || fail 'i1: expected a pass on Linux alone'
+[ "$listings" -eq 1 ] || fail "i1: expected 1 listing, got $listings"
+want i1 '^ok      corpus (ubuntu-24.04)$'
+! grep -q 'macos-15' "$work/out" "$work/err" || fail 'i1: macOS is not asked for and must not be read'
+newcase i2
+jobs "$FAKE_DIR/jobs.1" 'static (macos-15)=absent' 'unit (macos-15)=absent' 'corpus (macos-15)=absent' 'unit (ubuntu-24.04)=absent'
+gate GATE_PLATFORMS=ubuntu-24.04
+[ "$status" -ne 0 ] || fail 'i2: expected a failure for a missing Linux job'
+[ "$listings" -eq 4 ] || fail "i2: expected 4 listings, got $listings"
+want i2 '^MISSING unit (ubuntu-24.04): no gate job$'
+
+# (j) With both platforms named, as for a run started with the macos input, a
+# missing macOS job fails.
+newcase j
+jobs "$FAKE_DIR/jobs.1" 'corpus (macos-15)=absent'
+gate GATE_PLATFORMS='ubuntu-24.04 macos-15'
+[ "$status" -ne 0 ] || fail 'j: expected a failure for a missing macOS job'
+[ "$listings" -eq 4 ] || fail "j: expected 4 listings, got $listings"
+want j '^MISSING corpus (macos-15): no gate job$'
+
 echo 'test-gate-both-platforms: ok'
