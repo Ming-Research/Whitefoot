@@ -14,7 +14,7 @@ use crate::{
 use super::super::super::model::{
     CheckedEnumType, CheckedExpression, CheckedField, CheckedMatchArm, CheckedMatchBinder,
     CheckedMatchSelection, CheckedMatchType, CheckedMode, CheckedNominalKind, CheckedProjectedDrop,
-    CheckedStatement, CheckedType, CheckedValue,
+    CheckedStatement, CheckedType, CheckedValue, FunctionId,
 };
 use super::super::super::places::{PlaceRoot, PlaceStep};
 use super::super::super::tree::ConditionalAlternative;
@@ -42,6 +42,9 @@ struct ArmDescriptor {
 }
 
 pub(super) struct MatchResult {
+    /// [OP-5] the complete condition `expr` of an `if` or `value_if`, whose
+    /// source redundancy the entailment walk judges; `None` for a source match.
+    pub(super) condition: Option<crate::NodePath>,
     pub(super) scrutinee: CheckedExpression,
     pub(super) match_type: CheckedMatchType,
     pub(super) arms: Vec<CheckedMatchArm>,
@@ -198,7 +201,14 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .children_with(node, Production::Arm)?;
         let resolved_arms = if let Some(descriptor) = &descriptor {
-            self.resolve_enum_match_arms(check_context, node, descriptor, &arm_nodes)?
+            self.resolve_enum_match_arms(
+                check_context,
+                context.function.id,
+                node,
+                scrutinee.expression.ty(),
+                descriptor,
+                &arm_nodes,
+            )?
         } else {
             self.resolve_integer_match_arms(context, node, scrutinee.expression.ty(), &arm_nodes)?
         };
@@ -377,6 +387,7 @@ impl<'unit> Checker<'_, 'unit> {
             )?;
         }
         Ok(MatchResult {
+            condition: None,
             scrutinee: scrutinee.expression,
             match_type,
             arms,
@@ -537,6 +548,7 @@ impl<'unit> Checker<'_, 'unit> {
                 )?;
                 BlockResult {
                     statements: vec![CheckedStatement::Match {
+                        condition: chained.condition,
                         node_path: self.types.declarations.tree.path(*nested)?.clone(),
                         scrutinee: chained.scrutinee,
                         match_type: chained.match_type,
@@ -644,6 +656,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .map_err(|stop| self.conditional_join_repair(check_context, &base_bindings, stop))?;
         }
         Ok(MatchResult {
+            condition: Some(self.types.declarations.tree.path(expression_node)?.clone()),
             scrutinee: condition.expression,
             match_type: CheckedMatchType::Enum(CheckedEnumType::Bool),
             arms,
@@ -719,9 +732,11 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// [GRAM-12, TYPE-6, ERR-2] enum header and complete-variant judgments.
     fn resolve_enum_match_arms(
-        &self,
+        &mut self,
         check_context: &CheckContext<'_>,
+        function: FunctionId,
         node: NodeId,
+        scrutinee_type: CheckedType,
         descriptor: &MatchDescriptor,
         arm_nodes: &[NodeId],
     ) -> Result<Vec<ArmDescriptor>, CheckStop> {
@@ -772,12 +787,10 @@ impl<'unit> Checker<'_, 'unit> {
             .filter(|variant| !seen.contains(&variant.tag))
             .map(|variant| variant.name.clone())
             .collect::<Vec<_>>();
+        // [ERR-2] record the site and keep walking, so one compilation lists
+        // every incomplete match; the first recorded event is the rejection.
         if !missing_variants.is_empty() {
-            return self.types.declarations.issue_node(
-                SemanticRule::Err2,
-                node,
-                SemanticIssueKind::NonExhaustiveMatch { missing_variants },
-            );
+            self.record_non_exhaustive_match(function, node, scrutinee_type, missing_variants)?;
         }
         if let Some(variant) = duplicate {
             return self.types.declarations.issue_node(
@@ -1083,7 +1096,6 @@ impl<'unit> Checker<'_, 'unit> {
                         compiler_updated: false,
                         read_only_state: false,
                         reference,
-                        commit_target: None,
                         refinement_witnesses: Vec::new(),
                         handle_watch: None,
                         call_value: false,

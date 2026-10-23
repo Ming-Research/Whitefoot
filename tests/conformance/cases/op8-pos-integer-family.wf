@@ -10,13 +10,10 @@ fn mix(word: u32) -> return_value: u32 pure {
 }
 
 fn main() -> return_value: ExitStatus pure {
-  doc "OP-8: the extended integer family supports binary-data kernels through the normal compiler path.";
+  doc "OP-8: the extended integer family supports binary-data kernels through the normal compiler path. The bounded population count of the mixed word is the exit status 18.";
   let mixed = mix(word: 305419896_u32);
   let bits = ipopcount(mixed);
   let bounded = imin(bits, 32_u32);
-  if bounded <= 32_u32 {
-  } else {
-    return exit_status(code: 201_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u32, u8>(bounded);
+  return exit_status(code: code);
 }

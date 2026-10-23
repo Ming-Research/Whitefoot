@@ -1,0 +1,3 @@
+public fn first(a: u64) -> r: u64 pure;
+
+public fn second(a: u64) -> r: u64 pure;

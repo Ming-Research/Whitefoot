@@ -1,0 +1,11 @@
+fn limit() -> result: u64 pure waits contract {
+  ensures result == 2_u64;
+} {
+  return 2_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let values = array_filled::<u8, 2>(value: 0_u8);
+  let part = &values[0_u64..spawn limit()];
+  return std::process::exit_status(code: 0_u8);
+}

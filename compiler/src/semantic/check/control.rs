@@ -363,6 +363,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_if(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        condition: matched.condition,
                         node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
                         match_type: matched.match_type,
@@ -381,6 +382,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_match(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        condition: matched.condition,
                         node_path: self.types.declarations.tree.path(node)?.clone(),
                         scrutinee: matched.scrutinee,
                         match_type: matched.match_type,
@@ -625,7 +627,6 @@ impl<'unit> Checker<'_, 'unit> {
                             compiler_updated: false,
                             read_only_state: false,
                             reference,
-                            commit_target: None,
                             refinement_witnesses: Vec::new(),
                             handle_watch: None,
                             call_value: false,
@@ -638,6 +639,7 @@ impl<'unit> Checker<'_, 'unit> {
             return Ok(StatementResult {
                 statement: CheckedStatement::ValueMatchLet {
                     node_path: self.types.declarations.tree.path(node)?.clone(),
+                    condition: matched.condition,
                     kind: if value_if.is_some() {
                         ValueInitializerKind::ValueIf
                     } else {
@@ -725,7 +727,6 @@ impl<'unit> Checker<'_, 'unit> {
             compiler_updated: false,
             read_only_state: false,
             reference,
-            commit_target: None,
             refinement_witnesses: Vec::new(),
             handle_watch: None,
             call_value: false,

@@ -8,13 +8,6 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &line, value: 0_u8);
   place_back(window: &line, value: 0_u8);
   place_back(window: &line, value: 0_u8);
-  let spare = line.len;
-  let first_end = 4_u64;
-  let first_fits = first_end <= spare;
-  if first_fits {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let values = array_filled::<u8, 10>(value: 7_u8);
   let grown = slots_from_array::<u8, 10>(values: values);
   swap(first: &line, second: &grown);

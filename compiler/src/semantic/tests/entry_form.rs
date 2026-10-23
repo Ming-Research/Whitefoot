@@ -24,22 +24,22 @@ fn ordinary_prelude_calls_are_named_in_declared_order() {
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(value: 0_u8);\n}\n",
         SemanticRule::Gram11,
-        declared("exit_status", &["code"]),
+        declared("std::process::exit_status", &["code"]),
     );
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(0_u8);\n}\n",
         SemanticRule::Gram11,
-        declared("exit_status", &["code"]),
+        declared("std::process::exit_status", &["code"]),
     );
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status();\n}\n",
         SemanticRule::Gram11,
-        declared("exit_status", &["code"]),
+        declared("std::process::exit_status", &["code"]),
     );
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8, extra: 0_u8);\n}\n",
         SemanticRule::Gram11,
-        declared("exit_status", &["code"]),
+        declared("std::process::exit_status", &["code"]),
     );
     with_semantics(
         b"fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
@@ -55,7 +55,7 @@ fn ordinary_prelude_calls_are_named_in_declared_order() {
 #[test]
 fn arg_get_calls_are_checked_by_the_same_general_rule() {
     let declared = SemanticIssueKind::InvalidNamedArguments {
-        callee: "arg_get".to_owned(),
+        callee: "std::text::arg_get".to_owned(),
         declared_parameters: vec!["args".to_owned(), "position".to_owned()],
     };
     assert_rule(

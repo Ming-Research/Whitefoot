@@ -10,10 +10,13 @@ pub(in crate::semantic::check) mod expressions;
 pub(in crate::semantic) mod floats;
 mod frozen;
 mod generics;
+mod goal_instances;
 mod held;
+mod index_write_repairs;
 mod inventory;
 mod linearity;
 mod lock_ledger_sources;
+mod match_diagnostics;
 mod nominal_instances;
 mod nominals;
 mod obligations;
@@ -26,6 +29,7 @@ pub(in crate::semantic) mod repairs;
 mod requires;
 mod schedule;
 mod spawn;
+mod summary_repairs;
 mod support;
 mod tail_calls;
 mod text_literals;
@@ -33,6 +37,8 @@ mod type_invariants;
 mod type_regions;
 mod types;
 
+#[cfg(test)]
+pub(super) use match_diagnostics::capture_match_sites;
 pub(crate) use receipts::ProofReceipts;
 pub(crate) use repairs::{
     executable_caller_repair, executable_runner_repair, header_invariant_scope_repair,
@@ -281,10 +287,6 @@ struct LocalBinding {
     /// was the loan apparatus's way of stating what [REF-2] now states
     /// directly as a validity fact.
     reference: Option<ReferenceInfo>,
-    /// A set target's newly selected payload storage and later storage
-    /// selections while its RHS is checked, excluding trailing inline fields.
-    /// It uses the same REF-2 validity and preservation rules as a reference.
-    commit_target: Option<ReferenceInfo>,
     /// [REF-2, ENT-3.S15] the match refinement occurrences rooted at this
     /// binding. The occurrence identity is immutable even when a
     /// reference binding is rebound; only its flow-sensitive validity meets
@@ -580,6 +582,11 @@ struct DeclarationInventory<'unit> {
 /// extend this context directly; checking phases select ordered views of it.
 struct TypeContext<'unit> {
     declarations: &'unit DeclarationInventory<'unit>,
+    /// Exact source text for diagnostic-only captured-value occurrences.
+    source_spellings: HashMap<NodeId, String>,
+    postcondition_clauses:
+        HashMap<(FunctionId, crate::NodePath), super::postcondition::PostconditionClause>,
+    postcondition_sources: HashMap<crate::NodePath, super::postcondition::PostconditionSource>,
     view: InventoryView,
     nominals: Vec<CheckedNominal>,
     /// Counts the changes to `nominals`: an instance appended or completed.
@@ -623,6 +630,7 @@ struct TypeContext<'unit> {
     /// symbolic validation instance is checked; every concrete instantiation
     /// evaluates entries away, so no id reaches lowering.
     derived_consts: Vec<DerivedConst>,
+    captured_places: super::places::CapturedPlaceTable,
     behavior: behavior::BehaviorInventory,
     /// [TYPE-11] each struct's formed type invariants, in declaration order.
     type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
@@ -643,6 +651,8 @@ struct TypeContext<'unit> {
 /// a reference-summary retry; the completed attempt publishes its own facts.
 #[derive(Default)]
 struct BodyChecker {
+    /// Explanation only: an uncovered call write uses a rewritten row index.
+    rewritten_index_repair: Option<String>,
     /// Allocated and populated only by an EFF-2 rejection replay.
     repair_calls: Option<Vec<effect_repairs::EffectCall>>,
     /// [LIV-2] the target places of the `set` commit whose right-hand side is
@@ -671,7 +681,8 @@ struct BodyChecker {
     /// ends those call values. The sets only grow across the function's
     /// retries, and a new member restarts the walk, as a new loop-header
     /// summary path does.
-    loop_superseded_bindings: HashMap<super::model::CheckedLoopId, HashSet<BindingId>>,
+    loop_superseded_bindings:
+        HashMap<super::model::CheckedLoopId, HashSet<super::places::CapturedTerm>>,
     /// [ENT-3.S15, ENT-5] enclosing match occurrences whose variant fact
     /// does not survive every executable backedge of this loop. Each newly
     /// recorded occurrence restarts the existing structural walk; header
@@ -719,6 +730,8 @@ struct BodyChecker {
 /// Program-wide judgments and reuse records, published after checking succeeds.
 #[derive(Default)]
 struct AnalysisState {
+    /// [ERR-2] rejected structural scratch, stopped before proof consumers.
+    match_diagnostics: match_diagnostics::MatchDiagnostics,
     /// [DIAG-1, FN-10] retain tail-condition failures until ordinary call
     /// checking, including FN-8 proofs, can establish a prior same-node rule.
     musttail_rejections: Vec<SemanticIssue>,
@@ -841,6 +854,7 @@ fn check_semantics_with(
                     issue.kind,
                     SemanticIssueKind::EffectMismatch {
                         expected_row: None,
+                        mechanical_fix: None,
                         ..
                     }
                 ) =>
@@ -930,6 +944,7 @@ fn check_semantics_attempt(
             receipts,
         );
         let result = checker.check_program(&CheckContext::default());
+        let result = checker.analysis.match_diagnostics.finish(result);
         checker.analysis.finish_musttail_checks(result)
     })
 }
@@ -1394,10 +1409,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             true,
             None,
         )?;
-        let mut functions = function_inventory
+        let (mut functions, binding_names): (Vec<_>, Vec<_>) = function_inventory
             .into_iter()
-            .map(|checked| checked.function)
-            .collect::<Vec<_>>();
+            .map(|checked| (checked.function, checked.binding_names))
+            .unzip();
         for function in &mut functions {
             function.body_disposition = function.entailment.body_disposition;
         }
@@ -1430,6 +1445,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         &ranges[index].discharged,
                         &ranges[index].inconclusive,
                     )
+                    .map_err(|stop| {
+                        self.explain_summary_stop(
+                            stop,
+                            function,
+                            &baseline_functions,
+                            &callees,
+                            &binding_names[index],
+                        )
+                    })
                     .map_err(|stop| self.types.attribute_to_request(function.id, stop))
                 {
                     Ok(()) => {}
@@ -1830,11 +1854,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         };
         let queries = self.analysis.contract_queries.len();
         let tail_rejections = self.analysis.musttail_rejections.len();
+        let match_rejections = self.analysis.match_diagnostics.len();
         loop {
             self.analysis.contract_queries.truncate(queries);
             // Only the settled body may contribute FN-10 refusals. Keep the
             // position checks and earlier functions outside this attempt.
             self.analysis.musttail_rejections.truncate(tail_rejections);
+            self.analysis.match_diagnostics.truncate(match_rejections);
             let outcome = {
                 let mut attempt = Checker::new(
                     self.types,
@@ -2175,14 +2201,18 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 &signature.declared_effects,
                 signature,
             )?;
-            // An acyclic repair keeps origin/main's exact text. Recursive
+            // Rewritten-index repairs keep the declared row. Other recursive
             // rows are withheld until the rejection-only replay validates them.
             // If source graph classification is unavailable, replay is conservative.
             let recursive = self.types.effect_repairs.is_ordinary()
                 && self
                     .requires_recursive_row_repair(signature)
                     .unwrap_or(true);
-            let (expected_row, mechanical_fix) = if recursive {
+            let (expected_row, mechanical_fix) = if let Some(repair) =
+                &self.body.rewritten_index_repair
+            {
+                (None, Some(repair.clone()))
+            } else if recursive {
                 (None, None)
             } else {
                 let expected = self.types.render_effect_row(&suggested, signature)?;
@@ -2418,7 +2448,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     ResolvedPlace::binding(binding),
                 )
             }),
-            commit_target: None,
             refinement_witnesses: Vec::new(),
             handle_watch: None,
             call_value: true,
@@ -2718,393 +2747,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             | CheckedExpression::Project { .. } => {}
         }
         Ok(())
-    }
-
-    fn instantiate_goal_expression(
-        &mut self,
-        check_context: &CheckContext<'_>,
-        expression: &GoalExpression,
-        signature: &FunctionSignature,
-        regions: &[DeclarationId],
-        arguments: &[GoalExpression],
-    ) -> Result<GoalExpression, CheckStop> {
-        match expression {
-            GoalExpression::Datum(GoalDatum::Parameter {
-                ordinal,
-                projections,
-                ty,
-            }) => {
-                let index = usize::try_from(*ordinal)
-                    .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                let parameter = signature
-                    .parameters
-                    .get(index)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let mut image = arguments
-                    .get(index)
-                    .cloned()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                let parameter_type =
-                    self.instantiate_goal_type(check_context, parameter.ty, signature, regions)?;
-                if image.ty() != parameter_type {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                }
-                let remaining = if parameter.mode == CheckedMode::Own {
-                    projections.as_slice()
-                } else {
-                    let Some((GoalProjection::Deref, remaining)) = projections.split_first() else {
-                        return Err(SemanticCompilerFailure::InvalidResolution.into());
-                    };
-                    remaining
-                };
-                let final_type =
-                    self.instantiate_goal_type(check_context, *ty, signature, regions)?;
-                for projection in remaining {
-                    // [MSR-1, EFF-5] a formal-valued subscript names a value
-                    // parameter of the callee, and the caller substitutes its
-                    // own actual for it exactly as it substitutes a row's
-                    // index positions: the offset the place is identified
-                    // over is the value that argument names here.
-                    let projection = match projection {
-                        GoalProjection::FormalSubscript { ordinal } => GoalProjection::Subscript(
-                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
-                        ),
-                        GoalProjection::FormalPage { ordinal } => GoalProjection::Page(
-                            self.goal_argument_offset(arguments.get(*ordinal as usize))?,
-                        ),
-                        other => *other,
-                    };
-                    image = image
-                        .with_projection(projection, final_type)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                }
-                if image.ty() != final_type {
-                    return Err(SemanticCompilerFailure::InvalidResolution.into());
-                }
-                Ok(image)
-            }
-            GoalExpression::Datum(GoalDatum::NamedConst {
-                declaration,
-                projections,
-                ty,
-                admission,
-            }) => Ok(GoalExpression::Datum(GoalDatum::NamedConst {
-                declaration: *declaration,
-                projections: projections.clone(),
-                ty: self.instantiate_goal_type(check_context, *ty, signature, regions)?,
-                admission: admission.clone(),
-            })),
-            GoalExpression::Datum(GoalDatum::Literal(value)) => {
-                Ok(GoalExpression::Datum(GoalDatum::Literal(
-                    self.instantiate_goal_value(check_context, value, signature, regions)?,
-                )))
-            }
-            GoalExpression::Datum(GoalDatum::Place { .. } | GoalDatum::EvaluatedValue { .. }) => {
-                Err(SemanticCompilerFailure::InvalidResolution.into())
-            }
-            GoalExpression::Operation {
-                row,
-                type_arguments,
-                const_arguments,
-                result,
-                arguments: operands,
-            } => Ok(GoalExpression::Operation {
-                row: self.instantiate_goal_operation(check_context, *row, signature, regions)?,
-                type_arguments: type_arguments
-                    .iter()
-                    .map(|ty| self.instantiate_goal_type(check_context, *ty, signature, regions))
-                    .collect::<Result<Vec<_>, _>>()?,
-                const_arguments: const_arguments
-                    .iter()
-                    .map(|value| self.types.instantiate_goal_const(*value, signature))
-                    .collect::<Result<Vec<_>, _>>()?,
-                result: self.instantiate_goal_type(check_context, *result, signature, regions)?,
-                arguments: operands
-                    .iter()
-                    .map(|operand| {
-                        self.instantiate_goal_expression(
-                            check_context,
-                            operand,
-                            signature,
-                            regions,
-                            arguments,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
-        }
-    }
-
-    /// The offset one actual supplies to a formal-valued subscript [MSR-1].
-    ///
-    /// [ENT-2] decides a place's identity by its canonical spelling, so an
-    /// argument [`super::goal::actual_offset`] names supplies exactly that,
-    /// and an argument it names no offset for supplies the unknown offset,
-    /// which no admitted family separates -- the conservative reading in
-    /// both directions [OWN-7].
-    fn goal_argument_offset(
-        &self,
-        argument: Option<&GoalExpression>,
-    ) -> Result<super::places::CapturedValue, CheckStop> {
-        let named = |declaration| {
-            let constant = self
-                .types
-                .constant(*self.types.constants.get(&declaration)?);
-            match constant.ok()?.value {
-                CheckedValue::Integer { bits, .. } => Some(bits),
-                _ => None,
-            }
-        };
-        Ok(argument
-            .and_then(|argument| super::goal::actual_offset(argument, &named))
-            .unwrap_or_else(super::places::CapturedValue::unknown))
-    }
-
-    fn instantiate_goal_operation(
-        &mut self,
-        check_context: &CheckContext<'_>,
-        operation: GoalOperation,
-        signature: &FunctionSignature,
-        regions: &[DeclarationId],
-    ) -> Result<GoalOperation, CheckStop> {
-        Ok(match operation {
-            GoalOperation::Integer {
-                operation,
-                operand_type,
-            } => GoalOperation::Integer {
-                operation,
-                operand_type: self.instantiate_goal_type(
-                    check_context,
-                    operand_type,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::Float {
-                operation,
-                operand_type,
-            } => GoalOperation::Float {
-                operation,
-                operand_type: self.instantiate_goal_type(
-                    check_context,
-                    operand_type,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::NumericConversion {
-                mode,
-                source,
-                destination,
-            } => GoalOperation::NumericConversion {
-                mode,
-                source: self.instantiate_goal_numeric_type(
-                    check_context,
-                    source,
-                    signature,
-                    regions,
-                )?,
-                destination: self.instantiate_goal_numeric_type(
-                    check_context,
-                    destination,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::Reinterpret {
-                source,
-                destination,
-            } => GoalOperation::Reinterpret {
-                source: self.instantiate_goal_numeric_type(
-                    check_context,
-                    source,
-                    signature,
-                    regions,
-                )?,
-                destination: self.instantiate_goal_numeric_type(
-                    check_context,
-                    destination,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::Boolean(operation) => GoalOperation::Boolean(operation),
-            GoalOperation::ValueEquality {
-                equal,
-                operand_type,
-            } => GoalOperation::ValueEquality {
-                equal,
-                operand_type: self.instantiate_goal_type(
-                    check_context,
-                    operand_type,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::ArrayMeasure {
-                measure,
-                element,
-                length,
-            } => GoalOperation::ArrayMeasure {
-                measure,
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                length: self.types.instantiate_goal_const(length, signature)?,
-            },
-            GoalOperation::ArrayIndex { element, length } => GoalOperation::ArrayIndex {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                length: self.types.instantiate_goal_const(length, signature)?,
-            },
-            GoalOperation::BufferMeasure { measure, element } => GoalOperation::BufferMeasure {
-                measure,
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::BufferIndex { element } => GoalOperation::BufferIndex {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            GoalOperation::ContainerMeasure {
-                measure,
-                measured,
-                element,
-                constant,
-            } => GoalOperation::ContainerMeasure {
-                measure,
-                measured,
-                element: element
-                    .map(|element| {
-                        self.instantiate_goal_element(check_context, element, signature, regions)
-                    })
-                    .transpose()?,
-                constant: constant
-                    .map(|constant| self.types.instantiate_goal_const(constant, signature))
-                    .transpose()?,
-            },
-            GoalOperation::RunIndex {
-                measured,
-                element,
-                constant,
-            } => GoalOperation::RunIndex {
-                measured,
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                constant: constant
-                    .map(|constant| self.types.instantiate_goal_const(constant, signature))
-                    .transpose()?,
-            },
-        })
-    }
-
-    fn instantiate_goal_numeric_type(
-        &mut self,
-        check_context: &CheckContext<'_>,
-        ty: CheckedNumericType,
-        signature: &FunctionSignature,
-        regions: &[DeclarationId],
-    ) -> Result<CheckedNumericType, CheckStop> {
-        CheckedNumericType::from_type(self.instantiate_goal_type(
-            check_context,
-            ty.ty(),
-            signature,
-            regions,
-        )?)
-        .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
-    }
-
-    fn instantiate_goal_type(
-        &mut self,
-        check_context: &CheckContext<'_>,
-        ty: CheckedType,
-        signature: &FunctionSignature,
-        regions: &[DeclarationId],
-    ) -> Result<CheckedType, CheckStop> {
-        Ok(match ty {
-            CheckedType::Generic(declaration)
-            | CheckedType::GenericInt(declaration)
-            | CheckedType::GenericFloat(declaration) => signature
-                .substitution
-                .type_argument(declaration)
-                .unwrap_or(ty),
-            CheckedType::Array { element, length } => CheckedType::Array {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                length: self.types.instantiate_goal_const(length, signature)?,
-            },
-            CheckedType::Segments { element } => CheckedType::Segments {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            CheckedType::Buffer { element } => CheckedType::Buffer {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            CheckedType::Window {
-                shape,
-                element,
-                capacity,
-            } => CheckedType::Window {
-                shape,
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-                capacity: capacity
-                    .map(|capacity| self.types.instantiate_goal_const(capacity, signature))
-                    .transpose()?,
-            },
-            CheckedType::Entries { element } => CheckedType::Entries {
-                element: self.instantiate_goal_element(
-                    check_context,
-                    element,
-                    signature,
-                    regions,
-                )?,
-            },
-            CheckedType::Nominal(id) => {
-                self.instantiate_goal_nominal(check_context, id, signature, regions)?
-            }
-            CheckedType::Unit
-            | CheckedType::Bool
-            | CheckedType::Integer(_)
-            | CheckedType::Float(_)
-            | CheckedType::KeySet => ty,
-        })
     }
 
     /// [FN-2, S20] one nominal instance read at a caller with every formal
@@ -3935,6 +3577,9 @@ impl<'unit> TypeContext<'unit> {
     fn new(declarations: &'unit DeclarationInventory<'unit>) -> Self {
         Self {
             declarations,
+            source_spellings: HashMap::new(),
+            postcondition_clauses: HashMap::new(),
+            postcondition_sources: HashMap::new(),
             view: InventoryView::default(),
             nominal_templates: Default::default(),
             prelude_nominals: Default::default(),
@@ -3957,6 +3602,7 @@ impl<'unit> TypeContext<'unit> {
             constants: Default::default(),
             checked_constants: Default::default(),
             derived_consts: Default::default(),
+            captured_places: Default::default(),
             behavior: Default::default(),
             type_invariants: Default::default(),
             range_type_invariants: Default::default(),

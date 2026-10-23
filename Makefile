@@ -94,7 +94,7 @@ _check-runtime:
 # second copy of the list is a copy that goes stale, and did — retiring two
 # stages left the workflow naming targets that no longer exist.
 static:
-	@for stage in repository-invariants spec-archives readme-translation spec-prose-integrity guidance source-size design-lint; do \
+	@for stage in repository-invariants spec-archives readme-translation spec-prose-integrity guidance source-size design-lint safety-claims; do \
 		$(CHECK_RUN) "$$stage" $(MAKE) --no-print-directory "$$stage" || exit 1; \
 	done
 
@@ -113,8 +113,10 @@ repository-invariants:
 	@$(PY) .github/check-research-inputs.py --self-test
 	@$(PY) .github/check-research-inputs.py
 	@sh .github/test-run-check.sh
+	@$(PY) .github/recompute-time-budgets.py --self-test
 	@sh .github/test-gate-scope.sh
 	@sh .github/test-gate-both-platforms.sh
+	@sh .github/test-compiler-release-retention.sh
 	@perl .github/check-english.pl --self-test
 	@perl .github/check-english.pl
 	@test -s AGENTS.md || { echo "AGENTS.md missing" >&2; exit 1; }
@@ -169,6 +171,15 @@ readme-translation:
 guidance:
 	@$(PY) .github/check-guidance.py --self-test
 	@$(PY) .github/check-guidance.py
+
+# docs/safety-claims.md names, per safety claim, specification rules and
+# conformance cases. This reads the page, the specification and the manifest
+# and fails when a rule, case, verdict, quotation or make target the page names
+# no longer matches; it runs no compiler. The first command is the checker's
+# own tests.
+safety-claims:
+	@$(PY) .github/check-safety-claims.py --self-test
+	@$(PY) .github/check-safety-claims.py
 
 # A Rust source under compiler/src/ over the limit is listed in
 # SOURCE_SIZE_LIST with the status board item that records its split, so its
@@ -287,4 +298,4 @@ install-hooks:
 	git config core.hooksPath governance/hooks
 	@echo "installed governance/hooks (pre-commit, pre-merge-commit)"
 
-.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants spec-archives readme-translation guidance source-size spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
+.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants spec-archives readme-translation guidance safety-claims source-size spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
