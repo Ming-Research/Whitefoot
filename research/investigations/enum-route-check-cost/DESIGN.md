@@ -1277,6 +1277,57 @@ declaration, as it already does for `held`; a rename changes no compiler's work,
 and all columns check the same adapted source. The design, the verdict rules and
 the validity rules above are unchanged.
 
+### Result of the interval run
+
+Run 39905316095 (temporary workflow, removed after it; AMD EPYC 7763, one host
+for all five columns), on `6d0fa8711`, whose `compiler/` is that of `e0bb1ef7e`
+and of the reviewed head. Adaptation: the earlier runs' diffs, then one
+mechanical rename (`clear` in 14 files, see above); the baseline source lacks
+the `host_paths` and `process_id` bindings at `firn/server/server.wf:983`, as
+before. `c431fix` applied and built. All 75 compiler runs exited 0, and the
+interval of `T` (identical binaries) is 0.989–1.008, which contains 1.000, so the
+batch is valid. The `D` interval at round 15 lies wholly above 1.03, so the job
+stopped there, as designed. Ratios of compiler user+sys CPU, median, 96.5%
+interval of the median (recomputed from the raw `rounds.tsv` outside the job,
+same values), min–max and the 15 per-round values:
+
+| Ratio | median | interval | min–max | per round |
+|---|---:|---|---|---|
+| `D` = branch / base | 1.078 | 1.066–1.084 | 1.061–1.099 | 1.066 1.078 1.069 1.075 1.084 1.075 1.099 1.089 1.089 1.066 1.078 1.061 1.078 1.084 1.064 |
+| `E` = c431fix / base | 0.974 | 0.968–0.984 | 0.957–0.998 | 0.959 0.975 0.973 0.983 0.967 0.972 0.998 0.973 0.989 0.980 0.974 0.991 0.984 0.968 0.957 |
+| `F` = branch / c431fix | 1.106 | 1.096–1.111 | 1.071–1.122 | 1.111 1.106 1.099 1.094 1.122 1.106 1.101 1.119 1.100 1.088 1.107 1.071 1.096 1.121 1.111 |
+| `c` = branch / main | 0.876 | 0.871–0.880 | 0.859–0.884 | 0.878 0.884 0.871 0.878 0.882 0.873 0.870 0.877 0.880 0.873 0.881 0.863 0.876 0.859 0.872 |
+| `M` = main / base | 1.230 | 1.222–1.238 | 1.214–1.263 | 1.214 1.219 1.228 1.224 1.230 1.232 1.263 1.242 1.238 1.222 1.223 1.230 1.231 1.262 1.221 |
+| `T` = twin / base | 0.999 | 0.989–1.008 | 0.981–1.016 | 0.988 0.999 0.996 1.001 0.999 1.003 1.016 1.008 1.009 0.984 0.981 1.012 0.996 0.997 0.989 |
+
+Median CPU seconds: base 87.43, twin 87.39, c431fix 85.30, main 107.43, branch
+94.31.
+
+- Verdict 2 of the rules above: `D` = 1.078 (1.066–1.084), every one of the 15
+  rounds is above 1.03 (smallest 1.061). Measured against the main before #431,
+  the Firn row is not met. The earlier medians on neighbouring trees and other
+  hosts (1.027, 1.067, 1.082, 1.029) lie around this interval; 1.029 was the low
+  end of them.
+- `E` = 0.974 (0.968–0.984), every round at most 0.998: on the tree where #431
+  landed, with this change applied, Firn is below its pre-#431 time. The
+  direct column of the previous run (1.013 on another host) agrees in
+  direction. The change removes what #431 added to Firn and more than that.
+- `F` = 1.106 (1.096–1.111) is what the merges between #431 and the merge base
+  add on top of the fixed tree; `M` = 1.230 is the whole excess on main (main
+  is 23% above `base`); `c` = 0.876 says this branch runs Firn at 87.6% of main's
+  time.
+  The `D`, `E` and `F` intervals are consistent with `D` = `E` · `F`
+  (0.974 · 1.106 = 1.077).
+- Not known, and not tested by this run: whether the 10.6% of `F` is work of the
+  merges since #431 themselves or an interaction with #431's mechanism that this
+  change does not remove (the two readings of the previous section). A main with
+  #431 reverted cannot be built, so these runs cannot separate them; timing each
+  merge between #431 and the merge base on Firn would attribute the excess to
+  merges, and is not done here.
+- No further pairs: the interval decided at round 15, and the rules above stop
+  there. Rule 2 applies, and the row goes to the owner on a card with these
+  intervals.
+
 ### Reviews
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
