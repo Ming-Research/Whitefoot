@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-22 Definitions are substituted into every clause before its range terms are checked
+
+Nodes: language/checks-and-proofs/requires-entry-contract
+
+Summary: The changed decision substitutes a define into every clause before that clause's range terms are checked, so the range-term restriction holds independently of abbreviation spelling (a linear index admitted, a product of two parameters refused, in requires and ensures alike), instead of refusing a range term because it uses a define name.
+
 ## 2026-10-22 A manual gate run can add macOS, so a release is qualified once per release
 
 Nodes: compiler/verification
