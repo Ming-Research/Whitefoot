@@ -11,6 +11,12 @@ Nodes: language/data-model/hash-map-storage
 
 Summary: Two decisions are added and two changed. A successful removal now releases every bucket when no pair remains, and otherwise rebuilds the map once eight times the remaining pairs is below its bucket count, into the least power of two that is at least eight buckets and four per remaining pair, because Firn's `SPOP` walked a mostly empty backing while holding the set ([hash-shrink study](../research/investigations/hash-shrink/DESIGN.md#hysteresis-and-amortized-work)); the shrink is the same one-shot occupancy-only migration as growth. The ceiling decision no longer promises that a map created at its ceiling never allocates again: removal may shrink it and insertion then grows it, while an insertion at the ceiling still does not rebuild. The scan decision now names shrinking among the changes a pass survives, since a shrink halves the bucket count and so merges home intervals of the hash space the cursor already addresses. Refused: an explicit shrink operation alone, which leaves every caller that omits it sparse; keeping the never-allocates-again promise for maps reserved to their ceiling; incremental migration with two live backings, which needs dual-backing rules in every operation and a scan over both.
 
+## 2026-10-22 The kernel owns clearing a window while keeping its storage
+
+Nodes: language/data-model/kernel-minimality
+
+Summary: A program that reuses one byte buffer per batch could not empty it without one boundary operation per element or a transfer of every element into another window, as the [retained-buffer comparison](../research/investigations/slots-clear/DESIGN.md#existing-operations-do-not-supply-the-required-reset) shows. The kernel therefore owns `clear` over every droppable element type: it runs each element's derived release, sets the length to zero and keeps the storage, capacity, ring origin and pages, so an element type that needs no release is reset independently of length. Clearing leaves the list of operations that begin as source libraries, and clearing as a source library over `take_back` is recorded as rejected.
+
 ## 2026-10-21 A column for a model with too few runs takes the larger of the row's largest class and its own runs
 
 Nodes: compiler/verification

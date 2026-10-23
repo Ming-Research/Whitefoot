@@ -352,7 +352,7 @@ fn a_range_element_measure_dies_on_a_write_through_an_alias() {
   return unit;
 }
 
-fn clear(window: &Slots<u64, 2>) -> result: unit writes(window) {
+fn wipe(window: &Slots<u64, 2>) -> result: unit writes(window) {
   let empty = slots_new::<u64, 2>();
   set window^ = move empty;
   return unit;
@@ -366,7 +366,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let items = &outer[0_u64..1_u64];
   if items^[0_u64].len == 1_u64 {
     let aliased = &items^[0_u64];
-    let cleared = clear(window: aliased);
+    let cleared = wipe(window: aliased);
     let invalid = needs_one(value: items^[0_u64].len);
   }
   return std::process::exit_status(code: 0_u8);
@@ -538,12 +538,12 @@ const CONDITIONAL_RANGE_SEPARATION_HELPERS: &str = r#"fn touch(left: &[Slots<u64
   requires 0_u64 < left^.len;
   requires 0_u64 < right^.len;
 } {
-  clear(window: &left^[0_u64]);
-  clear(window: &right^[0_u64]);
+  wipe(window: &left^[0_u64]);
+  wipe(window: &right^[0_u64]);
   return unit;
 }
 
-fn clear(window: &Slots<u64, 2>) -> result: unit writes(window) {
+fn wipe(window: &Slots<u64, 2>) -> result: unit writes(window) {
   let empty = slots_new::<u64, 2>();
   set window^ = move empty;
   return unit;
@@ -597,7 +597,7 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: u64 wr
   }}
   let selected = &left^[0_u64];
   if selected^.len == 1_u64 {{
-    clear(window: &right^[0_u64]);
+    wipe(window: &right^[0_u64]);
     return selected^[0_u64];
   }}
   return 0_u64;
@@ -629,7 +629,7 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: u64 wr
   }} else {{
     let selected = &left^[0_u64];
     if selected^.len == 1_u64 {{
-      clear(window: &right^[0_u64]);
+      wipe(window: &right^[0_u64]);
       return selected^[0_u64];
     }}
   }}
@@ -664,7 +664,7 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64, count: u64) -> re
   }}
   let selected = &left^[0_u64];
   if selected^.len == 1_u64 {{
-    clear(window: &right^[0_u64]);
+    wipe(window: &right^[0_u64]);
     return selected^[0_u64];
   }}
   return 0_u64;

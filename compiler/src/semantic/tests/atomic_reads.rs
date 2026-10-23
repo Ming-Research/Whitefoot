@@ -68,7 +68,7 @@ fn bump(value: &u8) -> result: unit writes(value) {
   return unit;
 }
 
-fn clear(observed: &Option<u8>) -> result: unit writes(observed) {
+fn wipe(observed: &Option<u8>) -> result: unit writes(observed) {
   set observed^ = None<u8>();
   return unit;
 }
@@ -128,7 +128,7 @@ fn calls_a_payload_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit
 fn calls_an_entry_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
   atomic slot = &store^[observed] {
-    clear(observed: slot);
+    wipe(observed: slot);
   }
   return unit;
 }
