@@ -95,6 +95,42 @@ pub(super) fn float_literal_repair(canonical_spelling: Option<&str>) -> String {
     }
 }
 
+/// [FORM-7] a `u8` character literal above 0x7F: write the same character as
+/// a `u32` literal or, where its value fits a byte, the byte in decimal.
+pub(super) fn ascii_byte_character_repair(character: &str, value: u32) -> String {
+    if value <= u32::from(u8::MAX) {
+        format!(
+            "a `u8` character is ASCII, at most 0x7F: write `{character}` for the character, or `{value}_u8` for the byte"
+        )
+    } else {
+        format!("a `u8` character is ASCII, at most 0x7F: write `{character}`")
+    }
+}
+
+/// [CONST-2] a STRING whose UTF-8 byte length differs from the declared array
+/// length: state the byte length in the array's type, or change the text.
+pub(super) fn text_length_repair(byte_length: u64, declared_length: u64) -> String {
+    format!(
+        "this text is {byte_length} bytes in UTF-8: write `Array<u8, {byte_length}>` where this array's type is declared, or change the text to {declared_length} bytes"
+    )
+}
+
+/// [EFF-2] the row the body's accesses need, in its canonical spelling. A
+/// caller may append companion repairs after it.
+pub(super) fn effect_row_repair(expected: &str) -> String {
+    format!(
+        "declare the row as `{expected}`, which covers every access the body makes and no other"
+    )
+}
+
+/// [GIVE-1] no arm of a `let` binding's `if` or `match` supplies its value:
+/// drop the binding and write the form as a statement.
+pub(super) fn empty_delivery_repair(binding: &str, form: &str) -> String {
+    format!(
+        "no arm supplies a value to `{binding}`: drop `let {binding} =`, write the `{form}` as a statement, and delete the statements after it in this block, which no path reaches"
+    )
+}
+
 pub(super) const fn instantiation_cycle_repair() -> &'static str {
     "use the caller's parameter at the same position and kind, or a term containing none of the caller's parameters, with the callee's required kind and bounds; otherwise move the changing instantiation off the cycle"
 }

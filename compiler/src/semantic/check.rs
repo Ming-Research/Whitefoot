@@ -2217,9 +2217,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 (None, None)
             } else {
                 let expected = self.types.render_effect_row(&suggested, signature)?;
-                let fix = format!(
-                    "declare the row as `{expected}`, which covers every access the body makes and no other"
-                );
+                let fix = repairs::effect_row_repair(&expected);
                 (Some(expected), Some(fix))
             };
             return self.types.declarations.issue_node(
