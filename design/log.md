@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 Cooperative switches account invocations per executor and unwind for pending host work
+
+Nodes: compiler/waiting-contexts, compiler/waiting-contexts/suspension-accounting
+
+Summary: A native context invocation is now accounted by an odd/even sequence on its physical executor's own cache line instead of a process-wide active count and change counter that every driver wrote on every resume, and the stuck check collects all 128 sequences before and after its driver scan under one cold mutex that also serializes idle, wake and transfer transitions, with logical idleness persisting across empty polls so a persistent deadlock is eventually seen. A fairness suspension reaches its driver's ready queue after unwind without the external-wake gate, and the 64-answer rule now also unwinds when the driver has a pending host wait or ingress, because a sleeping context is not in the ready queue and a lone busy context otherwise never returns to expire its timer. The stuck-check decision in `compiler/waiting-contexts` gains the invocation and transfer exclusion. Four alternatives are refused in the new node: the shared count, one slot per logical driver, a single collect or Boolean, and a double collect without the cold mutex. The reasoning and the snapshot argument are in `research/investigations/suspension-accounting/DESIGN.md`; the saving is measured only on the sharded-counter study branch, together with a shorter whole-read ticket wait, and not on the main line.
+
 ## 2026-10-13 A window reference survives a call when its formation bounds are re-proved after it
 
 Nodes: compiler/checker-facts

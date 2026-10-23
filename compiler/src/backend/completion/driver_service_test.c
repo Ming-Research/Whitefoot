@@ -15,7 +15,7 @@
 static wf_driver assistant;
 static _Atomic unsigned computing, release_compute, ran_timer;
 enum { FRAME_COMPUTE, FRAME_TIMER, FRAME_EARLY_WAKE, FRAME_HANDOFF_COMPUTE,
-    FRAME_HANDOFF_TIMER, FRAME_LAUNCHER, FRAME_LAUNCHER_CHILD };
+    FRAME_HANDOFF_TIMER, FRAME_LAUNCHER, FRAME_LAUNCHER_CHILD, FRAME_FAIR };
 static _Atomic unsigned destroyed_child, destroyed_root;
 static pthread_t launcher_thread;
 static wf_cmap *handoff_map;
@@ -34,7 +34,7 @@ void wf_driver_service_test_destroy(void *opaque) {
         CHECK(pthread_equal(pthread_self(), launcher_thread));
         CHECK(atomic_load(&wf_monitor_exited));
         CHECK(atomic_load(&wf_executors[1].exited));
-        CHECK(!atomic_load(&wf_active_invocations));
+        CHECK(!wf_invocations_active());
         atomic_fetch_add(&destroyed_root, 1u);
     } else if (frame->kind == FRAME_LAUNCHER_CHILD || frame->kind == FRAME_HANDOFF_COMPUTE) {
         atomic_fetch_add(&destroyed_child, 1u);
@@ -46,7 +46,13 @@ void wf_driver_service_test_resume(void *opaque) {
     CHECK(wf_driver_service == NULL);
     CHECK((wf_context_outside & WF_DRIVER_PHASE_MASK) == WF_DRIVER_OUTSIDE);
     /* Reassignment may win even between OUTSIDE and this function's entry. */
-    if (frame->kind == FRAME_HANDOFF_COMPUTE) {
+    if (frame->kind == FRAME_FAIR) {
+        for (unsigned pass = 1u; pass <= WF_CONTEXT_YIELD_PASSES; ++pass)
+            CHECK(wf__context_pass(frame) == (pass == WF_CONTEXT_YIELD_PASSES));
+        CHECK(wf_context_parked_away == WF_SUSPEND_FAIR);
+        CHECK(!atomic_load(&wf_context_current->wake_gate));
+        frame->stage += 1u;
+    } else if (frame->kind == FRAME_HANDOFF_COMPUTE) {
         CHECK(wf__driver_index() == 0u);
         wf_cmap_user *user = wf_cmap_user_at(handoff_map, wf__driver_index());
         wf_cmap_entry entry;
@@ -147,7 +153,8 @@ static void fixture_begin(void) {
     wf_monitor_started = 0u;
     wf_executor_index = 0u;
     atomic_flag_clear(&wf_executor_lock);
-    atomic_store(&wf_active_invocations, 0u);
+    for (unsigned i = 0; i < WF_EXECUTOR_LIMIT; ++i)
+        atomic_store(&wf_invocations[i].sequence, 0u);
     atomic_store(&destroyed_child, 0u);
     atomic_store(&destroyed_root, 0u);
     atomic_store(&wf_driver_stats_count, 2u);
@@ -185,6 +192,162 @@ static void fixture_end(void) {
     wf_context_current = NULL;
     atomic_store(&wf_driver_count, 0u);
     atomic_store(&wf_drivers[0], NULL);
+}
+
+/* Drivers do not preempt, so a context offers its driver once it has had 64
+ * waits answered at once. A peer ready on the driver, a displaced invocation,
+ * and a lone context beside a pending host wait or ingress all require the
+ * context to unwind; a lone context with nothing pending continues. The
+ * suspension has no external waiter: it publishes straight to the run queue
+ * when its owner adopts it, never through the wake gate. */
+static void fair_yield_boundaries(void) {
+    fixture_begin();
+    service_frame frame = {0};
+    wf_context peer = {.driver = &wf_driver_root};
+    wf_context_outside = WF_DRIVER_EPOCH_STEP | WF_DRIVER_OUTSIDE;
+    atomic_store(&wf_driver_root.service_token, wf_context_outside);
+    wf_context_current = &wf_context_root;
+    wf_context_parked_away = WF_SUSPEND_NONE;
+
+    /* Alone and nothing pending: the 64th pass resets the count and goes on. */
+    wf_context_root.passes = WF_CONTEXT_YIELD_PASSES - 1u;
+    CHECK(wf__context_pass(&frame) == 0);
+    CHECK(wf_context_root.passes == 0u && wf_context_parked_away == WF_SUSPEND_NONE);
+
+    /* A ready peer: one pass short of the threshold continues, the 64th
+     * unwinds and enqueues behind the peer only when adopted. */
+    wf_run_push(&wf_driver_root, &peer);
+    wf_context_root.passes = WF_CONTEXT_YIELD_PASSES - 2u;
+    CHECK(wf__context_pass(&frame) == 0);
+    CHECK(wf_context_root.passes == WF_CONTEXT_YIELD_PASSES - 1u);
+    CHECK(wf__context_pass(&frame) == 1);
+    CHECK(wf_context_root.passes == 0u && wf_context_root.resume == &frame);
+    CHECK(wf_context_parked_away == WF_SUSPEND_FAIR);
+    CHECK(atomic_load(&wf_context_root.wake_gate) == WF_WAKE_NONE);
+    CHECK(atomic_load(&wf_driver_root.run_count) == 1u);
+    wf_context_root.disposition = WF_HAND_BACK_FAIR;
+    wf_context_adopt(&wf_driver_root, &wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == &peer);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+
+    /* A displaced invocation unwinds at once, below the threshold. */
+    wf_context_parked_away = WF_SUSPEND_NONE;
+    wf_context_root.passes = 0u;
+    atomic_store(&wf_driver_root.service_token,
+        (2u * WF_DRIVER_EPOCH_STEP) | WF_DRIVER_OUTSIDE);
+    CHECK(wf__context_pass(&frame) == 1);
+    CHECK(wf_context_parked_away == WF_SUSPEND_FAIR);
+    wf_context_root.disposition = WF_HAND_BACK_FAIR;
+    wf_context_adopt(&wf_driver_root, &wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    atomic_store(&wf_driver_root.service_token, wf_context_outside);
+
+    /* A lone busy context still returns when a sleeper or an ingress record
+     * needs the driver: a sleeper is not ready until a reap expires it. */
+    for (unsigned pending = 0; pending < 2u; ++pending) {
+        atomic_store(&wf_driver_root.host_waits, pending == 0u);
+        atomic_store(&wf_driver_root.ingress_count, pending == 1u);
+        wf_context_root.passes = WF_CONTEXT_YIELD_PASSES - 1u;
+        wf_context_parked_away = WF_SUSPEND_NONE;
+        CHECK(!atomic_load(&wf_driver_root.run_count));
+        CHECK(wf__context_pass(&frame) == 1);
+        CHECK(wf_context_parked_away == WF_SUSPEND_FAIR);
+        CHECK(!atomic_load(&wf_context_root.wake_gate));
+        CHECK(!atomic_load(&wf_driver_root.run_count));
+        wf_context_root.disposition = WF_HAND_BACK_FAIR;
+        wf_context_adopt(&wf_driver_root, &wf_context_root);
+        CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    }
+    atomic_store(&wf_driver_root.host_waits, 0u);
+    atomic_store(&wf_driver_root.ingress_count, 0u);
+    wf_context_parked_away = WF_SUSPEND_NONE;
+    fixture_end();
+}
+
+/* Scope boundaries are the production collector's helpers, with an invocation
+ * explicitly placed between the two collections. A Boolean or single collect
+ * misses the complete 0 -> 1 -> 2 transition. */
+static void invocation_collections(void) {
+    fixture_begin();
+    uint64_t sequence[WF_EXECUTOR_LIMIT];
+    wf_quiescence_lock();
+    wf_driver_idle_locked(&wf_driver_root);
+    wf_driver_idle_locked(&assistant);
+    CHECK(wf_contexts_stuck_locked());
+    CHECK(wf_invocations_collect(sequence));
+    uint64_t changes = atomic_load(&wf_drivers_changes);
+    wf_executor_index = WF_EXECUTOR_LIMIT - 1u;
+    wf_invocation_begin();
+    CHECK(!wf_invocations_unchanged(sequence));
+    CHECK(!wf_contexts_stuck_locked());
+    wf_executor_index = 0u;
+    wf_invocation_begin();
+    wf_invocation_end();
+    CHECK(!wf_contexts_stuck_locked());
+    CHECK(atomic_load(&wf_invocations[WF_EXECUTOR_LIMIT - 1u].sequence) & 1u);
+    wf_executor_index = WF_EXECUTOR_LIMIT - 1u;
+    wf_invocation_end();
+    CHECK(!wf_invocations_unchanged(sequence));
+    CHECK(!wf_contexts_stuck_since(sequence, changes));
+    CHECK(wf_invocations_collect(sequence));
+    CHECK(wf_invocations_unchanged(sequence));
+    CHECK(wf_contexts_stuck_locked());
+    wf_quiescence_unlock();
+    /* Shutdown also enumerates beyond the published executor count. */
+    wf_invocation_begin();
+    CHECK(!wf_drivers_quiescent());
+    CHECK(wf_driver_poll_wait_ms(&wf_driver_root) == 1);
+    wf_invocation_end();
+    CHECK(wf_drivers_quiescent());
+    wf_executor_index = 0u;
+    fixture_end();
+}
+
+/* Empty maintenance retains logical idleness. Failed borrow/steal probes
+ * finish under the cold mutex, so successive scans cannot chase their churn. */
+static void idle_quiescence(void) {
+    fixture_begin();
+    wf_quiescence_lock();
+    wf_driver_idle_locked(&wf_driver_root);
+    wf_driver_idle_locked(&assistant);
+    uint64_t changes = atomic_load(&wf_drivers_changes);
+    wf_quiescence_unlock();
+    for (unsigned poll = 0; poll < 8u; ++poll) {
+        CHECK(!wf_driver_steal(&wf_driver_root));
+        CHECK(!wf_driver_assist(&wf_driver_root));
+        wf_quiescence_lock();
+        wf_driver_idle_locked(&wf_driver_root);
+        CHECK(wf_contexts_stuck_locked());
+        CHECK(atomic_load(&wf_drivers_changes) == changes);
+        CHECK(atomic_load(&wf_drivers_idle) == 2u);
+        wf_quiescence_unlock();
+    }
+    wf_context ready = {.driver = &wf_driver_root};
+    wf_run_push(&wf_driver_root, &ready);
+    CHECK(atomic_load(&wf_driver_root.idle));
+    CHECK(wf_run_take(&wf_driver_root) == &ready);
+    CHECK(!wf_contexts_stuck(&wf_driver_root));
+    CHECK(!atomic_load(&wf_driver_root.idle));
+    CHECK(atomic_load(&wf_drivers_idle) == 1u);
+    /* A zero local searcher must not retire another driver's wake claim. */
+    atomic_store(&wf_drivers_searching, 1u);
+    atomic_store(&assistant.searcher, 1u);
+    wf_driver_end_search(&wf_driver_root, 0);
+    CHECK(atomic_load(&wf_drivers_searching));
+    wf_driver_end_search(&assistant, 0);
+    CHECK(!atomic_load(&wf_drivers_searching));
+    /* A claim after the fast zero observation survives until the target's
+     * next empty-loop end-search, even when no context was found. */
+    wf_driver_end_search(&assistant, 0);
+    wf_drivers_wake_one();
+    CHECK(atomic_load(&assistant.searcher));
+    CHECK(atomic_load(&wf_drivers_searching));
+    CHECK(!atomic_load(&assistant.idle));
+    wf_driver_end_search(&assistant, 0);
+    CHECK(!atomic_load(&assistant.searcher));
+    CHECK(!atomic_load(&wf_drivers_searching));
+    fixture_end();
 }
 
 typedef struct startup_park {
@@ -317,6 +480,37 @@ static wf_completion_record *park_record(wf_context *context, unsigned route, ui
     context->record = record;
     wf_context_adopt_wait(&wf_driver_root, context);
     return record;
+}
+
+/* No monitor or second executor participates. Force the parked sleep's
+ * timer instant to zero, which is due for every monotonic clock result. The
+ * production reap interval alone must make it ready by its 64th resume. */
+static void solitary_sleep_reap(void) {
+    fixture_begin();
+    service_frame busy = {.kind = FRAME_FAIR};
+    wf_context child = {.driver = &wf_driver_root, .root = &busy, .resume = &busy};
+    wf_completion_record *record = park_record(&wf_context_root, WF_COMPLETION_ROUTE_TIMER, 1u);
+    CHECK(wf_driver_root.timer_count == 1u);
+    wf_driver_root.timers[0]->timer_at = 0u;
+    uint64_t changes = atomic_load(&wf_drivers_changes);
+    for (unsigned run = 1u; run <= WF_DRIVER_REAP_RUNS; ++run) {
+        CHECK(!atomic_load(&wf_driver_root.run_count));
+        CHECK(wf_context_run(&wf_driver_root, &child));
+        CHECK(busy.stage == run);
+        CHECK(atomic_load(&wf_invocations[0].sequence) == 2u * run);
+        CHECK(atomic_load(&wf_drivers_changes) == changes);
+        if (run < WF_DRIVER_REAP_RUNS) {
+            CHECK(wf_bridge_record_state(record) == WF_COMPLETION_PENDING);
+            CHECK(wf_run_take(&wf_driver_root) == &child);
+        }
+    }
+    CHECK(wf_bridge_record_state(record) == WF_COMPLETION_DONE);
+    CHECK(!atomic_load(&wf_driver_root.host_waits));
+    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
+    CHECK(wf_run_take(&wf_driver_root) == &child);
+    CHECK(wf_run_take(&wf_driver_root) == NULL);
+    CHECK(!wf_invocations_active());
+    fixture_end();
 }
 
 static void *compute_thread(void *opaque) {
@@ -493,7 +687,7 @@ static void handoff_fixture(void) {
 
 static void handoff_fixture_end(void) {
     CHECK(!atomic_load(&wf_driver_root.ingress_count));
-    CHECK(!atomic_load(&wf_active_invocations));
+    CHECK(!wf_invocations_active());
     CHECK(wf_completion_runtime_destroy(&wf_executors[0].wake) == 0);
     CHECK(wf_completion_runtime_destroy(&wf_executors[1].wake) == 0);
     fixture_end();
@@ -608,9 +802,13 @@ static void displaced_dispositions(void) {
         CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
         CHECK(wf_context_run(&wf_driver_root, &wf_context_root));
         CHECK(atomic_load(&ran_timer) == 1u);
+        CHECK(atomic_load(&wf_invocations[0].sequence) & 1u);
+        CHECK(!(atomic_load(&wf_invocations[1].sequence) & 1u));
         /* Every logical role looks idle, but the old executor holds a map
          * entry and can still make progress. It must not be declared stuck. */
-        atomic_store(&wf_driver_root.idle, 1u);
+        wf_quiescence_lock();
+        wf_driver_idle_locked(&wf_driver_root);
+        wf_quiescence_unlock();
         CHECK(!wf_contexts_stuck(&wf_driver_root));
         atomic_store(&release_compute, 1u);
         CHECK(pthread_join(thread, NULL) == 0);
@@ -633,6 +831,9 @@ static void displaced_dispositions(void) {
             atomic_store(&wf_context_live, 0u);
         }
         CHECK(wf_run_take(&wf_driver_root) == NULL);
+        wf_quiescence_lock();
+        wf_driver_idle_locked(&wf_driver_root);
+        wf_quiescence_unlock();
         CHECK(wf_contexts_stuck(&wf_driver_root));
         wf_cmap_destroy(handoff_map);
         handoff_map = NULL;
@@ -643,6 +844,7 @@ static void displaced_dispositions(void) {
 static void root_ingress_quiescence(void) {
     handoff_fixture();
     wf_context_root.disposition = WF_HAND_BACK_COMPLETE;
+    wf_invocation_begin();
     wf_context_ingress(&wf_driver_root, &wf_context_root);
     CHECK(!wf_drivers_quiescent());
     /* Pause an owner between the two production adoption steps: publishing
@@ -656,6 +858,10 @@ static void root_ingress_quiescence(void) {
     CHECK(!wf_drivers_quiescent());
     atomic_fetch_add(&wf_drivers_changes, 1u);
     atomic_fetch_sub(&wf_driver_root.ingress_count, 1u);
+    CHECK(!wf_drivers_quiescent());
+    uint64_t epoch = wf_completion_wake_epoch(wf_driver_root.runtime);
+    wf_context_retire(&wf_driver_root, 0);
+    CHECK(wf_completion_wake_epoch(wf_driver_root.runtime) != epoch);
     CHECK(wf_drivers_quiescent());
     handoff_fixture_end();
 }
@@ -663,7 +869,7 @@ static void root_ingress_quiescence(void) {
 static void readiness_ingress_bound(void) {
     handoff_fixture();
     CHECK(wf_driver_poll_wait_ms(&wf_driver_root) == -1);
-    atomic_store(&wf_active_invocations, 1u);
+    wf_invocation_begin();
     CHECK(wf_driver_poll_wait_ms(&wf_driver_root) == 1);
 #if !defined(_WIN32)
     int descriptors[2];
@@ -680,7 +886,7 @@ static void readiness_ingress_bound(void) {
 #endif
     wf_context ready = {.driver = &wf_driver_root, .disposition = WF_HAND_BACK_READY};
     wf_context_ingress(&wf_driver_root, &ready);
-    atomic_store(&wf_active_invocations, 0u);
+    wf_invocation_end();
     CHECK(wf_driver_poll_wait_ms(&wf_driver_root) == 0);
     CHECK(wf_driver_adopt_ingress(&wf_driver_root));
     CHECK(wf_run_take(&wf_driver_root) == &ready);
@@ -717,7 +923,7 @@ static void root_takeover_cleanup(void) {
     CHECK(atomic_load(&destroyed_child) == 1u && atomic_load(&destroyed_root) == 1u);
     CHECK(atomic_load(&wf_driver_stats[0].reassignments) == 1u);
     CHECK(atomic_load(&wf_driver_stats[0].ingress_commits) == 1u);
-    CHECK(!atomic_load(&wf_drivers_moving) && !atomic_load(&wf_active_invocations));
+    CHECK(!atomic_load(&wf_drivers_moving) && !wf_invocations_active());
     CHECK(!wf_driver_root.ingress_head && !wf_driver_root.parked);
     wf_pool_give(wf_driver_root.timers, wf_driver_root.timer_bytes);
 }
@@ -726,6 +932,14 @@ int main(void) {
     wf_test_guard_start(30);
     wf_bridge_require();
     CHECK(!wf_bridge_ring_ready()); /* deterministic service-only fixture */
+    wf_test_guard_phase("fairness yields unwind for a peer, displacement and pending host work");
+    fair_yield_boundaries();
+    wf_test_guard_phase("64 lone-context resumptions service an expired sleep without monitor");
+    solitary_sleep_reap();
+    wf_test_guard_phase("executor generations reject complete intervening invocations");
+    invocation_collections();
+    wf_test_guard_phase("persistent idle scans and searcher claim ownership");
+    idle_quiescence();
     wf_test_guard_phase("startup publication wakes an obsolete unbounded park");
     startup_publication();
     wf_test_guard_phase("ready-queue steals have separate attribution");
