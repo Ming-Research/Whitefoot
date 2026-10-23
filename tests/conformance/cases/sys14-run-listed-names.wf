@@ -229,26 +229,22 @@ fn list_folder(factory: &HandleFactory, folder: &DirectoryRead) -> result: u8 re
             if content != 97_u8 {
               set status = 24_u8;
             }
-          } else {
-            if is_accented {
-              set accented_seen = accented_seen +wrap 1_u64;
-              if kind != 1_u8 {
-                set status = 25_u8;
-              }
-              let content = first_byte(factory: factory, root: folder, entries: names, start: name_at, end: name_end);
-              if content != 101_u8 {
-                set status = 26_u8;
-              }
-            } else {
-              if is_inner {
-                set inner_seen = inner_seen +wrap 1_u64;
-                if kind != 2_u8 {
-                  set status = 27_u8;
-                }
-              } else {
-                set status = 28_u8;
-              }
+          } else if is_accented {
+            set accented_seen = accented_seen +wrap 1_u64;
+            if kind != 1_u8 {
+              set status = 25_u8;
             }
+            let content = first_byte(factory: factory, root: folder, entries: names, start: name_at, end: name_end);
+            if content != 101_u8 {
+              set status = 26_u8;
+            }
+          } else if is_inner {
+            set inner_seen = inner_seen +wrap 1_u64;
+            if kind != 2_u8 {
+              set status = 27_u8;
+            }
+          } else {
+            set status = 28_u8;
           }
           set at = name_end;
           set seen = seen +wrap 1_u64;

@@ -1449,7 +1449,7 @@ static int wf_component(unsigned char *component, const wf_view *name,
         uint64_t count;
         for (index = 0; index < length; index++)
             /* A colon selects a data stream rather than a file component. */
-            if (text[index] == 0 || text[index] == '/' || text[index] == '\' ||
+            if (text[index] == 0 || text[index] == '/' || text[index] == '\\' ||
                 text[index] == ':')
                 return 0;
         if (!wf_text_valid(text, length, 1)) return 0;
