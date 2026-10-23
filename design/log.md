@@ -11,6 +11,18 @@ Nodes: language/system-interface, language/system-interface/directory-enumeratio
 
 Summary: A program that names `config.txt` to `open_file`, or skips the one-byte `.` among listed names, worked on POSIX and failed on Windows, where the runtime took and gave UTF-16 code units; `tests/programs/wfgrep.wf` opened `.` and `..` of every directory there and reported them unreadable. The root gains a decision: a name below a directory, taken by a single-name operation or given by a listing, is name bytes, a POSIX host's bytes and on Windows the WTF-8 encoding of the UTF-16 code units, with a function copying a host string into them, so a text name is its UTF-8 on both hosts and no host name is lost, with the native code units, an encoding chosen per call and UTF-8 only refused. The enumeration node's decision that self and parent entries are reported unfiltered is replaced: a listing leaves them out and a successful batch over a nonempty window holds an entry, since a name given with a root never denotes them and the extra host call is the one a caller makes anyway to reach the end; the old decision and an empty successful batch are refused.
 
+## 2026-10-22 A layout rejection lists every differing gap of its source in its repair
+
+Nodes: compiler/diagnostic-repairs, compiler/formatting-command
+
+Summary: A FORM-2 rejection reported one differing gap per compile, so a writer fixing a file with several layout faults spent a round on each; in a writer trial three of fifteen programs spent four to five rounds that way. The rejection still reports only the first gap, as the specification fixes for the canonical stage, and its repair now lists every differing gap of the rejected source, the first twenty with the line, the terminals around the gap and the bytes to write instead of the bytes found, and the count of the rest. The list comes from a walk over the rejected source's terminals that compares each gap with the one canonical-gap function the renderer emits from, so it cannot disagree with rendering; the walk has a work ceiling of its own, and reaching it leaves the rejection without a list. The formatting request's reason is restated: a writer without it applies the listed changes by hand.
+
+## 2026-10-22 The specification carries no version and an amendment adds no archive
+
+Nodes: compiler/build-inputs
+
+Summary: Open amendments of the specification kept merging main to renumber the title line, re-archive the outgoing version and retitle their change log entry each time another amendment merged first: 112 of 307 merges of main over 62 amendments in two weeks, measured in the [version-churn investigation](../research/investigations/spec-version-churn/README.md#measurement). The version was a counter every branch took at the same three places while its order was fixed only at the merge, and nothing read it, since the compiler's identity of the specification is the SHA-256 of its bytes. The first line of the specification is now `# Kernel Specification`, an amendment adds one entry at the top of the change log and no archive, and an entry's version is derived from its place in the log, so an entry directly above v0.9 is v0.10. The build-inputs node now records that decision. Refused: renumbering by script, assigning the number by a commit to main after the merge, a date or time in the title line or in archive names, naming an amendment by the date and title of its entry, and one amendment in flight at a time.
+
 ## 2026-10-22 The kernel owns clearing a window while keeping its storage
 
 Nodes: language/data-model/kernel-minimality

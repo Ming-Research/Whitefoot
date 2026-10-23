@@ -46,7 +46,7 @@ Source: [specification and test integrity](../AGENTS.md#specification-and-test-i
 
 - [ ] **T1 — Language evidence.** A specification amendment follows the
   steps in [AGENTS.md](../AGENTS.md#specification-and-test-integrity), whose
-  archive and title `make static` checks mechanically. The change declares
+  title, change log entries and archives `make static` checks mechanically. The change declares
   its specification delta (rules, tokens, spellings, exceptions) and
   evidence/minimality selection ground. Affected cases/verdicts,
   generated syntax, compiler and documentation follow the amendment. For
@@ -109,8 +109,8 @@ Source: [branch and main boundary](../AGENTS.md#branch-and-main-boundary).
   `spec/log.md` entry naming its rules.
 
 Existing checks: `git diff --check` for patch whitespace; `make static` for
-repository invariants, specification archives (immutability and amendment
-shape), live spec references, cited review items, entry-document paths and
+repository invariants, the specification's title, change log entries and
+archives (immutability and amendment shape), live spec references, cited review items, entry-document paths and
 design-tree form; the gate's compiler groups and any
 [focused CI step](../AGENTS.md#checks) for code. `make static`
 does not check document purpose, anchors or the truth of a claim. The root

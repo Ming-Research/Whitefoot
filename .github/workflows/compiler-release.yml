@@ -189,7 +189,9 @@ jobs:
             publish=false
           fi
           tag="$prefix${commit:0:12}"
-          spec=$(git show "$commit:spec/kernel-spec.md" | sed -n '1s/^# Kernel Specification //p')
+          # The specification names no version; the commit's change log gives
+          # it (.github/spec-version.sh).
+          spec=$(git show "$commit:spec/log.md" | sh .github/spec-version.sh - || true)
           # The LLVM major the commit's gate built its Linux jobs with, which its
           # Linux compiler is built with (compiler/downstream-releases): the
           # commit's .github/llvm-major, else the major its gate.yml named
@@ -211,7 +213,7 @@ jobs:
             tag="$tag-bundled"
           fi
           if [ -z "$spec" ]; then
-            echo "::error::spec/kernel-spec.md at $commit names no version"
+            echo "::error::spec/log.md at $commit gives no specification version"
             exit 1
           fi
           if git diff --quiet "$commit^" "$commit" -- .github/workflows; then

@@ -6,15 +6,33 @@ added, changed or retired, and a concise `Summary:` of the change and its
 selection ground. The form is the design tree log's, with `Rules:` in place of
 `Nodes:`. The entry is committed with the change, and `make design-ready`
 requires a new entry whenever the active specification changes; it cannot tell
-whether `Rules:` names every changed rule. Older entries also carry an
-`Owner-approved:` line, a field since retired. Earlier versions are the
-released archives beside this file; git holds the rest of the history.
+whether `Rules:` names every changed rule. An entry is never edited and a new
+one goes first. Blank lines between entries do not matter, and the file merges
+with git's union driver, so two branches that each add an entry both keep it.
+Older entries also carry an `Owner-approved:` line, a field since retired.
 
-## 2026-10-23 v0.165: a name is the same bytes on every host, and a directory listing states its records and leaves out `.` and `..`
+The specification carries no version. An entry's version is its place in this
+log: `sh .github/spec-version.sh` prints the active version and `--list` every
+entry's. An entry whose title begins `vA.B` names that version (every entry
+written under the earlier procedure does, and the entry that starts a major
+version does); any other entry is the next minor version after the entry below
+it. A new entry names a version only to start the next major version. Cite an
+entry by its date and title until it merges and by its version after. An
+archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
+file added by a change that edits no rule. The earlier procedure archived the
+outgoing version with every amendment; git holds the rest of the history.
+
+## 2026-10-23 a name is the same bytes on every host, and a directory listing states its records and leaves out `.` and `..`
 
 Rules: changed PRE-2
 
 Summary: PRE-2 said neither what bytes a name given with a root is nor what `directory_next` writes, and the runtimes took and gave a POSIX host's bytes and a Windows host's UTF-16 code units, so a program naming `config.txt` to `open_file` or skipping the one-byte `.` among listed names worked on POSIX and failed on Windows: `tests/programs/wfgrep.wf` opened `.` and `..` of every directory there and reported them unreadable. PRE-2 now defines the name bytes of a component or a `HostString`, its bytes on a POSIX host and the WTF-8 encoding of its UTF-16 code units on a Windows host, so a component that is text has its UTF-8 encoding as its name bytes on both hosts and an unpaired surrogate still has bytes of its own; a name given with a root is name bytes, and on Windows bytes that encode no component are `InvalidPath`. PRE-2 adds `host_copy_name_bytes`, which copies a `HostString`'s name bytes, so an argument that names an entry reaches a single-name operation on both hosts unchanged, where `host_copy_bytes` gives UTF-16 on Windows and `host_copy_utf8` refuses what is not text. It states the record `directory_next` writes for each entry, a kind byte by a host table, the name's byte count as two bytes low byte first and its name bytes, which the runtimes already wrote and `sys14-entry-kind-closed` already checked; it leaves out `.` and `..`, which the name rule already refused to denote an entry, and a call that returns `Ok` over a nonempty window writes at least one record. Selection ground: the design card on item wf-dir-listing-names recommends one name format shared by listing and naming, the WTF-8 Rust uses for Windows names, because a portable program then compares and prints a text name as UTF-8 on both hosts and passes a listed name back unchanged, instead of the native code units, which leave every comparison and print to a conversion that a program forgets only on Windows, an encoding chosen per call, which has no good answer for a name that is not text, or UTF-8 only, which loses the names that are not text; leaving out `.` and `..` costs no host call, since a batch holding only them is followed by the call that a caller would otherwise make to reach `ListEnd`.
+
+## 2026-10-22 the specification carries no version, and an amendment adds no archive
+
+Rules: none added, changed or retired; the first line of `spec/kernel-spec.md` is `# Kernel Specification` and names no version
+
+Summary: Every amendment took the next version on its own branch, in the title line, in the archive of the version it replaced and in its log heading, so each amendment that merged first made every other open amendment merge main, renumber, re-archive and run its checks again: of the 62 amendments merged from 2026-10-07 to 2026-10-21, the branches merged main 307 times, 112 of them with both sides editing the title line or the log, and 111 of the 986 branch commits only renumbered or repaired the log. The title line is now `# Kernel Specification`. An amendment adds its entry at the top of this log and no archive, and its version is derived from the log: this entry has no version in its title, so it is the next minor version after the entry below it. The compiler's identity of the specification is still the SHA-256 of its bytes, and the version constant that nothing read is gone. `spec/log.md` merges with git's union driver, and the check that replaces the archive-and-title check keeps every existing entry as written, requires exactly one new entry for a changed specification and none for an unchanged one, and lets a new entry name a version only to start the next major version. Selection ground: the owner's ruling of 2026-10-22 on the board (item spec-version-merge-churn) chose to derive the version from the log; the other approaches were refused because they leave the branch writing a line every other branch also writes (keeping the number and renumbering by script, naming an amendment by date in the title line), change the specification's bytes after the gate has passed on them (a stamp commit on main after each merge), or serialize amendments to about two a day against the 4.4 that merge (one amendment in flight at a time). The existing archives are unchanged, and the versions after the newest of them have none: their text is in git.
 
 ## 2026-10-22 v0.164: `clear` empties a window and keeps its storage
 

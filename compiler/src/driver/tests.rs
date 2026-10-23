@@ -1674,7 +1674,10 @@ fn a_canonical_rejection_prints_the_expected_bytes_beside_the_found_bytes() {
     )
     .expect_err("a double space is not canonical form");
     assert_eq!(failure.rule_id(), Some("FORM-2"));
-    assert_eq!(failure.detail(), "expected: \" \"\nfound: \"  \"");
+    assert_eq!(
+        failure.detail(),
+        "expected: \" \"\nfound: \"  \"\nmechanical_fix: make the change below to reach the canonical layout; it gives the bytes FORM-2 requires between two terminals [FORM-2]: line 3 between `:` and `0_u8`: write \" \" instead of \"  \""
+    );
     let rendered = failure.to_string();
     assert!(
         rendered.starts_with("/absolute/path/report.wf:3:"),

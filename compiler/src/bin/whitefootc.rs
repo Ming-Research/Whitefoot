@@ -1115,6 +1115,7 @@ fn print_stack_ledger(llvm: &str) -> Result<Vec<String>, String> {
         std::fs::write(&module, llvm)
             .map_err(|error| format!("cannot write the ledger module: {error}"))?;
         let toolchain = resolved_toolchain()?;
+        #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
         let status = toolchain
             .command()
             .arg("-x")
@@ -1246,6 +1247,7 @@ fn compile_executable(
                 if full_lto {
                     child.arg("-flto=full");
                 }
+                #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
                 let compiled = child
                     .arg("-c")
                     .arg(directory.join(relative_path))
@@ -1452,6 +1454,7 @@ fn link_cached_objects(
             .arg("-flto=thin")
             .arg(cache_argument);
     }
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let status = command.arg("-o").arg(&partial).status().map_err(|error| {
         format!(
             "cannot start {}: {error}",
@@ -1541,6 +1544,7 @@ fn cached_object<'text>(
         } else {
             Stdio::null()
         });
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let mut child = command.spawn().map_err(|error| {
         format!(
             "cannot start {}: {error}",
@@ -1574,6 +1578,7 @@ fn host_compiler_identity() -> Result<[u8; 32], String> {
 }
 
 fn link(command: &mut Command, llvm: &str, output: &Path) -> Result<(), String> {
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let mut child = command
         .arg("-x")
         .arg("ir")
@@ -3749,6 +3754,7 @@ mod tests {
         // The segment table shows whether `-z separate-code` took effect.
         #[cfg(target_os = "linux")]
         {
+            #[allow(clippy::disallowed_methods, reason = "host tool, not a test program")]
             let headers = std::process::Command::new("readelf")
                 .arg("-lW")
                 .arg(&executable)
