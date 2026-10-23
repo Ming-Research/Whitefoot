@@ -169,6 +169,7 @@ impl Checker<'_, '_> {
             state,
             reads: false,
             writes: Vec::new(),
+            variant_writes: Vec::new(),
             written_roots: Vec::new(),
             invariants,
         };
@@ -231,20 +232,26 @@ impl Checker<'_, '_> {
         writes.dedup();
         target.reads = writes.is_empty();
         target.writes = writes;
+        // Those of the writes that may change an enum's variant. A map's
+        // entry lock inserts the entry only for one of these: a write below
+        // the entry's payload step runs only where the entry is present.
+        let mut variant_writes = checked
+            .effects
+            .variant_writes
+            .iter()
+            .chain(guard.iter().flat_map(|g| g.1.variant_writes.iter()))
+            .filter(|path| held(path))
+            .map(|path| path.steps.clone())
+            .collect::<Vec<_>>();
+        variant_writes.sort();
+        variant_writes.dedup();
+        target.variant_writes = variant_writes;
         let mut written_roots = checked
             .effects
             .writes
             .iter()
             .chain(guard.iter().flat_map(|g| g.1.writes.iter()))
             .map(|path| path.root)
-            .chain(
-                checked
-                    .effects
-                    .variant_writes
-                    .iter()
-                    .chain(guard.iter().flat_map(|g| g.1.variant_writes.iter()))
-                    .copied(),
-            )
             .filter(|written| *written != root)
             .filter_map(|written| block_bindings.get(&written).map(|local| local.binding))
             .chain(changed)
@@ -255,7 +262,7 @@ impl Checker<'_, '_> {
         for set in std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|g| &mut g.1)) {
             set.reads.retain(|p| !held(p));
             set.writes.retain(|p| !held(p));
-            set.variant_writes.retain(|written| *written != root);
+            set.variant_writes.retain(|p| !held(p));
         }
         if let Some(g) = &guard {
             effects = effects.union(g.1.clone());

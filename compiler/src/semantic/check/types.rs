@@ -2123,6 +2123,11 @@ impl<'unit> TypeContext<'unit> {
                     rendered.push_str(measure.spelling());
                     selected = SelectedPlaceType::Value(CheckedType::Integer(IntegerType::U64));
                 }
+                CheckedEffectStep::CancelFlag => {
+                    rendered.push('.');
+                    rendered.push_str(crate::library::CANCELLATION_FLAG);
+                    selected = SelectedPlaceType::Value(CheckedType::Bool);
+                }
             }
         }
         Ok((rendered, selected))
@@ -2344,6 +2349,15 @@ impl<'unit> TypeContext<'unit> {
                         .declarations
                         .invalid_effect_row(path_node, EFF1_FIELD_OF_NON_STRUCT);
                 };
+                // [PRE-2] a watch's `fired` is a field of the watch that
+                // lives in the state it views, so a row names it by its own
+                // step, like the field it is, and nothing lies below it.
+                if spelling == crate::library::CANCELLATION_FLAG && self.is_cancel_watch(nominal)? {
+                    return Ok((
+                        CheckedEffectStep::CancelFlag,
+                        SelectedPlaceType::Value(CheckedType::Bool),
+                    ));
+                }
                 // [TYPE-9] a `Box`'s content is its field `inner`, reached by
                 // the ordinary field step, so a row names it as that step and
                 // the selected type below it is the cell's referent. The

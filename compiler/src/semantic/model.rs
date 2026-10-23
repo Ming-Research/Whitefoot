@@ -1082,6 +1082,12 @@ pub(crate) struct CheckedTarget {
     /// lowering takes the lock units they reach as written
     /// (compiler/waiting-contexts/state-locks).
     pub(crate) writes: Vec<Vec<CheckedEffectStep>>,
+    /// The paths among `writes` of the writes that may change an enum's
+    /// variant: those whose place has no payload step. A map's entry lock
+    /// inserts its entry only for one of these, since a write below the
+    /// entry's payload runs only where the entry is present
+    /// (compiler/waiting-contexts/concurrent-map).
+    pub(crate) variant_writes: Vec<Vec<CheckedEffectStep>>,
     /// The bindings declared outside the statement whose value the guard or
     /// the block may change: one written through a reference parameter's
     /// row, one rebound, and one a write or move overlaps, at the binding or
@@ -3186,8 +3192,9 @@ pub(crate) struct CheckedStatePath {
 /// One resolved selector of a declared effect path [EFF-1].
 ///
 /// This is the formal twin of [`super::places::PlaceStep`]: the same five
-/// storage selectors plus the two name families [TYPE-10] admits in a row,
-/// with the index and endpoint positions still unsubstituted. A signature
+/// storage selectors plus the two name families [TYPE-10] admits in a row
+/// and a watch's flag, with the index and endpoint positions still
+/// unsubstituted. A signature
 /// never contains an index expression — an index enters an effect only
 /// through an IDENT that resolves to a value parameter of the same callable
 /// — so an index position here is that parameter, and [EFF-5] replaces it
@@ -3216,6 +3223,11 @@ pub(crate) enum CheckedEffectStep {
     Part(super::places::WindowPart),
     /// `.len`, `.cap`, `.head`, or `.bytes` [MSR-1, OP-15, TYPE-2].
     Measure(CheckedMeasure),
+    /// `.fired` of a cancellation watch [PRE-2]: the flag of the state the
+    /// watch views. The flag lives in that state, so the step selects no
+    /// storage of the watch and has no place step; a footprint ends at the
+    /// watch above it.
+    CancelFlag,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

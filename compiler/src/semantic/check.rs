@@ -486,8 +486,11 @@ impl From<super::model::CheckedStatePath> for EffectPath {
 struct EffectSet {
     reads: Vec<super::model::CheckedStatePath>,
     writes: Vec<super::model::CheckedStatePath>,
-    /// Roots written without a resolved enum payload step (before row truncation).
-    variant_writes: Vec<DeclarationId>,
+    /// The paths among `writes` of the writes whose resolved place has no
+    /// enum payload step (before row truncation). Such a write may change
+    /// the variant of an enum it reaches, a map's entry included; a write
+    /// below a payload step finds that variant in place and keeps it.
+    variant_writes: Vec<super::model::CheckedStatePath>,
     /// [EFF-3] whether the boundary this set describes allocates. It is not
     /// a row category [EFF-1, STOR-8]; it is the checked-program metadata
     /// [EFF-3]'s deduplication and reordering licence reads.
@@ -508,9 +511,9 @@ impl EffectSet {
         for path in other.writes {
             Self::add_path(&mut self.writes, path.into());
         }
-        for root in other.variant_writes {
-            if !self.variant_writes.contains(&root) {
-                self.variant_writes.push(root);
+        for path in other.variant_writes {
+            if !self.variant_writes.contains(&path) {
+                self.variant_writes.push(path);
             }
         }
         self.variant_writes.sort_unstable();
@@ -529,8 +532,8 @@ impl EffectSet {
     }
 
     fn add_projected_write(&mut self, path: EffectPath) {
-        if !path.inside_payload && !self.variant_writes.contains(&path.path.root) {
-            self.variant_writes.push(path.path.root);
+        if !path.inside_payload && !self.variant_writes.contains(&path.path) {
+            self.variant_writes.push(path.path.clone());
             self.variant_writes.sort_unstable();
         }
         Self::add_path(&mut self.writes, path);

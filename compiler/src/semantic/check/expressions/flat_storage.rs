@@ -1033,8 +1033,10 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         let mut effects = place.offsets.effects;
+        // [PRE-2] a watch read for its flag reads the flag below it.
+        let cancel_flag = options.context == PlaceUseContext::CancellationFlag;
         for member in &place.resolved.members {
-            for path in self.effect_paths_for_place(node, member, bindings)? {
+            for path in self.effect_paths_for_access(node, member, bindings, cancel_flag)? {
                 effects.add_read(path);
             }
         }
@@ -1436,7 +1438,14 @@ impl<'unit> Checker<'_, 'unit> {
                     member
                         .path
                         .extend(range_path.iter().map(CheckedPlaceStep::place_step));
-                    for path in self.effect_paths_for_place(use_node, &member, bindings)? {
+                    // [PRE-2] a watch read for its flag reads the flag below
+                    // it.
+                    for path in self.effect_paths_for_access(
+                        use_node,
+                        &member,
+                        bindings,
+                        options.context == PlaceUseContext::CancellationFlag,
+                    )? {
                         effects.add_read(path);
                     }
                 }

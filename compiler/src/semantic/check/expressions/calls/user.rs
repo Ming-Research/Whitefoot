@@ -68,6 +68,10 @@ struct SubstitutedEntry {
     /// whose index positions take the values other arguments supply and are
     /// bounded by no obligation at the call [EFF-5, WIN-2].
     formed: usize,
+    /// Whether the declared path ends at a watch's `fired` [PRE-2]. `place`
+    /// ends at the watch, since the flag lives in the watch's state; the
+    /// caller's row still names the flag below it [EFF-2].
+    flag: bool,
 }
 
 /// [EFF-5, WIN-2] the separation oracle of one pair of substituted entries.
@@ -729,6 +733,7 @@ impl<'unit> Checker<'_, 'unit> {
                     origin: origin_start
                         .checked_add(ordinal)
                         .ok_or(SemanticCompilerFailure::CounterOverflow)?,
+                    flag: false,
                 });
             }
         }
@@ -874,7 +879,10 @@ impl<'unit> Checker<'_, 'unit> {
     }
 
     /// One declared `epsuffix*`, with its index and range positions replaced
-    /// by the values their own arguments supply [EFF-5].
+    /// by the values their own arguments supply [EFF-5]. A watch's `fired`
+    /// selects no storage of the watch [PRE-2], so the place ends at the
+    /// watch and [`SubstitutedEntry::flag`] keeps the step for the caller's
+    /// row.
     fn substitute_effect_steps(
         signature: &FunctionSignature,
         formal: &CheckedStatePath,
@@ -895,23 +903,26 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(formal
             .steps
             .iter()
-            .map(|step| match step {
-                CheckedEffectStep::Field(field) => PlaceStep::Field(*field),
-                CheckedEffectStep::Deref => PlaceStep::Deref,
-                CheckedEffectStep::Payload { variant, field } => PlaceStep::Payload {
-                    variant: *variant,
-                    field: *field,
-                },
-                CheckedEffectStep::Index(parameter) => PlaceStep::Index(captured(*parameter)),
-                CheckedEffectStep::Page(parameter) => PlaceStep::Page(captured(*parameter)),
-                CheckedEffectStep::Range { start, end } => {
-                    PlaceStep::Range(super::super::super::super::places::CapturedRange {
-                        start: captured(*start),
-                        end: captured(*end),
-                    })
-                }
-                CheckedEffectStep::Part(part) => PlaceStep::Part(*part),
-                CheckedEffectStep::Measure(measure) => PlaceStep::Measure(*measure),
+            .map_while(|step| {
+                Some(match step {
+                    CheckedEffectStep::Field(field) => PlaceStep::Field(*field),
+                    CheckedEffectStep::Deref => PlaceStep::Deref,
+                    CheckedEffectStep::Payload { variant, field } => PlaceStep::Payload {
+                        variant: *variant,
+                        field: *field,
+                    },
+                    CheckedEffectStep::Index(parameter) => PlaceStep::Index(captured(*parameter)),
+                    CheckedEffectStep::Page(parameter) => PlaceStep::Page(captured(*parameter)),
+                    CheckedEffectStep::Range { start, end } => {
+                        PlaceStep::Range(super::super::super::super::places::CapturedRange {
+                            start: captured(*start),
+                            end: captured(*end),
+                        })
+                    }
+                    CheckedEffectStep::Part(part) => PlaceStep::Part(*part),
+                    CheckedEffectStep::Measure(measure) => PlaceStep::Measure(*measure),
+                    CheckedEffectStep::CancelFlag => return None,
+                })
             })
             .collect())
     }
@@ -1248,7 +1259,7 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<(), CheckStop> {
         let caller = context.function;
         for entry in entries {
-            for path in self.effect_paths_for_place(node, &entry.place, bindings)? {
+            for path in self.effect_paths_for_access(node, &entry.place, bindings, entry.flag)? {
                 if !caller
                     .parameters
                     .iter()
@@ -1329,6 +1340,7 @@ impl<'unit> TypeContext<'unit> {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
                 let steps = Checker::substitute_effect_steps(signature, formal, actual_captures)?;
+                let flag = formal.steps.last() == Some(&CheckedEffectStep::CancelFlag);
                 for base in actual_paths.get(index).into_iter().flatten() {
                     let mut place = base.clone();
                     place.path.extend_from_slice(&steps);
@@ -1341,6 +1353,7 @@ impl<'unit> TypeContext<'unit> {
                         consuming: false,
                         argument: index,
                         origin,
+                        flag,
                     });
                 }
             }
@@ -1370,6 +1383,7 @@ impl<'unit> TypeContext<'unit> {
                     consuming,
                     argument: index,
                     origin,
+                    flag: false,
                 });
             }
         }

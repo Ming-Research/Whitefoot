@@ -110,6 +110,9 @@ struct UnitUse {
     guard: bool,
     body: bool,
     written: bool,
+    /// Whether a write may change an enum's variant in the unit, a map's
+    /// entry included, rather than write only below a payload step.
+    variant_written: bool,
     whole: bool,
     keys: Vec<(BindingId, CheckedExpression)>,
 }
@@ -258,9 +261,11 @@ impl IrBuilder<'_> {
                             key,
                             key_binding: *key_binding,
                             read: read && !used.guard,
-                            // Guards keep the existing reservation until
-                            // their watch is registered.
-                            inserts: used.written || used.guard,
+                            // A write that may change the entry's variant
+                            // may insert it; one below its payload runs only
+                            // where it is present. Guards keep the existing
+                            // reservation until their watch is registered.
+                            inserts: used.variant_written || used.guard,
                             stable_absence: several,
                         }
                     }
@@ -404,7 +409,9 @@ impl IrBuilder<'_> {
                 }
             }
         }
-        for write in &target.writes {
+        // The units one written path reaches: the map at its fields, or else
+        // the object's own lock and every map the path covers.
+        let written_units = |write: &[CheckedEffectStep]| {
             let fields = write
                 .iter()
                 .map_while(|step| match step {
@@ -429,13 +436,23 @@ impl IrBuilder<'_> {
                     );
                 }
             }
-            for unit in written {
+            written
+        };
+        for write in &target.writes {
+            for unit in written_units(write.as_slice()) {
                 let used = &mut uses[unit];
                 if !used.reached {
                     used.reached = true;
                     used.whole = true;
                 }
                 used.written = true;
+            }
+        }
+        // Each of these is among `target.writes`, so it reached its units
+        // above.
+        for write in &target.variant_writes {
+            for unit in written_units(write.as_slice()) {
+                uses[unit].variant_written = true;
             }
         }
         if !target.invariants.is_empty() || block_has_proof(body) {

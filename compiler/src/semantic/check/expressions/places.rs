@@ -512,7 +512,9 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let mut effects = EffectSet::NONE;
         for member in &place.resolved.members {
-            for path in self.effect_paths_for_place(use_node, member, bindings)? {
+            for path in
+                self.effect_paths_for_access(use_node, member, bindings, place.cancel_flag)?
+            {
                 effects.add_read(path);
             }
         }

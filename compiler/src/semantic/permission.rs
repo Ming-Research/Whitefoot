@@ -1825,21 +1825,32 @@ fn statement_value(statement: &CheckedStatement) -> Option<&CheckedExpression> {
 fn substituted_steps(path: &CheckedStatePath) -> Vec<PlaceStep> {
     path.steps
         .iter()
-        .map(|step| match step {
-            super::model::CheckedEffectStep::Field(field) => PlaceStep::Field(*field),
-            super::model::CheckedEffectStep::Deref => PlaceStep::Deref,
-            super::model::CheckedEffectStep::Payload { variant, field } => PlaceStep::Payload {
-                variant: *variant,
-                field: *field,
-            },
-            super::model::CheckedEffectStep::Index(_) => PlaceStep::Index(CapturedValue::unknown()),
-            super::model::CheckedEffectStep::Page(_) => PlaceStep::Page(CapturedValue::unknown()),
-            super::model::CheckedEffectStep::Range { .. } => PlaceStep::Range(CapturedRange {
-                start: CapturedValue::unknown(),
-                end: CapturedValue::unknown(),
-            }),
-            super::model::CheckedEffectStep::Part(part) => PlaceStep::Part(*part),
-            super::model::CheckedEffectStep::Measure(measure) => PlaceStep::Measure(*measure),
+        .map_while(|step| {
+            Some(match step {
+                super::model::CheckedEffectStep::Field(field) => PlaceStep::Field(*field),
+                super::model::CheckedEffectStep::Deref => PlaceStep::Deref,
+                super::model::CheckedEffectStep::Payload { variant, field } => {
+                    PlaceStep::Payload {
+                        variant: *variant,
+                        field: *field,
+                    }
+                }
+                super::model::CheckedEffectStep::Index(_) => {
+                    PlaceStep::Index(CapturedValue::unknown())
+                }
+                super::model::CheckedEffectStep::Page(_) => {
+                    PlaceStep::Page(CapturedValue::unknown())
+                }
+                super::model::CheckedEffectStep::Range { .. } => PlaceStep::Range(CapturedRange {
+                    start: CapturedValue::unknown(),
+                    end: CapturedValue::unknown(),
+                }),
+                super::model::CheckedEffectStep::Part(part) => PlaceStep::Part(*part),
+                super::model::CheckedEffectStep::Measure(measure) => PlaceStep::Measure(*measure),
+                // [PRE-2] a watch's flag lives in its state: the footprint
+                // ends at the watch.
+                super::model::CheckedEffectStep::CancelFlag => return None,
+            })
         })
         .collect()
 }

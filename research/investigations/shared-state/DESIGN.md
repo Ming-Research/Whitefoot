@@ -1014,11 +1014,11 @@ so that statements on different keys run their blocks side by side and meet
 only at the other fields. A statement that selects entries by a key set takes
 its map whole, where a key-set target took only the set's entries; finer units
 for that case belong to the lock-unit work (`one-object-lock-units`). An
-entry lock of a statement that writes only inside the entry's payload takes
-the inserting mode, since the written paths do not say per map whether a
-write may change the entry's variant; for a missing key that makes a cell and
-removes it at unlock, which costs time on misses only, where a per-target flag
-kept an entry target's lock non-inserting.
+entry lock inserts its entry only when a write of the guard or block may
+change the entry's variant: the checker keeps, for each written path, whether
+its place has an enum payload step before a dynamic selector truncates it, as
+it kept a flag per entry target before, so a statement that writes only
+inside the entry's payload takes no cell for a missing key.
 
 ### A map as a value
 

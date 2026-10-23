@@ -2056,15 +2056,16 @@ fn missing_lock_ledger_locations_preserve_lowering() {
 }
 
 /// A map unit locked by one entry inserts that entry when the statement may
-/// write the unit or waits on a guard, and is shared with other readers only
-/// when it neither writes nor waits. The writes are the resolved ones: a
-/// write through an alias of the entry, a helper's row naming the whole entry
-/// or only a payload field of it, and a row passed on through a second helper
-/// each count, and a payload write counts as a write of the unit like a whole
-/// one. A state of two maps gives each its own entry flags, in field order
-/// [SHARE-3]. Each function holds one statement, and every lock request of a
-/// statement carries its flags however many of its body statements reach the
-/// map.
+/// change the entry's variant or waits on a guard, and is shared with other
+/// readers only when it neither writes nor waits. The writes are the resolved
+/// ones: a write of the whole entry, through an alias of it or through a
+/// helper's row naming it, may change its variant, while a write below its
+/// payload, directly, through an alias, through a row naming a payload field
+/// or through such a row passed on by a second helper, writes the entry
+/// without inserting it. A state of two maps gives each its own entry flags,
+/// in field order [SHARE-3]. Each function holds one statement, and every
+/// lock request of a statement carries its flags however many of its body
+/// statements reach the map.
 #[test]
 fn keyed_atomic_insertion_flags_follow_resolved_writes() {
     let source = br#"struct Counter {
@@ -2275,16 +2276,16 @@ fn main() -> status: std::process::ExitStatus pure {
                 .collect::<Vec<_>>()
         };
         for (name, expected) in [
-            ("by_payload", (false, true)),
+            ("by_payload", (false, false)),
             ("by_insert", (false, true)),
             ("by_remove", (false, true)),
             ("by_whole_row", (false, true)),
             ("by_alias", (false, true)),
             ("by_read", (true, false)),
             ("by_payload_or_insert", (false, true)),
-            ("by_payload_alias", (false, true)),
-            ("by_payload_row", (false, true)),
-            ("by_second_helper", (false, true)),
+            ("by_payload_alias", (false, false)),
+            ("by_payload_row", (false, false)),
+            ("by_second_helper", (false, false)),
             ("by_guard", (false, true)),
         ] {
             let requests = flags(name);

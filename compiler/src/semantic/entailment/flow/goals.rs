@@ -2016,21 +2016,26 @@ pub(super) fn substituted_steps(
     };
     steps
         .iter()
-        .map(|step| match step {
-            Step::Field(field) => PlaceStep::Field(*field),
-            Step::Deref => PlaceStep::Deref,
-            Step::Payload { variant, field } => PlaceStep::Payload {
-                variant: *variant,
-                field: *field,
-            },
-            Step::Index(declaration) => PlaceStep::Index(offset(declaration)),
-            Step::Page(declaration) => PlaceStep::Page(offset(declaration)),
-            Step::Range { start, end } => PlaceStep::Range(CapturedRange {
-                start: offset(start),
-                end: offset(end),
-            }),
-            Step::Part(part) => PlaceStep::Part(*part),
-            Step::Measure(measure) => PlaceStep::Measure(*measure),
+        .map_while(|step| {
+            Some(match step {
+                Step::Field(field) => PlaceStep::Field(*field),
+                Step::Deref => PlaceStep::Deref,
+                Step::Payload { variant, field } => PlaceStep::Payload {
+                    variant: *variant,
+                    field: *field,
+                },
+                Step::Index(declaration) => PlaceStep::Index(offset(declaration)),
+                Step::Page(declaration) => PlaceStep::Page(offset(declaration)),
+                Step::Range { start, end } => PlaceStep::Range(CapturedRange {
+                    start: offset(start),
+                    end: offset(end),
+                }),
+                Step::Part(part) => PlaceStep::Part(*part),
+                Step::Measure(measure) => PlaceStep::Measure(*measure),
+                // [PRE-2] a watch's flag lives in its state: the place ends
+                // at the watch.
+                Step::CancelFlag => return None,
+            })
         })
         .collect()
 }

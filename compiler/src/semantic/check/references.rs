@@ -2205,6 +2205,16 @@ impl<'unit> Checker<'_, 'unit> {
         place: &ResolvedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<CheckedStatePath>, CheckStop> {
+        Ok(self.state_path_reach(place, bindings)?.map(|(path, _)| path))
+    }
+
+    /// [`Self::state_path`], and whether that path names the place itself
+    /// rather than the enclosing prefix a dynamic selector leaves.
+    fn state_path_reach(
+        &self,
+        place: &ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<Option<(CheckedStatePath, bool)>, CheckStop> {
         let PlaceRoot::Binding(binding) = place.root else {
             // A const root contributes no effect [EFF-2, CONST-2].
             return Ok(None);
@@ -2213,9 +2223,13 @@ impl<'unit> Checker<'_, 'unit> {
             return Ok(None);
         };
         let mut steps = Vec::new();
+        let mut complete = true;
         for step in &place.path {
             let mapped = match step {
-                PlaceStep::Descendant(_) => break,
+                PlaceStep::Descendant(_) => {
+                    complete = false;
+                    break;
+                }
                 PlaceStep::Field(field) => CheckedEffectStep::Field(*field),
                 PlaceStep::Deref => CheckedEffectStep::Deref,
                 PlaceStep::Payload { variant, field } => CheckedEffectStep::Payload {
@@ -2231,11 +2245,13 @@ impl<'unit> Checker<'_, 'unit> {
                         steps.push(CheckedEffectStep::Part(
                             super::super::places::WindowPart::Filled,
                         ));
+                        complete = false;
                         break;
                     }
                 }
                 PlaceStep::Index(captured) => {
                     let Some(parameter) = self.captured_parameter(*captured, bindings) else {
+                        complete = false;
                         break;
                     };
                     CheckedEffectStep::Index(parameter)
@@ -2245,6 +2261,7 @@ impl<'unit> Checker<'_, 'unit> {
                         self.captured_parameter(range.start, bindings),
                         self.captured_parameter(range.end, bindings),
                     ) else {
+                        complete = false;
                         break;
                     };
                     CheckedEffectStep::Range { start, end }
@@ -2252,10 +2269,13 @@ impl<'unit> Checker<'_, 'unit> {
             };
             steps.push(mapped);
         }
-        Ok(Some(CheckedStatePath {
-            root: local.declaration,
-            steps,
-        }))
+        Ok(Some((
+            CheckedStatePath {
+                root: local.declaration,
+                steps,
+            },
+            complete,
+        )))
     }
 
     /// The value parameter one captured index or endpoint read, when it read
@@ -2315,9 +2335,24 @@ impl<'unit> Checker<'_, 'unit> {
     /// ordinary footprint remain. A const root contributes no read.
     pub(super) fn effect_paths_for_place(
         &self,
+        node: NodeId,
+        place: &ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<Vec<EffectPath>, CheckStop> {
+        self.effect_paths_for_access(node, place, bindings, false)
+    }
+
+    /// [`Self::effect_paths_for_place`] for an access that, with
+    /// `cancel_flag`, reads the flag of the watch `place` resolves to
+    /// [PRE-2]. The flag is the watch's field `fired` [EFF-1], so a path
+    /// that names the watch itself names `.fired` below it; a path a dynamic
+    /// selector cut short names its enclosing prefix, as every access does.
+    pub(super) fn effect_paths_for_access(
+        &self,
         _node: NodeId,
         place: &ResolvedPlace,
         bindings: &HashMap<DeclarationId, LocalBinding>,
+        cancel_flag: bool,
     ) -> Result<Vec<EffectPath>, CheckStop> {
         let PlaceRoot::Binding(binding) = place.root else {
             return Ok(Vec::new());
@@ -2348,17 +2383,23 @@ impl<'unit> Checker<'_, 'unit> {
             return Ok(Vec::new());
         }
         Ok(self
-            .state_path(place, bindings)?
+            .state_path_reach(place, bindings)?
             .into_iter()
-            .map(|path| EffectPath {
-                path,
-                // Keep this before state_path truncates a dynamic selector.
-                // Descendant covers cannot establish where a payload lies.
-                inside_payload: place
-                    .path
-                    .iter()
-                    .take_while(|step| !matches!(step, PlaceStep::Descendant(_)))
-                    .any(|step| matches!(step, PlaceStep::Payload { .. })),
+            .map(|(mut path, complete)| {
+                if cancel_flag && complete {
+                    path.steps.push(CheckedEffectStep::CancelFlag);
+                }
+                EffectPath {
+                    path,
+                    // Keep this before state_path truncates a dynamic
+                    // selector. Descendant covers cannot establish where a
+                    // payload lies.
+                    inside_payload: place
+                        .path
+                        .iter()
+                        .take_while(|step| !matches!(step, PlaceStep::Descendant(_)))
+                        .any(|step| matches!(step, PlaceStep::Payload { .. })),
+                }
             })
             .collect())
     }
