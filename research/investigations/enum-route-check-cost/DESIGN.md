@@ -1111,6 +1111,85 @@ an exit code is not 0. `E` is read by its median; a margin smaller than the
 twin's range is reported with that range. The counters of `c431fix` are reported
 whatever they are.
 
+### Result of the direct column
+
+[Run 39899519361](https://github.com/Ming-Research/Whitefoot/actions/runs/39899519361),
+workflow head `1b9dade06`, whose `compiler/` is that of the head that merges
+(`main` column `a675796`, the merge base). The patch applied and the patched
+#431 compiler built in the Firn and the `pkg::vm` job (`c431fix-status.txt`:
+"applied and built"). Every exit code was 0 and every twin median lay inside its
+own range, so nothing was repeated. Firn ran on an EPYC 9V45, `pkg::vm` and
+`pkg::test` on an EPYC 7763; only ratios within one workload compare. The unit
+tests and the design-tree check ran on the same head
+([run 39899519442](https://github.com/Ming-Research/Whitefoot/actions/runs/39899519442)):
+3,026 unit tests passed (the 8 routed-ensures tests among them), design lint
+nodes 142 (base 142, +0), depth 3 (+0), decisions 924 (+0), rejected 792 (+0).
+
+Median of the per-round ratio to `base`, with min–max over the rounds:
+
+| Workload | `base` CPU s | `twin` | `c431` | `c431fix` (`E`) | `main` | `branch` (`D`) |
+|---|---:|---:|---:|---:|---:|---:|
+| Firn (5 rounds) | 53.35 | 1.022 (0.977–1.030) | 1.159 (1.094–1.205) | **1.013** (0.961–1.036) | 1.179 (1.158–1.324) | **1.029** (1.007–1.188) |
+| `pkg::vm` (5 rounds) | 16.33 | 0.998 (0.993–1.001) | 1.135 (1.133–1.143) | **0.990** (0.989–0.992) | 0.717 (0.714–0.720) | **0.585** (0.583–0.588) |
+| `pkg::test` (3 rounds, `main` once) | 1.99 | 0.985 (0.980–1.010) | not run | not run | 601.36 s | **1.005** (1.005–1.020), 2.00 s |
+
+Segments, median (min–max) with the per-round values in round order:
+
+| Workload | Ratio | Value |
+|---|---|---|
+| Firn | `a` = `c431`/`base` | 1.159 (1.094–1.205): 1.205, 1.198, 1.159, 1.094, 1.132 |
+| | `b` = `main`/`c431` | 1.048 (1.017–1.098): 1.098, 1.048, 1.017, 1.058, 1.032 |
+| | `c` = `branch`/`main` | 0.880 (0.854–0.898): 0.898, 0.890, 0.854, 0.871, 0.880 |
+| | `D` = `branch`/`base` | 1.029 (1.007–1.188): 1.188, 1.118, 1.007, 1.008, 1.029 |
+| | `E` = `c431fix`/`base` | 1.013 (0.961–1.036): 1.036, 1.017, 1.013, 0.961, 0.964 |
+| | `G` = `c431fix`/`c431` | 0.860 (0.848–0.878): 0.860, 0.848, 0.874, 0.878, 0.851 |
+| | `F` = `branch`/`c431fix` | 1.068 (0.993–1.147): 1.147, 1.100, 0.993, 1.049, 1.068 |
+| `pkg::vm` | `a` | 1.135 (1.133–1.143) |
+| | `b` | 0.631 (0.630–0.633) |
+| | `c` | 0.817 (0.811–0.820) |
+| | `D` | 0.585 (0.583–0.588) |
+| | `E` | 0.990 (0.989–0.992) |
+| | `G` | 0.872 (0.868–0.874) |
+| | `F` | 0.591 (0.589–0.593) |
+
+Per-round Firn CPU seconds (rounds 1–5): `base` 49.71, 52.82, 53.49, 53.35,
+55.08; `twin` 50.82, 54.39, 54.04, 54.92, 53.84; `c431` 59.92, 63.30, 61.99,
+58.39, 62.37; `c431fix` 51.52, 53.71, 54.20, 51.28, 53.08; `main` 65.82, 66.37,
+63.05, 61.78, 64.39; `branch` 59.08, 59.06, 53.84, 53.80, 56.67.
+
+Against the decision rules written above:
+
+- `pkg::vm`: `D` 0.585 is at most 1.03, rule 1, met. `pkg::test`: `D` 1.005 is at
+  most 1.5, met.
+- Firn: `D` 1.029 is at most 1.03, so by rule 1 the row's own criterion is met and
+  no card is needed. It is met by 0.001, which is smaller than this run's noise:
+  the twin's range is 0.977–1.030, the `D` range is 1.007–1.188, the mean of the
+  five per-round `D` is 1.070, and the earlier Firn runs on neighbouring trees
+  measured 1.067 (merge base `1fbd6623d`), 1.082 (merge base `48b94ccfc`) and
+  1.027 (merge base `7b11c52fb`). The median meets the criterion in this run;
+  five pairs do not show that it would in the next.
+- `E` is at most 1.03 in both workloads: Firn 1.013 (0.961–1.036), `pkg::vm`
+  0.990 (0.989–0.992). On the tree where #431 landed, with the same source and no
+  other merge of main, this change returns Firn and `pkg::vm` to the pre-#431
+  time. `G` (0.860 for Firn) is the reciprocal of `a` within the noise (1 / 1.159
+  = 0.863), and `pkg::vm` the same (0.872 against 1 / 1.135 = 0.881): the change
+  removes what #431 added. This does not depend on the premise that failed (P2).
+- The work counters of `c431fix` against `base` answer the question the previous
+  run left open. Firn: `closure:count` 163,984 against 165,907 (−1.2%),
+  `closure:rows_sum` −2.2%, `closure:cells_sum` −4.6%, `snapshot:rows_sum`
+  −5.5%, `function:intern_calls` −3.9%, `join:join` +2.8%, `join:pairs_evaluated`
+  +1.4%. `pkg::vm`: `closure:count` +0.5%, `closure:rows_sum` +0.2%,
+  `snapshot:rows_sum` −0.5%, `join:join` +13.5% (25,170 to 28,568, against 290,038
+  with #431). So the closure surplus that the branch keeps over `base` (Firn
+  +13.8% closures and +7.0% rows, `pkg::vm` +13.4% and +14.0%) is not left by this
+  change: it is absent on the #431 tree and present in `main` (249,382 closures
+  in Firn) as the work of the merges since. This is the reading the earlier
+  counters could not separate.
+
+What the figures do not show: where in the merges since #431 the excess of `F`
+(1.068, range 0.993–1.147) comes from. `b` was 1.080 on the previous head and is
+1.048 on this one, so the excess moves with main; this item does not attribute it.
+
 ### Reviews
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
