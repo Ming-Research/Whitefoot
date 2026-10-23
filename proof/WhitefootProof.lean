@@ -12,3 +12,4 @@ import WhitefootProof.Checker
 import WhitefootProof.Walk
 import WhitefootProof.Points
 import WhitefootProof.Safety
+import WhitefootProof.Simulation

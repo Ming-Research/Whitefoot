@@ -360,10 +360,10 @@ theorem run_ite_fail_ok {α : Type} {c : Prop} [Decidable c] {rule msg : String}
     (h : (if c then (fail rule msg >>= fun u => K u) else K PUnit.unit).run g = .ok (a, g')) :
     ¬c ∧ (K PUnit.unit).run g = .ok (a, g') := by
   by_cases hc : c
-  · rw [if_pos hc] at h
+  · rw [ite_eq_left hc] at h
     obtain ⟨_, _, hf, _⟩ := run_bind_ok h
     exact (run_fail_ok hf).elim
-  · rw [if_neg hc] at h
+  · rw [ite_eq_right hc] at h
     exact ⟨hc, h⟩
 
 theorem bool_of_not_not {b : Bool} (h : ¬((!b) = true)) : b = true := by
@@ -564,10 +564,10 @@ theorem ite_reject_ok {α : Type} {c : Prop} [Decidable c] {rule msg : String}
     (h : (if c then (rejectBy rule msg >>= fun u => K u) else K PUnit.unit) = .ok a) :
     ¬c ∧ K PUnit.unit = .ok a := by
   by_cases hc : c
-  · rw [if_pos hc] at h
+  · rw [ite_eq_left hc] at h
     obtain ⟨_, hr, _⟩ := bind_ok h
     exact (reject_ok hr).elim
-  · rw [if_neg hc] at h
+  · rw [ite_eq_right hc] at h
     exact ⟨hc, h⟩
 
 theorem stmts_cons_ok {p : Program} {f : FnDecl} {c : Ctx} {live : Bool} {s : Stmt}
@@ -627,7 +627,7 @@ theorem stmt_call_ok {p : Program} {f : FnDecl} {c : Ctx} {e : Expr} {r : Ctx ×
       cases hd
     | ok t => exact ⟨t, rfl⟩
   | atom a => exact (stmt_call_other h fun _ _ _ he => by cases he).elim
-  | infix l o r' => exact (stmt_call_other h fun _ _ _ he => by cases he).elim
+  | «infix» l o r' => exact (stmt_call_other h fun _ _ _ he => by cases he).elim
   | op o args => exact (stmt_call_other h fun _ _ _ he => by cases he).elim
   | bool b => exact (stmt_call_other h fun _ _ _ he => by cases he).elim
 
@@ -764,24 +764,35 @@ structure Watch where
   vars : List Checker.Var
   reach : Checker.Reach
 
-/-- A frame agrees with the loop's entry frame on the bindings that were in
-scope at the loop, but for the newest binding of a killed name. -/
-def Watch.Agree (w : Watch) (E : Env) : Prop :=
-  (E.restore w.E1.length).map (·.1) = w.E1.map (·.1) ∧
-  ∀ j (h : j < (E.restore w.E1.length).length) (h1 : j < w.E1.length),
-    (E.restore w.E1.length)[j].2 = w.E1[j].2 ∨
-      ∃ x ∈ w.killed, w.vars.findIdx? (·.name == x) = some j
+/-- Bindings `R` line up, newest first, with the loop's entry frame `E1` and
+the walk's bindings `vars` there: each has its entry value or is the newest
+binding of a killed name, a name no binding above it (`seen`) has. -/
+def Agrees (killed : List String) : List String → List Checker.Var → Env → Env → Prop
+  | _, [], R, E1 => R = [] ∧ E1 = []
+  | seen, v :: vs, R, E1 => ∃ a b R' E1', R = (v.name, a) :: R' ∧ E1 = (v.name, b) :: E1' ∧
+      (a = b ∨ (v.name ∈ killed ∧ v.name ∉ seen)) ∧ Agrees killed (v.name :: seen) vs R' E1'
 
-/-- At a point whose block continues with `ss`: if `ss` can reach the loop's
-head the frame agrees, and every name `ss` sets on a way to the head is killed. -/
+/-- A frame agrees with the loop's entry frame: under the bindings made since
+the loop, its bindings line up with the entry frame's. -/
+def Watch.Agree (w : Watch) (E : Env) : Prop :=
+  ∃ top R, E = top ++ R ∧ Agrees w.killed [] w.vars R w.E1
+
+/-- At a point whose block continues with `ss`: the frame is no shorter than at
+the loop, it agrees if `ss` can reach the loop's head, and every name `ss` sets
+on a way to the head is killed. -/
 def Watch.At (w : Watch) (ss : List Stmt) (E : Env) : Prop :=
-  (Checker.reachList w.reach ss = true → w.Agree E) ∧
+  w.E1.length ≤ E.length ∧ (Checker.reachList w.reach ss = true → w.Agree E) ∧
   ∀ x ∈ Checker.killList w.reach ss, x ∈ w.killed
 
 /-- The same at one statement, whose continuation `w.reach` describes. -/
 def Watch.AtStmt (w : Watch) (s : Stmt) (E : Env) : Prop :=
-  (Checker.reachStmt w.reach s = true → w.Agree E) ∧
+  w.E1.length ≤ E.length ∧ (Checker.reachStmt w.reach s = true → w.Agree E) ∧
   ∀ x ∈ Checker.killStmt w.reach s, x ∈ w.killed
+
+/-- Where the run goes on as `sel` says of each loop: each frame is no shorter
+than at its loop, and agrees where `sel` says the way reaches the loop's head. -/
+def Watch.Holds (W : List Watch) (sel : Watch → Bool) (E : Env) : Prop :=
+  ∀ w ∈ W, w.E1.length ≤ E.length ∧ (sel w = true → w.Agree E)
 
 /-- Leaving off the end, with bindings `vars` in the walk's view and the
 atoms `A` minted when the walk of what is left ended: from each normal state
@@ -791,30 +802,34 @@ def NormalOK (F : Model) (p : Program) (n : Nat) (W : List Watch) (vars : List C
     (A : List (Nat × Int × Int)) (normal : List Checker.State) (fn : FnDecl) (E0 : Env)
     (k : List Kont) (D : Dest) (callers : List Frame) : Prop :=
   ∀ s ∈ normal, ∀ E : Env, F.Holds ⟨vars, s, A⟩ (E, E0) →
-    (∀ w ∈ W, w.reach.normal = true → w.Agree E) →
-    SafeAt F p n (cfg fn E E0 k D callers)
+    Watch.Holds W (·.reach.normal) E → SafeAt F p n (cfg fn E E0 k D callers)
 
 /-- Leaving by a `break` to the loop of `loops` its label resolves to, from
-inside any number of nested blocks: the step is safe from each such state that
-holds, with the frame agreeing wherever the `break` reaches a loop's head. -/
+inside any number of nested blocks whose bindings `new` were minted below `N`:
+the step is safe from each such state that holds, with the frame agreeing
+wherever the `break` reaches a loop's head. -/
 def BreakOK (F : Model) (p : Program) (n : Nat) (W : List Watch) (loops : List Checker.LoopCtx)
-    (vars : List Checker.Var) (A : List (Nat × Int × Int)) (breaks : List (Nat × Checker.State))
+    (vars : List Checker.Var) (A : List (Nat × Int × Int)) (N : Nat)
+    (breaks : List (Nat × Checker.State))
     (fn : FnDecl) (E0 : Env) (k : List Kont) (D : Dest) (callers : List Frame) : Prop :=
   ∀ (label : Option String) (lc : Checker.LoopCtx) (s : Checker.State),
     Checker.target loops label = some lc → (lc.id, s) ∈ breaks →
-    ∀ (new : List Checker.Var) (E : Env) (k0 : List Kont), F.Holds ⟨new ++ vars, s, A⟩ (E, E0) →
-    (∀ w ∈ W, ((w.reach.find label).map (·.1)).getD false = true → w.Agree E) →
+    ∀ (new : List Checker.Var), (∀ v ∈ new, v.id < N) →
+    ∀ (E : Env) (k0 : List Kont), F.Holds ⟨new ++ vars, s, A⟩ (E, E0) →
+    Watch.Holds W (fun w => ((w.reach.find label).map (·.1)).getD false) E →
     StepOK (SafeAt F p n)
       (stepStmt.stepBreak { fn, env := E, entry := E0, kont := k0, dest := D } callers label k)
 
 /-- Leaving by a `continue`, as `BreakOK` says for a `break`. -/
 def ContOK (F : Model) (p : Program) (n : Nat) (W : List Watch) (loops : List Checker.LoopCtx)
-    (vars : List Checker.Var) (A : List (Nat × Int × Int)) (conts : List (Nat × Checker.State))
+    (vars : List Checker.Var) (A : List (Nat × Int × Int)) (N : Nat)
+    (conts : List (Nat × Checker.State))
     (fn : FnDecl) (E0 : Env) (k : List Kont) (D : Dest) (callers : List Frame) : Prop :=
   ∀ (label : Option String) (lc : Checker.LoopCtx) (s : Checker.State),
     Checker.target loops label = some lc → (lc.id, s) ∈ conts →
-    ∀ (new : List Checker.Var) (E : Env) (k0 : List Kont), F.Holds ⟨new ++ vars, s, A⟩ (E, E0) →
-    (∀ w ∈ W, ((w.reach.find label).map (·.2)).getD false = true → w.Agree E) →
+    ∀ (new : List Checker.Var), (∀ v ∈ new, v.id < N) →
+    ∀ (E : Env) (k0 : List Kont), F.Holds ⟨new ++ vars, s, A⟩ (E, E0) →
+    Watch.Holds W (fun w => ((w.reach.find label).map (·.2)).getD false) E →
     StepOK (SafeAt F p n)
       (stepStmt.stepContinue { fn, env := E, entry := E0, kont := k0, dest := D } callers label k)
 
@@ -850,59 +865,61 @@ theorem NormalOK.mono {F : Model} {p : Program} {m n : Nat} {W : List Watch}
 
 theorem BreakOK.mono {F : Model} {p : Program} {m n : Nat} {W : List Watch}
     {loops : List Checker.LoopCtx} {vars : List Checker.Var} {A : List (Nat × Int × Int)}
-    {breaks : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont} {D : Dest}
-    {callers : List Frame} (h : BreakOK F p n W loops vars A breaks fn E0 k D callers)
-    (hmn : m ≤ n) : BreakOK F p m W loops vars A breaks fn E0 k D callers :=
-  fun label lc s ht hs new E k0 hH hW => StepOK.safeAt_mono hmn (h label lc s ht hs new E k0 hH hW)
+    {N : Nat} {breaks : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont}
+    {D : Dest} {callers : List Frame} (h : BreakOK F p n W loops vars A N breaks fn E0 k D callers)
+    (hmn : m ≤ n) : BreakOK F p m W loops vars A N breaks fn E0 k D callers :=
+  fun label lc s ht hs new hN E k0 hH hW =>
+    StepOK.safeAt_mono hmn (h label lc s ht hs new hN E k0 hH hW)
 
 theorem ContOK.mono {F : Model} {p : Program} {m n : Nat} {W : List Watch}
     {loops : List Checker.LoopCtx} {vars : List Checker.Var} {A : List (Nat × Int × Int)}
-    {conts : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont} {D : Dest}
-    {callers : List Frame} (h : ContOK F p n W loops vars A conts fn E0 k D callers)
-    (hmn : m ≤ n) : ContOK F p m W loops vars A conts fn E0 k D callers :=
-  fun label lc s ht hs new E k0 hH hW => StepOK.safeAt_mono hmn (h label lc s ht hs new E k0 hH hW)
+    {N : Nat} {conts : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont}
+    {D : Dest} {callers : List Frame} (h : ContOK F p n W loops vars A N conts fn E0 k D callers)
+    (hmn : m ≤ n) : ContOK F p m W loops vars A N conts fn E0 k D callers :=
+  fun label lc s ht hs new hN E k0 hH hW =>
+    StepOK.safeAt_mono hmn (h label lc s ht hs new hN E k0 hH hW)
 
 /-- A `break` or `continue` passes over the end of a statement list or a
 block: what it is safe to leave to is the same past either. -/
 theorem BreakOK.stmts {F : Model} {p : Program} {n : Nat} {W : List Watch}
     {loops : List Checker.LoopCtx} {vars : List Checker.Var} {A : List (Nat × Int × Int)}
-    {breaks : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont} {D : Dest}
-    {callers : List Frame} {blk : Pos} {i : Nat} {ss : List Stmt}
-    (h : BreakOK F p n W loops vars A breaks fn E0 k D callers) :
-    BreakOK F p n W loops vars A breaks fn E0 (.stmts blk i ss :: k) D callers :=
-  fun label lc s ht hs new E k0 hH hW => by
+    {N : Nat} {breaks : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont}
+    {D : Dest} {callers : List Frame} {blk : Pos} {i : Nat} {ss : List Stmt}
+    (h : BreakOK F p n W loops vars A N breaks fn E0 k D callers) :
+    BreakOK F p n W loops vars A N breaks fn E0 (.stmts blk i ss :: k) D callers :=
+  fun label lc s ht hs new hN E k0 hH hW => by
     rw [stepBreak_stmts]
-    exact h label lc s ht hs new E k0 hH hW
+    exact h label lc s ht hs new hN E k0 hH hW
 
 theorem BreakOK.scope {F : Model} {p : Program} {n : Nat} {W : List Watch}
     {loops : List Checker.LoopCtx} {vars : List Checker.Var} {A : List (Nat × Int × Int)}
-    {breaks : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont} {D : Dest}
-    {callers : List Frame} {d : Nat}
-    (h : BreakOK F p n W loops vars A breaks fn E0 k D callers) :
-    BreakOK F p n W loops vars A breaks fn E0 (.scope d :: k) D callers :=
-  fun label lc s ht hs new E k0 hH hW => by
+    {N : Nat} {breaks : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont}
+    {D : Dest} {callers : List Frame} {d : Nat}
+    (h : BreakOK F p n W loops vars A N breaks fn E0 k D callers) :
+    BreakOK F p n W loops vars A N breaks fn E0 (.scope d :: k) D callers :=
+  fun label lc s ht hs new hN E k0 hH hW => by
     rw [stepBreak_scope]
-    exact h label lc s ht hs new E k0 hH hW
+    exact h label lc s ht hs new hN E k0 hH hW
 
 theorem ContOK.stmts {F : Model} {p : Program} {n : Nat} {W : List Watch}
     {loops : List Checker.LoopCtx} {vars : List Checker.Var} {A : List (Nat × Int × Int)}
-    {conts : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont} {D : Dest}
-    {callers : List Frame} {blk : Pos} {i : Nat} {ss : List Stmt}
-    (h : ContOK F p n W loops vars A conts fn E0 k D callers) :
-    ContOK F p n W loops vars A conts fn E0 (.stmts blk i ss :: k) D callers :=
-  fun label lc s ht hs new E k0 hH hW => by
+    {N : Nat} {conts : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont}
+    {D : Dest} {callers : List Frame} {blk : Pos} {i : Nat} {ss : List Stmt}
+    (h : ContOK F p n W loops vars A N conts fn E0 k D callers) :
+    ContOK F p n W loops vars A N conts fn E0 (.stmts blk i ss :: k) D callers :=
+  fun label lc s ht hs new hN E k0 hH hW => by
     rw [stepContinue_stmts]
-    exact h label lc s ht hs new E k0 hH hW
+    exact h label lc s ht hs new hN E k0 hH hW
 
 theorem ContOK.scope {F : Model} {p : Program} {n : Nat} {W : List Watch}
     {loops : List Checker.LoopCtx} {vars : List Checker.Var} {A : List (Nat × Int × Int)}
-    {conts : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont} {D : Dest}
-    {callers : List Frame} {d : Nat}
-    (h : ContOK F p n W loops vars A conts fn E0 k D callers) :
-    ContOK F p n W loops vars A conts fn E0 (.scope d :: k) D callers :=
-  fun label lc s ht hs new E k0 hH hW => by
+    {N : Nat} {conts : List (Nat × Checker.State)} {fn : FnDecl} {E0 : Env} {k : List Kont}
+    {D : Dest} {callers : List Frame} {d : Nat}
+    (h : ContOK F p n W loops vars A N conts fn E0 k D callers) :
+    ContOK F p n W loops vars A N conts fn E0 (.scope d :: k) D callers :=
+  fun label lc s ht hs new hN E k0 hH hW => by
     rw [stepContinue_scope]
-    exact h label lc s ht hs new E k0 hH hW
+    exact h label lc s ht hs new hN E k0 hH hW
 
 end Sim
 
