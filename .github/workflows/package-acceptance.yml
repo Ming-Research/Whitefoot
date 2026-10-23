@@ -4,6 +4,10 @@
 # Windows archive, when the release has one, runs in a Windows Server Core
 # container that holds no other compiler; a release made before the Windows
 # archive existed is qualified on the other two.
+# Each archive is installed by the commands of its platform's section of the
+# getting started guide (docs/guide/getting-started.md), and the guide's
+# programs are built and run with the installed compiler: the Windows commands
+# in the container below, the Linux and macOS commands by check-package.sh.
 # The workflow revision supplies the maintained runner and witness, even when
 # the candidate predates them; unsupported witness behavior fails qualification
 # without changing expectations. Candidate bytes and manifest identity stay fixed.
@@ -173,29 +177,37 @@ jobs:
         run: |
           set -euo pipefail
           test -f .github/toolchain/check-package.sh
+          test -f .github/toolchain/guide-steps.py
           test -f tests/package-fixtures/waiting.wf
           test -f tests/package-fixtures/stack-exhaustion.wf
+          test -f docs/guide/getting-started.md
           mkdir -p "$RUNNER_TEMP/package-$MODE/logs"
           status=0
-          # XML/ICU/LZMA/zlib/C++ are recorded host shared-library prerequisites
-          # of this official clang/lld asset; they supply no host compiler.
-          # strace/Python inspect execution/inventory. No repository, host
-          # compiler or /usr/lib/llvm tree is mounted.
+          # The libraries the bundled clang/lld link against and the stock image
+          # lacks (XML, ICU, the C development files) are installed by the
+          # guide's own apt-get line inside check-package.sh; the C++, zlib and
+          # LZMA runtime libraries are in the stock image before it runs. None
+          # supplies a host compiler. strace and Python inspect execution and
+          # inventory. The candidate directory holds the archive and the
+          # release's SHA256SUMS the guide's download would fetch. No
+          # repository checkout, host compiler or /usr/lib/llvm tree is mounted.
           docker run --rm --platform linux/amd64 \
-            --mount "type=bind,src=$PWD/candidate/whitefootc-linux-x86_64-bundled.tar.gz,dst=/input/package.tar.gz,readonly" \
+            --mount "type=bind,src=$PWD/candidate,dst=/input/candidate,readonly" \
             --mount "type=bind,src=$PWD/tests/package-fixtures,dst=/input/fixtures,readonly" \
             --mount "type=bind,src=$PWD/.github/toolchain,dst=/input/toolchain,readonly" \
+            --mount "type=bind,src=$PWD/docs/guide,dst=/input/guide,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/package-$MODE,dst=/output" \
             --env "MODE=$MODE" ubuntu:24.04 /bin/bash -c '
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
-              apt-get install -y --no-install-recommends libc6-dev libgcc-13-dev \
-                libstdc++6 zlib1g libxml2 libicu74 liblzma5 python3 strace
+              apt-get install -y --no-install-recommends python3 strace
               if [ "$MODE" = linux-wrong-major ]; then
                 apt-get install -y --no-install-recommends clang-18
               fi
-              bash /input/toolchain/check-package.sh /input/package.tar.gz /input/fixtures /output "$MODE"
+              bash /input/toolchain/check-package.sh \
+                /input/candidate/whitefootc-linux-x86_64-bundled.tar.gz /input/fixtures \
+                /output "$MODE" /input/guide/getting-started.md
             ' > "$RUNNER_TEMP/package-$MODE/logs/container.txt" 2>&1 || status=$?
           cat "$RUNNER_TEMP/package-$MODE/logs/container.txt"
           exit "$status"
@@ -206,7 +218,7 @@ jobs:
           MODE: ${{ matrix.mode }}
           COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
-          printf 'Linux %s: exact candidate %s passed inventory, coroutine IR, ordinary/full/ThinLTO, cold/warm caches, stack exhaustion, relocation and completeness checks. Successful clang/lld executions are traced; host calls are zero.\n' \
+          printf 'Linux %s: exact candidate %s, installed by the Linux commands of the getting started guide, built and ran the programs of the guide and passed inventory, coroutine IR, ordinary/full/ThinLTO, cold/warm caches, stack exhaustion, relocation and completeness checks. Successful clang/lld executions are traced; host calls are zero.\n' \
             "$MODE" "$COMMIT" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Linux command, inventory and execution logs
@@ -242,11 +254,14 @@ jobs:
         run: |
           set -euo pipefail
           test -f .github/toolchain/check-package.sh
+          test -f .github/toolchain/guide-steps.py
           test -f tests/package-fixtures/waiting.wf
           test -f tests/package-fixtures/stack-exhaustion.wf
+          test -f docs/guide/getting-started.md
           bash .github/toolchain/check-package.sh \
             "$PWD/candidate/whitefootc-macos-arm64-bundled.tar.gz" \
-            "$PWD/tests/package-fixtures" "$RUNNER_TEMP/package-macos" macos
+            "$PWD/tests/package-fixtures" "$RUNNER_TEMP/package-macos" macos \
+            "$PWD/docs/guide/getting-started.md"
           cat "$RUNNER_TEMP/package-macos/logs/result.txt" >> "$GITHUB_OUTPUT"
 
       - name: Record qualification and the isolation boundary
@@ -256,7 +271,7 @@ jobs:
           COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
           if [ "$ISOLATION" = verified ]; then
-            echo "macOS candidate $COMMIT: package checks passed under host-clang execution denial. Every inventoried host path first executed successfully outside the sandbox and failed inside it; SDK and system ld stayed available." >> "$GITHUB_STEP_SUMMARY"
+            echo "macOS candidate $COMMIT: installation by the getting started guide's macOS commands, the guide's programs and the package checks passed under host-clang execution denial. Every inventoried host path first executed successfully outside the sandbox and failed inside it; SDK and system ld stayed available." >> "$GITHUB_STEP_SUMMARY"
           elif [ "$ISOLATION" = unverified ]; then
             echo "UNVERIFIED: this hosted runner could not prove denial of every host clang. Basic package checks passed, but clang independence and release qualification remain unverified. Use an isolated CI VM; publication is blocked by qualified=false." >> "$GITHUB_STEP_SUMMARY"
           else
