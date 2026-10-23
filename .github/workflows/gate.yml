@@ -31,8 +31,15 @@
 # A checked revision runs every group on Linux only. macOS is off for now
 # (wf-gate-no-macos, compiler/verification): the hosted macOS runners take
 # five jobs at a time, and ready pull requests waited most of an hour for
-# them. The last job requires every group green on the checked platforms
-# for the revision. A job fails
+# them. A manual run started with the `macos` input runs every group on macOS
+# as well, which a compiler release asks of its commit (compiler-release.yml
+# requires a successful gate run with macOS jobs), so the macOS queue is
+# entered once per release:
+#
+#   gh workflow run gate.yml --ref <branch whose tip is the commit> -f macos=true
+#
+# The last job requires every group green on the platforms the run was asked
+# for, for the revision. A job fails
 # the run while a `tmp-` workflow file exists in the checked head: a temporary
 # workflow never merges, and the last run before a merge, started by hand, is
 # the one that stops a forgotten one; main's own run stops one that got in.
@@ -43,6 +50,11 @@ on:
   pull_request:
     types: [opened, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      macos:
+        description: Also run every group on macOS (a release needs such a run of its commit)
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -62,12 +74,14 @@ permissions:
 # The ready run checks the head it was raised for, and cancelling the push run
 # of that same head, or being cancelled by it, would only leave a cancelled
 # run beside the successful one; a manual run was asked for, and a push that
-# skips must not cancel it.
+# skips must not cancel it. A manual run that asks for macOS has a group apart
+# from one that does not, so that starting the one for a release does not
+# cancel the full check on Linux, nor the other way round.
 # Each main commit gets its own group: a release needs the gate of that exact
 # commit, and a group keeps only one pending run, so a shared main group would
 # cancel the run of every merge but the last of a quick succession.
 concurrency:
-  group: gate-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  group: gate-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && (inputs.macos && 'manual-macos-' || 'manual-') || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 env:
@@ -82,6 +96,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       groups: ${{ steps.select.outputs.groups }}
+      platforms: ${{ steps.platforms.outputs.platforms }}
       run: ${{ steps.scope.outputs.run }}
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +108,20 @@ jobs:
           groups=$(make --no-print-directory --silent check-groups)
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
           echo "Correctness groups: $groups" >> "$GITHUB_STEP_SUMMARY"
+      # Linux always; macOS too only in a manual run that asks for it, so a
+      # push, an opening and the event of marking ready stay on Linux.
+      - name: Choose the platforms
+        id: platforms
+        env:
+          MACOS: ${{ inputs.macos }}
+        run: |
+          if [ "$MACOS" = true ]; then
+            platforms='["ubuntu-24.04","macos-15"]'
+          else
+            platforms='["ubuntu-24.04"]'
+          fi
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+          echo "Platforms: $platforms" >> "$GITHUB_STEP_SUMMARY"
       # Whether this revision is checked. A failed query fails the run rather
       # than quietly skipping the gate.
       - name: Choose whether to check
@@ -151,8 +180,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS is off for now (wf-gate-no-macos): Linux only.
-        os: [ubuntu-24.04]
+        # Linux, and macOS in a manual run that asks for it
+        # (wf-gate-no-macos, compiler/verification).
+        os: ${{ fromJSON(needs.groups.outputs.platforms) }}
         stage: ${{ fromJSON(needs.groups.outputs.groups) }}
     steps:
       - uses: actions/checkout@v4
@@ -370,8 +400,9 @@ jobs:
           sparse-checkout: .github
       - name: Require every group green on the checked platforms
         env:
-          # Linux only while macOS is off (wf-gate-no-macos).
-          GATE_PLATFORMS: ubuntu-24.04
+          # The platforms the run was asked for: Linux, and macOS if its
+          # manual run asked for it (wf-gate-no-macos).
+          GATE_PLATFORMS: ${{ join(fromJSON(needs.groups.outputs.platforms), ' ') }}
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GATE_GROUPS: ${{ needs.groups.outputs.groups }}
