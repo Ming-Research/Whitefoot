@@ -115,16 +115,14 @@ static wf_cmap_holding *table_whole(wf_cmap *map) {
 }
 
 /* Gives up the map's own write hold, if it keeps one, counting each entry it
- * wrote by the slot tag the arguments locate, then releases the entries a
- * clear took out under it. */
+ * wrote by the slot tag the arguments locate. A clear under that hold has
+ * released what it took out already (wf__keyed_table_clear). */
 static void table_settle(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
     wf_cmap_holding *hold = map->local_hold;
     if (hold == NULL)
         return;
     map->local_hold = NULL;
-    wf_cmap *cleared = map->whole_hold == hold ? wf_cmap_take_cleared(map) : NULL;
     wf_cmap_hold_release(hold, tag_offset, tag_width, none_tag);
-    wf_cmap_release_cleared(cleared);
     WF_CMAP_GIVE(hold, sizeof *hold);
 }
 
@@ -183,12 +181,17 @@ uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, wf_k
 }
 
 /* The cleared entries go to a map of their own, which release, the table's
- * drop helper, drains and frees once the statement's hold is given up
- * (wf__table_hold_release). */
+ * drop helper, drains and frees [SHARE-1]: once the statement's hold is given
+ * up (wf__table_hold_release), or at once under the map's own hold, which
+ * only shared_new or the map's release gives up, so that the values a clear
+ * took out are released before the program goes on from it. */
 void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
                            void (*release)(void *)) {
-    table_whole((wf_cmap *)table);
-    wf_cmap_clear((wf_cmap *)table, tag_offset, tag_width, none_tag, release);
+    wf_cmap *map = (wf_cmap *)table;
+    table_whole(map);
+    wf_cmap_clear(map, tag_offset, tag_width, none_tag, release);
+    if (map->whole_hold == map->local_hold)
+        wf_cmap_release_cleared(wf_cmap_take_cleared(map));
 }
 
 uint64_t wf__keyed_table_release_reserve(void *table) { return wf_cmap_release_reserve((wf_cmap *)table); }

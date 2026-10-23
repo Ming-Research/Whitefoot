@@ -1006,8 +1006,9 @@ the guard and block is `s^.m[k]` with one key binding declared outside the
 statement that the statement neither rebinds nor writes, at the binding or at
 any byte the key names, through the key or another reference to those bytes;
 any other reach takes the map whole. An
-invariant on the state type or a proof step in the block takes every unit
-whole, since the fact names parts the block may not reach (SHARE-3).
+invariant the checking uses, a type invariant of the state, affine or with a
+range, or a local or loop invariant in the block, takes every unit whole,
+since its facts may name parts the block never reaches (SHARE-3).
 
 Field order is now a writer's lever: a state declares its map fields first
 so that statements on different keys run their blocks side by side and meet
@@ -1024,12 +1025,14 @@ inside the entry's payload takes no cell for a missing key.
 
 A statement waiting on a map unit keeps the map's address, so a write or a
 `swap` of a value holding maps exchanges the maps' contents rather than their
-addresses. A map that a context writes outside any statement takes a local
-hold when it is first written; `shared_new` and the map's release settle it.
-The design tree had refused a local map whose access rules differed by
-position and whose hidden hold had to be settled at publication; access is
-now one rule in every position (an ordinary path and OP-4), and the hold is
-settled at those two points only.
+addresses. A map that no statement holds, written outside any statement or
+under its object's own lock, takes a local hold when it is first written;
+`shared_new` and the map's release settle it, and a `map_clear` under it
+releases the entries it takes out at once rather than when the hold is
+settled. The design tree had refused a local map whose access rules differed
+by position and whose hidden hold had to be settled at publication; access
+is now one rule in every position (an ordinary path and OP-4), and the hold
+is settled at those two points only.
 
 ### Cancellation flags
 
@@ -1055,7 +1058,11 @@ reached through another target, state types of two targets compared by
 unification, one object held once through two handles, locks over several
 objects in one order, entry-target keys read when the statement begins, and
 alias partitions of two targets of one invariant-bearing type (one target's
-leaving edges stay pinned by the `type11-neg-atomic-*` cases). The TYPE-9 map
+leaving edges stay pinned by the `type11-neg-atomic-*` cases). The partition
+case that rebound one of two targets also pinned that a rebound binding still
+owes the state's invariant on leaving, which one binding keeps: it is
+rewritten for one binding as `type11-neg-range-atomic-rebound-binder`, with
+an affine counterpart, `type11-neg-atomic-rebound-binder`. The TYPE-9 map
 placement cases reverse their verdicts and are replaced by positive cases
 under new ids. Every other case that used several targets, entry or key-set
 targets or `shared_map_new` is rewritten for one object with its verdict

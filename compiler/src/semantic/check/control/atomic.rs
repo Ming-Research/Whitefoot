@@ -1,10 +1,11 @@
 //! The atomic statement's one target and its ordinary reference, effect and
 //! scope judgments [SHARE-2].
 use super::super::super::model::{
-    BindingId, CheckedExpression, CheckedMode, CheckedNominalKind, CheckedShared, CheckedStatePath,
-    CheckedStatement, CheckedTarget, CheckedType, expression_children,
+    BindingId, CheckedExpression, CheckedLoopId, CheckedMode, CheckedNominalKind, CheckedShared,
+    CheckedStatePath, CheckedStatement, CheckedTarget, CheckedType, expression_children,
 };
 use super::super::super::places::{PlaceRoot, ResolvedPlace};
+use super::super::super::range_facts::CheckedRangeLoop;
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
 use super::super::references::{HandleWatch, ReferenceInfo, ReferenceKind};
 use super::super::types::SelectedPlaceType;
@@ -16,7 +17,7 @@ use crate::{
     DeclarationId, DeclarationRole, Production, ResolvedTarget, SemanticCompilerFailure,
     SemanticIssueKind, SemanticRule,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>` or `SharedRead<T>`: create the object with `shared_new` and give each context its own handle made with `shared_share`";
 pub(in crate::semantic::check) const SHARE2_WAIT_OUTSIDE_THE_BLOCK: &str = "move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome";
@@ -139,9 +140,11 @@ impl Checker<'_, '_> {
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         local.read_only_state = read_only;
         local.handle_watch.clone_from(&watch);
+        let mut range_invariants = false;
         if let CheckedType::Nominal(nominal) = state
             && let Some(clauses) = self.types.range_type_invariants.get(&nominal)
         {
+            range_invariants = !clauses.is_empty();
             self.body
                 .range_facts
                 .atomics
@@ -178,6 +181,7 @@ impl Checker<'_, '_> {
             variant_writes: Vec::new(),
             written_roots: Vec::new(),
             invariants,
+            uses_invariants: false,
         };
         let root = declaration.id();
         self.body.atomic_depth += 1;
@@ -265,6 +269,9 @@ impl Checker<'_, '_> {
         written_roots.sort_by_key(|binding| binding.0);
         written_roots.dedup();
         target.written_roots = written_roots;
+        target.uses_invariants = !target.invariants.is_empty()
+            || range_invariants
+            || block_states_invariants(&checked.statements, &self.body.range_facts.loops);
         for set in std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|g| &mut g.1)) {
             set.reads.retain(|p| !held(p));
             set.writes.retain(|p| !held(p));
@@ -590,3 +597,35 @@ impl Checker<'_, '_> {
     }
 }
 
+/// [SHARE-3] whether a statement among `statements`, nested blocks included,
+/// states an invariant the checking uses: a local invariant [INV-1], or a
+/// loop's affine invariant or its range invariant [RANGE-2], which `loops`
+/// keeps by the loop's identity.
+fn block_states_invariants(
+    statements: &[CheckedStatement],
+    loops: &BTreeMap<CheckedLoopId, CheckedRangeLoop>,
+) -> bool {
+    statements.iter().any(|statement| match statement {
+        CheckedStatement::Proof(_) => true,
+        CheckedStatement::Loop {
+            id,
+            invariants,
+            body,
+            ..
+        }
+        | CheckedStatement::CountedRange {
+            id,
+            invariants,
+            body,
+            ..
+        } => {
+            !invariants.is_empty()
+                || loops.get(id).is_some_and(|range| !range.invariants.is_empty())
+                || block_states_invariants(body, loops)
+        }
+        CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
+            arms.iter().any(|arm| block_states_invariants(&arm.body, loops))
+        }
+        _ => false,
+    })
+}

@@ -299,6 +299,68 @@ fn lock_ledger_names_an_entry_lock_and_a_whole_map_lock() {
     );
 }
 
+/// An invariant the statement's checking uses may name parts of the state
+/// its code never reaches, so the statement takes every unit, the map whole,
+/// before its block, although the block reaches only the map's entry under
+/// one key [SHARE-3]: an affine and a range type invariant of the state, a
+/// local invariant and a loop invariant in the block. Without an invariant
+/// the same block takes the entry alone (the entry witness above), so a
+/// lowering that leaves one kind out reports one line and fails.
+#[test]
+fn lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses() {
+    let affine = (
+        "  table: ConcurrentHashMap<u8>;\n  meta: Meta;\n  invariant counted(ledger): ledger.meta.count >= 0_u64;",
+        MAP_FIRST.1,
+    );
+    let range = (
+        "  table: ConcurrentHashMap<u8>;\n  meta: Meta;\n  cells: Array<u64, 1>;\n  invariant(ledger): forall zero(k in 0_u64..ledger^.cells.len): ledger^.cells[k] == 0_u64;",
+        "build(table: move table, meta: meta)",
+    );
+    // The range invariant reaches `shared_new` as a postcondition of the
+    // state's builder, which constructs it [TYPE-11].
+    let builder = "fn build(table: ConcurrentHashMap<u8>, meta: Meta) -> result: Ledger pure {\n  let cells = array_filled::<u64, 1>(value: 0_u64);\n  return Ledger(table: move table, meta: meta, cells: cells);\n}\n\nfn main()";
+    let witnesses = [
+        ("an affine type invariant", lock_ledger_source(affine, "", "")),
+        (
+            "a range type invariant",
+            lock_ledger_source(range, "", "").replacen("fn main()", builder, 1),
+        ),
+        (
+            "a local invariant",
+            lock_ledger_source(MAP_FIRST, "", "    invariant bounded: 0_u64 <= m^.meta.count;"),
+        ),
+        (
+            "a loop invariant",
+            lock_ledger_source(
+                MAP_FIRST,
+                "",
+                "    let seen = 0_u8;\n    for (\n      at in 0_u64..1_u64,\n      invariant bounded: 0_u64 <= m^.meta.count\n    ) {\n      set seen = 1_u8;\n    }",
+            ),
+        ),
+    ];
+    // Every witness is judged before the assertion, so a failure names each
+    // kind of invariant the lowering left out.
+    let mut partial = Vec::new();
+    for (kind, source) in witnesses {
+        let module = compile(source.as_bytes());
+        let lines = lock_ledger_lines(&module);
+        let whole = lines.len() == 2
+            && lines
+                .iter()
+                .any(|line| line.contains("  unit(m^.0): whole map  before the guard; "))
+            && lines
+                .iter()
+                .any(|line| line.contains("  unit(m^): Ledger  before the guard; "));
+        if !whole {
+            partial.push(format!("{kind}: {lines:?}"));
+        }
+    }
+    assert!(
+        partial.is_empty(),
+        "each invariant takes the map whole and the state's own unit before the block: {partial:#?}"
+    );
+}
+
 /// Two key bindings declared before the statement subscript the map, so no
 /// one entry covers the block's reaches and the statement takes the whole
 /// map, its one unit. A lowering that locks one key's entry and selects the

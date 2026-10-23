@@ -165,7 +165,12 @@ no other clear can add to it, gives the hold up, and then runs each drop
 helper, which drains the map, releases each `Option<V>` and frees it, as a
 map's last handle release does. A prelude row is a callee of its own, so
 its locals cannot carry the map past the statement; the list on the map is
-the statement's.
+the statement's. A map no statement holds, a local one or one under its
+object's own lock, is written under a hold of its own that only `shared_new`
+or the map's release gives up (`compiler/waiting-contexts/state-locks`), so
+a clear under it runs the helpers at once: kept on the list, the values
+would stay alive while the program goes on, and a `shared_close` of an
+object whose other handle a cleared entry held would return `None`.
 
 Alternative: no clear; a program scans every key into a `KeySet` and writes
 `None` through `&t^[ks]`. That is O(n) work and a copy of every key under the

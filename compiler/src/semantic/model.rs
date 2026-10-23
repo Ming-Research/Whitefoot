@@ -1093,6 +1093,13 @@ pub(crate) struct CheckedTarget {
     /// outside it names the same entry throughout the statement.
     pub(crate) written_roots: Vec<BindingId>,
     pub(crate) invariants: Vec<super::goal::CheckedCallRequirement>,
+    /// Whether the statement's checking uses an invariant, which may name
+    /// parts of the state its code never reaches [SHARE-3]: a type invariant
+    /// of the state, affine or with a range [TYPE-11], or a local invariant
+    /// or a loop's affine or range invariant in its block [INV-1, RANGE-2].
+    /// The lowering then holds every unit, each map whole
+    /// (compiler/waiting-contexts/state-locks).
+    pub(crate) uses_invariants: bool,
 }
 
 impl CheckedTarget {

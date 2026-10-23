@@ -1,5 +1,6 @@
 # Temporary (one-object-core): the gate's four correctness groups on Linux for
-# the one-object atomic statement, which a draft pull request's gate skips.
+# the one-object atomic statement, which a draft pull request's gate skips,
+# and the new tests watched failing on the code they guard against.
 # Removed before the full check.
 name: tmp-one-object
 
@@ -68,3 +69,64 @@ jobs:
       - name: grammar pins
         if: always() && matrix.stage == 'unit'
         run: perl .github/run-check.pl tmp/grammar cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib syntax::grammar::tests -- --test-threads=1
+
+  watch-fail:
+    name: watch-fail
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      # A lowering that ignores the statement's invariants: the ledger test
+      # must fail and name all four of its invariant witnesses.
+      - name: ledger test without the invariant condition
+        run: |
+          sed -i 's/^        if target.uses_invariants {$/        if false \&\& target.uses_invariants {/' compiler/src/lowering/builder/atomic.rs
+          grep -n 'if false && target.uses_invariants {' compiler/src/lowering/builder/atomic.rs
+          set +e
+          perl .github/run-check.pl tmp/watch-ledger cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses
+          status=$?
+          set -e
+          git checkout -- compiler/src/lowering/builder/atomic.rs
+          test "$status" -ne 0
+
+      # The reviewed head's runtime, which kept a cleared map's values until
+      # the map's own hold was given up, and a range walk that judges a
+      # leaving edge over the binding's current value: both closes in the
+      # clear case must return None, so it exits 0 rather than 3 + 4, and the
+      # rebound binding's range case must be accepted.
+      - name: new cases against the replaced runtime and a broken range walk
+        run: |
+          git checkout 8bd22795401d22478aaa1d2863c5d2a85a9fbd8f -- compiler/src/backend/keyed_table.c
+          sed -i 's/CheckedRangeRoot::Binding(binding) => bindings.get(&binding).cloned(),/CheckedRangeRoot::Binding(binding) => state.values.get(\&binding).or(bindings.get(\&binding)).cloned(),/' compiler/src/semantic/range_judgment/walk/type_invariants.rs
+          grep -n 'state.values.get(&binding).or(bindings.get(&binding)).cloned()' compiler/src/semantic/range_judgment/walk/type_invariants.rs
+          perl .github/run-check.pl tmp/watch-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
+          compiler/target/gate/whitefootc -o "$RUNNER_TEMP/clear" tests/conformance/cases/share-pos-map-clear-ends-held-handles.wf
+          set +e
+          "$RUNNER_TEMP/clear"
+          clear_status=$?
+          compiler/target/gate/whitefootc --check tests/conformance/cases/type11-neg-range-atomic-rebound-binder.wf
+          range_status=$?
+          set -e
+          echo "the clear case exits $clear_status; the range case's check exits $range_status"
+          test "$clear_status" -eq 0
+          test "$range_status" -eq 0

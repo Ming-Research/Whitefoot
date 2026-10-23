@@ -367,8 +367,9 @@ impl IrBuilder<'_> {
     /// when every reach of the map subscripts it by one key binding declared
     /// before the statement that the statement neither rebinds nor writes,
     /// at the binding or at any byte the key names (`written_roots`); any
-    /// other reach takes the whole map. The parts the state type's
-    /// invariants and a proof statement name count as reached [SHARE-3].
+    /// other reach takes the whole map. When the statement's checking uses
+    /// an invariant (`uses_invariants`), whose facts may name any part,
+    /// every unit counts as reached and each map as held whole [SHARE-3].
     fn unit_uses(
         &self,
         target: &CheckedTarget,
@@ -468,7 +469,7 @@ impl IrBuilder<'_> {
                 uses[unit].variant_written = true;
             }
         }
-        if !target.invariants.is_empty() || block_has_proof(body) {
+        if target.uses_invariants {
             for (unit, used) in uses.iter_mut().enumerate() {
                 if unit == object && !has_object {
                     continue;
@@ -1043,18 +1044,6 @@ fn key_binding_of(offset: &CheckedExpression) -> Option<BindingId> {
         | CheckedExpression::DerefAddressed { binding, .. } => Some(*binding),
         _ => None,
     }
-}
-fn block_has_proof(statements: &[CheckedStatement]) -> bool {
-    statements.iter().any(|statement| match statement {
-        CheckedStatement::Proof(_) => true,
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            block_has_proof(body)
-        }
-        CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
-            arms.iter().any(|arm| block_has_proof(&arm.body))
-        }
-        _ => false,
-    })
 }
 /// Executable reaches throughout a block, reusing the same direct-expression
 /// walk that triggers lazy acquisition while lowering each statement.
