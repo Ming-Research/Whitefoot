@@ -1213,6 +1213,97 @@ python3 .github/recompute-time-budgets.py replay --samples <file> --from <date> 
 `collect` makes about seven GitHub requests per run; the quota is shared with
 every other session, so collect in parts.
 
+### Recomputing again after the main line turned red (2026-10-23)
+
+The merge of Whitefoot#508 turned the gate on `main` (merge commit a675796,
+run 39898785271) red: on an Intel Xeon Platinum 8573C host `compiler/test-corpus`
+took 226.3 s against its 225 s budget. That cell had been lowered from 235 s by
+the recompute above, from the 29 runs of that stage on that CPU through 09:51
+UTC on 10-21 (median 190.5 s, maximum 204.1 s). The 21 runs on that CPU since
+then have a median of 216.6 s and a maximum of 236.3 s, and 4 of them took more
+than 225 s. The other classes moved the same way: of 78 runs on EPYC 7763 since
+then, 5 took more than 255 s (the slowest 270.0 s), and EPYC 9V74 and EPYC 9V45
+each have one run over their `compiler/test-corpus` budget. Why the stage grew
+was not traced to commits; the corpus grew with the cases `main` gained in those
+two days (inferred).
+
+**Sources.** The earlier samples plus the group jobs (static, unit, corpus,
+runtime; the sanitizer jobs) of the 466 finished `gate.yml` runs and 457
+finished `sanitizers.yml` runs created from 09:51 UTC on 10-21 until the
+collection on the morning of 10-23 (the last stage row ends at 04:17 UTC):
+2,000 jobs. The collection used the tool's own log parser but downloaded
+only the logs of the jobs that run stages, to spare the shared GitHub quota
+(`collect` downloads every job's log and yields the same stage rows). The
+scratch samples are not kept.
+
+**How far behind the table was.** Of the 3,899 stage runs of the mapped CPU
+classes in these runs that have a row in the table and exited 0, 15 (0.4%, in 13
+of 1,703 jobs, 0.8%) took longer than the budget the merge left in the table: `check/corpus`
+on EPYC 7763 (1 run) and on the Xeon (1), `check/runtime` on EPYC 7763 (1), the
+`asan` conformance row on EPYC 7763 (1) and `compiler/test-corpus` on all four
+classes (5, 1, 1 and 4 runs). The replay above gave 3 jobs of 850 (0.4%) for a
+table recomputed daily; this table was two days old and the share is of the same
+order, so the rule is not at fault; the table was recomputed once and not
+again. After the recompute below, each of the 3,899 was compared with its new
+budget and none exceeds it. That was checked one by one with a throwaway script
+on the samples, not deduced from the runs lying in the window: a class with more
+than 50 runs here, such as EPYC 7763 with 78 `compiler/test-corpus` runs, has
+older runs outside the 50-run window that the maximum does not cover. It does
+not show that the table will stay current.
+
+**New budgets.** The tool's output on the combined samples, rows kept as before
+(`--keep` for the three unit-group rows, which no run exceeds); 34 of the 80
+cells it judges change, 14 up and 20 down. On the Xeon, the cells with 13 runs
+(`asan` programs) and 8 runs (`tsan` programs) take the row's largest recomputed
+class value (420 s and 405 s); every other changed cell has 20 or more runs of
+its class.
+
+| stage | class | runs | median s | max s | old | new |
+|---|---|---:|---:|---:|---:|---:|
+| `check/static` | epyc-7763 | 50 | 66.6 | 76.9 | 95 | 85 |
+| `check/static` | xeon-8573c | 25 | 61.8 | 74.0 | 95 | 85 |
+| `compiler/lint` | epyc-7763 | 50 | 35.9 | 46.3 | 65 | 55 |
+| `compiler/lint` | epyc-9v74 | 50 | 32.6 | 41.5 | 45 | 50 |
+| `compiler/lint` | xeon-8573c | 25 | 34.5 | 46.4 | 65 | 55 |
+| `check/corpus` | epyc-7763 | 50 | 362.7 | 407.9 | 400 | 450 |
+| `check/corpus` | epyc-9v74 | 50 | 275.2 | 363.0 | 385 | 400 |
+| `check/corpus` | epyc-9v45 | 50 | 221.7 | 255.6 | 265 | 285 |
+| `check/corpus` | xeon-8573c | 50 | 311.4 | 365.9 | 360 | 405 |
+| `compiler/test-build-corpus` | epyc-7763 | 50 | 118.1 | 137.8 | 150 | 155 |
+| `compiler/test-build-corpus` | epyc-9v74 | 50 | 93.8 | 121.8 | 140 | 135 |
+| `compiler/test-build-corpus` | xeon-8573c | 50 | 114.6 | 129.6 | 140 | 145 |
+| `compiler/test-corpus` | epyc-7763 | 50 | 243.8 | 270.0 | 255 | 300 |
+| `compiler/test-corpus` | epyc-9v74 | 50 | 185.6 | 246.7 | 245 | 275 |
+| `compiler/test-corpus` | epyc-9v45 | 50 | 142.7 | 167.6 | 165 | 185 |
+| `compiler/test-corpus` | xeon-8573c | 50 | 196.2 | 236.3 | 225 | 260 |
+| `check/runtime` | epyc-7763 | 50 | 24.2 | 31.1 | 30 | 35 |
+| `check/runtime` | epyc-9v74 | 50 | 19.4 | 27.9 | 30 | 35 |
+| `compiler/corpus-asan-conformance` | epyc-7763 | 50 | 270.4 | 372.8 | 320 | 415 |
+| `compiler/corpus-asan-conformance` | epyc-9v74 | 50 | 219.8 | 291.4 | 415 | 325 |
+| `compiler/corpus-asan-conformance` | epyc-9v45 | 50 | 183.7 | 209.4 | 415 | 235 |
+| `compiler/corpus-asan-conformance` | xeon-8573c | 30 | 237.8 | 260.7 | 320 | 290 |
+| `compiler/corpus-asan-programs` | epyc-7763 | 50 | 338.4 | 378.2 | 475 | 420 |
+| `compiler/corpus-asan-programs` | epyc-9v74 | 45 | 269.8 | 342.8 | 475 | 380 |
+| `compiler/corpus-asan-programs` | epyc-9v45 | 28 | 213.7 | 233.5 | 475 | 260 |
+| `compiler/corpus-asan-programs` | xeon-8573c | 13 | 315.9 | 341.9 | 475 | 420 |
+| `compiler/corpus-tsan-conformance` | epyc-7763 | 50 | 271.3 | 288.8 | 335 | 320 |
+| `compiler/corpus-tsan-conformance` | epyc-9v74 | 50 | 236.5 | 297.8 | 415 | 330 |
+| `compiler/corpus-tsan-conformance` | epyc-9v45 | 50 | 191.4 | 243.2 | 415 | 270 |
+| `compiler/corpus-tsan-conformance` | xeon-8573c | 35 | 250.4 | 285.2 | 335 | 315 |
+| `compiler/corpus-tsan-programs` | epyc-7763 | 50 | 343.5 | 366.9 | 475 | 405 |
+| `compiler/corpus-tsan-programs` | epyc-9v74 | 24 | 265.7 | 341.5 | 475 | 380 |
+| `compiler/corpus-tsan-programs` | epyc-9v45 | 36 | 214.4 | 252.8 | 475 | 280 |
+| `compiler/corpus-tsan-programs` | xeon-8573c | 8 | 294.3 | 331.6 | 475 | 405 |
+
+To recompute again, the commands under "Recomputing the Linux budgets" apply,
+with one change: the samples of this recompute and the earlier one are scratch
+files and are not kept, so `--since` must reach back far enough for every class
+to have its 50 newest runs again. The classes with the fewest runs here are the
+Xeon's and the `programs` sanitizer rows; `collect` prints the oldest run it
+keeps, and the listing holds at most 1,000 runs per query, so collect in parts
+with `--until`. With a shorter window, a class with fewer than 20 runs keeps its
+value, and the Xeon column takes the row's largest class value.
+
 ### Gate at ready, not at each draft push
 
 Read from the Actions API on 2026-10-19: the 200 newest `gate.yml` runs, created
