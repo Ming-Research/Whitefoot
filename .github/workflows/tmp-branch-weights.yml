@@ -625,7 +625,7 @@ jobs:
           perl .github/run-check.pl tbw-fetch cargo fetch --locked --manifest-path compiler/Cargo.toml
           perl .github/run-check.pl tbw-build cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib --no-run
       - name: Branch-weight tests
-        run: perl .github/run-check.pl tbw-weights cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- backend::tests::branch_weights::
+        run: perl .github/run-check.pl tbw-weights cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- backend::tests::branch_weights
       - name: Dispatch and cost-shape tests
         if: ${{ !cancelled() }}
         run: perl .github/run-check.pl tbw-dispatch cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- backend::tests::match_dispatch backend::tests::cost_shape
@@ -653,7 +653,7 @@ jobs:
           cp compiler/src/backend/tests/branch_weights.rs "$arm/compiler/src/backend/tests/branch_weights.rs"
           perl .github/run-check.pl tbw-prev-fetch cargo fetch --locked --manifest-path "$arm/compiler/Cargo.toml"
           status=0
-          perl .github/run-check.pl tbw-prev-test cargo test --manifest-path "$arm/compiler/Cargo.toml" --profile gate --locked --offline --lib -- backend::tests::branch_weights:: 2>&1 | tee "$RUNNER_TEMP/previous.log" || status=$?
+          perl .github/run-check.pl tbw-prev-test cargo test --manifest-path "$arm/compiler/Cargo.toml" --profile gate --locked --offline --lib -- backend::tests::branch_weights 2>&1 | tee "$RUNNER_TEMP/previous.log" || status=$?
           echo "exit status of the run on the previous rule: $status"
           grep -E "^test .* (ok|FAILED)$" "$RUNNER_TEMP/previous.log" || true
           # Only the guard-return test separates the two rules; it must be
