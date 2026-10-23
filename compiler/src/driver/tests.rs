@@ -7,6 +7,7 @@ use crate::{OverlapLowering, RecursionBudget, SourceInput};
 mod call_result_repairs;
 mod call_spellings;
 mod recursive_postconditions;
+mod wait_sites;
 #[cfg(unix)]
 mod spellings;
 
@@ -1160,6 +1161,115 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
         b"fn spare() -> result: u8 pure {\n  return 3_u8;\n}\n",
         false
     ));
+}
+
+/// Moving host files reuses emitted code and rebinds its source descriptions
+/// without any frontend or proof work, matching a fresh build at the new path.
+#[test]
+fn moving_a_source_rebinds_wait_descriptions_without_rechecking_its_proof() {
+    let directory = CacheDirectory::new("wait-site-relocation");
+    let cache = directory.open();
+    let graph = crate::form_module_graph(
+        SourceInput::new(
+            "modules.wfg",
+            b"pkg: [std::process];\n\nentry app = pkg::main;\n",
+        ),
+        CompilerLimits::default(),
+    )
+    .expect("the graph forms");
+    let records: [(&str, &[u8]); 2] = [
+        (
+            "module.wfm",
+            b"public fn main() -> status: std::process::ExitStatus pure waits doc \"Waits on its guard.\";\n",
+        ),
+        (
+            "main.wf",
+            b"fn main() -> status: std::process::ExitStatus pure waits {\n  let cell = shared_new::<u64>(value: 0_u64);\n  atomic value = &cell when value^ != 0_u64 {\n    set value^ = 2_u64;\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        ),
+    ];
+    let build = |display_path, cached| {
+        let inputs = module_inputs(&graph, &records)
+            .into_iter()
+            .map(|input| {
+                if input.logical_path() == "main.wf" {
+                    SourceInput::from_host_path("main.wf", display_path, input.bytes())
+                        .in_module(input.module(), input.role())
+                } else {
+                    input
+                }
+            })
+            .collect::<Vec<_>>();
+        super::build_module_entry(
+            &graph,
+            &inputs,
+            super::ModuleEntry::Named("app"),
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+            cached,
+        )
+        .expect("relocation does not change source acceptance")
+    };
+    let (original, reused) = build("old/main.wf", Some(&cache));
+    assert!(!reused, "the first module build is cold");
+    assert_eq!(original, build("old/main.wf", None).0);
+    let (warm, reused) = build("old/main.wf", Some(&cache));
+    assert!(reused, "the unchanged host path reuses the emitted module");
+    assert_eq!(warm, original);
+    let before = cache.receipt_counts();
+    let (relocated, reused) = build("new/main.wf", Some(&cache));
+    let after = cache.receipt_counts();
+    assert!(reused, "relocation reuses the already emitted code");
+    assert_eq!(after, before, "no frontend or proof work runs on relocation");
+    assert_eq!(relocated, build("new/main.wf", None).0);
+    let text = relocated.into_string();
+    let literal = |value: &str| {
+        value
+            .bytes()
+            .map(|byte| format!("\\{byte:02X}"))
+            .collect::<String>()
+    };
+    assert!(
+        text.contains(&literal(
+            "waits for the guard of the atomic statement at new/main.wf:3:3\0"
+        )),
+        "{text}"
+    );
+    assert!(!text.contains(&literal("old/main.wf")), "{text}");
+    assert!(
+        text.contains("; lock: "),
+        "the fixture retains its lock ledger: {text}"
+    );
+    assert!(text.contains("new/main.wf:3:3"), "{text}");
+    assert!(!text.contains("old/main.wf"), "{text}");
+    let (_, reused) = build("new/main.wf", Some(&cache));
+    assert!(reused, "the relocated module then reuses its own entry");
+}
+
+/// A forced frontend walk at a new host path reuses atomic-function proofs;
+/// a target's lock-ledger source spelling is presentation, not an analysis input.
+#[test]
+fn atomic_proof_receipts_ignore_the_targets_display_path() {
+    let directory = CacheDirectory::new("atomic-receipt-paths");
+    let cache = directory.open();
+    let source = b"fn main() -> status: std::process::ExitStatus pure waits {\n  let cell = shared_new::<u64>(value: 0_u64);\n  atomic value = &cell when value^ != 0_u64 {\n    set value^ = 2_u64;\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    let analyzed = |display_path| {
+        let inputs = [SourceInput::from_host_path("main.wf", display_path, source)];
+        let fresh =
+            super::check(&inputs, CompilerLimits::default()).map_err(|failure| failure.to_string());
+        let before = cache.receipt_counts();
+        let cached = super::check_with_cache(&inputs, CompilerLimits::default(), &cache)
+            .map_err(|failure| failure.to_string());
+        assert_eq!(cached, fresh, "host paths change no acceptance judgment");
+        let after = cache.receipt_counts();
+        (cached, (after.0 - before.0, after.1 - before.1))
+    };
+    let (first, (_, recorded)) = analyzed("old/main.wf");
+    assert_eq!(first, Ok(()));
+    assert!(recorded > 0, "the initial atomic function records its proof");
+    let (relocated, (reused, recorded)) = analyzed("new/main.wf");
+    assert_eq!(relocated, Ok(()));
+    assert!(reused > 0, "the forced frontend walk reuses the atomic proof");
+    assert_eq!(recorded, 0, "display paths require no new proof analysis");
 }
 
 /// [MOD-9] a module program's entry build reports the permission ledger of
