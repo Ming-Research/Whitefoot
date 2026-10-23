@@ -1206,6 +1206,64 @@ with #431's mechanism that this change does not remove. `b` was 1.080 on the
 previous head and is 1.048 on this one, so the excess moves with main; this item
 does not attribute it.
 
+### Deciding the Firn row by an interval on the head that merges
+
+Written before the measurement. The previous section reports Firn `D` = 1.029 by
+median, which meets the criterion by 0.001, while all five per-round `D` exceed 1
+(1.007 to 1.188), the twin's range is 0.977–1.030 and three earlier runs on
+neighbouring trees gave 1.027, 1.067 and 1.082. A pass of that kind would also
+have been reported if the true ratio were 1.07, so it does not decide the row.
+The architect ruled that the row is decided by the 95% interval of the per-round
+ratio, adding pairs until the interval decides and no further, instead of by a
+median that sits at the criterion.
+
+Design, fixed now:
+
+- One job, Firn only, on the head that merges (the commit that adds the workflow
+  leaves `compiler/` as `e0bb1ef7e` has it; no merge of main follows unless
+  GitHub reports a conflict). The Halo rows are not repeated: they met their
+  criteria with wide margins (`pkg::vm` 0.585, `pkg::test` 1.005).
+- Five columns, measured in every round, interleaved, with the order reversed in
+  alternate rounds, compiler user+sys CPU, no check cache: `base` (`7d9118eba`
+  on the source without the two `Inputs` bindings it lacks, as before), `twin`
+  (the `base` binary again), `c431fix` (`af7665be6` with this change applied, as
+  in the direct column), `main` (the merge base `dc2bd2f33`) and `branch`. The
+  adapted source is that of the earlier runs (their adaptation diffs, then the
+  compiler's own mechanical fixes). No work counters are collected: the change's
+  compiler files are those the earlier counter runs measured.
+- Per round: `D` = `branch`/`base` (the row's ratio), `E` = `c431fix`/`base`,
+  `F` = `branch`/`c431fix` (= `D`/`E`; what the merges since #431 add on top of
+  the fixed tree, the architect's `b`), `c` = `branch`/`main`, `M` =
+  `main`/`base` (the whole excess on main) and `T` = `twin`/`base`. #431's own
+  column is not run, so `a` and `b` of the earlier runs are not recomputed.
+- The interval is the distribution-free confidence interval for the median of the
+  per-round ratios: the sorted ratios `R(1)` ≤ … ≤ `R(n)` and the interval
+  [`R(k)`, `R(n+1−k)`] with `k` = 4 for `n` = 15 (coverage 96.5%, from
+  1 − 2·P(Bin(15, ½) ≤ 3)) and `k` = 8 for `n` = 25 (coverage 95.7%, from
+  1 − 2·P(Bin(25, ½) ≤ 7)). It makes no assumption about the distribution of the
+  ratios. The workflow prints it for every ratio above.
+- Checkpoints: after round 15, then after round 25, in the same job (one host,
+  one adapted source, so nothing is pooled across hosts). The job stops at round
+  15 when the `D` interval lies wholly at or below 1.03 or wholly above it, or
+  when the batch is invalid; otherwise it runs to round 25 and stops.
+
+Verdict on the Firn row, from the `D` interval at the last checkpoint:
+
+1. The upper end is at most 1.03: the criterion is met (rule 1).
+2. The lower end is above 1.03: the criterion is not met. Rule 2 applies: a card
+   goes to the owner on this item (inquiry, blocking the acceptance row), written
+   with the `D`, `E` and `F` intervals and the per-round values, asking which
+   criterion the row is judged by, with at least three options.
+3. The interval still contains 1.03 after round 25: the same card, with the
+   intervals as they are.
+
+Validity: the batch does not count, and the run is repeated, if an exit code is
+not 0 or the interval of `T` (identical binaries) excludes 1.000, since the noise
+or the order bias of the run then exceeds the floor of identical binaries. No
+noise floor is recorded for Firn on the hosted runners; the width of the `T`
+interval is reported. `E` is read the same way and is reported with its interval
+whatever the verdict on `D`; it carries no verdict of its own.
+
 ### Reviews
 
 For the first candidate, an independent read-only review with `gpt-6.1-sol` covered the complete
