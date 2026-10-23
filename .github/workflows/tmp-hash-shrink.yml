@@ -142,6 +142,67 @@ jobs:
             done
           done
 
+  remove-codegen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    name: removal code under both libraries
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the merge base's library and this commit's
+        run: bash research/experiments/hash-map-compare/arms.sh "$GITHUB_SHA" "" "$RUNNER_TEMP/out"
+      - name: Optimized code of the bench under each library
+        run: |
+          out="$RUNNER_TEMP/out"
+          for arm in base candidate; do
+            wfc="$out/arms/$arm/compiler/target/gate/whitefootc"
+            "$wfc" --emit-llvm research/experiments/hash-map-compare/bench.wf -o "$out/$arm.ll"
+            clang -O2 -falign-functions=64 -Wno-override-module -x ir -S -emit-llvm "$out/$arm.ll" -o "$out/$arm.opt.ll"
+            clang -O2 -falign-functions=64 -Wno-override-module -x ir -S "$out/$arm.ll" -o "$out/$arm.s"
+            "$wfc" research/experiments/hash-map-compare/bench.wf -o "$out/bench-$arm"
+          done
+          python3 - "$out" <<'PY'
+          import re, sys
+          out = sys.argv[1]
+          for arm in ("base", "candidate"):
+              text = open(f"{out}/{arm}.opt.ll").read()
+              print(f"== {arm}")
+              for m in re.finditer(r"^define [^@]*@([^(]+)\(.*?^}", text, re.S | re.M):
+                  name, body = m.group(1), m.group(0)
+                  if not re.search(r"remove|migrate|shrink|rebuild|churn|put_one", name):
+                      continue
+                  calls = sorted(set(re.findall(r"call [^@]*@([A-Za-z0-9_.$]+)", body)))
+                  lines = sum(1 for l in body.splitlines() if l.startswith("  "))
+                  print(f"{name}: {lines} instructions; calls {calls}")
+          PY
+      - name: Remove-insert timing, alternating libraries
+        run: |
+          out="$RUNNER_TEMP/out"
+          for round in 1 2 3 4 5; do
+            for arm in base candidate; do
+              for size in 1000 1000000; do
+                printf '%s %s ' "$arm" "$size"
+                WF_DRIVERS=1 taskset -c 1 "$out/bench-$arm" 6 "$size" 5 0 | tr '\n' ' '
+                echo
+              done
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remove-codegen
+          path: |
+            ${{ runner.temp }}/out/*.opt.ll
+            ${{ runner.temp }}/out/*.s
+
   design-tree:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
