@@ -713,6 +713,40 @@ took five engineer turns and four `proof.yml` runs to its review, one of which
 failed to compile: the toolchain's `Int.fdiv_eq_ediv` carries no sign
 hypothesis.
 
+### The typing lemmas
+
+`Typing.lean` proves that an accepted program never stops ill formed:
+`Program.never_illFormed` says that for a program the checker accepts and
+whose `main` entry holds (`EntryHolds`), no number of steps of the interpreter
+ends in `illFormed`. It rests on a well-typedness of interpreter states,
+`Config.WellTyped`, with three lemmas: the entry state is well typed, `step`
+keeps a well-typed state well typed, and a step from a well-typed state is not
+`illFormed`. The statements follow the interface `spec-proof-theorems` fixes
+for the theorems that use them.
+
+A state is well typed when the checker accepts the program and every frame
+agrees with a context the checker judged its continuation from. A value has a
+type when its shape matches and an integer lies in its type's range, so the
+range part is available to the fact proofs. A frame's bindings match the
+context's scope name by name and type by type. Its continuation is accepted
+statement list by statement list, under two flags the checker's flow carries:
+whether the next statement can be reached normally, which only needs to be an
+upper bound of the checker's flag, and for each enclosing loop whether its
+exit is reached normally, which is what a counted `break` needs. The frames
+below the running one take its result at their destination: the condition is
+stated for every value of the result type rather than through a stored
+context, since a `set` or `if` destination resumes in a state that does not
+exist until the value arrives.
+
+The module adds 1,642 lines of Lean, changes no model definition and adds no
+coverage mark. The build of the model and harness took 21.9 s to 23.4 s on
+its three green `proof.yml` runs, within the 25 s budget, with the module
+itself 6.0 s to 6.5 s. The part took seven engineer turns and five
+`proof.yml` runs to its review. The first turn only studied the question and
+ended on an API error; the first draft was written without a local Lean and
+failed to compile in about 30 places, the second run in 9, and the two later
+runs changed only warnings and this record.
+
 ### The generator lemmas
 
 `GenGrows.lean` proves that the checker's walk only grows its generator, the

@@ -256,9 +256,9 @@ Extend stuck detection to include:
 - Committed ingress and contexts still arming waits.
 - Transfers, probes, borrows and reserved replacements.
 
-Publish WAIT/READY/COMPLETE before dropping the active-invocation count. Read active-invocation state before role counts in the coherent double collect; transfer and idle transitions must participate in its change/moving accounting. Otherwise all logical roles can appear idle while displaced computation will later fire a guard.
+Publish WAIT/READY/COMPLETE before the executor's even sequence store. Collect the executor sequences before role counts in the coherent double collect; transfer and idle transitions must participate in its change/moving accounting. Otherwise all logical roles can appear idle while displaced computation will later fire a guard.
 
-For the first implementation, a global active-invocation counter is the simpler auditable choice. Replacing its per-resume RMWs with per-executor stores requires a separately justified collection protocol.
+The first implementation used a global active-invocation counter. It was replaced by per-executor odd/even sequences with a double collect over all of them; the collection protocol and its argument are in [suspension accounting](../suspension-accounting/DESIGN.md#3-the-invocation-sequence-and-the-snapshot-argument).
 
 Shutdown must:
 
@@ -331,7 +331,7 @@ The proposal adds synchronization even when no handoff occurs.
 
 | Path | Proposed added cost |
 |---|---|
-| Every native coroutine resume segment | Release publication of OUTSIDE and acquire CAS on return; active-invocation increment/decrement; publication of deadline/detection hints. |
+| Every native coroutine resume segment | Release publication of OUTSIDE and acquire CAS on return; an odd/even store pair on the executor's own invocation sequence; publication of deadline/detection hints. |
 | Host `.start` | No ownership CAS. Use context-private intent and stable adapter binding; retain existing engine synchronization. |
 | Host wait, pass or acquisition retry | One acquire ownership check at an existing legal boundary. |
 | Cross-thread shared/guard/join wake | Atomic unwind-gate transition preventing premature enqueueing. |
@@ -343,7 +343,7 @@ The proposal adds synchronization even when no handoff occurs.
 
 Keep token checks at scope boundaries. Do not add them to every SQE, CQE, heap comparison or local hash lookup. Preserve direct adoption and local completion lookup under SERVICE.
 
-The initial global active counter adds two atomic RMWs per resume segment. This may be significant for short I/O continuations. A later per-executor representation could remove that contention, but its stuck-detection correctness must be established before substitution.
+The initial global active counter added two atomic RMWs per resume segment, which could be significant for short I/O continuations. Per-executor invocation sequences replaced it, keeping those writes on the executor's own line ([suspension accounting](../suspension-accounting/DESIGN.md)).
 
 The monitor should scan only candidate roles and batch its work. Redundant hints can tolerate false positives; private-state inspection cannot tolerate data races.
 
@@ -386,7 +386,7 @@ Disabling the flag may materially harm ordinary I/O performance; the existing so
 | **Unverified, latency-critical** | Foreign Linux progress with cooperative task work. | Old submitter held in compute while peer completes an operation; inspect publication and foreign progress. |
 | **Unverified, latency-critical** | Monitor scan, locks, syscalls and service work fit `H`. | Measure each component; introduce bounded service-only paths where current code can block. |
 | **Known limit** | All bounded executors can become occupied with computation. | Conditional profile and explicit exhaustion behavior; no unlimited-context claim. |
-| **Unmeasured cost** | Token transitions, active counter and wake gates affect short I/O continuations. | Same-source I/O control and profiling. |
+| **Unmeasured cost** | Token transitions, invocation sequences and wake gates affect short I/O continuations. | Same-source I/O control and profiling. |
 | **Unmeasured cost** | Enlarged map-user inventory increases map size and construction work. | Map construction/holding and MemoryMeter comparison. |
 | **Unmeasured consequence** | Migration can lose future lane-zero attachment and reduce `--par` parallelism. | Measure post-handoff compute. Lane leasing is a separate material choice. |
 | **Unverified, platform-specific** | Non-ring polling, Windows helper latency and stop lifecycle races. | Real platform routes, not Linux-only mocks. |
