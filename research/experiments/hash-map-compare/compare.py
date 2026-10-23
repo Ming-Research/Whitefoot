@@ -10,8 +10,8 @@
 `build` writes DIR/images: the base, twin and candidate images of bench.wf
 and tail.wf, the candidate image of hold.wf and the memory cell's observed
 images. The twin is a byte copy of the base image. `measure` runs the
-interleaved rounds and appends DIR/raw.tsv, DIR/memory.tsv, DIR/hold.tsv and
-DIR/tail.tsv. `reduce` writes
+interleaved rounds and appends DIR/raw.tsv, DIR/memory.tsv, DIR/hold.tsv,
+DIR/tail.tsv and DIR/shrink.tsv. `reduce` writes
 DIR/summary.txt and prints it; FLOOR is the recorded noise floor of each
 cell, as "operation:size=spread" items separated by commas, and a cell whose
 twin spread is above its floor is not counted. Exit status: 0 when the data are complete and
@@ -71,7 +71,12 @@ CHAIN_CALLS = 2000
 # once in each arm, in a rotating arm order, timing every removal alone; a
 # cell's per-round ratios are the candidate's and the twin's 99th percentile
 # over the base's, judged by the same paired rule as the timed cells. The
-# maximum is reported, not judged: a removal that shrinks migrates the map.
+# 99th percentile judges only the ordinary removal path: a drain migrates
+# once per halving of its buckets, a dozen to twenty removals, far fewer than
+# one in a hundred, so the 99th percentile excludes them (the 99.9th of the
+# 10,000-pair drain may not). The maximum and every removal that changed the map's
+# capacity (shrink.tsv) are reported, not judged; whether a migration holds a
+# request too long is judged by Firn's SPOP drain against its competitors.
 TAIL_SIZES = [10000, 1000000]
 TAIL_ROUNDS = 12
 TAIL_EXACT = 65536
@@ -79,6 +84,7 @@ RAW_COLUMNS = ["round", "position", "arm", "operation", "size", "sample", "ops",
 MEMORY_COLUMNS = ["arm", "run", "size", "before", "retained", "length", "peak", "maxrss_kib"]
 HOLD_COLUMNS = ["mode", "size", "call", "ns", "pairs"]
 TAIL_COLUMNS = ["round", "position", "arm", "size", "found", "p50", "p99", "p999", "max"]
+SHRINK_COLUMNS = ["round", "position", "arm", "size", "before", "after", "left", "ns"]
 
 
 class Invalid(Exception):
@@ -458,6 +464,36 @@ def reduce_tail(rows, out):
     return verdicts
 
 
+def reduce_shrink(rows, out):
+    """Per tail size and arm: each capacity change of a drain, with the
+    median and maximum nanoseconds of its removal over the rounds. Reported,
+    not judged. Returns {(size, arm): number of changes per drain}."""
+    steps, drains = {}, {}
+    for row in rows:
+        if row["after"] >= row["before"]:
+            raise Invalid(f"shrink {row['arm']} {row['size']} round {row['round']}: "
+                          f"capacity {row['before']} to {row['after']}")
+        key = (row["size"], row["arm"])
+        steps.setdefault(key, {}).setdefault((row["before"], row["after"], row["left"]), []).append(row["ns"])
+        drains.setdefault(key, {}).setdefault(row["round"], 0)
+        drains[key][row["round"]] += 1
+    counts = {}
+    print("Shrinking removals: nanoseconds of each removal that changed the capacity "
+          "during a drain; reported, not judged.", file=out)
+    if not steps:
+        print("  none", file=out)
+    for key in sorted(steps):
+        per_drain = sorted(set(drains[key].values()))
+        if len(per_drain) != 1:
+            raise Invalid(f"shrink {key[1]} {key[0]}: {per_drain} changes per drain differ between rounds")
+        counts[key] = per_drain[0]
+        print(f"{key[0]:>8} {key[1]:<10} {per_drain[0]} per drain", file=out)
+        for (before, after, left), times in sorted(steps[key].items(), reverse=True):
+            print(f"{'':>8} {'':<10} capacity {before:>8} -> {after:>8}, {left:>8} left: "
+                  f"median {statistics.median(times):>10g} ns, max {max(times):>10}", file=out)
+    return counts
+
+
 def reduce_all(directory, expect_regression, out, floor=None):
     manifest = os.path.join(directory, "manifest.txt")
     slow = False
@@ -473,6 +509,8 @@ def reduce_all(directory, expect_regression, out, floor=None):
     reduce_hold(read_tsv(os.path.join(directory, "hold.tsv"), HOLD_COLUMNS), out)
     print(file=out)
     reduce_tail(read_tsv(os.path.join(directory, "tail.tsv"), TAIL_COLUMNS), out)
+    print(file=out)
+    reduce_shrink(read_tsv(os.path.join(directory, "shrink.tsv"), SHRINK_COLUMNS), out)
     print(file=out)
     counts = {v: sum(1 for x in timed.values() if x == v) for v in sorted(set(timed.values()))}
     print("Timed verdicts: " + ", ".join(f"{v} {n}" for v, n in counts.items()), file=out)
@@ -606,13 +644,17 @@ def measure(args):
             raise Invalid(f"hold mode {mode} size {size}: {len(lines)} rows for {count} calls")
         append(hold, HOLD_COLUMNS, [f for f in lines])
     tail = os.path.join(args.out, "tail.tsv")
+    shrink = os.path.join(args.out, "shrink.tsv")
+    append(shrink, SHRINK_COLUMNS, [])
     for round_ in range(TAIL_ROUNDS):
         for index, size in enumerate(TAIL_SIZES):
             for position, arm in enumerate(ORDERS[(round_ + index) % len(ORDERS)]):
                 lines = launch(os.path.join(images, f"tail-{arm}"), [size], args.cpu)
-                if len(lines) != 1 or len(lines[0]) != 6 or int(lines[0][0]) != size:
+                if (not lines or len(lines[0]) != 6 or int(lines[0][0]) != size
+                        or any(len(f) != 4 for f in lines[1:])):
                     raise Invalid(f"tail {arm} {size}: output {lines}")
                 append(tail, TAIL_COLUMNS, [[round_, position, arm] + lines[0]])
+                append(shrink, SHRINK_COLUMNS, [[round_, position, arm, size] + f for f in lines[1:]])
     return 0
 
 
@@ -780,6 +822,19 @@ def self_test():
         [dict(r, found=r["size"] - 1) if r["round"] == 0 else r for r in tail_rows(1.0)], sink))
     expect_invalid("tail missing size", lambda: reduce_tail(
         [r for r in tail_rows(1.0) if r["size"] != TAIL_SIZES[0]], sink))
+    def shrink_rows(rounds=3):
+        """Two capacity changes per candidate drain of each size, none in the
+        base or twin."""
+        return [{"round": r, "position": 0, "arm": "candidate", "size": size,
+                 "before": before, "after": before // 2, "left": before // 8, "ns": 1000 + r}
+                for r in range(rounds) for size in TAIL_SIZES for before in (96, 48)]
+    expect("shrink counts", reduce_shrink(shrink_rows(), sink),
+           {(size, "candidate"): 2 for size in TAIL_SIZES})
+    expect("shrink none", reduce_shrink([], sink), {})
+    expect_invalid("shrink growth", lambda: reduce_shrink(
+        [dict(r, after=r["before"] * 2) if r["round"] == 0 else r for r in shrink_rows()], sink))
+    expect_invalid("shrink uneven drains", lambda: reduce_shrink(
+        [r for r in shrink_rows() if not (r["round"] == 1 and r["before"] == 48)], sink))
     sink.close()
     for failure in failures:
         print("FAIL " + failure)

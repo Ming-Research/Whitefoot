@@ -81,7 +81,10 @@ image like the bench's. It builds a map of N uniform pairs from capacity
 zero, untimed, then removes every pair in the bench's permutation order,
 timing each removal alone, and prints the 50th, 99th and 99.9th percentiles
 and the maximum of one removal's nanoseconds; percentiles are exact below
-65,536 ns, from a count per nanosecond. It serves the hash-shrink
+65,536 ns, from a count per nanosecond. It then prints one row per removal
+that changed the map's capacity, read untimed after the removal: the
+capacity before and after, the pairs left and that removal's nanoseconds.
+It serves the hash-shrink
 investigation (board item wf-need-firn-hash-shrink), where a removal that
 leaves the map sparse migrates it in one step: every round drains 10,000
 and 1,000,000 pairs once per arm, 12 rounds.
@@ -134,9 +137,13 @@ measurement:
   twin's 99th percentile over the base's, judged by the paired rule above
   at the same resolution as a timed cell of that size. The maximum is
   printed per arm, not judged: one removal of a shrinking map migrates it,
-  so the candidate's maximum is expected to be far above the base's. A
-  regression of the 99th percentile is the hash-shrink investigation's
-  reason to reopen one-shot migration.
+  so the candidate's maximum is expected to be far above the base's. A drain
+  migrates once per halving of its buckets, far fewer than one removal in a
+  hundred, so the 99th percentile judges only the ordinary removal path.
+- Shrinking removals: each capacity change of a drain, with the median and
+  maximum nanoseconds of its removal over the rounds, per arm and size;
+  reported, not judged. Whether a one-shot migration holds a request too
+  long is judged by Firn's `SPOP` drain against its competitors, not here.
 
 Accepting a detected regression is not this instrument's decision.
 
@@ -172,7 +179,7 @@ python3 -B compare.py reduce --out OUT [--floor "lookup-hit:1000=0.0123,..."]
 ```
 
 `OUT/manifest.txt` records the revisions, compiler and image digests, CPU,
-sizes and rounds; `raw.tsv`, `memory.tsv`, `hold.tsv` and `tail.tsv` hold every row;
+sizes and rounds; `raw.tsv`, `memory.tsv`, `hold.tsv`, `tail.tsv` and `shrink.tsv` hold every row;
 `summary.txt` is the reduction. The workflow uploads them with the images.
 On the 14900K the default CPU is 2, one hyperthread of a P core other than
 CPU 0. A hosted runner shares its host, so its runs show the instrument

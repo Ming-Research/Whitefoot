@@ -331,17 +331,26 @@ candidate this branch's, twin a byte copy of the base. Its grow-only cells
 no-slowdown criterion: a candidate interval wholly on the slower side is a
 regression of any size. Its removal cells change by design (removal to empty
 now shrinks) and are reported, not judged against that criterion. The
-removal tail, the one-shot card's reopen condition, is the instrument's
-`tail.wf`: it drains 10,000 and 1,000,000 pairs, timing every removal alone,
-so each drain crosses the threshold at every halving down to empty. Its 99th
-percentile carries the paired criterion; a candidate interval wholly on the
-slower side, against a twin that contains 1, reopens one-shot migration. The
-maximum, the removal that migrates the largest map, is reported as a number:
-it is expected to be far above the base's, since the base never migrates on
-removal. A shrinking removal is about one in 50,000 removals of the
-1,000,000-pair drain, below the 99th and 99.9th percentiles, so the library
-percentiles measure the ordinary removal path, and Firn's `SPOP` latency,
-measured in Firn's item, carries the hold as a request sees it.
+removal tail is the instrument's `tail.wf`: it drains 10,000 and 1,000,000
+pairs, timing every removal alone, so each drain crosses the threshold at
+every halving down to empty. A drain migrates once per halving, a dozen to
+twenty of its removals, far fewer than one in a hundred, so its 99th
+percentile measures the ordinary removal path and cannot see a migration;
+it carries the paired criterion for that path only: a candidate interval
+wholly on the slower side, against a twin that contains 1, is a regression.
+The maximum and each removal that changed the capacity, with its
+nanoseconds, are reported as numbers, not judged: they are expected to be
+far above the base's, since the base never migrates on removal.
+
+Whether a one-shot migration holds a request too long is judged where a
+request sees it: Firn's `SPOP` measurement (board item firn-bl-01-19) fills a
+1,000,000-member set and pops it empty at pipeline depth 1 and 16, and a 99th
+percentile repeatably above the fastest competitor's, with the time spent
+migrating, reopens one-shot migration. The originally ruled criterion, a
+library p99 at the threshold crossing or over a full drain, cannot decide:
+over a drain the migrations fall outside the 99th percentile, and the
+crossing removal alone is always slower than the base's, which never
+migrates.
 
 ## Owner decisions
 
@@ -349,8 +358,11 @@ measured in Firn's item, carries the hold as a request sees it.
   four buckets per pair with a minimum of eight, empty maps to zero (A).
 - Removal may shrink a map reserved to its ceiling; insertion at the
   ceiling still does not rebuild (A).
-- One-shot migration first; a repeatable threshold-crossing or full-drain
-  p99 regression reopens the choice (A).
+- One-shot migration first (A). The reopen measurement was ruled as a
+  threshold-crossing or full-drain p99; a replacing card
+  (hash-shrink-reopen-measure, recommended A) moves it to Firn's `SPOP`
+  drain p99 against the fastest competitor, for the reason under
+  [Measurement](#measurement).
 - The 14900K measurement runs this comparison (A).
 
 ## Found along the way
