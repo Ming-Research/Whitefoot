@@ -11,6 +11,18 @@ Nodes: language/system-interface, language/system-interface/directory-enumeratio
 
 Summary: A program that names `config.txt` to `open_file`, or skips the one-byte `.` among listed names, worked on POSIX and failed on Windows, where the runtime took and gave UTF-16 code units; `tests/programs/wfgrep.wf` opened `.` and `..` of every directory there and reported them unreadable. The root gains a decision: a name below a directory, taken by a single-name operation or given by a listing, is name bytes, a POSIX host's bytes and on Windows the WTF-8 encoding of the UTF-16 code units, with a function copying a host string into them, so a text name is its UTF-8 on both hosts and no host name is lost, with the native code units, an encoding chosen per call and UTF-8 only refused. The enumeration node's decision that self and parent entries are reported unfiltered is replaced: a listing leaves them out and a successful batch over a nonempty window holds an entry, since a name given with a root never denotes them and the extra host call is the one a caller makes anyway to reach the end; the host operation makes that call before it completes, so the wait suspends once under its deadline; the old decision, an empty successful batch and a second read submitted from the finish are refused.
 
+## 2026-10-20 A guard written as a helper call filters wakes through a callback
+
+Nodes: compiler/waiting-contexts/state-locks
+
+Summary: A wait guard written as a call to a helper function, such as `atomic m = &meta when reply_covered(...)`, gave the wake derivation no atom, so each write to the object could wake a waiter whose guard was still false, which woke, reacquired, found it false and parked again; a counted program test measured eight such wakes for a helper guard and none for the same comparison written inline (`tests/programs/helper_guard_false_wakes.wf`). When the atom derivation yields no test for a guard containing a helper call, the guard now compiles to a read-only, nonwaiting, nonlocking, nonallocating, nonrecursive function over the written object's state and the values captured at registration, kept with its captures in the waiter's frame and called by the writer under the hold it already has; a guard the audit cannot cover, or one reading another target, still contributes true, and atom tests are still preferred. A helper whose body is a single `return` of an expression over its parameters is also expanded into atom tests, which the earlier derivation dropped as an unknown call. The existing rejection of the releaser running each waiter's guard is narrowed to every guard, and a rejection of field-read footprints is added, because a write flag names the whole object. The cost of the callbacks against the wakes they remove is unmeasured and reopens the decision.
+
+## 2026-10-22 Definitions are substituted into every clause before its range terms are checked
+
+Nodes: language/checks-and-proofs/requires-entry-contract
+
+Summary: The changed decision substitutes a define into every clause before that clause's range terms are checked, so the range-term restriction holds independently of abbreviation spelling (a linear index admitted, a product of two parameters refused, in requires and ensures alike), instead of refusing a range term because it uses a define name.
+
 ## 2026-10-22 A manual gate run can add macOS, so a release is qualified once per release
 
 Nodes: compiler/verification
