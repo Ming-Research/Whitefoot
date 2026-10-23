@@ -1,0 +1,27 @@
+# Temporary (spec-proof-theorems): prints the elaborated shapes of the model's
+# definitions that the simulation proof takes apart. Removed before the full
+# check.
+name: tmp-spec-proof-theorems
+
+on:
+  push:
+    branches: [spec-proof-theorems]
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Lean toolchain
+        working-directory: proof
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$RUNNER_TEMP/elan-init.sh"
+          sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build the model up to the points
+        working-directory: proof
+        run: perl ../.github/run-check.pl tmp-probe-build lake build WhitefootProof.Points
+      - name: Print the shapes
+        working-directory: proof
+        run: perl ../.github/run-check.pl tmp-probe lake env lean Probe.lean
