@@ -3,7 +3,8 @@
 # alignment tests that use the map, the design tree's lint and readiness, and
 # runs that watch each new or changed hash-map test fail on a broken library:
 # the merge base's library, which never shrinks, and for the scan-shrink test
-# also a scan that treats its cursor as a bucket index.
+# also a scan that treats its cursor as a bucket index; a run of the
+# comparison instrument's removal-tail program and its reducer's self-test.
 name: tmp-hash-shrink
 
 on:
@@ -129,6 +130,18 @@ jobs:
                   print(f"{name} {arm}: exit {status}, expected {expected}, {verdict}", flush=True)
           sys.exit(1 if wrong else 0)
           EOF
+
+      - name: The removal-tail program on both libraries, and the reducer's self-test
+        run: |
+          out="$RUNNER_TEMP/out"
+          python3 -B research/experiments/hash-map-compare/compare.py self-test
+          for arm in base candidate; do
+            "$out/arms/$arm/compiler/target/gate/whitefootc" research/experiments/hash-map-compare/tail.wf -o "$out/tail-$arm"
+            for size in 10000 1000000; do
+              printf '%s ' "$arm"
+              taskset -c 1 "$out/tail-$arm" "$size"
+            done
+          done
 
   design-tree:
     runs-on: ubuntu-24.04
