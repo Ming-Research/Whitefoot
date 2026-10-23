@@ -765,6 +765,10 @@ fn run_transfer_pre_label(result: IrValueId) -> String {
     format!("run.move.pre.v{}", result.ordinal())
 }
 
+fn run_clear_label(result: IrValueId, part: &str) -> String {
+    format!("run.clear.{part}.v{}", result.ordinal())
+}
+
 pub(super) fn window_block_ready_label(result: IrValueId) -> String {
     format!("window.block.ready.v{}", result.ordinal())
 }
@@ -1084,6 +1088,95 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         writeln!(self.output, "  br label %{done}")?;
+        self.output.open_block(done);
+        self.emit_constant(result, ty, IrConstant::Unit)
+    }
+
+    /// [OP-10] `clear`: release the old window's elements in ascending
+    /// logical order, then store zero to `len`.
+    ///
+    /// The element walk exists only when the element type's release action
+    /// is non-empty, read from the one release classification [PROV-6]; an
+    /// element type with empty release emits the length test and the store
+    /// alone, so its work is independent of `len` and `cap`. A window whose
+    /// `len` is already zero is not written: a zero-capacity runtime window is
+    /// the shared immutable empty header [STOR-1], and its `len` is zero.
+    /// `cap`, a Ring's `head`, the slots and a Paged's pages are untouched, and
+    /// nothing is allocated or freed besides what the elements own.
+    pub(super) fn emit_run_clear(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        run: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        let run_type = self.run_value_type(run)?;
+        if ty != IrType::Unit || !matches!(self.value_type(run), Some(IrType::Address(_))) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let Some(shape) = RunShape::of(run_type) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let element = shape.element_type(self.program)?;
+        let releases = cleanup::type_requires_cleanup(self.program, element)?;
+        let pre = run_clear_label(result, "pre");
+        let head_label = run_clear_label(result, "head");
+        let body = run_clear_label(result, "body");
+        let commit = run_clear_label(result, "commit");
+        let done = run_clear_label(result, "done");
+        writeln!(self.output, "  br label %{pre}").map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(pre.clone());
+        let length = self.run_word(run_type, run, shape.length_field())?;
+        let origin = if releases {
+            Some(self.window_origin(shape, run_type, run)?)
+        } else {
+            None
+        };
+        let empty = self.next_temporary()?;
+        let first = if releases { &head_label } else { &commit };
+        writeln!(
+            self.output,
+            "  %{empty} = icmp eq i64 {length}, 0\n  br i1 %{empty}, label %{done}, label %{first}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        if let Some(origin) = origin {
+            let counter = self.next_temporary()?;
+            let stepped = self.next_temporary()?;
+            let more = self.next_temporary()?;
+            self.output.open_block(head_label.clone());
+            write!(
+                self.output,
+                "  %{counter} = phi i64 [ 0, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp ult i64 %{counter}, {length}\n  br i1 %{more}, label %{body}, label %{commit}\n"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            self.output.open_block(body.clone());
+            writeln!(self.output, "  %{stepped} = add i64 %{counter}, 1")
+                .map_err(|_| BackendFailure::TextEmission)?;
+            let physical =
+                self.wrap_offset(shape, run_type, run, &origin, &format!("%{counter}"))?;
+            let slot = self.element_pointer(result, shape, run_type, run, &physical)?;
+            // [PROV-6] the element's own release action, read where it lies;
+            // the walk emits straight-line calls, so `body` is still the block
+            // that branches back.
+            cleanup::emit_cleanup(
+                self.program,
+                &mut self.output,
+                &mut self.temporary,
+                element,
+                cleanup::CleanupOperand::Address(format!("%{slot}")),
+            )?;
+            writeln!(self.output, "  br label %{head_label}")
+                .map_err(|_| BackendFailure::TextEmission)?;
+        }
+        self.output.open_block(commit);
+        let storage = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+        let length_address =
+            self.aggregate_field_pointer(run_type, &storage, shape.length_field() as usize)?;
+        writeln!(
+            self.output,
+            "  store i64 0, ptr {length_address}{}\n  br label %{done}",
+            storage_alias::runtime_word(run_type, shape.length_field())
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(done);
         self.emit_constant(result, ty, IrConstant::Unit)
     }
