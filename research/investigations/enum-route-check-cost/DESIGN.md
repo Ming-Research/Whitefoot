@@ -1325,8 +1325,19 @@ Median CPU seconds: base 87.43, twin 87.39, c431fix 85.30, main 107.43, branch
   merge between #431 and the merge base on Firn would attribute the excess to
   merges, and is not done here.
 - No further pairs: the interval decided at round 15, and the rules above stop
-  there. Rule 2 applies, and the row goes to the owner on a card with these
+  there. Rule 2 applies, and the row went to the owner on a card with these
   intervals.
+
+Ruling on the row. The owner ruled that the Firn row is judged by `E`, the
+#431 merge commit with this change applied against the main before #431: 0.974
+(0.968–0.984), every one of the 15 rounds at most 0.998, so the row is met. The
+row asks that the change remove what #431 added, and `E` measures exactly that;
+`D` also contains the work of the merges after #431, which this change does not
+touch. The 7.8% by which this branch stays above the pre-#431 main on Firn
+(`D` = 1.078) is accepted as the work of those merges, and attributing the
+10.6% of `F` to them is a separate item (`firn-check-post431-merges`). The ruling changes no code and no
+measurement; the other two readings left open above (the merges' own work, or
+an interaction with #431's mechanism) remain untested here.
 
 ### Reviews
 
