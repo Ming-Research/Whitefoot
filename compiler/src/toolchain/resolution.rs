@@ -124,6 +124,7 @@ impl Toolchain {
     /// version line. Length prefixes preserve native OS path bytes unambiguously.
     pub fn cache_identity(&self) -> Result<[u8; 32], String> {
         let version = self.version.get_or_init(|| {
+            #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
             let output = Command::new(&self.clang)
                 .arg("--version")
                 .output()
@@ -295,6 +296,7 @@ fn xcrun_path(argument: &str, component: &str) -> Result<PathBuf, String> {
     if argument == "--find" {
         command.arg("ld");
     }
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let output = command.output().map_err(|error| {
         macos_help(format!(
             "cannot discover {component} with {command:?}: {error}"
