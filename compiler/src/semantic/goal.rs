@@ -181,6 +181,45 @@ impl GoalExpression {
             },
         }
     }
+
+    /// [TYPE-11] the binder datum this expression reads whole, with its
+    /// type: a projection from parameter zero, or a measure row over one,
+    /// which reads the measure member of the place that projection reaches
+    /// and is written as the projection followed by the measure [OP-15].
+    pub(crate) fn binder_datum(&self) -> Option<(Vec<GoalProjection>, CheckedType)> {
+        match self {
+            Self::Datum(GoalDatum::Parameter {
+                ordinal: 0,
+                projections,
+                ty,
+            }) => Some((projections.clone(), *ty)),
+            Self::Datum(_) => None,
+            Self::Operation {
+                row:
+                    GoalOperation::ArrayMeasure { measure, .. }
+                    | GoalOperation::BufferMeasure { measure, .. }
+                    | GoalOperation::ContainerMeasure { measure, .. },
+                result,
+                arguments,
+                ..
+            } => {
+                let [
+                    Self::Datum(GoalDatum::Parameter {
+                        ordinal: 0,
+                        projections,
+                        ..
+                    }),
+                ] = arguments.as_slice()
+                else {
+                    return None;
+                };
+                let mut datum = projections.clone();
+                datum.push(GoalProjection::Measure(*measure));
+                Some((datum, *result))
+            }
+            Self::Operation { .. } => None,
+        }
+    }
 }
 
 /// One typed leaf in a requirement template or concrete proof goal.

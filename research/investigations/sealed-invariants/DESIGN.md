@@ -512,8 +512,9 @@ computed by monotone iteration (see [result 3](#result-3-the-bound-on-the-added-
 T13 **Instance at a sealed place** (the delivering hand-off's fact,
 retrieved; see [SI as a chain of hand-offs](#the-sealing-invariant)). A new
 ENT-3 fact source: when a
-statement reads a fragment-integer place q that is a binder datum of an
-invariant I at an anchor a (q = a.d), and `(a, I)` has no debt that may
+statement reads a binder datum q of an invariant I at an anchor a
+(q = a.d), a fragment-integer place or a measure member of a measured
+place, which is read as a field [OP-15], and `(a, I)` has no debt that may
 denote it, and a's root is live, and every payload step in a carries a
 current [ENT-3.S15] refinement, and every position in a is proved live
 [OP-4] (it is, since the read itself owes that), the instance of I over a
@@ -523,9 +524,15 @@ the instance becomes an active fact of the range walk [RANGE-2]. When the
 anchor's other data are not terms — a place under a subscript that is no
 [ENT-2] term — and I has exactly one binder datum, the instance is
 established over the term the read binds (`let v = indexes[i].value;`
-gives `v < 16`). An instance is a fact like any other: a later write that
+gives `v < 16`, and `let n = stacks[i + 1].slots.len;` gives `n >= 1`).
+An instance is a fact like any other: a later write that
 overlaps its support kills it [ENT-5], and the same write adds the debt
 (T2), so the fact cannot be re-established until the debt is restored.
+The support of a measure member is the one descriptor word it names, so a
+write of an element of the measured place or of another word kills nothing
+of it and adds no debt for it [MSR-2] (cases
+`type11-pos-measure-read-sealed`, `type11-neg-measure-read-keeps-debt` and
+`type11-pos-element-write-keeps-measure-sealed`).
 Four points read sealed values without a statement read. At a selected
 return, a written postcondition is judged with the instance at each anchor
 of a value or written referent the return hands back that its datums read

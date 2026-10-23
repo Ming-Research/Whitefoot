@@ -1151,7 +1151,8 @@ pub(crate) struct CheckedAffineInvariant {
     /// The `type_invariant` occurrence.
     pub(crate) clause: NodePath,
     pub(crate) goal: super::goal::GoalExpression,
-    /// Each binder datum's projection from parameter zero, once each.
+    /// Each binder datum's projection from parameter zero, once each; a
+    /// measure member's ends with its measure [OP-15].
     pub(crate) data: Vec<Vec<super::goal::GoalProjection>>,
     /// The same relation over parameter zero's exit state, which an exit's
     /// clause reads at an anchor of a value it hands back [TYPE-11.S7].

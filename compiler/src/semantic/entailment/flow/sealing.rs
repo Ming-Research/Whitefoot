@@ -344,6 +344,40 @@ fn substitute_binder(
     }
 }
 
+/// The goal `expression` with each read of the binder datum `datum`, a
+/// measure member's whole measure row included, replaced by what `value`
+/// forms from the datum's type; `None` when it reads another binder datum
+/// [TYPE-11.S7].
+fn substitute_datum(
+    expression: &GoalExpression,
+    datum: &[GoalProjection],
+    value: &dyn Fn(CheckedType) -> GoalExpression,
+) -> Option<GoalExpression> {
+    if let Some((read, ty)) = expression.binder_datum() {
+        return (read == datum).then(|| value(ty));
+    }
+    match expression {
+        GoalExpression::Datum(GoalDatum::Parameter { .. }) => None,
+        GoalExpression::Datum(other) => Some(GoalExpression::Datum(other.clone())),
+        GoalExpression::Operation {
+            row,
+            type_arguments,
+            const_arguments,
+            result,
+            arguments,
+        } => Some(GoalExpression::Operation {
+            row: *row,
+            type_arguments: type_arguments.clone(),
+            const_arguments: const_arguments.clone(),
+            result: *result,
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_datum(argument, datum, value))
+                .collect::<Option<Vec<_>>>()?,
+        }),
+    }
+}
+
 /// The storage steps of one binder datum's projection.
 fn datum_steps(datum: &[GoalProjection]) -> impl Iterator<Item = PlaceStep> + '_ {
     datum.iter().map(|projection| projection.place_step())
@@ -802,8 +836,9 @@ impl Input<'_, '_> {
 
     /// [TYPE-11.S1, ENT-5] whether a write at `written` reaches the read set
     /// of `invariant` at `anchor`: the storage of a fragment-integer datum,
-    /// or the descriptor storage of a measured one, which a write at the
-    /// measured place or above it replaces [MSR-2].
+    /// or the descriptor word a measure member names, which a write of that
+    /// word, of the measured place or above it replaces, and a write of an
+    /// element or of another word does not [MSR-2].
     fn write_reaches_read_set(
         &self,
         oracle: &dyn SeparationOracle,
@@ -814,12 +849,7 @@ impl Input<'_, '_> {
         invariant.data.iter().any(|datum| {
             let mut place = anchor.clone();
             place.path.extend(datum_steps(datum));
-            if matches!(place.path.last(), Some(PlaceStep::Measure(_))) {
-                place.path.pop();
-                written.path.len() <= place.path.len() && places_overlap(oracle, written, &place)
-            } else {
-                places_overlap(oracle, written, &place)
-            }
+            places_overlap(oracle, written, &place)
         })
     }
 
@@ -1075,20 +1105,52 @@ impl Input<'_, '_> {
         anchors
     }
 
+    /// [TYPE-11.S7] the resolved places the read `expression` reads: for a
+    /// measure read, the measure member of each resolved member of the
+    /// place it measures [OP-15], and for any other read the places
+    /// [`Self::sealed_places`] gives.
+    fn read_places(&self, expression: &CheckedExpression) -> Vec<ResolvedPlace> {
+        let Some(read) = measure_read(expression) else {
+            return self.sealed_places(expression);
+        };
+        self.resolve_sealed(&read.place)
+            .into_iter()
+            .map(|mut place| {
+                place.path.push(PlaceStep::Measure(read.measure));
+                place
+            })
+            .collect()
+    }
+
+    /// [ENT-2] the place the read `expression` spells, when it is a term: a
+    /// measure read's measured place followed by its measure, or the place
+    /// [`Self::read_place_path`] gives.
+    fn read_term_place(&self, expression: &CheckedExpression) -> Option<ResolvedPlace> {
+        let Some(read) = measure_read(expression) else {
+            return self.read_place_path(expression);
+        };
+        if read.term.is_none() {
+            return None;
+        }
+        let mut place = read.place;
+        place.path.push(PlaceStep::Measure(read.measure));
+        Some(place)
+    }
+
     /// [TYPE-11.S7] each binder datum the read `expression` selects at every
     /// resolved member of its place. The instance reads its binder data from
     /// the one member's anchor, or, for a read that resolves through a
     /// reference to several members, from the place the read spells through
     /// that reference, which names the one member it reads [ENT-2, REF-1].
     fn read_anchors(&self, expression: &CheckedExpression) -> Vec<ReadAnchor> {
-        let places = self.sealed_places(expression);
+        let places = self.read_places(expression);
         let Some((first, rest)) = places.split_first() else {
             return Vec::new();
         };
         let spelled = if rest.is_empty() {
             None
         } else {
-            self.read_place_path(expression)
+            self.read_term_place(expression)
         };
         let mut anchors = Vec::new();
         for (anchor, index, ty, datum) in self.place_anchors(first) {
@@ -1943,7 +2005,7 @@ impl Analyzer<'_, '_> {
         value: &CheckedExpression,
         state: &mut ProofFlowState,
     ) {
-        if !self.input.sealing || self.input.read_place_path(value).is_some() {
+        if !self.input.sealing || self.input.read_term_place(value).is_some() {
             return;
         }
         for read in self.input.read_anchors(value) {
@@ -1953,9 +2015,8 @@ impl Analyzer<'_, '_> {
             if invariant.data.len() != 1 || !self.sealed_members(&read, state) {
                 continue;
             }
-            let goal = substitute_binder(&invariant.goal, &|projections, datum_ty| {
-                (projections == read.datum.as_slice())
-                    .then(|| goal_binding_place(binding, Vec::new(), datum_ty))
+            let goal = substitute_datum(&invariant.goal, &read.datum, &|datum_ty| {
+                goal_binding_place(binding, Vec::new(), datum_ty)
             });
             if let Some(goal) = goal {
                 self.establish_instance(Some(read.ty), read.index, goal, state);

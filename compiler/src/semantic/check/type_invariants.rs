@@ -1231,23 +1231,17 @@ fn typed_binder_data<'goal>(expression: &'goal GoalExpression, data: &mut Vec<Bi
     }
 }
 
-/// Each distinct projection from parameter zero that `expression` reads.
+/// Each distinct binder datum `expression` reads, as its projection from
+/// parameter zero: a measure member's projection ends with its measure, so
+/// two measures of one place are two data [MSR-2].
 fn binder_data(expression: &GoalExpression, data: &mut Vec<Vec<GoalProjection>>) {
-    match expression {
-        GoalExpression::Datum(GoalDatum::Parameter {
-            ordinal: 0,
-            projections,
-            ..
-        }) => {
-            if !data.contains(projections) {
-                data.push(projections.clone());
-            }
+    if let Some((datum, _)) = expression.binder_datum() {
+        if !data.contains(&datum) {
+            data.push(datum);
         }
-        GoalExpression::Datum(_) => {}
-        GoalExpression::Operation { arguments, .. } => {
-            for argument in arguments {
-                binder_data(argument, data);
-            }
+    } else if let GoalExpression::Operation { arguments, .. } = expression {
+        for argument in arguments {
+            binder_data(argument, data);
         }
     }
 }
