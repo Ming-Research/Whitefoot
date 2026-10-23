@@ -5,7 +5,8 @@ A guide that the acceptance never runs stays correct only until the next edit.
 check-package.sh installs the Linux and macOS packages with the `sh` blocks of
 docs/guide/getting-started.md and builds the guide's programs with the
 installed compiler. The Windows runner reads the same guide for its PowerShell
-blocks (check-package-windows.sh).
+blocks with a reader of its own (check-package-windows.sh), which the item
+wf-guide-reader-single replaces by this one.
 
   guide-steps.py prepare GUIDE PLATFORM DOWNLOADS PROGRAMS TOOLS
       Writes TOOLS/install.sh, which runs the guide's blocks for PLATFORM

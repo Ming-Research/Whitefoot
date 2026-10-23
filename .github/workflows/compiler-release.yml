@@ -36,6 +36,8 @@
 # there would still need the host's clang.
 # Bundled Linux qualification uses Ubuntu 24.04, with host prerequisites from
 # `sudo apt-get install libc6-dev libgcc-13-dev libstdc++6 zlib1g libxml2 libicu74 liblzma5`.
+# The Linux section of docs/guide/getting-started.md and the release notes
+# below repeat this line; the item wf-guide-reader-single keeps the three equal.
 # This test host does not establish a minimum supported Linux distribution.
 #
 # A downstream pins an experiment release only on an experiment branch, never
