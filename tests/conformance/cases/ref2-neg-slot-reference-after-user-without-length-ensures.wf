@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn replace_last_unspecified(window: &Slots<u64, 8>, value: u64) -> result: unit writes(window.last), writes(window.next), writes(window.len) contract {
+  requires window^.len > 0_u64;
+} {
+  doc "Takes and replaces the last value without publishing an exit length.";
+  let old = take_back(window: window);
+  place_back(window: window, value: value);
+  return unit;
+}
+
+fn probe(window: &Slots<u64, 8>) -> result: u64 writes(window) contract {
+  requires window^.len >= 1_u64;
+} {
+  doc "The caller cannot inspect the helper's body to restore the first slot's formation bound.";
+  let first = &window^[0_u64];
+  replace_last_unspecified(window: window, value: 7_u64);
+  return first^;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

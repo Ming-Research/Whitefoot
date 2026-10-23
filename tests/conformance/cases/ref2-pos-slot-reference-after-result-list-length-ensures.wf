@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn replace_last_report(window: &Slots<u64, 8>, value: u64) -> (previous: u64, size: u64) writes(window.last), writes(window.next), writes(window.len) contract {
+  requires window^.len > 0_u64;
+  ensures size >= 1_u64;
+  ensures window^.len == size;
+} {
+  doc "Returns the replaced value and the nonempty exit length as separate result ordinals.";
+  let old = take_back(window: window);
+  place_back(window: window, value: value);
+  return old, window^.len;
+}
+
+fn probe(window: &Slots<u64, 8>) -> result: u64 writes(window) contract {
+  requires window^.len >= 1_u64;
+} {
+  doc "The second destructuring-let destination receives the only postcondition linking the exit length to a nonempty bound.";
+  let first = &window^[0_u64];
+  let (previous, size) = replace_last_report(window: window, value: 7_u64);
+  return first^;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
