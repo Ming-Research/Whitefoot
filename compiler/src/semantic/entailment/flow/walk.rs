@@ -613,9 +613,10 @@ impl Analyzer<'_, '_> {
         {
             state.results.insert(place.binding, result);
         }
-        // [TYPE-11.S7] a stored call result is sealed at its target.
+        // [TYPE-11.S7] the committed value is sealed at its target unless a
+        // debt may denote it there.
         if commit_reached {
-            self.seal_set_result(node_path, target, value, &target_kills, state);
+            self.seal_set_target(node_path, target, &target_kills, state);
         }
         self.judge_expression_window_bounds(value, state);
     }
@@ -711,9 +712,10 @@ impl Analyzer<'_, '_> {
                     self.reasoning()
                         .establish_direct_result(node_path, *binding, value, prepared, state);
                 }
-                // [TYPE-11.S7] a call result is sealed at its binding.
+                // [TYPE-11.S7] the value the binding received is sealed there
+                // unless a debt it took may denote it.
                 if judgment.reached {
-                    self.seal_call_result(&ResolvedPlace::binding(*binding), value, &[], state);
+                    self.seal_received(&ResolvedPlace::binding(*binding), &[], state);
                 }
                 if judgment.reached
                     && value.ty() == CheckedType::Bool
@@ -911,11 +913,11 @@ impl Analyzer<'_, '_> {
                         state,
                     );
                 }
-                // [TYPE-11.S7] each result of a call is sealed at its binder.
+                // [TYPE-11.S7] each value a binder received is sealed there
+                // unless a debt it took may denote it.
                 if judgment.reached {
                     for (binding, _, _) in bindings {
-                        let binder = ResolvedPlace::binding(*binding);
-                        self.seal_call_result(&binder, value, &[], state);
+                        self.seal_received(&ResolvedPlace::binding(*binding), &[], state);
                     }
                 }
                 self.judge_expression_window_bounds(value, state);
@@ -966,6 +968,11 @@ impl Analyzer<'_, '_> {
                 if let Some(success) = result.iter().find(|result| result.success) {
                     self.reasoning()
                         .select_result(node_path, success, *binding, state);
+                }
+                // [TYPE-11.S7] the `Ok` value is sealed at its binder unless a
+                // debt it took may denote it.
+                if judgment.reached {
+                    self.seal_received(&ResolvedPlace::binding(*binding), &[], state);
                 }
                 if self.input.affine_binding_type(*binding).is_some()
                     && let Some(value) = self.vocabulary.affine_unknown_integer(*ok_type)
@@ -1815,6 +1822,9 @@ impl Analyzer<'_, '_> {
                     return false;
                 }
                 *state = self.join_with_transport(&frame.gives, &frame.delivery_edges);
+                // [TYPE-11.S7] each `give` handed its value off [TYPE-11.S4],
+                // so the binding holds a sealed value.
+                self.seal_received(&ResolvedPlace::binding(*binding), &[], state);
                 if self.input.affine_binding_type(*binding).is_some()
                     && let Some(value) = self.vocabulary.affine_unknown_integer(*result_type)
                 {
@@ -2286,6 +2296,14 @@ impl Analyzer<'_, '_> {
             .scopes
             .push(arm.binders.iter().map(|b| b.binding).collect());
         self.bind_sealed(arm, sealed, &mut state);
+        // [TYPE-11.S7] each by-value binder is sealed unless a debt it took
+        // may denote it; a reference binder names the payload in place.
+        for binder in &arm.binders {
+            if binder.mode == CheckedMode::Own {
+                let place = ResolvedPlace::binding(binder.binding);
+                self.seal_received(&place, &[], &mut state);
+            }
+        }
         for binder in &arm.binders {
             if let CheckedType::Integer(ty) = binder.ty
                 && matches!(binder.mode, CheckedMode::Own)

@@ -7,10 +7,13 @@
 # parked file, the context, traversal, host path and file replacement
 # programs), the trial compile of the downstream programs with the branch's
 # compiler and main's at the merge of its enum route demand, the probes of
-# the instances a call's return and its received results establish, each
-# checked with main's compiler, the branch's before that fix and the
-# branch's head, and the repository-level static checks and the change-log
-# check against the branch's fork point. Removed before the branch is ready.
+# the instances a call's return and each received value establish and the
+# new conformance cases of those instances, each checked with main's
+# compiler, the branch's at its previous head, which established them only
+# at a call's written referents and received results, the branch's head,
+# and the head with the debt premise of those instances removed, and the
+# repository-level static checks and the change-log check against the
+# branch's fork point. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -36,6 +39,13 @@ jobs:
           rustup default stable
           cargo --version
           cargo fetch --locked --manifest-path compiler/Cargo.toml
+      # As the gate does: a program that dies would otherwise wait for
+      # systemd-coredump, which kept three deadlock reports past their
+      # 60-second deadline here.
+      - name: Decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          cat /proc/sys/kernel/core_pattern
       - name: Build the compiler
         run: |
           perl .github/run-check.pl sealed-build cargo build --manifest-path compiler/Cargo.toml \
@@ -53,6 +63,7 @@ jobs:
       - name: Reach every conformance verdict and list each failing case
         if: always()
         run: |
+          ulimit -c 0
           set +e
           perl .github/run-check.pl sealed-corpus cargo test --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --test corpus -- \
@@ -66,11 +77,13 @@ jobs:
       - name: Check every documentation example through the branch's compiler
         if: always()
         run: |
+          ulimit -c 0
           perl .github/run-check.pl sealed-doc-examples cargo test --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --test corpus -- doc_examples:: --nocapture
       - name: Check main's new programs through the branch's compiler
         if: always()
         run: |
+          ulimit -c 0
           perl .github/run-check.pl sealed-main-programs cargo test --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --test corpus -- \
             programs::containers:: programs::snapshot_export:: \
@@ -278,19 +291,24 @@ jobs:
               | sed "s/^/$side tasks by rule: /"
           done
 
-  # The probes the review asked for: each program below checked with main's
-  # compiler at the merge base, the branch's before the instances at a call's
-  # written referents and received results, and the branch's head, printing
-  # each verdict with its first error and the opening of each rejection. Each
-  # probe shares the stack struct, a helper that takes and replaces its last
-  # value through a reference, and a constructor; the name says what follows.
+  # The probes the review asked for and the conformance cases of the
+  # instances at received values: each program below and each case checked
+  # with main's compiler at the merge base, the branch's at its previous
+  # head, which established those instances only at a call's written
+  # referents and received results, the branch's head, and the head with
+  # the debt premise of the instances a call's return and a received value
+  # establish removed, which must accept each case that rejects a debt
+  # those instances keep; each verdict is printed with its first error and
+  # the opening of each rejection. Each probe shares the stack struct, a
+  # helper that takes and replaces its last value through a reference, and
+  # a constructor; the name says what follows.
   probe:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        compiler: [main, before-fix, head]
+        compiler: [main, previous-head, head, without-debt-premise]
     steps:
       - uses: actions/checkout@v4
       - name: Install the host toolchain
@@ -306,13 +324,18 @@ jobs:
           tree="$GITHUB_WORKSPACE"
           case "${{ matrix.compiler }}" in
             main) revision=c79d523bbe10789c796e5d19c53e5c69275e635c ;;
-            before-fix) revision=99059f0c61f4cd8c7864a74bbe80568b22d0fd19 ;;
+            previous-head) revision=fbbc697ebcf08f4541d4351fd3237025c84eb07c ;;
             *) revision= ;;
           esac
           if [ -n "$revision" ]; then
             git fetch --depth=1 origin "$revision"
             git worktree add "$RUNNER_TEMP/compiler" FETCH_HEAD
             tree="$RUNNER_TEMP/compiler"
+          fi
+          if [ "${{ matrix.compiler }}" = without-debt-premise ]; then
+            perl -0777 -pi -e 's/(fn seal_delivered\(.*?for index in 0\.\.count \{\n)\s*if !members\s*\.iter\(\)\s*\.all\(\|member\| self\.sealed_anchor\(member, index, state\)\)\s*\{\s*continue;\s*\}\n/$1/s or die "the debt premise is gone\n"' \
+              compiler/src/semantic/entailment/flow/sealing.rs
+            git diff
           fi
           git -C "$tree" log -1 --format='compiler %H'
           cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
@@ -500,25 +523,6 @@ jobs:
             return second^;
           }
           EOF
-          probe p15-nested-written-call-then-index <<'EOF'
-          fn touch(stack: &Stack) -> result: u64 writes(stack.slots.last), writes(stack.slots.next), writes(stack.slots.len) {
-            let old = take_back(window: &stack^.slots);
-            place_back(window: &stack^.slots, value: 1_u64);
-            return old;
-          }
-
-          fn add_one(value: u64) -> result: u64 pure {
-            let next = value +wrap 1_u64;
-            return next;
-          }
-
-          fn probe(stack: &Stack) -> result: u64 writes(stack) {
-            let sum = add_one(value: touch(stack: stack));
-            let got = stack^.slots[0_u64];
-            let total = got +wrap sum;
-            return total;
-          }
-          EOF
           probe p16-reference-match-then-index <<'EOF'
           fn probe(maybe: &Option<Stack>) -> result: u64 reads(maybe) {
             match &maybe^ {
@@ -555,6 +559,21 @@ jobs:
             return got;
           }
           EOF
+          # The conformance cases of the instances at received values, and
+          # the cases that already reject a debt a `let` or `set` receiver
+          # takes, each checked as it stands in the head's corpus.
+          cases="$GITHUB_WORKSPACE/tests/conformance/cases"
+          for case in type11-pos-payload-binder-sealed type11-pos-received-value-sealed \
+            type11-neg-payload-binder-keeps-debt type11-neg-received-value-keeps-debt \
+            type11-neg-copy-carries-debt type11-neg-local-set-move-carries-debt; do
+            if "$WHITEFOOTC" --check "$cases/$case.wf" > "case-$case.log" 2>&1; then
+              verdict=accept
+            else
+              verdict="reject: $(grep -m1 -E 'error\[' "case-$case.log" || head -1 "case-$case.log")"
+              { echo "::group::case $case"; head -30 "case-$case.log"; echo "::endgroup::"; } >> rejections.txt
+            fi
+            printf '%-44s %s\n' "case $case" "$verdict" >> verdicts.txt
+          done
           echo "compiler ${{ matrix.compiler }}:"
           cat verdicts.txt
           cat rejections.txt 2>/dev/null || true

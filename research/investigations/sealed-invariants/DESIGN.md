@@ -545,12 +545,21 @@ referent the call returned. A reference into the referent's window whose
 bound the call re-judges [OP-10, REF-2], a later call's requirement and a
 later subscript then use the instance as they use the body-entry one,
 which before this design the caller took from the generated postcondition
-of the written reference parameter. The binding of a `let`, the binder of
-a destructuring `let` and the target of a `set` commit that receive a
-call's result of the struct take its instance the same way, once the
-statement's kills, for the `set` the commit's own, have run: a result
-carries no debt (T6), and the generated result postcondition this design
-retires gave the caller the same fact.
+of the written reference parameter. Each binding of the struct that a
+statement gives a value, and the target of a `set` commit, takes its
+instance the same way once the statement's kills, for the commit its own,
+have run: the binding of a `let` whatever its initializer, a binder of a
+destructuring `let`, a by-value `match` binder and the `Ok` binder of
+`propagate`. Only the debts a continuation brings along (T4)
+can leave such a value unsealed, and the premise checks them: a call result
+carries none (T6), a construction proved its invariants, a `give` and a
+store into anything but a complete own local binding handed the value off
+(T5), and T3 removes the debts proved at the stored place. Before this
+design the caller took the same fact from the generated result
+postcondition, and a `match` arm or a `propagate` binder from the routed
+requirement or postcondition of the enum parameter or result it unpacks;
+without this point a subscript or a call in the statement that first reads
+such a value would see no fact.
 
 ## Result 1: restoration obligations are never lost
 
@@ -1178,7 +1187,7 @@ Rules to change, with the intended behavior (not final text):
 | FN-8 | The generated type-invariant requirements become the hand-off of each argument (value or referent): discharged by sealedness or by restoration proof. Body entry establishes every parameter value and referent as sealed (T1). |
 | FN-9 | The generated postconditions become exit hand-offs: each written reference parameter's referent restored at every exit, below its top level too; results sealed. The routed enum-payload postconditions and their vacuity rule are subsumed. |
 | FN-4 | Each refinement query also takes the body-entry instances at the data it ranges over, in place of the generated clauses formal and actual shared. |
-| ENT-3 | New source T13 (instance at a sealed anchor when its datum is read, including the one-datum copy form); S4 covers parameters through T13 rather than as generated requirements. |
+| ENT-3 | New source T13 (instance at a sealed anchor when its datum is read, including the one-datum copy form, and at the points T13 lists without a read: body entry, the referents a call wrote, each binding a statement gives a value and a selected return's clause); S4 covers parameters through T13 rather than as generated requirements. |
 | ENT-5 | Debt state: T2 on exactly the write events this rule kills on, including the relocation table; restoration attempts in the pre-kill closure (T8.2); widening (T9); join union and edge instances before intersection (T11); loop headers as least fixed points (T12). |
 | ENT-2 | Optional: an S5 post-write image for a subscripted target with captured offsets, so `set c[i].f = x;` can restore without a reference. |
 | SET-1 | The right-hand side of a store into anything but a complete own local binding is a hand-off; the commit applies T2 and T3. |

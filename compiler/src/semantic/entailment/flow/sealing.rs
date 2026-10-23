@@ -2027,31 +2027,37 @@ impl Analyzer<'_, '_> {
         }
     }
 
-    /// [TYPE-11.S7] after a call result's commit into the place `spelled`
-    /// names, once the commit's kills `kills` have run, the instance of each
-    /// affine invariant of the result's struct there: the callee's return
-    /// handed the result off [TYPE-11.S4].
-    pub(super) fn seal_call_result(
+    /// [TYPE-11.S7] once the kills `kills` of the statement that gave the
+    /// place `spelled` names a value have run, the instance of each affine
+    /// invariant of its struct there: a binding, a binder or a commit's
+    /// target holds the value it received, which a debt it took [TYPE-11.S3]
+    /// is the only thing that can keep unsealed. A reference binding receives
+    /// no value of the struct.
+    pub(super) fn seal_received(
         &mut self,
         spelled: &ResolvedPlace,
-        value: &CheckedExpression,
         kills: &[KillEvent],
         state: &mut ProofFlowState,
     ) {
-        if !self.input.sealing || !matches!(value, CheckedExpression::UserCall { .. }) {
+        if !self.input.sealing {
+            return;
+        }
+        if let (PlaceRoot::Binding(binding), []) = (spelled.root, spelled.path.as_slice())
+            && self.input.places.is_reference(binding)
+        {
             return;
         }
         let members = self.input.resolve_sealed(spelled);
         self.seal_delivered(&members, spelled, kills, state);
     }
 
-    /// [TYPE-11.S7] a [SET-1] commit of a call result: the instance at the
-    /// place the commit wrote, after the commit's own kills `kills`.
-    pub(super) fn seal_set_result(
+    /// [TYPE-11.S7] a [SET-1] commit: the instance at the place the commit
+    /// wrote, after the commit's own kills `kills`. A reference rebind
+    /// writes no value of the struct.
+    pub(super) fn seal_set_target(
         &mut self,
         node_path: &crate::NodePath,
         target: &CheckedSetTarget,
-        value: &CheckedExpression,
         kills: &[KillEvent],
         state: &mut ProofFlowState,
     ) {
@@ -2059,16 +2065,16 @@ impl Analyzer<'_, '_> {
             return;
         }
         if let KillEvent::Write { place, .. } = self.input.commit_kill(node_path, target) {
-            self.seal_call_result(&place, value, kills, state);
+            self.seal_received(&place, kills, state);
         }
     }
 
     /// [TYPE-11.S7] the instance of each affine invariant of the struct at
-    /// the place `spelled` names, whose resolved members are `members`,
-    /// which a call's return left sealed: over the one member's anchor, or
-    /// over the terms the place forms through a reference to several [ENT-2,
-    /// REF-1], when every member meets the premises and no kill of `kills`
-    /// ended what it names.
+    /// the place `spelled` names, whose resolved members are `members`, which
+    /// a call's return or a statement's delivery left holding a received
+    /// value: over the one member's anchor, or over the terms the place forms
+    /// through a reference to several [ENT-2, REF-1], when every member meets
+    /// the premises and no kill of `kills` ended what it names.
     fn seal_delivered(
         &mut self,
         members: &[ResolvedPlace],
