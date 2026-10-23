@@ -350,9 +350,9 @@ fn main() -> status: ExitStatus pure waits {
       put(server: &server, db: db, key: b, value: value_b);
     }
   }
-  let checked = check_databases(server: &server);
-  if checked != 0_u8 {
-    return exit_status(code: checked);
+  let failure = check_databases(server: &server);
+  if failure != 0_u8 {
+    return exit_status(code: failure);
   }
   let total = 0_u64;
   atomic s = &server {

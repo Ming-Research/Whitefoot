@@ -704,6 +704,9 @@ struct BodyChecker {
     held_atomic_roots: Vec<BindingId>,
     held_calls: Vec<(NodeId, Vec<ResolvedPlace>)>,
     held_writes: Vec<(NodeId, ResolvedPlace)>,
+    /// The reference variables an atomic statement's guard or block rebinds
+    /// [REF-1], which write no storage and so are not among `held_writes`.
+    held_rebindings: Vec<BindingId>,
     checked_held_calls: Vec<super::model::CheckedHeldCall>,
     held_atomic_node: Option<crate::NodePath>,
     held_guard: bool,

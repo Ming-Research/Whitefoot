@@ -498,11 +498,12 @@ fn complete_inventory_is_pinned() {
     // v0.136's clause suffix choice moves them once more; v0.142 keeps it.
     assert_eq!(DECISIONS[160].production(), Production::Pbase);
     assert_eq!(DECISIONS[160].kind(), DecisionKind::Repeat0);
-    // The 12 entering rows and 83 exiting rows are unchanged: replacing
-    // range_guard's `unchanged` occurrence with range_variant's `is`
-    // occurrence removes one FOLLOW provenance row and adds one.
+    // 12 entering rows and 82 exiting rows: replacing range_guard's
+    // `unchanged` occurrence with range_variant's `is` occurrence removes one
+    // FOLLOW provenance row and adds one, and GRAM-4's one atomic target
+    // retires the `,` that followed a target's place, one exiting row.
     // The graph-only diagnostic start contributes no place continuation.
-    assert_eq!(DECISIONS[160].rows().len(), 95);
+    assert_eq!(DECISIONS[160].rows().len(), 94);
     assert_eq!(DECISIONS[161].production(), Production::Psuffix);
     assert_eq!(DECISIONS[161].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[162].production(), Production::Psuffix);

@@ -55,12 +55,19 @@ const META_FIRST: (&str, &str) = (
     "Ledger(meta: meta, table: move table)",
 );
 
+/// The witness with `body` before the map write; an empty body leaves no
+/// line, since a canonical source has no blank line inside an item [FORM-2].
 fn lock_ledger_source(layout: (&str, &str), guard: &str, body: &str) -> String {
+    let body = if body.is_empty() {
+        String::new()
+    } else {
+        format!("{body}\n")
+    };
     LOCK_LEDGER_SOURCE
         .replace("FIELDS", layout.0)
         .replace("CONSTRUCT", layout.1)
         .replace("GUARD", guard)
-        .replace("BODY", body)
+        .replace("BODY\n", &body)
 }
 
 fn lock_ledger_position(source: &str, needle: &str) -> String {
@@ -328,6 +335,27 @@ fn lock_ledger_takes_the_whole_map_for_a_key_the_block_rebinds() {
         MAP_FIRST,
         "",
         "    set key = &ledger_names[0_u64..1_u64];",
+    );
+    let module = compile(source.as_bytes());
+    let expected = format!(
+        "LOCK lock_run  {}  unit(m^.0): whole map  on every path; first use {}",
+        lock_ledger_position(&source, "atomic m"),
+        lock_ledger_position(&source, "set m^.table[key] = None<u8>();"),
+    );
+    assert_eq!(lock_ledger_lines(&module), [expected.as_str()]);
+}
+
+/// The block writes the key's byte through the key before it subscripts the
+/// map, so the bytes the statement began with need not select the entry the
+/// block names, and the statement takes the whole map. A lowering that
+/// counts only a rebinding, and not a write of a path the key names, locks
+/// the entry under the old byte and fails.
+#[test]
+fn lock_ledger_takes_the_whole_map_for_a_key_the_block_writes_through() {
+    let source = lock_ledger_source(MAP_FIRST, "", "    set key^[0_u64] = 98_u8;").replacen(
+        "  let key = &ledger_names[0_u64..1_u64];",
+        "  let bytes = array_filled::<u8, 1>(value: 97_u8);\n  let key = &bytes[0_u64..1_u64];",
+        1,
     );
     let module = compile(source.as_bytes());
     let expected = format!(

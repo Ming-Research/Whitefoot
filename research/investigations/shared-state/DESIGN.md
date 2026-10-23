@@ -1003,7 +1003,9 @@ ordered by field path and taken at first use together with every earlier
 unit, guard units before the guard, so no two statements take two units in
 opposite orders. A map unit is an entry lock when every reach of that map in
 the guard and block is `s^.m[k]` with one key binding declared outside the
-statement and not written by it; any other reach takes the map whole. An
+statement that the statement neither rebinds nor writes, at the binding or at
+any byte the key names, through the key or another reference to those bytes;
+any other reach takes the map whole. An
 invariant on the state type or a proof step in the block takes every unit
 whole, since the fact names parts the block may not reach (SHARE-3).
 

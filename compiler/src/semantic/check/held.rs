@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use crate::{DeclarationId, DeferredUseRole, Production, SemanticCompilerFailure, SemanticIssueKind, SemanticRule};
 use crate::syntax::NodeId;
 use super::{CheckStop, Checker, EffectSet, FunctionSignature, LocalBinding, ParameterSignature};
-use super::super::model::{CheckedCallSeparation, CheckedHeldProtectionUse, CheckedMode, CheckedNominalKind, CheckedReleaseClass, CheckedShared, CheckedType};
+use super::super::model::{BindingId, CheckedCallSeparation, CheckedHeldProtectionUse, CheckedMode, CheckedNominalKind, CheckedReleaseClass, CheckedShared, CheckedType};
 use super::generics::{GenericArgument, GenericSubstitution};
 use super::super::places::{CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace, SeparationOracle, places_overlap};
 
@@ -261,6 +261,37 @@ impl Checker<'_, '_> {
         if self.body.atomic_depth > 0 {
             self.body.held_writes.push((node, place.clone()));
         }
+    }
+
+    /// [SHARE-3] the bindings of `bindings`, those declared before an atomic
+    /// statement, whose value its guard or block may change: one the
+    /// statement rebinds, and one a write or move in it may overlap, at the
+    /// binding itself or at a path the binding names. Lowering locks a map's
+    /// entry by one key binding only when it is none of these, so every
+    /// subscript of the map names the entry the lock took
+    /// (compiler/waiting-contexts/state-locks).
+    pub(super) fn bindings_changed_in_block(
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        writes: &[(NodeId, ResolvedPlace)],
+        rebound: &[BindingId],
+    ) -> Vec<BindingId> {
+        bindings
+            .values()
+            .filter(|local| {
+                rebound.contains(&local.binding)
+                    || writes.iter().any(|(_, write)| {
+                        places_overlap(&BlockSeparations, &ResolvedPlace::binding(local.binding), write)
+                            || local.reference.as_ref().is_some_and(|reference| {
+                                reference
+                                    .paths
+                                    .iter()
+                                    .chain(&reference.anchors)
+                                    .any(|path| places_overlap(&BlockSeparations, path, write))
+                            })
+                    })
+            })
+            .map(|local| local.binding)
+            .collect()
     }
 
     /// A source occurrence inside a loop denotes many evaluations. Likewise,

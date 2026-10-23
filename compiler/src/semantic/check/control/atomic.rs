@@ -178,6 +178,7 @@ impl Checker<'_, '_> {
         self.body.held_atomic_node = Some(node_path.clone());
         let held_call_start = self.body.held_calls.len();
         let held_write_start = self.body.held_writes.len();
+        let held_rebinding_start = self.body.held_rebindings.len();
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
         self.body.held_atomic_roots.clear();
@@ -185,9 +186,12 @@ impl Checker<'_, '_> {
         let (mut guard, mut checked) = checked?;
         let held_calls = self.body.held_calls[held_call_start..].to_vec();
         let held_writes = self.body.held_writes[held_write_start..].to_vec();
+        let rebound = self.body.held_rebindings[held_rebinding_start..].to_vec();
         self.check_held_protection(&held_writes, &block_bindings, &held_calls)?;
         self.body.held_calls.truncate(held_call_start);
         self.body.held_writes.truncate(held_write_start);
+        self.body.held_rebindings.truncate(held_rebinding_start);
+        let changed = Checker::bindings_changed_in_block(bindings, &held_writes, &rebound);
         if !self.atomic_part_mentions(node)?.contains(&root) {
             return self.types.declarations.issue_node(
                 SemanticRule::Share2,
@@ -243,6 +247,7 @@ impl Checker<'_, '_> {
             )
             .filter(|written| *written != root)
             .filter_map(|written| block_bindings.get(&written).map(|local| local.binding))
+            .chain(changed)
             .collect::<Vec<_>>();
         written_roots.sort_by_key(|binding| binding.0);
         written_roots.dedup();

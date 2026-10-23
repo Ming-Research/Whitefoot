@@ -1082,8 +1082,10 @@ pub(crate) struct CheckedTarget {
     /// lowering takes the lock units they reach as written
     /// (compiler/waiting-contexts/state-locks).
     pub(crate) writes: Vec<Vec<CheckedEffectStep>>,
-    /// The bindings declared outside the statement whose storage the guard
-    /// or the block writes; a map key read from any other binding declared
+    /// The bindings declared outside the statement whose value the guard or
+    /// the block may change: one written through a reference parameter's
+    /// row, one rebound, and one a write or move overlaps, at the binding or
+    /// at a path it names; a map key read from any other binding declared
     /// outside it names the same entry throughout the statement.
     pub(crate) written_roots: Vec<BindingId>,
     pub(crate) invariants: Vec<super::goal::CheckedCallRequirement>,

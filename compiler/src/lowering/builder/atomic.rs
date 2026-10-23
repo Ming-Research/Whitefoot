@@ -346,10 +346,11 @@ impl IrBuilder<'_> {
     }
     /// What the guard and block do with each unit, maps in `maps` order
     /// and then the object's own lock. A unit's entry is locked alone only
-    /// when every reach of the map subscripts it by one key binding the
-    /// statement neither declares nor writes; any other reach takes the
-    /// whole map. The parts the state type's invariants and a proof
-    /// statement name count as reached [SHARE-3].
+    /// when every reach of the map subscripts it by one key binding declared
+    /// before the statement that the statement neither rebinds nor writes,
+    /// at the binding or at any byte the key names (`written_roots`); any
+    /// other reach takes the whole map. The parts the state type's
+    /// invariants and a proof statement name count as reached [SHARE-3].
     fn unit_uses(
         &self,
         target: &CheckedTarget,
