@@ -3754,6 +3754,7 @@ mod tests {
         // The segment table shows whether `-z separate-code` took effect.
         #[cfg(target_os = "linux")]
         {
+            #[allow(clippy::disallowed_methods, reason = "host tool, not a test program")]
             let headers = std::process::Command::new("readelf")
                 .arg("-lW")
                 .arg(&executable)
