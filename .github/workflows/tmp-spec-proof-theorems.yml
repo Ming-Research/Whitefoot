@@ -1,0 +1,144 @@
+# Temporary workflow for spec-proof-theorems: probes of a call datum whose
+# captured image reaches a join from the branch that made the call. Each
+# program runs through the Lean model (parse, check, run) and through the
+# compiler (compile, run). Removed before the full check.
+name: tmp-spec-proof-theorems
+
+on:
+  push:
+    branches: [spec-proof-theorems]
+
+jobs:
+  probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write the probe programs
+        run: |
+          mkdir -p "$RUNNER_TEMP/probes"
+          cd "$RUNNER_TEMP/probes"
+          # The then-branch calls g with y + 1, which mints a call datum
+          # whose captured image is y's entry image plus one. The
+          # postcondition's two sides are that one datum, so the then-state
+          # holds the disequality `d - d != 1`, which every state derives;
+          # the join keeps it, with d's implicit u8 bounds, and the joined
+          # datum images keep d's image, so `y0 + 1` reads as at most 255 on
+          # the else path too, where y0 is 255.
+          cat > leak.wf <<'WF'
+          fn g(v: u8) -> r: u8 pure contract {
+            ensures r - r + v != v + 1_u8;
+          } {
+            return v;
+          }
+
+          fn main() -> status: std::process::ExitStatus pure {
+            let a = array_filled::<u8, 1>(value: 255_u8);
+            let y = a[0_u64];
+            let y0 = y;
+            if y < 255_u8 {
+              set y = y + 1_u8;
+              let w = g(v: y);
+              set y = w;
+            }
+            let z = y0 + 1_u8;
+            return std::process::exit_status(code: z);
+          }
+          WF
+          # The same program with a postcondition that names its result: the
+          # model must reject `y0 + 1`; a compiler that keeps every datum's
+          # implicit bounds and captured image across the join accepts it.
+          cat > plain.wf <<'WF'
+          fn g(v: u8) -> r: u8 pure contract {
+            ensures r == v;
+          } {
+            return v;
+          }
+
+          fn main() -> status: std::process::ExitStatus pure {
+            let a = array_filled::<u8, 1>(value: 255_u8);
+            let y = a[0_u64];
+            let y0 = y;
+            if y < 255_u8 {
+              set y = y + 1_u8;
+              let w = g(v: y);
+              set y = w;
+            }
+            let z = y0 + 1_u8;
+            return std::process::exit_status(code: z);
+          }
+          WF
+          # The control: no call in the branch; every checker must reject.
+          cat > control.wf <<'WF'
+          fn main() -> status: std::process::ExitStatus pure {
+            let a = array_filled::<u8, 1>(value: 255_u8);
+            let y = a[0_u64];
+            let y0 = y;
+            if y < 255_u8 {
+              set y = y + 1_u8;
+            }
+            let z = y0 + 1_u8;
+            return std::process::exit_status(code: z);
+          }
+          WF
+          cat > Probe.lean <<'LEAN'
+          import WhitefootProof
+          open Whitefoot
+
+          def describe : Outcome → String
+            | .done v => s!"done {repr v}"
+            | .stuck s => s!"stuck {repr s}"
+            | .illFormed w => s!"ill formed: {w}"
+            | .outOfSteps => "out of steps"
+
+          def main (args : List String) : IO UInt32 := do
+            for path in args do
+              let src ← IO.FS.readFile path
+              match parseProgram src with
+              | .error e => IO.println s!"MODEL {path}: parse error {repr e}"
+              | .ok p =>
+                let verdict := match p.check with
+                  | .ok _ => "accepted"
+                  | .error r => s!"rejected citing {r.rule}: {r.msg}"
+                IO.println s!"MODEL {path}: {verdict}; run: {describe (p.run 100000)}"
+            return 0
+          LEAN
+      - name: Install the pinned Lean toolchain
+        working-directory: proof
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$RUNNER_TEMP/elan-init.sh"
+          sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Run the model on the probes
+        continue-on-error: true
+        working-directory: proof
+        run: |
+          perl ../.github/run-check.pl tmp-proof-build lake build
+          cd "$RUNNER_TEMP/probes"
+          lake --dir "$GITHUB_WORKSPACE/proof" env lean --run Probe.lean leak.wf plain.wf control.wf
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the compiler
+        run: perl .github/run-check.pl tmp-probe-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --bin whitefootc
+      - name: Run the compiler on the probes
+        run: |
+          cd "$RUNNER_TEMP/probes"
+          for probe in leak plain control; do
+            set +e
+            "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" -o "$probe" "$probe.wf" > "$probe.out" 2>&1
+            compiled=$?
+            ran=none
+            if [ "$compiled" -eq 0 ]; then
+              "./$probe"
+              ran=$?
+            fi
+            set -e
+            echo "COMPILER $probe: compile status $compiled, run status $ran"
+            head -c 2000 "$probe.out"
+          done
