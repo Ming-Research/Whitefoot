@@ -1,0 +1,35 @@
+struct Pair {
+  left: u64;
+  right: u64;
+}
+
+interface Touch {
+  fn touch(pair: &Pair) -> answer: u64 writes(pair) contract {
+    ensures entry(pair)^.right + 3_u64 - 1_u64 == pair^.right + 2_u64;
+    ensures answer == 3_u64;
+  };
+}
+
+fn update(actual_pair: &Pair) -> output: u64 writes(actual_pair.left) contract {
+  ensures output == 3_u64;
+} {
+  set actual_pair^.left = 1_u64;
+  return 3_u64;
+}
+
+binding FieldTouch : Touch {
+  touch = update;
+}
+
+fn observe<interface Touch>(pair: &Pair) -> saved: u64 writes(pair) contract {
+  ensures saved == entry(pair)^.right;
+} {
+  let answer = Touch::touch(pair: pair);
+  return pair^.right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let initial = Pair(left: 0_u64, right: 9_u64);
+  let observed = observe::<FieldTouch>(pair: &initial);
+  return std::process::exit_status(code: 0_u8);
+}

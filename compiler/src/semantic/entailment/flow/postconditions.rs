@@ -167,7 +167,8 @@ impl Input<'_, '_> {
     /// formal surface only when its exact FN-4 query is discharged and every
     /// actual premise selected by that query has an FN-9 summary or a
     /// same-component induction hypothesis [DIAG-2]. A zero-premise
-    /// implication needs only its retained query.
+    /// implication needs only its retained query, including its
+    /// declared-row evidence when FN-4 discharged a frame.
     pub(super) fn available_call_postconditions(
         &self,
         call: &crate::NodePath,
@@ -203,6 +204,10 @@ impl Input<'_, '_> {
                     || query.instance != Some(self.function.id)
                     || query.goal != boundary.selector.block
                     || query.premises.len() != boundary.actual_premises.len()
+                    || query
+                        .frame
+                        .as_ref()
+                        .is_some_and(|frame| frame.actual != function)
                 {
                     return None;
                 }
