@@ -64,6 +64,9 @@ the work-branch and merge boundary.
 - [Range facts for ordinary obligations](investigations/ordinary-range-obligations/DESIGN.md):
   how a bounds, overflow or invariant obligation uses a range fact, comparing
   deferral to the range judgment with range facts inside ordinary entailment.
+- [Window references across calls](investigations/window-call-references/DESIGN.md):
+  current prefix and named-removal invalidation, the post-call range-bound
+  repair, and a proposed surviving-slot rule for direct removals.
 - [Range type invariants](investigations/range-type-invariants/DESIGN.md):
   a struct's range fact over its own stores, kept by its module's writers and
   assumed by every function that receives the struct.

@@ -10,6 +10,13 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 Nodes: compiler/waiting-contexts, compiler/incremental-compilation
 
 Summary: A deadlock report enumerates an intrusive roster under one lock, registering the root once and each child at its first actual guard or join park and removing it before reclamation, because at all-stuck every live context is such a waiter while registering every child at spawn cost 8.4% on one driver's concurrent spawns; a guard registers under its watch lock with the roster lock nested inside. The pre-registered one-percent comparison rejected no spawn panel, five of eight being inconclusive against the twin's spread, so the global roster stays provisional. Diagnostic fields occupy a cold tail initialized at first registration, and every all-stuck decision calls one inactive predicate. Cache keys still exclude host display paths, and emitted wait-site positions are templates whose display path is bound from the current invocation on reuse, so a different spelling of the same graph reuses its build while its reports name the paths this invocation wrote.
+## 2026-10-13 A window reference survives a call when its formation bounds are re-proved after it
+
+Nodes: compiler/checker-facts
+
+Owner-approved: On the shared status board on 2026-10-13, written in Chinese, the owner chose option A, "approve" (translated), on the card "approve the design-tree change: when a reference into a window crosses a call, re-prove its formation bounds from the facts after the call and keep it when they hold? (Ming-Research/Whitefoot#440, head 61c635f54)" (translated).
+
+Summary: The reference-validity decision adds one sentence. Where the specification lets a window reference survive, its formation bounds reuse the existing retained-question record but are judged after the call's invalidation and postcondition publication, destructured results included, and the reference is kept when they are proved, because the specification keeps a reference valid while its bounds hold, instead of invalidating every window reference at any call that writes the window's length, end or filled part. A write to a prefix of the reference's path, a moved Ring start, and `take_back`, `remove_at` and `clear`, whose specified guarantees exclude those bounds, still invalidate it independently.
 
 ## 2026-10-23 An implementation that leaves a place unwritten discharges an interface's frame equality
 
