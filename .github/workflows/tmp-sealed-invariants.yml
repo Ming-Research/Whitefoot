@@ -178,7 +178,7 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
       - name: Build the branch's compiler and the base's
         run: |
-          git fetch --depth=1 origin dc2bd2f3370cfd400a551482e1b226fafabbb242
+          git fetch --depth=1 origin 7bce4190915b71e176b4c2ecfcbb2d49d4fd3491
           git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
           if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
             # A decided condition counts as discharged in both compilers,

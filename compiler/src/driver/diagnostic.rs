@@ -1167,11 +1167,12 @@ impl Report for CanonicalIssue {
             location: _,
             expected,
             found,
-            mechanical_fix,
+            differences: _,
+            difference_count: _,
         } = self;
         fields.field("expected", &Exact(expected));
         fields.field("found", &Exact(found));
-        fields.field("mechanical_fix", mechanical_fix);
+        fields.field("mechanical_fix", &self.mechanical_fix());
         "NonCanonicalTrivia"
     }
 }

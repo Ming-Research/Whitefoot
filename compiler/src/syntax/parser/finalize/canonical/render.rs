@@ -7,7 +7,7 @@
 //! depth and the two neighbouring predicates into exact bytes, so a change to
 //! either rule moves the auditor and the renderer together.
 
-use super::format::{GapStyle, attachment, build_gap_styles, canonical_gap};
+use super::format::{attachment, build_gap_styles, canonical_gap, gap_after};
 use super::{AuditWork, Stop, expected_terminal_bytes, preflight_sources, terminal_element};
 use crate::syntax::parser::finalize::outcome::{
     CanonicalCompilerFailure, CanonicalLimit, CanonicalLimits, CanonicalResourceFailure,
@@ -107,35 +107,9 @@ fn render(
             // The gap belongs to the boundary before the next terminal, so its
             // style and indentation are that terminal's. After the last one the
             // source ends in a bare newline, which is a depth-zero break.
-            let next = ordinal
-                .checked_add(1)
-                .ok_or(CanonicalCompilerFailure::CounterOverflow)?;
-            let (style, depth, right_attachment) = if next < end {
-                let (_, right_predicate) = terminal_element(finalized, next)?;
-                let right_attachment = attachment(&finalized.topology, next, right_predicate)?;
-                let owner = finalized
-                    .topology
-                    .terminals
-                    .get(next)
-                    .and_then(|record| record.owner)
-                    .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
-                let depth = finalized
-                    .topology
-                    .node(owner)
-                    .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?
-                    .terminal_depth(
-                        u64::try_from(next)
-                            .map_err(|_| CanonicalCompilerFailure::CounterOverflow)?,
-                    );
-                let style = *gaps
-                    .get(next)
-                    .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
-                (style, depth, Some(right_attachment))
-            } else {
-                (GapStyle::Break, 0, None)
-            };
+            let after = gap_after(finalized, &gaps, ordinal, end)?;
             let left_attachment = attachment(&finalized.topology, ordinal, predicate)?;
-            let gap = canonical_gap(style, depth, Some(left_attachment), right_attachment)?;
+            let gap = canonical_gap(after.style, after.depth, Some(left_attachment), after.right)?;
             extend_rendering(&mut bytes, gap.bytes(), gap.len()?, limits, work)?;
         }
         rendered.push(RenderedSource { source, bytes });
