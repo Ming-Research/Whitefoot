@@ -45,9 +45,11 @@ jobs:
       - name: Decoder records
         run: perl .github/run-check.pl tmp-enumeration cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib enumeration_records
       - name: Programs that list and name entries
-        run: perl .github/run-check.pl tmp-programs cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus -- programs::traversal:: programs::wfgrep:: programs::wfgrep_hosts:: programs::host_paths:: programs::file_replacement::
+        run: |
+          perl .github/run-check.pl tmp-programs cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus -- programs::traversal:: programs::wfgrep:: programs::wfgrep_hosts:: programs::host_paths:: programs::file_replacement::
       - name: Conformance adapter
-        run: perl .github/run-check.pl tmp-conformance cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus -- conformance::adapter::
+        run: |
+          perl .github/run-check.pl tmp-conformance cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus -- conformance::adapter::
       - name: POSIX ordinary values probe
         run: perl .github/run-check.pl tmp-ordinary-values make -C compiler ordinary-values-test
 
