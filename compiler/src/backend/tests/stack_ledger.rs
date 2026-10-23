@@ -44,6 +44,7 @@ pub(super) fn machine_report(emitted: &str, directory: &std::path::Path) -> (Str
     let module = directory.join("ledger.ll");
     let assembly = directory.join("ledger.s");
     std::fs::write(&module, emitted).expect("write the ledger module");
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let status = Command::new(crate::clang_executable())
         .arg("-x")
         .arg("ir")
@@ -275,6 +276,7 @@ fn link_measured_boundary(directory: &std::path::Path, wide: bool) -> std::path:
         let path = scratch.join("floor.c");
         let object = scratch.join("floor.o");
         std::fs::write(&path, source).expect("write small-stack floor variant");
+        #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
         let output = Command::new(crate::clang_executable())
             .args(["-std=c11", "-pthread", "-c"])
             .arg(&path)
@@ -314,6 +316,7 @@ fn link_measured_boundary(directory: &std::path::Path, wide: bool) -> std::path:
     );
     // The shared support owns object order; index zero is its staged floor.
     std::fs::write(&objects[0], floor).expect("select the small-stack floor variant");
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let output = command
         .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
         .args(crate::HOST_LINK_LIBRARIES)
