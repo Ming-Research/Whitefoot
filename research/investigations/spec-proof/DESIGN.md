@@ -580,9 +580,10 @@ new valuation atom by atom: the taken input's atoms keep their values and every
 other atom takes 0, a member of every fragment type. A second form needs no
 new valuation when every term already lies in its type.
 
-The module adds 622 lines of Lean and no coverage mark. It built in 1.9 s
-inside a 16.8 s build of the model, within the 25 s budget, after two
-`proof.yml` runs: the first failed in one lemma, the saturation step.
+The module adds 618 lines of Lean and no coverage mark. It built in 2.3 s
+inside a 17.2 s build of the model, within the 25 s budget, on the fourth
+`proof.yml` run: the first failed in one lemma, the saturation step, and the
+third on normalizing steps that changed nothing.
 
 ## Cost
 
