@@ -1,0 +1,767 @@
+# Temporary (board item wf-req-halo-dispatch-arm-spills-own); remove before the
+# branch is ready. Focused checks of the call-side branch rule's restriction to
+# a split dispatch loop: the unit tests that cover it (and a run showing the
+# guard-return test fails on the previous rule), the optimized code and paired
+# timing of the ordinary HashMap's removal under the compilers before and after
+# the restriction, and Halo's instruction counts under the same compilers.
+name: tmp-branch-weights
+
+on:
+  push:
+    branches: [claude/cold-branch-weights]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-branch-weights-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  # Halo-wf's draft port to the newer prelude (its PR 71, branch
+  # halo-main-compiler-names); the revision measured earlier no longer compiles.
+  HALO_REVISION: df3eb9ec00f4d7db992e82b6d8ab35f8a643a317
+  PROBE_REVISION: 14eb8eb181fd5fa57cb9f13382ad31bf858c9ae4
+  SILVERFIR_REVISION: 5f248e4420102356be7edadbdb4db2ae105d3270
+  COREMARK_BLOB: 70b4d2165e7fbbd797e47b43032fc06302c1774f
+  # The head before the restriction: the approved rule plus the compile fix.
+  S3_COMMIT: 9e5b6689f47439f0676fc343520db8e141532cde
+
+jobs:
+  halo-counts:
+    name: Halo instruction counts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize scratch outputs and provisional execution ceilings
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/halo-e2"
+          mkdir -p "$out"/{inputs,images,ir,logs,raw,pilot,probe,native-rss}
+          echo "E2_OUT=$out" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_FILE=$out/execution-ceilings.txt" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$out/execution-ceilings-record.txt" >> "$GITHUB_ENV"
+          # Scratch ceilings bound acquisition, not measured performance or
+          # maintained gate budgets. Both compiler builds share the parent lock.
+          cat > "$out/execution-ceilings.txt" <<'BUDGETS'
+          label                 linux
+          compiler/build        1800
+          e2/build              1800
+          e2/native-rss         480
+          e2/pilot              480
+          e2/counts             4800
+          BUDGETS
+          printf '%s\n' 'Data acquisition has not completed; no E2 verdict is available.' > "$out/acquisition-status.txt"
+
+      - name: Install pinned LLVM major, LLD, valgrind and binutils
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo apt-get install -y -q "llvm-$version" valgrind binutils time
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo ln -sf "/usr/bin/llvm-dis-$version" /usr/local/bin/llvm-dis
+          rustup default stable
+          {
+            /usr/bin/clang --version
+            ld.lld --version
+            llvm-dis --version
+            valgrind --version
+            rustc -vV
+            cargo --version
+            python3 --version
+            uname -a
+            lscpu
+          } > "$E2_OUT/toolchain.txt"
+          cat "$E2_OUT/toolchain.txt"
+
+      - uses: actions/cache@v4
+        with:
+          # Never cache compiler targets or native/module products. Base and
+          # candidate have separate fresh Cargo targets; C1/C2 share one compiler.
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-halo-e2-cargo-${{ hashFiles('compiler/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-halo-e2-cargo-
+
+      - name: Fetch exact input identities
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          base=$(git merge-base origin/main HEAD)
+          git worktree add --detach "$RUNNER_TEMP/halo-e2-base" "$base"
+          git worktree add --detach "$RUNNER_TEMP/halo-e2-s3" "$S3_COMMIT"
+          git fetch origin "$PROBE_REVISION"
+          test "$(git rev-parse "$PROBE_REVISION^{commit}")" = "$PROBE_REVISION"
+          git show "$PROBE_REVISION:research/investigations/halo-call-path/probe/measure.py" > "$E2_OUT/inputs/measure.py"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo-e2-halo"
+          git -C "$RUNNER_TEMP/halo-e2-halo" checkout --quiet "$HALO_REVISION"
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/halo-e2-silverfir"
+          git -C "$RUNNER_TEMP/halo-e2-silverfir" checkout --quiet "$SILVERFIR_REVISION"
+          module=benchmarks/wasi/coremark/coremark.wasm
+          test "$(git -C "$RUNNER_TEMP/halo-e2-silverfir" rev-parse "HEAD:$module")" = "$COREMARK_BLOB"
+          test "$(git hash-object "$RUNNER_TEMP/halo-e2-silverfir/$module")" = "$COREMARK_BLOB"
+          cp "$RUNNER_TEMP/halo-e2-silverfir/$module" "$E2_OUT/inputs/coremark.wasm"
+          cp research/experiments/match-dispatch/wasm/{gen.py,interp_head.wf,interp_tail.wf,coremark.py} "$E2_OUT/inputs/"
+          cp research/investigations/halo-call-path/DESIGN.md "$E2_OUT/inputs/E2-design.md"
+          {
+            echo "candidate=$(git rev-parse HEAD)"
+            echo "origin_main=$(git rev-parse origin/main)"
+            echo "base_merge_base=$base"
+            echo "s3_commit=$S3_COMMIT"
+            echo "halo=$(git -C "$RUNNER_TEMP/halo-e2-halo" rev-parse HEAD)"
+            echo "probe=$PROBE_REVISION"
+            echo "probe_path=research/investigations/halo-call-path/probe/measure.py"
+            echo "silverfir=$(git -C "$RUNNER_TEMP/halo-e2-silverfir" rev-parse HEAD)"
+            echo "coremark_blob=$COREMARK_BLOB"
+            echo "llvm_major=$(cat .github/llvm-major)"
+            echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "Halo: full LTO, uncached; diagnostics: emit LLVM + ledger, separate fresh caches"
+            echo "v2h: direct source compilation, default optimizing level, separate fresh caches"
+            echo "Counts: callgrind Ir; executable self per Lua call differs from process-total Ir"
+            echo "CoreMark: fixed 200-iteration comparison; native base RSS diagnostics at 10, 200, 2000 iterations"
+            echo "Full 2000-iteration callgrind coverage is unavailable on the 16 GB hosted runner; reduced counts do not validate that workload"
+            echo "Ceilings are provisional acquisition limits; hosted elapsed times are not speed evidence"
+          } > "$E2_OUT/manifest.txt"
+
+      - name: Write scratch construction, acquisition and reduction helper
+        run: |
+          set -euo pipefail
+          cat > "$E2_OUT/inputs/e2.py" <<'PY'
+          import concurrent.futures
+          import hashlib
+          from fractions import Fraction
+          import json
+          import math
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import subprocess
+          import sys
+          import time
+
+          OUT = Path(os.environ['E2_OUT'])
+          TEMP = Path(os.environ['RUNNER_TEMP'])
+          WORK = Path(os.environ['GITHUB_WORKSPACE'])
+          LABELS = ('base', 'S3', 'R1')
+          SIZES = {'binary-trees': 12, 'concat': 200000, 'fib': 32,
+                   'integer-table': 1000000, 'loop': 5000000,
+                   'sort': 100000, 'string-key': 200000}
+          CALLS = 7049155
+          # The wasm interpreter CoreMark runs (research/experiments/match-dispatch/wasm)
+          # is rejected by the current compiler (reserved word held, then OP-5
+          # RedundantCondition); the Halo kernels are measured without it.
+          COREMARK = False
+          # Run 38350625447 could not measure full 2000-iteration CoreMark on
+          # the 16 GB host: Valgrind had 20303183872 anonymous mmap bytes and
+          # failed to obtain a further 29360132096 bytes. The owner selected
+          # 200 iterations, fixed before acquisition, with no adaptive fallback.
+          # C1/base and C2/C1 below describe this identical 200-iteration workload;
+          # they do not establish the full 2000-iteration criterion's coverage.
+          COREMARK_ITERATIONS = 200
+          PILOT_COREMARK_ITERATIONS = 10
+          NATIVE_BOUND = 120
+          MEMORY_LIMITATION = ('Full 2000-iteration CoreMark callgrind coverage is unavailable: '
+                              'run 38350625447 on the 16 GB host had 20303183872 anonymous mmap bytes '
+                              'and failed to obtain a further 29360132096 bytes. The fixed 200-iteration '
+                              'comparison reports only that workload; it does not validate the full 2000-iteration criterion.')
+          # Provisional single-process bounds fit inside the 4800s count stage.
+          # A measured pilot that predicts a longer run makes data unavailable;
+          # there is no smaller fallback and no fabricated successful verdict.
+          FULL_BOUND = 2400
+          PILOT_BOUND = 90
+          CRC = {'crclist': '0xe714', 'crcmatrix': '0x1fd7', 'crcstate': '0x8e3a'}
+          C1_QUOTE = "C1 is rejected if fib(32) falls by fewer than 5 instructions per Lua call against B (841.53), or any kernel's count rises by more than 1%."
+          C2_QUOTE = "C2 is rejected if fib(32) is above 814.9 (less than 75% of V2's 35.5 gain), or any Halo kernel or v2h's CoreMark instruction count rises by more than 1% against C1."
+          TIME_QUOTE = "A change passing both then gets 14900K timing on fib and CoreMark, interleaved against B with a twin of B; it is rejected if it is not faster than B beyond the twin's spread on fib, or slower beyond it on CoreMark."
+
+          def command(argv, label, cwd=WORK, env=None):
+              with (OUT / 'logs' / (label + '.stdout')).open('wb') as stdout, \
+                   (OUT / 'logs' / (label + '.stderr')).open('wb') as stderr:
+                  print(label + ': ' + ' '.join(map(str, argv)), flush=True)
+                  subprocess.run(list(map(str, argv)), cwd=cwd, env=env,
+                                 stdout=stdout, stderr=stderr, check=True)
+
+          def environment(label):
+              env = os.environ.copy()
+              env.pop('WHITEFOOT_BRANCH_WEIGHTS', None)
+              env.pop('CCC_OVERRIDE_OPTIONS', None)
+              env.pop('CARGO_TARGET_DIR', None)
+              return env
+
+          def fresh_cache(name):
+              path = TEMP / 'halo-e2-caches' / name
+              if path.exists():
+                  raise ValueError('cache must be new: ' + str(path))
+              path.parent.mkdir(exist_ok=True)
+              return path
+
+          def write_kernel(name, n, target):
+              source = (TEMP / 'halo-e2-halo' / 'research/experiments/halo-bench/kernels' / (name + '.lua')).read_text()
+              text, changed = re.subn(r'^local N = [0-9]+$', 'local N = ' + str(n), source, flags=re.M)
+              if changed != 1:
+                  raise ValueError(f'{name}: expected exactly one local N binding, got {changed}')
+              target.write_text(text)
+
+          def build():
+              for label, tree in [('base', TEMP / 'halo-e2-base'), ('S3', TEMP / 'halo-e2-s3'), ('R1', WORK)]:
+                  env = environment('base')
+                  # Fresh targets also exclude inherited runner state; the target
+                  # trees live outside the uploaded evidence directory.
+                  target = TEMP / 'halo-e2-targets' / label
+                  if target.exists():
+                      raise ValueError('compiler target must be new: ' + str(target))
+                  env['CARGO_TARGET_DIR'] = str(target)
+                  command(['cargo', 'fetch', '--locked', '--manifest-path', tree / 'compiler/Cargo.toml'], label + '-fetch', env=env)
+                  # Its existing compiler/build run-check stage nests under the
+                  # e2/build parent, so subprocesses share one host-wide lock.
+                  command(['make', '-C', tree / 'compiler', 'build'], label + '-compiler', env=env)
+                  shutil.copy2(target / 'gate/whitefootc', OUT / 'images' / ('whitefootc-' + label))
+
+              for label in LABELS:
+                  env = environment(label)
+                  compiler = OUT / 'images' / ('whitefootc-' + label)
+                  graph = ['--graph', 'tests/halo-bench/modules.wfg', '--entry', 'bench']
+                  # --full-lto forbids --cache. Each native full-LTO build is
+                  # uncached; diagnostic IR emission legally has its own cache.
+                  command([compiler, *graph, '--full-lto', '-o', OUT / 'images' / ('halo-' + label)], 'halo-' + label,
+                          cwd=TEMP / 'halo-e2-halo', env=env)
+                  command([compiler, *graph, '--emit-llvm', '--dispatch-ledger',
+                           '--cache', fresh_cache('halo-ir-' + label), '-o', OUT / 'ir' / (label + '.ll')],
+                          'halo-ir-ledger-' + label, cwd=TEMP / 'halo-e2-halo', env=env)
+              for name, n in SIZES.items():
+                  write_kernel(name, n, OUT / 'inputs' / (name + '.lua'))
+              write_kernel('fib', 24, OUT / 'inputs/pilot-fib24.lua')
+
+          def read_count(raw, stderr):
+              events = re.findall(r'^events:\s*(.*?)\s*$', raw, re.M)
+              if len(events) != 1 or events[0].split() != ['Ir']:
+                  raise ValueError('callgrind must contain exactly events: Ir (probe uses its first event)')
+              summaries = re.findall(r'^summary:\s*([0-9]+)\s*$', raw, re.M)
+              collected = re.findall(r'^==[0-9]+==\s+Collected\s*:\s*([0-9]+)\s*$', stderr, re.M)
+              if len(summaries) != 1 or len(collected) != 1:
+                  raise ValueError('missing or malformed callgrind summary/Collected Ir')
+              n, c = int(summaries[0]), int(collected[0])
+              if n <= 0 or n != c:
+                  raise ValueError(f'callgrind summary/Collected disagree or are empty: {n}/{c}')
+              return c
+
+          def validate_coremark(text, iterations):
+              # Match the independent coremark.py oracle's fields. A short run
+              # may print the 10-second warning: it is not a CRC failure. Never
+              # compare timing scores or full stdout across CoreMark launches.
+              fields = re.findall(r'\[0\](crc\w+)\s*:\s*(0x[0-9a-fA-F]+)', text)
+              got = dict(fields)
+              if len(fields) != 4 or set(got) != set(CRC) | {'crcfinal'}:
+                  raise ValueError('missing, duplicate or malformed CoreMark CRC fields')
+              if any(got[k].lower() != v for k, v in CRC.items()):
+                  raise ValueError('wrong CoreMark component CRCs: ' + str(got))
+              # research/experiments/match-dispatch/RESULTS.md, v1, records
+              # 0x4983 for this checked-in module / seeds / 2000 iterations.
+              if iterations == 2000 and got['crcfinal'].lower() != '0x4983':
+                  raise ValueError('wrong 2000-iteration CoreMark final CRC: ' + str(got))
+              return got['crcfinal'].lower()
+
+          def validate_final_crcs(finals):
+              # No independent final CRC is known for 200 iterations. Require
+              # agreement across settings at the same iteration count instead.
+              if not finals or len(set(finals.values())) != 1:
+                  raise ValueError('CoreMark final CRCs disagree at the same iteration count: ' + str(finals))
+
+          def read_max_rss(text):
+              values = re.findall(r'^\s*Maximum resident set size \(kbytes\):\s*([0-9]+)\s*$', text, re.M)
+              return int(values[0]) if len(values) == 1 else None
+
+          def native_rss():
+              # Run all three serial diagnostics before any CoreMark callgrind
+              # pilot. Findings remain visible but do not discard a valid
+              # reduced comparison; the diagnostic panel is not a leak test.
+              rows = []
+              env = environment('base')
+              env['LC_ALL'] = 'C'  # GNU time's RSS field has a fixed spelling.
+              for iterations in (10, COREMARK_ITERATIONS, 2000):
+                  prefix = OUT / 'native-rss' / f'CoreMark.base.{iterations}'
+                  timefile = Path(str(prefix) + '.time.txt')
+                  argv = ['timeout', '--foreground', '--signal=TERM', '--kill-after=10s',
+                          str(NATIVE_BOUND) + 's', '/usr/bin/time', '-v', '-o', str(timefile),
+                          str(OUT / 'images/v2h-base'), 'coremark.wasm', '0x0', '0x0', '0x66', str(iterations)]
+                  row = {'iterations': iterations, 'actual_returncode': None, 'max_rss_kib': None,
+                         'crc_validated': False, 'final_crc': None, 'findings': []}
+                  try:
+                      with Path(str(prefix) + '.stdout').open('wb') as stdout, Path(str(prefix) + '.stderr').open('wb') as stderr:
+                          result = subprocess.run(argv, cwd=TEMP / 'halo-e2-silverfir/benchmarks/wasi/coremark',
+                                                  stdout=stdout, stderr=stderr, env=env)
+                      row['actual_returncode'] = result.returncode
+                      if result.returncode != 0:
+                          row['findings'].append(f'native timed-command subprocess returned {result.returncode}; not validated')
+                      else:
+                          row['final_crc'] = validate_coremark(Path(str(prefix) + '.stdout').read_text(), iterations)
+                          row['crc_validated'] = True
+                  except (OSError, ValueError) as error:
+                      row['findings'].append(str(error) + '; not validated')
+                  try:
+                      row['max_rss_kib'] = read_max_rss(timefile.read_text())
+                  except OSError:
+                      pass
+                  if row['max_rss_kib'] is None:
+                      row['findings'].append('maximum RSS unavailable')
+                  row['status'] = 'FINDING / NOT VALIDATED' if row['findings'] else 'VALIDATED'
+                  Path(str(prefix) + '.json').write_text(json.dumps(row, indent=2) + '\n')
+                  rows.append(row)
+                  print(f'{prefix.name}: max RSS KiB={row["max_rss_kib"] if row["max_rss_kib"] is not None else "unavailable"}; '
+                        f'actual subprocess returncode={row["actual_returncode"] if row["actual_returncode"] is not None else "unavailable"}; '
+                        f'{row["status"]}; {"; ".join(row["findings"])}', flush=True)
+              (OUT / 'native-rss/diagnostics.json').write_text(json.dumps(rows, indent=2) + '\n')
+              lines = ['## Native base CoreMark memory diagnostics', '', MEMORY_LIMITATION, '',
+                       'GNU time wraps the native program directly; timeout is outside it. Actual return codes come from subprocess, '
+                       'not GNU time\'s Exit status field (which can mislead after a signal). A timeout may leave RSS unavailable.',
+                       'This three-point RSS growth panel alone cannot establish a leak.', '',
+                       '| Iterations | Maximum RSS KiB | Actual subprocess return code | CRC validation | Diagnostic status |',
+                       '|---:|---:|---:|---|---|']
+              for row in rows:
+                  rss = row['max_rss_kib'] if row['max_rss_kib'] is not None else 'unavailable'
+                  code = row['actual_returncode'] if row['actual_returncode'] is not None else 'unavailable'
+                  crc = row['final_crc'] if row['crc_validated'] else 'not validated'
+                  lines.append(f'| {row["iterations"]} | {rss} | {code} | {crc} | {row["status"]} |')
+              for row in rows:
+                  for finding in row['findings']:
+                      lines.append(f'\nFinding at {row["iterations"]} iterations: {finding}.')
+              (OUT / 'native-rss/report.md').write_text('\n'.join(lines) + '\n')
+              print('\n'.join(lines), flush=True)
+
+          def validate_fib(text, n):
+              a, b = 0, 1
+              for _ in range(n):
+                  a, b = b, a + b
+              if text.strip() != str(a):
+                  raise ValueError(f'fib({n}) expected {a}, got {text!r}')
+
+          def memory_snapshot(prefix, phase, returncode=None):
+              heading = f'{prefix.name}: memory {phase}'
+              if returncode is not None:
+                  heading += f'; process exit {returncode}'
+              try:
+                  snapshot = subprocess.run(['free', '-m'], check=False, stdout=subprocess.PIPE,
+                                            stderr=subprocess.STDOUT, text=True)
+                  record = heading + '\n' + snapshot.stdout
+                  if snapshot.returncode != 0:
+                      record += f'free -m exit {snapshot.returncode}\n'
+              except OSError as error:
+                  record = heading + f'\nfree -m unavailable: {error}\n'
+              if not record.endswith('\n'):
+                  record += '\n'
+              try:
+                  print(record, end='', flush=True)
+              except OSError:
+                  pass
+              try:
+                  with Path(str(prefix) + '.memory.txt').open('a') as stream:
+                      stream.write(record)
+              except OSError as error:
+                  try:
+                      print(f'{prefix.name}: memory artifact unavailable: {error}', flush=True)
+                  except OSError:
+                      pass
+
+          def acquire(label, workload, pilot_round=None):
+              pilot = pilot_round is not None
+              prefix = OUT / ('pilot' if pilot else 'raw') / (f'{workload}.{label}' + (f'.{pilot_round}' if pilot else ''))
+              is_core = workload == 'CoreMark'
+              binary = OUT / 'images' / (('v2h-' if is_core else 'halo-') + label)
+              flags = ['valgrind', '--tool=callgrind', '--dump-instr=yes', '--collect-jumps=yes',
+                       '--dump-line=no', '--compress-strings=no', '--compress-pos=no',
+                       '--cache-sim=no', '--branch-sim=no', '--callgrind-out-file=' + str(prefix) + '.out']
+              if is_core:
+                  # interp_tail.wf's relative_path requires this cwd and argument.
+                  cwd = TEMP / 'halo-e2-silverfir/benchmarks/wasi/coremark'
+                  iterations = PILOT_COREMARK_ITERATIONS if pilot else COREMARK_ITERATIONS
+                  argv = [binary, 'coremark.wasm', '0x0', '0x0', '0x66', str(iterations)]
+                  stdin = None
+              else:
+                  cwd = WORK
+                  argv = [binary]
+                  stdin = (OUT / 'inputs' / ('pilot-fib24.lua' if pilot else workload + '.lua')).open('rb')
+              if is_core:
+                  memory_snapshot(prefix, 'before')
+              # The same GNU time wrapper records peak profiler RSS for every
+              # CoreMark setting and pilot, without changing callgrind flags.
+              timed = ['/usr/bin/time', '-v', '-o', str(prefix) + '.time.txt'] if is_core else []
+              result = None
+              start = time.monotonic()
+              try:
+                  with Path(str(prefix) + '.stdout').open('wb') as stdout, Path(str(prefix) + '.stderr').open('wb') as stderr:
+                      # --foreground is essential: keep timeout and profiler
+                      # subprocesses inside run-check's owned process group.
+                      result = subprocess.run(['timeout', '--foreground', '--signal=TERM', '--kill-after=10s',
+                                               str(PILOT_BOUND if pilot else FULL_BOUND) + 's',
+                                               *timed, *flags, *map(str, argv)], cwd=cwd, stdin=stdin,
+                                              stdout=stdout, stderr=stderr, env=environment(label))
+              finally:
+                  elapsed = time.monotonic() - start
+                  if is_core:
+                      memory_snapshot(prefix, 'after', result.returncode if result is not None else None)
+                  if stdin is not None:
+                      stdin.close()
+              if result.returncode != 0:
+                  raise ValueError(f'{prefix.name}: measurement unavailable, process exit {result.returncode}')
+              text = Path(str(prefix) + '.stdout').read_text()
+              final_crc = None
+              if is_core:
+                  final_crc = validate_coremark(text, iterations)
+              elif workload == 'fib':
+                  validate_fib(text, 24 if pilot else 32)
+              count = read_count(Path(str(prefix) + '.out').read_text(), Path(str(prefix) + '.stderr').read_text())
+              row = {'label': label, 'workload': workload, 'Ir': count, 'elapsed_for_sizing_only': elapsed}
+              if is_core:
+                  row.update(iterations=iterations, final_crc=final_crc)
+              Path(str(prefix) + '.json').write_text(json.dumps(row, indent=2) + '\n')
+              print(f'{prefix.name}: Ir={count}; elapsed-for-sizing-only={elapsed:.3f}s', flush=True)
+              return row
+
+          def pilot():
+              records = {}
+              for workload in ('fib', 'CoreMark')[:2 if COREMARK else 1]:
+                  rows = [acquire('base', workload, round_) for round_ in (1, 2)]
+                  seconds = [r['elapsed_for_sizing_only'] for r in rows]
+                  ratio = COREMARK_ITERATIONS / PILOT_COREMARK_ITERATIONS if workload == 'CoreMark' else CALLS / 150049
+                  # Retain the conservative 1.5 multiplier for three-way Halo
+                  # and serial CoreMark; sizing is never a speed comparison.
+                  estimate = max(seconds) * ratio * 1.5
+                  records[workload] = {'seconds': seconds, 'spread_seconds': max(seconds) - min(seconds),
+                                       'scale_ratio': ratio, 'conservative_comparison_seconds': estimate,
+                                       'single_process_ceiling_seconds': FULL_BOUND}
+              (OUT / 'pilot/sizing.json').write_text(json.dumps(records, indent=2) + '\n')
+              (OUT / 'pilot/sizing.txt').write_text('\n'.join(
+                  f'{k}: seconds {v["seconds"]}, spread {v["spread_seconds"]:.3f}s; comparison estimate {v["conservative_comparison_seconds"]:.1f}s; scale {v["scale_ratio"]}; ceiling {FULL_BOUND}s (sizing only)' for k, v in records.items()) + '\n')
+              print((OUT / 'pilot/sizing.txt').read_text(), flush=True)
+              if any(v['conservative_comparison_seconds'] > FULL_BOUND for v in records.values()):
+                  raise ValueError(f'measurement unavailable: baseline pilot extrapolates beyond comparison execution ceiling; CoreMark remains fixed at {COREMARK_ITERATIONS}, no smaller fallback')
+
+          def counts():
+              # One parent e2/counts stage owns every process. Rerun all Halo
+              # tasks with at most three active; run CoreMark serially after.
+              tasks = [(label, k) for k in SIZES for label in LABELS]
+              with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                  rows = list(pool.map(lambda task: acquire(*task), tasks))
+              if COREMARK:
+                  print(f'All Halo counts completed; starting serial CoreMark base, C1, C2 at {COREMARK_ITERATIONS} iterations.', flush=True)
+                  for label in LABELS:
+                      rows.append(acquire(label, 'CoreMark'))
+                  finals = {r['label']: r['final_crc'] for r in rows if r['workload'] == 'CoreMark'}
+                  validate_final_crcs(finals)
+              for workload in SIZES:
+                  baseline = (OUT / 'raw' / (workload + '.base.stdout')).read_bytes()
+                  for label in ('S3', 'R1'):
+                      if (OUT / 'raw' / (workload + '.' + label + '.stdout')).read_bytes() != baseline:
+                          raise ValueError(f'{workload}: {label} stdout differs from base')
+              (OUT / 'counts.json').write_text(json.dumps(rows, indent=2) + '\n')
+              for label in LABELS:
+                  command(['python3', '-I', OUT / 'inputs/measure.py', 'run', label,
+                           OUT / 'images' / ('halo-' + label), OUT / 'raw' / ('fib.' + label + '.out'),
+                           str(CALLS), OUT / 'probe'], 'probe-' + label)
+              reduce(rows)
+
+          def exceeds_harm(candidate, reference):
+              # Exact integer comparison: equality at +1% is not rejection.
+              return 100 * candidate > 101 * reference
+
+          def reject_c1(fib, threshold, harm_triggered):
+              return fib > threshold or harm_triggered
+
+          def reject_c2(fib, threshold, harm_triggered):
+              return fib > threshold or harm_triggered
+
+          def reduce(rows):
+              data = {label: json.loads((OUT / 'probe' / (label + '.json')).read_text()) for label in LABELS}
+              totals = {(r['label'], r['workload']): r['Ir'] for r in rows}
+              pct = lambda a, b: float(Fraction(100 * (a - b), b))
+              lines = ['# Branch weights restricted to a split loop: hosted instruction counts', '',
+                       'base = the merge base with main; S3 = the approved rule (a call-free return counts as evidence);',
+                       'R1 = the rule restricted to a call-free continuation of the split loop. Executable self per Lua call',
+                       'comes from the exact historical measure.py; whole-process Ir from callgrind.',
+                       f'fib(32): {CALLS:,} Lua calls, expected output 2178309. CoreMark is not measured here (its wasm interpreter does not compile with the current compiler).', '',
+                       '| Instructions / Lua call | base | S3 | R1 | S3 gain vs base | R1 gain vs base |', '|---|---:|---:|---:|---:|---:|']
+              def row(name, fn):
+                  b, s, r = (fn(data[l]) for l in LABELS)
+                  lines.append(f'| {name} | {b:.6f} | {s:.6f} | {r:.6f} | {b - s:.6f} | {b - r:.6f} |')
+              row('fib executable self total', lambda d: d['total_per_call'])
+              for role in ('SubRK', 'LtJmpRK', 'GetUpval', 'Call', 'Return'):
+                  row(role + ' self', lambda d, r=role: d['arms'][r]['self_per_call'])
+              lines += ['', '| Whole process workload | base Ir | S3 Ir | R1 Ir | S3 vs base | R1 vs base | R1 vs S3 |', '|---|---:|---:|---:|---:|---:|---:|']
+              for k in (*SIZES, *(('CoreMark',) if COREMARK else ())):
+                  b, s, r = (totals[(l, k)] for l in LABELS)
+                  lines.append(f'| {k} | {b} | {s} | {r} | {pct(s, b):+.4f}% | {pct(r, b):+.4f}% | {pct(r, s):+.4f}% |')
+              gain = data['base']['total_per_call'] - data['R1']['total_per_call']
+              lines += ['', f'fib gain of R1 against base: {gain:.6f} instructions per Lua call (the item requires at least 25).']
+              (OUT / 'table.md').write_text('\n'.join(lines) + '\n')
+              print('\n'.join(lines), flush=True)
+              (OUT / 'acquisition-status.txt').write_text('Instruction counts acquired; see table.md.\n')
+
+          def sensitivity():
+              def must_fail(fn):
+                  try:
+                      fn()
+                  except ValueError:
+                      return
+                  raise AssertionError('invalid input was accepted')
+              good_raw, good_err = 'events: Ir\nsummary: 123\n', '==123== Collected : 123\n'
+              assert read_count(good_raw, good_err) == 123
+              for raw, err in [('', good_err), (good_raw, ''), ('events: Dr Ir\nsummary: 1 123\n', good_err),
+                               (good_raw, '==123== Collected : bad\n'), (good_raw, '==123== Collected : 124\n')]:
+                  must_fail(lambda raw=raw, err=err: read_count(raw, err))
+              good_crc = '\n'.join('[0]' + k + ' : ' + v for k, v in {**CRC, 'crcfinal': '0x4983'}.items())
+              validate_coremark(good_crc, 2000)
+              validate_coremark(good_crc.replace('0x4983', '0x0001'), COREMARK_ITERATIONS)
+              for text in ('', good_crc.replace('0xe714', '0xe715'), good_crc.replace('0x4983', '0x4984')):
+                  must_fail(lambda text=text: validate_coremark(text, 2000))
+              must_fail(lambda: validate_coremark(good_crc.replace('0xe714', '0xe715'), COREMARK_ITERATIONS))
+              validate_final_crcs({'base': '0x0001', 'C1': '0x0001', 'C2': '0x0001'})
+              must_fail(lambda: validate_final_crcs({'base': '0x0001', 'C1': '0x0001', 'C2': '0x0002'}))
+              must_fail(lambda: validate_final_crcs({'base': '0x0001', 'native base': '0x0002'}))
+              assert read_max_rss(' Maximum resident set size (kbytes): 123\n') == 123
+              for text in ('', 'Maximum resident set size (kbytes): bad\n',
+                           'Maximum resident set size (kbytes): 1\nMaximum resident set size (kbytes): 2\n'):
+                  assert read_max_rss(text) is None
+              validate_fib('2178309\n', 32)
+              must_fail(lambda: validate_fib('2178310\n', 32))
+              # Equality at the published limits passes; a tiny violation fails.
+              assert not exceeds_harm(101, 100)
+              assert exceeds_harm(101000001, 100000000)
+              c1_limit = Fraction('841.53') - 5
+              c2_limit = Fraction('814.9')
+              assert not reject_c1(Fraction('836.53'), c1_limit, False)
+              assert reject_c1(Fraction('836.530001'), c1_limit, False)
+              assert reject_c1(Fraction('836.53'), c1_limit, True)
+              assert not reject_c2(Fraction('814.9'), c2_limit, False)
+              assert reject_c2(Fraction('814.900001'), c2_limit, False)
+              assert reject_c2(Fraction('814.9'), c2_limit, True)
+              (OUT / 'sensitivity.txt').write_text('PASS: absent/malformed/disagreeing Ir, wrong component/2000-final CRC, cross-setting/native-final CRC disagreement, unavailable RSS, wrong fib, exact boundary and tiny threshold violations detected.\n')
+
+          def hashes():
+              paths = [p for p in OUT.rglob('*') if p.is_file() and p.name != 'sha256.txt']
+              with (OUT / 'sha256.txt').open('w') as record:
+                  for path in sorted(paths):
+                      digest = hashlib.sha256()
+                      with path.open('rb') as stream:
+                          for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                              digest.update(chunk)
+                      record.write(digest.hexdigest() + '  ' + str(path.relative_to(OUT)) + '\n')
+
+          if __name__ == '__main__':
+              try:
+                  {'build': build, 'native-rss': native_rss, 'pilot': pilot, 'counts': counts, 'sensitivity': sensitivity, 'hashes': hashes}[sys.argv[1]]()
+              except Exception as error:
+                  if sys.argv[1] != 'hashes':
+                      (OUT / 'acquisition-status.txt').write_text('Measurement unavailable: ' + str(error) + '\nNo unavailable criterion is a PASS.\n')
+                  raise
+          PY
+
+      - name: Build the three compilers, then the nine native images
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "1800"
+        run: perl .github/run-check.pl e2/build python3 "$E2_OUT/inputs/e2.py" build
+
+      - name: Pilot baseline fib24 and CoreMark10 twice for scale sizing only
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "480"
+        run: perl .github/run-check.pl e2/pilot python3 "$E2_OUT/inputs/e2.py" pilot
+
+      - name: Acquire all Halo and fixed CoreMark200 E2 counts and emit scoped verdicts
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "4800"
+        run: perl .github/run-check.pl e2/counts python3 "$E2_OUT/inputs/e2.py" counts
+
+      - name: Publish the table or the acquisition failure
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f "$E2_OUT/table.md" ]; then
+            cat "$E2_OUT/table.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            cat "$E2_OUT/acquisition-status.txt" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tmp-branch-weights-halo-${{ github.run_id }}
+          path: ${{ runner.temp }}/halo-e2/
+          if-no-files-found: error
+          retention-days: 7
+
+  tests:
+    name: focused tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the library tests
+        run: |
+          perl .github/run-check.pl tbw-fetch cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl tbw-build cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib --no-run
+      - name: Branch-weight tests
+        run: perl .github/run-check.pl tbw-weights cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- backend::tests::branch_weights
+      - name: Dispatch and cost-shape tests
+        if: ${{ !cancelled() }}
+        run: perl .github/run-check.pl tbw-dispatch cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- backend::tests::match_dispatch backend::tests::cost_shape
+
+  tests-fail-on-previous-rule:
+    name: new tests fail on the previous rule
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Run this commit's tests against the previous rule's compiler
+        run: |
+          arm="$RUNNER_TEMP/previous"
+          git worktree add --detach "$arm" "$S3_COMMIT"
+          cp compiler/src/backend/tests/branch_weights.rs "$arm/compiler/src/backend/tests/branch_weights.rs"
+          perl .github/run-check.pl tbw-prev-fetch cargo fetch --locked --manifest-path "$arm/compiler/Cargo.toml"
+          status=0
+          perl .github/run-check.pl tbw-prev-test cargo test --manifest-path "$arm/compiler/Cargo.toml" --profile gate --locked --offline --lib -- backend::tests::branch_weights 2>&1 | tee "$RUNNER_TEMP/previous.log" || status=$?
+          echo "exit status of the run on the previous rule: $status"
+          grep -E "^test .* (ok|FAILED)$" "$RUNNER_TEMP/previous.log" || true
+          # Only the guard-return test separates the two rules; it must be
+          # the one that fails, and the run must fail.
+          test "$status" -ne 0
+          grep -q "a_call_free_return_is_no_evidence_against_the_call_side ... FAILED" "$RUNNER_TEMP/previous.log"
+          test "$(grep -c ' \.\.\. FAILED$' "$RUNNER_TEMP/previous.log")" -eq 1
+
+  remove-find:
+    name: HashMap removal under each compiler
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the three compilers
+        # base: the merge base with main (no branch weights); s3: the approved
+        # rule; r1: this commit, the rule restricted to a split loop.
+        run: |
+          out="$RUNNER_TEMP/rf"
+          mkdir -p "$out"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          base=$(git merge-base origin/main HEAD)
+          git worktree add --detach "$out/base" "$base"
+          git worktree add --detach "$out/s3" "$S3_COMMIT"
+          git worktree add --detach "$out/r1" "$GITHUB_SHA"
+          for arm in base s3 r1; do
+            perl .github/run-check.pl "tbw-rf-fetch-$arm" cargo fetch --locked --manifest-path "$out/$arm/compiler/Cargo.toml"
+            perl .github/run-check.pl "tbw-rf-build-$arm" make -C "$out/$arm/compiler" build
+          done
+      - name: Weights and inlining decisions for removal
+        run: |
+          out="$RUNNER_TEMP/rf"
+          bench=research/experiments/hash-map-compare/bench.wf
+          for arm in base s3 r1; do
+            "$out/$arm/compiler/target/gate/whitefootc" --emit-llvm "$bench" -o "$out/$arm.ll"
+            echo "== $arm: branch weights in hash_map_remove before optimization"
+            awk '/^define .*hash_map_remove\$instance/{p=1} p&&/!prof/{print} p&&/^}/{p=0}' "$out/$arm.ll"
+            clang -O2 -Wno-override-module -x ir -c "$out/$arm.ll" -o "$out/$arm.o" \
+              -Rpass=inline -Rpass-missed=inline 2> "$out/$arm.remarks.txt" || true
+            echo "== $arm: the optimizer's decisions about hash_map_find"
+            grep -E "hash_map_find" "$out/$arm.remarks.txt" | grep -E "hash_map_remove" | sed -E 's/^[^ ]+ //' | sort | uniq -c | head -10 || true
+            clang -O2 -Wno-override-module -x ir -S -emit-llvm "$out/$arm.ll" -o "$out/$arm.opt.ll"
+          done
+          python3 - "$out" <<'EOF'
+          import re, sys
+          out = sys.argv[1]
+          for arm in ("base", "s3", "r1"):
+              text = open(f"{out}/{arm}.opt.ll").read()
+              parts = []
+              for m in re.finditer(r'^define [^@]*@("?[^(]+"?)\(.*?^}', text, re.S | re.M):
+                  name = m.group(1).strip('"')
+                  short = name.split("$")[0].split(".")[-1]
+                  if short not in ("wf_remove_one", "hash_map_remove", "hash_map_find"):
+                      continue
+                  count = sum(1 for l in m.group(0).splitlines() if l.startswith("  "))
+                  calls = sorted({c.split("$")[0].split(".")[-1] for c in re.findall(r'call [^@]*@"?([A-Za-z0-9_.$]+)', m.group(0)) if not c.startswith("llvm")})
+                  parts.append(f"{short}={count} calls {calls}")
+              print(arm + ": " + "; ".join(parts))
+          EOF
+      - name: Paired timing of the compilers (hosted, descriptive)
+        run: |
+          out="$RUNNER_TEMP/rf"
+          python3 -B research/experiments/hash-map-compare/compare.py self-test
+          for arm in s3 r1; do
+            echo "== $arm against base"
+            python3 -B research/experiments/hash-map-compare/compare.py build \
+              --base-wfc "$out/base/compiler/target/gate/whitefootc" \
+              --candidate-wfc "$out/$arm/compiler/target/gate/whitefootc" \
+              --runtime-root "$out/$arm" --out "$out/cmp-$arm" || { echo "build failed or images identical: $?"; continue; }
+            python3 -B research/experiments/hash-map-compare/compare.py measure --out "$out/cmp-$arm" \
+              --cpu 1 --sizes 1000,10000 --min-rounds 10 --max-rounds 30
+            python3 -B research/experiments/hash-map-compare/compare.py reduce --out "$out/cmp-$arm" || echo "reduce exit $?"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tmp-branch-weights-remove
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/rf/*.ll
+            ${{ runner.temp }}/rf/*.remarks.txt
+            ${{ runner.temp }}/rf/cmp-*/summary.txt
+            ${{ runner.temp }}/rf/cmp-*/raw.tsv
+
+  design-tree:
+    name: design tree lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+      - name: Tree lint and readiness against the merge base with main
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          perl .github/run-check.pl tbw-design-lint make design-lint DESIGN_REVIEW_BASE="$base"
+          perl .github/run-check.pl tbw-design-ready make design-ready DESIGN_REVIEW_BASE="$base"

@@ -174,6 +174,8 @@ fn census(
                 window_address_facts: WindowAddressFacts::Emit,
                 dispatch_layout,
                 owner_scopes: &owner_scopes,
+                // Planning emits no branch text and must not depend on hints.
+                call_branch_weights: false,
                 environments: &environments,
             },
         )?;

@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 Unlikely-edge branch weights are placement hints chosen by three general rules
+
+Nodes: compiler/branch-weights
+
+Summary: The compiler supplies LLVM unlikely-edge weights as code-placement hints, separate from correctness facts, by three general rules: failure arms and all-Err paths, paths in a split dispatch loop that return without reaching its header, and, only inside a split dispatch loop, a call-containing side against a side that reaches the restored header without a call. Weights are 1:2000, structural predictions take precedence, and calls are estimated after inlining with a provisional sixteen-instruction proxy. The Halo call-path probe attributed the hot arms' entry spills to placement under unknown frequency. The call-side rule first also counted a call-free return as evidence; the ordinary HashMap's removal then lost the inlining of its lookup and ran 2.6% to 3.4% slower, so the rule now takes only a loop continuation. preserve_most entries, callee-level cold, default profile-guided builds, a source frequency hint and the call-free-return evidence were rejected.
+
 ## 2026-10-23 Cooperative switches account invocations per executor and unwind for pending host work
 
 Nodes: compiler/waiting-contexts, compiler/waiting-contexts/suspension-accounting

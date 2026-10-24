@@ -141,7 +141,7 @@ pub(super) struct DispatchLoop {
     pub(super) invariants: Vec<IrValueId>,
 }
 
-fn successors(block: &IrBlock) -> Vec<usize> {
+pub(super) fn successors(block: &IrBlock) -> Vec<usize> {
     match block.terminator() {
         IrTerminator::Jump { target, .. } => vec![target.index()],
         IrTerminator::Match { targets, .. } => targets
@@ -2410,10 +2410,14 @@ impl FunctionEmitter<'_, '_> {
         target: IrBlockId,
         arguments: &[IrValueId],
     ) -> Result<bool, BackendFailure> {
-        let Some((index, bound, failure)) = self
-            .arm_cursor_join(target)
-            .map(|join| (join.guard.index, join.guard.bound, join.guard.failure))
-        else {
+        let Some((index, bound, success, failure)) = self.arm_cursor_join(target).map(|join| {
+            (
+                join.guard.index,
+                join.guard.bound,
+                join.guard.success,
+                join.guard.failure,
+            )
+        }) else {
             return Ok(false);
         };
         let parameters = self.block(target)?.parameters();
@@ -2430,13 +2434,31 @@ impl FunctionEmitter<'_, '_> {
             index.ordinal(),
             block.index()
         );
-        writeln!(
+        write!(
             self.output,
             "  %{predicate} = icmp ult i64 {}, {}\n  br i1 %{predicate}, label %{qualified}, label %{}",
             self.value_name(offset),
             self.value_name(bound),
             block_label(failure)
         )?;
+        // This is the original join's Bool match moved to an incoming edge.
+        // Transfer its prediction in LLVM br's true/false order, independently
+        // of the order the source listed the match arms.
+        if let Some(weights) = self.match_branch_weights(target) {
+            let IrTerminator::Match { targets, .. } = self.block(target)?.terminator() else {
+                return Err(BackendFailure::InvalidIr);
+            };
+            let weight = |block| {
+                targets
+                    .iter()
+                    .position(|edge| edge.block() == block)
+                    .and_then(|position| weights.get(position).copied())
+                    .ok_or(BackendFailure::InvalidIr)
+            };
+            let ordered = [weight(success)?, weight(failure)?];
+            self.emit_branch_weights(ordered)?;
+        }
+        writeln!(self.output)?;
         self.output.open_block(qualified);
         let cursor = self
             .dispatch
