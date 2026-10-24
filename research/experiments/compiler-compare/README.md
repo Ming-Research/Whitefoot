@@ -138,7 +138,12 @@ unresolved, a floor, and every output check. `interp.py self-test` also runs
 launch path: the base and the twin sleep 0.05 s and the candidate 0.2 s, and
 the rows must show the candidate's median ratio above 2 and the twin's between
 0.7 and 1.4, which finds an image launched for the wrong arm or a row written
-under the wrong label. The interpreters group has no slow control like
+under the wrong label. On Linux it also launches stand-in images of known
+resource use (one sleeps, one counts in a loop, one makes system calls), whose
+usage must show wall time without CPU time, user time above sys time and sys
+time above user time, and runs `perf` and `reduce` end to end with a stand-in
+`perf` script that writes the CSV of a CPU that is not hybrid, which finds a
+usage or window taken from the wrong place. The interpreters group has no slow control like
 `hash-map-compare`'s, which injects extra work inside the timed interval; its
 sensitivity is what the synthetic rows and the stand-in images show.
 `run.sh selftest` also checks the `groups` list.
