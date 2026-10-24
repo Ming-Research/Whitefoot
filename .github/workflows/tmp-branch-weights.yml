@@ -736,6 +736,94 @@ jobs:
               --cpu 1 --sizes 1000,10000 --min-rounds 10 --max-rounds 30
             python3 -B research/experiments/hash-map-compare/compare.py reduce --out "$out/cmp-$arm" || echo "reduce exit $?"
           done
+      - name: Machine code and instruction counts of the removal cell
+        # The removal at 10000 pairs is 18.5% slower under the restricted
+        # rule on the 14900K, with optimized IR that differs only in branch
+        # weights. Is the machine code the same instructions placed
+        # differently, or different instructions? Disassemble the bench
+        # images and count executed instructions under callgrind.
+        run: |
+          out="$RUNNER_TEMP/rf"
+          sudo apt-get install -y valgrind >/dev/null
+          bench=research/experiments/hash-map-compare/bench.wf
+          for arm in base s3 r1; do
+            "$out/$arm/compiler/target/gate/whitefootc" "$bench" -o "$out/img-$arm"
+          done
+          for arm in base s3 r1; do
+            echo "== $arm: callgrind, removal (5) at 10000 pairs, one warmup and two samples"
+            valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$out/cg.$arm.out" \
+              "$out/img-$arm" 5 10000 2 0 > "$out/cg.$arm.rows" 2> "$out/cg.$arm.err" || echo "valgrind exit $?"
+            grep -E "Events|Collected" "$out/cg.$arm.err" || true
+            cat "$out/cg.$arm.rows"
+            callgrind_annotate "$out/cg.$arm.out" 2>/dev/null | head -24 || true
+          done
+          cat > "$out/layout.py" <<'EOF'
+          import collections, re, subprocess, sys
+          out = sys.argv[1]
+          ARMS = ("base", "s3", "r1")
+
+          def run(*command):
+              return subprocess.run(command, capture_output=True, text=True, check=True).stdout
+
+          def symbols(image):
+              table = {}
+              for line in run("nm", "-S", "--defined-only", image).splitlines():
+                  parts = line.split()
+                  if len(parts) == 4 and parts[2] in ("t", "T"):
+                      table[parts[3]] = (int(parts[0], 16), int(parts[1], 16))
+              return table
+
+          def disassemble(image, start, size):
+              text = run("objdump", "-d", "-M", "intel", "--no-show-raw-insn",
+                         f"--start-address={start}", f"--stop-address={start + size}", image)
+              rows = []
+              for line in text.splitlines():
+                  m = re.match(r"^\s+([0-9a-f]+):\t(.*)$", line)
+                  if m:
+                      rows.append((int(m.group(1), 16), m.group(2).strip()))
+              return rows
+
+          def mask(text):
+              return re.sub(r"\b[0-9a-f]{4,}\b <[^>]*>", "T", text)
+
+          def wanted(name):
+              return name in ("wf_remove_sample", "wf_remove_one") or "hash_map_remove$instance" in name or "hash_map_find$instance" in name
+
+          found = {}
+          for arm in ARMS:
+              image = f"{out}/img-{arm}"
+              table = symbols(image)
+              for name, (start, size) in sorted(table.items()):
+                  if not wanted(name):
+                      continue
+                  rows = disassemble(image, start, size)
+                  short = name.split("$")[0].split(".")[-1]
+                  with open(f"{out}/asm-{arm}-{short}.txt", "w") as f:
+                      for addr, text in rows:
+                          f.write(f"{addr:x} (+{addr - start:#x}, %64={addr % 64:2d})  {text}\n")
+                  loops = []
+                  for addr, text in rows:
+                      m = re.match(r"^(j\w+)\s+([0-9a-f]+)\b", text)
+                      if m and int(m.group(2), 16) <= addr:
+                          head = int(m.group(2), 16)
+                          loops.append((head - start, head % 64, addr + 1 - head, m.group(1)))
+                  print(f"{arm}: {short}: address {start:#x} (%64={start % 64}) size {size} bytes, {len(rows)} instructions, {len(loops)} backward branches")
+                  for head, mod, body, kind in loops:
+                      print(f"    loop head +{head:#x} (%64={mod:2d}), up to the {kind} {body} bytes")
+                  found[(arm, short)] = collections.Counter(mask(t) for _, t in rows)
+          for arm in ("s3", "r1"):
+              for (a, short), counter in sorted(found.items()):
+                  if a != arm or ("base", short) not in found:
+                      continue
+                  delta = counter - found[("base", short)]
+                  gone = found[("base", short)] - counter
+                  print(f"== {arm} against base, {short}: {sum(delta.values())} instructions more, {sum(gone.values())} fewer (branch and call targets masked)")
+                  for text, n in sorted(delta.items(), key=lambda kv: -kv[1])[:40]:
+                      print(f"    + {n} {text}")
+                  for text, n in sorted(gone.items(), key=lambda kv: -kv[1])[:40]:
+                      print(f"    - {n} {text}")
+          EOF
+          python3 -I "$out/layout.py" "$out"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -746,6 +834,9 @@ jobs:
             ${{ runner.temp }}/rf/*.remarks.txt
             ${{ runner.temp }}/rf/cmp-*/summary.txt
             ${{ runner.temp }}/rf/cmp-*/raw.tsv
+            ${{ runner.temp }}/rf/asm-*.txt
+            ${{ runner.temp }}/rf/cg.*.rows
+            ${{ runner.temp }}/rf/cg.*.err
 
   design-tree:
     name: design tree lint
