@@ -65,43 +65,58 @@ def CStep.child : CStep → Nat
   | .elem k => k
   | .payload _ i => i
 
-/-- Whether a step selects below a value with this tag: a payload step only
-below the variant the enum holds. -/
-def CStep.fits : CStep → Nat → Bool
-  | .payload v _, tag => v == tag
-  | _, _ => true
+/-- What a node value is: a struct, a `Box`, an `Array`, or an enum. -/
+inductive VKind where
+  | strct
+  | box
+  | array
+  | enum
+  deriving DecidableEq, Repr
 
-/-- A runtime value: an integer, or a node whose children are a struct's
-fields, a `Box`'s content, an `Array`'s elements, or the payload fields of the
-variant an enum holds, its tag. -/
+/-- Whether a step selects below a node of this kind holding this tag: a field
+below a struct, the content below a `Box`, an element below an `Array`, and a
+payload field below an enum holding that variant. -/
+def CStep.fits : CStep → VKind → Nat → Bool
+  | .field _, k, _ => k == .strct
+  | .inner, k, _ => k == .box
+  | .elem _, k, _ => k == .array
+  | .payload v _, k, tag => k == .enum && v == tag
+
+/-- A runtime value: an integer, or a node of a kind whose children are a
+struct's fields, a `Box`'s content, an `Array`'s elements, or the payload
+fields of the variant an enum holds, its tag. -/
 inductive Val where
   | int (v : Int)
-  | node (tag : Nat) (cs : List Val)
+  | node (kind : VKind) (tag : Nat) (cs : List Val)
+
+/-- The child of a value that a step selects, if the step selects below it. -/
+def Val.child : Val → CStep → Option Val
+  | .int _, _ => none
+  | .node k t cs, s => if s.fits k t then nth cs s.child else none
+
+/-- The value with the child a step selects replaced. -/
+def Val.replace : Val → CStep → Val → Val
+  | .int x, _, _ => .int x
+  | .node k t cs, s, c => .node k t (upd cs s.child c)
 
 /-- The value at a path below a value, if the path exists. -/
 def Val.get : Val → List CStep → Option Val
   | v, [] => some v
-  | .int _, _ :: _ => none
-  | .node t cs, s :: p =>
-    if s.fits t then
-      (match nth cs s.child with
-       | some c => Val.get c p
-       | none => none)
-    else none
+  | v, s :: p =>
+    match Val.child v s with
+    | some c => Val.get c p
+    | none => none
 
 /-- The value with the value at a path below it replaced, if the path exists. -/
 def Val.set : Val → List CStep → Val → Option Val
   | _, [], w => some w
-  | .int _, _ :: _, _ => none
-  | .node t cs, s :: p, w =>
-    if s.fits t then
-      (match nth cs s.child with
-       | some c =>
-         match Val.set c p w with
-         | some c' => some (.node t (upd cs s.child c'))
-         | none => none
-       | none => none)
-    else none
+  | v, s :: p, w =>
+    match Val.child v s with
+    | some c =>
+      match Val.set c p w with
+      | some c' => some (Val.replace v s c')
+      | none => none
+    | none => none
 
 /-- A runtime place: a root and the steps below it. -/
 structure CPlace where
@@ -445,11 +460,11 @@ def offsets : List (SStep T) → List T
 
 /-! ## Reference members -/
 
-/-- A reference description's members for a reference variable. -/
-def lookupRefs (refs : List (String × List (Shape T))) (q : String) : List (Shape T) :=
-  match refs.find? (·.1 == q) with
-  | some (_, ms) => ms
-  | none => []
+/-- A reference description's members for a reference variable: those of its
+first entry. -/
+def lookupRefs : List (String × List (Shape T)) → String → List (Shape T)
+  | [], _ => []
+  | (q', ms) :: rest, q => if q' = q then ms else lookupRefs rest q
 
 /-- A reference variable's members [REF-1]. -/
 def St.members (s : St T) (q : String) : List (Shape T) :=
@@ -465,8 +480,7 @@ variable's members are the union of its incoming members. -/
 def unionRefs [DecidableEq T] (a b : List (String × List (Shape T))) :
     List (String × List (Shape T)) :=
   (a.map (·.1) ++ b.map (·.1)).eraseDups.map fun q =>
-    let ms := lookupRefs a q
-    (q, ms ++ (lookupRefs b q).filter fun m => !ms.contains m)
+    (q, lookupRefs a q ++ (lookupRefs b q).filter fun m => !(lookupRefs a q).contains m)
 
 /-- The resolved members of a spelled place [REF-1]: the place itself when it
 starts at a binding, and each member of the reference variable followed by its
@@ -483,10 +497,9 @@ def St.resolveRec (s : St T) (p : Place T) : List (Shape T × Option (String × 
   match p.base with
   | .var x => [(Shape.mk x p.steps, none)]
   | .deref q =>
-    let ms := s.members q
-    ms.map fun m =>
+    (s.members q).map fun m =>
       (Shape.mk m.root (m.steps ++ p.steps),
-        if 2 ≤ ms.length then some (q, m.steps.length) else none)
+        if 2 ≤ (s.members q).length then some (q, m.steps.length) else none)
 
 /-! ## Overlap and the debt judgments -/
 
@@ -512,14 +525,10 @@ separation counts as overlap. -/
 def Ctx.mayOverlap (X : Ctx T F) (f : F) (a b : Shape T) : Bool :=
   a.root == b.root && !X.sepSteps f a.steps b.steps
 
-/-- Whether two steps are one step, every captured offset equal
+/-- Whether two steps are one known step, every captured offset equal
 [TYPE-11.S2]. -/
-def provedStep [DecidableEq T] : SStep T → SStep T → Bool
-  | .field i, .field j => i == j
-  | .inner, .inner => true
-  | .elem (.cap s), .elem (.cap t) => decide (s = t)
-  | .payload v i, .payload v' j => v == v' && i == j
-  | _, _ => false
+def provedStep [DecidableEq T] (x y : SStep T) : Bool :=
+  x.known && decide (x = y)
 
 /-- Whether a list of steps begins with another, every captured offset
 equal. -/
@@ -622,28 +631,31 @@ def Ctx.restored (X : Ctx T F) (f : F) (d : Debt T) : Bool :=
   | some (p, I) => X.core.proves f p I
   | none => false
 
-/-- An anchor's steps with a handed place's captured offsets at its `[?]`
-positions, when the handed place has a captured offset at each of them, the
-anchor's other steps within the handed place's length are the handed place's,
-and the anchor has no `[?]` below it [TYPE-11.S5]. -/
-def fixAt [DecidableEq T] : List (SStep T) → List (SStep T) → Option (List (SStep T))
-  | xs, [] => if xs.all SStep.known then some xs else none
-  | [], _ :: _ => none
-  | x :: xs, h :: hs =>
-    match x, h, fixAt xs hs with
-    | .elem .unknown, .elem (.cap t), some rest => some (.elem (.cap t) :: rest)
-    | x, h, some rest => if x.known && decide (x = h) then some (x :: rest) else none
-    | _, _, none => none
+/-- Whether a step is a captured offset. -/
+def SStep.isCap : SStep T → Bool
+  | .elem (.cap _) => true
+  | _ => false
+
+/-- Whether an anchor's steps agree with a handed place's at each position of
+the handed place [TYPE-11.S5]: `[?]` where the handed place has a captured
+offset, and otherwise the handed place's own known step. -/
+def agrees [DecidableEq T] : List (SStep T) → List (SStep T) → Bool
+  | _, [] => true
+  | [], _ :: _ => false
+  | x :: xs, y :: ys =>
+    ((x == .elem .unknown && y.isCap) || (x.known && x == y)) && agrees xs ys
 
 /-- Whether a debt at an anchor with `[?]` is satisfied at a handed member
-[TYPE-11.S5]: the facts prove the instance at the anchor with the member's
-offsets at its `[?]` positions. -/
+[TYPE-11.S5]: the member has a captured offset at each `[?]` of the anchor
+within its length, the anchor's other steps there are the member's, the anchor
+has no `[?]` below the member, and the facts prove the instance at the anchor
+with the member's offsets at its `[?]` positions, which is the member's steps
+followed by the anchor's below them. -/
 def Ctx.satisfied [DecidableEq T] (X : Ctx T F) (f : F) (m : Shape T) : Debt T → Bool
   | .inv a I _ =>
-    a.root == m.root && !(a.steps.all SStep.known) &&
-      (match fixAt a.steps m.steps with
-       | some steps => X.core.proves f ⟨.var a.root, steps⟩ I
-       | none => false)
+    a.root == m.root && !(a.steps.all SStep.known) && agrees a.steps m.steps &&
+      (a.steps.drop m.steps.length).all SStep.known &&
+      X.core.proves f ⟨.var a.root, m.steps ++ a.steps.drop m.steps.length⟩ I
   | .cover _ => false
 
 /-- Each debt of a set offered for restoration [TYPE-11.S5]; the restored ones
@@ -659,12 +671,10 @@ at that member, in the state before the hand-off's own events; the restored
 ones leave the set. None when one is neither. -/
 def Ctx.handoff [DecidableEq T] (X : Ctx T F) (f : F) (s : St T) (p : Place T) :
     Option (St T) :=
-  let ms := s.resolve p
-  if s.debts.all (fun d => ms.all fun m =>
+  if s.debts.all (fun d => (s.resolve p).all fun m =>
       !X.mayAtOrBelow f m d || X.restored f d || X.satisfied f m d) then
-    some { s with
-      debts := s.debts.filter fun d =>
-        !(ms.any (fun m => X.mayAtOrBelow f m d) && X.restored f d) }
+    some ⟨s.debts.filter (fun d =>
+      !((s.resolve p).any (fun m => X.mayAtOrBelow f m d) && X.restored f d)), s.refs⟩
   else none
 
 /-- Whether the instance of an affine invariant at a place is established
@@ -743,17 +753,24 @@ def Ctx.killRow [DecidableEq T] (X : Ctx T F) (f : F) (kb : Kills T) (D : List (
     else if X.restored f d then none
     else some (X.widen f kb d))
 
-/-- Each reference variable's members after a kill batch: a member's offset
-the batch kills becomes `[?]`. The reference keeps the value the offset had
-when it was formed [REF-1], which the term no longer names. -/
+/-- A reference variable's member after a kill batch: an offset the batch kills
+becomes `[?]`. The reference keeps the value the offset had when it was formed
+[REF-1], which the term no longer names. -/
+def Ctx.widenShape (X : Ctx T F) (f : F) (kb : Kills T) (m : Shape T) : Shape T :=
+  ⟨m.root, X.widenSteps f kb false m.steps⟩
+
+/-- Each reference variable's members after a kill batch. -/
 def Ctx.killRefs (X : Ctx T F) (f : F) (kb : Kills T) (refs : List (String × List (Shape T))) :
     List (String × List (Shape T)) :=
-  refs.map fun e => (e.1, e.2.map fun m => Shape.mk m.root (X.widenSteps f kb false m.steps))
+  refs.map fun e => (e.1, e.2.map (X.widenShape f kb))
 
-/-- The sealing state after a statement's kill batch: the kill row, and the
-reference members. -/
-def Ctx.afterKills [DecidableEq T] (X : Ctx T F) (f : F) (kb : Kills T) (s : St T) : St T :=
-  ⟨X.killRow f kb s.debts, X.killRefs f kb s.refs⟩
+/-- The reference and projection a write-row debt at level k records
+[TYPE-11.S3]: r and the projection from `r^` to the anchor, when the write is
+spelled through r with its referent at level b and the anchor lies at or below
+that referent. -/
+def writeRec (w : Shape T) (k : Nat) : Option (String × Nat) → Option (Rec T)
+  | some (q, b) => if b ≤ k then some ⟨q, (w.steps.take k).drop b⟩ else none
+  | none => none
 
 /-- The write row [TYPE-11.S3] for one resolved member w of a write: (a, I) for
 each anchor a strictly above w at a level below hi and each affine invariant I
@@ -766,13 +783,18 @@ referent sealed. Each debt is settled by the statement's kill batch. -/
 def Ctx.writeDebts [DecidableEq T] (X : Ctx T F) (f : F) (kb : Kills T) (w : Shape T)
     (hi : Nat) (through : Option (String × Nat)) : List (Debt T) :=
   (List.range (min hi w.steps.length)).flatMap fun k =>
-    let a : Shape T := ⟨w.root, w.steps.take k⟩
-    let rc : Option (Rec T) :=
-      match through with
-      | some (q, b) => if b ≤ k then some ⟨q, (w.steps.take k).drop b⟩ else none
-      | none => none
-    (X.invsAt a).filterMap fun I =>
-      if X.reaches f w a I then some (X.settle f kb (.inv a I rc)) else none
+    (X.invsAt ⟨w.root, w.steps.take k⟩).filterMap fun I =>
+      if X.reaches f w ⟨w.root, w.steps.take k⟩ I then
+        some (X.settle f kb (.inv ⟨w.root, w.steps.take k⟩ I (writeRec w k through)))
+      else none
+
+/-- The write rows [TYPE-11.S3] of a write at a spelled place p followed by a
+projection: those of each resolved member followed by the projection, with
+the member's own level as the bound. An ordinary write has no projection. -/
+def Ctx.writeRows [DecidableEq T] (X : Ctx T F) (f : F) (kb : Kills T) (s : St T) (p : Place T)
+    (proj : List (SStep T)) : List (Debt T) :=
+  (s.resolveRec p).flatMap fun mt =>
+    X.writeDebts f kb ⟨mt.1.root, mt.1.steps ++ proj⟩ mt.1.steps.length mt.2
 
 /-- Whether a debt records the reference variable q and a projection p, and its
 anchor is the member m followed by p. -/
@@ -787,15 +809,13 @@ reference variable q that resolves to several members, at each member, each
 debt proved at or below it that records q and a projection p and whose anchor
 is q's referent there followed by p. -/
 def storeRemove [DecidableEq T] (s : St T) (w : Place T) (D : List (Debt T)) : List (Debt T) :=
-  let one := D.filter fun d => !((s.resolve w).any fun m => d.provedAtOrBelow m)
   match w.base with
   | .deref q =>
-    let ms := s.members q
-    if 2 ≤ ms.length then
-      D.filter fun d => !(ms.any fun m =>
+    if 2 ≤ (s.members q).length then
+      D.filter fun d => !((s.members q).any fun m =>
         d.provedAtOrBelow ⟨m.root, m.steps ++ w.steps⟩ && d.recordsAt q m)
-    else one
-  | .var _ => one
+    else D.filter fun d => !((s.resolve w).any fun m => d.provedAtOrBelow m)
+  | .var _ => D.filter fun d => !((s.resolve w).any fun m => d.provedAtOrBelow m)
 
 /-- The continuation row [TYPE-11.S3] of a value from place p into the
 complete own local binding y: it takes each debt that may be at or below a
@@ -803,10 +823,31 @@ member of p, rebased onto y; removes each debt proved at or below y; then adds
 the taken debts. -/
 def Ctx.continueRow [DecidableEq T] (X : Ctx T F) (f : F) (s : St T) (p : Place T) (y : String)
     (D : List (Debt T)) : List (Debt T) :=
-  let ys : Shape T := ⟨y, []⟩
-  let taken := (s.resolve p).flatMap fun m =>
-    (D.filter fun d => X.mayAtOrBelow f m d).map (Debt.rebase m ys)
-  addDebts (D.filter fun d => !d.provedAtOrBelow ys) taken
+  addDebts (D.filter fun d => !d.provedAtOrBelow ⟨y, []⟩)
+    ((s.resolve p).flatMap fun m =>
+      (D.filter fun d => X.mayAtOrBelow f m d).map (Debt.rebase m ⟨y, []⟩))
+
+/-- Whether a debt is proved at or below a target that resolves to one member. -/
+def provedOne [DecidableEq T] : List (Shape T) → Debt T → Bool
+  | [m], d => d.provedAtOrBelow m
+  | _, _ => false
+
+/-- The debts that stay where they are at a swap: all of them when the two
+targets may be one place, and otherwise each one not proved at or below a
+target that resolves to one member. -/
+def Ctx.swapStay [DecidableEq T] (X : Ctx T F) (f : F) (fs ss : List (Shape T)) (D : List (Debt T)) :
+    List (Debt T) :=
+  if fs.any (fun a => ss.any fun b => X.mayOverlap f a b && a.steps.length == b.steps.length) then D
+  else D.filter fun d => !(provedOne fs d || provedOne ss d)
+
+/-- The debts a swap exchanges from each member o of one target onto each
+member t of the other: each debt that may be at or below o, or is proved there,
+exchanged and settled by the swap's kill batch. -/
+def Ctx.across [DecidableEq T] (X : Ctx T F) (f : F) (kb : Kills T) (D : List (Debt T))
+    (src dst : List (Shape T)) : List (Debt T) :=
+  src.flatMap fun o =>
+    (D.filter fun d => X.mayAtOrBelow f o d || d.provedAtOrBelow o).flatMap fun d =>
+      dst.map fun t => X.settle f kb (d.exchange o t)
 
 /-- The swap row [TYPE-11.S3] for `swap(first: &f, second: &s)`, given each
 target's resolved members: a debt proved at or below a target that resolves
@@ -817,18 +858,7 @@ targets may be one place, each keeps its own debts as well, so each receives
 the union. -/
 def Ctx.swapRow [DecidableEq T] (X : Ctx T F) (f : F) (kb : Kills T) (fs ss : List (Shape T))
     (D : List (Debt T)) : List (Debt T) :=
-  let proved : List (Shape T) → Debt T → Bool := fun ms d =>
-    match ms with
-    | [m] => d.provedAtOrBelow m
-    | _ => false
-  let one := fs.any fun a => ss.any fun b =>
-    X.mayOverlap f a b && a.steps.length == b.steps.length
-  let stay := if one then D else D.filter fun d => !(proved fs d || proved ss d)
-  let across : List (Shape T) → List (Shape T) → List (Debt T) := fun src dst =>
-    src.flatMap fun o =>
-      (D.filter fun d => X.mayAtOrBelow f o d || d.provedAtOrBelow o).flatMap fun d =>
-        dst.map fun t => X.settle f kb (d.exchange o t)
-  addDebts stay (across fs ss ++ across ss fs)
+  addDebts (X.swapStay f fs ss D) (X.across f kb D fs ss ++ X.across f kb D ss fs)
 
 /-- The death row [TYPE-11.S3]: each debt whose anchor, or cover's place, is
 rooted at the binding leaves the set. -/
@@ -840,65 +870,59 @@ def deathRow (x : String) (D : List (Debt T)) : List (Debt T) :=
 
 /-! ## Events -/
 
+/-- The store rows of a commit at w, then the kill row, then the write row, in
+the state after the right-hand side's hand-off [TYPE-11.S3]. -/
+def Ctx.storeRows [DecidableEq T] (X : Ctx T F) (f : F) (kb : Kills T) (w : Place T) (s : St T) :
+    St T :=
+  ⟨addDebts (X.killRow f kb (storeRemove s w s.debts)) (X.writeRows f kb s w []),
+    X.killRefs f kb s.refs⟩
+
 /-- The sealing state after an event, or none when the rules reject it. Each
 row is judged in the state before the event's kill batch, with the members
-the event's places resolve to there. -/
+the event's places resolve to there; the kill row comes before the rows that
+add debts, whose debts the batch settles. -/
 def Ctx.step [DecidableEq T] (X : Ctx T F) (f : F) (s : St T) : Event T → Option (St T)
-  | .store w rhs kb => do
+  | .store w rhs kb =>
     -- the right-hand side's hand-off [TYPE-11.S4]
-    let s₁ ← (match rhs with
-      | .read p _ => X.handoff f s p
-      | .fresh => pure s)
-    -- the store rows, then the kill row, then the write row
-    let s₂ := X.afterKills f kb { s₁ with debts := storeRemove s₁ w s₁.debts }
-    let added := (s₁.resolveRec w).flatMap fun (m, through) =>
-      X.writeDebts f kb m m.steps.length through
-    pure { s₂ with debts := addDebts s₂.debts added }
+    (match rhs with
+     | .read p _ => X.handoff f s p
+     | .fresh => some s).map (X.storeRows f kb w)
   | .bind y rhs kb =>
     match rhs with
     | .fresh =>
       -- the store row at y; a root has no anchor strictly above it
-      some (X.afterKills f kb { s with debts := storeRemove s ⟨.var y, []⟩ s.debts })
+      some ⟨X.killRow f kb (storeRemove s ⟨.var y, []⟩ s.debts), X.killRefs f kb s.refs⟩
     | .read p _ =>
       -- the kill row, then the continuation row
-      let s₁ := X.afterKills f kb s
-      some { s₁ with debts := X.continueRow f s p y s₁.debts }
+      some ⟨X.continueRow f s p y (X.killRow f kb s.debts), X.killRefs f kb s.refs⟩
   | .swap fp sp kb =>
-    let fs := s.resolve fp
-    let ss := s.resolve sp
     -- [OP-11]: every pair of targets equal or disjoint, neither possibly a
     -- proper ancestor of the other
-    if fs.all (fun a => ss.all fun b =>
+    if (s.resolve fp).all (fun a => (s.resolve sp).all fun b =>
         !X.mayOverlap f a b || a.steps.length == b.steps.length) then
-      -- restoration at the swap, in the state before its events [TYPE-11.S5]
-      let D₁ := s.debts.filter fun d =>
-        !((fs ++ ss).any (fun m => X.mayAtOrBelow f m d) && X.restored f d)
-      -- the kill row, the write rows of the two targets, then the exchange
-      let s₂ := X.afterKills f kb { s with debts := D₁ }
-      let added := (s.resolveRec fp ++ s.resolveRec sp).flatMap fun (m, through) =>
-        X.writeDebts f kb m m.steps.length through
-      some { s₂ with debts := X.swapRow f kb fs ss (addDebts s₂.debts added) }
+      -- restoration at the swap, in the state before its events
+      -- [TYPE-11.S5]; the kill row, the write rows of the two targets, then
+      -- the exchange
+      some ⟨X.swapRow f kb (s.resolve fp) (s.resolve sp)
+          (addDebts (X.killRow f kb (s.debts.filter fun d =>
+              !((s.resolve fp ++ s.resolve sp).any (fun m => X.mayAtOrBelow f m d) &&
+                X.restored f d)))
+            (X.writeRows f kb s fp [] ++ X.writeRows f kb s sp [])),
+        X.killRefs f kb s.refs⟩
     else none
-  | .call handed ws kb => do
-    -- each argument's hand-off, in the state before the call's events
-    let s₁ ← handed.foldlM (fun t p => X.handoff f t p) s
-    -- the kill row, then each projected write's row for the anchors strictly
+  | .call handed ws kb =>
+    -- each argument's hand-off, in the state before the call's events; then
+    -- the kill row, and each projected write's row for the anchors strictly
     -- above its argument's referent
-    let s₂ := X.afterKills f kb s₁
-    let added := ws.flatMap fun (p, proj) =>
-      (s₁.resolveRec p).flatMap fun (m, through) =>
-        X.writeDebts f kb (Shape.mk m.root (m.steps ++ proj)) m.steps.length through
-    pure { s₂ with debts := addDebts s₂.debts added }
-  | .death x kb =>
-    let s₁ := X.afterKills f kb s
-    some { s₁ with debts := deathRow x s₁.debts }
+    (handed.foldlM (fun t p => X.handoff f t p) s).map fun s₁ =>
+      ⟨addDebts (X.killRow f kb s₁.debts) (ws.flatMap fun pw => X.writeRows f kb s₁ pw.1 pw.2),
+        X.killRefs f kb s₁.refs⟩
+  | .death x kb => some ⟨deathRow x (X.killRow f kb s.debts), X.killRefs f kb s.refs⟩
   | .bindRef q p kb =>
-    let ms := (s.resolve p).map fun m => Shape.mk m.root (X.widenSteps f kb false m.steps)
-    let s₁ := X.afterKills f kb s
-    some { s₁ with refs := setRef s₁.refs q ms }
+    some ⟨X.killRow f kb s.debts,
+      setRef (X.killRefs f kb s.refs) q ((s.resolve p).map (X.widenShape f kb))⟩
   | .kill kb =>
-    let s₁ := X.afterKills f kb s
-    some { s₁ with refs := s₁.refs.filter fun e => !kb.rebound.contains e.1 }
+    some ⟨X.killRow f kb s.debts, (X.killRefs f kb s.refs).filter fun e => !kb.rebound.contains e.1⟩
 
 /-- A state with an incoming edge's debts after their restoration in the
 edge's own state, and the edge's reference members, united in [TYPE-11.S6,
@@ -924,19 +948,18 @@ def Ctx.header [DecidableEq T] (X : Ctx T F) (entry : St T) (backs : List (F × 
 /-- A resolved step denotes a runtime step: the same field, content or
 payload field, and an element whose index is the offset's value, or any
 element for `[?]`. -/
-def StepDenotes (ev : Run → T → Option Int) (r : Run) : SStep T → CStep → Prop
-  | .field i, .field j => i = j
-  | .inner, .inner => True
-  | .elem .unknown, .elem _ => True
-  | .elem (.cap t), .elem k => ev r t = some (k : Int)
-  | .payload v i, .payload v' j => v = v' ∧ i = j
-  | _, _ => False
+inductive StepDenotes (ev : Run → T → Option Int) (r : Run) : SStep T → CStep → Prop
+  | field (i : Nat) : StepDenotes ev r (.field i) (.field i)
+  | inner : StepDenotes ev r .inner .inner
+  | unknown (k : Nat) : StepDenotes ev r (.elem .unknown) (.elem k)
+  | cap (t : T) (k : Nat) (h : ev r t = some (k : Int)) : StepDenotes ev r (.elem (.cap t)) (.elem k)
+  | payload (v i : Nat) : StepDenotes ev r (.payload v i) (.payload v i)
 
 /-- Each resolved step denotes the runtime step at its position. -/
-def StepsDenote (ev : Run → T → Option Int) (r : Run) : List (SStep T) → List CStep → Prop
-  | [], [] => True
-  | s :: ss, c :: cs => StepDenotes ev r s c ∧ StepsDenote ev r ss cs
-  | _, _ => False
+inductive StepsDenote (ev : Run → T → Option Int) (r : Run) : List (SStep T) → List CStep → Prop
+  | nil : StepsDenote ev r [] []
+  | cons {s : SStep T} {c : CStep} {ss : List (SStep T)} {cs : List CStep} :
+      StepDenotes ev r s c → StepsDenote ev r ss cs → StepsDenote ev r (s :: ss) (c :: cs)
 
 /-- A resolved place denotes a runtime place. -/
 def Shape.Denotes (a : Shape T) (ev : Run → T → Option Int) (r : Run) (π : CPlace) : Prop :=
@@ -983,18 +1006,18 @@ def Ctx.ValidVal (X : Ctx T F) (t : STy) (v : Val) : Prop :=
 def Ctx.Valid (X : Ctx T F) (r : Run) (π : CPlace) : Prop :=
   ∀ (t : STy) (v : Val), X.tyOf π = some t → r.get π = some v → X.ValidVal t v
 
+/-- A recorded reference and projection denote a runtime place: the one `r^`
+followed by p denotes. A debt that records none places no condition. -/
+def Rec.Denotes : Option (Rec T) → (Run → T → Option Int) → Run → CPlace → Prop
+  | some ⟨q, p⟩, ev, r, π => (Place.mk (.deref q) p).Denotes ev r π
+  | none, _, _, _ => True
+
 /-- A debt covers an invariant at a runtime place: it names the invariant at
-an anchor that denotes the place and, when it records a reference r and
-projection p, the place is the one `r^` followed by p denotes; or it is a
-cover above the place. -/
-def Debt.Covers (d : Debt T) (ev : Run → T → Option Int) (r : Run) (π : CPlace)
-    (I : InvId) : Prop :=
-  match d with
-  | .inv a J rc => J = I ∧ a.Denotes ev r π ∧
-      (match rc with
-       | some ⟨q, p⟩ => (Place.mk (.deref q) p).Denotes ev r π
-       | none => True)
-  | .cover R => ∃ ρ : CPlace, R.Denotes ev r ρ ∧ π.Below ρ
+an anchor that denotes the place, and its recorded reference and projection,
+if any, denote the place too; or it is a cover above the place. -/
+def Debt.Covers : Debt T → (Run → T → Option Int) → Run → CPlace → InvId → Prop
+  | .inv a J rc, ev, r, π, I => J = I ∧ a.Denotes ev r π ∧ Rec.Denotes rc ev r π
+  | .cover R, ev, r, _, _ => ∃ ρ : CPlace, R.Denotes ev r ρ ∧ π.Below ρ
 
 /-- The sealing invariant [TYPE-11.S2]: each affine invariant at each runtime
 place holds unless a debt covers it. -/
@@ -1040,8 +1063,11 @@ def Ctx.RhsValue (X : Ctx T F) (M : Sem X) (r : Run) (t : Option STy) : Rhs T �
 
 /-- What an event does in the run, with what the rest of the checker and the
 callee supply: the type rules, the kill judgment's soundness, and for a call
-its row's exactness [EFF-2] and its exits' hand-offs, which leave each written
-referent valid [TYPE-11.S4]. -/
+its row's exactness [EFF-2] — each place apart from every place it writes
+keeps its value, and each place below no written referent that exists after it
+existed before — its exits' hand-offs, which leave each written referent
+valid [TYPE-11.S4], and that it rebinds no reference variable of the caller
+[REF-1]. -/
 def Ctx.RunStep (X : Ctx T F) (M : Sem X) (f : F) : Event T → Run → Run → Prop
   | .store w rhs kb, r, r' =>
     ∃ (π : CPlace) (v : Val), w.Denotes M.eval r π ∧ X.RhsValue M r (X.tyOf π) rhs v ∧
@@ -1061,9 +1087,13 @@ def Ctx.RunStep (X : Ctx T F) (M : Sem X) (f : F) : Event T → Run → Run → 
         ∀ (πa : CPlace) (ext : List CStep), p.Denotes M.eval r πa →
           StepsDenote M.eval r proj ext → π.Apart ⟨πa.root, πa.path ++ ext⟩) →
       r'.get π = r.get π) ∧
+    (∀ π : CPlace,
+      (∀ (p : Place T) (proj : List (SStep T)), (p, proj) ∈ ws →
+        ∀ πa : CPlace, p.Denotes M.eval r πa → ¬ π.Below πa) →
+      (r'.get π).isSome → (r.get π).isSome) ∧
     (∀ (p : Place T) (proj : List (SStep T)), (p, proj) ∈ ws →
       ∀ πa : CPlace, p.Denotes M.eval r πa → X.Valid r' πa) ∧
-    M.Frame f kb r r'
+    r'.refs = r.refs ∧ M.Frame f kb r r'
   | .death x kb, r, r' =>
     r'.vals = override r.vals x none ∧ r'.refs = r.refs ∧ M.Frame f kb r r'
   | .bindRef q p kb, r, r' =>

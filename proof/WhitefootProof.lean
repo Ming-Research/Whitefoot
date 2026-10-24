@@ -15,3 +15,4 @@ import WhitefootProof.Points
 import WhitefootProof.Typing
 import WhitefootProof.Sealing
 import WhitefootProof.SealingCases
+import WhitefootProof.SealingSound
