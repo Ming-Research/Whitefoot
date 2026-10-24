@@ -1,13 +1,12 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn replace_last(window: &Paged<u64>, value: u64) -> result: unit writes(window.last), writes(window.next), writes(window.len) contract {
+fn drop_last(window: &Paged<u64>) -> result: unit writes(window.last), writes(window.len) contract {
   requires window^.len > 0_u64;
-  ensures window^.len == entry(window)^.len;
+  ensures window^.len + 1_u64 == entry(window)^.len;
 } {
-  doc "Takes and replaces the last value, publishing the unchanged window length.";
+  doc "Takes the last value and publishes the window one shorter.";
   let old = take_back(window: window);
-  place_back(window: window, value: value);
   return unit;
 }
 
@@ -15,11 +14,11 @@ fn probe(window: &Paged<u64>) -> result: u64 writes(window) contract {
   requires window^.len >= 1_u64;
   requires window^.pages.len > 0_u64;
 } {
-  doc "A helper's last-slot write is a proper-prefix write of an element reference below a page, so only the page itself keeps its formation length across the call.";
+  doc "The helper's postcondition refutes the page's formation length, so an element below the page is no longer known to be filled.";
   let page = &window^.pages[0_u64];
   if 0_u64 < page^.len {
     let first = &page^[0_u64];
-    replace_last(window: window, value: 7_u64);
+    drop_last(window: window);
     return first^;
   }
   return 0_u64;

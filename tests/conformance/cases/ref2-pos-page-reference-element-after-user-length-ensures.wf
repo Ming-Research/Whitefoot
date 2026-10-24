@@ -1,0 +1,30 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn replace_last(window: &Paged<u64>, value: u64) -> result: unit writes(window.last), writes(window.next), writes(window.len) contract {
+  requires window^.len > 0_u64;
+  ensures window^.len == entry(window)^.len;
+} {
+  doc "Takes and replaces the last value, publishing the unchanged window length.";
+  let old = take_back(window: window);
+  place_back(window: window, value: value);
+  return unit;
+}
+
+fn probe(window: &Paged<u64>) -> result: u64 writes(window) contract {
+  requires window^.len >= 1_u64;
+  requires window^.pages.len > 0_u64;
+} {
+  doc "An element reference below a page keeps the page's formation length across the helper's last-slot write: its slot lies inside the page's extent.";
+  let page = &window^.pages[0_u64];
+  if 0_u64 < page^.len {
+    let first = &page^[0_u64];
+    replace_last(window: window, value: 7_u64);
+    return first^;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
