@@ -128,11 +128,16 @@ jobs:
         run: |
           perl .github/run-check.pl before-fix-build cargo build --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --bin whitefootc
-      - name: The case is accepted before the fix
+      - name: The cases are accepted before the fix
         run: |
           set +e
-          compiler/target/gate/whitefootc --check \
-            tests/conformance/cases/ent5-neg-loop-head-sibling-element-measure.wf
-          status=$?
-          echo "whitefootc --check exit: $status"
-          test "$status" -eq 0
+          failed=0
+          for case in ent5-neg-loop-head-sibling-element-measure ent5-neg-loop-head-sibling-element-goal; do
+            compiler/target/gate/whitefootc --check "tests/conformance/cases/$case.wf"
+            status=$?
+            echo "$case: whitefootc --check exit: $status"
+            if [ "$status" -ne 0 ]; then
+              failed=1
+            fi
+          done
+          test "$failed" -eq 0
