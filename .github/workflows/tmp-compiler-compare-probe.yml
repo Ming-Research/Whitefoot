@@ -82,15 +82,19 @@ jobs:
             ( time taskset -c 1 "$RUNNER_TEMP/p/halo-image" < "$RUNNER_TEMP/p/fib.lua" ) 2>&1 | tail -6
           done
 
-      - name: Compile v2h (as generated, then with the reserved field renamed)
+      - name: Compile v2h and run CoreMark
         continue-on-error: true
         run: |
           wfc=$PWD/compiler/target/gate/whitefootc
           python3 -B research/experiments/match-dispatch/wasm/gen.py "$RUNNER_TEMP/p/v2h.wf"
-          grep -c '\bheld\b' "$RUNNER_TEMP/p/v2h.wf" || true
-          grep -n '\bheld\b' research/experiments/match-dispatch/wasm/*.py research/experiments/match-dispatch/wasm/*.wf | head -20
-          sed -E 's/\bheld\b/held_at/g' "$RUNNER_TEMP/p/v2h.wf" > "$RUNNER_TEMP/p/v2h-renamed.wf"
-          ( time "$wfc" "$RUNNER_TEMP/p/v2h-renamed.wf" --cache "$RUNNER_TEMP/p/v2h-cache" -o "$RUNNER_TEMP/p/v2h-image" ) 2>&1 | cut -c1-400 | head -80
+          ( time "$wfc" "$RUNNER_TEMP/p/v2h.wf" --cache "$RUNNER_TEMP/p/v2h-cache" -o "$RUNNER_TEMP/p/v2h-image" ) 2>&1 | cut -c1-400 | head -120
+          module="$RUNNER_TEMP/p/silverfir/benchmarks/wasi/coremark/coremark.wasm"
+          cp "$module" "$RUNNER_TEMP/p/coremark.wasm"
+          echo "== absolute path, 2000 iterations"
+          ( time taskset -c 1 "$RUNNER_TEMP/p/v2h-image" "$RUNNER_TEMP/p/coremark.wasm" 0x0 0x0 0x66 2000 ) 2>&1 | tail -30
+          echo "== relative path, 2000 iterations"
+          cd "$RUNNER_TEMP/p"
+          ( time taskset -c 1 "$RUNNER_TEMP/p/v2h-image" coremark.wasm 0x0 0x0 0x66 2000 ) 2>&1 | tail -30
 
       - name: Perf availability
         continue-on-error: true

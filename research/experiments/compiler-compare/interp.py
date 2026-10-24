@@ -4,6 +4,7 @@ beside this file): the Halo Lua interpreter running fib, and the wasm
 interpreter v2h running CoreMark.
 
     interp.py build --base-wfc WFC --candidate-wfc WFC --halo DIR --silverfir DIR --out DIR
+                    [--v2h-generator GEN]
     interp.py time --out DIR --cpu N [--min-rounds 10] [--max-rounds 30]
     interp.py perf --out DIR --cpu N [--rounds 5]
     interp.py reduce --out DIR [--floor FLOOR]
@@ -126,7 +127,7 @@ def build(args):
         raise Invalid(f"{module} does not exist")
     shutil.copyfile(module, os.path.join(inputs, "coremark.wasm"))
     v2h = os.path.join(inputs, "v2h.wf")
-    run([sys.executable, "-B", V2H_GENERATOR, v2h])
+    run([sys.executable, "-B", args.v2h_generator, v2h])
     for arm, wfc in (("base", args.base_wfc), ("candidate", args.candidate_wfc)):
         wfc = os.path.abspath(wfc)
         # --full-lto forbids --cache, so Halo is built uncached; v2h gets a
@@ -606,10 +607,12 @@ def self_test():
         if got != wanted:
             failures.append(f"{label}: got {got!r}, wanted {wanted!r}")
 
-    def expect_invalid(label, thunk):
+    def expect_invalid(label, thunk, reason):
         try:
             thunk()
-        except Invalid:
+        except Invalid as error:
+            if reason not in str(error):
+                failures.append(f"{label}: refused for {str(error)!r}, wanted a reason with {reason!r}")
             return
         failures.append(f"{label}: accepted")
 
@@ -632,30 +635,39 @@ def self_test():
     expect("below the floor", set(reduce_time(noisy, sink, {w: 0.01 for w in WORKLOADS}).values()), {"regression"})
     expect("above the floor", set(reduce_time(noisy, sink, {w: 0.0001 for w in WORKLOADS}).values()),
            {"not counted"})
-    expect_invalid("floor missing a workload", lambda: reduce_time(noisy, sink, {"fib": 0.01}))
+    expect_invalid("floor missing a workload", lambda: reduce_time(noisy, sink, {"fib": 0.01}),
+                   "gives no spread for coremark")
     expect("floor parsed", parse_floor("fib=0.012, coremark=0.003"), {"fib": 0.012, "coremark": 0.003})
-    for text in ("fib", "fibonacci=0.01", "fib=x", "fib=-1", "fib=0.01,fib=0.02", " , "):
-        expect_invalid(f"floor {text!r}", lambda text=text: parse_floor(text))
+    for text, reason in (("fib", "is not workload=spread"), ("fibonacci=0.01", "is not workload=spread"),
+                         ("fib=x", "is not workload=spread"), ("fib=-1", "negative or repeated"),
+                         ("fib=0.01,fib=0.02", "negative or repeated"), (" , ", "names no workload")):
+        expect_invalid(f"floor {text!r}", lambda text=text: parse_floor(text), reason)
 
     good = synthetic(6, 1.0)
     expect_invalid("missing arm", lambda: timed_cells([r for r in good if not (r["round"] == 2 and r["arm"] == "twin"
-                                                                               and r["workload"] == "fib")]))
-    expect_invalid("duplicate", lambda: timed_cells(good + good[:1]))
-    expect_invalid("no time", lambda: timed_cells([dict(r, ns=0) if r["round"] == 0 else r for r in good]))
-    expect_invalid("unknown arm", lambda: timed_cells([dict(r, arm="old") for r in good]))
+                                                                               and r["workload"] == "fib")]),
+                   "fib round 2: no row for twin")
+    expect_invalid("duplicate", lambda: timed_cells(good + good[:1]), "repeated")
+    expect_invalid("no time", lambda: timed_cells([dict(r, ns=0) if r["round"] == 0 else r for r in good]),
+                   "no time")
+    expect_invalid("unknown arm", lambda: timed_cells([dict(r, arm="old") for r in good]), "unknown arm")
     expect_invalid("a workload with other rounds", lambda: timed_cells(
-        [r for r in good if not (r["workload"] == "coremark" and r["round"] == 5)]))
+        [r for r in good if not (r["workload"] == "coremark" and r["round"] == 5)]),
+                   "different numbers of rounds")
 
     # The outputs: fib must print its value, CoreMark its CRCs.
     validate("fib", f"{FIB_VALUE}\n")
-    expect_invalid("fib value", lambda: validate("fib", "2178308\n"))
+    expect_invalid("fib value", lambda: validate("fib", "2178308\n"), "expected 2178309")
     coremark = "".join(f"[0]{k} : {v}\n" for k, v in CRC.items()) + f"[0]crcfinal : {CRC_FINAL}\n"
     validate("coremark", coremark)
-    expect_invalid("coremark wrong component", lambda: validate("coremark", coremark.replace("0xe714", "0xe715")))
-    expect_invalid("coremark wrong final", lambda: validate("coremark", coremark.replace(CRC_FINAL, "0x4984")))
-    expect_invalid("coremark missing field", lambda: validate("coremark", coremark.split("\n", 1)[1]))
+    expect_invalid("coremark wrong component", lambda: validate("coremark", coremark.replace("0xe714", "0xe715")),
+                   "wrong component CRCs")
+    expect_invalid("coremark wrong final", lambda: validate("coremark", coremark.replace(CRC_FINAL, "0x4984")),
+                   "final CRC")
+    expect_invalid("coremark missing field", lambda: validate("coremark", coremark.split("\n", 1)[1]),
+                   "missing, repeated or malformed")
     expect("fib source", fib_source("local N = 30\nprint(fib(N))\n"), f"local N = {FIB_N}\nprint(fib(N))\n")
-    expect_invalid("fib source without a size", lambda: fib_source("print(1)\n"))
+    expect_invalid("fib source without a size", lambda: fib_source("print(1)\n"), "expected one")
 
     # perf stat output: the CPU 2 sits in cpu_core, whose rows are summed and
     # whose unsupported atom rows are ignored; a counter that is missing or
@@ -664,13 +676,15 @@ def self_test():
     counts = {event: 1000.0 * (i + 1) for i, event in enumerate(PERF_EVENTS)}
     expect("perf parsed", read_perf(perf_text(counts), PERF_EVENTS, 2, pmus), (counts, []))
     expect_invalid("perf event missing", lambda: read_perf(
-        perf_text({k: v for k, v in counts.items() if k != "branches:u"}), PERF_EVENTS, 2, pmus))
+        perf_text({k: v for k, v in counts.items() if k != "branches:u"}), PERF_EVENTS, 2, pmus),
+                   "no active counter for branches:u")
     expect_invalid("perf not counted", lambda: read_perf(
         perf_text(counts).replace("1000.0,,cpu_core/instructions/u", "<not counted>,,cpu_core/instructions/u"),
-        PERF_EVENTS, 2, pmus))
-    expect_invalid("perf unknown pmu", lambda: read_perf(perf_text(counts), PERF_EVENTS, 2, lambda pmu: None))
+        PERF_EVENTS, 2, pmus), "was not counted")
+    expect_invalid("perf unknown pmu", lambda: read_perf(perf_text(counts), PERF_EVENTS, 2, lambda pmu: None),
+                   "cannot establish the CPUs")
     expect_invalid("perf unexpected event", lambda: read_perf(
-        perf_text(dict(counts, **{"page-faults:u": 1.0})), PERF_EVENTS, 2, pmus))
+        perf_text(dict(counts, **{"page-faults:u": 1.0})), PERF_EVENTS, 2, pmus), "unexpected perf event")
     stalled = perf_text(counts).replace(f"{counts['stalled-cycles-backend:u']},,cpu_core/stalled-cycles-backend/u",
                                         "<not supported>,,cpu_core/stalled-cycles-backend/u")
     values, unsupported = read_perf(stalled, PERF_EVENTS, 2, pmus)
@@ -678,13 +692,16 @@ def self_test():
     expect("perf unsupported dropped from values", "stalled-cycles-backend:u" in values, False)
     nocycles = perf_text(counts).replace(f"{counts['cycles:u']},,cpu_core/cycles/u",
                                          "<not supported>,,cpu_core/cycles/u")
-    expect_invalid("perf no cycles", lambda: read_perf(nocycles, PERF_EVENTS, 2, pmus))
+    expect_invalid("perf no cycles", lambda: read_perf(nocycles, PERF_EVENTS, 2, pmus), "cycles:u is unavailable")
     # With both PMUs active, the atom PMU's unsupported rows beside the core
     # PMU's counts are a partly unsupported event, not a zero.
     both = {"cpu_core": "0-31", "cpu_atom": "0-31"}.get
-    expect_invalid("perf partly unsupported", lambda: read_perf(perf_text(counts), PERF_EVENTS, 2, both))
-    # Pinned to an atom CPU the core rows are the ones ignored.
-    expect_invalid("perf pinned to atom", lambda: read_perf(perf_text(counts), PERF_EVENTS, 20, pmus))
+    expect_invalid("perf partly unsupported", lambda: read_perf(perf_text(counts), PERF_EVENTS, 2, both),
+                   "unsupported on only some")
+    # Pinned to an atom CPU the core rows are the ones ignored, and the
+    # atom rows count nothing.
+    expect_invalid("perf pinned to atom", lambda: read_perf(perf_text(counts), PERF_EVENTS, 20, pmus),
+                   "instructions:u is unavailable")
 
     def perf_data(candidate_scale, twin_scale):
         runs = []
@@ -698,11 +715,12 @@ def self_test():
     text_out = open(os.devnull, "w")
     expect("perf reduced", reduce_perf(perf_data(0.9, 1.0), text_out), 0)
     expect_invalid("perf missing run", lambda: reduce_perf(
-        dict(perf_data(0.9, 1.0), runs=perf_data(0.9, 1.0)["runs"][:-1]), text_out))
+        dict(perf_data(0.9, 1.0), runs=perf_data(0.9, 1.0)["runs"][:-1]), text_out),
+                   "no run of coremark twin in round 4")
     expect_invalid("perf repeated run", lambda: reduce_perf(
-        dict(perf_data(0.9, 1.0), runs=perf_data(0.9, 1.0)["runs"] * 2), text_out))
+        dict(perf_data(0.9, 1.0), runs=perf_data(0.9, 1.0)["runs"] * 2), text_out), "repeated")
     expect_invalid("perf counts differ from the events", lambda: reduce_perf(
-        dict(perf_data(0.9, 1.0), events=PERF_EVENTS[:3]), text_out))
+        dict(perf_data(0.9, 1.0), events=PERF_EVENTS[:3]), text_out), "counts")
     buffer = io.StringIO()
     reduce_perf(perf_data(0.9, 1.0), buffer)
     expect("perf ratio printed", "0.90000" in buffer.getvalue(), True)
@@ -722,6 +740,7 @@ def main(argv):
     p.add_argument("--candidate-wfc", required=True)
     p.add_argument("--halo", required=True)
     p.add_argument("--silverfir", required=True)
+    p.add_argument("--v2h-generator", default=V2H_GENERATOR)
     p.add_argument("--out", required=True)
     p = sub.add_parser("time")
     p.add_argument("--out", required=True)
