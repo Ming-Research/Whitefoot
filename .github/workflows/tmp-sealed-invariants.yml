@@ -503,6 +503,17 @@ jobs:
             return share;
           }
           EOF
+          probe p27-element-variable-offset-length-read <<'EOF'
+          fn probe(stacks: &Slots<Stack, 4>, i: u64) -> result: u64 reads(stacks) contract {
+            requires i < 3_u64;
+            requires stacks^.len == 4_u64;
+          } {
+            let j = i + 1_u64;
+            let n = stacks^[j].slots.len;
+            let share = 64_u64 / n;
+            return share;
+          }
+          EOF
           # The conformance cases of the read, and the cases that already
           # reject a debt a received value keeps, each checked as it stands
           # in the head's corpus.
