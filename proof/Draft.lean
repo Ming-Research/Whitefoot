@@ -2021,7 +2021,8 @@ theorem domain_l0 {ν : TermVal} {op : InfixOp} {t : IntTy} {va vb : Val} {x y :
     have ey := hbt tb kb htb
     cases o with
     | add =>
-      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [InfixDomain, ArithOp.defined, decide_eq_true_eq]
+      simp only [IntTy.Mem, ArithOp.math]
       simp only [hta, htb] at hcs
       split at hcs
       · rename_i hc
@@ -2052,7 +2053,8 @@ theorem domain_l0 {ν : TermVal} {op : InfixOp} {t : IntTy} {va vb : Val} {x y :
             omega
           · simp at hcs
     | sub =>
-      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [InfixDomain, ArithOp.defined, decide_eq_true_eq]
+      simp only [IntTy.Mem, ArithOp.math]
       simp only [hta, htb] at hcs
       split at hcs
       · rename_i hc
@@ -2083,7 +2085,8 @@ theorem domain_l0 {ν : TermVal} {op : InfixOp} {t : IntTy} {va vb : Val} {x y :
             omega
           · simp at hcs
     | mul =>
-      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [InfixDomain, ArithOp.defined, decide_eq_true_eq]
+      simp only [IntTy.Mem, ArithOp.math]
       simp only [hta, htb] at hcs
       split at hcs
       · rename_i hc
@@ -2188,7 +2191,8 @@ theorem domain_affine {G : Nat → Int} {op : InfixOp} {t : IntTy} {va vb : Val}
     have ey := hbi fb hfb
     cases o with
     | add =>
-      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [InfixDomain, ArithOp.defined, decide_eq_true_eq]
+      simp only [IntTy.Mem, ArithOp.math]
       simp only [hfa, hfb, Option.some.injEq] at hts
       subst hts
       have h1 : (Ineq.le (fa.add fb) (Form.const t.maxVal)).Holds G := hall _ List.mem_cons_self
@@ -2197,7 +2201,8 @@ theorem domain_affine {G : Nat → Int} {op : InfixOp} {t : IntTy} {va vb : Val}
       rw [Ineq.holds_le, Form.eval_add, Form.eval_const] at h1 h2
       omega
     | sub =>
-      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [InfixDomain, ArithOp.defined, decide_eq_true_eq]
+      simp only [IntTy.Mem, ArithOp.math]
       simp only [hfa, hfb, Option.some.injEq] at hts
       subst hts
       have h1 : (Ineq.le (fa.sub fb) (Form.const t.maxVal)).Holds G := hall _ List.mem_cons_self
@@ -2206,7 +2211,8 @@ theorem domain_affine {G : Nat → Int} {op : InfixOp} {t : IntTy} {va vb : Val}
       rw [Ineq.holds_le, Form.eval_sub, Form.eval_const] at h1 h2
       omega
     | mul =>
-      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [InfixDomain, ArithOp.defined, decide_eq_true_eq]
+      simp only [IntTy.Mem, ArithOp.math]
       simp only [hfa, hfb] at hts
       split at hts
       · rename_i hc
@@ -2344,7 +2350,8 @@ theorem domain_product {env : Env} {g : Gen} {st : State} {E E0 : Whitefoot.Env}
           have c10 := hall (a1 * b0) (by simp)
           have c11 := hall (a1 * b1) (by simp)
           simp only [Bool.and_eq_true, decide_eq_true_eq] at c00 c01 c10 c11
-          simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+          simp only [InfixDomain, ArithOp.defined, decide_eq_true_eq]
+          simp only [IntTy.Mem, ArithOp.math]
           exact ⟨corners_le_mul hA.1 hA.2 hB.1 hB.2 c00.2.1 c01.2.1 c10.2.1 c11.2.1,
             mul_le_corners hA.1 hA.2 hB.1 hB.2 c00.2.2 c01.2.2 c10.2.2 c11.2.2⟩
         · simp at hi
