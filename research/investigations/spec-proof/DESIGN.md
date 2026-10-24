@@ -713,6 +713,70 @@ took five engineer turns and four `proof.yml` runs to its review, one of which
 failed to compile: the toolchain's `Int.fdiv_eq_ediv` carries no sign
 hypothesis.
 
+### The typing lemmas
+
+`Typing.lean` proves that an accepted program never stops ill formed:
+`Program.never_illFormed` says that for a program the checker accepts and
+whose `main` entry holds (`EntryHolds`), no number of steps of the interpreter
+ends in `illFormed`. It rests on a well-typedness of interpreter states,
+`Config.WellTyped`, with three lemmas: the entry state is well typed, `step`
+keeps a well-typed state well typed, and a step from a well-typed state is not
+`illFormed`. The statements follow the interface `spec-proof-theorems` fixes
+for the theorems that use them.
+
+A state is well typed when the checker accepts the program and every frame
+agrees with a context the checker judged its continuation from. A value has a
+type when its shape matches and an integer lies in its type's range, so the
+range part is available to the fact proofs. A frame's bindings match the
+context's scope name by name and type by type. Its continuation is accepted
+statement list by statement list, under two flags the checker's flow carries:
+whether the next statement can be reached normally, which only needs to be an
+upper bound of the checker's flag, and for each enclosing loop whether its
+exit is reached normally, which is what a counted `break` needs. The frames
+below the running one take its result at their destination: the condition is
+stated for every value of the result type rather than through a stored
+context, since a `set` or `if` destination resumes in a state that does not
+exist until the value arrives.
+
+The module adds 1,642 lines of Lean, changes no model definition and adds no
+coverage mark. The build of the model and harness took 21.9 s to 23.4 s on
+its three green `proof.yml` runs, within the 25 s budget, with the module
+itself 6.0 s to 6.5 s; the first run on `main` after the merge took 26.0 s,
+and the budget became 30 s, 1.5 times the 16.9 s of the first run on the
+merged head rounded up to 5 s. The part took seven engineer turns and five
+`proof.yml` runs to its review. The first turn only studied the question and
+ended on an API error; the first draft was written without a local Lean and
+failed to compile in about 30 places, the second run in 9, and the two later
+runs changed only warnings and this record.
+
+### The generator lemmas
+
+`GenGrows.lean` proves that the checker's walk only grows its generator, the
+state that numbers atoms and records snapshots: the counter never falls, every
+atom registered on the way has a number between the old and the new counter
+and a nonempty interval, and the snapshot table only gains entries at its end,
+at points below the block walked and each recorded once. A function's final
+table therefore holds each point at most once. The delta atom a join
+registers needs its own proof that its interval is nonempty: its ends are the
+least lower and the greatest upper end of the inputs' constant intervals, and
+each input's interval stays nonempty through the fold that builds it. To state
+the lemmas over named functions, the loop head's state and a function's entry
+state move out of the walk into `Checker.loopHead` and `Checker.entryState`,
+with no change of behavior; the model's run over the conformance cases is
+unchanged.
+
+The part adds 740 lines of Lean in one module and no coverage mark. The
+module alone built in 14.8 s and 15.6 s, and the build of the model and
+harness took 26.9 s and 38.6 s on the first two `proof.yml` runs that
+compiled it, against 16.5 s and 16.9 s on the main line's runs of the same
+day. With the typing lemmas merged in from the main line it took 24.2 s,
+42.2 s, 29.5 s and 41.4 s on four runs of the same content, and the build's
+provisional budget rises from the main line's 30 s to 65 s, 1.5 times the
+longest of them rounded up to 5 s: a budget from the first, faster run failed
+on the slower host. Four earlier runs failed to compile: a tactic macro could
+not resolve lemma names defined after it, then, once it could, a lemma's
+proof referred to itself, and two proofs needed steps the tactic did not take.
+
 ## Cost
 
 Precedents with measured sizes:
