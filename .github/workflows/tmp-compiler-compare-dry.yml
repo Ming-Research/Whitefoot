@@ -5,7 +5,7 @@
 # compiler-compare/run.sh at a small scale: the null run (this commit as both
 # arms), a comparison with the compiler of PR 420 as the base (cross) and as the
 # candidate against its merge base with main (live, the 14900K verification's
-# shape); null is the zero control at the workflow's default inputs, the
+# shape); default is the zero control at the workflow's default inputs, the
 # acceptance run.
 name: tmp-compiler-compare-dry
 
@@ -202,7 +202,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [zero, cross, live, scale, null]
+        case: [zero, cross, live, scale, default]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
@@ -210,12 +210,12 @@ jobs:
       BASE: ${{ matrix.case == 'cross' && 'claude/cold-branch-weights' || github.sha }}
       CASE: ${{ matrix.case }}
       RUNNER_KIND: github
-      # The null case is the acceptance run: the compiler-compare.yml defaults.
-      SIZES: ${{ (matrix.case == 'scale' || matrix.case == 'null') && '1000,10000,1000000' || '1000,10000' }}
-      MIN_ROUNDS: ${{ matrix.case == 'null' && '10' || '6' }}
-      MAX_ROUNDS: ${{ matrix.case == 'null' && '40' || '8' }}
-      INTERP_MIN_ROUNDS: ${{ matrix.case == 'null' && '10' || '6' }}
-      INTERP_MAX_ROUNDS: ${{ matrix.case == 'null' && '30' || '8' }}
+      # The default case is the acceptance run (not named null: YAML reads that as no value): the compiler-compare.yml defaults.
+      SIZES: ${{ (matrix.case == 'scale' || matrix.case == 'default') && '1000,10000,1000000' || '1000,10000' }}
+      MIN_ROUNDS: ${{ matrix.case == 'default' && '10' || '6' }}
+      MAX_ROUNDS: ${{ matrix.case == 'default' && '40' || '8' }}
+      INTERP_MIN_ROUNDS: ${{ matrix.case == 'default' && '10' || '6' }}
+      INTERP_MAX_ROUNDS: ${{ matrix.case == 'default' && '30' || '8' }}
     steps:
       - uses: actions/checkout@v4
         with:
