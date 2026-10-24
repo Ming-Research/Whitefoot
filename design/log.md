@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-24 A compiler-owned integer update keeps its proved range as an exact operation
+
+Nodes: compiler/backend-facts
+
+Summary: A counted loop's hidden unit increment was emitted as a wrapping add although its true guard `binder < upper` already proves the result representable, so LLVM reported no computable trip count for `for t in 0..taps { acc = acc + x[i - t] * h[t]; }` and unrolled it twice; the single-thread `fir` kernel ran about 6% slower than the same loop in a `--par` chunk body, which carried the no-wrap fact (interleaved 10-round comparison on the hosted machine). The node gains a decision: a compiler-owned integer update whose dominating guards and checked storage immutability prove the result representable is lowered as an exact IR operation and emitted with the no-wrap flag, instead of modular IR that discards the proof. It covers the counted binder's increment, range splitting's width, midpoint and budget decrement, and the byte probe's advance; a source wrapping add and arithmetic ahead of those guards stay modular, since the source operation is defined at every operand.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
