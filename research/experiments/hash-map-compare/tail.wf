@@ -1,0 +1,348 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias HashMap = std::collections::hash_map::HashMap;
+alias HashMapConsume = std::collections::hash_map::HashMapConsume;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias HashMapPut = std::collections::hash_map::HashMapPut;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias OutputStream = std::io::OutputStream;
+alias exit_status = std::process::exit_status;
+alias hash_map_free = std::collections::hash_map::hash_map_free;
+alias hash_map_capacity = std::collections::hash_map::hash_map_capacity;
+alias hash_map_len = std::collections::hash_map::hash_map_len;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+
+const ceiling: u64 = 4194304_u64;
+
+const spread: u64 = 11400714819323198485_u64;
+
+const stride: u64 = 1000003_u64;
+
+const exact: u64 = 65536_u64;
+
+const shrink_words: u64 = 256_u64;
+
+struct TailKeys {
+  doc "The hash environment, which the hash does not read.";
+  unused: u64;
+}
+
+struct TailCount {
+  unused: u64;
+}
+
+fn bench_mix(key: u64) -> mixed: u64 pure {
+  doc "The splitmix64 finalizer, a bijection whose output bits are uniformly distributed for any distinct inputs.";
+  let a_shift = ishr.wrap(key, 30_u32);
+  let a = ixor(key, a_shift);
+  let b = a *wrap 13787848793156543929_u64;
+  let c_shift = ishr.wrap(b, 27_u32);
+  let c = ixor(b, c_shift);
+  let d = c *wrap 10723151780598845931_u64;
+  let e_shift = ishr.wrap(d, 31_u32);
+  return ixor(d, e_shift);
+}
+
+fn tail_hash(env: &TailKeys, key: &u64) -> result: u64 reads(key) {
+  let value = key^;
+  return bench_mix(key: value);
+}
+
+fn tail_equal(env: &TailKeys, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
+  return left^ == right^;
+}
+
+binding TailKey : HashMapKey<u64, TailKeys> {
+  hash = tail_hash;
+  equal = tail_equal;
+}
+
+fn tail_consume(env: &TailCount, key: u64, value: u64) -> result: unit pure {
+  return unit;
+}
+
+binding TailConsume : HashMapConsume<u64, u64, TailCount> {
+  consume = tail_consume;
+}
+
+fn key_of(index: u64) -> key: u64 pure {
+  doc "The key of index: one multiplication by an odd constant, so distinct indexes give distinct keys.";
+  return index *wrap spread;
+}
+
+fn order(step: u64, size: u64) -> index: u64 pure contract {
+  requires size > 0_u64;
+} {
+  doc "The index visited at step: a permutation of 0..size that is unrelated to insertion order, since stride is a prime above every admitted size.";
+  let scaled = step *wrap stride;
+  return scaled % size;
+}
+
+fn grown(size: u64, keys: &TailKeys) -> map: HashMap<u64, u64, ceiling> reads(keys) {
+  doc "A map of size pairs built from capacity zero by insertion, with the keys and hash of bench.wf.";
+  let map = hash_map_new::<u64, u64, ceiling>(capacity: 0_u64);
+  for (index in 0_u64..size) {
+    let key = key_of(index: index);
+    let outcome = hash_map_put::<TailKey, u64, ceiling>(map: &map, key: key, value: index, env: keys);
+  }
+  return move map;
+}
+
+fn release_map(map: HashMap<u64, u64, ceiling>) -> result: unit pure {
+  let count = TailCount(unused: 0_u64);
+  hash_map_free::<TailConsume, ceiling>(map: move map, env: &count);
+  return unit;
+}
+
+fn release_words(words: Box<Slots<u64>>) -> result: unit pure {
+  loop @drain {
+    if words.inner.len == 0_u64 {
+      break @drain;
+    }
+    let dropped = take_back(window: &words.inner);
+  }
+  free_empty(window: move words);
+  return unit;
+}
+
+fn quantile(counts: &Box<Slots<u64>>, need: u64) -> value: u64 reads(counts) {
+  doc "The least nanosecond count whose cumulative count reaches need, or exact when it lies among the removals of exact nanoseconds or more.";
+  let seen = 0_u64;
+  for (at in 0_u64..counts^.inner.len) {
+    let tally = counts^.inner[at];
+    set seen = seen +wrap tally;
+    if seen >= need {
+      return at;
+    }
+  }
+  return exact;
+}
+
+fn put_decimal(line: &Slots<u8, 256>, value: u64) -> result: unit writes(line) {
+  doc "Appends value in decimal and one tab to the line, as much as fits.";
+  let digits = slots_new::<u8, 20>();
+  let rest = value;
+  loop @split {
+    let low = rest % 10_u64;
+    let glyph = cvt.wrap::<u64, u8>(low);
+    let shown = glyph +wrap 48_u8;
+    if digits.len < digits.cap {
+      place_back(window: &digits, value: shown);
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @split;
+    }
+  }
+  loop @emit {
+    if digits.len == 0_u64 {
+      break @emit;
+    }
+    let shown = take_back(window: &digits);
+    if line^.len < line^.cap {
+      place_back(window: line, value: shown);
+    }
+  }
+  if line^.len < line^.cap {
+    place_back(window: line, value: 9_u8);
+  }
+  return unit;
+}
+
+fn write_line(factory: &HandleFactory, output: &OutputStream, line: &Slots<u8, 256>) -> result: u8 writes(line), writes(factory), writes(output) waits {
+  doc "Ends the line's last field with a newline instead of a tab and writes the whole line; 0 when written, 1 when the output refused it.";
+  if line^.len > 0_u64 {
+    let dropped = take_back(window: line);
+  }
+  place_back(window: line, value: 10_u8);
+  let length = line^.len;
+  let source = &line^[0_u64..length];
+  let sent = 0_u64;
+  let unbounded = None<Instant>();
+  let cancel = std::time::cancel_never();
+  loop @send {
+    if sent < length {
+    } else {
+      break @send;
+    }
+    match std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: unbounded, cancel: &cancel) {
+      Ok(value: endpoint) => {
+        set sent = endpoint;
+      }
+      Err(error: failure) => {
+        std::time::close_cancel_watch(watch: move cancel);
+        return 1_u8;
+      }
+    }
+  }
+  std::time::close_cancel_watch(watch: move cancel);
+  return 0_u8;
+}
+
+fn emit(factory: &HandleFactory, output: &OutputStream, fields: &Array<u64, 6>) -> result: u8 reads(fields), writes(factory), writes(output) waits {
+  doc "Prints one row of six tab-separated decimal fields.";
+  let line = slots_new::<u8, 256>();
+  for (at in 0_u64..6_u64) {
+    let field = fields^[at];
+    put_decimal(line: &line, value: field);
+  }
+  return write_line(factory: factory, output: output, line: &line);
+}
+
+fn emit_shrinks(factory: &HandleFactory, output: &OutputStream, shrinks: &Box<Slots<u64>>) -> result: u8 reads(shrinks), writes(factory), writes(output) waits {
+  doc "Prints one row of four tab-separated decimal fields per recorded capacity change; 1 when the output refused a row.";
+  let rows = shrinks^.inner.len / 4_u64;
+  for (row in 0_u64..rows) {
+    let first = row *wrap 4_u64;
+    let line = slots_new::<u8, 256>();
+    for (offset in 0_u64..4_u64) {
+      let at = first +wrap offset;
+      if at < shrinks^.inner.len {
+        let field = shrinks^.inner[at];
+        put_decimal(line: &line, value: field);
+      }
+    }
+    let status = write_line(factory: factory, output: output, line: &line);
+    if status != 0_u8 {
+      return status;
+    }
+  }
+  return 0_u8;
+}
+
+fn record(shrinks: &Box<Slots<u64>>, value: u64) -> result: unit writes(shrinks) {
+  doc "Appends one field of a capacity-change row when the preallocated record has room.";
+  if shrinks^.inner.len < shrinks^.inner.cap {
+    place_back(window: &shrinks^.inner, value: value);
+  }
+  return unit;
+}
+
+fn arg_number(args: &std::text::Args, position: u64) -> result: Option<u64> reads(args) {
+  doc "The invocation argument at position read as a decimal number of one to 18 digits, or None.";
+  match std::text::arg_get(args: args, position: position) {
+    Ok(value: host) => {
+      let digits = array_filled::<u8, 18>(value: 0_u8);
+      match std::text::host_copy_bytes(value: &host, destination: &digits[0_u64..18_u64], start: 0_u64, end: 18_u64) {
+        Ok(value: length) => {
+          if length == 0_u64 {
+            return None<u64>();
+          }
+          let total = 0_u64;
+          for @digit (at in 0_u64..length) {
+            let byte = digits[at];
+            if byte < 48_u8 {
+              return None<u64>();
+            }
+            if byte > 57_u8 {
+              return None<u64>();
+            }
+            let digit = byte - 48_u8;
+            let value = cvt::<u8, u64>(digit);
+            set total = total *wrap 10_u64;
+            set total = total +wrap value;
+          }
+          return Some<u64>(value: total);
+        }
+        Err(error: short) => {
+          return None<u64>();
+        }
+      }
+    }
+    Err(error: missing) => {
+      return None<u64>();
+    }
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "tail SIZE builds a map of SIZE pairs from capacity zero, untimed, then removes every pair in the order of bench.wf, timing each removal alone, and prints one row: size, removals that found their pair, and the 50th, 99th and 99.9th percentile and the maximum nanoseconds of one removal. Percentiles are exact below 65536 ns and print 65536 above. Then one row per removal that changed the map's capacity, read untimed after the removal: capacity before, capacity after, pairs left, and that removal's nanoseconds; up to 64 such rows. SIZE 1..1000000. Status 2 for invalid arguments, 1 when output failed.";
+  let Inputs(args: args, cwd: directory, stdout: output, handles: factory, clock: clock, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  let size = 0_u64;
+  match arg_number(args: &args, position: 1_u64) {
+    Some(value: read) => {
+      set size = read;
+    }
+    None() => {
+    }
+  }
+  if size == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if size > 1000000_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let keys = TailKeys(unused: 0_u64);
+  let counts = box_slots_new::<u64>(capacity: exact);
+  for (at in 0_u64..exact) {
+    if counts.inner.len < counts.inner.cap {
+      place_back(window: &counts.inner, value: 0_u64);
+    }
+  }
+  let shrinks = box_slots_new::<u64>(capacity: shrink_words);
+  let map = grown(size: size, keys: &keys);
+  let known = hash_map_capacity::<u64, u64, ceiling>(map: &map);
+  let found = 0_u64;
+  let longest = 0_u64;
+  for (step in 0_u64..size) {
+    let index = order(step: step, size: size);
+    let probe = key_of(index: index);
+    let started = now(clock: &clock);
+    let removed = hash_map_remove::<TailKey, u64, ceiling>(map: &map, key: &probe, env: &keys);
+    let ended = now(clock: &clock);
+    match removed {
+      Some(value: gone) => {
+        set found = found +wrap 1_u64;
+      }
+      None() => {
+      }
+    }
+    let elapsed = nanoseconds_from(earlier: started, later: ended);
+    if elapsed < counts.inner.len {
+      let tally = counts.inner[elapsed];
+      set counts.inner[elapsed] = tally +wrap 1_u64;
+    }
+    if elapsed > longest {
+      set longest = elapsed;
+    }
+    let after = hash_map_capacity::<u64, u64, ceiling>(map: &map);
+    if after != known {
+      let left = hash_map_len::<u64, u64, ceiling>(map: &map);
+      record(shrinks: &shrinks, value: known);
+      record(shrinks: &shrinks, value: after);
+      record(shrinks: &shrinks, value: left);
+      record(shrinks: &shrinks, value: elapsed);
+      set known = after;
+    }
+  }
+  let half = size / 2_u64;
+  let hundredth = size / 100_u64;
+  let thousandth = size / 1000_u64;
+  let median_need = size -sat half;
+  let p99_need = size -sat hundredth;
+  let p999_need = size -sat thousandth;
+  let fields = array_filled::<u64, 6>(value: 0_u64);
+  set fields[0_u64] = size;
+  set fields[1_u64] = found;
+  set fields[2_u64] = quantile(counts: &counts, need: median_need);
+  set fields[3_u64] = quantile(counts: &counts, need: p99_need);
+  set fields[4_u64] = quantile(counts: &counts, need: p999_need);
+  set fields[5_u64] = longest;
+  let status = emit(factory: &factory, output: &output, fields: &fields);
+  if status == 0_u8 {
+    set status = emit_shrinks(factory: &factory, output: &output, shrinks: &shrinks);
+  }
+  release_map(map: move map);
+  release_words(words: move counts);
+  release_words(words: move shrinks);
+  return exit_status(code: status);
+}

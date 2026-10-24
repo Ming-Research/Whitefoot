@@ -21,7 +21,7 @@ modules checked like any other; their interfaces are their documentation.
 | [`std::collections::vector`](collections/vector/module.wfm) | Reserve, growing append, indexed insertion/removal, and ordered consumption over `Box<Slots<T>>`. |
 | [`std::collections::deque`](collections/deque/module.wfm) | Reference-taking endpoints, logical visitation and drain over `Box<Ring<T>>`; explicit consuming rebase produces a new backing. No automatic endpoint growth or zero-copy two-span interface. |
 | [`std::collections::slab`](collections/slab/module.wfm) | Explicit reserve growth within a bounded backing, lazily materialized slots, generation handles, borrowed lookup/edit, reuse, expiry, exhaustion returning the offered owner, and explicit consumption. Handles are relative to the supplied slab. |
-| [`std::collections::hash_map`](collections/hash_map/module.wfm) | Generic owning keys and values with supplied hash/equality, growing insertion, removal, borrowed lookup/edit, rehash, resumable bounded scan, and explicit consumption. No stable bucket index or payload address. |
+| [`std::collections::hash_map`](collections/hash_map/module.wfm) | Generic owning keys and values with supplied hash/equality, growing insertion, shrinking removal, borrowed lookup/edit, rehash, resumable bounded scan, and explicit consumption. No stable bucket index or payload address. |
 | [`std::collections::priority_queue`](collections/priority_queue/module.wfm) | Growing boxed binary heap with supplied comparison, proved-nonempty borrowed peek and owning pop/replacement, bottom-up heapify, ordered drain, and explicit final consumption. Indexed operations additionally report resident positions and support arbitrary-position removal/replacement. |
 | [`std::collections::ordered_map`](collections/ordered_map/module.wfm) | Owning B-tree with supplied ordering, insertion/replacement, complete deletion and rebalancing, borrowed lookup/edit, ordered and bounded-range visitation, and explicit consumption. |
 
@@ -65,7 +65,8 @@ capacity is below its ceiling once its filled buckets and the buckets removals
 vacated number its capacity or more: at the same bucket count when fewer than
 half its capacity, rounded down, are filled, and otherwise from zero buckets to
 two or at twice its buckets; a map whose capacity has reached its ceiling is
-not rebuilt, so its vacated buckets remain until `hash_map_rehash`.
+not rebuilt, so its vacated buckets remain until `hash_map_rehash` or a
+shrinking removal.
 `hash_map_reserve` is a no-op at or below current capacity and refuses requests
 above the ceiling; `hash_map_rehash` rebuilds at the same bucket count.
 `hash_map_scan` resumes from a cursor and lends the pairs homed in at most
@@ -79,7 +80,14 @@ refusal is not an allocation-failure outcome.
 `hash_map_lookup` and `hash_map_each` borrow stored pairs for callbacks.
 `hash_map_edit` permits its callback to change the value while reading the key,
 and the callback can return ordinary owned data. `hash_map_remove` returns the
-removed owned pair. Supply a `HashMapConsume` binding to `hash_map_free` and
+removed owned pair. After a successful removal, a map with no pair left
+releases its backing; otherwise it shrinks when eight times its remaining
+length is below its bucket count, into the least power of two that is at least
+eight buckets and four buckets per pair. Removing an absent key changes
+nothing. A shrinking removal clears vacated buckets, allocates a second backing,
+moves every remaining pair and calls its hash callback, and releases the old
+backing before returning. This applies to a map reserved to its ceiling too,
+so later insertions may grow it again. Supply a `HashMapConsume` binding to `hash_map_free` and
 `hash_map_pair_consume` to consume every key and value, including `nodrop`
 owners. Hash/equality consistency determines ordinary map contents; ownership
 and bounded probing do not assume those laws. Neither iteration order nor

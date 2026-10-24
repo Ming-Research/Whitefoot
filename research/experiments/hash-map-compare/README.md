@@ -76,6 +76,19 @@ be of per-call work, not of cache hits against misses, and the 14900K run
 tests that premise; the 1,000,000-pair table is only about 40% over the
 cache, so partly cached there, and is read for H2 and H3 only.
 
+`tail.wf` is built by both compilers, its twin a byte copy of the base
+image like the bench's. It builds a map of N uniform pairs from capacity
+zero, untimed, then removes every pair in the bench's permutation order,
+timing each removal alone, and prints the 50th, 99th and 99.9th percentiles
+and the maximum of one removal's nanoseconds; percentiles are exact below
+65,536 ns, from a count per nanosecond. It then prints one row per removal
+that changed the map's capacity, read untimed after the removal: the
+capacity before and after, the pairs left and that removal's nanoseconds.
+It serves the hash-shrink
+investigation (board item wf-need-firn-hash-shrink), where a removal that
+leaves the map sparse migrates it in one step: every round drains 10,000
+and 1,000,000 pairs once per arm, 12 rounds.
+
 ## Criterion, set before measurement
 
 The decision rule is the engineering standard's paired rule, with the
@@ -120,6 +133,18 @@ measurement:
   microseconds; H3, the median call over a chain of m pairs takes at most 2m
   times the median per-pair time of the uniform calls at 1,000,000 pairs.
 
+- Removal tail: a size's per-round ratios are the candidate's and the
+  twin's 99th percentile over the base's, judged by the paired rule above
+  at the same resolution as a timed cell of that size. The maximum is
+  printed per arm, not judged: one removal of a shrinking map migrates it,
+  so the candidate's maximum is expected to be far above the base's. A drain
+  migrates once per halving of its buckets, far fewer than one removal in a
+  hundred, so the 99th percentile judges only the ordinary removal path.
+- Shrinking removals: each capacity change of a drain, with the median and
+  maximum nanoseconds of its removal over the rounds, per arm and size;
+  reported, not judged. Whether a one-shot migration holds a request too
+  long is judged by Firn's `SPOP` drain against its competitors, not here.
+
 Accepting a detected regression is not this instrument's decision.
 
 ## Controls
@@ -154,7 +179,7 @@ python3 -B compare.py reduce --out OUT [--floor "lookup-hit:1000=0.0123,..."]
 ```
 
 `OUT/manifest.txt` records the revisions, compiler and image digests, CPU,
-sizes and rounds; `raw.tsv`, `memory.tsv` and `hold.tsv` hold every row;
+sizes and rounds; `raw.tsv`, `memory.tsv`, `hold.tsv`, `tail.tsv` and `shrink.tsv` hold every row;
 `summary.txt` is the reduction. The workflow uploads them with the images.
 On the 14900K the default CPU is 2, one hyperthread of a P core other than
 CPU 0. A hosted runner shares its host, so its runs show the instrument

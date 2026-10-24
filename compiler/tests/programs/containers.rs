@@ -264,15 +264,24 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
     // rebuild. Map backings per case: scalars 4 (a map and its reserve and
     // rehash, a zero-ceiling map), wrapping 3 (rehash, reserve), cycle 2,
     // edit 1, owned 1 (two buckets already hold its ceiling of two), units 4
-    // (zero buckets, then two, then four, and a rehash), growth 10 (capacity
+    // (zero buckets, then two, then four, and a rehash), growth 12 (capacity
     // 6 doubled and rebuilt at the same count, 3 doubled, two of capacity 12,
     // one doubled and one rebuilt at the same count, and a map at its ceiling
-    // that is not rebuilt), resumable scan 17 (16 -> 512 buckets under 300
-    // insertions and one rehash; an empty map; 16 -> 1024 with insertions
-    // after part of a pass; a colliding map; a wrapping map). With ten
-    // payload/query child Boxes and the Box returned by the borrowed edit
-    // callback: 53.
-    execute_container_program("hash-map", &sources, 53, 0, false);
+    // that insertion does not rebuild, shrunk 64 -> 32 by a removal and grown
+    // back to 64), resumable scan 28 (16 -> 512 buckets under 300 insertions
+    // and one rehash, cleared 512 -> 256 -> ... -> 8 -> 0 by removals, then
+    // 0 -> 2 -> 4 -> 8 -> 16 under ten insertions; an empty map; 16 -> 1024
+    // with insertions after part of a pass; a colliding map; a wrapping map).
+    // With ten payload/query child Boxes and the Box returned by the borrowed
+    // edit callback: 66. The shrink cases add 88: a million pairs 31 (an empty
+    // header, 21 doublings 0 -> 2^21, nine halvings to 4096 buckets),
+    // oscillation 2 (64, one shrink to 32), empty reuse 5 (32 -> 16 -> 8 -> 0,
+    // then 0 -> 2), regrowth 7 (64 -> 32 -> 16 -> 8, then 16, 32, 64), the
+    // owned shrink 32 (an empty header, its reserve to 64, shrinks to 32, 16
+    // and 8, eighteen stored child Boxes and nine query Boxes) and the scan
+    // shrink 11 (16 -> 1024 under 400 insertions, 1024 -> 64 by removals):
+    // 154.
+    execute_container_program("hash-map", &sources, 154, 0, false);
 }
 
 #[test]
@@ -320,7 +329,11 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
     // direct indexed heapify adds one; the nodrop SlabEdit result adds one
     // backing and two payload Boxes. The source model independently checks
     // dictionary membership, sorted expiration and exact owner identities.
-    execute_container_program("indexed-membership", &sources, 129, 0, false);
+    // Shrinking adds three ID-map backings to each of the four traces: its
+    // map holds eight IDs in 16 buckets until the final expiry, whose removals
+    // shrink it to eight buckets at one ID and release it at none, and the
+    // last attachment grows it again from none to two: 129 + 4 * 3 = 141.
+    execute_container_program("indexed-membership", &sources, 141, 0, false);
 }
 
 #[test]

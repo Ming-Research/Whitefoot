@@ -185,5 +185,7 @@ jobs:
             ${{ runner.temp }}/out/raw.tsv
             ${{ runner.temp }}/out/memory.tsv
             ${{ runner.temp }}/out/hold.tsv
+            ${{ runner.temp }}/out/tail.tsv
+            ${{ runner.temp }}/out/shrink.tsv
             ${{ runner.temp }}/out/summary.txt
             ${{ runner.temp }}/out/images/

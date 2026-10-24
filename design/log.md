@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 A HashMap shrinks after a removal leaves it sparse
+
+Nodes: language/data-model/hash-map-storage
+
+Summary: Two decisions are added and two changed. A successful removal now releases every bucket when no pair remains, and otherwise rebuilds the map once eight times the remaining pairs is below its bucket count, into the least power of two that is at least eight buckets and four per remaining pair, because Firn's `SPOP` walked a mostly empty backing while holding the set ([hash-shrink study](../research/investigations/hash-shrink/DESIGN.md#hysteresis-and-amortized-work)); the shrink is the same one-shot occupancy-only migration as growth, reopened when Firn's `SPOP` popping a large set empty has a 99th percentile repeatably above the fastest competitor's, since the library's removal percentiles cannot see a migration. The ceiling decision no longer promises that a map created at its ceiling never allocates again: removal may shrink it and insertion then grows it, while an insertion at the ceiling still does not rebuild. The scan decision now names shrinking among the changes a pass survives, since a shrink halves the bucket count and so merges home intervals of the hash space the cursor already addresses. Refused: an explicit shrink operation alone, which leaves every caller that omits it sparse; keeping the never-allocates-again promise for maps reserved to their ceiling; incremental migration with two live backings, which needs dual-backing rules in every operation and a scan over both.
+
 ## 2026-10-23 Cooperative switches account invocations per executor and unwind for pending host work
 
 Nodes: compiler/waiting-contexts, compiler/waiting-contexts/suspension-accounting

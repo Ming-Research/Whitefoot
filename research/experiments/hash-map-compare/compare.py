@@ -7,10 +7,11 @@
     compare.py reduce --out DIR [--expect-regression] [--floor FLOOR]
     compare.py self-test
 
-`build` writes DIR/images: the base, twin and candidate images of bench.wf,
-the candidate image of hold.wf and the memory cell's observed images. The
-twin is a byte copy of the base image. `measure` runs the interleaved rounds
-and appends DIR/raw.tsv, DIR/memory.tsv and DIR/hold.tsv. `reduce` writes
+`build` writes DIR/images: the base, twin and candidate images of bench.wf
+and tail.wf, the candidate image of hold.wf and the memory cell's observed
+images. The twin is a byte copy of the base image. `measure` runs the
+interleaved rounds and appends DIR/raw.tsv, DIR/memory.tsv, DIR/hold.tsv,
+DIR/tail.tsv and DIR/shrink.tsv. `reduce` writes
 DIR/summary.txt and prints it; FLOOR is the recorded noise floor of each
 cell, as "operation:size=spread" items separated by commas, and a cell whose
 twin spread is above its floor is not counted. Exit status: 0 when the data are complete and
@@ -65,9 +66,25 @@ HOLD_LIMIT_NS = 20000
 CHAINS = [64, 1024, 65536]
 HOLD_CALLS = 20000
 CHAIN_CALLS = 2000
+# The removal tail, set before measurement with the hash-shrink investigation
+# (board item wf-need-firn-hash-shrink): every round drains a map of each size
+# once in each arm, in a rotating arm order, timing every removal alone; a
+# cell's per-round ratios are the candidate's and the twin's 99th percentile
+# over the base's, judged by the same paired rule as the timed cells. The
+# 99th percentile judges only the ordinary removal path: a drain migrates
+# once per halving of its buckets, a dozen to twenty removals, far fewer than
+# one in a hundred, so the 99th percentile excludes them (the 99.9th of the
+# 10,000-pair drain may not). The maximum and every removal that changed the map's
+# capacity (shrink.tsv) are reported, not judged; whether a migration holds a
+# request too long is judged by Firn's SPOP drain against its competitors.
+TAIL_SIZES = [10000, 1000000]
+TAIL_ROUNDS = 12
+TAIL_EXACT = 65536
 RAW_COLUMNS = ["round", "position", "arm", "operation", "size", "sample", "ops", "ns", "check", "extra"]
 MEMORY_COLUMNS = ["arm", "run", "size", "before", "retained", "length", "peak", "maxrss_kib"]
 HOLD_COLUMNS = ["mode", "size", "call", "ns", "pairs"]
+TAIL_COLUMNS = ["round", "position", "arm", "size", "found", "p50", "p99", "p999", "max"]
+SHRINK_COLUMNS = ["round", "position", "arm", "size", "before", "after", "left", "ns"]
 
 
 class Invalid(Exception):
@@ -409,6 +426,74 @@ def reduce_hold(rows, out):
     return readings
 
 
+def reduce_tail(rows, out):
+    """Per tail size: the paired verdict on the 99th percentile of one
+    removal, with each arm's median percentiles and maximum."""
+    cells = {}
+    for row in rows:
+        if row["found"] != row["size"]:
+            raise Invalid(f"tail {row['arm']} {row['size']} round {row['round']}: found {row['found']}")
+        rounds = cells.setdefault(row["size"], {})
+        arms = rounds.setdefault(row["round"], {})
+        if row["arm"] in arms:
+            raise Invalid(f"tail {row['size']} round {row['round']}: two {row['arm']} rows")
+        arms[row["arm"]] = row
+    for size in TAIL_SIZES:
+        if size not in cells:
+            raise Invalid(f"tail size {size}: no rows")
+    print("Removal tail: nanoseconds of one removal while draining a map from full to empty; "
+          f"percentiles of {TAIL_EXACT} or more print {TAIL_EXACT}.", file=out)
+    print(f"{'size':>8} {'arm':<10} {'p50':>7} {'p99':>7} {'p99.9':>7} {'max':>10} {'max of max':>10}", file=out)
+    verdicts = {}
+    for size in sorted(cells):
+        rounds = cells[size]
+        for number, arms in rounds.items():
+            if sorted(arms) != sorted(ARMS):
+                raise Invalid(f"tail {size} round {number}: arms {sorted(arms)}")
+        for arm in ARMS:
+            got = [rounds[r][arm] for r in sorted(rounds)]
+            medians = [statistics.median(g[k] for g in got) for k in ("p50", "p99", "p999", "max")]
+            print(f"{size:>8} {arm:<10} " + " ".join(f"{m:>7g}" for m in medians[:3])
+                  + f" {medians[3]:>10g} {max(g['max'] for g in got):>10}", file=out)
+        candidate = [rounds[r]["candidate"]["p99"] / rounds[r]["base"]["p99"] for r in sorted(rounds)]
+        twin = [rounds[r]["twin"]["p99"] / rounds[r]["base"]["p99"] for r in sorted(rounds)]
+        result = judge(candidate, twin, size)
+        verdicts[size] = result["verdict"]
+        print(f"{size:>8} p99 candidate/base {result['ratio']:.4f} {fmt_interval(result['ci'])}, "
+              f"twin/base {result['twin']:.4f} {fmt_interval(result['wi'])}: {result['verdict']}", file=out)
+    return verdicts
+
+
+def reduce_shrink(rows, out):
+    """Per tail size and arm: each capacity change of a drain, with the
+    median and maximum nanoseconds of its removal over the rounds. Reported,
+    not judged. Returns {(size, arm): number of changes per drain}."""
+    steps, drains = {}, {}
+    for row in rows:
+        if row["after"] >= row["before"]:
+            raise Invalid(f"shrink {row['arm']} {row['size']} round {row['round']}: "
+                          f"capacity {row['before']} to {row['after']}")
+        key = (row["size"], row["arm"])
+        steps.setdefault(key, {}).setdefault((row["before"], row["after"], row["left"]), []).append(row["ns"])
+        drains.setdefault(key, {}).setdefault(row["round"], 0)
+        drains[key][row["round"]] += 1
+    counts = {}
+    print("Shrinking removals: nanoseconds of each removal that changed the capacity "
+          "during a drain; reported, not judged.", file=out)
+    if not steps:
+        print("  none", file=out)
+    for key in sorted(steps):
+        per_drain = sorted(set(drains[key].values()))
+        if len(per_drain) != 1:
+            raise Invalid(f"shrink {key[1]} {key[0]}: {per_drain} changes per drain differ between rounds")
+        counts[key] = per_drain[0]
+        print(f"{key[0]:>8} {key[1]:<10} {per_drain[0]} per drain", file=out)
+        for (before, after, left), times in sorted(steps[key].items(), reverse=True):
+            print(f"{'':>8} {'':<10} capacity {before:>8} -> {after:>8}, {left:>8} left: "
+                  f"median {statistics.median(times):>10g} ns, max {max(times):>10}", file=out)
+    return counts
+
+
 def reduce_all(directory, expect_regression, out, floor=None):
     manifest = os.path.join(directory, "manifest.txt")
     slow = False
@@ -422,6 +507,10 @@ def reduce_all(directory, expect_regression, out, floor=None):
     reduce_memory(read_tsv(os.path.join(directory, "memory.tsv"), MEMORY_COLUMNS), out)
     print(file=out)
     reduce_hold(read_tsv(os.path.join(directory, "hold.tsv"), HOLD_COLUMNS), out)
+    print(file=out)
+    reduce_tail(read_tsv(os.path.join(directory, "tail.tsv"), TAIL_COLUMNS), out)
+    print(file=out)
+    reduce_shrink(read_tsv(os.path.join(directory, "shrink.tsv"), SHRINK_COLUMNS), out)
     print(file=out)
     counts = {v: sum(1 for x in timed.values() if x == v) for v in sorted(set(timed.values()))}
     print("Timed verdicts: " + ", ".join(f"{v} {n}" for v, n in counts.items()), file=out)
@@ -458,11 +547,14 @@ def build(args):
              f"BUILD={os.path.join(args.out, 'peak-' + arm)}"])
         shutil.copyfile(os.path.join(args.out, f"peak-{arm}", "bench-peak"), os.path.join(images, f"peak-{arm}"))
     shutil.copyfile(os.path.join(images, "bench-base"), os.path.join(images, "bench-twin"))
+    for arm, wfc in (("base", args.base_wfc), ("candidate", args.candidate_wfc)):
+        run([wfc, os.path.join(HERE, "tail.wf"), "-o", os.path.join(images, f"tail-{arm}")])
+    shutil.copyfile(os.path.join(images, "tail-base"), os.path.join(images, "tail-twin"))
     run([args.candidate_wfc, os.path.join(HERE, "hold.wf"), "-o", os.path.join(images, "hold-candidate")])
     for name in os.listdir(images):
         os.chmod(os.path.join(images, name), 0o755)
     digests = {name: sha256(os.path.join(images, name)) for name in sorted(os.listdir(images))}
-    if digests["bench-twin"] != digests["bench-base"]:
+    if digests["bench-twin"] != digests["bench-base"] or digests["tail-twin"] != digests["tail-base"]:
         raise Invalid("the twin image differs from the base image")
     if digests["bench-candidate"] == digests["bench-base"]:
         raise Invalid("the candidate image equals the base image: the library change does not reach the program")
@@ -551,6 +643,18 @@ def measure(args):
         if len(lines) != count or any(len(f) != 5 for f in lines):
             raise Invalid(f"hold mode {mode} size {size}: {len(lines)} rows for {count} calls")
         append(hold, HOLD_COLUMNS, [f for f in lines])
+    tail = os.path.join(args.out, "tail.tsv")
+    shrink = os.path.join(args.out, "shrink.tsv")
+    append(shrink, SHRINK_COLUMNS, [])
+    for round_ in range(TAIL_ROUNDS):
+        for index, size in enumerate(TAIL_SIZES):
+            for position, arm in enumerate(ORDERS[(round_ + index) % len(ORDERS)]):
+                lines = launch(os.path.join(images, f"tail-{arm}"), [size], args.cpu)
+                if (not lines or len(lines[0]) != 6 or int(lines[0][0]) != size
+                        or any(len(f) != 4 for f in lines[1:])):
+                    raise Invalid(f"tail {arm} {size}: output {lines}")
+                append(tail, TAIL_COLUMNS, [[round_, position, arm] + lines[0]])
+                append(shrink, SHRINK_COLUMNS, [[round_, position, arm, size] + f for f in lines[1:]])
     return 0
 
 
@@ -697,6 +801,40 @@ def self_test():
         [dict(r, pairs=1) if r["mode"] == 2 else r for r in hold_rows(1, 1, 1, lambda m: 1)], sink))
     expect_invalid("hold missing size", lambda: reduce_hold(
         [r for r in hold_rows(1, 1, 1, lambda m: 1) if r["size"] != HOLD_SMALL], sink))
+    def tail_rows(factor, noise=0.0, rounds=TAIL_ROUNDS):
+        """Tail rows whose candidate p99 is factor times the base's, each
+        round's base and twin differing by up to noise."""
+        rows = []
+        for r in range(rounds):
+            for size in TAIL_SIZES:
+                wobble = 1 + noise * ((r % 3) - 1)
+                for arm, p99 in (("base", 100), ("twin", 100 * wobble), ("candidate", 100 * factor * wobble)):
+                    rows.append({"round": r, "position": 0, "arm": arm, "size": size, "found": size,
+                                 "p50": 50, "p99": p99, "p999": 300, "max": 900})
+        return rows
+    expect("tail equal", set(reduce_tail(tail_rows(1.0), sink).values()), {"no change"})
+    expect("tail slower", set(reduce_tail(tail_rows(1.1, noise=0.005), sink).values()), {"regression"})
+    expect("tail faster", set(reduce_tail(tail_rows(0.9, noise=0.005), sink).values()), {"improvement"})
+    expect("tail too few rounds", set(reduce_tail(tail_rows(1.2, rounds=5), sink).values()), {"unresolved"})
+    expect_invalid("tail missing arm", lambda: reduce_tail(
+        [r for r in tail_rows(1.0) if not (r["round"] == 3 and r["arm"] == "twin")], sink))
+    expect_invalid("tail lost pair", lambda: reduce_tail(
+        [dict(r, found=r["size"] - 1) if r["round"] == 0 else r for r in tail_rows(1.0)], sink))
+    expect_invalid("tail missing size", lambda: reduce_tail(
+        [r for r in tail_rows(1.0) if r["size"] != TAIL_SIZES[0]], sink))
+    def shrink_rows(rounds=3):
+        """Two capacity changes per candidate drain of each size, none in the
+        base or twin."""
+        return [{"round": r, "position": 0, "arm": "candidate", "size": size,
+                 "before": before, "after": before // 2, "left": before // 8, "ns": 1000 + r}
+                for r in range(rounds) for size in TAIL_SIZES for before in (96, 48)]
+    expect("shrink counts", reduce_shrink(shrink_rows(), sink),
+           {(size, "candidate"): 2 for size in TAIL_SIZES})
+    expect("shrink none", reduce_shrink([], sink), {})
+    expect_invalid("shrink growth", lambda: reduce_shrink(
+        [dict(r, after=r["before"] * 2) if r["round"] == 0 else r for r in shrink_rows()], sink))
+    expect_invalid("shrink uneven drains", lambda: reduce_shrink(
+        [r for r in shrink_rows() if not (r["round"] == 1 and r["before"] == 48)], sink))
     sink.close()
     for failure in failures:
         print("FAIL " + failure)
