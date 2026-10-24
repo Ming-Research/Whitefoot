@@ -1,0 +1,347 @@
+alias ExitStatus = std::process::ExitStatus;
+alias OrderedCursor = std::collections::ordered_map::OrderedCursor;
+alias OrderedDirection = std::collections::ordered_map::OrderedDirection;
+alias OrderedKey = std::collections::ordered_map::OrderedKey;
+alias OrderedMap = std::collections::ordered_map::OrderedMap;
+alias OrderedPut = std::collections::ordered_map::OrderedPut;
+alias OrderedSeek = std::collections::ordered_map::OrderedSeek;
+alias exit_status = std::process::exit_status;
+alias ordered_map_edit = std::collections::ordered_map::ordered_map_edit;
+alias ordered_map_first = std::collections::ordered_map::ordered_map_first;
+alias ordered_map_free = std::collections::ordered_map::ordered_map_free;
+alias ordered_map_last = std::collections::ordered_map::ordered_map_last;
+alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
+alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
+alias ordered_map_read = std::collections::ordered_map::ordered_map_read;
+alias ordered_map_remove = std::collections::ordered_map::ordered_map_remove;
+alias ordered_map_seek = std::collections::ordered_map::ordered_map_seek;
+alias ordered_map_step = std::collections::ordered_map::ordered_map_step;
+
+struct CursorTestOrder {
+  mode: u64;
+}
+
+struct CursorTestPair {
+  key: u64;
+  value: u64;
+}
+
+struct CursorTestLog {
+  failures: u64;
+  consumed: u64;
+}
+
+struct CursorTestKeys {
+  doc "The oracle: a map holding exactly the keys spacing times i for i below count, each with value ten times its key plus one.";
+  spacing: u64;
+  count: u64;
+}
+
+fn cursor_test_compare(env: &CursorTestOrder, left: &u64, right: &u64) -> result: i32 reads(left), reads(right) {
+  if left^ < right^ {
+    return -1_i32;
+  }
+  if left^ > right^ {
+    return 1_i32;
+  }
+  return 0_i32;
+}
+
+binding CursorTestKey : OrderedKey<u64, CursorTestOrder> {
+  compare = cursor_test_compare;
+}
+
+fn cursor_test_narrow_place(env: &CursorTestOrder, left: &u64, right: &u32) -> result: i32 reads(left), reads(right) {
+  doc "Orders a stored u64 key against a u32 probe: a seek's probe need not be a key.";
+  let wide = cvt::<u32, u64>(right^);
+  if left^ < wide {
+    return -1_i32;
+  }
+  if left^ > wide {
+    return 1_i32;
+  }
+  return 0_i32;
+}
+
+fn cursor_test_take(env: &CursorTestLog, key: &u64, value: &u64) -> result: CursorTestPair reads(key), reads(value) {
+  return CursorTestPair(key: key^, value: value^);
+}
+
+fn cursor_test_bump(env: &CursorTestLog, key: &u64, value: &u64) -> result: unit writes(value) {
+  set value^ = value^ +wrap 1000_u64;
+  return unit;
+}
+
+fn cursor_test_consume(env: &CursorTestLog, key: u64, value: u64) -> result: unit writes(env) {
+  set env^.consumed = env^.consumed +wrap 1_u64;
+  return unit;
+}
+
+fn cursor_test_fail(log: &CursorTestLog) -> result: unit writes(log) {
+  set log^.failures = log^.failures +wrap 1_u64;
+  return unit;
+}
+
+fn cursor_test_value(key: u64) -> result: u64 pure {
+  let scaled = key *wrap 10_u64;
+  let value = scaled +wrap 1_u64;
+  return value;
+}
+
+fn cursor_test_expect(map: &OrderedMap<u64, u64, 512>, cursor: &OrderedCursor, present: Bool, key: u64, value: u64, log: &CursorTestLog) -> result: unit reads(map), reads(cursor), writes(log) {
+  doc "The cursor is on the pair key, value when present is set, and on no pair otherwise.";
+  let read = ordered_map_read::<u64, u64, CursorTestLog, CursorTestPair, fn cursor_test_take, 512>(map: map, cursor: cursor, env: log);
+  match read {
+    Ok(value: pair) => {
+      if present {
+        if pair.key != key {
+          cursor_test_fail(log: log);
+        }
+        if pair.value != value {
+          cursor_test_fail(log: log);
+        }
+      } else {
+        cursor_test_fail(log: log);
+      }
+    }
+    Err(error: absent) => {
+      if present {
+        cursor_test_fail(log: log);
+      }
+    }
+  }
+  return unit;
+}
+
+fn cursor_test_walk(map: &OrderedMap<u64, u64, 512>, start: OrderedCursor, keys: CursorTestKeys, present: Bool, index: u64, forward: Bool, moves: u64, log: &CursorTestLog) -> result: unit reads(map), writes(log) {
+  doc "From a cursor the oracle places at index, or on no pair when present is clear, takes up to moves steps in one direction, checking each pair against the oracle, that the step past either end returns False and leaves the cursor on no pair, and that a cursor on no pair stays there.";
+  let cursor = start;
+  let direction = OrderedDirection::OrderedBackward();
+  if forward {
+    set direction = OrderedDirection::OrderedForward();
+  }
+  let on = present;
+  let at = index;
+  for (move_count in 0_u64..moves) {
+    let key = keys.spacing *wrap at;
+    let value = cursor_test_value(key: key);
+    cursor_test_expect(map: map, cursor: &cursor, present: on, key: key, value: value, log: log);
+    let moved = ordered_map_step::<u64, u64, 512>(map: map, cursor: &cursor, direction: direction);
+    let expect_moved = False();
+    if on {
+      if forward {
+        let following = at +wrap 1_u64;
+        if following < keys.count {
+          set expect_moved = True();
+          set at = following;
+        }
+      } else if at > 0_u64 {
+        set expect_moved = True();
+        set at = at - 1_u64;
+      }
+    }
+    if moved {
+      if expect_moved {
+      } else {
+        cursor_test_fail(log: log);
+      }
+    } else if expect_moved {
+      cursor_test_fail(log: log);
+    }
+    set on = expect_moved;
+  }
+  return unit;
+}
+
+fn cursor_test_seeks(map: &OrderedMap<u64, u64, 512>, keys: CursorTestKeys, order: &CursorTestOrder, log: &CursorTestLog) -> result: unit reads(map), reads(order), writes(log) {
+  doc "For every probe from 0 to two spacings past the greatest key, each seek lands where the oracle's arithmetic says and walks five steps both ways from there.";
+  let spacing = keys.spacing;
+  if spacing == 0_u64 {
+    cursor_test_fail(log: log);
+    return unit;
+  }
+  let greatest = 0_u64;
+  if keys.count > 0_u64 {
+    let last_index = keys.count - 1_u64;
+    set greatest = spacing *wrap last_index;
+  }
+  let reach = spacing *wrap 2_u64;
+  let limit = greatest +wrap reach;
+  let forward = True();
+  let backward = False();
+  for (probe in 0_u64..limit) {
+    let rounded_up = probe +wrap spacing;
+    let rounded = rounded_up -wrap 1_u64;
+    let ceiling_index = rounded / spacing;
+    let floor_index = probe / spacing;
+    let above_index = floor_index +wrap 1_u64;
+    let last_index = keys.count -wrap 1_u64;
+    let nonempty = keys.count > 0_u64;
+    let at_least_on = ceiling_index < keys.count;
+    let at_least = OrderedSeek::OrderedAtLeast();
+    let cursor = ordered_map_seek::<u64, u64, CursorTestOrder, u64, fn cursor_test_compare, 512>(map: map, seek: at_least, probe: &probe, env: order);
+    cursor_test_walk(map: map, start: cursor, keys: keys, present: at_least_on, index: ceiling_index, forward: forward, moves: 5_u64, log: log);
+    cursor_test_walk(map: map, start: cursor, keys: keys, present: at_least_on, index: ceiling_index, forward: backward, moves: 5_u64, log: log);
+    let above_on = above_index < keys.count;
+    let above = OrderedSeek::OrderedAbove();
+    set cursor = ordered_map_seek::<u64, u64, CursorTestOrder, u64, fn cursor_test_compare, 512>(map: map, seek: above, probe: &probe, env: order);
+    cursor_test_walk(map: map, start: cursor, keys: keys, present: above_on, index: above_index, forward: forward, moves: 5_u64, log: log);
+    cursor_test_walk(map: map, start: cursor, keys: keys, present: above_on, index: above_index, forward: backward, moves: 5_u64, log: log);
+    let at_most_index = floor_index;
+    if at_most_index > last_index {
+      set at_most_index = last_index;
+    }
+    let at_most = OrderedSeek::OrderedAtMost();
+    set cursor = ordered_map_seek::<u64, u64, CursorTestOrder, u64, fn cursor_test_compare, 512>(map: map, seek: at_most, probe: &probe, env: order);
+    cursor_test_walk(map: map, start: cursor, keys: keys, present: nonempty, index: at_most_index, forward: forward, moves: 5_u64, log: log);
+    cursor_test_walk(map: map, start: cursor, keys: keys, present: nonempty, index: at_most_index, forward: backward, moves: 5_u64, log: log);
+    let below_on = False();
+    let below_index = 0_u64;
+    if probe > 0_u64 {
+      set below_on = nonempty;
+      let before = probe - 1_u64;
+      set below_index = before / spacing;
+      if below_index > last_index {
+        set below_index = last_index;
+      }
+    }
+    let below = OrderedSeek::OrderedBelow();
+    set cursor = ordered_map_seek::<u64, u64, CursorTestOrder, u64, fn cursor_test_compare, 512>(map: map, seek: below, probe: &probe, env: order);
+    cursor_test_walk(map: map, start: cursor, keys: keys, present: below_on, index: below_index, forward: forward, moves: 5_u64, log: log);
+    cursor_test_walk(map: map, start: cursor, keys: keys, present: below_on, index: below_index, forward: backward, moves: 5_u64, log: log);
+  }
+  return unit;
+}
+
+fn cursor_test_whole(map: &OrderedMap<u64, u64, 512>, keys: CursorTestKeys, log: &CursorTestLog) -> result: unit reads(map), writes(log) {
+  doc "Walks the whole map from its first pair forward and from its last pair backward, one step past the far end.";
+  let nonempty = keys.count > 0_u64;
+  let last_index = keys.count -wrap 1_u64;
+  let moves = keys.count +wrap 2_u64;
+  let first = ordered_map_first::<u64, u64, 512>(map: map);
+  let forward = True();
+  cursor_test_walk(map: map, start: first, keys: keys, present: nonempty, index: 0_u64, forward: forward, moves: moves, log: log);
+  let last = ordered_map_last::<u64, u64, 512>(map: map);
+  let backward = False();
+  cursor_test_walk(map: map, start: last, keys: keys, present: nonempty, index: last_index, forward: backward, moves: moves, log: log);
+  return unit;
+}
+
+fn cursor_test_fill(map: &OrderedMap<u64, u64, 512>, keys: CursorTestKeys, order: &CursorTestOrder, log: &CursorTestLog) -> result: unit reads(order), writes(map), writes(log) {
+  doc "Inserts the oracle's keys in ascending order.";
+  for (index in 0_u64..keys.count) {
+    let key = keys.spacing *wrap index;
+    let value = cursor_test_value(key: key);
+    let put = ordered_map_put::<CursorTestKey, u64, 512>(map: map, key: key, value: value, env: order);
+    match put {
+      OrderedInserted() => {
+      }
+      OrderedReturned(reason: reason, pair: pair) => {
+        cursor_test_fail(log: log);
+      }
+    }
+  }
+  return unit;
+}
+
+fn cursor_test_check(map: &OrderedMap<u64, u64, 512>, keys: CursorTestKeys, order: &CursorTestOrder, log: &CursorTestLog) -> result: unit reads(map), reads(order), writes(log) {
+  cursor_test_whole(map: map, keys: keys, log: log);
+  cursor_test_seeks(map: map, keys: keys, order: order, log: log);
+  return unit;
+}
+
+fn cursor_test_shapes(log: &CursorTestLog) -> result: unit writes(log) {
+  doc "An empty map, one pair, one full leaf, and 400 pairs inserted in ascending order, which need at least three levels since one node of 15 entries has at most 16 children and 400 pairs fill at least 27 leaves; then removing every odd multiple of three, which merges and contracts nodes, leaves the multiples of six.";
+  let order = CursorTestOrder(mode: 0_u64);
+  let empty_keys = CursorTestKeys(spacing: 3_u64, count: 0_u64);
+  let map = ordered_map_new::<u64, u64, 512>();
+  cursor_test_check(map: &map, keys: empty_keys, order: &order, log: log);
+  let one_keys = CursorTestKeys(spacing: 3_u64, count: 1_u64);
+  cursor_test_fill(map: &map, keys: one_keys, order: &order, log: log);
+  cursor_test_check(map: &map, keys: one_keys, order: &order, log: log);
+  ordered_map_free::<u64, u64, CursorTestLog, fn cursor_test_consume, 512>(map: move map, env: log);
+  let leaf_keys = CursorTestKeys(spacing: 3_u64, count: 15_u64);
+  let leaf = ordered_map_new::<u64, u64, 512>();
+  cursor_test_fill(map: &leaf, keys: leaf_keys, order: &order, log: log);
+  cursor_test_check(map: &leaf, keys: leaf_keys, order: &order, log: log);
+  ordered_map_free::<u64, u64, CursorTestLog, fn cursor_test_consume, 512>(map: move leaf, env: log);
+  let deep_keys = CursorTestKeys(spacing: 3_u64, count: 400_u64);
+  let deep = ordered_map_new::<u64, u64, 512>();
+  cursor_test_fill(map: &deep, keys: deep_keys, order: &order, log: log);
+  cursor_test_check(map: &deep, keys: deep_keys, order: &order, log: log);
+  for (index in 0_u64..200_u64) {
+    let doubled = index *wrap 2_u64;
+    let odd = doubled +wrap 1_u64;
+    let key = odd *wrap 3_u64;
+    let removed = ordered_map_remove::<CursorTestKey, u64, 512>(map: &deep, key: &key, env: &order);
+    match removed {
+      Some(value: pair) => {
+      }
+      None() => {
+        cursor_test_fail(log: log);
+      }
+    }
+  }
+  let even_keys = CursorTestKeys(spacing: 6_u64, count: 200_u64);
+  cursor_test_check(map: &deep, keys: even_keys, order: &order, log: log);
+  let narrow = 100_u32;
+  let at_least = OrderedSeek::OrderedAtLeast();
+  let probed = ordered_map_seek::<u64, u64, CursorTestOrder, u32, fn cursor_test_narrow_place, 512>(map: &deep, seek: at_least, probe: &narrow, env: &order);
+  let expected = cursor_test_value(key: 102_u64);
+  let present = True();
+  cursor_test_expect(map: &deep, cursor: &probed, present: present, key: 102_u64, value: expected, log: log);
+  ordered_map_free::<u64, u64, CursorTestLog, fn cursor_test_consume, 512>(map: move deep, env: log);
+  return unit;
+}
+
+fn cursor_test_staleness(log: &CursorTestLog) -> result: unit writes(log) {
+  doc "Editing a value and replacing a present key keep a cursor usable; an insertion of a new key and a removal each make every earlier cursor read nothing and refuse to step, while a seek after the change works.";
+  let order = CursorTestOrder(mode: 0_u64);
+  let keys = CursorTestKeys(spacing: 3_u64, count: 40_u64);
+  let map = ordered_map_new::<u64, u64, 512>();
+  cursor_test_fill(map: &map, keys: keys, order: &order, log: log);
+  let probe = 30_u64;
+  let at_least = OrderedSeek::OrderedAtLeast();
+  let cursor = ordered_map_seek::<u64, u64, CursorTestOrder, u64, fn cursor_test_compare, 512>(map: &map, seek: at_least, probe: &probe, env: &order);
+  let present = True();
+  let absent = False();
+  let edited = ordered_map_edit::<CursorTestKey, u64, CursorTestLog, unit, fn cursor_test_bump, 512>(map: &map, key: &probe, key_env: &order, edit_env: log);
+  let bumped = cursor_test_value(key: 30_u64);
+  set bumped = bumped +wrap 1000_u64;
+  cursor_test_expect(map: &map, cursor: &cursor, present: present, key: 30_u64, value: bumped, log: log);
+  let replaced = ordered_map_put::<CursorTestKey, u64, 512>(map: &map, key: 30_u64, value: 7_u64, env: &order);
+  cursor_test_expect(map: &map, cursor: &cursor, present: present, key: 30_u64, value: 7_u64, log: log);
+  let saved = cursor;
+  let inserted = ordered_map_put::<CursorTestKey, u64, 512>(map: &map, key: 31_u64, value: 8_u64, env: &order);
+  cursor_test_expect(map: &map, cursor: &cursor, present: absent, key: 30_u64, value: 7_u64, log: log);
+  let forward = OrderedDirection::OrderedForward();
+  let moved = ordered_map_step::<u64, u64, 512>(map: &map, cursor: &cursor, direction: forward);
+  if moved {
+    cursor_test_fail(log: log);
+  }
+  set cursor = ordered_map_seek::<u64, u64, CursorTestOrder, u64, fn cursor_test_compare, 512>(map: &map, seek: at_least, probe: &probe, env: &order);
+  set moved = ordered_map_step::<u64, u64, 512>(map: &map, cursor: &cursor, direction: forward);
+  if moved {
+  } else {
+    cursor_test_fail(log: log);
+  }
+  cursor_test_expect(map: &map, cursor: &cursor, present: present, key: 31_u64, value: 8_u64, log: log);
+  let removed = ordered_map_remove::<CursorTestKey, u64, 512>(map: &map, key: &probe, env: &order);
+  cursor_test_expect(map: &map, cursor: &cursor, present: absent, key: 31_u64, value: 8_u64, log: log);
+  cursor_test_expect(map: &map, cursor: &saved, present: absent, key: 30_u64, value: 7_u64, log: log);
+  ordered_map_free::<u64, u64, CursorTestLog, fn cursor_test_consume, 512>(map: move map, env: log);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let log = CursorTestLog(failures: 0_u64, consumed: 0_u64);
+  cursor_test_shapes(log: &log);
+  cursor_test_staleness(log: &log);
+  if log.failures != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if log.consumed != 256_u64 {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

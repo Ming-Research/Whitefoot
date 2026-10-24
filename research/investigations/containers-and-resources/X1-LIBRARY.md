@@ -1272,6 +1272,48 @@ needs a new discriminator for the remaining per-put storage, owner movement,
 occupancy and frame costs; [the maintained TODO](../../../docs/todo.md) retains
 that attribution task alongside node construction/cleanup and occupancy work.
 
+### Ordered-map cursor
+
+**Question.** The map lent pairs only through `ordered_map_each` and the
+half-open forward `ordered_map_range`, whose callbacks return unit, so a writer
+could not start at the last key at or below a probe, walk backward, or stop
+early. Firn's sorted-set code in `apps/firn` walked the published node fields
+instead, which made the fanout-16 node shape, a measured baseline rather than
+a default representation, part of every such client.
+
+**Constraint.** A reference may not be stored in an aggregate or returned
+([REF-3](../../../spec/kernel-spec.md)), and there are no function values
+([FN-5](../../../spec/kernel-spec.md)), so no value can hold the map. A
+position must be owned data that the caller hands back with the map.
+
+**Alternatives compared, by reading the interfaces and Firn's walks.**
+
+| Interface | Loop | Per step | Writer cost |
+| --- | --- | --- | --- |
+| Owned cursor: index path plus the map's version | caller's | one descent along the path, no key comparison | none beyond the lend callbacks |
+| Callback walk that stops on a returned flag | library's | amortized constant | the callback has one environment, so a step that writes two places copies the pair out first; two maps cannot be walked together |
+| Successor query by key | caller's | one comparing descent | the caller copies a key every step to remember its place |
+
+Firn's range walk decides from its walk state and then writes the client
+reply, two places per pair; under the callback walk every taken member would
+be copied before replying. The cursor lets the same loop lend the pair twice,
+once with each environment. A walk keeps the map borrowed only for each call,
+so a writer may change the map between steps; a cursor made before an
+insertion or a removal then reads nothing and does not step, because those
+can move pairs between nodes, while an edit or a replacement of a present key
+moves nothing and keeps cursors usable. The writer re-seeks by key.
+
+**Path bound.** The path is 32 levels. Every node below the root keeps at
+least seven entries, so eight children, and the root at least two children
+once it has a child, so a tree of depth 33 holds at least 2 times 8^31 times 7
+pairs, more than 10^28; a cursor that would pass the 32nd level rests on no
+pair instead. This is a deduction from the balancing in
+`lib/std/collections/ordered_map/ordered-map.wf`, not a measurement.
+
+**Not measured.** The cost of one descent per step against the callback walk
+was not timed. A sorted-set range command measured materially slower than its
+earlier node walk would reopen the comparison.
+
 ## Ceiling challenges connected to real source contracts
 
 | Challenge and external pressure | Ordinary x1 candidate | What remains to establish |
