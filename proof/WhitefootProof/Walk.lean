@@ -155,7 +155,7 @@ def branchState (env : Env) (st : State) (o : Origins) (s : Bool) : State :=
 -- spec ENT-3 a03af111b84dab86
 -- spec ENT-3.S5 72b4d00bbf489a99
 -- spec ENT-3.S7 7d57baede0c7cae7
--- spec ENT-6 55c0b60bde3ccdce
+-- spec ENT-6 1b3c7bab80aa9d7e
 /-- Bind a `let`'s value [ENT-3.S5, ENT-3.S7, ENT-6]: the copy or literal
 equality, the operation row's facts, the image, the captured division, a
 matched product's bound and the origin link. -/
@@ -201,7 +201,7 @@ where
 
 -- spec FN-9 dc8c78b15eb05053
 -- spec FN-9 c41a9690f56f2e8f
--- spec ENT-2 0f07cfa9989a6ee8
+-- spec ENT-2 6cf8c7e39161964d
 -- spec ENT-3.S5 96db5232821f2958
 -- spec ENT-3.S5 031da783167c8ba8
 -- spec ENT-3.S5 34b6becc68fcb93b
@@ -234,6 +234,32 @@ def setVar (env : Env) (st : State) (x : Var) (r : Rhs) : M State := do
   | _, some (f, args) => publish env st f args none none (·.write x.id)
   | _, none => return st.write x.id
 
+-- spec FN-9 322881af1ae53903
+-- spec ENT-6 1b3c7bab80aa9d7e
+-- spec ENT-3.S7 af0f36d4c6e5d834
+/-- A returned computed integer expression, an integer operation row
+[ENT-3.S7], gives the return's returned value [FN-9, ENT-2]: a fresh
+compiler-owned term that receives what a `let` of the same expression gives
+its binding, after the expression's own obligations, in the state where it is
+evaluated: the row's facts, the image, the captured division and a matched
+product's bound. The term is an immutable datum with that image [ENT-6]. A
+place, subscript, literal or constant is no computed expression, and a call's
+result denotes no term. -/
+def returnedValue (env : Env) (st : State) (e : Expr) (r : Rhs) : M (State × Val) := do
+  let computed := match e with
+    | .infix .. | .op .. => true
+    | _ => false
+  match r.val.ty, computed with
+  | .int t, true => do
+    let v := Term.commit (← freshId) t
+    let img ← match r.val.image with
+      | some f => pure f
+      | none => typeAtom t
+    let st := bindLet.capture (st.add env (r.facts v)) img r
+    return ({ st with data := st.data ++ [(v, img)] },
+      { r.val with term := some (v, 0), image := some img })
+  | _, _ => return (st, r.val)
+
 -- spec FN-1 e9ced632e8466aa3
 -- spec FN-9 474d75677adbf145
 -- spec FN-9 d0581c5c92c83713
@@ -242,7 +268,7 @@ def setVar (env : Env) (st : State) (x : Var) (r : Rhs) : M State := do
 -- spec FN-9 51a8f7fdc09ba5c6
 -- spec ENT-2 261757f83e159d4f
 -- spec ENT-2 e7b64879f58fcb34
--- spec FN-9 cda2ca4d680967a7
+-- spec FN-9 4038b8af6f9fa239
 /-- A return proves each postcondition [FN-9]: the result is the returned
 value and each parameter the normalized relation carries is its entry value,
 which needs its entry image to be stable. -/
@@ -273,6 +299,19 @@ def merge (env : Env) : List State → M (Option State)
   | [] => return none
   | [s] => return some s
   | ss => some <$> joinStates env ss
+
+/-- A loop's head state [ENT-5, INV-1]: the entering state with each binding
+of `killed` that is in scope written, each such integer binding given a fresh
+atom over its type as its image, and then each invariant established. -/
+def loopHead (env : Env) (st : State) (killed : List String)
+    (invs : List (String × Relation)) : M State := do
+  let mut head := st
+  for x in killed do
+    if let some v := env.var? x then
+      head := head.write v.id
+      if let .int t := v.ty then
+        head := head.setImage v.id (← typeAtom t)
+  return invs.foldl (fun s (_, r) => establishRel env s r) head
 
 mutual
 -- spec ENT-2 e1dbb8e4dc9adc24
@@ -400,7 +439,8 @@ def walkStmt (env : Env) (st : State) (pos : Pos) (s : Stmt) : M (Env × Out) :=
     let st ← match r.call with
       | some (f, args) => publish env st f args none none id
       | none => pure st
-    checkReturn env st r.val
+    let (st, v) ← returnedValue env st e r
+    checkReturn env st v
     return (env, {})
   | .if_ c thn els _ => do
     let r ← evalRhs env st c
@@ -429,13 +469,7 @@ def walkStmt (env : Env) (st : State) (pos : Pos) (s : Stmt) : M (Env × Out) :=
       if !relHolds env gen st r then fail "INV-1" s!"the invariant `{n}` is not proved on entry"
     let id ← freshId
     let killed := (killList { normal := true, loops := [(label, false, true)] } body).eraseDups
-    let mut head := st
-    for x in killed do
-      if let some v := env.var? x then
-        head := head.write v.id
-        if let .int t := v.ty then
-          head := head.setImage v.id (← typeAtom t)
-    head := invs.foldl (fun s (_, r) => establishRel env s r) head
+    let head ← loopHead env st killed invs
     let lc : LoopCtx := { id, label, headers := invs.map (·.2), outside := env.vars }
     let o ← walkList { env with loops := lc :: env.loops } head (pos ++ [0]) 0 body
     let inputs := (o.normal ++ (o.conts.filter (·.1 == id)).map (·.2)).map (·.exit env.vars)
@@ -539,6 +573,25 @@ def consistent (p : Program) (f : FnDecl) : Judge Unit := do
   let s := close [] (facts.flatMap (·.1)) (facts.flatMap (·.2.1))
   if s.contra then rejectBy "CALL-6" s!"the postconditions of `{f.name}` are contradictory"
 
+/-- A function's entry environment and state [ENT-3.S4, FN-8, FN-9]: each
+parameter bound to a fresh identity and, for an integer parameter, given a
+fresh atom over its type as its entry image; every parameter's entry image
+stable; then each requirement established. -/
+def entryState (p : Program) (f : FnDecl) : M (Env × State) := do
+  let mut vars : List Var := []
+  let mut st : State := {}
+  for prm in f.params do
+    let id ← freshId
+    let ty := Static.normTy p prm.ty
+    vars := { name := prm.name, id, ty } :: vars
+    if let .int t := ty then
+      st := st.setImage id (← typeAtom t)
+  let env : Env := { prog := p, fn := f, vars, params := vars.map (fun v => (v.name, v.id)), loops := [] }
+  st := { st with stable := vars.map (·.id), l0 := close env.live [] [] }
+  for r in f.requires do
+    st := establishRequire env st r
+  return (env, st)
+
 mutual
 /-- Whether a statement list holds a `return`: a postcondition's selected
 returns [FN-9]. -/
@@ -571,18 +624,7 @@ then the walk of its body from the entry state of its requirements. -/
 def checkFn (p : Program) (f : FnDecl) : M Unit := do
   for r in f.ensures do StateT.lift (ensuresShape f r)
   StateT.lift (consistent p f)
-  let mut vars : List Var := []
-  let mut st : State := {}
-  for prm in f.params do
-    let id ← freshId
-    let ty := Static.normTy p prm.ty
-    vars := { name := prm.name, id, ty } :: vars
-    if let .int t := ty then
-      st := st.setImage id (← typeAtom t)
-  let env : Env := { prog := p, fn := f, vars, params := vars.map (fun v => (v.name, v.id)), loops := [] }
-  st := { st with stable := vars.map (·.id), l0 := close env.live [] [] }
-  for r in f.requires do
-    st := establishRequire env st r
+  let (env, st) ← entryState p f
   if !f.ensures.isEmpty && !returns f.body && !st.contra then
     fail "FN-9" s!"`{f.name}` has postconditions and no return to prove them at"
   discard <| walkList env st [] 0 f.body

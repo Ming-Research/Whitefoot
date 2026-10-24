@@ -90,10 +90,10 @@ linux-runtime-tsan              10         10         10         10          -  
 # proof.yml: the Lean model's sentence coverage (building and running its
 # checker), the build of its model, proofs and conformance harness, and its run
 # over the conformance cases. Provisional until 20 runs are recorded: 1.5 times
-# the first run of the stage's current content, rounded up to 5 s, under the
-# 10 s floor (coverage 2.6 s, build 16.9 s, conformance run 4.0 s).
+# the longest run of the stage's current content, rounded up to 5 s, under the
+# 10 s floor (coverage 2.7 s, build 42.2 s, conformance run 5.2 s).
 proof-coverage                  10         10         10         10          -      -
-proof-build                     30         30         30         30          -      -
+proof-build                     65         65         65         65          -      -
 proof-conformance               10         10         10         10          -      -
 
 # sanitizers.yml: the corpus target under one sanitizer, building its test

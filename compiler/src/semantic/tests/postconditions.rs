@@ -100,7 +100,9 @@ fn direct_range_measure_returns_prove_only_the_matching_postcondition() {
 "#,
     );
 
-    assert_rule(
+    // [FN-9] a widened byte is a computed integer expression: its returned
+    // value equals the byte, which nothing relates to the length.
+    assert_fn9_unproved(
         br#"fn first(part: &[u8]) -> result: u64 reads(part) contract {
   requires part^.len > 0_u64;
   ensures result == part^.len;
@@ -109,8 +111,6 @@ fn direct_range_measure_returns_prove_only_the_matching_postcondition() {
   return cvt::<u8, u64>(byte);
 }
 "#,
-        SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionReturn,
     );
 }
 

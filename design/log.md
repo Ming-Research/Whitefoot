@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
+
+Nodes: language/checks-and-proofs/automatic-facts
+
+Summary: A selected return read its result datum only from a returned place, a construction's field operand, a literal or a forwarded payload, so the float-text module's rounding function returning `value + 1_u64` under `ensures result <= 1000000000000000000_u64;` was refused, while the same value bound by a `let` first proved the clause. The node gains a decision: an integer `cvt` or a row of the operation-fact table returned for a result ordinal gives a fresh returned value, bound as an ordinary `let` of the expression binds its binding, its affine value image and a captured division included, which is the binding a value initializer's `give` already gives such an expression; a returned call still supplies no datum. Admitting only expressions with an affine image is refused because a remainder or a mask carries its bound only through the operation-fact rows, and publishing a returned call's relations is refused here because it changes the call boundary, not what a return reads. The specification's change log records the FN-9, ENT-2, ENT-3.S7 and ENT-6 amendment.
+
 ## 2026-10-23 Cooperative switches account invocations per executor and unwind for pending host work
 
 Nodes: compiler/waiting-contexts, compiler/waiting-contexts/suspension-accounting
