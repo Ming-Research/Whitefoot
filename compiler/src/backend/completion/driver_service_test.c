@@ -587,7 +587,8 @@ static void steal_attribution(void) {
     char report[512];
     CHECK(wf_driver_report(1u, report, sizeof(report)));
     CHECK(strcmp(report, "driver: index=1 borrow_attempts=0 borrows=0 borrowed_sleeps=0 "
-          "borrowed_terminals=0 stolen_contexts=2 reassignments=0 ingress_commits=0 reserve_misses=0") == 0);
+          "borrowed_terminals=0 stolen_contexts=2 reassignments=0 ingress_commits=0 reserve_misses=0 "
+          "ring_reassignments=0") == 0);
     CHECK(!wf_driver_report(2u, report, sizeof(report)));
     CHECK(!wf_driver_report(1u, report, 1u));
     fixture_end();

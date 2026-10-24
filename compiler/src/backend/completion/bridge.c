@@ -1800,9 +1800,16 @@ typedef struct wf_driver_statistics {
     _Atomic uint64_t borrowed_sleeps;
     _Atomic uint64_t borrowed_terminals;
     _Atomic uint64_t stolen_contexts;
+    /* Every whole-role handoff, and of those the ones the monitor made
+     * because one context run left ring work unserved (bounded waits). */
     _Atomic uint64_t reassignments;
     _Atomic uint64_t ingress_commits;
+    /* Attempts, not distinct runs: each monitor scan that finds a trigger
+     * ready and no spare counts one, up to two per scan when the deadline and
+     * ring triggers both miss, about 1,000 a second through a long
+     * computation with no spare. */
     _Atomic uint64_t reserve_misses;
+    _Atomic uint64_t ring_reassignments;
 } wf_driver_statistics;
 static wf_driver_statistics wf_driver_stats[WF_DRIVER_LIMIT];
 static _Atomic unsigned wf_driver_stats_count;
@@ -1815,7 +1822,7 @@ static int wf_driver_report(unsigned index, char *buffer, size_t capacity) {
     int written = snprintf(buffer, capacity,
         "driver: index=%u borrow_attempts=%llu borrows=%llu borrowed_sleeps=%llu "
         "borrowed_terminals=%llu stolen_contexts=%llu reassignments=%llu "
-        "ingress_commits=%llu reserve_misses=%llu", index,
+        "ingress_commits=%llu reserve_misses=%llu ring_reassignments=%llu", index,
         (unsigned long long)atomic_load_explicit(&stats->borrow_attempts, memory_order_relaxed),
         (unsigned long long)atomic_load_explicit(&stats->borrows, memory_order_relaxed),
         (unsigned long long)atomic_load_explicit(&stats->borrowed_sleeps, memory_order_relaxed),
@@ -1823,7 +1830,8 @@ static int wf_driver_report(unsigned index, char *buffer, size_t capacity) {
         (unsigned long long)atomic_load_explicit(&stats->stolen_contexts, memory_order_relaxed),
         (unsigned long long)atomic_load_explicit(&stats->reassignments, memory_order_relaxed),
         (unsigned long long)atomic_load_explicit(&stats->ingress_commits, memory_order_relaxed),
-        (unsigned long long)atomic_load_explicit(&stats->reserve_misses, memory_order_relaxed));
+        (unsigned long long)atomic_load_explicit(&stats->reserve_misses, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->ring_reassignments, memory_order_relaxed));
     return written > 0 && (size_t)written < capacity;
 }
 
@@ -4936,7 +4944,9 @@ static int wf_driver_assist(wf_driver *driver) {
  * OUTSIDE after every peer has looked and gone to sleep, without paying a
  * wake or a clock read on each resume. Even a scan finding no OUTSIDE role
  * must keep this bound. It also notices newly published completions. There
- * is also a deadline monitor, but idle peers get first chance to borrow.
+ * is also a monitor: idle peers get first chance to borrow a due deadline,
+ * but ring work, which no borrow does, goes to a spare whether or not a
+ * peer is idle.
  * One driver retains its ordinary deadline-only service park. The interval is a service policy,
  * not a latency guarantee, and its idle CPU cost needs CI measurement. */
 #define WF_DRIVER_ASSIST_WAIT_MS 1u
@@ -5180,24 +5190,41 @@ __attribute__((weak)) size_t wf__floor_stack_bytes(void) {
 }
 #endif
 
-/* Bounded deadline-only detector. It never executes a context or enters a
- * host engine. OUTSIDE publishes a hint; PROBE validates the heap minimum
- * after winning the exact token, since an intervening borrow can remove it.
- * An idle logical driver gets first opportunity to borrow. */
+/* Bounded detector of a role whose thread stays inside one context run. It
+ * never executes a context or enters a host engine. Two triggers share one
+ * handoff. A due deadline: OUTSIDE publishes a hint, PROBE validates the heap
+ * minimum after winning the exact token, since an intervening borrow can
+ * remove it, and an idle logical driver gets first opportunity to borrow.
+ * Ring work: the role's ring holds completions, an overflow or staged
+ * submissions, which no borrow may touch, so it is handed off whether or not
+ * a peer is idle once the same OUTSIDE word, that is the same context run,
+ * has been seen with ring work for a monitor period. */
 #define WF_HANDOFF_TAU_NS UINT64_C(1000000)
 #define WF_MONITOR_PERIOD_MS 1u
 static int wf_driver_deadline_due(uint64_t deadline, uint64_t now) {
     return deadline != 0u && now > deadline && now - deadline > WF_HANDOFF_TAU_NS;
 }
 
-static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
-    uint64_t outside = atomic_load_explicit(&driver->service_token, memory_order_acquire);
-    if ((outside & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE
-        || !wf_driver_deadline_due(atomic_load_explicit(&driver->deadline_hint,
-            memory_order_relaxed), now)
-        || atomic_load_explicit(&wf_drivers_idle, memory_order_seq_cst)) return 0;
-    /* Reserve only an already floor-attached, parked executor. There is no
-     * thread creation, allocation or blocking engine lock in this path. */
+/* Lock-free and syscall-free: the root role uses the process ring and every
+ * other role its own. A stale answer costs at most one needless probe. */
+static int wf_driver_ring_pending(const wf_driver *driver) {
+#if defined(__linux__)
+    if (!wf_bridge_ring_ready()) return 0;
+    return wf_linux_io_uring_pending(driver == &wf_driver_root
+        ? &wf_bridge_linux_adapter : &driver->own_adapter);
+#else
+    (void)driver;
+    return 0;
+#endif
+}
+
+enum { WF_HANDOFF_DEADLINE, WF_HANDOFF_RING };
+
+/* Claims the exact OUTSIDE word, rechecks the trigger's work under PROBE,
+ * and reserves a spare for the whole role. Reserve only an already
+ * floor-attached, parked executor: there is no thread creation, allocation
+ * or blocking engine lock in this path, and a miss leaves the token alone. */
+static int wf_driver_hand_off(wf_driver *driver, uint64_t outside, uint64_t now, unsigned trigger) {
     wf_quiescence_lock();
     if (atomic_flag_test_and_set_explicit(&wf_executor_lock, memory_order_acquire)) {
         wf_quiescence_unlock();
@@ -5218,14 +5245,19 @@ static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
     uint64_t probe = (outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_PROBE;
     int claimed = atomic_compare_exchange_strong_explicit(&driver->service_token,
         &outside, probe, memory_order_acquire, memory_order_relaxed);
-    if (claimed && driver->timer_count
-        && wf_driver_deadline_due(driver->timers[0]->timer_at, now)) {
+    int work = 0;
+    if (claimed && trigger == WF_HANDOFF_RING) work = wf_driver_ring_pending(driver);
+    else if (claimed) work = driver->timer_count
+        && wf_driver_deadline_due(driver->timers[0]->timer_at, now);
+    if (work) {
         uint64_t reserved = wf_driver_next_epoch(outside, spare->index) | WF_DRIVER_RESERVED;
         spare->available = 0u;
         spare->assignment = driver;
         atomic_store_explicit(&driver->service_token, reserved, memory_order_release);
         atomic_fetch_add_explicit(&wf_driver_stats[driver->index].reassignments,
             1u, memory_order_relaxed);
+        if (trigger == WF_HANDOFF_RING) atomic_fetch_add_explicit(
+            &wf_driver_stats[driver->index].ring_reassignments, 1u, memory_order_relaxed);
         wf_spin_unlock(&wf_executor_lock);
         wf_quiescence_unlock();
         wf_completion_notify_target(&spare->wake);
@@ -5240,6 +5272,48 @@ static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
     return 0;
 }
 
+static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
+    uint64_t outside = atomic_load_explicit(&driver->service_token, memory_order_acquire);
+    if ((outside & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE
+        || !wf_driver_deadline_due(atomic_load_explicit(&driver->deadline_hint,
+            memory_order_relaxed), now)
+        || atomic_load_explicit(&wf_drivers_idle, memory_order_seq_cst)) return 0;
+    return wf_driver_hand_off(driver, outside, now, WF_HANDOFF_DEADLINE);
+}
+
+/* The ring trigger's claim from the OUTSIDE word the monitor saw: only that
+ * exact word, never a newer run's or one a borrower holds, yields PROBE. */
+static int wf_driver_ring_claim(wf_driver *driver, uint64_t outside) {
+    return wf_driver_hand_off(driver, outside, 0u, WF_HANDOFF_RING);
+}
+
+/* The OUTSIDE word each role last showed with ring work, and when the
+ * monitor first saw it so. Written only by the monitor thread. Every run
+ * publishes a new epoch at departure, and a borrow restores the exact word,
+ * so an unchanged word is one uninterrupted context run. */
+typedef struct wf_monitor_sighting {
+    uint64_t outside;
+    uint64_t since;
+} wf_monitor_sighting;
+static wf_monitor_sighting wf_monitor_sightings[WF_DRIVER_LIMIT];
+
+static int wf_monitor_ring_watch(wf_driver *driver, uint64_t now) {
+    wf_monitor_sighting *sighting = &wf_monitor_sightings[driver->index];
+    uint64_t token = atomic_load_explicit(&driver->service_token, memory_order_acquire);
+    uint64_t phase = token & WF_DRIVER_PHASE_MASK;
+    if (phase == WF_DRIVER_BORROWED_SERVICE) return 0;
+    if (phase != WF_DRIVER_OUTSIDE || !wf_driver_ring_pending(driver)) {
+        sighting->outside = 0u;
+        return 0;
+    }
+    if (sighting->outside != token) {
+        sighting->outside = token;
+        sighting->since = now;
+    }
+    if (now < sighting->since + WF_HANDOFF_TAU_NS) return 0;
+    return wf_driver_ring_claim(driver, token);
+}
+
 static uint32_t wf_monitor_scan(uint64_t now) {
     uint32_t wait = WF_MONITOR_PERIOD_MS;
     unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
@@ -5247,6 +5321,7 @@ static uint32_t wf_monitor_scan(uint64_t now) {
         wf_driver *driver = atomic_load_explicit(&wf_drivers[i], memory_order_acquire);
         if (!driver) continue;
         (void)wf_driver_reassign(driver, now);
+        (void)wf_monitor_ring_watch(driver, now);
         if ((atomic_load_explicit(&driver->service_token, memory_order_acquire)
                 & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE) continue;
         uint64_t deadline = atomic_load_explicit(&driver->deadline_hint, memory_order_relaxed);

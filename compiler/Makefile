@@ -184,7 +184,7 @@ test-unit:
 # canonical rendering and the CLI's own tests; no baseline compiler or timed
 # comparison is involved.
 test-corpus:
-	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-corpus $(CARGO) test --profile gate --bins --test '*' --locked --offline
+	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) $(CHECK_RUN) compiler/test-corpus $(CARGO) test --profile gate --bins --test '*' --locked --offline
 
 # The corpus target again with every program it builds, its running
 # conformance cases also with the `--par` lowering, compiled and linked under
