@@ -2,7 +2,7 @@
 
 Status board item wf-inline-policy. This record holds the question, the
 approaches compared, the criteria written before measuring, and the results
-as they arrive. It is a study; no compiler behavior has changed yet.
+as they arrive, and the design they select.
 
 ## Question
 
@@ -246,7 +246,8 @@ with the base):
 | corpus (97 programs) | 187,255 | 71,673 | 4,979 | 12,975 | 15,477 | 6,314 |
 
 So the witness is not alone: in the corpus 12,975 kept sites (18% of the kept
-ones) cost between the threshold and 1.44 times it, and Halo's
+ones) cost between the threshold and 1.44 times it (almost all of them the C
+runtime's, as round 3 corrects), and Halo's
 `native_binding` is again 310 against 225 at its four sites. These are
 static counts, the first pricing of each site; admitting one changes the
 pricing of its callers.
@@ -313,3 +314,138 @@ and the fragments, logs each rewrite, and the workflow fails a hint arm that
 rewrote nothing. One observation stands: full LTO for the default build
 again slowed iterate by 3.3%–4.5% at all three sizes on an AMD EPYC 9V74,
 as in round 1 on the same model, while on a 9V45 (round 2) it did not.
+
+[Run 40099834955](https://github.com/Ming-Research/Whitefoot/actions/runs/40099834955)
+on commit `a964e5e88` measured the hint: the wrapper rewrote the bench's
+piped module and Halo's full-LTO module, and the hinted callees meet 325
+(the bench's census in the hint arm: 154 sites at 325, 982 at 225, the rest
+the runtime's C and the compiler-owned `ordinary_values` unit, which keep
+LLVM's defaults). Against today's settings with shrinking:
+
+| Arm (runner) | bench text | Halo text | v2h text | corpus text | bench / Halo / v2h compile | remove-insert 1,000 / 10,000 / 1,000,000 | fib | cells judged slower |
+| --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- |
+| hint (Xeon 8573C) | 1.0075 | 1.0526 | 1.0156 | 1.0003 | 1.003 / 1.036 / 1.021 | 0.960 [0.947, 0.971] / 0.970 [0.960, 0.983] / 0.964 ? | 0.897 [0.893, 0.908] | none |
+| hint with full LTO (EPYC 9V74) | 0.410 | 1.0526 | 1.0156 | 0.400 | 0.903 / 1.032 / 1.002 | 0.936 / 0.944 / 0.879 | 0.933 | iterate 1.061, 1.046, 1.029; lookup-miss 1,000 1.035 |
+
+The hint arm also made iterate faster at all three sizes (0.754, 0.787,
+0.944) and remove at all three (0.944, 0.982, 0.983), and changed no memory
+cell. Against today's settings without shrinking (EPYC 9V45): remove-insert
+0.986 [0.975, 0.996], 0.991 [0.975, 0.997] and 0.980 [0.963, 0.994], fib
+0.907 (unresolved), and draining 1.85, 1.59 and 1.28 times slower, shrinking's
+own rebuilding as in round 2.
+
+**Correction to round 2's census.** The census counts a call site as one
+between Whitefoot definitions when both names start with `wf`, which also
+admits the compiler-owned C runtime (`wf_pool_take`, `wf_timer_remove`) that
+every program compiles. Split by origin (remarks from the C units carry a
+`.c` location; in Halo's full-LTO records, Whitefoot source definitions are
+the qualified or instantiated names), the sites kept at 225 that cost at most
+325 are:
+
+| Program | Whitefoot definitions | compiler-owned C runtime |
+| --- | ---: | ---: |
+| bench (shrinking) | 29 | 133 |
+| Halo | 356 | 95 |
+| v2h | 45 | 133 |
+| corpus (97 programs) | 49 | 12,901 |
+
+So the corpus's 12,975 sites are almost all the runtime's C, counted once per
+program, and threshold 325's 7.3% corpus growth is mostly the runtime's. The
+programs that are mostly Whitefoot carry the pattern: Halo has 356 of its
+2,719 kept Whitefoot sites within 1.44 times the threshold.
+
+Reading of round 3:
+
+- The hint meets every criterion written before measuring: both witness
+  intervals lie wholly below 1, fib improves, no cell is judged slower, and
+  against the library before shrinking no remove-insert interval lies above
+  1. It recovers less of the witness on its runner than 325 did on another
+  model (0.96–0.97 against 0.92) and grows the code far less (bench 0.75%
+  against 7.4%, corpus 0.03% against 7.3%, Halo 5.3% against 6.4%), because it
+  leaves the runtime's C at LLVM's defaults; that this explains the
+  difference in the witness is deduced, not measured.
+- The hint composes with full LTO as 325 did. Full LTO's iterate slowdown
+  repeats a third time on the EPYC 9V74 and never on the other models; it
+  belongs to the linkage question, not to the hint.
+
+## Design
+
+The compiler gives every Whitefoot definition it emits LLVM's `inlinehint`
+attribute, in the attribute group all of them carry, and nothing else
+changes: the compiler-owned C runtime and `ordinary_values` keep LLVM's
+defaults, a statically cold call site keeps its threshold of 45, and LLVM
+still prices every call.
+
+Grounds:
+
+- Whitefoot has no inline annotation, and should not need one: a writer
+  cannot know where LLVM's cost model places a cliff, and the witness shows
+  the source-level forms (branch weights, a hint or always-inline on one
+  function) only move the boundary one caller out. C++ and Rust writers
+  mark their small hot functions `inline` and `#[inline]`, and LLVM's hint
+  level is calibrated for that use; a Whitefoot definition is the
+  equivalent of such a function, a whole-program unit whose body is always
+  visible to its callers.
+- The hint is an IR attribute of the definition, so the cached ThinLTO build,
+  the fragment build and full LTO all see it without an option on each
+  compile and link command, and the runtime's C, which is ordinary C, is
+  priced as C.
+- It is LLVM's own level, not a number chosen from the witness: rounds 1
+  and 2 showed that a threshold picked to recover the witness is a position
+  on a cliff (400 recovered less than 325).
+- It is not the withdrawn always-inline policy (storage-placement node): the
+  hint keeps LLVM's pricing after each callee's own simplification and
+  marks no subset by a size budget.
+
+Not chosen:
+
+- A global `-inline-threshold` of 325: the same gain for Whitefoot code, but
+  it also raises the runtime's C (corpus text +7.3% instead of +0.03%) and
+  must reach every compile and LTO link as an `-mllvm` option.
+- Thresholds above 325, and `-O3`: Halo's text grows by 28.8% at 500 and by
+  109% and 318% at 1,000 and 2,000; 400 recovers less of the witness than
+  325; `-O3` does not recover it.
+- Call-site selection by the compiler (approach B2), such as always-inline
+  for a small callee called in a loop: it needs a size bound with no
+  structural ground, which is why the always-inline policy was withdrawn,
+  and LLVM already reads loop frequency at every site. Not measured.
+- Smaller emitted code (approach C): the witness's priced instructions are
+  hashing, probing and comparing, nothing Whitefoot's lowering adds
+  (round 1), so there is nothing to remove for it.
+- Branch weights on rarely taken directions (Whitefoot#420): measured 1.050–1.056
+  on the witness, because a cold site's threshold of 45 stops the lookup
+  from being inlined. Weights and the hint are separate decisions; the hint
+  does not lift the cold threshold, so their interaction is that item's
+  measurement, not this one's.
+
+Separate from this design, recorded for its own item: internal linkage for
+the default build (approach B1), which full LTO approximates, makes the
+bench's and the corpus's text 56%–60% smaller and the witness faster, but
+slows iterate by 3%–6% on one runner model in three runs out of three; it
+needs that slowdown attributed before a decision.
+
+Acceptance numbers, against the same compiler without the hint and the same
+standard library: Halo's text grows by at most 6% and the corpus's total by
+at most 1%; Halo's and v2h's compile times grow by at most 5% in interleaved
+pairs on one hosted runner. Ground: the hint arm measured 5.3%, 0.03%, 3.6%
+and 2.1%, and threshold 325, the cheaper global alternative, grows Halo's
+text by 6.4%; a larger growth means the implementation is not the design
+measured here. The timing acceptance is the board item's, on the
+i9-14900K.
+
+## Round 4: the implemented hint (hosted runners)
+
+Written before measuring. The compiler now emits the hint itself
+(`emit_module` in `compiler/src/backend/emitter.rs`). The temporary workflow
+compares this branch's compiler with its merge base's, both with the
+shrinking library, and builds the bench a third time with the merge base's
+compiler and round 3's hint arm.
+
+- The implementation is the measured design when the bench's code (its
+  `.text` bytes) differs from the merge base's and equals the hint arm's.
+- The acceptance bounds of the design apply: Halo's text grows by at most 6%
+  and the corpus's total by at most 1%, and Halo's and v2h's median compile
+  times over five interleaved pairs by at most 5%.
+- The HashMap, fib and CoreMark cells repeat round 3's hint arm as a hosted
+  screen; the timing acceptance is the i9-14900K's.
+

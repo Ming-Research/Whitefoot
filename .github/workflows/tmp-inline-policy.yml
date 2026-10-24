@@ -1,12 +1,12 @@
 # Temporary (board item wf-inline-policy); remove before the branch is ready.
-# The inline-policy investigation's rounds on hosted runners
-# (research/investigations/inline-policy/DESIGN.md): the census of LLVM's
-# inline decisions over the programs, and each arm of the sweep against
-# today's settings, measured on the HashMap cells, Halo's fib and CoreMark,
-# code size and compile time. The candidate side of every arm is this
-# commit's compiler with the shrinking HashMap of wf-need-firn-hash-shrink;
-# the base side is that compiler or this commit's own, and only the clang
-# wrapper beside each differs (research/experiments/inline-policy/).
+# Round 4 of the inline-policy investigation
+# (research/investigations/inline-policy/DESIGN.md): the implemented inline
+# hint. The tests job runs the compiler tests the change touches and the
+# static checks. The other jobs compare this commit's compiler with its merge
+# base, both with the shrinking HashMap of wf-need-firn-hash-shrink, on hosted
+# runners: code size and compile time, the HashMap cells, Halo's fib and
+# CoreMark, and whether the implementation builds the bench image the hint
+# arm of round 3 built (research/experiments/inline-policy/).
 name: tmp-inline-policy
 
 on:
@@ -51,38 +51,42 @@ jobs:
           rustup default stable
       - name: Self-test the census reducer
         run: python3 -B research/experiments/inline-policy/census.py self-test
-      - name: Build this commit's compiler and the same with the shrinking HashMap
+      - name: Build this commit's compiler and its merge base's, both with the shrinking HashMap
         run: |
           out="$RUNNER_TEMP/out"
           mkdir -p "$out/bin"
           git fetch --no-tags origin +refs/heads/claude/hash-shrink:refs/remotes/origin/claude/hash-shrink
-          git worktree add --detach "$out/shrink" HEAD
-          rm -r "$out/shrink/lib/std/collections/hash_map"
-          git -C "$out/shrink" checkout origin/claude/hash-shrink -- lib/std/collections/hash_map
-          git -C "$out/shrink" diff --cached --stat
-          echo "shrink library from $(git rev-parse origin/claude/hash-shrink)" | tee "$out/bin/manifest.txt"
-          for tree in "$GITHUB_WORKSPACE" "$out/shrink"; do
+          base=$(git merge-base HEAD origin/main)
+          git worktree add --detach "$out/head" HEAD
+          git worktree add --detach "$out/base" "$base"
+          for tree in "$out/head" "$out/base"; do
+            rm -r "$tree/lib/std/collections/hash_map"
+            git -C "$tree" checkout origin/claude/hash-shrink -- lib/std/collections/hash_map
+          done
+          {
+            echo "head $(git rev-parse HEAD), base $base (merge base with main)"
+            echo "shrink library from $(git rev-parse origin/claude/hash-shrink)"
+          } | tee "$out/bin/manifest.txt"
+          for tree in "$out/head" "$out/base"; do
             cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             make -C "$tree/compiler" build
           done
-          cp compiler/target/gate/whitefootc "$out/bin/whitefootc-main"
-          cp "$out/shrink/compiler/target/gate/whitefootc" "$out/bin/whitefootc-shrink"
+          cp "$out/head/compiler/target/gate/whitefootc" "$out/bin/whitefootc-head"
+          cp "$out/base/compiler/target/gate/whitefootc" "$out/bin/whitefootc-base"
       - uses: actions/upload-artifact@v4
         with:
           name: compilers
           path: ${{ runner.temp }}/out/bin/
 
-  census:
-    needs: build
+  tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    name: census of inline decisions
+    timeout-minutes: 90
+    name: tests the change touches
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
         with:
-          name: compilers
-          path: ${{ runner.temp }}/bin
+          fetch-depth: 0
+          submodules: true
       - name: Install the host toolchain
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
@@ -90,119 +94,26 @@ jobs:
           sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
           sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
           sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          sudo ln -sf "/usr/bin/opt-$version" /usr/bin/opt
-      - name: Inputs
-        run: |
-          inputs="$RUNNER_TEMP/inputs"
-          mkdir -p "$inputs"
-          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$inputs/halo"
-          git -C "$inputs/halo" checkout --quiet "$HALO"
-          python3 -B research/experiments/match-dispatch/wasm/gen.py "$inputs/v2h.wf"
-      - name: Today's settings, with remarks
-        run: |
-          for compiler in main shrink; do
-            arm="$RUNNER_TEMP/arms/$compiler"
-            mkdir -p "$arm"
-            cp "$RUNNER_TEMP/bin/whitefootc-$compiler" "$arm/whitefootc"
-            cp research/experiments/inline-policy/clang-arm.sh "$arm/clang"
-            chmod +x "$arm/whitefootc" "$arm/clang"
-            ln -s "$(readlink -f /usr/bin/ld.lld)" "$arm/ld.lld"
-            # Full costs: LLVM otherwise stops pricing a call site once it
-            # passes the threshold, so a kept site's cost would be truncated.
-            printf '%s\n' 'ARM_REMARKS=${CENSUS_REMARKS:-}' 'ARM_LLVM=-inline-cost-full=true' > "$arm/arm.conf"
-          done
-      - name: Compile each program, collecting its remarks
-        run: |
-          inputs="$RUNNER_TEMP/inputs"
-          remarks="$RUNNER_TEMP/remarks"
-          images="$RUNNER_TEMP/images"
-          mkdir -p "$remarks" "$images"
-          wfc() { "$RUNNER_TEMP/arms/$1/whitefootc" "${@:2}"; }
-          bench=research/experiments/hash-map-compare/bench.wf
-          CENSUS_REMARKS="$remarks/bench-main.txt" wfc main "$bench" -o "$images/bench-main"
-          CENSUS_REMARKS="$remarks/bench-shrink.txt" wfc shrink "$bench" -o "$images/bench-shrink"
-          graph=tests/halo-bench/modules.wfg
-          [ -e "$inputs/halo/$graph" ] || graph=research/experiments/halo-bench/modules.wfg
-          (cd "$inputs/halo" && CENSUS_REMARKS="$remarks/halo.txt" wfc shrink --graph "$graph" --entry bench --full-lto -o "$images/halo")
-          CENSUS_REMARKS="$remarks/v2h.txt" wfc shrink "$inputs/v2h.wf" --cache "$RUNNER_TEMP/cache-v2h" -o "$images/v2h"
-          compiled=0; failed=0
-          for program in tests/programs/*.wf; do
-            name=$(basename "$program" .wf)
-            if CENSUS_REMARKS="$remarks/corpus.txt" timeout 300 "$RUNNER_TEMP/arms/shrink/whitefootc" "$program" -o "$images/corpus-$name" > /dev/null 2>&1; then
-              compiled=$((compiled + 1))
-            else
-              failed=$((failed + 1))
-            fi
-          done
-          echo "corpus: $compiled programs compiled, $failed did not compile standalone"
-          ls -la "$remarks"
-      - name: Census
-        run: |
-          remarks="$RUNNER_TEMP/remarks"
-          for name in bench-main bench-shrink halo v2h corpus; do
-            files=$(ls "$remarks/$name".txt "$remarks/$name".txt.lto.*.yaml 2>/dev/null || true)
-            # shellcheck disable=SC2086
-            [ -n "$files" ] && python3 -B research/experiments/inline-policy/census.py reduce --name "$name" $files || true
-          done
-      - name: The removal's call sites
-        run: |
-          remarks="$RUNNER_TEMP/remarks"
-          for name in bench-main bench-shrink; do
-            echo "== $name"
-            { grep -h "hash_map_remove" "$remarks/$name.txt" || true; } | sed 's/^.*remark: //' | cut -c1-400 | sort | uniq -c | sort -rn | sed -n '1,40p'
-          done
-      - name: Halo's call sites of native_binding
-        run: |
-          python3 - "$RUNNER_TEMP/remarks" <<'EOF'
-          import glob, sys
-          sys.path.insert(0, "research/experiments/inline-policy")
-          import census
-          for path in glob.glob(f"{sys.argv[1]}/halo.txt.lto.*.yaml"):
-              for d in census.parse_yaml(open(path, errors="replace").read()):
-                  if d["callee"].endswith("native_binding"):
-                      print("inlined" if d["inlined"] else "kept", d["reason"], d["cost"], d["threshold"], d["callee"], "<-", d["caller"])
-          EOF
-      - name: Inline cost of the remaining removal calls, instruction by instruction
-        run: |
-          out="$RUNNER_TEMP/cost"
-          mkdir -p "$out"
-          bench=research/experiments/hash-map-compare/bench.wf
-          for compiler in main shrink; do
-            "$RUNNER_TEMP/arms/$compiler/whitefootc" --emit-llvm "$bench" -o "$out/bench-$compiler.ll"
-            clang -O2 -Wno-override-module -x ir -S -emit-llvm "$out/bench-$compiler.ll" -o "$out/bench-$compiler.O2.ll"
-            opt -passes='print<inline-cost>' -disable-output "$out/bench-$compiler.O2.ll" > "$out/cost-$compiler.txt" 2>&1 || true
-            echo "== $compiler: calls of the removal left in the optimized module: $(grep -c 'call .*hash_map_remove' "$out/bench-$compiler.O2.ll")"
-            # Each analyzed call's block: from its heading to the next one.
-            awk '/Analyzing call of/{p = ($0 ~ /hash_map_remove/); n += p} p && n <= 1' "$out/cost-$compiler.txt" | cut -c1-200 | sed -n '1,400p'
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: census
-          path: |
-            ${{ runner.temp }}/remarks/
-            ${{ runner.temp }}/cost/
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Static checks, the design tree's included
+        env:
+          DESIGN_REVIEW_BASE: origin/main
+        run: make static
+      - name: The inline hint on every definition
+        run: perl .github/run-check.pl tmp-effect-attributes cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib effect_attributes
+      - name: The attribute group's stack probes and their negative controls
+        run: perl .github/run-check.pl tmp-exhaustion cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib exhaustion
+      - name: Sanitized groups
+        run: perl .github/run-check.pl tmp-sanitizer cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib sanitizer
+      - name: Fragment modules
+        run: perl .github/run-check.pl tmp-fragments cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib fragments
 
   sweep:
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 300
-    name: arm ${{ matrix.arm }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # base names the compiler of the base side: shrink, or main for the
-        # library before shrinking.
-        include:
-          - arm: hint
-            base: shrink
-            conf: ARM_HINT=1
-          - arm: hint-lto
-            base: shrink
-            conf: ARM_HINT=1 ARM_LTO=1
-          - arm: hint-vs-main
-            base: main
-            conf: ARM_HINT=1
+    name: implementation against its merge base
     steps:
       - uses: actions/checkout@v4
         with:
@@ -220,33 +131,31 @@ jobs:
           sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
           rustup default stable
       # The two arms of compiler-compare's stages are two trees of this
-      # commit, whose runtime sources the memory cell links; each holds the
-      # same shrink compiler binary, base with today's settings and candidate
-      # with the arm's.
+      # commit, whose runtime sources the memory cell links: base holds the
+      # merge base's compiler and candidate this commit's, each beside a
+      # wrapper that only collects remarks. A third tree, hint, holds the
+      # merge base's compiler with round 3's hint arm.
       - name: Arms
-        env:
-          CONF: ${{ matrix.conf }}
         run: |
           out="$RUNNER_TEMP/out"
           echo "OUT=$out" >> "$GITHUB_ENV"
           mkdir -p "$out/arms"
-          for side in base candidate; do
+          for side in base candidate hint; do
             tree="$out/arms/$side"
             git worktree add --detach "$tree" HEAD
             mkdir -p "$tree/compiler/target/gate"
-            compiler=shrink
-            if [ "$side" = base ]; then compiler=${{ matrix.base }}; fi
+            compiler=base
+            if [ "$side" = candidate ]; then compiler=head; fi
             cp "$RUNNER_TEMP/bin/whitefootc-$compiler" "$tree/compiler/target/gate/whitefootc"
             cp research/experiments/inline-policy/clang-arm.sh "$tree/compiler/target/gate/clang"
             chmod +x "$tree/compiler/target/gate/whitefootc" "$tree/compiler/target/gate/clang"
             ln -s "$(readlink -f /usr/bin/ld.lld)" "$tree/compiler/target/gate/ld.lld"
             echo 'ARM_REMARKS=${CENSUS_REMARKS:-}' > "$tree/compiler/target/gate/arm.conf"
           done
-          for setting in $CONF; do echo "$setting" >> "$out/arms/candidate/compiler/target/gate/arm.conf"; done
+          echo ARM_HINT=1 >> "$out/arms/hint/compiler/target/gate/arm.conf"
           {
             echo "instrument $(git rev-parse HEAD)"
-            echo "candidate arm ${{ matrix.arm }}: $CONF"
-            echo "base: the ${{ matrix.base }} compiler with today's settings"
+            echo "candidate: this commit's compiler; base: its merge base's, both with LLVM's defaults"
             cat "$RUNNER_TEMP/bin/manifest.txt"
             echo "clang $(/usr/bin/clang --version | head -1)"
             echo "cpu model $(lscpu | sed -n 's/^Model name: *//p')"
@@ -254,23 +163,27 @@ jobs:
           python3 -B research/experiments/match-dispatch/wasm/gen.py "$RUNNER_TEMP/v2h.wf"
           git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo"
           git -C "$RUNNER_TEMP/halo" checkout --quiet "$HALO"
-      - name: The arm reaches the compiler's decisions
-        env:
-          CONF: ${{ matrix.conf }}
+      - name: The implementation is the measured hint
         run: |
-          wfc="$OUT/arms/candidate/compiler/target/gate/whitefootc"
           mkdir -p "$RUNNER_TEMP/check"
+          for side in base candidate hint; do
+            "$OUT/arms/$side/compiler/target/gate/whitefootc" research/experiments/hash-map-compare/bench.wf -o "$RUNNER_TEMP/check/bench-$side"
+          done
+          # Compare code, not whole images: the hint arm hands clang a named
+          # file where whitefootc pipes the module, which may name it apart.
+          for side in base candidate hint; do
+            objcopy -O binary --only-section=.text "$RUNNER_TEMP/check/bench-$side" "$RUNNER_TEMP/check/text-$side"
+          done
+          sha256sum "$RUNNER_TEMP"/check/text-*
+          # The implementation must change the code, and emit the code the
+          # hint arm did; the attribute's place in its group changes nothing.
+          ! cmp -s "$RUNNER_TEMP/check/text-base" "$RUNNER_TEMP/check/text-candidate"
+          cmp "$RUNNER_TEMP/check/text-hint" "$RUNNER_TEMP/check/text-candidate"
+          wfc="$OUT/arms/candidate/compiler/target/gate/whitefootc"
           CENSUS_REMARKS="$RUNNER_TEMP/check/bench.txt" "$wfc" research/experiments/hash-map-compare/bench.wf -o "$RUNNER_TEMP/check/bench"
           graph=tests/halo-bench/modules.wfg
           [ -e "$RUNNER_TEMP/halo/$graph" ] || graph=research/experiments/halo-bench/modules.wfg
           (cd "$RUNNER_TEMP/halo" && CENSUS_REMARKS="$RUNNER_TEMP/check/halo.txt" "$wfc" --graph "$graph" --entry bench --full-lto -o "$RUNNER_TEMP/check/halo")
-          # A hint arm must have rewritten the modules it compiled.
-          case "$CONF" in
-          *ARM_HINT=1*)
-            echo "hinted modules: $(wc -l < "$OUT/arms/candidate/compiler/target/gate/hinted.log")"
-            test -s "$OUT/arms/candidate/compiler/target/gate/hinted.log"
-            ;;
-          esac
           for name in bench halo; do
             files=$(ls "$RUNNER_TEMP/check/$name".txt "$RUNNER_TEMP/check/$name".txt.lto.*.yaml 2>/dev/null || true)
             # shellcheck disable=SC2086
@@ -284,7 +197,7 @@ jobs:
           mkdir -p "$sizes"
           text() { size -A "$1" | awk '$1 == ".text" {print $2}'; }
           # Interleaved: each repeat compiles every program under both arms.
-          for repeat in 1 2; do
+          for repeat in 1 2 3 4 5; do
             for side in base candidate; do
               wfc="$OUT/arms/$side/compiler/target/gate/whitefootc"
               rm -rf "$sizes/cache-$side"
@@ -348,7 +261,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sweep-${{ matrix.arm }}
+          name: sweep-impl
           path: |
             ${{ runner.temp }}/out/manifest.txt
             ${{ runner.temp }}/out/hashmap/summary.txt

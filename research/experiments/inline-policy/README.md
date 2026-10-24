@@ -13,11 +13,12 @@ investigation closes.
   sets the arm's variables (listed in the script's header) compiles every
   program with those settings: an optimization level in place of `-O2`,
   LLVM options for compiles and LTO links, full LTO for the default build,
-  and a file collecting LLVM's inline remarks. Nothing else differs between
-  two such directories holding the same binary.
+  `inlinehint` on every emitted Whitefoot definition, and a file collecting
+  LLVM's inline remarks. Nothing else differs between two such directories
+  holding the same binary.
 - `census.py reduce --name NAME FILES` reduces the collected remarks of one
-  program: the decisions between Whitefoot definitions by outcome and
-  reason, the thresholds met, the priced call sites by cost over threshold,
+  program: the decisions between definitions whose names start with `wf`
+  (the compiler-owned C runtime's included) by outcome and reason, the thresholds met, the priced call sites by cost over threshold,
   and the sites close to it. `census.py self-test` checks the parser on
   fixed remark text and YAML.
 

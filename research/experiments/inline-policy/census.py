@@ -10,8 +10,9 @@ prints for an ordinary per-module compile. Each *.yaml file holds the remarks
 of an LTO link, whose decisions are the final ones; when a program has any,
 its census is taken from them alone. A decision is one call site LLVM's inliner
 priced: inlined, or not inlined with a reason. The reducer prints, for the
-call sites whose callee and caller are both Whitefoot definitions (names that
-start with "wf"):
+call sites whose callee and caller names both start with "wf" (Whitefoot
+definitions and the compiler-owned C runtime alike, which the report calls
+"Whitefoot definitions"):
 
 - the decisions by outcome and reason, and the thresholds the priced ones met;
 - the priced sites by cost over threshold, in bands around 1: the sites near
