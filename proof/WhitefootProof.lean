@@ -22,3 +22,4 @@ import WhitefootProof.Align
 import WhitefootProof.Simulation
 import WhitefootProof.Blocks
 import WhitefootProof.Loops
+import WhitefootProof.Theorems

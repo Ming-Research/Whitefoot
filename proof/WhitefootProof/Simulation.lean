@@ -9,8 +9,9 @@ The interpreter runs an accepted function's statements in the order the
 checker's walk visited them. A statement's triple says that from a frame where
 the snapshot the walk recorded on entering it holds, its step is safe for as
 many steps as what it leaves to is safe. What the facts mean, and the lemmas
-about each step of the walk, come in as premises (`Sim.Laws`), each a lemma
-another item of the proof proves.
+about each step of the walk, come in as premises (`Sim.Laws`): the discharge
+group, which `Theorems.lean` proves for the snapshots' meaning, and the
+transfer group, each a lemma another item of the proof proves.
 -/
 
 namespace Whitefoot
@@ -23,19 +24,13 @@ namespace Sim
 def callArgs (E : Env) (as : List (String × Atom)) : Eval (List (String × Value)) :=
   as.mapM fun (n, a) => do return (n, ← evalAtom E a)
 
-/-- The lemmas the simulation rests on. The first group is about the meaning
-`F` gives the facts; the discharge group says a proved obligation holds at run
-time; the transfer group says each statement's new snapshot holds of the frame
-the step leaves; the freshness group says each new state's identities lie
-below the counter the walk ends with; the last group is a loop's head and a
-function's entry. That the walk only grows the generator is proved
-(`Checker.Gen.Grows`).
-
-A loop's head holds on a frame `E` that some snapshot over the same bindings
-holds on (so its values fit the bindings) and that differs from the frame `E1`
-the loop was entered with only at the newest binding of a name the head
-kills. -/
-structure Laws (F : Model) : Prop where
+/-- What the simulation takes from the meaning `F` gives the facts and from
+the obligations: a snapshot that holds fits its frame, is not contradictory
+and keeps holding as atoms are minted; freshness survives a larger counter and
+a binding table below it; and each obligation the checker proved neither
+sticks nor fails at run time. For the snapshots' meaning they are proved
+lemmas (`Sim.discharge_laws`). -/
+structure DischargeLaws (F : Model) : Prop where
   fits : ∀ {s : Snapshot} {E E0 : Env}, F.Holds s (E, E0) → E.Fits s.vars
   not_contra : ∀ {s : Snapshot} {fr : Env × Env}, F.Holds s fr → s.state.contra = false
   atoms_mono : ∀ {s : Snapshot} {fr : Env × Env} {n : Nat} {new : List (Nat × Int × Int)},
@@ -112,6 +107,17 @@ structure Laws (F : Model) : Prop where
     F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) →
     Static.invariantOk (Checker.scopeOf env.vars) rel = .ok () →
     Checker.relHolds env g st rel = true → Relation.holds E rel = .ok true
+
+/-- What the simulation takes from the state transfers: each statement's new
+snapshot holds of the frame the step leaves; each new state's identities lie
+below the counter the walk ends with; and a loop's head and a function's entry
+hold. The item spec-proof-transfer-sound proves them.
+
+A loop's head holds on a frame `E` that some snapshot over the same bindings
+holds on (so its values fit the bindings) and that differs from the frame `E1`
+the loop was entered with only at the newest binding of a name the head
+kills. -/
+structure TransferLaws (F : Model) : Prop where
   let_sound : ∀ {env : Checker.Env} {st st' : Checker.State} {g g1 g2 : Checker.Gen}
     {x : String} {e : Expr} {r : Checker.Rhs} {E E0 : Env} {val : Value},
     F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) → F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
@@ -277,6 +283,10 @@ structure Laws (F : Model) : Prop where
   entry_fresh : ∀ {p : Program} {f : FnDecl} {env : Checker.Env} {st : Checker.State}
     {g : Checker.Gen}, (Checker.entryState p f).run {} = .ok ((env, st), g) →
     F.Fresh ⟨env.vars, st, g.atoms⟩ g.next ∧ env.prog = p ∧ env.fn = f ∧ env.loops = []
+
+/-- The lemmas the simulation rests on. That the walk only grows the generator
+is proved (`Checker.Gen.Grows`). -/
+structure Laws (F : Model) : Prop extends DischargeLaws F, TransferLaws F
 
 /-- A snapshot that holds still holds once more atoms are minted. -/
 theorem Laws.lift {F : Model} (L : Laws F) {vars : List Checker.Var} {st : Checker.State}
