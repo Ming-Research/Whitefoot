@@ -1,0 +1,356 @@
+# Temporary (board item wf-inline-policy); remove before the branch is ready.
+# The inline-policy investigation's first round on hosted runners
+# (research/investigations/inline-policy/DESIGN.md): the census of LLVM's
+# inline decisions over the programs, and each arm of the threshold sweep
+# against today's settings, measured on the HashMap cells, Halo's fib and
+# CoreMark, code size and compile time. Every arm is this commit's compiler
+# with the shrinking HashMap of wf-need-firn-hash-shrink; only the clang
+# wrapper beside it differs (research/experiments/inline-policy/).
+name: tmp-inline-policy
+
+on:
+  push:
+    branches: [wf-inline-policy]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: tmp-inline-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  WHITEFOOT_CHECK_TIMEOUT: 3600
+  HALO: df3eb9ec00f4d7db992e82b6d8ab35f8a643a317
+  SILVERFIR: 5f248e4420102356be7edadbdb4db2ae105d3270
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    name: compilers
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Self-test the census reducer
+        run: python3 -B research/experiments/inline-policy/census.py self-test
+      - name: Build this commit's compiler and the same with the shrinking HashMap
+        run: |
+          out="$RUNNER_TEMP/out"
+          mkdir -p "$out/bin"
+          git fetch --no-tags origin +refs/heads/claude/hash-shrink:refs/remotes/origin/claude/hash-shrink
+          git worktree add --detach "$out/shrink" HEAD
+          rm -r "$out/shrink/lib/std/collections/hash_map"
+          git -C "$out/shrink" checkout origin/claude/hash-shrink -- lib/std/collections/hash_map
+          git -C "$out/shrink" diff --cached --stat
+          echo "shrink library from $(git rev-parse origin/claude/hash-shrink)" | tee "$out/bin/manifest.txt"
+          for tree in "$GITHUB_WORKSPACE" "$out/shrink"; do
+            cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+            make -C "$tree/compiler" build
+          done
+          cp compiler/target/gate/whitefootc "$out/bin/whitefootc-main"
+          cp "$out/shrink/compiler/target/gate/whitefootc" "$out/bin/whitefootc-shrink"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compilers
+          path: ${{ runner.temp }}/out/bin/
+
+  census:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    name: census of inline decisions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: compilers
+          path: ${{ runner.temp }}/bin
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo ln -sf "/usr/bin/opt-$version" /usr/bin/opt
+      - name: Inputs
+        run: |
+          inputs="$RUNNER_TEMP/inputs"
+          mkdir -p "$inputs"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$inputs/halo"
+          git -C "$inputs/halo" checkout --quiet "$HALO"
+          git clone --quiet --recurse-submodules https://github.com/Ming-Research/Firn-wf.git "$inputs/firn"
+          echo "firn $(git -C "$inputs/firn" rev-parse HEAD)"
+          python3 -B research/experiments/match-dispatch/wasm/gen.py "$inputs/v2h.wf"
+      - name: Today's settings, with remarks
+        run: |
+          for compiler in main shrink; do
+            arm="$RUNNER_TEMP/arms/$compiler"
+            mkdir -p "$arm"
+            cp "$RUNNER_TEMP/bin/whitefootc-$compiler" "$arm/whitefootc"
+            cp research/experiments/inline-policy/clang-arm.sh "$arm/clang"
+            chmod +x "$arm/whitefootc" "$arm/clang"
+            echo 'ARM_REMARKS=${CENSUS_REMARKS:-}' > "$arm/arm.conf"
+          done
+      - name: Compile each program, collecting its remarks
+        run: |
+          inputs="$RUNNER_TEMP/inputs"
+          remarks="$RUNNER_TEMP/remarks"
+          images="$RUNNER_TEMP/images"
+          mkdir -p "$remarks" "$images"
+          wfc() { "$RUNNER_TEMP/arms/$1/whitefootc" "${@:2}"; }
+          bench=research/experiments/hash-map-compare/bench.wf
+          CENSUS_REMARKS="$remarks/bench-main.txt" wfc main "$bench" -o "$images/bench-main"
+          CENSUS_REMARKS="$remarks/bench-shrink.txt" wfc shrink "$bench" -o "$images/bench-shrink"
+          graph=tests/halo-bench/modules.wfg
+          [ -e "$inputs/halo/$graph" ] || graph=research/experiments/halo-bench/modules.wfg
+          (cd "$inputs/halo" && CENSUS_REMARKS="$remarks/halo.txt" wfc shrink --graph "$graph" --entry bench --full-lto -o "$images/halo")
+          CENSUS_REMARKS="$remarks/v2h.txt" wfc shrink "$inputs/v2h.wf" --cache "$RUNNER_TEMP/cache-v2h" -o "$images/v2h"
+          (cd "$inputs/firn" && CENSUS_REMARKS="$remarks/firn.txt" wfc shrink --graph firn/modules.wfg --entry firn --cache "$RUNNER_TEMP/cache-firn" -o "$images/firn") \
+            || echo "firn does not compile with this compiler"
+          compiled=0; failed=0
+          for program in tests/programs/*.wf; do
+            name=$(basename "$program" .wf)
+            if CENSUS_REMARKS="$remarks/corpus.txt" timeout 300 "$RUNNER_TEMP/arms/shrink/whitefootc" "$program" -o "$images/corpus-$name" > /dev/null 2>&1; then
+              compiled=$((compiled + 1))
+            else
+              failed=$((failed + 1))
+            fi
+          done
+          echo "corpus: $compiled programs compiled, $failed did not compile standalone"
+          ls -la "$remarks"
+      - name: Census
+        run: |
+          remarks="$RUNNER_TEMP/remarks"
+          for name in bench-main bench-shrink halo v2h firn corpus; do
+            files=$(ls "$remarks/$name".txt "$remarks/$name".txt.lto.*.yaml 2>/dev/null || true)
+            # shellcheck disable=SC2086
+            [ -n "$files" ] && python3 -B research/experiments/inline-policy/census.py reduce --name "$name" $files || true
+          done
+      - name: The removal's call sites
+        run: |
+          remarks="$RUNNER_TEMP/remarks"
+          for name in bench-main bench-shrink; do
+            echo "== $name"
+            { grep -h "hash_map_remove" "$remarks/$name.txt" || true; } | sed 's/^.*remark: //' | cut -c1-400 | sort | uniq -c | sort -rn | sed -n '1,40p'
+          done
+          echo "== firn"
+          cat "$remarks"/firn.txt.lto.*.yaml 2>/dev/null | grep -c "hash_map_remove" || true
+          python3 - "$remarks" <<'EOF'
+          import glob, sys
+          sys.path.insert(0, "research/experiments/inline-policy")
+          import census
+          decisions = []
+          for path in glob.glob(f"{sys.argv[1]}/firn.txt.lto.*.yaml"):
+              decisions.extend(census.parse_yaml(open(path, errors="replace").read()))
+          for d in decisions:
+              if "hash_map_remove" in d["callee"]:
+                  print("firn", "inlined" if d["inlined"] else "kept", d["reason"], d["cost"], d["threshold"], d["callee"][:120], "<-", d["caller"][:120])
+          EOF
+      - name: Inline cost of the remaining removal calls, instruction by instruction
+        run: |
+          out="$RUNNER_TEMP/cost"
+          mkdir -p "$out"
+          bench=research/experiments/hash-map-compare/bench.wf
+          for compiler in main shrink; do
+            "$RUNNER_TEMP/arms/$compiler/whitefootc" --emit-llvm "$bench" -o "$out/bench-$compiler.ll"
+            clang -O2 -Wno-override-module -x ir -S -emit-llvm "$out/bench-$compiler.ll" -o "$out/bench-$compiler.O2.ll"
+            opt -passes='print<inline-cost>' -disable-output "$out/bench-$compiler.O2.ll" > "$out/cost-$compiler.txt" 2>&1 || true
+            echo "== $compiler: calls of the removal left in the optimized module: $(grep -c 'call .*hash_map_remove' "$out/bench-$compiler.O2.ll")"
+            # Each analyzed call's block: from its heading to the next one.
+            awk '/Analyzing call of/{p = ($0 ~ /hash_map_remove/); n += p} p && n <= 1' "$out/cost-$compiler.txt" | cut -c1-200 | sed -n '1,400p'
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: census
+          path: |
+            ${{ runner.temp }}/remarks/
+            ${{ runner.temp }}/cost/
+
+  sweep:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    name: arm ${{ matrix.arm }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arm: t325
+            conf: ARM_LLVM=-inline-threshold=325
+          - arm: t500
+            conf: ARM_LLVM=-inline-threshold=500
+          - arm: t1000
+            conf: ARM_LLVM=-inline-threshold=1000
+          - arm: t2000
+            conf: ARM_LLVM=-inline-threshold=2000
+          - arm: o3
+            conf: ARM_OPT=3
+          - arm: lto
+            conf: ARM_LTO=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: compilers
+          path: ${{ runner.temp }}/bin
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      # The two arms of compiler-compare's stages are two trees of this
+      # commit, whose runtime sources the memory cell links; each holds the
+      # same shrink compiler binary, base with today's settings and candidate
+      # with the arm's.
+      - name: Arms
+        env:
+          CONF: ${{ matrix.conf }}
+        run: |
+          out="$RUNNER_TEMP/out"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          mkdir -p "$out/arms"
+          for side in base candidate; do
+            tree="$out/arms/$side"
+            git worktree add --detach "$tree" HEAD
+            mkdir -p "$tree/compiler/target/gate"
+            cp "$RUNNER_TEMP/bin/whitefootc-shrink" "$tree/compiler/target/gate/whitefootc"
+            cp research/experiments/inline-policy/clang-arm.sh "$tree/compiler/target/gate/clang"
+            chmod +x "$tree/compiler/target/gate/whitefootc" "$tree/compiler/target/gate/clang"
+            echo 'ARM_REMARKS=${CENSUS_REMARKS:-}' > "$tree/compiler/target/gate/arm.conf"
+          done
+          echo "$CONF" >> "$out/arms/candidate/compiler/target/gate/arm.conf"
+          {
+            echo "instrument $(git rev-parse HEAD)"
+            echo "candidate arm ${{ matrix.arm }}: $CONF"
+            echo "base: today's settings"
+            cat "$RUNNER_TEMP/bin/manifest.txt"
+            echo "clang $(/usr/bin/clang --version | head -1)"
+            echo "cpu model $(lscpu | sed -n 's/^Model name: *//p')"
+          } | tee "$out/manifest.txt"
+          python3 -B research/experiments/match-dispatch/wasm/gen.py "$RUNNER_TEMP/v2h.wf"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo"
+          git -C "$RUNNER_TEMP/halo" checkout --quiet "$HALO"
+          git clone --quiet --recurse-submodules https://github.com/Ming-Research/Firn-wf.git "$RUNNER_TEMP/firn"
+      - name: The arm reaches the compiler's decisions
+        run: |
+          wfc="$OUT/arms/candidate/compiler/target/gate/whitefootc"
+          mkdir -p "$RUNNER_TEMP/check"
+          CENSUS_REMARKS="$RUNNER_TEMP/check/bench.txt" "$wfc" research/experiments/hash-map-compare/bench.wf -o "$RUNNER_TEMP/check/bench"
+          graph=tests/halo-bench/modules.wfg
+          [ -e "$RUNNER_TEMP/halo/$graph" ] || graph=research/experiments/halo-bench/modules.wfg
+          (cd "$RUNNER_TEMP/halo" && CENSUS_REMARKS="$RUNNER_TEMP/check/halo.txt" "$wfc" --graph "$graph" --entry bench --full-lto -o "$RUNNER_TEMP/check/halo")
+          for name in bench halo; do
+            files=$(ls "$RUNNER_TEMP/check/$name".txt "$RUNNER_TEMP/check/$name".txt.lto.*.yaml 2>/dev/null || true)
+            # shellcheck disable=SC2086
+            python3 -B research/experiments/inline-policy/census.py reduce --name "$name" $files | sed -n '1,20p' || true
+          done
+      - name: Code size and compile time
+        run: |
+          graph=tests/halo-bench/modules.wfg
+          [ -e "$RUNNER_TEMP/halo/$graph" ] || graph=research/experiments/halo-bench/modules.wfg
+          sizes="$RUNNER_TEMP/sizes"
+          mkdir -p "$sizes"
+          text() { size -A "$1" | awk '$1 == ".text" {print $2}'; }
+          # Interleaved: each repeat compiles every program under both arms.
+          for repeat in 1 2; do
+            for side in base candidate; do
+              wfc="$OUT/arms/$side/compiler/target/gate/whitefootc"
+              rm -rf "$sizes/cache-$side"
+              s=$(date +%s.%N); "$wfc" research/experiments/hash-map-compare/bench.wf -o "$sizes/bench-$side"; e=$(date +%s.%N)
+              echo "bench $side $repeat $(awk "BEGIN {print $e - $s}") $(text "$sizes/bench-$side")" | tee -a "$sizes/rows.txt"
+              s=$(date +%s.%N); (cd "$RUNNER_TEMP/halo" && "$wfc" --graph "$graph" --entry bench --full-lto -o "$sizes/halo-$side"); e=$(date +%s.%N)
+              echo "halo $side $repeat $(awk "BEGIN {print $e - $s}") $(text "$sizes/halo-$side")" | tee -a "$sizes/rows.txt"
+              s=$(date +%s.%N); "$wfc" "$RUNNER_TEMP/v2h.wf" --cache "$sizes/cache-$side/v2h" -o "$sizes/v2h-$side"; e=$(date +%s.%N)
+              echo "v2h $side $repeat $(awk "BEGIN {print $e - $s}") $(text "$sizes/v2h-$side")" | tee -a "$sizes/rows.txt"
+              s=$(date +%s.%N)
+              if (cd "$RUNNER_TEMP/firn" && "$wfc" --graph firn/modules.wfg --entry firn --cache "$sizes/cache-$side/firn" -o "$sizes/firn-$side"); then
+                e=$(date +%s.%N)
+                echo "firn $side $repeat $(awk "BEGIN {print $e - $s}") $(text "$sizes/firn-$side")" | tee -a "$sizes/rows.txt"
+              fi
+            done
+          done
+          for side in base candidate; do
+            wfc="$OUT/arms/$side/compiler/target/gate/whitefootc"
+            total=0; count=0
+            for program in tests/programs/*.wf; do
+              name=$(basename "$program" .wf)
+              if timeout 300 "$wfc" "$program" -o "$sizes/corpus-$side-$name" > /dev/null 2>&1; then
+                total=$((total + $(text "$sizes/corpus-$side-$name"))); count=$((count + 1))
+              fi
+            done
+            echo "corpus $side 1 - $total ($count programs)" | tee -a "$sizes/rows.txt"
+          done
+          python3 - "$sizes/rows.txt" <<'EOF'
+          import collections, statistics, sys
+          rows = collections.defaultdict(lambda: collections.defaultdict(list))
+          for line in open(sys.argv[1]):
+              name, side, _, seconds, text = line.split()[:5]
+              rows[name][side].append((None if seconds == "-" else float(seconds), int(text)))
+          print("program  text base -> candidate (ratio)  compile seconds base -> candidate (ratio)")
+          for name, sides in rows.items():
+              if set(sides) != {"base", "candidate"}:
+                  continue
+              tb, tc = sides["base"][0][1], sides["candidate"][0][1]
+              line = f"{name}  {tb} -> {tc} ({tc / tb:.3f})"
+              sb = [s for s, _ in sides["base"] if s is not None]
+              sc = [s for s, _ in sides["candidate"] if s is not None]
+              if sb and sc:
+                  mb, mc = statistics.median(sb), statistics.median(sc)
+                  line += f"  {mb:.1f} -> {mc:.1f} ({mc / mb:.3f})"
+              print(line)
+          EOF
+      - name: Hash-map cells
+        if: ${{ !cancelled() }}
+        env:
+          RUNNER_KIND: github
+          SIZES: 1000,10000,1000000
+          MIN_ROUNDS: "10"
+          MAX_ROUNDS: "20"
+        run: bash research/experiments/compiler-compare/run.sh hashmap
+      - name: Halo fib and CoreMark
+        if: ${{ !cancelled() }}
+        env:
+          RUNNER_KIND: github
+          INTERP_MAX_ROUNDS: "20"
+        run: bash research/experiments/compiler-compare/run.sh interp
+      - name: Summary
+        if: ${{ !cancelled() }}
+        env:
+          RUNNER_KIND: github
+        run: bash research/experiments/compiler-compare/run.sh summary
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sweep-${{ matrix.arm }}
+          path: |
+            ${{ runner.temp }}/out/manifest.txt
+            ${{ runner.temp }}/out/hashmap/summary.txt
+            ${{ runner.temp }}/out/hashmap/raw.tsv
+            ${{ runner.temp }}/out/interp/summary.txt
+            ${{ runner.temp }}/out/interp/time.tsv
+            ${{ runner.temp }}/sizes/rows.txt
+            ${{ runner.temp }}/check/
