@@ -5347,6 +5347,7 @@ fn for_each_implicit_bound(
         }
         TermKind::ResultPayload { ty, .. }
         | TermKind::CommitValue { ty, .. }
+        | TermKind::ReturnedValue { ty, .. }
         | TermKind::CallDatum { ty, .. } => {
             let (minimum, maximum) = type_range(*ty);
             emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);

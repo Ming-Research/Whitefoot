@@ -840,6 +840,7 @@ impl Vocabulary {
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
+            | TermKind::ReturnedValue { .. }
             | TermKind::CallDatum { .. }
             | TermKind::EntryDatum { .. }
             | TermKind::MeasureDatum { .. } => false,
@@ -932,6 +933,7 @@ impl Reasoning<'_, '_, '_> {
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
+            | TermKind::ReturnedValue { .. }
             | TermKind::CallDatum { .. }
             | TermKind::EntryDatum { .. }
             | TermKind::MeasureDatum { .. } => false,
