@@ -494,7 +494,7 @@ def walkStmt (env : Env) (st : State) (pos : Pos) (s : Stmt) : M (Env × Out) :=
 termination_by structural s
 end
 
--- spec ENT-3.S4 ffc80389dfb17776
+-- spec ENT-3.S4 baa5bae4763965e5
 /-- Whether a requirement side is an entry side [ENT-3.S4]: `some true` when
 it holds one term, `some false` when it holds none, and `none` when it is no
 entry side. A sum has a term on at most one side, a difference none in its
