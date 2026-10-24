@@ -415,18 +415,89 @@ mod tests {
         assert!(error.contains("missing packaged clang"), "{error}");
     }
 
+    /// Write an executable script and return once it can be started. The
+    /// script must be harmless to run one more time than the test runs it.
+    ///
+    /// The tests run on parallel threads. A child that another thread forks
+    /// while this thread has the script open for writing keeps its copy of the
+    /// write end until it execs, and Linux refuses to start a file that anyone
+    /// still has open for writing (ETXTBSY, "Text file busy"). Every holder
+    /// lets go when it execs or exits, and a child forked after the write end
+    /// closed here holds none, so a start that stops being refused ends the
+    /// window for good.
+    #[cfg(unix)]
+    fn write_executable(path: &Path, script: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(path, script).expect("write script");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+            .expect("executable permission");
+        wait_until_startable(path);
+    }
+
+    /// Start `path` until the kernel stops refusing it as busy.
+    #[cfg(unix)]
+    fn wait_until_startable(path: &Path) {
+        use std::io::ErrorKind;
+        use std::time::{Duration, Instant};
+        // Bounds a hang, not a verdict: a holder is gone within moments.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+            let started = Command::new(path).arg("--version").output();
+            match started {
+                Err(error) if error.kind() == ErrorKind::ExecutableFileBusy => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "{} stayed busy: {error}",
+                        path.display()
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("cannot start {}: {error}", path.display()),
+                Ok(_) => return,
+            }
+        }
+    }
+
     #[cfg(unix)]
     fn fake_clang(directory: &Path) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let clang = directory.join("clang");
-        fs::write(
+        write_executable(
             &clang,
             "#!/bin/sh\nprintf '%s\\n' 'fake bundled clang 22'\n",
-        )
-        .expect("fake clang");
-        fs::set_permissions(&clang, fs::Permissions::from_mode(0o755))
-            .expect("executable permission");
+        );
         clang
+    }
+
+    // Linux refuses to start a file that is open for writing and macOS does
+    // not, so the wait has something to wait for only on Linux.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_script_open_for_writing_is_waited_for() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let directory = super::super::ProbeDirectory::new().expect("scratch directory");
+        let script = directory.0.join("script");
+        fs::write(&script, "#!/bin/sh\n").expect("script");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755))
+            .expect("executable permission");
+        let writer = fs::OpenOptions::new()
+            .append(true)
+            .open(&script)
+            .expect("writer");
+        let released = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                released.store(true, Ordering::SeqCst);
+                drop(writer);
+            });
+            wait_until_startable(&script);
+            assert!(
+                released.load(Ordering::SeqCst),
+                "the script started while a writer still held it"
+            );
+        });
     }
 
     #[cfg(target_os = "linux")]
@@ -457,7 +528,7 @@ mod tests {
                 .join("ld.lld"),
         );
         assert_eq!(arguments, [OsString::from("-fuse-ld=lld"), expected]);
-        assert!(toolchain.cache_identity().is_ok());
+        toolchain.cache_identity().expect("fake clang version");
     }
 
     #[cfg(target_os = "linux")]
@@ -504,23 +575,18 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn cache_identity_rejects_a_failed_version_command() {
-        use std::os::unix::fs::PermissionsExt;
         let directory = super::super::ProbeDirectory::new().expect("scratch directory");
-        let clang = directory.0.join("clang");
-        fs::write(
-            &clang,
+        write_executable(
+            &directory.0.join("clang"),
             "#!/bin/sh\nprintf '%s\n' 'pretend version'\nexit 7\n",
-        )
-        .expect("failing clang");
-        fs::set_permissions(&clang, fs::Permissions::from_mode(0o755))
-            .expect("executable permission");
+        );
         let toolchain =
             Toolchain::with_prerequisites(&directory.0, |_, _| Ok(())).expect("fake bundle");
         let error = toolchain
             .cache_identity()
             .expect_err("failed version is no identity");
         assert!(
-            error.contains("--version") && error.contains("7"),
+            error.contains("--version exited with exit status: 7"),
             "{error}"
         );
     }
@@ -566,7 +632,7 @@ mod tests {
             arguments,
             [OsString::from("-isysroot"), sdk.into_os_string(), expected]
         );
-        assert!(toolchain.cache_identity().is_ok());
+        toolchain.cache_identity().expect("fake clang version");
     }
 
     #[cfg(unix)]
