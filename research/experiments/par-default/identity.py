@@ -6,8 +6,9 @@ optimizer. Unsupported dispatch shapes fail construction. ABI registers,
 constants, memory offsets, branch topology and external symbol names survive
 normalization. Only consistent renaming of nonvolatile integer temporaries
 and caller-clobbered r10/r11 is admitted. Never collapse all registers to REG.
-The one exception is the entry-version comparison (`layout_free_difference`),
-which reduces registers to a class and is recorded as weaker than identity.
+The exceptions are the entry-version comparison (`layout_free_difference`),
+which reduces registers to a class and is recorded as weaker than identity,
+and the one join reload it admits beside that (`join_reload_difference`).
 """
 import argparse
 import bisect
@@ -972,8 +973,13 @@ def _plumbing(line):
 
 
 def _shape(line):
-    """Register names reduced to a class, stack offsets erased; the rest kept."""
-    text = re.sub(r'%[xy]mm\d+', '%X', line)
+    """Register names reduced to a class, stack offsets erased; the rest kept.
+
+    A zero displacement is dropped: an RBP or R13 base must encode one, so
+    objdump prints `0x0(` for exactly the address another base prints as `(`.
+    """
+    text = re.sub(r'(?<![\w$])0x0\(', '(', line)
+    text = re.sub(r'%[xy]mm\d+', '%X', text)
     text = re.sub(r'%(?!rsp\b|rip\b|X\b)[a-z][\w.]*', '%R', text)
     return re.sub(r'(?:-?0x[0-9a-f]+)?\(%rsp', 'S(%rsp', text)
 
@@ -1024,13 +1030,14 @@ def _computation(lines, at):
     return at
 
 
-def layout_free_difference(left, right, left_root=0, right_root=0):
+def layout_free_difference(left, right, left_root=0, right_root=0, pairs=None):
     """None when two normalized functions have the same rooted shape graph.
 
     A walk from both roots pairs compared instructions one to one: each pair
     has equal `_shape` text and its successors pair in order. A conditional
     branch also pairs with its inverse condition when its two successors are
-    swapped, so block order is not compared; plumbing is skipped.
+    swapped, so block order is not compared; plumbing is skipped. A `pairs`
+    dict receives the pairing of left lines to right lines.
     """
     forward, backward = {}, {}
     pending = [(_computation(left, left_root), _computation(right, right_root))]
@@ -1062,7 +1069,262 @@ def layout_free_difference(left, right, left_root=0, right_root=0):
             return difference('instruction shapes differ')
         pending.extend((None if x is None else _computation(left, x), None if y is None else _computation(right, y))
                        for x, y in reversed(list(zip(successors_a, successors_b))))
+    if pairs is not None:
+        pairs.update(forward)
     return None
+
+
+# A join reload (stage 3, the mandelbrot timed wrapper).
+#
+# An entry-version function's sequential path can rejoin a path from the
+# parallel decision. There the optimizer may read a value from memory that the
+# canonical function kept in a register: in the canonical function the value
+# was stored to that address on one path and loaded from it, just before the
+# join, on another, so it never loads at the join. `join_reload_difference`
+# admits exactly that one load and nothing else: see its docstring.
+DIRECT_MEMORY = re.compile(r'(-?0x[0-9a-f]+)?\((%[a-z][\w.]*)\)')
+INDEXED_MEMORY = re.compile(r'(-?0x[0-9a-f]+)?\((%[a-z][\w.]*)?,%[a-z][\w.]*(?:,\d)?\)')
+CALLER_SAVED = ('rax', 'rcx', 'rdx', 'rsi', 'rdi', 'r8', 'r9', 'r10', 'r11')
+# Instructions with an implicit register result or an implicit memory
+# operand; a function holding one is never admitted as a join reload.
+IMPLICIT_EFFECTS = re.compile(r'(?:(?:mul|div|idiv)[bwlq]?|cqto|cqo|cltq|cltd|cdq|cdqe|cwtl|xchg|cmpxchg\w*|xadd|rep\w*|stos\w*|movs[bwlq]?'
+                              r'|cmps\w*|scas\w*|lods\w*|cpuid|rdtsc\w*|leave\w*|enter\w*|pushf\w*|popf\w*)')
+COMPARE_ONLY = ('cmp', 'test', 'ucomisd', 'ucomiss', 'comisd', 'comiss', 'bt')
+JOIN_RELOAD_QUALIFICATION = ('the entry-version function loads, once at the join outside any loop, the value the canonical function '
+                             'kept in a register that holds that address\'s last stored or loaded value on every other path; '
+                             'whether a call or an indexed store between may change that address is the canonical build\'s own '
+                             'alias reasoning, not checked here; all other instructions have entry-version strength')
+
+
+def _family(operand):
+    """The register an operand names, whatever its width or renaming."""
+    name = operand[1:]
+    renamed = re.fullmatch(r'(saved|scratch)(\d+)\.\d+', name)
+    if renamed:
+        return renamed[1] + renamed[2]
+    return INTEGER_REGISTER_ALIASES.get(name, name)
+
+
+def _full_width(operand):
+    return (re.fullmatch(r'%(?:saved|scratch)\d+\.0', operand) is not None
+            or FULL_INTEGER_REGISTER.fullmatch(operand) is not None)
+
+
+def _displacement(text):
+    return int(text, 16) if text and '0x' in text else int(text or 0)
+
+
+def _written(line):
+    """The register family an instruction writes explicitly, or None."""
+    head, _, rest = line.partition(' ')
+    operands = _split_operands(rest.strip())
+    if (NOISE.match(line) or head.startswith(('j', 'ret', 'push', 'call')) or head in COMPARE_ONLY
+            or not operands or not _register(operands[-1])):
+        return None
+    return _family(operands[-1])
+
+
+def _cell_flow(lines, preds):
+    """Per line, the register values and address cells after it executes.
+
+    A value is a symbol: an entry register, an instruction's result, or a
+    join's merge. A register holds a cell (base value, displacement) when its
+    full-width value was last stored to or loaded from that direct address
+    with no store to an overlapping direct address of the same base since.
+    Calls clobber caller-saved registers. Returns None when the flow does not
+    settle or the function has an implicit effect.
+    """
+    for line in lines:
+        head, _, rest = line.partition(' ')
+        if not NOISE.match(line) and (IMPLICIT_EFFECTS.fullmatch(head)
+                                      or head.startswith('imul') and len(_split_operands(rest.strip())) == 1):
+            return None
+    reach = line_reach(lines, [0])
+
+    def transfer(state, at):
+        values, cells = dict(state[0]), {family: set(held) for family, held in state[1].items()}
+
+        def value(family):
+            return values.get(family, ('entry', family))
+
+        def write(family):
+            values[family] = ('def', at, family)
+            cells.pop(family, None)
+
+        def overwrite(base, displacement):
+            for family in cells:
+                cells[family] = {cell for cell in cells[family]
+                                 if not (cell[0] == base and abs(cell[1] - displacement) < 8)}
+
+        line = lines[at]
+        head, _, rest = line.partition(' ')
+        operands = _split_operands(rest.strip())
+        if head.startswith('call'):
+            for family in CALLER_SAVED:
+                write(family)
+            for family in list(values) + list(cells):
+                if family.startswith(('scratch', 'xmm')):
+                    write(family)
+            return values, cells
+        if head == 'mov' and len(operands) == 2:
+            source, destination = operands
+            loaded, stored = DIRECT_MEMORY.fullmatch(source), DIRECT_MEMORY.fullmatch(destination)
+            if _register(source) and _register(destination) and _full_width(source) and _full_width(destination):
+                values[_family(destination)] = value(_family(source))
+                cells[_family(destination)] = set(cells.get(_family(source), ()))
+                return values, cells
+            if loaded and _register(destination) and loaded[2] != '%rsp':
+                cell = (value(_family(loaded[2])), _displacement(loaded[1]))
+                write(_family(destination))
+                if _full_width(destination):
+                    cells[_family(destination)] = {cell}
+                return values, cells
+            if stored and stored[2] != '%rsp':
+                cell = (value(_family(stored[2])), _displacement(stored[1]))
+                overwrite(*cell)
+                if _register(source) and _full_width(source):
+                    cells.setdefault(_family(source), set()).add(cell)
+                return values, cells
+        if operands and (stored := DIRECT_MEMORY.fullmatch(operands[-1])) and stored[2] != '%rsp' \
+                and head not in COMPARE_ONLY and not head.startswith('push'):
+            overwrite(value(_family(stored[2])), _displacement(stored[1]))
+        written = _written(line)
+        if written:
+            write(written)
+        return values, cells
+
+    def merge(states, at):
+        families = set().union(*(state[0] for state in states))
+        values = {}
+        for family in families:
+            seen = {state[0].get(family, ('entry', family)) for state in states}
+            values[family] = seen.pop() if len(seen) == 1 else ('join', at, family)
+        cells = {}
+        for family in set().union(*(state[1] for state in states)):
+            common = set.intersection(*(set(state[1].get(family, ())) for state in states))
+            if common:
+                cells[family] = common
+        return values, cells
+
+    after = {}
+    for _ in range(64):
+        changed = False
+        for at in sorted(reach):
+            incoming = [after[p] for p in preds[at] if p in after] + ([({}, {})] if at == 0 else [])
+            if not incoming:
+                continue
+            state = transfer(incoming[0] if len(incoming) == 1 else merge(incoming, at), at)
+            if after.get(at) != state:
+                after[at], changed = state, True
+        if not changed:
+            return after
+    return None
+
+
+def _predecessors(lines):
+    preds = {at: [] for at in range(len(lines))}
+    for at in line_reach(lines, [0]):
+        for successor in line_successors(lines, at):
+            if successor is not None and at not in preds[successor]:
+                preds[successor].append(at)
+    return preds
+
+
+def _block_head(lines, preds, at):
+    """The first line of the block whose first compared instruction is `at`."""
+    while len(preds[at]) == 1 and _plumbing(lines[preds[at][0]]) and line_successors(lines, preds[at][0]) == [at]:
+        at = preds[at][0]
+    return at
+
+
+def _block_lines(lines, preds, head):
+    """The straight-line lines from a block head to its branch, exit or the next join."""
+    block, at = [head], head
+    while True:
+        successors = line_successors(lines, at)
+        if len(successors) != 1 or successors[0] is None or len(preds[successors[0]]) != 1:
+            return block
+        at = successors[0]
+        block.append(at)
+
+
+def join_reload_difference(left, right):
+    """Evidence that `right` differs from `left` by one reload at a join; else None.
+
+    The right function holds a direct load `mov D(%B),%R` that is the first
+    compared instruction of a block two or more paths enter, outside any loop.
+    The left function holds the same-shaped load as the last instruction of
+    one path into the corresponding join, also outside any loop. With both
+    loads removed the two functions have the same rooted shape graph, and in
+    the join block the right base and destination registers stand exactly
+    where the left ones do until either is written. On every other path into
+    the left join, the left destination register holds the value last stored
+    to or loaded from D(%B), for that path's value of %B (`_cell_flow`).
+    """
+    left_preds, right_preds = _predecessors(left), _predecessors(right)
+    flow = None
+    found = []
+    for s, seq_load in enumerate(left):
+        seq_match = re.fullmatch(r'mov (\S+),(%[a-z][\w.]*)', seq_load)
+        seq_address = DIRECT_MEMORY.fullmatch(seq_match[1]) if seq_match else None
+        if (not seq_address or seq_address[2] in ('%rsp', '%rip') or not _full_width(seq_match[2])
+                or _family(seq_address[2]) == _family(seq_match[2]) or s not in line_reach(left, [0])):
+            continue
+        join = line_successors(left, s)
+        if len(join) != 1 or join[0] is None or len(left_preds[join[0]]) < 2 or s in line_reach(left, join):
+            continue
+        join = join[0]
+        seq_base, seq_value = _family(seq_address[2]), _family(seq_match[2])
+        seq_block = _block_lines(left, left_preds, join)
+        for d, demand_load in enumerate(right):
+            if _shape(demand_load) != _shape(seq_load) or d not in line_reach(right, [0]):
+                continue
+            demand_match = re.fullmatch(r'mov (\S+),(%[a-z][\w.]*)', demand_load)
+            demand_base, demand_value = _family(DIRECT_MEMORY.fullmatch(demand_match[1])[2]), _family(demand_match[2])
+            head = _block_head(right, right_preds, d)
+            if (demand_base == demand_value or len(right_preds[head]) < 2 or _computation(right, head) != d
+                    or d in line_reach(right, [x for x in line_successors(right, d) if x is not None])):
+                continue
+            left_without = left[:s] + ['nop'] + left[s + 1:]
+            right_without = right[:d] + ['nop'] + right[d + 1:]
+            pairs = {}
+            if layout_free_difference(left_without, right_without, pairs=pairs) is not None:
+                continue
+            if pairs.get(_computation(left_without, join)) != _computation(right_without, head):
+                continue
+            # The base and the loaded value stand in the same places in the join block.
+            roles = {seq_base: demand_base, seq_value: demand_value}
+            demand_block = _block_lines(right, right_preds, head)
+            corresponding, used = True, set()
+            for a in seq_block:
+                if roles and not _plumbing(left[a]):
+                    b = pairs.get(a)
+                    if b is None or b not in demand_block or any(_written(right[x]) in roles.values()
+                                                                for x in demand_block if x < b and x != d):
+                        corresponding = False
+                        break
+                    for x, y in zip(re.findall(r'%[a-z][\w.]*', left[a]), re.findall(r'%[a-z][\w.]*', right[b])):
+                        for seq_role, demand_role in roles.items():
+                            if (_family(x) == seq_role) != (_family(y) == demand_role):
+                                corresponding = False
+                            elif _family(x) == seq_role:
+                                used.add(seq_role)
+                written = _written(left[a])
+                if written in roles:
+                    roles = {}
+            if not corresponding or used != {seq_base, seq_value}:
+                continue
+            # Every other path into the join carries the loaded cell in the register.
+            if flow is None:
+                flow = _cell_flow(left, left_preds)
+            if flow is None:
+                return None
+            others = [p for p in left_preds[join] if p != s]
+            if all(p in flow and (flow[p][0].get(seq_base, ('entry', seq_base)), _displacement(seq_address[1]))
+                   in flow[p][1].get(seq_value, ()) for p in others):
+                found.append({'seq_load': s + 1, 'demand_load': d + 1, 'seq_join': join + 1, 'demand_join': head + 1,
+                              'address': seq_address[0], 'carried_on': [p + 1 for p in others]})
+    return found[0] if len(found) == 1 else None
 
 
 SPLIT_CALL = re.compile(r'call wf__par_split_')
@@ -1817,30 +2079,44 @@ def observed_difference(failure):
 
 
 PROJECTION_ROLE = 'conservative actual W1 wrapper CFG projection; all nondecision instructions retained'
+ADMITTED_CATEGORIES = ('latched-writer', 'entry-adapter', 'entry-version', 'join-reload')
 INLINED_ROLE = 'cheap-region clone inlined into its entry-version function; layout-free shape graph from the clone root'
 ENTRY_VERSION_QUALIFICATION = ('default --par picks the version once at function entry, so the allocator re-assigns saved registers, '
                                'spill slots and frame and the optimizer may inline the clone and reorder its blocks; opcodes, immediates, '
                                'memory shapes, call targets and branch topology are identical, machine identity is not proved')
 
 
-def verified_entry_version(record, wrapper, failure):
-    """Replay: the wrapper's strict difference is exactly the stored one and its shape graphs agree."""
+def entry_version_rows(record, wrapper, failure):
+    """Replay: the wrapper's retained rows whose strict difference is exactly the stored one, or None."""
     evidence = record.get('entry_version_evidence')
     if (not isinstance(evidence, dict) or evidence.get('wrapper') != wrapper
             or evidence.get('wrapper_pool_calls') != record.get('dispatch', {}).get('pool_decisions_per_timed_call')
             or failure['function'] != wrapper or failure['reason'] != 'normalized timed sequential wrapper differs'
             or not observed_difference(failure)):
-        return False
+        return None
     for row in record['comparisons']:
         if row['function'] == wrapper and row['role'] == PROJECTION_ROLE and row.get('identical') is False:
             seq, demand = row.get('seq_instructions'), row.get('demand_instructions')
             if not (isinstance(seq, list) and seq and isinstance(demand, list) and demand
                     and all(isinstance(line, str) for line in seq + demand)):
-                return False
+                return None
             strict = first_difference(seq, demand)
-            return (strict is not None and all(failure.get(key) == value for key, value in strict.items())
-                    and layout_free_difference(seq, demand) is None)
-    return False
+            if strict is None or any(failure.get(key) != value for key, value in strict.items()):
+                return None
+            return seq, demand
+    return None
+
+
+def verified_entry_version(record, wrapper, failure):
+    """Replay: the stored strict difference, and shape graphs that agree."""
+    rows = entry_version_rows(record, wrapper, failure)
+    return rows is not None and layout_free_difference(*rows) is None
+
+
+def verified_join_reload(record, wrapper, failure):
+    """Replay: the stored strict difference, and one admitted join reload; its evidence or None."""
+    rows = entry_version_rows(record, wrapper, failure)
+    return None if rows is None else join_reload_difference(*rows)
 
 
 def _classify_construction(record, wrapper, selected_roots, writer_evidence, inventory_roots=None):
@@ -1858,6 +2134,9 @@ def _classify_construction(record, wrapper, selected_roots, writer_evidence, inv
         elif verified_entry_version(record, wrapper, failure):
             failure.update(category='entry-version', evidence={
                 'timed_wrapper': wrapper, 'qualification': ENTRY_VERSION_QUALIFICATION})
+        elif (reload := verified_join_reload(record, wrapper, failure)) is not None:
+            failure.update(category='join-reload', evidence={
+                'timed_wrapper': wrapper, 'reload': reload, 'qualification': JOIN_RELOAD_QUALIFICATION})
         else:
             failure['category'] = 'ordinary'
             if failure['function'] != wrapper:
@@ -1958,7 +2237,7 @@ def _classify_construction(record, wrapper, selected_roots, writer_evidence, inv
         and all(type(width) is int for width in record.get('covered_widths', []))
         and {1, *([2, 4, 8] if regions else [])} <= set(record.get('covered_widths', [])))
     categories = {category: [failure for failure in record['failures'] if failure['category'] == category]
-                  for category in ('latched-writer', 'entry-adapter', 'entry-version')}
+                  for category in ADMITTED_CATEGORIES}
     ordinary = [failure for failure in record['failures'] if failure['category'] == 'ordinary']
     admitted = closure_complete and decisions_complete and not ordinary
     record['admission'] = {'policy': 'experiment-6-option-D', 'status': 'pass' if admitted else 'fail',
@@ -2279,6 +2558,51 @@ def shape_self_test():
                               ['mulsd %xmm0,%xmm3', 'ret']) is None:
         raise IdentityError('shape self-test accepted a changed vector operation')
 
+    # A zero displacement an RBP or R13 base must encode is the same address.
+    if layout_free_difference(['movsd 0x0(%saved0.0,%saved1.0,8),%xmm1', 'ret'],
+                              ['movsd (%saved1.0,%saved0.0,8),%xmm1', 'ret']) is not None:
+        raise IdentityError('shape self-test rejected an encoded zero displacement')
+    if layout_free_difference(['movsd 0x0(%saved0.0,%saved1.0,8),%xmm1', 'ret'],
+                              ['movsd 0x8(%saved1.0,%saved0.0,8),%xmm1', 'ret']) is None:
+        raise IdentityError('shape self-test accepted a changed displacement')
+
+    # A join reload: the canonical function stores the length it keeps in a
+    # register on the allocating path and loads it on the empty path; the
+    # entry-version function loads it once where the two paths join.
+    empty = 'lea [readonly-address:empty](%rip),%saved0.0'
+    allocating = ['push %saved0.0', 'push %saved1.0', 'test %rdi,%rdi', 'je I10', 'mov %rdi,%saved1.0',
+                  'call wf__heap_take', 'mov %rax,%saved0.0', 'mov %saved1.0,(%rax)', 'call memset']
+    returning = ['lea 0x8(%saved0.0),%rax', 'pop %saved1.0', 'pop %saved0.0', 'ret']
+    kept = allocating + ['jmp I12', empty, 'mov (%saved0.0),%saved1.0', 'mov %saved1.0,(%rsi)'] + returning
+    reloaded = allocating + ['jmp I11', empty, 'mov (%saved0.0),%rcx', 'mov %rcx,(%rsi)'] + returning
+    if layout_free_difference(kept, reloaded) is None:
+        raise IdentityError('shape self-test join reload fixture has no shape difference')
+    if join_reload_difference(kept, reloaded) is None:
+        raise IdentityError('shape self-test rejected a join reload')
+
+    def looped(lines):
+        # A back edge from the join block to the test makes both loads loop.
+        return lines[:-3] + ['jne I2'] + lines[-3:]
+
+    def replaced(lines, at, line):
+        return lines[:at] + [line] + lines[at + 1:]
+    reload_wrong = {
+        'join reload in a loop': (looped(kept), looped(reloaded)),
+        # The load ends one path instead of starting the join block, so the
+        # empty path reaches the store without it.
+        'join reload off the join': (kept, replaced(allocating, 3, 'je I11')
+                                     + ['mov (%saved0.0),%rcx', 'jmp I12', empty, 'mov %rcx,(%rsi)'] + returning),
+        'join reload at another offset': (kept, replaced(reloaded, 11, 'mov 0x8(%saved0.0),%rcx')),
+        'join reload from another base': (kept, replaced(reloaded, 11, 'mov (%saved2.0),%rcx')),
+        'join reload of an unstored value': (replaced(kept, 7, 'mov %rdx,(%rax)'), replaced(reloaded, 7, 'mov %rdx,(%rax)')),
+        'join reload after an overwrite': (replaced(kept, 8, 'movq $0x0,(%saved0.0)'),
+                                           replaced(reloaded, 8, 'movq $0x0,(%saved0.0)')),
+    }
+    for name, (seq_lines, demand_lines) in reload_wrong.items():
+        if join_reload_difference(seq_lines, demand_lines) is not None:
+            raise IdentityError(f'shape self-test accepted a wrong join reload: {name}')
+        wrong[name] = demand_lines
+
     # An inlined clone: a decision prefix, the parallel path through a split
     # call, and the canonical function's code entered from the decision.
     prefix = ['push %saved0.0', 'cmp $0x2,%rdi', 'jb I{clone}']
@@ -2483,7 +2807,7 @@ def main():
             record['status'] = 'fail'
     categories = {category: [failure for record in records.values() for failure in record['failures']
                              if failure.get('category') == category]
-                  for category in ('latched-writer', 'entry-adapter', 'entry-version')}
+                  for category in ADMITTED_CATEGORIES}
     result = {'hashes': hashes, 'schema': 1, 'status': 'pass' if all(record['status'] == 'pass' for record in records.values()) else 'fail',
               'computation_status': 'pass' if all(status == 'pass' for status in computation) else 'fail' if 'fail' in computation else 'unverified',
               'admission_policy': 'experiment-6-option-D', 'admitted_differences': categories,

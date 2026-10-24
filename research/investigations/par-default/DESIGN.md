@@ -616,7 +616,22 @@ pops, stack adjustments, register and spill moves, padding, placement jumps)
 is dropped; an inlined clone's root is the one instruction outside the code
 that can still reach a parallel split call whose graph is the canonical
 function's. The owner chose this comparison over marking the clone
-`noinline` and over checking the shape alone.
+`noinline` and over checking the shape alone. A zero displacement is dropped
+from the compared shape, since an RBP or R13 base must encode one.
+
+A third shape, a join reload, is admitted beside them. Where the timed wrapper's sequential path rejoins
+the path from the parallel decision, the optimizer may load a value the
+canonical function kept in a register: the mandelbrot wrapper reads the result
+array's length from its header once at that join, where the canonical
+function had stored that length on the allocating path and loaded it on the
+empty path. `join_reload_difference` admits exactly one such direct load, at
+a join outside any loop, matched by a same-address load ending one canonical
+path into the join; with both removed the shape graphs agree, the base and
+loaded registers stand in the same places in the join block, and on every
+other canonical path the register holds that address's last stored or loaded
+value. Whether a call or an indexed store between could change the address is
+the canonical build's own alias reasoning and is not checked. Removing the
+load itself is the work of the board item `par-split-clone-identity`.
 
 ### Workloads
 

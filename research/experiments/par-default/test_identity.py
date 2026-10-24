@@ -123,7 +123,7 @@ define i64 @wf__par_seq_body(i64 %value) {
         self.assertEqual(record['computation_status'], 'pass')
         self.assertEqual(record['timed_selection_status'], 'unverified')
         self.assertEqual(record['status'], 'pass')
-        self.assertEqual(validate_admission(record)['category_counts'], {'latched-writer': 0, 'entry-adapter': 1, 'entry-version': 0})
+        self.assertEqual(validate_admission(record)['category_counts'], {'latched-writer': 0, 'entry-adapter': 1, 'entry-version': 0, 'join-reload': 0})
         self.assertEqual(record['computation_scope']['selected_sequential_roots'], [])
         for projection, root in [({}, 'wf__par_seq_body'),
                                  ({'pool_decisions_per_timed_call': 0}, 'wf__par_seq_body'),
