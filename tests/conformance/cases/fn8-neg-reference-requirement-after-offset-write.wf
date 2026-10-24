@@ -21,15 +21,11 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &rows, value: move a);
   place_back(window: &rows, value: move b);
   let k = 0_u64;
-  if k < rows.len {
-    let wr = &rows[k];
-    set k = 1_u64;
-    if k < rows.len {
-      if 3_u64 <= rows[k].len {
-        let d = get(x: wr, i: 2_u64);
-        return exit_status(code: 0_u8);
-      }
-    }
+  let wr = &rows[k];
+  set k = 1_u64;
+  if 3_u64 <= rows[k].len {
+    let d = get(x: wr, i: 2_u64);
+    return exit_status(code: 0_u8);
   }
   return exit_status(code: 0_u8);
 }

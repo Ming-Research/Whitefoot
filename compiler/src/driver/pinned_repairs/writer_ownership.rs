@@ -2,8 +2,8 @@
 
 use super::RepairPair;
 
-const JOIN_REJECTED: &[u8] = br#"fn finish(pool: Box<u8>) -> result: unit pure {
-  if True() {
+const JOIN_REJECTED: &[u8] = br#"fn finish(pool: Box<u8>, flag: Bool) -> result: unit pure {
+  if flag {
     let released_pool = move pool;
   }
   return unit;
@@ -15,8 +15,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
 
 const JOIN_REPAIRED: &[&[u8]] = &[
-    br#"fn finish(pool: Box<u8>) -> result: unit pure {
-  if True() {
+    br#"fn finish(pool: Box<u8>, flag: Bool) -> result: unit pure {
+  if flag {
     let released_pool = move pool;
   } else {
     release::<Box<u8>>(value: move pool);
@@ -28,8 +28,8 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-    br#"fn finish(pool: Box<u8>) -> result: unit pure {
-  if True() {
+    br#"fn finish(pool: Box<u8>, flag: Bool) -> result: unit pure {
+  if flag {
     let observed = pool.inner;
   }
   return unit;
@@ -39,8 +39,8 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-    br#"fn finish(pool: Box<u8>) -> result: unit pure {
-  if True() {
+    br#"fn finish(pool: Box<u8>, flag: Bool) -> result: unit pure {
+  if flag {
     let released_pool = move pool;
     set pool = move released_pool;
   }
@@ -51,7 +51,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-    br#"fn finish(pool: Box<u8>) -> result: unit pure {
+    br#"fn finish(pool: Box<u8>, flag: Bool) -> result: unit pure {
   release::<Box<u8>>(value: move pool);
   return unit;
 }
@@ -225,11 +225,11 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        name: "writer-implicit-false-edge-retained-for-true.wf",
+        name: "writer-implicit-false-edge-retained-for-undecided-condition.wf",
         rejected: JOIN_REJECTED,
         rule: "LIV-1",
         sentences: &[
-            "\n  live_predecessor: the implicit false edge of this `if` (no `else` is written); constant conditions do not remove this structural edge [FN-1]\n",
+            "\n  live_predecessor: the implicit false edge of this `if` (no `else` is written)\n",
             "\n  dead_predecessor: the `if` branch\n",
             "consume it on every predecessor, on none, or commit a value back into it",
             "write `release::<Box<u8>>(value: move pool);` before the code that needs it released and remove the conditional consume",
@@ -242,34 +242,26 @@ fn main() -> status: std::process::ExitStatus pure {
 fn an_implicit_false_edge_is_structural_and_only_droppable_owners_get_release() {
     use super::{CompilerLimits, SourceInput, compile};
 
-    for (name, condition, constant) in [
-        ("false-edge.wf", "False()", true),
-        ("variable-edge.wf", "flag", false),
-    ] {
-        let source = std::str::from_utf8(JOIN_REJECTED)
-            .expect("the fixture is UTF-8")
-            .replace("pool: Box<u8>", "pool: Box<u8>, flag: Bool")
-            .replace("True()", condition);
-        let failure = compile(
-            &[SourceInput::from_host_path(name, name, source.as_bytes())],
-            CompilerLimits::default(),
-        )
-        .expect_err("the structural false edge retains the owner");
-        assert_eq!(failure.rule_id(), Some("LIV-1"));
-        let rendered = failure.to_string();
-        assert!(rendered.contains("the implicit false edge of this `if` (no `else` is written)"));
-        assert_eq!(
-            rendered.contains("constant conditions do not remove"),
-            constant
-        );
-    }
+    let failure = compile(
+        &[SourceInput::from_host_path(
+            "variable-edge.wf",
+            "variable-edge.wf",
+            JOIN_REJECTED,
+        )],
+        CompilerLimits::default(),
+    )
+    .expect_err("the structural false edge retains the owner");
+    assert_eq!(failure.rule_id(), Some("LIV-1"));
+    let rendered = failure.to_string();
+    assert!(rendered.contains("the implicit false edge of this `if` (no `else` is written)"));
+    assert!(!rendered.contains("constant conditions do not remove"));
 
     let source = br#"nodrop struct Ticket {
   code: u8;
 }
 
-fn finish(ticket: Ticket) -> result: unit pure {
-  if True() {
+fn finish(ticket: Ticket, flag: Bool) -> result: unit pure {
+  if flag {
     let Ticket(code: code) = move ticket;
   }
   return unit;
@@ -290,4 +282,78 @@ fn main() -> status: std::process::ExitStatus pure {
     .expect_err("the structural false edge retains the linear value");
     assert_eq!(failure.rule_id(), Some("LIV-1"));
     assert!(!failure.to_string().contains("release::<"));
+}
+
+/// The structural join is checked before source-condition redundancy. Both
+/// literals still carry LIV-1's constant-edge sentence on an unbalanced join;
+/// restoring the owner makes that join valid and exposes OP-5 instead.
+#[test]
+fn a_constant_unbalanced_join_precedes_condition_redundancy() {
+    use super::{CompilerLimits, SourceInput, compile};
+
+    for (condition, decided) in [("True()", "True"), ("False()", "False")] {
+        let source = std::str::from_utf8(JOIN_REJECTED)
+            .expect("the fixture is UTF-8")
+            .replace("if flag", &format!("if {condition}"));
+        let failure = compile(
+            &[SourceInput::new("constant-edge.wf", source.as_bytes())],
+            CompilerLimits::default(),
+        )
+        .expect_err("the structural join retains the owner on only one edge");
+        assert_eq!(failure.rule_id(), Some("LIV-1"), "{failure}");
+        assert!(failure.to_string().contains(
+            "\n  live_predecessor: the implicit false edge of this `if` (no `else` is written); constant conditions do not remove this structural edge [FN-1]\n"
+        ));
+
+        let source = std::str::from_utf8(JOIN_REPAIRED[2])
+            .expect("the fixture is UTF-8")
+            .replace("if flag", &format!("if {condition}"));
+        let failure = compile(
+            &[SourceInput::new("constant-edge.wf", source.as_bytes())],
+            CompilerLimits::default(),
+        )
+        .expect_err("a balanced join exposes the redundant constant condition");
+        assert_eq!(failure.rule_id(), Some("OP-5"), "{failure}");
+        let rendered = failure.to_string();
+        assert!(rendered.contains("]: RedundantCondition\n"), "{rendered}");
+        assert!(
+            rendered.contains(&format!("\n  decided: {decided}\n")),
+            "{rendered}"
+        );
+    }
+}
+
+/// OP-5 admits constants in a contradictory entering state. Structural
+/// ownership still requires agreement at the join: contradiction does not
+/// remove the implicit false edge [FN-1]. The restored-owner control proves
+/// the constant condition itself is admitted in this state.
+#[test]
+fn contradictory_conditions_do_not_remove_structural_ownership_edges() {
+    use super::{CompilerLimits, SourceInput, compile};
+
+    for condition in ["True()", "False()"] {
+        for (source, restored) in [(JOIN_REJECTED, false), (JOIN_REPAIRED[2], true)] {
+            let source = std::str::from_utf8(source)
+                .expect("the fixture is UTF-8")
+                .replace("flag: Bool)", "flag: Bool, n: u8)")
+                .replace(
+                    "-> result: unit pure {",
+                    "-> result: unit pure contract {\n  requires n < 0_u8;\n} {",
+                )
+                .replace("if flag", &format!("if {condition}"));
+            let outcome = compile(
+                &[SourceInput::new("contradictory-edge.wf", source.as_bytes())],
+                CompilerLimits::default(),
+            );
+            if restored {
+                outcome.expect("OP-5 admits the constant in a contradictory entering state");
+            } else {
+                let failure = outcome.expect_err("structural ownership still judges both edges");
+                assert_eq!(failure.rule_id(), Some("LIV-1"), "{failure}");
+                assert!(failure.to_string().contains(
+                    "\n  live_predecessor: the implicit false edge of this `if` (no `else` is written); constant conditions do not remove this structural edge [FN-1]\n"
+                ));
+            }
+        }
+    }
 }

@@ -1,0 +1,3 @@
+fn offset_at(clock: &std::time::WallClock, at: i64) -> result: Option<i64> pure {
+  return std::time::local_offset_seconds(clock: clock, at: at);
+}

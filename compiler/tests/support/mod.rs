@@ -47,8 +47,59 @@ pub(crate) const LINK_LIBRARIES: &[&str] = whitefoot::HOST_LINK_LIBRARIES;
 #[cfg(windows)]
 pub(crate) const LINK_LIBRARIES: &[&str] = &["-lws2_32", "-lshell32"];
 
+/// The sanitizer this test process builds every program with, named by
+/// `WHITEFOOT_TEST_SANITIZER` (`address` or `thread`), or none
+/// (compiler/sanitized-builds). It is read once, so every runtime object and
+/// every link of one process agree.
+#[allow(dead_code)]
+pub(crate) fn sanitizer() -> Option<whitefoot::Sanitizer> {
+    static SELECTED: OnceLock<Option<whitefoot::Sanitizer>> = OnceLock::new();
+    *SELECTED.get_or_init(|| {
+        let word = std::env::var("WHITEFOOT_TEST_SANITIZER").ok()?;
+        Some(whitefoot::Sanitizer::parse(&word).unwrap_or_else(|| {
+            panic!("WHITEFOOT_TEST_SANITIZER names address or thread, not {word:?}")
+        }))
+    })
+}
+
+/// The arguments this process's sanitizer adds to every compile and link.
+fn sanitizer_arguments() -> &'static [&'static str] {
+    sanitizer().map_or(&[], whitefoot::Sanitizer::clang_arguments)
+}
+
+/// `module` as this process links it: admitted to the selected sanitizer's
+/// instrumentation, or unchanged without one.
+#[allow(dead_code)]
+pub(crate) fn sanitized(module: whitefoot::LlvmModule) -> whitefoot::LlvmModule {
+    match sanitizer() {
+        Some(selected) => module.sanitized(selected),
+        None => module,
+    }
+}
+
+/// Stops a sanitized run before it links an emitted unit whose definitions
+/// the sanitizer would skip, so no path that builds a program can leave its
+/// code unchecked without failing.
+#[allow(dead_code)]
+pub(crate) fn require_sanitized(unit: &str) {
+    let Some(selected) = sanitizer() else {
+        return;
+    };
+    if let Some(group) = unit
+        .lines()
+        .find(|line| line.starts_with("attributes #0 = {"))
+    {
+        assert!(
+            group.contains(selected.function_attribute()),
+            "a {} run links an emitted unit built without it: {group}",
+            selected.name()
+        );
+    }
+}
+
 static DEFAULT_OBJECTS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
 static C11_OBJECTS: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
+static GUARD_COUNTER_BRIDGE: OnceLock<Vec<u8>> = OnceLock::new();
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 
 /// Records optional test-helper wall times separately from Cargo construction.
@@ -188,6 +239,51 @@ fn stage_sources(directory: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+fn compile_native_object(
+    directory: &Path,
+    name: &str,
+    object: &Path,
+    c_standard: Option<&str>,
+    guard_counters: bool,
+) -> Vec<u8> {
+    let mut command = Command::new(CLANG);
+    if let Some(standard) = c_standard {
+        command.arg(format!("-std={standard}"));
+    }
+    // Before the restricted child arguments, whose -fno-sanitize=all keeps
+    // that closure uninstrumented.
+    command.args(sanitizer_arguments());
+    if matches!(
+        name,
+        "completion/snapshot_export.c" | "completion/fork_capsule.c"
+    ) {
+        command.args(whitefoot::RESTRICTED_CHILD_COMPILE_ARGUMENTS);
+    }
+    if guard_counters {
+        command.arg("-DWF_GUARD_COUNTERS=1");
+    }
+    command
+        .args(COMPILE_ARGUMENTS)
+        .args(HOST_OPTIMIZATION_ARGUMENTS)
+        .arg("-I")
+        .arg(directory.join("completion"))
+        .arg("-I")
+        .arg(directory)
+        .arg("-x")
+        .arg(if name.ends_with(".ll") { "ir" } else { "c" })
+        .arg(directory.join(name))
+        .arg("-c")
+        .arg("-o")
+        .arg(object);
+    let result = run_command(&mut command);
+    assert!(
+        result.status.success(),
+        "clang rejected native unit {name}:\n{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    std::fs::read(object).expect("read native library object")
+}
+
 fn compile_objects(c_standard: Option<&str>) -> Vec<Vec<u8>> {
     let sequence = NEXT_BUILD.fetch_add(1, Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
@@ -201,40 +297,30 @@ fn compile_objects(c_standard: Option<&str>) -> Vec<Vec<u8>> {
         .enumerate()
         .map(|(index, name)| {
             let object = directory.join(format!("unit-{index}.o"));
-            let mut command = Command::new(CLANG);
-            if let Some(standard) = c_standard {
-                command.arg(format!("-std={standard}"));
-            }
-            if matches!(
-                *name,
-                "completion/snapshot_export.c" | "completion/fork_capsule.c"
-            ) {
-                command.args(whitefoot::RESTRICTED_CHILD_COMPILE_ARGUMENTS);
-            }
-            command
-                .args(COMPILE_ARGUMENTS)
-                .args(HOST_OPTIMIZATION_ARGUMENTS)
-                .arg("-I")
-                .arg(directory.join("completion"))
-                .arg("-I")
-                .arg(&directory)
-                .arg("-x")
-                .arg(if name.ends_with(".ll") { "ir" } else { "c" })
-                .arg(directory.join(name))
-                .arg("-c")
-                .arg("-o")
-                .arg(&object);
-            let result = run_command(&mut command);
-            assert!(
-                result.status.success(),
-                "clang rejected native unit {name}:\n{}",
-                String::from_utf8_lossy(&result.stderr)
-            );
-            std::fs::read(object).expect("read native library object")
+            compile_native_object(&directory, name, &object, c_standard, false)
         })
         .collect();
     std::fs::remove_dir_all(directory).expect("remove native object build directory");
     objects
+}
+
+fn compile_guard_counter_bridge() -> Vec<u8> {
+    let sequence = NEXT_BUILD.fetch_add(1, Ordering::Relaxed);
+    let directory = std::env::temp_dir().join(format!(
+        "whitefoot-guard-counter-object-{}-{sequence}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).expect("create unique guard counter build directory");
+    let _sources = stage_sources(&directory);
+    let object = compile_native_object(
+        &directory,
+        "completion/completion_bridge.c",
+        &directory.join("guard-counter-bridge.o"),
+        None,
+        true,
+    );
+    std::fs::remove_dir_all(directory).expect("remove guard counter build directory");
+    object
 }
 
 /// Appends ordinary library objects, the requested heap object and an optional
@@ -253,6 +339,35 @@ pub(crate) fn append_runtime_objects(
     observer: Option<&Path>,
     needs_heap: bool,
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    append_runtime_objects_with_counters(
+        command,
+        directory,
+        c_standard,
+        observer,
+        needs_heap,
+        false,
+    )
+}
+
+/// Uses the ordinary objects except for a separately cached bridge built with
+/// its existing diagnostic counters. Shipped-runtime builds remain unchanged.
+#[allow(dead_code)] // Unit tests share this module without the counted corpus case.
+pub(crate) fn append_runtime_objects_with_guard_counters(
+    command: &mut Command,
+    directory: &Path,
+    needs_heap: bool,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    append_runtime_objects_with_counters(command, directory, None, None, needs_heap, true)
+}
+
+fn append_runtime_objects_with_counters(
+    command: &mut Command,
+    directory: &Path,
+    c_standard: Option<&str>,
+    observer: Option<&Path>,
+    needs_heap: bool,
+    guard_counters: bool,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let sources = stage_sources(directory);
     let objects = match c_standard {
         None => DEFAULT_OBJECTS.get_or_init(|| compile_objects(None)),
@@ -265,12 +380,18 @@ pub(crate) fn append_runtime_objects(
         .arg("-I")
         .arg(directory.join("completion"))
         .arg("-I")
-        .arg(directory);
+        .arg(directory)
+        .args(sanitizer_arguments());
     let paths = objects
         .iter()
         .enumerate()
         .map(|(index, bytes)| {
             let path = directory.join(format!("wf-native-unit-{index}.o"));
+            let bytes = if guard_counters && UNITS[index] == "completion/completion_bridge.c" {
+                GUARD_COUNTER_BRIDGE.get_or_init(compile_guard_counter_bridge)
+            } else {
+                bytes
+            };
             std::fs::write(&path, bytes).expect("materialize native library object");
             if UNITS[index] != "heap.c" || needs_heap {
                 command.arg("-x").arg("none").arg(&path);

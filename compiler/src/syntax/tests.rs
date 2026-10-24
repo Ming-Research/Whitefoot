@@ -333,6 +333,57 @@ fn malformed_numeric_membership_stops_at_first_source_then_byte() {
 }
 
 #[test]
+fn malformed_literal_and_remainder_fixes_keep_membership_owners_and_tokens() {
+    use crate::diagnostic_repairs::{
+        CHARACTER_SUFFIX_FIX, DECIMAL_INTEGER_FIX, REMAINDER_MODE_FIX,
+    };
+    for (spelling, owner, fix) in [
+        (
+            b"'a'".as_slice(),
+            TerminalIssueOwner::Form5,
+            CHARACTER_SUFFIX_FIX,
+        ),
+        (
+            br"'\u{e9}'".as_slice(),
+            TerminalIssueOwner::Form5,
+            CHARACTER_SUFFIX_FIX,
+        ),
+        (
+            b"0xff_u32".as_slice(),
+            TerminalIssueOwner::Form5,
+            DECIMAL_INTEGER_FIX,
+        ),
+        (
+            b"%wrap".as_slice(),
+            TerminalIssueOwner::Gram1,
+            REMAINDER_MODE_FIX,
+        ),
+    ] {
+        let inputs = [SourceInput::new("spelling.wf", spelling)];
+        let Ok(bundle) = source_bundle(&inputs) else {
+            panic!("source bundle must be constructible");
+        };
+        let Ok(lexed) = lexed(&bundle) else {
+            panic!("the complete malformed spelling must still form one token");
+        };
+        let TerminalOutcome::SourceIssue(issue) = classify_terminals(
+            &lexed,
+            ACTIVE_KERNEL_SPEC_HASH,
+            TerminalLimits { max_tokens: 1 },
+        ) else {
+            panic!("malformed spelling must fail membership");
+        };
+        assert_eq!(issue.owner(), owner);
+        assert_eq!(issue.mechanical_fix(), Some(fix));
+        assert_eq!(issue.token().start().value(), 0);
+        assert_eq!(
+            issue.token().end().value(),
+            u64::try_from(spelling.len()).unwrap_or(u64::MAX)
+        );
+    }
+}
+
+#[test]
 fn malformed_numeric_language_is_rejected_without_rescanning() {
     for spelling in [
         b"2_T".as_slice(),

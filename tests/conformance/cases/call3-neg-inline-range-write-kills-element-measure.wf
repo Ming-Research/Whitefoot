@@ -26,13 +26,11 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &rows, value: move third);
   let cells = array_filled::<u64, 3>(value: 7_u64);
   let total = 0_u64;
-  if rows.len == 3_u64 {
-    if rows[1_u64].len <= cells.len {
-      refill(part: &rows[1_u64..3_u64], at: 0_u64);
-      for (c in 0_u64..rows[1_u64].len) {
-        let cell = cells[c];
-        set total = total +wrap cell;
-      }
+  if rows[1_u64].len <= cells.len {
+    refill(part: &rows[1_u64..3_u64], at: 0_u64);
+    for (c in 0_u64..rows[1_u64].len) {
+      let cell = cells[c];
+      set total = total +wrap cell;
     }
   }
   return exit_status(code: 0_u8);

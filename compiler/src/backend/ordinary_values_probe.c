@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -38,6 +39,7 @@
 #else
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <locale.h>
@@ -480,18 +482,8 @@ extern void wf_test_public_read(wf_read_result *, wf_value *, wf_value *, wf_vie
 
 static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read read_at) {
     static const char filename[] = "ordinary-values.data";
-#if defined(_WIN32)
-    static const uint16_t component[] = { 'o','r','d','i','n','a','r','y','-','v','a','l','u','e','s','.','d','a','t','a' };
-#else
-    static const unsigned char component[] = "ordinary-values.data";
-#endif
-    wf_view name = {(void *)component,
-#if defined(_WIN32)
-        sizeof(component)
-#else
-        sizeof(component) - 1
-#endif
-    };
+    /* A name is name bytes on every host, so the ASCII name is shared. */
+    wf_view name = {(void *)filename, sizeof(filename) - 1};
     unsigned char bytes[4096];
     unsigned char unchanged[sizeof(bytes)];
     wf_view window = {bytes, sizeof(bytes)};
@@ -560,11 +552,7 @@ static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read
     open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 1 && opened.err.error.tag == 0);
     assert(WF_PROBE_INPUT_BUDGET == saved - 1);
-#if defined(_WIN32)
-    static const uint16_t invalid[] = { 'b','a','d','/','n','a','m','e' };
-#else
     static const unsigned char invalid[] = { 'b','a','d','/','n','a','m','e' };
-#endif
     wf_view invalid_name = {(void *)invalid, sizeof(invalid)};
     open_file(&opened, &inputs->handles, &inputs->cwd_read, &invalid_name, 0, invalid_name.length);
     assert(opened.tag == 1 && opened.err.error.tag == 9);
@@ -578,17 +566,14 @@ static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read
     assert(WF_PROBE_INPUT_BUDGET == saved);
 }
 
-/* The fixture has one file and whichever self/parent entries this host
- * returns. A successful batch must consume new entries, so at most three
- * successful batches can precede EOF; there is no open-ended iteration. */
+/* A listing reports each fixture entry once, as name bytes on every host,
+ * and never `.` or `..`. Every successful batch consumes at least one new
+ * expected entry, so at most `count` successful batches can precede EOF;
+ * there is no open-ended iteration. */
 struct expected_entry { const void *name; size_t bytes; unsigned kind; };
-#if defined(_WIN32)
-#define WF_ENTRY(name, kind) { L##name, sizeof(L##name) - sizeof(wchar_t), kind }
-#else
 #define WF_ENTRY(name, kind) { name, sizeof(name) - 1, kind }
-#endif
 static const struct expected_entry ordinary_entries[] = {
-    WF_ENTRY(".", 2), WF_ENTRY("..", 2), WF_ENTRY("ordinary-directory.data", 1)
+    WF_ENTRY("ordinary-directory.data", 1)
 };
 static unsigned directory_contents(wf_value *source, int empty_first,
                                    const struct expected_entry *expected, unsigned count) {
@@ -604,7 +589,7 @@ static unsigned directory_contents(wf_value *source, int empty_first,
         assert(listed.result.tag == 0 && listed.next == 11 && listed.entries == 0);
         assert(memcmp(bytes, unchanged, sizeof(bytes)) == 0);
     }
-    for (unsigned batch = 0; batch < 4; ++batch) {
+    for (unsigned batch = 0; batch <= count; ++batch) {
         memset(bytes, 0x7d, sizeof(bytes));
         memcpy(unchanged, bytes, sizeof(bytes));
         wf__body_directory_next(&listed, source, &window, start, end);
@@ -620,7 +605,7 @@ static unsigned directory_contents(wf_value *source, int empty_first,
             memcpy(unchanged + end - sizeof(eof_flags), &eof_flags, sizeof(eof_flags));
 #endif
             assert(memcmp(bytes, unchanged, sizeof(bytes)) == 0);
-            unsigned required = ((1u << count) - 1u) & ~3u;
+            unsigned required = (1u << count) - 1u;
             assert((seen & required) == required);
             return seen;
         }
@@ -668,8 +653,8 @@ static void directory_probe(wf_inputs *inputs) {
     assert(first.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 1);
     wf__body_open_directory_source(&second, &inputs->handles, &inputs->cwd_read);
     assert(second.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 2);
-    unsigned first_entries = directory_contents(&first.ok.value, 1, ordinary_entries, 3);
-    unsigned second_entries = directory_contents(&second.ok.value, 0, ordinary_entries, 3);
+    unsigned first_entries = directory_contents(&first.ok.value, 1, ordinary_entries, 1);
+    unsigned second_entries = directory_contents(&second.ok.value, 0, ordinary_entries, 1);
     assert(first_entries == second_entries);
     wf__body_close_directory_source(&closed, &inputs->handles, &second.ok.value);
     check_close(&closed);
@@ -684,11 +669,15 @@ static void directory_probe(wf_inputs *inputs) {
 /* A saved production DirectoryRead, not the process cwd or a private NT
  * wrapper, owns these operations. This child has exclusive cwd ownership. */
 static void windows_namespace_probe(wf_inputs *inputs) {
+    /* The fixture is made and removed through the wide Win32 API. */
     static const wchar_t file_name[] = L"\x4241", directory_name[] = L"\x4242";
-    static const wchar_t link_name[] = L"link", missing_name[] = L"missing";
+    static const wchar_t link_name[] = L"link";
+    /* The same names as name bytes: U+4241 and U+4242 in UTF-8. */
+    static const char file_bytes[] = "\xe4\x89\x81", directory_bytes[] = "\xe4\x89\x82";
+    static const char link_bytes[] = "link", missing_bytes[] = "missing";
     static const struct expected_entry expected[] = {
-        WF_ENTRY(".", 2), WF_ENTRY("..", 2), WF_ENTRY("\x4241", 1),
-        WF_ENTRY("\x4242", 2), WF_ENTRY("link", 3), WF_ENTRY("ambient", 2)
+        WF_ENTRY("\xe4\x89\x81", 1), WF_ENTRY("\xe4\x89\x82", 2),
+        WF_ENTRY("link", 3), WF_ENTRY("ambient", 2)
     };
     HANDLE file = CreateFileW(file_name, GENERIC_WRITE, 0, NULL, CREATE_NEW,
                               FILE_ATTRIBUTE_NORMAL, NULL);
@@ -713,24 +702,24 @@ static void windows_namespace_probe(wf_inputs *inputs) {
     wf_read_result read;
     unsigned char byte = 0;
     wf_view destination = { &byte, 1 };
-    wf_view name = { (void *)file_name, sizeof(file_name) - sizeof(wchar_t) };
+    wf_view name = { (void *)file_bytes, sizeof(file_bytes) - 1 };
     wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 0 && WF_PROBE_INPUT_BUDGET == credits - 1);
     wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, 1);
     assert(read.tag == 0 && read.ok.value == 1 && byte == 'N');
     wf__body_close_read(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
 
-    name.data = (void *)directory_name; name.length = sizeof(directory_name) - sizeof(wchar_t);
+    name.data = (void *)directory_bytes; name.length = sizeof(directory_bytes) - 1;
     wf__body_open_directory(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 0);
     wf__body_close_directory(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
     wf__body_open_directory_source(&opened, &inputs->handles, &inputs->cwd_read);
     assert(opened.tag == 0);
-    (void)directory_contents(&opened.ok.value, 1, expected, 6);
+    (void)directory_contents(&opened.ok.value, 1, expected, 4);
     wf__body_close_directory_source(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
     assert(WF_PROBE_INPUT_BUDGET == credits);
 
-    name.data = (void *)missing_name; name.length = sizeof(missing_name) - sizeof(wchar_t);
+    name.data = (void *)missing_bytes; name.length = sizeof(missing_bytes) - 1;
     wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 1 && opened.err.error.tag == 0);
     assert(opened.err.error.code == ERROR_FILE_NOT_FOUND && opened.err.error.origin == 1);
@@ -740,7 +729,7 @@ static void windows_namespace_probe(wf_inputs *inputs) {
      * RelativePath open deliberately follows that same link to the regular file. */
     DWORD handles_before = 0, handles_after = 0;
     assert(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
-    name.data = (void *)link_name; name.length = sizeof(link_name) - sizeof(wchar_t);
+    name.data = (void *)link_bytes; name.length = sizeof(link_bytes) - 1;
     wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 1 && opened.err.error.tag == 10);
     assert(opened.err.error.code == 0 && opened.err.error.origin == 0);
@@ -760,6 +749,53 @@ static void windows_namespace_probe(wf_inputs *inputs) {
     assert(SetCurrentDirectoryW(L".."));
     assert(DeleteFileW(link_name) && DeleteFileW(file_name));
     assert(RemoveDirectoryW(directory_name) && RemoveDirectoryW(L"ambient"));
+}
+
+/* A name holding an unpaired surrogate is listed as its WTF-8 name bytes and
+ * opens by them [PRE-2]; a pair spelled as two separate surrogates is the name
+ * bytes of no component, so it is refused rather than read as the pair. */
+static void windows_surrogate_name_probe(wf_inputs *inputs) {
+    static const wchar_t directory_wide[] = L"surrogate";
+    static const wchar_t file_wide[] = {
+        's','u','r','r','o','g','a','t','e','\\', 0xd800, 'x', 0
+    };
+    static const char directory_bytes[] = "surrogate";
+    static const char file_bytes[] = "\xed\xa0\x80x";
+    static const char split_pair[] = "\xed\xa0\x80\xed\xb0\x80";
+    static const struct expected_entry expected[] = { WF_ENTRY("\xed\xa0\x80x", 1) };
+    const uint64_t credits = WF_PROBE_INPUT_BUDGET;
+    wf_open_result directory, opened;
+    wf_close_result closed;
+    wf_read_result read;
+    unsigned char byte = 0;
+    wf_view destination = { &byte, 1 };
+    wf_view name = { (void *)directory_bytes, sizeof(directory_bytes) - 1 };
+    DWORD written = 0;
+    HANDLE file;
+    assert(CreateDirectoryW(directory_wide, NULL));
+    file = CreateFileW(file_wide, GENERIC_WRITE, 0, NULL, CREATE_NEW,
+                       FILE_ATTRIBUTE_NORMAL, NULL);
+    assert(file != INVALID_HANDLE_VALUE);
+    assert(WriteFile(file, "S", 1, &written, NULL) && written == 1);
+    assert(CloseHandle(file));
+    wf__body_open_directory(&directory, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
+    assert(directory.tag == 0);
+    wf__body_open_directory_source(&opened, &inputs->handles, &directory.ok.value);
+    assert(opened.tag == 0);
+    (void)directory_contents(&opened.ok.value, 0, expected, 1);
+    wf__body_close_directory_source(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
+    name.data = (void *)file_bytes; name.length = sizeof(file_bytes) - 1;
+    wf__body_open_file(&opened, &inputs->handles, &directory.ok.value, &name, 0, name.length);
+    assert(opened.tag == 0);
+    wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, 1);
+    assert(read.tag == 0 && read.ok.value == 1 && byte == 'S');
+    wf__body_close_read(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
+    name.data = (void *)split_pair; name.length = sizeof(split_pair) - 1;
+    wf__body_open_file(&opened, &inputs->handles, &directory.ok.value, &name, 0, name.length);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_INVALID_PATH);
+    wf__body_close_directory(&closed, &inputs->handles, &directory.ok.value); check_close(&closed);
+    assert(WF_PROBE_INPUT_BUDGET == credits);
+    assert(DeleteFileW(file_wide) && RemoveDirectoryW(directory_wide));
 }
 #endif
 
@@ -987,14 +1023,9 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
  * each append at its end, is handed to durability, and reads back through the
  * read half; opening it again appends rather than truncating. */
 static void append_probe(wf_inputs *inputs) {
-    /* A path component is UTF-16 on Windows, as the file probe's is. */
-#if defined(_WIN32)
-    static const uint16_t component[] = { 'a','p','p','e','n','d','e','d' };
-    wf_view name = { (void *)component, sizeof(component) };
-#else
+    /* A name is name bytes on every host, as the file probe's is. */
     static const unsigned char component[] = "appended";
     wf_view name = { (void *)component, sizeof(component) - 1 };
-#endif
     wf_view source = { (void *)"abcde", 5 };
     unsigned char bytes[8];
     wf_view destination = { bytes, sizeof bytes };
@@ -1093,13 +1124,8 @@ static void check_namespace(wf_close_result *result, const char *what) {
 
 /* Names change independently of the lifetime of already-open files. */
 static void replacement_probe(wf_inputs *inputs) {
-#if defined(_WIN32)
-    static const uint16_t old_name[] = { 'o', 'l', 'd' };
-    static const uint16_t new_name[] = { 'n', 'e', 'w' };
-#else
     static const unsigned char old_name[] = { 'o', 'l', 'd' };
     static const unsigned char new_name[] = { 'n', 'e', 'w' };
-#endif
     wf_view old = { (void *)old_name, sizeof old_name };
     wf_view fresh = { (void *)new_name, sizeof new_name };
     wf_view source = { (void *)"a", 1 };
@@ -1130,10 +1156,10 @@ static void replacement_probe(wf_inputs *inputs) {
 #if defined(_WIN32)
     /* Both destination stream-renaming syntax and source stream-opening
      * syntax must refuse before changing either file's name or contents. */
-    static const uint16_t stream_target[] = { ':', 's', 'a', 'v', 'e', 'd' };
+    static const unsigned char stream_target[] = { ':', 's', 'a', 'v', 'e', 'd' };
     /* A colon after more than one letter reaches the stream check rather
      * than the earlier drive-qualified-path refusal. */
-    static const uint16_t stream_source[] = {
+    static const unsigned char stream_source[] = {
         'n', 'e', 'w', ':', 's', 't', 'r', 'e', 'a', 'm'
     };
     wf_view target_stream = { (void *)stream_target, sizeof stream_target };
@@ -1195,28 +1221,28 @@ static void replacement_probe(wf_inputs *inputs) {
  * start/finish ABI. Refusals must restore a reserved credit and close any
  * provisional handle; an exhausted budget must not create the directory. */
 static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write open_directory_write) {
-#if defined(_WIN32)
-    static const wchar_t padded[] = L"xordinary-subdirx";
-    static const wchar_t bad[] = L"ordinary:stream";
-    static const wchar_t link[] = L"ordinary-subdir-link";
-    static const wchar_t collision[] = L"ordinary-subdir-file";
-    const uint64_t unit = sizeof(wchar_t);
-#else
+    /* Names are name bytes on every host; the padding byte on each side of
+     * `padded` checks that only the selected window is read. */
     static const char padded[] = "xordinary-subdirx";
-    static const char bad[] = "ordinary/subdir";
     static const char link[] = "ordinary-subdir-link";
     static const char collision[] = "ordinary-subdir-file";
-    const uint64_t unit = 1;
+#if defined(_WIN32)
+    /* A colon would name a stream on Windows, so the name is refused. */
+    static const char bad[] = "ordinary:stream";
+    /* The fixture link is made and removed through the wide Win32 API. */
+    static const wchar_t wide_link[] = L"ordinary-subdir-link";
+#else
+    static const char bad[] = "ordinary/subdir";
 #endif
-    wf_view name = { (void *)padded, sizeof(padded) - unit };
-    wf_view invalid = { (void *)bad, sizeof(bad) - unit };
-    wf_view link_name = { (void *)link, sizeof(link) - unit };
-    wf_view file_name = { (void *)collision, sizeof(collision) - unit };
+    wf_view name = { (void *)padded, sizeof(padded) - 1 };
+    wf_view invalid = { (void *)bad, sizeof(bad) - 1 };
+    wf_view link_name = { (void *)link, sizeof(link) - 1 };
+    wf_view file_name = { (void *)collision, sizeof(collision) - 1 };
     wf_value factory = {{0, 0, 0, 0}};
     wf_open_result opened;
     wf_close_result closed;
     FILE *fixture = NULL;
-    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, unit, name.length - unit);
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, 1, name.length - 1);
     assert(opened.tag == 1 && opened.err.error.tag == WF_IO_RESOURCE_EXHAUSTED);
     assert(factory.words[0] == 0);
     assert(wf_mkdir("ordinary-subdir") == 0);
@@ -1227,12 +1253,12 @@ static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write 
     open_directory_write(&opened, &factory, &inputs->cwd_write, &invalid, 0, invalid.length);
     assert(opened.tag == 1 && opened.err.error.tag == WF_IO_INVALID_PATH);
     assert(factory.words[0] == 1);
-    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, unit, name.length - unit);
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, 1, name.length - 1);
     assert(opened.tag == 0 && factory.words[0] == 0);
     wf__body_close_directory_write(&closed, &factory, &opened.ok.value);
     check_close(&closed);
     assert(factory.words[0] == 1);
-    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, unit, name.length - unit);
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, 1, name.length - 1);
     assert(opened.tag == 0 && factory.words[0] == 0);
     wf__body_close_directory_write(&closed, &factory, &opened.ok.value);
     check_close(&closed);
@@ -1247,9 +1273,9 @@ static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write 
     assert(opened.tag == 1 && factory.words[0] == 1);
     assert(wf_unlink("ordinary-subdir-file") == 0);
 #if defined(_WIN32)
-    BOOLEAN linked = CreateSymbolicLinkW(link, L"ordinary-subdir", 3u);
+    BOOLEAN linked = CreateSymbolicLinkW(wide_link, L"ordinary-subdir", 3u);
     if (!linked && GetLastError() == ERROR_INVALID_PARAMETER)
-        linked = CreateSymbolicLinkW(link, L"ordinary-subdir", 1u);
+        linked = CreateSymbolicLinkW(wide_link, L"ordinary-subdir", 1u);
     assert(linked);
     DWORD handles_before = 0, handles_after = 0;
     assert(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
@@ -1261,11 +1287,181 @@ static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write 
 #if defined(_WIN32)
     assert(GetProcessHandleCount(GetCurrentProcess(), &handles_after));
     assert(handles_after == handles_before);
-    assert(RemoveDirectoryW(link));
+    assert(RemoveDirectoryW(wide_link));
 #else
     assert(wf_unlink(link) == 0);
 #endif
     assert(wf_rmdir("ordinary-subdir") == 0);
+}
+
+/* [PRE-2] each local offset equals the host C library's own answer for the
+ * same second: `tm_gmtoff` from `localtime_r` on POSIX, and on Windows the
+ * `_localtime64_s` date and time read back as UTC by `_mkgmtime64`. The
+ * seconds are 2026-01-15T12:00Z, 2026-07-01T12:00Z and the second before
+ * 1969-10-26T06:00Z, when New York left daylight saving time; the last is
+ * reached from one nanosecond before that boundary, so truncating instead
+ * of flooring converts the boundary second and disagrees in New York. */
+static void local_offset_probe(wf_inputs *inputs) {
+#if defined(_WIN32)
+    static const char *const zones[] = {"UTC0", "CST-8", "EST5EDT"};
+#else
+    /* The last is a POSIX rule a full day and 3599 seconds east of UTC,
+     * which glibc and macOS accept; its offset is out of the reported
+     * range, so the reading must be None. */
+    static const char *const zones[] = {"UTC", "Asia/Shanghai", "America/New_York", "XXX-24:59:59"};
+#endif
+    static const int64_t seconds[] = {INT64_C(1768478400), INT64_C(1782907200), INT64_C(-5767201)};
+    static const int64_t instants[] = {
+        INT64_C(1768478400000000000), INT64_C(1782907200000000000), INT64_C(-5767200000000001)};
+    char previous[256];
+    int had_previous = 0;
+#if defined(_WIN32)
+    char *saved = NULL;
+    size_t saved_size = 0;
+    assert(_dupenv_s(&saved, &saved_size, "TZ") == 0);
+#else
+    const char *saved = getenv("TZ");
+#endif
+    if (saved != NULL) {
+        size_t length = strlen(saved);
+        assert(length < sizeof(previous));
+        memcpy(previous, saved, length + 1);
+        had_previous = 1;
+    }
+#if defined(_WIN32)
+    free(saved);
+#endif
+    for (size_t zone = 0; zone < sizeof(zones) / sizeof(zones[0]); zone++) {
+#if defined(_WIN32)
+        assert(_putenv_s("TZ", zones[zone]) == 0);
+        _tzset();
+#else
+        assert(setenv("TZ", zones[zone], 1) == 0);
+        tzset();
+#endif
+        for (size_t index = 0; index < sizeof(seconds) / sizeof(seconds[0]); index++) {
+            struct tm local;
+            wf_optional_i64 offset;
+            int converted;
+            int64_t expected = 0;
+#if defined(_WIN32)
+            __time64_t moment = (__time64_t)seconds[index];
+            converted = _localtime64_s(&local, &moment) == 0;
+            if (converted) expected = (int64_t)_mkgmtime64(&local) - seconds[index];
+#else
+            time_t moment = (time_t)seconds[index];
+            converted = localtime_r(&moment, &local) != NULL;
+            if (converted) expected = (int64_t)local.tm_gmtoff;
+#endif
+            wf__body_local_offset_seconds(&offset, &inputs->wall_clock, instants[index]);
+#if !defined(_WIN32)
+            if (zone == 3) assert(converted && expected == INT64_C(89999));
+#endif
+            if (converted && expected > -INT64_C(86400) && expected < INT64_C(86400)) {
+                assert(offset.tag == WF_OPTION_SOME);
+                assert(offset.value == expected);
+            } else {
+                assert(offset.tag != WF_OPTION_SOME);
+            }
+        }
+    }
+#if defined(_WIN32)
+    assert(_putenv_s("TZ", had_previous ? previous : "") == 0);
+    _tzset();
+#else
+    if (had_previous) assert(setenv("TZ", previous, 1) == 0);
+    else assert(unsetenv("TZ") == 0);
+    tzset();
+#endif
+}
+
+#if !defined(_WIN32)
+/* c(n) of [PRE-2], restated for the probe. */
+static uint64_t probe_limit_credits(uint64_t soft) {
+    uint64_t bounded = soft > (UINT64_C(1) << 20) ? (UINT64_C(1) << 20) : soft;
+    return bounded > 64 ? bounded - 64 : 0;
+}
+
+/* The limits getrlimit reports now, unlimited read as 2^64 - 1. */
+static void probe_limits_now(uint64_t *soft, uint64_t *hard) {
+    struct rlimit now;
+    assert(getrlimit(RLIMIT_NOFILE, &now) == 0);
+    *soft = now.rlim_cur == RLIM_INFINITY ? UINT64_MAX : (uint64_t)now.rlim_cur;
+    *hard = now.rlim_max == RLIM_INFINITY ? UINT64_MAX : (uint64_t)now.rlim_max;
+}
+#endif
+
+/* [PRE-2] the open-files limit. On POSIX a reading equals getrlimit's; a
+ * raise above the hard limit is the host's refusal, which Linux and macOS
+ * give as InvalidInput carrying EINVAL, with origin 11, leaving the limits
+ * and the budget alone; a raise to at most the soft limit changes nothing;
+ * and a successful raise reports the limits getrlimit reads after it and
+ * adds the credits of the soft limit the host then holds, so a raise from
+ * 128 to 256 adds c(256) - c(128) = 128 credits to the invocation's budget.
+ * Under an unlimited hard limit a finite request of 2^63, which a host
+ * whose RLIM_INFINITY is 2^63 - 1 sets as unlimited, is either refused with
+ * nothing changed or reports what the host then holds. Every other host
+ * answers Unsupported. */
+static void open_files_probe(wf_inputs *inputs) {
+    wf_limit_result outcome;
+#if defined(_WIN32)
+    wf__body_open_files_limit(&outcome, &inputs->handles);
+    assert(outcome.tag == 1 && outcome.err.error.tag == WF_IO_UNSUPPORTED);
+    assert(outcome.err.error.code == 0 && outcome.err.error.origin == 0);
+    wf__body_raise_open_files_limit(&outcome, &inputs->handles, 100u);
+    assert(outcome.tag == 1 && outcome.err.error.tag == WF_IO_UNSUPPORTED);
+    assert(outcome.err.error.code == 0 && outcome.err.error.origin == 0);
+#else
+    struct rlimit saved;
+    uint64_t before, soft, hard;
+    assert(getrlimit(RLIMIT_NOFILE, &saved) == 0);
+    wf__body_open_files_limit(&outcome, &inputs->handles);
+    assert(outcome.tag == 0);
+    assert(outcome.ok.value.soft == (saved.rlim_cur == RLIM_INFINITY ? UINT64_MAX : (uint64_t)saved.rlim_cur));
+    assert(outcome.ok.value.hard == (saved.rlim_max == RLIM_INFINITY ? UINT64_MAX : (uint64_t)saved.rlim_max));
+    if (saved.rlim_max != RLIM_INFINITY) {
+        before = WF_PROBE_INPUT_BUDGET;
+        wf__body_raise_open_files_limit(&outcome, &inputs->handles, (uint64_t)saved.rlim_max + 1u);
+        assert(outcome.tag == 1 && outcome.err.error.tag == WF_IO_INVALID_INPUT);
+        assert(outcome.err.error.code == (uint32_t)EINVAL && outcome.err.error.origin == 11);
+        assert(WF_PROBE_INPUT_BUDGET == before);
+        probe_limits_now(&soft, &hard);
+        assert(soft == (saved.rlim_cur == RLIM_INFINITY ? UINT64_MAX : (uint64_t)saved.rlim_cur));
+        assert(hard == (uint64_t)saved.rlim_max);
+    } else if (saved.rlim_cur != RLIM_INFINITY && (uint64_t)saved.rlim_cur < (UINT64_C(1) << 63)) {
+        uint64_t old_soft = (uint64_t)saved.rlim_cur;
+        before = WF_PROBE_INPUT_BUDGET;
+        wf__body_raise_open_files_limit(&outcome, &inputs->handles, UINT64_C(1) << 63);
+        probe_limits_now(&soft, &hard);
+        if (outcome.tag == 0) {
+            assert(outcome.ok.value.soft == soft && outcome.ok.value.hard == hard);
+            assert(WF_PROBE_INPUT_BUDGET - before ==
+                   probe_limit_credits(soft) - probe_limit_credits(old_soft));
+            WF_PROBE_INPUT_BUDGET = before;
+            assert(setrlimit(RLIMIT_NOFILE, &saved) == 0);
+        } else {
+            assert(outcome.err.error.origin == 11 && outcome.err.error.code != 0);
+            assert(soft == old_soft && hard == UINT64_MAX);
+            assert(WF_PROBE_INPUT_BUDGET == before);
+        }
+    }
+    if (saved.rlim_cur != RLIM_INFINITY && saved.rlim_cur >= 256) {
+        struct rlimit lowered = saved;
+        lowered.rlim_cur = 128;
+        assert(setrlimit(RLIMIT_NOFILE, &lowered) == 0);
+        before = WF_PROBE_INPUT_BUDGET;
+        wf__body_raise_open_files_limit(&outcome, &inputs->handles, 100u);
+        assert(outcome.tag == 0 && outcome.ok.value.soft == 128u);
+        assert(WF_PROBE_INPUT_BUDGET == before);
+        wf__body_raise_open_files_limit(&outcome, &inputs->handles, 256u);
+        probe_limits_now(&soft, &hard);
+        assert(outcome.tag == 0 && outcome.ok.value.soft == 256u && soft == 256u);
+        assert(outcome.ok.value.hard == hard);
+        assert(WF_PROBE_INPUT_BUDGET == before + 128u);
+        WF_PROBE_INPUT_BUDGET -= 128u;
+        assert(setrlimit(RLIMIT_NOFILE, &saved) == 0);
+    }
+#endif
 }
 
 /* [PRE-2] two reads through one clock do not go back, a sleep outside every
@@ -1290,6 +1486,11 @@ static void time_probe(wf_inputs *inputs) {
     assert(!wf__body_instant_reached(&latest, &later));
     /* 2020-01-01T00:00:00Z. */
     assert(wf__body_unix_nanoseconds(&inputs->wall_clock) > INT64_C(1577836800000000000));
+    /* [PRE-2] the invocation's process identifier is the host's. */
+    assert(inputs->process_id.tag == WF_OPTION_SOME);
+    assert(inputs->process_id.value == (uint64_t)wf_pid());
+    local_offset_probe(inputs);
+    open_files_probe(inputs);
 }
 
 typedef void (*wf_probe_stop_open)(wf_open_result *, wf_value *, const wf_value *);
@@ -1486,6 +1687,11 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
         wf_test_guard_phase("ordinary saved directory/native names/reparse");
         windows_namespace_probe(&inputs);
         puts("ordinary saved directory/native names/reparse: PASS");
+    }
+    if (directory) {
+        wf_test_guard_phase("ordinary unpaired surrogate names");
+        windows_surrogate_name_probe(&inputs);
+        puts("ordinary unpaired surrogate names: PASS");
     }
 #endif
     if (tcp) {

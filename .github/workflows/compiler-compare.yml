@@ -1,0 +1,201 @@
+# Two whole compilers against each other on a hosted runner or the owner's
+# i9-14900K: the same programs built by a candidate revision's compiler and a
+# base revision's, in three groups: the ordinary HashMap cells of
+# research/experiments/hash-map-compare, the Halo interpreter's fib and the
+# wasm interpreter's CoreMark timed in interleaved rounds against a twin of the
+# base, and perf stat counts of those two programs (14900K only). The README
+# beside research/experiments/compiler-compare gives the cells, the decision
+# rule and the controls; the stages are research/experiments/compiler-compare/
+# run.sh, which a temporary workflow on a work branch can run too.
+#
+# research-boundary: manual-only
+# Explicitly requested comparison; no push or pull-request trigger. GitHub
+# dispatches only a workflow present on the default branch, which is why this
+# file lives on main; the instrument (this checkout) is the dispatch ref's, and
+# the compilers are built from the candidate and base commits.
+#
+# FAILURE POLICY. The job fails when `groups` names no group, an unknown one,
+# or perf without interpreters, when a compiler or image does not build, when
+# a reducer's self-test fails, when a process fails or its rows are missing,
+# malformed or differ from the workload's expected checks or output (a failed
+# perf stat included; the timed table is still written), and when a floor is
+# given that is malformed or misses a measured cell. No verdict of an ordinary
+# run fails it. `timeout-minutes` bounds a stuck runner.
+#
+# The summary a decision relies on is copied by hand into the consuming
+# item's research record with its run id, because artifacts expire.
+name: compiler-compare
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Candidate commit or branch, whose compiler is compared with the base's
+        type: string
+        required: true
+      base:
+        description: Base commit or branch; empty means the candidate's merge base with main
+        type: string
+        default: ""
+      runner:
+        description: Where it runs, GitHub or the owner's i9-14900K runner
+        type: choice
+        options: [github, 14900k]
+        default: github
+      cpu:
+        description: The CPU every timed process is pinned to; empty means 2 on the 14900K and 1 on GitHub
+        type: string
+        default: ""
+      groups:
+        description: Comma-separated groups to run, of hash_map, interpreters and perf (perf stat of the interpreters, 14900K only; perf needs interpreters)
+        type: string
+        default: "hash_map,interpreters,perf"
+      halo:
+        description: Commit of Ming-Research/Halo-wf whose interpreter is built by both compilers; it must compile with both. The default is a commit of Halo-wf's main line (its PR 71) that compiles under the current compiler
+        type: string
+        default: df3eb9ec00f4d7db992e82b6d8ab35f8a643a317
+      min_rounds:
+        description: Hash-map rounds before any cell may be judged (at least 6)
+        type: string
+        default: "10"
+      max_rounds:
+        description: Hash-map rounds after which an unjudged cell is reported unresolved
+        type: string
+        default: "40"
+      floor:
+        description: The hash-map noise floor, operation:size=spread items separated by commas, as an earlier run's summary printed it; empty means this run only measures the floor
+        type: string
+        default: ""
+      interp_floor:
+        description: The interpreters' noise floor, workload=spread items separated by commas, as an earlier run's summary printed it; empty means this run only measures the floor
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# A 14900K run waits for the one before it.
+concurrency:
+  group: compiler-compare-${{ inputs.runner }}${{ inputs.runner == 'github' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  compare:
+    name: compare (${{ inputs.runner }})
+    runs-on: ${{ inputs.runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 480
+    env:
+      CANDIDATE: ${{ inputs.candidate }}
+      BASE: ${{ inputs.base }}
+      RUNNER_KIND: ${{ inputs.runner }}
+      CPU: ${{ inputs.cpu }}
+      HALO: ${{ inputs.halo }}
+      MIN_ROUNDS: ${{ inputs.min_rounds }}
+      MAX_ROUNDS: ${{ inputs.max_rounds }}
+      FLOOR: ${{ inputs.floor }}
+      INTERP_FLOOR: ${{ inputs.interp_floor }}
+      PERF: ${{ contains(inputs.groups, 'perf') && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A groups list that selects nothing measurable would end in a green job
+      # with no data: stop before any build.
+      - name: Check the groups
+        env:
+          OUT: ${{ runner.temp }}/out
+          GROUP_LIST: ${{ inputs.groups }}
+        run: bash research/experiments/compiler-compare/run.sh groups
+
+      # The hosted image's clang predates the calling convention the
+      # compiler emits; take the pinned LLVM major as the gate does. The
+      # 14900K carries the latest stable release at /usr/bin/clang.
+      - name: Install the host toolchain (GitHub)
+        if: inputs.runner == 'github'
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+
+      # Stop what a cancelled run left behind and remove a stale host lock,
+      # as the other 14900K timing workflows do, before looking at the load.
+      - name: Stop leftovers of a cancelled run (14900K)
+        if: inputs.runner == '14900k'
+        run: |
+          set -uo pipefail
+          pids=$(pgrep -f 'compiler-compare/(interp|run)|hash-map-compare/compare\.py' || true)
+          echo "leftover processes: ${pids:-none}"
+          # shellcheck disable=SC2086
+          if [ -n "$pids" ]; then kill $pids 2>/dev/null || true; fi
+          sleep 2
+          lock=/tmp/whitefoot-check-$(id -u).lock
+          if [ -e "$lock" ]; then
+            owner=$(head -1 "$lock/pid" 2>/dev/null)
+            if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+              echo "removing stale lock of $owner"
+              rm -rf "$lock"
+            fi
+          fi
+
+      - name: Check the host's tools
+        run: |
+          echo "OUT=$RUNNER_TEMP/out" >> "$GITHUB_ENV"
+          OUT="$RUNNER_TEMP/out" bash research/experiments/compiler-compare/run.sh tools
+
+      - name: Self-test the reducers
+        run: bash research/experiments/compiler-compare/run.sh selftest
+
+      - name: Build the base and candidate compilers
+        id: arms
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "5400"
+        run: perl .github/run-check.pl compiler-compare/arms bash research/experiments/compiler-compare/run.sh arms
+
+      - name: Hash-map cells
+        id: hashmap
+        if: ${{ !cancelled() && steps.arms.outcome == 'success' && contains(inputs.groups, 'hash_map') }}
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "14400"
+        run: perl .github/run-check.pl compiler-compare/hashmap bash research/experiments/compiler-compare/run.sh hashmap
+
+      - name: Halo fib and CoreMark
+        id: interp
+        if: ${{ !cancelled() && steps.arms.outcome == 'success' && contains(inputs.groups, 'interpreters') }}
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "14400"
+        run: perl .github/run-check.pl compiler-compare/interp bash research/experiments/compiler-compare/run.sh interp
+
+      - name: Publish
+        if: ${{ !cancelled() }}
+        run: bash research/experiments/compiler-compare/run.sh summary
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compiler-compare-${{ inputs.runner }}-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/out/manifest.txt
+            ${{ runner.temp }}/out/hashmap/manifest.txt
+            ${{ runner.temp }}/out/hashmap/raw.tsv
+            ${{ runner.temp }}/out/hashmap/memory.tsv
+            ${{ runner.temp }}/out/hashmap/hold.tsv
+            ${{ runner.temp }}/out/hashmap/summary.txt
+            ${{ runner.temp }}/out/hashmap/images/
+            ${{ runner.temp }}/out/interp/manifest.txt
+            ${{ runner.temp }}/out/interp/time.tsv
+            ${{ runner.temp }}/out/interp/perf.json
+            ${{ runner.temp }}/out/interp/perf/
+            ${{ runner.temp }}/out/interp/summary.txt

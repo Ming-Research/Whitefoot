@@ -1,12 +1,14 @@
 //! Program results and host-visible parallel behavior. Compiler permissions,
 //! private IR and controlled worker observations live in backend tests.
 
-use std::process::Output;
+use std::process::{Command, Output};
 
 use super::support::{
-    build_program, build_program_from_fragments, compile_program, compile_program_with_overlap,
+    build_program, build_program_from_fragments, build_program_with_guard_counters, compile_program,
+    compile_program_with_overlap, fixture_directory,
 };
-use whitefoot::{FragmentGranularity, module_requires_parallel_runtime};
+use crate::support::run_command;
+use whitefoot::{FragmentGranularity, module_requires_parallel_runtime, split_module};
 
 /// The recursive corpus program publishes one byte sequence whatever the
 /// recursion budget cuts, and whatever width it was cut for.
@@ -83,7 +85,7 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         if mode == OverlapLowering::Off {
             assert!(!module_requires_parallel_runtime(&module));
         }
-        let program = build_program(&module);
+        let program = build_program(&crate::support::sanitized(module));
         for &width in workers {
             let output = program.run_with_workers(width);
             assert!(output.status.success(), "{mode:?}/{width:?}: {output:?}");
@@ -170,7 +172,7 @@ fn tree_window_and_deep_spine_preserve_their_independent_results() {
                 },
             )
             .expect("pinned-budget tree must compile");
-            let pinned = build_program(&module);
+            let pinned = build_program(&crate::support::sanitized(module));
             for workers in ["1", "4"] {
                 let output = pinned.run_with_workers(Some(workers));
                 assert_eq!(
@@ -233,9 +235,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let n = 200000_u64;
   let last = n - 1_u64;
   let values = box_array_filled::<u64>(count: n, value: 0_u64);
-  if n <= values.inner.len {
-    shifted_inline(values: &values, n: n);
-  }
+  shifted_inline(values: &values, n: n);
   if last < values.inner.len {
     let once = values.inner[last];
     if once == n {
@@ -426,6 +426,125 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
     }
 }
 
+/// A multi-statement guard with an if, match and nested helper call captures
+/// each sequence separately. The writer changes an unrelated field before
+/// advancing written; refusing that relevant write leaves both contexts
+/// waiting and fails the shared harness's deadline/progress check. The C
+/// guard test separately guarantees registration before each false/true
+/// write; these source rendezvous do not expose watch-registration timing.
+#[test]
+fn full_helper_guard_callbacks_admit_relevant_writes_on_one_driver_and_on_two() {
+    let llvm = compile_program("helper_guard_wake.wf");
+    assert!(
+        llvm.as_str().contains(".wake_filter("),
+        "a multi-statement helper guard must register a callable filter"
+    );
+    let fragments = split_module(&llvm, FragmentGranularity::Function)
+        .expect("the guard callback remains splittable with its dependencies");
+    let registration = fragments
+        .iter()
+        .find(|fragment| {
+            fragment.lines().any(|line| {
+                line.contains("store ptr @") && line.contains(".wake_filter,")
+            })
+        })
+        .expect("one fragment registers the full guard callback");
+    let adapter_symbol = registration
+        .lines()
+        .find_map(|line| {
+            let (_, rest) = line.split_once("store ptr @")?;
+            let (symbol, _) = rest.split_once(", ptr ")?;
+            symbol.ends_with(".wake_filter").then_some(symbol)
+        })
+        .expect("the registration stores the callback function pointer");
+    assert!(
+        registration.lines().any(|line| {
+            line.starts_with("declare ") && line.contains(&format!("@{adapter_symbol}("))
+        }),
+        "registration records its function-pointer dependency: {registration}"
+    );
+    let adapter = fragments
+        .iter()
+        .find(|fragment| {
+            fragment.lines().any(|line| {
+                line.starts_with("define ") && line.contains(&format!("@{adapter_symbol}("))
+            })
+        })
+        .expect("the adapter has a definition in its own function fragment");
+    let thunk_symbol = adapter_symbol
+        .strip_suffix(".wake_filter")
+        .expect("adapter names its guard thunk");
+    assert!(
+        adapter.lines().any(|line| {
+            line.starts_with("declare ") && line.contains(&format!("@{thunk_symbol}("))
+        }) && adapter.contains(&format!("call i1 @{thunk_symbol}(")),
+        "adapter records and calls its guard thunk dependency: {adapter}"
+    );
+    let program = build_program(&llvm);
+    for drivers in ["1", "2"] {
+        let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+        assert_eq!(output.status.code(), Some(0), "drivers {drivers}: {output:?}");
+        assert!(output.stdout.is_empty(), "drivers {drivers}: {output:?}");
+        assert!(output.stderr.is_empty(), "drivers {drivers}: {output:?}");
+    }
+}
+
+/// Count actual false re-parks, including the lowering and emitted guard.
+/// The helper has an early return and an Option match; its notice stays None,
+/// so it equals the inline comparison for every state this witness reaches.
+/// On one driver, the FIFO launch queue runs the waiter before the writer;
+/// neither child has enough immediate waits to reach the cooperative yield
+/// threshold first. The existing test clock makes the waiter older than the
+/// guard-turn threshold before the first write. With an absent filter, every
+/// unrelated write therefore reserves the object for the waiter: the writer's
+/// next acquisition must wait until the waiter has retried false and parked.
+/// Before helper-guard callbacks, the helper call had no derived filter and
+/// reported eight false re-parks and nine wakes; with the callback, the helper
+/// reports zero and one, as the inline filter does. No sleep, elapsed host time, callback-specific
+/// API or synthetic counter selects this result. Checking one wake also rejects
+/// a run that never registered the waiter before the final write made it ready.
+/// Argument count includes argv[0]. Distinct successful statuses (4 for inline,
+/// 0 for helper) verify mode selection independently of the counters; selecting
+/// inline in both runs must fail even when both counter reports would pass.
+#[test]
+fn helper_and_inline_guards_avoid_false_reparks_after_unrelated_writes() {
+    let llvm = compile_program("helper_guard_false_wakes.wf");
+    let clock = r#"
+#include <stdatomic.h>
+#include <stdint.h>
+
+uint64_t wf__guard_clock_ns(void) {
+    static _Atomic uint64_t now = UINT64_C(1);
+    return atomic_fetch_add_explicit(&now, UINT64_C(2000000), memory_order_relaxed);
+}
+"#;
+    let program = build_program_with_guard_counters(&llvm, clock);
+    let modes: [(&str, &[&[u8]], i32); 2] = [("inline", &[b"inline"], 4), ("helper", &[], 0)];
+    for (mode, arguments, expected_status) in modes {
+        let output =
+            program.run_with_settings_and_arguments(None, &[("WF_DRIVERS", "1")], arguments);
+        assert_eq!(
+            output.status.code(),
+            Some(expected_status),
+            "{mode}: selected guard and completed writes: {output:?}"
+        );
+        assert!(output.stdout.is_empty(), "{mode}: {output:?}");
+        let stderr = std::str::from_utf8(&output.stderr).expect("guard diagnostics are UTF-8");
+        let reports = stderr
+            .lines()
+            .filter_map(|line| line.strip_prefix("guard_counters,"))
+            .collect::<Vec<_>>();
+        assert_eq!(reports.len(), 1, "{mode}: one real counter report: {stderr}");
+        let counters = reports[0]
+            .split(',')
+            .map(|field| field.parse::<u64>().expect("guard counter is an integer"))
+            .collect::<Vec<_>>();
+        assert_eq!(counters.len(), 4, "{mode}: counter report shape: {stderr}");
+        assert_eq!(counters[1], 0, "{mode}: no false re-parks: {stderr}");
+        assert_eq!(counters[0], 1, "{mode}: only the final write wakes: {stderr}");
+    }
+}
+
 /// [SHARE-1, SHARE-2] sixteen contexts hold the only handles to one counter
 /// and add to it through statements that count no handle of their own, since
 /// no block writes or moves the handle place it was read from. Each context
@@ -437,6 +556,66 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
 #[test]
 fn shared_objects_outlive_statements_while_other_contexts_release_handles() {
     run_on_one_driver_and_on_four("shared_handle_release.wf", 3);
+}
+
+/// [SHARE-1, PROV-6] objects whose states are linear, on one driver and on
+/// four: two running contexts take `nodrop` tickets out of one queue, three
+/// take turns with one `nodrop` pen outside their atomic statements, and the
+/// handle whose `shared_close` is last receives each state and consumes it.
+/// Statements that did not hold the object alone would lose a stroke or
+/// redeem a ticket twice, and a close that took the state early would lose a
+/// count; the program's status names the first wrong count.
+#[test]
+fn linear_states_pass_between_running_contexts() {
+    run_on_one_driver_and_on_four("linear_shared_states.wf", 3);
+}
+
+/// [SHARE-1, PROV-6] three running contexts take turns with one `WriteFile`
+/// parked in the one-slot window that is a shared object's linear state, on
+/// one driver and on four: each turn takes the file out in an atomic
+/// statement, appends a five-byte record in two host writes outside every
+/// statement, and puts it back, and the handle that ends last receives the
+/// file and closes it. The program's status covers what it can count itself;
+/// this test reads the log it left, which is the independent oracle for the
+/// rest: two contexts holding the file at once would interleave the halves of
+/// their records, and a lost turn or a turn counted twice changes a count.
+#[test]
+fn contexts_take_turns_appending_to_one_parked_file() {
+    let program = build_program(&compile_program("linear_shared_file_turns.wf"));
+    for drivers in ["1", "4"] {
+        for round in 0..3 {
+            let directory = fixture_directory();
+            let mut command = Command::new(program.executable());
+            command
+                .current_dir(directory.path())
+                .env_remove("WF_WORKERS")
+                .env_remove("WF_IO_NO_NATIVE_RING")
+                .env("WF_DRIVERS", drivers);
+            let output = run_command(&mut command);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "drivers {drivers}, round {round}: {output:?}"
+            );
+            let log = std::fs::read(directory.path().join("aof")).expect("the program's log");
+            assert_eq!(
+                log.len(),
+                (100 + 200 + 300) * 5,
+                "drivers {drivers}, round {round}: a record is five bytes"
+            );
+            let mut counts = [0usize; 3];
+            for record in log.chunks(5) {
+                let letter = record[0];
+                assert!(
+                    matches!(letter, b'a'..=b'c')
+                        && record == [letter, b'(', letter, b')', b'\n'],
+                    "drivers {drivers}, round {round}: a record that two writers shared: {record:?}"
+                );
+                counts[usize::from(letter - b'a')] += 1;
+            }
+            assert_eq!(counts, [100, 200, 300], "drivers {drivers}, round {round}");
+        }
+    }
 }
 
 /// Runs one program on one driver and on four, `rounds` times each, and

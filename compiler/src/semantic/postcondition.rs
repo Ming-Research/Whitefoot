@@ -102,6 +102,34 @@ pub(crate) struct RelationTemplate {
     pub(crate) normalized: NormalizedRelation,
 }
 
+/// Expanded clause syntax retained only for rejection rendering, before
+/// relation admission folds arithmetic into displacement constants.
+#[derive(Clone, Debug)]
+pub(crate) enum PostconditionClause {
+    Datum(RelationDatum),
+    Literal {
+        value: CheckedValue,
+        spelling: Option<String>,
+    },
+    NamedConst {
+        declaration: DeclarationId,
+        projections: Vec<GoalProjection>,
+        spelling: String,
+    },
+    Operation {
+        row: super::goal::GoalOperation,
+        arguments: Vec<Self>,
+    },
+}
+
+/// Diagnostic source occurrences for returned expressions and constructor fields.
+#[derive(Clone, Debug)]
+pub(crate) struct PostconditionSource {
+    pub(crate) spelling: String,
+    pub(crate) literal: bool,
+    pub(crate) fields: Vec<Self>,
+}
+
 /// One FN-9 side: a datum displaced by a mathematical integer constant,
 /// optionally adding one bare own integer parameter with coefficient one.
 /// At most one side of a relation carries that additional parameter.
@@ -319,6 +347,14 @@ pub(crate) enum PostconditionReturnDatum {
     /// result datum selects one field and continues below its operand.
     Construct {
         fields: Vec<Option<PostconditionReturnDatum>>,
+    },
+    /// A returned fragment-integer expression that [ENT-3] relates to its
+    /// operands as the initializer of an ordinary `let` [FN-9]: the return's
+    /// evaluated value for this result ordinal, one compiler-owned term on
+    /// which the return establishes that expression's let image [ENT-2].
+    Evaluated {
+        ordinal: u32,
+        ty: super::model::IntegerType,
     },
 }
 

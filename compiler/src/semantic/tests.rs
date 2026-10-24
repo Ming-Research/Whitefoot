@@ -58,6 +58,7 @@ mod integer_matches;
 mod integer_negation;
 mod loop_invariants;
 mod loop_permission;
+mod match_sites;
 mod operation_table;
 mod options;
 mod ordinary_effects;
@@ -74,6 +75,7 @@ mod recursive_postconditions;
 mod references;
 mod reinterpret;
 mod requires;
+mod returned_values;
 mod source_proofs;
 mod struct_equality;
 mod value_equality;
@@ -241,6 +243,22 @@ fn with_resolved_semantics_inputs<ResultValue>(
     inputs: &[SourceInput<'_>],
     run: impl FnOnce(&crate::ResolvedSyntaxUnit, SemanticOutcome) -> ResultValue,
 ) -> ResultValue {
+    // Every test passes its own closure, so this function is instantiated once
+    // per test. The front end's driving code lives in the function below,
+    // which takes the callback as a trait object and is compiled once.
+    let mut run = Some(run);
+    let mut result = None;
+    run_resolved_semantics(inputs, &mut |resolved, outcome| {
+        let run = run.take().expect("the semantic test callback runs once");
+        result = Some(run(resolved, outcome));
+    });
+    result.expect("the semantic test callback ran")
+}
+
+fn run_resolved_semantics(
+    inputs: &[SourceInput<'_>],
+    run: &mut dyn FnMut(&crate::ResolvedSyntaxUnit, SemanticOutcome),
+) {
     let Ok(bundle) = SourceBundle::with_prelude(inputs, SOURCE_LIMITS) else {
         panic!("semantic test bundle must be valid");
     };
@@ -703,14 +721,18 @@ fn loop_break_and_backedge_cleanup_is_explicit() {
   value: i32;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn cycle(stop: Bool) -> result: unit pure {
   loop @again {
     let first = Cell(value: 1_i32);
-    if True() {
+    if stop {
       break @again;
     }
     let second = Cell(value: 2_i32);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -718,12 +740,17 @@ fn main() -> status: std::process::ExitStatus pure {
         let SemanticOutcome::Complete(checked) = outcome else {
             panic!("loop cleanup source must check: {outcome:?}");
         };
-        let main = &checked.data.functions[0];
+        let cycle = checked
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "cycle")
+            .expect("cycle");
         let CheckedStatement::Loop {
             body,
             backedge_drops,
             ..
-        } = &main.body.as_ref().expect("WF body")[0]
+        } = &cycle.body.as_ref().expect("WF body")[0]
         else {
             panic!("first statement must be the checked loop");
         };
@@ -897,12 +924,13 @@ fn nominal_diagnostics_retain_required_lists_and_repairs() {
             declared_fields: vec!["a".to_owned(), "b".to_owned()],
         },
     );
-    assert_rule(
-        include_bytes!("../../../tests/conformance/cases/err2-neg-missing-variant.wf"),
-        SemanticRule::Err2,
-        SemanticIssueKind::NonExhaustiveMatch {
-            missing_variants: vec!["Blue".to_owned()],
-        },
+    match_sites::assert_sites(
+        include_str!("../../../tests/conformance/cases/err2-neg-missing-variant.wf"),
+        "Color",
+        &[(
+            "match c {\n    Red() => {\n      return 1_i32;\n    }\n    Green() => {\n      return 2_i32;\n    }\n  }",
+            &["Blue"],
+        )],
     );
     assert_rule(
         b"struct Pair {\n  x: i32;\n  x: i32;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",

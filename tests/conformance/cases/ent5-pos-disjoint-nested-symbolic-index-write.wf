@@ -1,0 +1,16 @@
+fn probe(rows: &[Slots<Slots<u8, 8>, 8>], i: u64, j: u64, k: u64) -> result: u8 writes(rows) contract {
+  requires rows^.len >= 1_u64;
+  requires i < j;
+  requires j < rows^[0_u64].len;
+  requires k < rows^[0_u64][i].len;
+} {
+  doc "ENT-5 and OWN-7 compare the symbolic indices below the same rows[0] base even though the containing literal index is evaluated at distinct source occurrences. The write to rows[0][j] preserves the length bound for rows[0][i].";
+  set rows^[0_u64][j] = slots_new::<u8, 8>();
+  let value = rows^[0_u64][i][k];
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checking probe exercises nested same-base separation without constructing runtime rows.";
+  return std::process::exit_status(code: 0_u8);
+}

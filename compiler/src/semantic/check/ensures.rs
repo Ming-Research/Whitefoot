@@ -1,7 +1,7 @@
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::FunctionContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
-use crate::semantic::entailment::integer_value;
+use crate::semantic::entailment::{computed_integer_image, integer_value};
 use std::collections::{HashMap, HashSet};
 
 use crate::FixedTerminal;
@@ -47,6 +47,52 @@ enum SelectorAdmissionType {
     /// place as its value and a measured place through its measures.
     Aggregate,
     Invalid,
+}
+
+fn postcondition_source(
+    tree: &super::super::tree::TreeView<'_>,
+    node: NodeId,
+) -> Option<super::super::postcondition::PostconditionSource> {
+    use super::super::postcondition::PostconditionSource;
+    let spelling = tree.source_spelling(node).ok()?;
+    let mut source = PostconditionSource {
+        spelling,
+        literal: false,
+        fields: Vec::new(),
+    };
+    if let Some(literal) = tree
+        .direct_token_with(node, crate::TerminalPredicate::Literal)
+        .ok()?
+    {
+        // A generic numeric identity such as `1_Num` is written over the
+        // type parameter, whatever its name, so it is not the concrete
+        // instance's literal [FORM-5].
+        source.literal =
+            !crate::syntax::terminal::is_generic_numeric_literal(tree.token_bytes(literal).ok()?);
+    } else if tree.has_fixed(node, FixedTerminal::Move).ok()? {
+        return postcondition_source(
+            tree,
+            tree.first_child_with(node, Production::Place).ok()??,
+        );
+    } else if let Some(list) = tree.first_child_with(node, Production::FieldinitList).ok()? {
+        source.fields = tree
+            .children_with(list, Production::Fieldinit)
+            .ok()?
+            .iter()
+            .map(|field| {
+                postcondition_source(
+                    tree,
+                    tree.first_child_with(*field, Production::Atom).ok()??,
+                )
+            })
+            .collect::<Option<Vec<_>>>()?;
+    } else if let [child] = tree.children(node).ok()? {
+        let child = postcondition_source(tree, *child)?;
+        source.spelling = child.spelling;
+        source.literal = child.literal;
+        source.fields = child.fields;
+    }
+    Some(source)
 }
 
 #[derive(Clone, Copy)]
@@ -713,12 +759,142 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .first_child_with(clause, Production::ClauseExpr)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let relation = self.types.declarations.postcondition_relation(
-            expression,
-            expanded,
-            context.function,
-        )?;
+        let relation = self
+            .types
+            .declarations
+            .postcondition_relation(expression, expanded.clone(), context.function)?;
+        let capture_sources = !self
+            .types
+            .postcondition_clauses
+            .keys()
+            .any(|(function, _)| *function == context.function.id);
+        if let Some(clause) = Self::postcondition_display_clause(&expanded) {
+            self.types.postcondition_clauses.insert(
+                (context.function.id, selector.block.clone()),
+                clause,
+            );
+        }
+        if !capture_sources {
+            return Ok((relation, places));
+        }
+        let tree = &self.types.declarations.tree;
+        for production in [
+            Production::Atom,
+            Production::Expr,
+            Production::Call,
+            Production::Place,
+        ] {
+            for node in tree
+                .descendants_with(context.function.node, production)
+                .unwrap_or_default()
+            {
+                if let (Ok(path), Some(source)) = (tree.path(node), postcondition_source(tree, node)) {
+                    self.types.postcondition_sources.insert(path.clone(), source);
+                }
+            }
+        }
+        for production in [Production::ReturnStmt, Production::LetStmt] {
+            for node in tree
+                .descendants_with(context.function.node, production)
+                .unwrap_or_default()
+            {
+                if let (Ok(path), Ok(expressions)) =
+                    (tree.path(node), tree.children_with(node, Production::Expr))
+                {
+                    let mut sources = expressions
+                        .into_iter()
+                        .map(|expression| postcondition_source(tree, expression))
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(sources) = sources.as_mut() {
+                        let source = if sources.len() == 1 {
+                            sources.pop()
+                        } else if sources.is_empty() {
+                            None
+                        } else {
+                            Some(super::super::postcondition::PostconditionSource {
+                                spelling: String::new(),
+                                literal: false,
+                                fields: std::mem::take(sources),
+                            })
+                        };
+                        if let Some(source) = source {
+                            self.types.postcondition_sources.insert(path.clone(), source);
+                        }
+                    }
+                }
+            }
+        }
         Ok((relation, places))
+    }
+
+    fn postcondition_display_clause(
+        expanded: &ExpandedClauseExpression,
+    ) -> Option<super::super::postcondition::PostconditionClause> {
+        use super::super::postcondition::PostconditionClause;
+        match expanded {
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, spelling, .. }) => {
+                Some(PostconditionClause::Literal {
+                    value: value.clone(),
+                    spelling: spelling.clone(),
+                })
+            }
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
+                declaration,
+                projections,
+                spelling: Some(spelling),
+                ..
+            }) => Some(PostconditionClause::NamedConst {
+                declaration: *declaration,
+                projections: projections.clone(),
+                spelling: spelling.clone(),
+            }),
+            ExpandedClauseExpression::Datum(datum) => Some(PostconditionClause::Datum(match datum {
+                ExpandedClauseDatum::Result {
+                    ordinal,
+                    projections,
+                    ty,
+                } => RelationDatum::Result {
+                    ordinal: *ordinal,
+                    projections: projections.clone(),
+                    ty: *ty,
+                },
+                ExpandedClauseDatum::Parameter {
+                    ordinal,
+                    projections,
+                    ty,
+                    denotation,
+                } => RelationDatum::Parameter {
+                    ordinal: *ordinal,
+                    projections: projections.clone(),
+                    ty: *ty,
+                    denotation: *denotation,
+                },
+                ExpandedClauseDatum::NamedConst {
+                    declaration,
+                    projections,
+                    ty,
+                    ..
+                } => RelationDatum::NamedConst {
+                    declaration: *declaration,
+                    projections: projections.clone(),
+                    ty: *ty,
+                },
+                ExpandedClauseDatum::Literal { value, origin, .. } => RelationDatum::Literal {
+                    value: value.clone(),
+                    origin: origin.clone(),
+                },
+            })),
+            ExpandedClauseExpression::Operation { row, arguments, .. } => {
+                Some(PostconditionClause::Operation {
+                    row: *row,
+                    arguments: arguments
+                        .iter()
+                        .map(Self::postcondition_display_clause)
+                        .collect::<Option<Vec<_>>>()?,
+                })
+            }
+            ExpandedClauseExpression::InvalidSelectorUse { .. } => None,
+        }
     }
 
     /// The clause's alpha-expanded expression, with the [ENT-2] clause (b)
@@ -864,7 +1040,7 @@ impl<'unit> Checker<'_, 'unit> {
                         .invalid_postcondition_relation(expression);
                 }
                 expanded_bindings.insert(*binding, expanded);
-                clause_places.define(*binding, value);
+                clause_places.define(*binding, value, &self.types.captured_places);
             }
             let expression = self
                 .types
@@ -1096,6 +1272,8 @@ impl<'unit> Checker<'_, 'unit> {
                         | GoalProjection::Page(_)
                         | GoalProjection::FormalSubscript { .. }
                         | GoalProjection::FormalPage { .. }
+                        | GoalProjection::FormalPlaceSubscript { .. }
+                        | GoalProjection::FormalPlacePage { .. }
                 )
             }) =>
             {
@@ -1116,12 +1294,13 @@ impl<'unit> Checker<'_, 'unit> {
                 declaration,
                 projections,
                 ty,
+                ..
             }) => Some(RelationDatum::NamedConst {
                 declaration: *declaration,
                 projections: projections.clone(),
                 ty: *ty,
             }),
-            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, origin }) => {
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::Literal { value, origin, .. }) => {
                 Some(RelationDatum::Literal {
                     value: value.clone(),
                     origin: origin.clone(),
@@ -1398,10 +1577,24 @@ const fn representable_bits(ty: CheckedType, value: i128) -> Option<u64> {
     Some((value & ((1_i128 << width) - 1)) as u64)
 }
 
+/// [FN-9] a returned fragment-integer expression that [ENT-3] relates to its
+/// operands as the initializer of an ordinary `let`, and that is no place,
+/// literal or named const, gives the return's evaluated value for its
+/// ordinal. Every other expression gives no datum.
+fn evaluated_return_datum(
+    value: &CheckedExpression,
+    ordinal: u32,
+) -> Option<PostconditionReturnDatum> {
+    let CheckedType::Integer(ty) = value.ty() else {
+        return None;
+    };
+    computed_integer_image(value).then_some(PostconditionReturnDatum::Evaluated { ordinal, ty })
+}
+
 /// [FN-9, CALL-4] whether one selected return's value, projected by a
 /// result datum's owned descendant projection, is inside the concrete integer
-/// fragment: an integer place, literal or success payload for a value datum,
-/// and a place for a measured one. A construction selects the operand of its
+/// fragment: an integer place, literal, evaluated value or success payload
+/// for a value datum, and a place for a measured one. A construction selects the operand of its
 /// field and continues below it.
 fn returned_projection_is_fragment(
     value: &PostconditionReturnDatum,
@@ -1429,7 +1622,9 @@ fn returned_projection_is_fragment(
         PostconditionReturnDatum::Literal { value, .. } => {
             !measured && projections.is_empty() && matches!(value.ty(), CheckedType::Integer(_))
         }
-        PostconditionReturnDatum::Measure(..) => !measured && projections.is_empty(),
+        PostconditionReturnDatum::Measure(..) | PostconditionReturnDatum::Evaluated { .. } => {
+            !measured && projections.is_empty()
+        }
     }
 }
 
@@ -1493,6 +1688,49 @@ impl<'unit> DeclarationInventory<'unit> {
             .map_or(context.result_type, |(_, ty)| ty);
         Ok(Some((usage.origin.clone(), ty)))
     }
+    /// [MSR-3] entry state belongs only to a callable's postconditions,
+    /// including in templates no concrete function instance reaches.
+    pub(super) fn check_entry_positions(&self) -> Result<(), CheckStop> {
+        for base in self
+            .tree
+            .descendants_with(self.tree.root(), Production::Pbase)?
+        {
+            if !self.tree.has_fixed(base, FixedTerminal::Entry)? {
+                continue;
+            }
+            let mut ancestor = self.tree.parent(base)?;
+            let mut in_ensures = false;
+            while let Some(node) = ancestor {
+                match self.tree.production(node)? {
+                    Production::EnsuresClause => {
+                        in_ensures = true;
+                        break;
+                    }
+                    Production::FnDecl | Production::FnSig => break,
+                    _ => ancestor = self.tree.parent(node)?,
+                }
+            }
+            if !in_ensures {
+                return self.reject_entry_outside_postcondition(base);
+            }
+        }
+        Ok(())
+    }
+
+    /// [MSR-3] keeps a refused entry read at its complete former.
+    pub(super) fn reject_entry_outside_postcondition<T>(
+        &self,
+        base: NodeId,
+    ) -> Result<T, CheckStop> {
+        self.issue_node(
+            SemanticRule::Msr3,
+            base,
+            SemanticIssueKind::InvalidEntryFormer {
+                mechanical_fix: super::repairs::entry_outside_postcondition_repair(),
+            },
+        )
+    }
+
     /// The psuffix nodes of every place written through `entry(parameter)`
     /// in one `contract_block` [MSR-3].
     pub(super) fn entry_former_suffixes(
@@ -1565,7 +1803,8 @@ impl<'unit> DeclarationInventory<'unit> {
                 }
             }
             // Clause uses remain provisional until selector admission. This
-            // whole-function position check runs outside an active clause.
+            // parameter check runs outside an active clause; positions have
+            // already been checked across the complete source tree.
             let path = self.tree.path(base)?;
             let usage = self
                 .resolved
@@ -1583,19 +1822,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 matches!(usage.target(), ResolvedTarget::Source { declaration, .. }
                     if declaration == parameter.declaration)
             });
-            let mut ancestor = self.tree.parent(base)?;
-            let mut in_ensures = false;
-            while let Some(node) = ancestor {
-                if self.tree.production(node)? == Production::EnsuresClause {
-                    in_ensures = true;
-                    break;
-                }
-                if node == function.node {
-                    break;
-                }
-                ancestor = self.tree.parent(node)?;
-            }
-            if !in_ensures || !parameter.is_some_and(|p| parameter_has_exit_state(function, p)) {
+            if !parameter.is_some_and(|p| parameter_has_exit_state(function, p)) {
                 return self.issue_node(
                     SemanticRule::Msr3,
                     base,
@@ -2568,8 +2795,10 @@ impl<'unit> TypeContext<'unit> {
         let CheckedNominalKind::Enum { variants } = &self.nominal(nominal)?.kind else {
             return Ok(None);
         };
-        Ok(variants.iter().enumerate().find(|(_, variant)| {
-            match (variant.constructor, target) {
+        Ok(variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| match (variant.constructor, target) {
                 (
                     super::super::model::CheckedConstructor::Prelude(actual),
                     Some(ResolvedTarget::Prelude(wanted)),
@@ -2579,8 +2808,7 @@ impl<'unit> TypeContext<'unit> {
                     Some(ResolvedTarget::Source { declaration, .. }),
                 ) => actual == declaration,
                 _ => false,
-            }
-        }))
+            }))
     }
     /// A symbolic result type has no enum instance yet, but its route's
     /// resolved variant still fixes the declared field names and positions.
@@ -2993,6 +3221,7 @@ impl<'unit> TypeContext<'unit> {
                                 node_path,
                                 binding_info,
                             )?
+                            .or_else(|| evaluated_return_datum(produced, ordinal))
                         };
                         if datum.is_none() && named.contains(&ordinal) {
                             return self.declarations.invalid_postcondition_return(node_path);
@@ -3354,9 +3583,7 @@ impl<'unit> TypeContext<'unit> {
                 }
                 // Retain the field-specific diagnostic for a missing or
                 // misspelled field of a valid enum variant.
-                None if selected_variant.is_some() => {
-                    (SelectorAdmissionType::Payload, declared.ty)
-                }
+                None if selected_variant.is_some() => (SelectorAdmissionType::Payload, declared.ty),
                 _ if symbolic_enum => (SelectorAdmissionType::Symbolic, declared.ty),
                 _ => (SelectorAdmissionType::Invalid, declared.ty),
             }
@@ -3365,8 +3592,12 @@ impl<'unit> TypeContext<'unit> {
                 ty if Checker::postcondition_fragment_type(ty, symbolic) => {
                     (SelectorAdmissionType::Fragment, ty)
                 }
-                ty if self.type_supplies_data(ty, symbolic)? => (SelectorAdmissionType::Aggregate, ty),
-                CheckedType::Generic(_) if symbolic => (SelectorAdmissionType::Symbolic, declared.ty),
+                ty if self.type_supplies_data(ty, symbolic)? => {
+                    (SelectorAdmissionType::Aggregate, ty)
+                }
+                CheckedType::Generic(_) if symbolic => {
+                    (SelectorAdmissionType::Symbolic, declared.ty)
+                }
                 _ => (SelectorAdmissionType::Invalid, declared.ty),
             }
         };

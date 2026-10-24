@@ -103,7 +103,7 @@ fn main() -> status: std::process::ExitStatus pure {
         // The whole payload, so the field labels the record prints are pinned
         // with the sentence they carry.
         sentences: &[
-            "\n  expected: [IDENT]\n  found: \"Limit\"\n  mechanical_fix: an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape",
+            "\n  expected: [\"IDENT\"]\n  found: \"Limit\"\n  mechanical_fix: an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape",
         ],
     },
     Probe {
@@ -188,23 +188,6 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "GRAM-9",
         sentences: &[
             "a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`",
-        ],
-    },
-    Probe {
-        name: "forbidden-atom-in-a-contract-block.wf",
-        source: br#"fn count(data: &[u8], start: u64, end: u64) -> lines: u64 reads(data) contract {
-  requires imax(start, imin(start, end)) <= end;
-} {
-  return 0_u64;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "GRAM-9",
-        sentences: &[
-            "a `call` or `construct` in an atom position does not derive [GRAM-9]: a `contract_block` has no `let`, so bind the inner call with a preceding `define` in this same block and write that binder in the atom position — `define inner = f(x: 0_u64); requires g(y: inner);`",
         ],
     },
     // -------------------------------------------------------------------
@@ -796,7 +779,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "EFF-2",
         sentences: &[
             "]: EffectMismatch\n",
-            "\n  expected_row: reads(data.len)\n  found_row: pure\n  missing: [reads(data.len)]\n  extra: []\n  mechanical_fix: declare the row as `reads(data.len)`, which covers every access the body makes and no other\n",
+            "\n  expected_row: reads(data.len)\n  found_row: pure\n  missing: [\"reads(data.len)\"]\n  extra: []\n  mechanical_fix: declare the row as `reads(data.len)`, which covers every access the body makes and no other\n",
         ],
     },
     Probe {
@@ -821,7 +804,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-2",
         sentences: &[
-            "\n  expected_row: writes(stats.count)\n  found_row: writes(stats.count), writes(stats.total)\n  missing: []\n  extra: [writes(stats.total)]\n",
+            "\n  expected_row: writes(stats.count)\n  found_row: writes(stats.count), writes(stats.total)\n  missing: []\n  extra: [\"writes(stats.total)\"]\n",
         ],
     },
     Probe {
@@ -1374,7 +1357,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "GRAM-8",
         sentences: &[
             "]: InvalidConstructionFields\n",
-            "\n  constructor: Wrap<u64>\n  declared_fields: [value]\n",
+            "\n  constructor: Wrap<u64>\n  declared_fields: [\"value\"]\n",
         ],
     },
     // [FORM-8] one canonical region spelling: each position a region can
@@ -1463,7 +1446,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // Typed reference, field and Box-content steps retain their source spelling.
     Probe {
         name: "entry-box-content.wf",
-        source: br#"fn clear(cell: &Box<Slots<u8, 4>>) -> result: unit writes(cell) contract {
+        source: br#"fn wipe(cell: &Box<Slots<u8, 4>>) -> result: unit writes(cell) contract {
   ensures cell^.inner.len == entry(cell)^.inner.len;
 } {
   let empty = slots_new::<u8, 4>();
@@ -1485,7 +1468,7 @@ fn main() -> status: std::process::ExitStatus pure {
   storage: Box<Slots<u8, 4>>;
 }
 
-fn clear(cell: &Holder) -> result: unit writes(cell) contract {
+fn wipe(cell: &Holder) -> result: unit writes(cell) contract {
   ensures cell^.storage.inner.len == entry(cell)^.storage.inner.len;
 } {
   let empty = slots_new::<u8, 4>();

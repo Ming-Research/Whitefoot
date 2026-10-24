@@ -351,7 +351,10 @@ impl Input<'_, '_> {
         let represented = |offset: &CapturedValue| {
             matches!(
                 offset.term,
-                CapturedTerm::Literal(_) | CapturedTerm::Const(_) | CapturedTerm::Binding(_)
+                CapturedTerm::Literal(_)
+                    | CapturedTerm::Const(_)
+                    | CapturedTerm::Binding(_)
+                    | CapturedTerm::Place(_)
             )
         };
         for step in projections {
@@ -604,8 +607,10 @@ impl Vocabulary {
             // [MSR-4] a measure term's image is its own compiler-owned atom,
             // [MSR-3] a measure datum inherits the atom of the term it
             // denotes, and [MSR-6] gives one immutable image to a symbolic
-            // const parameter throughout the generic body.
+            // const parameter throughout the generic body. [FN-9] a
+            // returned value holds the image its return installed.
             TermKind::ConstParameter(..)
+            | TermKind::ReturnedValue { .. }
             | TermKind::Measure(..)
             | TermKind::TargetMeasure { .. }
             | TermKind::EntryDatum { .. }
@@ -661,6 +666,8 @@ impl Vocabulary {
             return;
         }
         self.affine_atoms.truncate(start);
+        // A reused atom index may have another range; discard model views too.
+        self.affine_models.clear();
         let kept = |term: AffineTermId| (term.index() as usize) < start;
         let kept_all = |terms: &[AffineCoefficient]| terms.iter().all(|each| kept(each.term()));
         self.product_atoms
@@ -1373,6 +1380,9 @@ impl Judging<'_, '_, '_> {
     }
 
     pub(super) fn join_flows(&mut self, states: &[ProofFlowState]) -> ProofFlowState {
+        for state in states {
+            self.reasoning().observe_summary_context(state);
+        }
         // Close L0 contradiction before any structural intersection. An
         // unreachable predecessor is neutral: it cannot erase a live affine
         // value, published invariant name, or canonical fact. Keeping all
@@ -1426,6 +1436,24 @@ impl Judging<'_, '_, '_> {
                 .flat_map(|state| state.written.iter().copied())
                 .collect(),
             measure_kills: join_measure_kills(&contributing),
+            lost_headers: {
+                let mut losses = Vec::new();
+                for loss in contributing.iter().flat_map(|state| &state.lost_headers) {
+                    // A source relation replayed after loop exit must still
+                    // name the same live support on every incoming path.
+                    if matches!(loss.components, LostHeaderComponents::Exit(_))
+                        && !contributing
+                            .iter()
+                            .all(|state| state.lost_headers.contains(loss))
+                    {
+                        continue;
+                    }
+                    if !losses.contains(loss) {
+                        losses.push(loss.clone());
+                    }
+                }
+                losses
+            },
             continuing,
         }
     }

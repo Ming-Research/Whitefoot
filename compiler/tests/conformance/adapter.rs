@@ -41,15 +41,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use whitefoot::{
     BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
-    HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, ModuleProgramFailure,
-    SourceInput, check, check_module_entry, check_module_program, check_with_cache, compile,
-    compile_module_program, discover_module_sources, entry_verdict, form_module_program_graph,
-    module_verdict,
+    DiagnosticFormat, HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry,
+    ModuleProgramFailure, OverlapLowering, SourceInput, check, check_module_entry,
+    check_module_program, check_module_program_with_cache, check_with_cache, compile,
+    compile_module_program, compile_with_overlap, discover_module_sources, entry_verdict,
+    form_module_program_graph,
 };
 
-use crate::support::{PROGRAM_DEADLINE, ProgramChild, append_runtime_objects};
+use crate::support::{
+    PROGRAM_DEADLINE, ProgramChild, append_runtime_objects, require_sanitized, sanitized, sanitizer,
+};
 
-use super::corpus::{self, Arrangement, Case, Expectation, Verdict};
+use super::corpus::{
+    self, Arrangement, Case, DiagnosticCoordinate, Expectation, FixtureContent, RejectedDiagnostic,
+    Verdict,
+};
+use super::json;
 
 static NEXT_INVOCATION: AtomicU64 = AtomicU64::new(0);
 
@@ -70,6 +77,7 @@ struct Reached {
 fn reach_module_program(
     case: &Case,
     root: &Path,
+    overlap: OverlapLowering,
 ) -> Result<Option<whitefoot::LlvmModule>, CompilationFailure> {
     let graph =
         match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default()) {
@@ -87,7 +95,7 @@ fn reach_module_program(
         })
         .collect();
     match &case.expect {
-        Expectation::Accept | Expectation::Reject(_) => {
+        Expectation::Accept | Expectation::Reject(_) | Expectation::RejectDiagnostics(_) => {
             check_module_program(&graph, &inputs, CompilerLimits::default())?;
             for entry in graph.entries() {
                 check_module_entry(
@@ -104,9 +112,31 @@ fn reach_module_program(
             &inputs,
             ModuleEntry::Named("main"),
             CompilerLimits::default(),
-            whitefoot::OverlapLowering::Off,
+            overlap,
         )
         .map(Some),
+    }
+}
+
+/// Checks the case, or compiles it with `overlap` when it needs the complete
+/// toolchain.
+fn build(
+    case: &Case,
+    overlap: OverlapLowering,
+) -> Result<Option<whitefoot::LlvmModule>, CompilationFailure> {
+    if let Some(root) = case.module_root() {
+        return reach_module_program(case, &root, overlap);
+    }
+    let source = case.source();
+    let path = case.logical_path();
+    let inputs = [SourceInput::new(&path, &source)];
+    match &case.expect {
+        Expectation::Accept | Expectation::Reject(_) | Expectation::RejectDiagnostics(_) => {
+            check(&inputs, CompilerLimits::default()).map(|()| None)
+        }
+        Expectation::Run(_) | Expectation::Unsupported => {
+            compile_with_overlap(&inputs, CompilerLimits::default(), overlap).map(Some)
+        }
     }
 }
 
@@ -117,41 +147,11 @@ fn reach(case: &Case) -> Reached {
     // change either one. A runtime or unsupported expectation still needs the
     // complete toolchain: the former executes its module, while the latter may
     // name a capability first encountered during lowering.
-    let module = if let Some(root) = case.module_root() {
-        reach_module_program(case, &root)
-    } else {
-        let source = case.source();
-        let path = case.logical_path();
-        let inputs = [SourceInput::new(&path, &source)];
-        match &case.expect {
-            Expectation::Accept | Expectation::Reject(_) => {
-                check(&inputs, CompilerLimits::default()).map(|()| None)
-            }
-            Expectation::Run(_) | Expectation::Unsupported => {
-                compile(&inputs, CompilerLimits::default()).map(Some)
-            }
-        }
-    };
-    let module = match module {
+    let module = match build(case, OverlapLowering::Off) {
         Ok(module) => module,
         Err(failure) => {
             let note = Some(failure.to_string());
-            let verdict = match failure.kind() {
-                // A numbered source rule was violated. The rule the
-                // diagnostic cites is the verdict's whole content; an
-                // uncited stop stays `None` rather than being attributed to
-                // the rule the case happens to declare.
-                CompilationFailureKind::Source => {
-                    Verdict::Reject(failure.rule_id().map(ToOwned::to_owned))
-                }
-                // Valid source needing an unimplemented capability reaches
-                // the same verdict kind, so a `runnable` case fails rather
-                // than passing as though the language had judged it.
-                CompilationFailureKind::Unsupported => Verdict::Unsupported(failure.to_string()),
-                // Everything else is a compiler, resource, or target stop the
-                // corpus does not model. It must never become a verdict.
-                _ => Verdict::Stopped(failure.to_string()),
-            };
+            let verdict = failure_verdict(&failure);
             return Reached { verdict, note };
         }
     };
@@ -161,13 +161,29 @@ fn reach(case: &Case) -> Reached {
             note: None,
         };
     }
+    let module = module.expect("a run expectation uses the complete compiler path");
+    let verdict = execute(&sanitized(module), case.arrange.as_ref());
+    // A sanitized run also builds the case with the `--par` lowering, which
+    // hands work the compiler proved independent to worker threads, so the
+    // sanitizers see the same program run in parallel; both builds must reach
+    // one verdict (compiler/sanitized-builds).
+    if sanitizer().is_some() && matches!(verdict, Verdict::Run(_)) {
+        let parallel = match build(case, OverlapLowering::OnWithCallGrain) {
+            Ok(Some(module)) => execute(&sanitized(module), case.arrange.as_ref()),
+            Ok(None) => unreachable!("a run expectation uses the complete compiler path"),
+            Err(failure) => Verdict::Stopped(format!("the --par build failed: {failure}")),
+        };
+        if parallel != verdict {
+            return Reached {
+                verdict: Verdict::Stopped(format!(
+                    "the --par build reached {parallel:?}, the ordinary build {verdict:?}"
+                )),
+                note: None,
+            };
+        }
+    }
     Reached {
-        verdict: execute(
-            module
-                .as_deref()
-                .expect("a run expectation uses the complete compiler path"),
-            case.arrange.as_ref(),
-        ),
+        verdict,
         note: None,
     }
 }
@@ -181,16 +197,23 @@ fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
     let arrange = arrange.unwrap_or(&default);
     let directory = invocation_directory();
     let executable = link(module, &directory);
+    // Fixtures are made in listed order; a link's target need not exist.
     for fixture in &arrange.files {
         let path = directory.join(Path::new(std::ffi::OsStr::from_bytes(&fixture.path)));
-        match &fixture.bytes {
-            Some(bytes) => {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).expect("fixture parent directory");
-                }
-                std::fs::write(&path, bytes).expect("write fixture file");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("fixture parent directory");
+        }
+        match &fixture.content {
+            FixtureContent::File(bytes) => {
+                std::fs::write(&path, bytes.resolve(&directory)).expect("write fixture file");
             }
-            None => std::fs::create_dir_all(&path).expect("create fixture directory"),
+            FixtureContent::Directory => {
+                std::fs::create_dir_all(&path).expect("create fixture directory");
+            }
+            FixtureContent::Link(target) => {
+                std::os::unix::fs::symlink(std::ffi::OsStr::from_bytes(target), &path)
+                    .expect("create fixture link");
+            }
         }
     }
 
@@ -201,6 +224,7 @@ fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
     // leaves the invocation's own default vector, which is exactly the one
     // element the link step produced.
     if let Some(argv) = &arrange.argv {
+        let argv: Vec<Vec<u8>> = argv.iter().map(|bytes| bytes.resolve(&directory)).collect();
         let (invoked, rest) = argv.split_first().expect("argv is nonempty");
         command.arg0(std::ffi::OsStr::from_bytes(invoked));
         command.args(rest.iter().map(|bytes| std::ffi::OsStr::from_bytes(bytes)));
@@ -273,6 +297,25 @@ fn execute(module: &str, arrange: Option<&Arrangement>) -> Verdict {
     )
 }
 
+/// The part of the manifest this process walks: every case by default, or
+/// with `WHITEFOOT_CONFORMANCE_SHARD=INDEX/COUNT` every COUNT-th case from
+/// the INDEX-th, counting from 1, so that COUNT processes together walk each
+/// case once. The sanitizer workflow splits its slow walk this way
+/// (compiler/sanitized-builds).
+fn shard() -> (usize, usize) {
+    let Ok(selection) = std::env::var("WHITEFOOT_CONFORMANCE_SHARD") else {
+        return (0, 1);
+    };
+    let parsed = selection
+        .split_once('/')
+        .and_then(|(index, count)| Some((index.parse().ok()?, count.parse().ok()?)))
+        .filter(|&(index, count): &(usize, usize)| (1..=count).contains(&index));
+    let (index, count) = parsed.unwrap_or_else(|| {
+        panic!("WHITEFOOT_CONFORMANCE_SHARD names INDEX/COUNT with 1 <= INDEX <= COUNT, not {selection:?}")
+    });
+    (index - 1, count)
+}
+
 fn invocation_directory() -> PathBuf {
     let sequence = NEXT_INVOCATION.fetch_add(1, Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
@@ -286,6 +329,7 @@ fn invocation_directory() -> PathBuf {
 fn link(module: &str, directory: &Path) -> PathBuf {
     let assembly = directory.join("case.ll");
     let executable = directory.join("case");
+    require_sanitized(module);
     std::fs::write(&assembly, module).expect("write the case's emitted module");
     let mut command = Command::new("/usr/bin/clang");
     command.arg("-x").arg("ir").arg(&assembly);
@@ -293,6 +337,7 @@ fn link(module: &str, directory: &Path) -> PathBuf {
     let needs_heap = whitefoot::module_requires_heap_runtime(module);
     let (_sources, objects) =
         append_runtime_objects(&mut command, directory, None, None, needs_heap);
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let linked = command
         .args(HOST_OPTIMIZATION_ARGUMENTS)
         // One link recipe: a case that reaches a libm entry point links here
@@ -346,7 +391,7 @@ fn executable_cases_with_unit_and_exit_status_keep_running() {
             CompilerLimits::default(),
         )
         .expect("the executable entry checks");
-        assert_eq!(execute(&module, None), Verdict::Run(expected));
+        assert_eq!(execute(&sanitized(module), None), Verdict::Run(expected));
     }
 }
 
@@ -369,7 +414,7 @@ fn outcome(case: &Case, reached: &Verdict) -> Outcome {
     if matches!(reached, Verdict::Unsupported(_)) && case.expect != Expectation::Unsupported {
         return Outcome::Fail;
     }
-    if case.expect.matched_by(reached) {
+    if case.expect.matched_by(reached) && case.matches_span(reached) {
         Outcome::Pass
     } else {
         Outcome::Fail
@@ -385,7 +430,8 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     );
     let mut tally: BTreeMap<Outcome, usize> = BTreeMap::new();
     let mut reports = Vec::new();
-    for case in &cases {
+    let (shard, shards) = shard();
+    for case in cases.iter().skip(shard).step_by(shards) {
         let reached = reach(case);
         let outcome = outcome(case, &reached.verdict);
         *tally.entry(outcome).or_default() += 1;
@@ -413,19 +459,59 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     assert_eq!(failed, 0, "conformance adapter: {summary}");
 }
 
-/// One failure's corpus verdict, as `reach` reduces it.
+/// One failure's corpus verdict, as `reach` reduces it: every reported
+/// diagnostic with its rule and source coordinate. Module verdicts retained
+/// as text cannot supply byte spans; the manifest therefore limits span
+/// assertions to single-source cases, including caches.
 fn failure_verdict(failure: &CompilationFailure) -> Verdict {
     match failure.kind() {
-        CompilationFailureKind::Source => Verdict::Reject(failure.rule_id().map(ToOwned::to_owned)),
+        CompilationFailureKind::Source => {
+            Verdict::Reject(failure.diagnostics().map(rejected_diagnostic).collect())
+        }
         CompilationFailureKind::Unsupported => Verdict::Unsupported(failure.to_string()),
         _ => Verdict::Stopped(failure.to_string()),
     }
 }
 
+/// Retains the diagnostic's structured coordinate and expected-terminal labels.
+/// JSON is the public structured presentation boundary; parsing it checks the
+/// payload the writer receives rather than rebuilding grammar expectations.
+fn rejected_diagnostic(failure: &CompilationFailure) -> RejectedDiagnostic {
+    let rendered = failure.render_diagnostic(DiagnosticFormat::Json);
+    let value = json::parse(&rendered).expect("compiler diagnostic is structured JSON");
+    let expected = value
+        .get("detail")
+        .and_then(|detail| detail.get("expected"))
+        .and_then(json::Value::array)
+        .map(|terminals| {
+            terminals
+                .iter()
+                .map(|terminal| {
+                    terminal
+                        .string()
+                        .expect("expected terminal label")
+                        .to_owned()
+                })
+                .collect()
+        });
+    let coordinate = failure
+        .source_coordinate()
+        .map(|coordinate| DiagnosticCoordinate {
+            source_ordinal: u64::from(coordinate.source().ordinal()),
+            byte_start: coordinate.start().value(),
+            byte_end: coordinate.end().value(),
+        });
+    RejectedDiagnostic {
+        rule: failure.rule_id().map(ToOwned::to_owned),
+        coordinate,
+        expected,
+    }
+}
+
 /// [MOD-8] one case's source verdict reached with proof receipts from
 /// `cache`: a one-record case through the cached check, a module-form case
-/// through each module's verdict in row order and then each named entry's
-/// composition verdict, the order `reach` judges them in.
+/// through the cached program check, which admits syntax across every module
+/// before judging module verdicts, and then each named entry's composition.
 fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
     let limits = CompilerLimits::default();
     let Some(root) = case.module_root() else {
@@ -450,20 +536,10 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
                 .in_module(source.module, source.role)
         })
         .collect();
-    let mut verdicts = Vec::new();
-    for record in graph.modules() {
-        match module_verdict(
-            &graph,
-            &inputs,
-            &record.qualified_name(),
-            false,
-            limits,
-            Some(cache),
-        ) {
-            Ok(verdict) => verdicts.push(verdict),
-            Err(failure) => return failure_verdict(&failure),
-        }
+    if let Err(failure) = check_module_program_with_cache(&graph, &inputs, limits, cache) {
+        return failure_verdict(&failure);
     }
+    let mut verdicts = Vec::new();
     for entry in graph.entries() {
         match entry_verdict(
             &graph,
@@ -471,7 +547,7 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
             ModuleEntry::Named(entry.name()),
             limits,
             Some(cache),
-            &verdicts,
+            &[],
         ) {
             Ok(verdict) => verdicts.push(verdict),
             Err(failure) => return failure_verdict(&failure),
@@ -480,7 +556,22 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
     verdicts
         .iter()
         .find_map(|verdict| match verdict.outcome() {
-            CheckOutcome::Rejected { rule, .. } => Some(Verdict::Reject(rule.clone())),
+            CheckOutcome::Rejected { diagnostics, .. } => Some(Verdict::Reject(
+                diagnostics
+                    .iter()
+                    .map(|diagnostic| RejectedDiagnostic {
+                        rule: Some(diagnostic.rule().to_owned()),
+                        coordinate: diagnostic.source_coordinate().map(|coordinate| {
+                            DiagnosticCoordinate {
+                                source_ordinal: u64::from(coordinate.source().ordinal()),
+                                byte_start: coordinate.start().value(),
+                                byte_end: coordinate.end().value(),
+                            }
+                        }),
+                        expected: diagnostic.expected().map(<[String]>::to_vec),
+                    })
+                    .collect(),
+            )),
             CheckOutcome::Accepted { .. } => None,
         })
         .unwrap_or(Verdict::Accept)
@@ -510,11 +601,14 @@ fn a_shared_proof_receipt_cache_reaches_every_declared_source_verdict() {
         let expected = match &case.expect {
             Expectation::Accept | Expectation::Run(_) => Expectation::Accept,
             Expectation::Reject(rule) => Expectation::Reject(rule.clone()),
+            Expectation::RejectDiagnostics(diagnostics) => {
+                Expectation::RejectDiagnostics(diagnostics.clone())
+            }
             Expectation::Unsupported => continue,
         };
         checked += 1;
         let reached = reach_with_receipts(case, &cache);
-        if !expected.matched_by(&reached) {
+        if !expected.matched_by(&reached) || !case.matches_span(&reached) {
             reports.push(format!(
                 "  {} want {expected:?} reached {reached:?}",
                 case.id

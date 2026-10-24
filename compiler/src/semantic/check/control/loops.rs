@@ -89,7 +89,7 @@ struct LoopReferenceEquation {
 /// [`BodyChecker::record_backedge_supersedes`] reads.
 struct LoopReferenceHeader {
     equations: Vec<LoopReferenceEquation>,
-    spelled: HashSet<(CaptureId, BindingId)>,
+    spelled: HashSet<(CaptureId, crate::semantic::places::CapturedTerm)>,
     call_values: HashSet<BindingId>,
 }
 
@@ -193,13 +193,15 @@ impl<'unit> Checker<'_, 'unit> {
         {
             for path in &mut reference.paths {
                 for binding in &superseded {
-                    path.supersede_binding(*binding);
+                    path.supersede_term(*binding);
                 }
                 spelled.extend(path.spelled_indices());
             }
         }
         for local in bindings.values_mut() {
-            if superseded.contains(&local.binding) {
+            if superseded.contains(&crate::semantic::places::CapturedTerm::Binding(
+                local.binding,
+            )) {
                 local.call_value = false;
             }
         }
@@ -450,7 +452,7 @@ impl<'unit> Checker<'_, 'unit> {
             SemanticIssueKind::InvalidReferenceUse {
                 binder: self.types.declarations.declaration_spelling(declaration)?,
                 event: event.phrase(),
-                mechanical_fix: super::super::references::REF2_FORM_AGAIN,
+                mechanical_fix: super::super::references::REF2_FORM_AGAIN.to_owned(),
             },
         )
     }
@@ -602,7 +604,6 @@ impl<'unit> Checker<'_, 'unit> {
                     compiler_updated: true,
                     read_only_state: false,
                     reference: None,
-                    commit_target: None,
                     refinement_witnesses: Vec::new(),
                     handle_watch: None,
                     call_value: false,
@@ -1248,7 +1249,7 @@ impl BodyChecker {
     fn record_backedge_supersedes(
         &mut self,
         id: CheckedLoopId,
-        spelled: &HashSet<(CaptureId, BindingId)>,
+        spelled: &HashSet<(CaptureId, crate::semantic::places::CapturedTerm)>,
         call_values: &HashSet<BindingId>,
         header_keys: &[DeclarationId],
         backedge: &HashMap<DeclarationId, LocalBinding>,
@@ -1261,7 +1262,9 @@ impl BodyChecker {
                 continue;
             };
             if !local.call_value && call_values.contains(&local.binding) {
-                grown |= recorded.insert(local.binding);
+                grown |= recorded.insert(crate::semantic::places::CapturedTerm::Binding(
+                    local.binding,
+                ));
             }
             let Some(reference) = local.reference.as_ref() else {
                 continue;
