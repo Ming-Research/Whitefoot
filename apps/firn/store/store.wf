@@ -216,9 +216,7 @@ fn log_reserve(log: &Box<Slots<u8>>, needed: u64) -> result: unit writes(log) {
     let target = imax(doubled, wanted);
     let fits = target <= 4611686018427387904_u64;
     if fits {
-      if target >= log^.inner.cap {
-        grow(cell: log, capacity: target);
-      }
+      grow(cell: log, capacity: target);
     }
   }
   return unit;

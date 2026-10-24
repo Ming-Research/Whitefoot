@@ -180,7 +180,8 @@ uint64_t wf__completion_monotonic_ns(void);
  * base-position cell Darwin's facility requires; Linux keeps the whole cursor
  * in the descriptor and leaves the cell untouched.  The native record the
  * batch holds differs by platform and is decoded by the ordinary linked
- * library, not here. */
+ * library, not here; the engine reads only the records' names, to read again
+ * within the operation a batch that held only `.` and `..` [PRE-2]. */
 void wf__completion_directory_next_submit(
     int descriptor,
     void *buffer,
@@ -374,8 +375,10 @@ void *wf__context_prepare(uint64_t bytes);
 void wf__context_launch(uint64_t *group, void *arguments, void *(*start)(void *arguments));
 /* Returns zero when every context the group's activation started has
  * finished, and otherwise records the running context as the group's waiter,
- * to resume `frame`, and returns nonzero, after which the frame suspends. */
-int wf__context_join_wait(uint64_t *group, void *frame);
+ * to resume `frame`, and returns nonzero, after which the frame suspends.
+ * `site` is a static string describing the wait after "context <id> ";
+ * it and any source positions it contains must outlive the program. */
+int wf__context_join_wait(uint64_t *group, void *frame, const char *site);
 
 /* Shared objects [SHARE-1]: a header the runtime keeps, then the object's
  * state at WF_SHARED_STATE_OFFSET, which the emitted code stores, reads and
@@ -418,14 +421,15 @@ uint32_t wf__claim_killed(void *cell);
  * kind in both, as the acquire asked for it.  `wf__shared_watch`, called
  * holding the object after a guard read false, ends the hold and waits until
  * a statement that writes the object ends, leaving it in a state where
- * `test` (a `wf_wake_test` below, or NULL for none) may hold: it returns
+ * `test` (a `wf_wake_test` or `wf_wake_callback` below, or NULL for none) may hold: it returns
  * zero when one has ended since it registered the wait, and otherwise
  * nonzero, after which the frame suspends; either way the statement then
  * acquires the object again and re-reads its guard. */
 int wf__shared_acquire(void *object, uint32_t write, void *frame);
 void wf__shared_unlock(void *object, uint32_t write);
 void wf__shared_unlock_unwritten(void *object, uint32_t write);
-int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test);
+int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test,
+                     const char *site);
 /* The acquire of a statement that already holds a keyed table's entries,
  * which keeps its driver and never suspends: it returns once the running
  * context holds the object. */
@@ -569,7 +573,8 @@ void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width,
 void wf__watch_begin(void *watch);
 void wf__watch_object(void *watch, void *object, const void *test);
 void wf__watch_table(void *watch, void *table);
-int wf__watch_park(void *watch, void *frame);
+/* `site` has the static lifetime and text contract of context_join_wait. */
+int wf__watch_park(void *watch, void *frame, const char *site);
 
 /* What keyed_table.c takes from this runtime for guards: the list of
  * watches registered on a table, which it keeps in the table, whose count
@@ -624,6 +629,22 @@ typedef struct wf_wake_test {
     uint8_t program[WF_WAKE_PROGRAM];
     wf_wake_atom atoms[WF_WAKE_ATOMS];
 } wf_wake_test;
+
+/* A generated full-guard filter. The first byte tags this 24-byte descriptor
+ * rather than an atom program. The callback reads the held target state and
+ * immutable captures only: it never re-enters the runtime, waits, locks or
+ * allocates. Descriptor and capture block live in the waiting frame and stay
+ * unchanged until its watch is detached. Distinct descriptors are not grouped,
+ * even when they have the same callback and captures. */
+#define WF_WAKE_CALLBACK 255u
+#define WF_WAKE_CALLBACK_SIZE 24u
+typedef int (*wf_wake_evaluate)(const void *target_state, const void *captured_block);
+typedef struct wf_wake_callback {
+    uint8_t tag;
+    uint8_t reserved[7];
+    wf_wake_evaluate evaluate;
+    const void *captures;
+} wf_wake_callback;
 
 /* Diagnostic guard counters, off unless a build defines WF_GUARD_COUNTERS
  * to 1; a build without them compiles no counter code. */

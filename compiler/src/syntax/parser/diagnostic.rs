@@ -1,7 +1,15 @@
+#[path = "repairs.rs"]
+mod repairs;
+
+use crate::diagnostic_repairs::{
+    FLAT_CONTRACT_OPERATION_FIX, FLAT_OPERATION_FIX, FORM3_IDENT_FIX, FORM3_LABEL_FIX,
+    FORM3_TYPEID_FIX, GRAM2_CONTRACT_ORDER_FIX, GRAM9_BODY_FIX, GRAM9_CONTRACT_FIX,
+    RANGE1_BARE_BOOL_FIX,
+};
 use crate::lexer::TokenKind;
 use crate::syntax::grammar::{
     Decision, DecisionContext, DecisionKind, GrammarNodeId, GrammarNodeKind, LookaheadPredicate,
-    NamePredicate, Production, SelectRow, grammar_node,
+    NamePredicate, Production, SelectAtom, SelectRow, grammar_node, grammar_prefixes,
 };
 use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
 use crate::{ByteOffset, SourceId};
@@ -30,6 +38,7 @@ pub(crate) enum DecisionSelection {
 pub(crate) struct DiagnosticSite<'tokens> {
     pub(crate) source: SourceId,
     pub(crate) source_len: u64,
+    pub(crate) bundle: &'tokens crate::SourceBundle,
     pub(crate) tokens: &'tokens [ClassifiedToken],
     pub(crate) cursor: usize,
     pub(crate) limits: ParseLimits,
@@ -40,13 +49,26 @@ pub(crate) struct ProbeContext {
     pub(crate) production: Production,
     pub(crate) atom_only: bool,
     /// Whether an open production frame is the `contract_block` of GRAM-2.
-    ///
-    /// The repair GRAM-9 admits is the same restructuring in both positions —
-    /// bind the inner call first and write the binder here — but the binding
-    /// statement is not: a body has `let_stmt` and a `contract_block` has only
-    /// `contract_define`. The grammar position decides which, so it is read
-    /// from the open frames and never from the text of the offending line.
     pub(crate) in_contract: bool,
+    /// Only a definition initializer can be split into preceding definitions
+    /// without moving its operands out of their grammar scope. Result data,
+    /// routed payloads and range binders are unavailable there [TYPE-6, FN-9].
+    pub(crate) in_contract_define: bool,
+    /// An open production frame is a `range_clause`, whose relations admit no call.
+    pub(crate) in_range: bool,
+    /// The nearest atom-bearing grammar role is an `infix_tail` operand.
+    pub(crate) infix_operand: bool,
+    /// The just-completed `infix_tail`'s final `atom` child, when no terminal
+    /// has been consumed since. Strong-LL(2) recognition can finish this atom
+    /// using another caller's continuation before the next frontier rejects;
+    /// DIAG-1 row 2 still attributes that occurrence's two-token infix start.
+    pub(crate) completed_infix_operand: Option<SyntaxCoordinate>,
+    /// The preceding completed statement has a value-match initializer.
+    pub(crate) after_value_match: bool,
+    /// The grammar is inside an expression, including its callee/type arguments.
+    pub(crate) in_expression: bool,
+    /// The nearest field-binding role is a match arm, not a result route or let.
+    pub(crate) match_binder: bool,
     /// The qualified path a `call` in a value position has consumed when the
     /// token after its final IDENT continues no call [DIAG-1, MOD-5].
     ///
@@ -101,34 +123,6 @@ pub(crate) fn qualified_value_fix(path: &str, root: &str, name: &str) -> String 
     )
 }
 
-/// GRAM-9's repair in the two grammar positions that admit a binding.
-const GRAM9_BODY_FIX: &str = "a `call` or `construct` in an atom position does not derive [GRAM-9]: bind the inner call with its own preceding `let` in this body and write that binder in the atom position — `let inner = f(x: 0_u64); let outer = g(y: inner);`";
-const GRAM9_CONTRACT_FIX: &str = "a `call` or `construct` in an atom position does not derive [GRAM-9]: a `contract_block` has no `let`, so bind the inner call with a preceding `define` in this same block and write that binder in the atom position — `define inner = f(x: 0_u64); requires g(y: inner);`";
-
-/// [FORM-3]'s lexical class for each name slot, with the repair a slot filled
-/// from another class admits.
-///
-/// A name slot's class is a grammar position: `const_decl` writes IDENT,
-/// `struct_decl` writes TYPEID, and no class is admitted in another's slot.
-/// The expectation list names the class and never says what the class is, so
-/// a writer who spelled a const `Limit` read only `expected: ["IDENT"]`.
-const FORM3_IDENT_FIX: &str = "an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape";
-const FORM3_TYPEID_FIX: &str = "a TYPEID slot admits only [FORM-3]'s TYPEID `[A-Z][A-Za-z0-9]*`, so a struct, enum, contract, variant, or constructor name is capitalized and is never an IDENT `[a-z][a-z0-9_]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the TYPEID shape";
-const FORM3_LABEL_FIX: &str = "a LABEL slot admits only [FORM-3]'s LABEL `@[a-z][a-z0-9_]*`, so write the leading `@`; an IDENT `[a-z][a-z0-9_]*`, a TYPEID `[A-Z][A-Za-z0-9]*`, and an OPNAME are other lexical classes and none is admitted here";
-
-/// [GRAM-2] fixes the order of a `contract_block`: every `contract_define`,
-/// then every `requires_clause`, then every `ensures_clause`. A clause written
-/// out of that order leaves the frontier at a position whose expectation list
-/// names only the sections still open, which states what is admitted next
-/// without ever stating the order that was broken.
-const GRAM2_CONTRACT_ORDER_FIX: &str = "a `contract_block` is written in one fixed order: all `define` definitions first, then all `requires` requirements, then all `ensures` postconditions. A clause of an earlier section written after a later one is not admitted, so move it above the first clause of the later section";
-
-/// [RANGE-1] a range guard is one comparison or one variant relation; a range
-/// postcondition conclusion may also state `unchanged`. A `Bool` datum written
-/// alone leaves the frontier after its expression, whose expectation list names
-/// the operators and `is` without saying how a `Bool` is tested.
-const RANGE1_BARE_BOOL_FIX: &str = "a range guard is one comparison or one variant relation, and a range postcondition conclusion may also state `unchanged` [RANGE-1]; a Bool datum written alone does not derive: test it with `is True` or `is False`, as in `when nodes^[k].live is True:`";
-
 /// The repair the failing production admits, when the production itself fixes
 /// one. The decision is the grammar position, never the text of the line.
 const fn production_fix(production: Production) -> Option<&'static str> {
@@ -160,6 +154,120 @@ enum ProbeTask {
     Execute(GrammarNodeId, ProbeContext),
     Continue(GrammarNodeId, ProbeContext),
     Match(TerminalPredicate, ProbeContext),
+    Boundary,
+}
+
+/// Unconsumed grammar work, in execution order, with finished frames omitted.
+#[derive(Clone, Copy)]
+pub(crate) enum Continuation {
+    Node(GrammarNodeId),
+    Repeat(GrammarNodeId),
+    Terminal(TerminalPredicate),
+}
+
+impl ProbeTask {
+    fn continuation(self) -> Option<Continuation> {
+        match self {
+            Self::Execute(node, _) => Some(Continuation::Node(node)),
+            Self::Continue(node, _) => Some(Continuation::Repeat(node)),
+            Self::Match(terminal, _) => Some(Continuation::Terminal(terminal)),
+            Self::Boundary => None,
+        }
+    }
+}
+
+fn same_occurrence(left: SelectAtom, right: SelectAtom) -> bool {
+    left.predicate() == right.predicate()
+        && left.provenance() == right.provenance()
+        && left.transparent_name() == right.transparent_name()
+        && left.is_atom_only() == right.is_atom_only()
+}
+
+/// A global row belongs to this call instance exactly when its outside-arm
+/// suffix is a prefix of the actual pending continuation. FIRST(2) words
+/// carry their length, so nullable tasks advance to the next pending task;
+/// SOURCE_END is introduced only after that complete continuation ends.
+fn contextual_row(
+    decision: Decision,
+    row: SelectRow,
+    continuation: impl Iterator<Item = Continuation>,
+    work: &mut Work,
+) -> Result<bool, DiagnosticResult> {
+    let atoms = [row.position(0), row.position(1)];
+    let [Some(first), Some(second)] = atoms else {
+        return Err(DiagnosticResult::Compiler(
+            ParseCompilerFailure::InvalidGrammarData,
+        ));
+    };
+    let suffix = if !first.is_inside_arm() {
+        [Some(first), Some(second)]
+    } else if !second.is_inside_arm() {
+        [Some(second), None]
+    } else {
+        return Ok(true);
+    };
+    let length = if suffix[1].is_some() { 2 } else { 1 };
+    let repeated = (row.arm() == 0
+        && matches!(decision.kind(), DecisionKind::Repeat0 | DecisionKind::Repeat1))
+        .then_some(Continuation::Repeat(decision.node()));
+    let mut positions = [true, false];
+    for task in repeated.into_iter().chain(continuation) {
+        let mut next = [false; 2];
+        for consumed in 0..length {
+            if !positions[consumed] {
+                continue;
+            }
+            if let Continuation::Terminal(terminal) = task {
+                work.spend(1).map_err(DiagnosticResult::Resource)?;
+                if suffix[consumed].is_some_and(|atom| {
+                    atom.predicate() == LookaheadPredicate::Terminal(terminal)
+                }) {
+                    if consumed + 1 == length {
+                        return Ok(true);
+                    }
+                    next[consumed + 1] = true;
+                }
+                continue;
+            }
+            let (node, repeat_tail) = match task {
+                Continuation::Node(node) => (node, false),
+                Continuation::Repeat(node) => (node, true),
+                Continuation::Terminal(_) => {
+                    return Err(DiagnosticResult::Compiler(
+                        ParseCompilerFailure::InvalidGrammarData,
+                    ));
+                }
+            };
+            for word in grammar_prefixes(node, repeat_tail) {
+                work.spend(1).map_err(DiagnosticResult::Resource)?;
+                let mut position = consumed;
+                let mut matches = true;
+                for atom in word.iter().flatten() {
+                    if !suffix[position].is_some_and(|expected| same_occurrence(expected, *atom)) {
+                        matches = false;
+                        break;
+                    }
+                    position += 1;
+                    if position == length {
+                        return Ok(true);
+                    }
+                }
+                if matches {
+                    next[position] = true;
+                }
+            }
+        }
+        positions = next;
+        if !positions.iter().any(|position| *position) {
+            return Ok(false);
+        }
+    }
+    Ok((0..length).any(|consumed| {
+        positions[consumed]
+            && suffix[consumed..length].iter().all(|atom| {
+                atom.is_some_and(|atom| atom.predicate() == LookaheadPredicate::SourceEnd)
+            })
+    }))
 }
 
 fn accepts(
@@ -300,6 +408,27 @@ fn dotted_override(
     Ok(None)
 }
 
+/// GRAM-9 does not require a repair [DIAG-1]. A clause cannot introduce a
+/// local definition, and lifting its expressions can lose result/payload/range
+/// scope or facts from earlier requirements. Offer no unverified hoist there.
+fn atom_repair(context: ProbeContext, nested_infix: bool) -> Option<&'static str> {
+    if context.in_contract_define {
+        Some(if nested_infix {
+            FLAT_CONTRACT_OPERATION_FIX
+        } else {
+            GRAM9_CONTRACT_FIX
+        })
+    } else if context.in_contract {
+        None
+    } else {
+        Some(if nested_infix {
+            FLAT_OPERATION_FIX
+        } else {
+            GRAM9_BODY_FIX
+        })
+    }
+}
+
 /// The qualified path `("pkg" | "std" | IDENT) "::" IDENT ("::" IDENT)*`
 /// that begins at `start`, with the index of the token after its final
 /// IDENT, when that token continues no call: it is neither `(` nor `::`.
@@ -360,21 +489,44 @@ pub(crate) fn qualified_value_path(
 fn forbidden_atom_override(
     source: SourceId,
     tokens: &[ClassifiedToken],
-    start: usize,
-    in_contract: bool,
+    cursor: usize,
+    context: ProbeContext,
     expected: super::ExpectedTerminals,
     work: &mut Work,
 ) -> Result<Option<SyntaxIssue>, ParseResourceFailure> {
+    if let Some(atom) = context.completed_infix_operand
+        && let Some(first) = cursor.checked_sub(1).and_then(|index| tokens.get(index))
+        && let Some(second) = tokens.get(cursor)
+        && atom.source() == source
+        && atom.start() == first.token().id().start()
+        && atom.end() == first.token().id().end()
+        && repairs::is_infix_operator(second)
+    {
+        return Ok(Some(SyntaxIssue {
+            rule: SyntaxRule::Gram9,
+            coordinate: SyntaxCoordinate::new(
+                source,
+                first.token().id().start(),
+                second.token().id().end(),
+            ),
+            expected,
+            mechanical_fix: atom_repair(context, true).map(SyntaxRepair::Fixed),
+        }));
+    }
+    if !context.atom_only {
+        return Ok(None);
+    }
     let (Some(first), Some(second)) = (
-        tokens.get(start),
-        start.checked_add(1).and_then(|index| tokens.get(index)),
+        tokens.get(cursor),
+        cursor.checked_add(1).and_then(|index| tokens.get(index)),
     ) else {
         return Ok(None);
     };
     // [DIAG-1] row 2: a `call` start is a name followed by `(` or by the
-    // `::` type-application or qualified-path delimiter, or `pkg ::`; a
+    // `::` type-application or qualified-path delimiter, or `pkg ::` / `std ::`; a
     // `construct` start is a TYPEID followed by `(`, `<` or the `::` of a
-    // type-owned variant [TYPE-6]. `IDENT <` is a comparison, never a call.
+    // type-owned variant [TYPE-6]. A call marker is followed by FIRST(callee):
+    // IDENT, OPNAME, TYPEID, pkg or std. `IDENT <` is a comparison, never a call.
     let named_head =
         has(first, TerminalPredicate::Identifier) || has(first, TerminalPredicate::OperationName);
     let construct_head = has(first, TerminalPredicate::TypeIdentifier);
@@ -386,21 +538,34 @@ fn forbidden_atom_override(
         && (fixed(second, FixedTerminal::LeftParen)
             || fixed(second, FixedTerminal::LeftAngle)
             || fixed(second, FixedTerminal::ColonColon));
-    if !(call_start || construct_start) {
+    let marked_call_start = (fixed(first, FixedTerminal::Musttail)
+        || fixed(first, FixedTerminal::Spawn))
+        && (has(second, TerminalPredicate::Identifier)
+            || has(second, TerminalPredicate::OperationName)
+            || has(second, TerminalPredicate::TypeIdentifier)
+            || fixed(second, FixedTerminal::Pkg)
+            || fixed(second, FixedTerminal::Std));
+    let nested_infix = (context.infix_operand || context.production == Production::InfixTail)
+        && repairs::is_infix_operator(second);
+    if !(call_start || construct_start || marked_call_start || nested_infix) {
         return Ok(None);
     }
-    // A qualified path no call continues is another module's const written
-    // in an atom position, not a nested call: its repair is the alias that
-    // names it [MOD-5], never a `let` that would bind the same refused path.
+    // A qualified path no call continues names a const through the wrong
+    // spelling [MOD-5]. Its alias repair applies in body and contract scope.
     let qualified = if call_start {
-        qualified_value_path(source, tokens, start, work)?
+        qualified_value_path(source, tokens, cursor, work)?
     } else {
         None
     };
-    let repair = match qualified {
-        Some(site) => SyntaxRepair::QualifiedValue(site.path),
-        None if in_contract => SyntaxRepair::Fixed(GRAM9_CONTRACT_FIX),
-        None => SyntaxRepair::Fixed(GRAM9_BODY_FIX),
+    let repair = if let Some(site) = qualified {
+        Some(SyntaxRepair::QualifiedValue(site.path))
+    } else if marked_call_start || (construct_start && context.in_contract) {
+        // A musttail call cannot be lifted to a let [FN-10], and spawn
+        // admission depends on the callee [WAIT-3]. Construction is always
+        // inadmissible in definitions [FN-8], so that route also fails.
+        None
+    } else {
+        atom_repair(context, nested_infix).map(SyntaxRepair::Fixed)
     };
     Ok(Some(SyntaxIssue {
         rule: SyntaxRule::Gram9,
@@ -410,7 +575,7 @@ fn forbidden_atom_override(
             second.token().id().end(),
         ),
         expected,
-        mechanical_fix: Some(repair),
+        mechanical_fix: repair,
     }))
 }
 
@@ -479,6 +644,22 @@ fn raw_restriction_owner(
         }
     }
     None
+}
+
+/// The rename a fixed lowercase word in an IDENT slot admits [FORM-3].
+///
+/// [`raw_restriction_owner`] cites FORM-3 only for a lowercase word that
+/// IDENT excludes, which is a fixed grammar word, where IDENT is expected.
+/// The rename is offered only where an IDENT in that place lets the
+/// frontier's row match the token after it: `outer(musttail 0_u32)` meant a
+/// call marker, and no name written in place of `musttail` derives there.
+fn reserved_name_repair(
+    rule: SyntaxRule,
+    identifier_continues: bool,
+    coordinate: SyntaxCoordinate,
+) -> Option<SyntaxRepair> {
+    (rule == SyntaxRule::Form3 && identifier_continues)
+        .then_some(SyntaxRepair::ReservedName(coordinate))
 }
 
 /// Whether the expected set is exactly a `const`'s own two alternatives.
@@ -574,17 +755,111 @@ struct Frontier {
     transparent_name: Option<NamePredicate>,
     transparent_disagreement: bool,
     atom_only: bool,
-    /// Whether a maximal-prefix row enters an atom-only occurrence at the
-    /// boundary itself: its first predicate lies before that occurrence and
-    /// its second, at the boundary, is the occurrence's first token, as after
-    /// an infix operator. Row 2 then reads the two tokens that begin there.
-    atom_at_boundary: bool,
+    /// A maximal-prefix row has already matched a terminal of an atom.
+    matched_atom_prefix: bool,
+    /// A maximal-prefix row expects IDENT at the boundary and the token
+    /// after the boundary can follow that IDENT, so writing a fresh IDENT in
+    /// place of the boundary token lets the derivation continue past it
+    /// [FORM-3, DIAG-1].
+    identifier_continues: bool,
+}
+
+/// Whether `token` can follow the terminal occurrence `node` within the
+/// production whose right-hand side writes it.
+///
+/// A row whose last position is the IDENT ends there, so the row cannot say
+/// what follows it. The answer comes from the source EBNF: each enclosing
+/// sequence's later children, and each enclosing repetition's own body, up to
+/// the production's root. What follows the production itself depends on the
+/// caller instance, which the occurrence does not record, so reaching the
+/// root answers no: `outer(& musttail inner())` writes its IDENT in `pbase`,
+/// and no rename of `musttail` derives there.
+fn follows_in_production(node: GrammarNodeId, token: Option<&ClassifiedToken>) -> bool {
+    let Some(token) = token else {
+        return false;
+    };
+    let Some(path) = crate::syntax::grammar::productions()
+        .iter()
+        .find_map(|production| enclosing_path(production.root(), node))
+    else {
+        return false;
+    };
+    for (parent, index) in path.iter().rev() {
+        let Some(record) = grammar_node(*parent) else {
+            return false;
+        };
+        let children = record.children();
+        match record.kind() {
+            GrammarNodeKind::Sequence => {
+                for sibling in children.iter().skip(index + 1) {
+                    let (starts, nullable) = first_accepts(*sibling, token);
+                    if starts {
+                        return true;
+                    }
+                    if !nullable {
+                        return false;
+                    }
+                }
+            }
+            GrammarNodeKind::RepeatZero | GrammarNodeKind::RepeatOne
+                if children
+                    .get(*index)
+                    .is_some_and(|body| first_accepts(*body, token).0) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The structural ancestors of `target` below `node`, outermost first, each
+/// with the index of the child on the way down; `None` when `target` is not
+/// in `node`'s tree. A production reference is a leaf here.
+fn enclosing_path(
+    node: GrammarNodeId,
+    target: GrammarNodeId,
+) -> Option<Vec<(GrammarNodeId, usize)>> {
+    if node == target {
+        return Some(Vec::new());
+    }
+    let record = grammar_node(node)?;
+    record
+        .children()
+        .iter()
+        .enumerate()
+        .find_map(|(index, child)| {
+            let mut path = enclosing_path(*child, target)?;
+            path.insert(0, (node, index));
+            Some(path)
+        })
+}
+
+/// Whether `token` can begin `node`, and whether `node` derives the empty
+/// string.
+fn first_accepts(node: GrammarNodeId, token: &ClassifiedToken) -> (bool, bool) {
+    let mut starts = false;
+    let mut nullable = false;
+    for word in grammar_prefixes(node, false) {
+        match word[0] {
+            Some(atom) => {
+                starts |= matches!(
+                    atom.predicate(),
+                    LookaheadPredicate::Terminal(predicate) if token.terminals().contains(predicate)
+                );
+            }
+            None => nullable = true,
+        }
+    }
+    (starts, nullable)
 }
 
 fn frontier(
     decision: Decision,
     tokens: &[ClassifiedToken],
     cursor: usize,
+    continuation: impl Iterator<Item = Continuation> + Clone,
     work: &mut Work,
 ) -> Result<Frontier, DiagnosticResult> {
     let arm_count = usize::from(decision.arm_count());
@@ -593,10 +868,13 @@ fn frontier(
             ParseCompilerFailure::InvalidGrammarData,
         ));
     }
-    let mut arm_scores = [0_u8; 64];
+    let mut arm_scores = [None; 64];
     let mut maximum = 0_u8;
     for row in decision.rows() {
         work.spend(1).map_err(DiagnosticResult::Resource)?;
+        if !contextual_row(decision, *row, continuation.clone(), work)? {
+            continue;
+        }
         let score = row_score(*row, tokens, cursor).map_err(DiagnosticResult::Compiler)?;
         if score == 2 {
             return Err(DiagnosticResult::Compiler(
@@ -609,16 +887,25 @@ fn frontier(
                 ParseCompilerFailure::InvalidGrammarData,
             ));
         }
-        arm_scores[arm] = arm_scores[arm].max(score);
+        arm_scores[arm] = Some(arm_scores[arm].map_or(score, |old: u8| old.max(score)));
         maximum = maximum.max(score);
+    }
+    if arm_scores[..arm_count].iter().all(Option::is_none) {
+        return Err(DiagnosticResult::Compiler(
+            ParseCompilerFailure::InvalidGrammarData,
+        ));
     }
     let mut expected = ExpectedBuilder::empty();
     let mut transparent_name = None;
     let mut transparent_disagreement = false;
     let mut atom_only = false;
-    let mut atom_at_boundary = false;
+    let mut matched_atom_prefix = false;
+    let mut identifier_continues = false;
     for row in decision.rows() {
         work.spend(1).map_err(DiagnosticResult::Resource)?;
+        if !contextual_row(decision, *row, continuation.clone(), work)? {
+            continue;
+        }
         if row_score(*row, tokens, cursor).map_err(DiagnosticResult::Compiler)? != maximum {
             continue;
         }
@@ -628,13 +915,20 @@ fn frontier(
                 ParseCompilerFailure::InvalidGrammarData,
             ))?;
         expected.insert(atom.predicate());
-        atom_only |= atom.is_atom_only();
-        if maximum == 1 && atom.is_atom_only() {
-            let before = row.position(0).ok_or(DiagnosticResult::Compiler(
-                ParseCompilerFailure::InvalidGrammarData,
-            ))?;
-            atom_at_boundary |= !before.is_atom_only();
+        if atom.predicate() == LookaheadPredicate::Terminal(TerminalPredicate::Identifier) {
+            identifier_continues |= match row.position(usize::from(maximum) + 1) {
+                Some(next) => accepts(next.predicate(), tokens, cursor, usize::from(maximum) + 1)
+                    .map_err(DiagnosticResult::Compiler)?,
+                // The row ends at the IDENT, so it says nothing about the
+                // token after it; ask the production that writes the IDENT.
+                None => atom.provenance().is_some_and(|occurrence| {
+                    follows_in_production(occurrence, tokens.get(cursor + usize::from(maximum) + 1))
+                }),
+            };
         }
+        atom_only |= atom.is_atom_only();
+        matched_atom_prefix |=
+            maximum > 0 && row.position(0).is_some_and(|first| first.is_atom_only());
         if let Some(name) = atom.transparent_name() {
             match transparent_name {
                 Some(previous) if previous != name => transparent_disagreement = true,
@@ -645,12 +939,12 @@ fn frontier(
     }
     let best_arms = arm_scores[..arm_count]
         .iter()
-        .filter(|score| **score == maximum)
+        .filter(|score| **score == Some(maximum))
         .count();
     let best_arm = if best_arms == 1 {
         arm_scores[..arm_count]
             .iter()
-            .position(|score| *score == maximum)
+            .position(|score| *score == Some(maximum))
             .and_then(|index| u8::try_from(index).ok())
     } else {
         None
@@ -661,6 +955,7 @@ fn frontier(
             work.spend(1).map_err(DiagnosticResult::Resource)?;
             if row.arm() != arm
                 || row_score(*row, tokens, cursor).map_err(DiagnosticResult::Compiler)? != maximum
+                || !contextual_row(decision, *row, continuation.clone(), work)?
             {
                 continue;
             }
@@ -680,7 +975,8 @@ fn frontier(
         transparent_name,
         transparent_disagreement,
         atom_only,
-        atom_at_boundary,
+        matched_atom_prefix,
+        identifier_continues,
     })
 }
 
@@ -703,45 +999,53 @@ fn override_issue(
     {
         return Ok(Some(issue));
     }
-    // [DIAG-1] row 2 reads the two tokens that begin the atom occurrence:
-    // the frontier's own lookahead when the occurrence begins there, and the
-    // boundary when a row reaches the occurrence only after one token, as an
-    // infix operand does after its operator.
-    let atom_starts = [
-        (context.atom_only || frontier.atom_only).then_some(site.cursor),
-        frontier.atom_at_boundary.then_some(boundary),
-    ];
-    for start in atom_starts.into_iter().flatten() {
-        if let Some(issue) = forbidden_atom_override(
-            site.source,
-            site.tokens,
-            start,
-            context.in_contract,
-            frontier.expected,
-            work,
-        )
-        .map_err(DiagnosticResult::Resource)?
-        {
-            return Ok(Some(issue));
-        }
+    // A matched delimiter can put the would-next-enter atom at position m,
+    // for example `( std` or `, spawn` in an argument-list continuation.
+    // This is a new atom only when no maximal-prefix row has matched an atom's
+    // terminal: `value spawn`, `& spawn` and `move spawn` have already begun
+    // the atom. Existing starts retain their original cursor in that case.
+    let atom_cursor = if frontier.atom_only && !frontier.matched_atom_prefix {
+        boundary
+    } else {
+        site.cursor
+    };
+    if let Some(issue) = forbidden_atom_override(
+        site.source,
+        site.tokens,
+        atom_cursor,
+        ProbeContext {
+            atom_only: context.atom_only || frontier.atom_only,
+            ..context
+        },
+        frontier.expected,
+        work,
+    )
+    .map_err(DiagnosticResult::Resource)?
+    {
+        return Ok(Some(issue));
     }
     if let Some(issue) = qualified_value_override(context, site.cursor) {
         return Ok(Some(issue));
     }
     if let Some(token) = site.tokens.get(boundary) {
         if let Some(rule) = raw_restriction_owner(token, frontier.expected) {
+            let coordinate = boundary_coordinate(
+                site.source,
+                site.source_len,
+                site.tokens,
+                site.cursor,
+                usize::from(frontier.maximum),
+            )
+            .map_err(DiagnosticResult::Compiler)?;
             return Ok(Some(SyntaxIssue {
                 rule,
-                coordinate: boundary_coordinate(
-                    site.source,
-                    site.source_len,
-                    site.tokens,
-                    site.cursor,
-                    usize::from(frontier.maximum),
-                )
-                .map_err(DiagnosticResult::Compiler)?,
+                coordinate,
                 expected: frontier.expected,
-                mechanical_fix: None,
+                mechanical_fix: reserved_name_repair(
+                    rule,
+                    frontier.identifier_continues,
+                    coordinate,
+                ),
             }));
         }
         if let Some((rule, admitted)) = name_slot_owner(
@@ -839,8 +1143,16 @@ fn descend_or_issue(
     site: DiagnosticSite<'_>,
     work: &mut Work,
     tasks: &mut Vec<ProbeTask>,
+    continuation: impl Iterator<Item = Continuation> + Clone,
 ) -> Result<Option<SyntaxIssue>, DiagnosticResult> {
-    let value = frontier(decision, site.tokens, site.cursor, work)?;
+    let pending = tasks.iter().rev().filter_map(|task| task.continuation());
+    let value = frontier(
+        decision,
+        site.tokens,
+        site.cursor,
+        pending.chain(continuation),
+        work,
+    )?;
     if let Some(issue) = override_issue(decision, &value, site, context, work)? {
         return Ok(Some(issue));
     }
@@ -864,7 +1176,18 @@ fn descend_or_issue(
                 mechanical_fix: production_fix(decision.production()).map(SyntaxRepair::Fixed),
             }));
         };
-        tasks.clear();
+        // Retain the enclosing arm's pending work as diagnostic continuation,
+        // but never execute past the selected arm after its failed frontier.
+        if matches!(decision.kind(), DecisionKind::Repeat0 | DecisionKind::Repeat1) {
+            push_probe(
+                tasks,
+                ProbeTask::Continue(decision.node(), context),
+                site.limits,
+            )
+            .map_err(DiagnosticResult::Resource)?;
+        }
+        push_probe(tasks, ProbeTask::Boundary, site.limits)
+            .map_err(DiagnosticResult::Resource)?;
         push_probe(tasks, ProbeTask::Execute(node, context), site.limits)
             .map_err(DiagnosticResult::Resource)?;
         return Ok(None);
@@ -884,7 +1207,7 @@ fn descend_or_issue(
     }))
 }
 
-pub(crate) fn direct_mismatch(
+fn direct_mismatch_inner(
     expected_terminal: TerminalPredicate,
     context: ProbeContext,
     site: DiagnosticSite<'_>,
@@ -898,34 +1221,35 @@ pub(crate) fn direct_mismatch(
         Ok(None) => {}
         Err(failure) => return DiagnosticResult::Resource(failure),
     }
-    if context.atom_only {
-        match forbidden_atom_override(
-            site.source,
-            site.tokens,
-            site.cursor,
-            context.in_contract,
-            expected,
-            work,
-        ) {
-            Ok(Some(issue)) => return DiagnosticResult::Issue(issue),
-            Ok(None) => {}
-            Err(failure) => return DiagnosticResult::Resource(failure),
-        }
+    match forbidden_atom_override(
+        site.source,
+        site.tokens,
+        site.cursor,
+        context,
+        expected,
+        work,
+    ) {
+        Ok(Some(issue)) => return DiagnosticResult::Issue(issue),
+        Ok(None) => {}
+        Err(failure) => return DiagnosticResult::Resource(failure),
     }
     if let Some(issue) = qualified_value_override(context, site.cursor) {
         return DiagnosticResult::Issue(issue);
     }
     if let Some(token) = site.tokens.get(site.cursor) {
         if let Some(rule) = raw_restriction_owner(token, expected) {
+            let coordinate = SyntaxCoordinate::new(
+                site.source,
+                token.token().id().start(),
+                token.token().id().end(),
+            );
+            // A direct mismatch has one terminal to match: an IDENT written
+            // here matches it whatever follows.
             return DiagnosticResult::Issue(SyntaxIssue {
                 rule,
-                coordinate: SyntaxCoordinate::new(
-                    site.source,
-                    token.token().id().start(),
-                    token.token().id().end(),
-                ),
+                coordinate,
                 expected,
-                mechanical_fix: None,
+                mechanical_fix: reserved_name_repair(rule, true, coordinate),
             });
         }
         let transparent = [
@@ -965,6 +1289,7 @@ fn probe(
     context: ProbeContext,
     site: DiagnosticSite<'_>,
     work: &mut Work,
+    continuation: impl Iterator<Item = Continuation> + Clone,
 ) -> DiagnosticResult {
     let mut cursor = site.cursor;
     let mut tasks = Vec::new();
@@ -980,6 +1305,11 @@ fn probe(
             return DiagnosticResult::Resource(failure);
         }
         match task {
+            ProbeTask::Boundary => {
+                return DiagnosticResult::Compiler(
+                    ParseCompilerFailure::DiagnosticReachedSuccessfulEnd,
+                );
+            }
             ProbeTask::Match(expected, task_context) => {
                 let matches = site
                     .tokens
@@ -1009,7 +1339,28 @@ fn probe(
                             atom_only: node.is_atom_only_reference(),
                             in_contract: task_context.in_contract
                                 || production == Production::ContractBlock,
+                            in_contract_define: task_context.in_contract_define
+                                || production == Production::ContractDefine,
+                            in_range: task_context.in_range
+                                || production == Production::RangeClause,
+                            infix_operand: match production {
+                                Production::InfixTail => true,
+                                Production::Psuffix
+                                | Production::AtomList
+                                | Production::Fieldinit
+                                | Production::ForBinding => false,
+                                _ => task_context.infix_operand,
+                            },
+                            completed_infix_operand: task_context.completed_infix_operand,
+                            after_value_match: task_context.after_value_match,
+                            in_expression: task_context.in_expression
+                                || production == Production::Expr,
                             qualified_value: None,
+                            match_binder: match production {
+                                Production::Arm => true,
+                                Production::ResultRoute | Production::LetStmt => false,
+                                _ => task_context.match_binder,
+                            },
                         };
                         if let Err(failure) = push_probe(
                             &mut tasks,
@@ -1114,6 +1465,7 @@ fn probe(
                                 DiagnosticSite { cursor, ..site },
                                 work,
                                 &mut tasks,
+                                continuation.clone(),
                             ) {
                                 Ok(Some(issue)) => return DiagnosticResult::Issue(issue),
                                 Ok(None) => {}
@@ -1164,6 +1516,7 @@ fn probe(
                         DiagnosticSite { cursor, ..site },
                         work,
                         &mut tasks,
+                        continuation.clone(),
                     ) {
                         Ok(Some(issue)) => return DiagnosticResult::Issue(issue),
                         Ok(None) => {}
@@ -1182,13 +1535,14 @@ fn probe(
     DiagnosticResult::Compiler(ParseCompilerFailure::DiagnosticReachedSuccessfulEnd)
 }
 
-pub(crate) fn diagnose_decision(
+fn diagnose_decision_inner(
     decision: Decision,
     context: ProbeContext,
     site: DiagnosticSite<'_>,
     work: &mut Work,
+    continuation: impl Iterator<Item = Continuation> + Clone,
 ) -> DiagnosticResult {
-    let value = match frontier(decision, site.tokens, site.cursor, work) {
+    let value = match frontier(decision, site.tokens, site.cursor, continuation.clone(), work) {
         Ok(value) => value,
         Err(result) => return result,
     };
@@ -1210,7 +1564,16 @@ pub(crate) fn diagnose_decision(
             }
             Err(failure) => return DiagnosticResult::Compiler(failure),
         };
-        return probe(initial, context, site, work);
+        let repeated = (arm == 0
+            && matches!(decision.kind(), DecisionKind::Repeat0 | DecisionKind::Repeat1))
+            .then_some(Continuation::Repeat(decision.node()));
+        return probe(
+            initial,
+            context,
+            site,
+            work,
+            repeated.into_iter().chain(continuation),
+        );
     }
     let coordinate = match boundary_coordinate(
         site.source,
@@ -1228,4 +1591,25 @@ pub(crate) fn diagnose_decision(
         expected: value.expected,
         mechanical_fix: production_fix(decision.production()).map(SyntaxRepair::Fixed),
     })
+}
+
+pub(crate) fn direct_mismatch(
+    expected_terminal: TerminalPredicate,
+    context: ProbeContext,
+    site: DiagnosticSite<'_>,
+    work: &mut Work,
+) -> DiagnosticResult {
+    let result = direct_mismatch_inner(expected_terminal, context, site, work);
+    repairs::attach(result, context, site)
+}
+
+pub(crate) fn diagnose_decision(
+    decision: Decision,
+    context: ProbeContext,
+    site: DiagnosticSite<'_>,
+    work: &mut Work,
+    continuation: impl Iterator<Item = Continuation> + Clone,
+) -> DiagnosticResult {
+    let result = diagnose_decision_inner(decision, context, site, work, continuation);
+    repairs::attach(result, context, site)
 }

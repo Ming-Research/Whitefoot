@@ -27,14 +27,14 @@ pub use parser::{
     BundleSourceExtent, CanonicalCompilerFailure, CanonicalIssue, CanonicalLimit, CanonicalLimits,
     CanonicalLocation, CanonicalOutcome, CanonicalResourceFailure, CanonicalStorage,
     CanonicalSyntaxUnit, ExpectedTerminals, FinalizeCompilerFailure, FinalizeLimit, FinalizeLimits,
-    FinalizeOutcome, FinalizeResourceFailure, FinalizeStorage, FinalizedBundle, NodePath,
-    ParseCompilerFailure, ParseInvocationFailure, ParseLimit, ParseLimits, ParseOutcome,
+    FinalizeOutcome, FinalizeResourceFailure, FinalizeStorage, FinalizedBundle, LayoutDifference,
+    NodePath, ParseCompilerFailure, ParseInvocationFailure, ParseLimit, ParseLimits, ParseOutcome,
     ParseResourceFailure, ParseStorage, ParsedBundle, QualifiedValuePath, RenderOutcome,
     RenderedSource, SyntaxCoordinate, SyntaxIssue, SyntaxRepair, SyntaxRule, audit_canonical,
     finalize, parse, parse_graph, render_canonical,
 };
 
-pub(crate) use parser::{FinalizedExtent, FinalizedTopology, NodeId};
+pub(crate) use parser::{FinalizedExtent, FinalizedTopology, NodeId, parse_graph_segment};
 
 #[cfg(test)]
 mod tests;

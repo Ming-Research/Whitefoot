@@ -1,5 +1,6 @@
 #!/bin/sh
-# Reject any commit that modifies, renames, or deletes a released kernel spec.
-# Amend spec/kernel-spec.md and archive its outgoing bytes under a new
-# spec/kernel-spec-v*.md name, as AGENTS.md describes.
+# Reject any commit that modifies, renames, or deletes a released kernel spec
+# archive. An amendment edits spec/kernel-spec.md and adds no archive; a
+# milestone archive is added by a change that edits no rule, as AGENTS.md
+# describes.
 exec make --no-print-directory spec-append-only-staged

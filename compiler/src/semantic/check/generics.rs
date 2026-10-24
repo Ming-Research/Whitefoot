@@ -1436,11 +1436,25 @@ impl<'unit> Checker<'_, 'unit> {
                 .get(*index)
                 .filter(|checked| checked.function.declaration == *declaration)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            self.types.entailment_rejection_after_range(
-                &checked.function,
-                &ranges[*index].discharged,
-                &ranges[*index].inconclusive,
-            )?;
+            self.types
+                .entailment_rejection_after_range(
+                    &checked.function,
+                    &ranges[*index].discharged,
+                    &ranges[*index].inconclusive,
+                )
+                .map_err(|stop| {
+                    self.types.explain_unavailable_summary(
+                        stop,
+                        &checked.function,
+                        &range_functions,
+                        &super::summary_repairs::SummaryRepairInputs {
+                            callees,
+                            contract_queries: &self.analysis.contract_queries,
+                            binding_names: &checked.binding_names,
+                            judge_conditions: true,
+                        },
+                    )
+                })?;
         }
         if let Some(issue) = ranges.iter().flat_map(|range| &range.issues).find(|issue| {
             matches!(
@@ -1938,6 +1952,19 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
+    /// [FN-2] whether `function` is a concrete instance of a declaration
+    /// with type, const or function parameters, whose source judgments were
+    /// made once at its symbolic instance [OP-5].
+    pub(super) fn is_generic_instance(
+        &self,
+        function: &super::super::model::CheckedFunction,
+    ) -> bool {
+        self.templates_by_declaration
+            .get(&function.declaration)
+            .and_then(|index| self.function_templates.get(*index))
+            .is_some_and(|template| !template.generic_parameters.is_empty())
+    }
+
     /// The written integer type of one const `gparam` [MSR-6].
     ///
     /// A const generic is declared by exactly one function or nominal

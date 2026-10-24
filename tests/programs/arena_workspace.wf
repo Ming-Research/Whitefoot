@@ -1,14 +1,46 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn main() -> status: ExitStatus pure {
-  doc "A bump allocator is one window used with place_back as allocation and a range reference as the run it hands out [OP-13]. One constant-capacity Slots of 256 slots lives in this activation's frame, two runs are carved off its back, one of them is filled and read back, and the take the window has no free slots for is refused by its own free-slots measure.";
+fn publish_report(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) waits contract {
+  define source_length = source^.len;
+  requires length <= source_length;
+} {
+  doc "Publishes one prefix of the report, reattempting until the host has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @publish {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @publish;
+    }
+    let no_deadline = None<std::time::Instant>();
+    let wait_cancel = std::time::cancel_never();
+    let wait_outcome = std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel);
+    std::time::close_cancel_watch(watch: move wait_cancel);
+    match wait_outcome {
+      Ok(value: accepted) => {
+        set sent = accepted;
+      }
+      Err(error: problem) => {
+        return Err<unit, std::io::IoError>(error: problem);
+      }
+    }
+  }
+  return Ok<unit, std::io::IoError>(value: unit);
+}
+
+fn main(inputs: std::process::Inputs) -> status: ExitStatus pure waits {
+  doc "A bump allocator is one window used with place_back as allocation and a range reference as the run it hands out [OP-13]. One constant-capacity Slots of 256 slots lives in this activation's frame, two runs are carved off its back, one of them is filled and read back, and the window's measures read before and after each carve, among them the free slots a take of 1024 slots would exceed, are published one byte each (the 256 opening free slots as two bytes, low first) for the harness to compare.";
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &factory, directory: move unused_cwd);
+  let report = array_filled::<u8, 8>(value: 0_u8);
   let workspace = slots_new::<u64, 256>();
   let opened = workspace.cap - workspace.len;
-  if opened == 256_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  set report[4_u64] = cvt.wrap::<u64, u8>(opened);
+  let opened_high = ishr.wrap(opened, 8_u32);
+  set report[5_u64] = cvt.wrap::<u64, u8>(opened_high);
   for @carve (
     at in 0_u64..8_u64,
     invariant grown: workspace.len >= at,
@@ -24,10 +56,7 @@ fn main() -> status: ExitStatus pure {
   }
   let built = &workspace[0_u64..8_u64];
   let capacity = built^.len;
-  if capacity == 8_u64 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
+  set report[0_u64] = cvt::<u64, u8>(capacity);
   for @fill (
     at in 0_u64..8_u64,
     invariant sized: built^.len >= 8_u64
@@ -35,20 +64,14 @@ fn main() -> status: ExitStatus pure {
     set built^[at] = at;
   }
   let observed = workspace.len;
-  if observed == 8_u64 {
-  } else {
-    return exit_status(code: 4_u8);
-  }
+  set report[1_u64] = cvt::<u64, u8>(observed);
   let last = built^[7_u64];
   if last == 7_u64 {
   } else {
     return exit_status(code: 5_u8);
   }
   let offered = workspace.cap - workspace.len;
-  if offered >= 4_u64 {
-  } else {
-    return exit_status(code: 8_u8);
-  }
+  set report[6_u64] = cvt::<u64, u8>(offered);
   for @second (
     at in 0_u64..4_u64,
     invariant grown: workspace.len >= 8_u64 + at,
@@ -59,10 +82,7 @@ fn main() -> status: ExitStatus pure {
   }
   let scratch = &workspace[8_u64..12_u64];
   let spare = scratch^.len;
-  if spare == 4_u64 {
-  } else {
-    return exit_status(code: 6_u8);
-  }
+  set report[2_u64] = cvt::<u64, u8>(spare);
   set scratch^[0_u64] = 99_u64;
   let front = scratch^[0_u64];
   if front == 99_u64 {
@@ -75,18 +95,21 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 9_u8);
   }
   let impossible = workspace.cap - workspace.len;
-  if impossible >= 1024_u64 {
-    return exit_status(code: 10_u8);
-  }
+  set report[7_u64] = cvt::<u64, u8>(impossible);
   let unmoved = workspace.len;
-  if unmoved == 12_u64 {
-  } else {
-    return exit_status(code: 11_u8);
-  }
+  set report[3_u64] = cvt::<u64, u8>(unmoved);
   let first = built^[0_u64];
   if first == 0_u64 {
   } else {
     return exit_status(code: 12_u8);
+  }
+  let report_window = &report[0_u64..8_u64];
+  match publish_report(factory: &factory, output: &out, source: report_window, length: 8_u64) {
+    Ok(value: published) => {
+    }
+    Err(error: problem) => {
+      return exit_status(code: 13_u8);
+    }
   }
   return exit_status(code: 0_u8);
 }

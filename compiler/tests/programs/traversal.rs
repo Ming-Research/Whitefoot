@@ -56,15 +56,14 @@ fn the_traversal_program_walks_a_real_tree_and_publishes_it_sorted() {
         String::from_utf8_lossy(&output.stdout),
         "1 a.txt\n2 sub\n1 sub/b.txt\n2 sub/deeper\n1 sub/deeper/c.txt\n1 z.txt\n"
     );
-    an_empty_tree_publishes_nothing_after_the_self_and_parent_entries_are_skipped(&program);
+    an_empty_tree_publishes_nothing(&program);
     an_unreadable_subdirectory_is_recorded_without_descending_into_it(&program);
 }
 
-/// An empty directory yields exactly the entries the host reports and nothing
-/// else: the self and parent entries reach source and the program skips them,
-/// which is the whole reason the family contract states that they are
-/// delivered rather than filtered.
-fn an_empty_tree_publishes_nothing_after_the_self_and_parent_entries_are_skipped(
+/// An empty directory yields no entry: the listing leaves out the self and
+/// parent entries [PRE-2], and the program, which no longer skips them, would
+/// otherwise descend into them.
+fn an_empty_tree_publishes_nothing(
     program: &CompiledProgram,
 ) {
     let fixture = fixture_directory();

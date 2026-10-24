@@ -1024,6 +1024,24 @@ int wf__windows_stdin_descriptor(void) {
     return wf_windows_duplicate_descriptor(0, WF_WINDOWS_DESCRIPTOR_CLASS_INPUT);
 }
 
+/* The duplicate shares the original's directory object, so both halves of a
+ * host-path directory are the one directory its lookup opened [PRE-2]. */
+int wf__windows_duplicate_directory(int descriptor) {
+    return wf_windows_duplicate_descriptor(
+        descriptor,
+        WF_WINDOWS_DESCRIPTOR_CLASS_DIRECTORY_ROOT
+    );
+}
+
+void wf__windows_discard_descriptor(int descriptor) {
+    wf__windows_completion_forget_descriptor(descriptor);
+    if (_close(descriptor) != 0) {
+        wf_windows_fail(
+            "a descriptor no program received could not be closed"
+        );
+    }
+}
+
 int64_t wf__windows_diagnostic_write(const void *bytes, uint64_t length) {
     HANDLE handle;
     DWORD written = 0;
@@ -1194,6 +1212,338 @@ HANDLE wf__windows_open_directory_for_sync(HANDLE root, int *error_code) {
     );
 }
 
+/* ------------------------------------------------------ host-path lookup
+ *
+ * [PRE-2] A host path in the Win32 dialect becomes one NT name and the
+ * directory it is looked up from. An extended path (`\\?\...`) is its own NT
+ * name below `\??\`, unnormalized. Every other path is normalized by the
+ * host's own GetFullPathNameW, which reads `/` as `\`, removes `.`
+ * components, lets each `..` remove the component before it but never the
+ * root, and trims the last component's trailing periods and spaces, applied
+ * to the path joined to its starting point. A path that starts at base and
+ * normalizes to base or below it is looked up from base's handle by its
+ * remainder, so a rename of base or its parents cannot redirect it; every
+ * other path is looked up from `\??\` by its full spelling. Base's own
+ * spelling, which the joined forms need, is the one the host reports for its
+ * handle at the open. The scratch blocks are mapped pages, never the host
+ * heap (the descriptor registry is its one user), and are freed before the worker returns. */
+
+static int wf_windows_path_separator(uint16_t unit) {
+    return unit == UINT16_C('\\') || unit == UINT16_C('/');
+}
+
+static int wf_windows_drive_letter(uint16_t unit) {
+    return (unit >= UINT16_C('A') && unit <= UINT16_C('Z'))
+        || (unit >= UINT16_C('a') && unit <= UINT16_C('z'));
+}
+
+static uint16_t wf_windows_upper(uint16_t unit) {
+    return unit >= UINT16_C('a') && unit <= UINT16_C('z')
+        ? (uint16_t)(unit - UINT16_C(0x20))
+        : unit;
+}
+
+/* A block of `units` UTF-16 code units, or NULL. */
+static WCHAR *wf_windows_units_take(size_t units) {
+    if (units == 0 || units > SIZE_MAX / sizeof(WCHAR)) {
+        return NULL;
+    }
+    return (WCHAR *)VirtualAlloc(
+        NULL, units * sizeof(WCHAR), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE
+    );
+}
+
+static void wf_windows_units_give(WCHAR **block) {
+    if (*block != NULL) {
+        if (VirtualFree(*block, 0, MEM_RELEASE) == FALSE) {
+            wf_windows_fail("a host-path scratch block could not be freed");
+        }
+        *block = NULL;
+    }
+}
+
+static DWORD wf_windows_last_error(void) {
+    DWORD error = GetLastError();
+    return error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error;
+}
+
+/* The DOS spelling the host reports for the directory `root` opens:
+ * `C:\dir` or `\\server\share\dir`, terminated, in a block the caller gives
+ * back. A directory with no DOS spelling is the host's refusal. */
+static DWORD wf_windows_directory_spelling(
+    HANDLE root,
+    WCHAR **spelling,
+    size_t *length
+) {
+    const DWORD form = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
+    DWORD needed = GetFinalPathNameByHandleW(root, NULL, 0, form);
+    DWORD written;
+    size_t start = 0;
+    WCHAR *block;
+    *spelling = NULL;
+    *length = 0;
+    for (;;) {
+        if (needed == 0) {
+            return wf_windows_last_error();
+        }
+        block = wf_windows_units_take(needed);
+        if (block == NULL) {
+            return ERROR_NOT_ENOUGH_MEMORY;
+        }
+        written = GetFinalPathNameByHandleW(root, block, needed, form);
+        if (written == 0) {
+            DWORD error = wf_windows_last_error();
+            wf_windows_units_give(&block);
+            return error;
+        }
+        if (written < needed) {
+            break;
+        }
+        /* The directory was renamed to a longer spelling meanwhile. */
+        wf_windows_units_give(&block);
+        needed = written;
+    }
+    if (written >= 8 && memcmp(block, L"\\\\?\\UNC\\", 8 * sizeof(WCHAR)) == 0) {
+        block[6] = L'\\';
+        start = 6;
+    } else if (written >= 4 && memcmp(block, L"\\\\?\\", 4 * sizeof(WCHAR)) == 0) {
+        start = 4;
+    }
+    memmove(block, block + start, (written - start + 1) * sizeof(WCHAR));
+    *spelling = block;
+    *length = written - start;
+    return 0;
+}
+
+/* `head` (its first `head_length` units) followed by `tail`, with one `\`
+ * between them when neither supplies a separator there, terminated. */
+static DWORD wf_windows_join(
+    const WCHAR *head,
+    size_t head_length,
+    const uint16_t *tail,
+    size_t tail_length,
+    WCHAR **joined
+) {
+    int separate = head_length != 0 && head[head_length - 1] != L'\\'
+        && tail_length != 0 && !wf_windows_path_separator(tail[0]);
+    size_t length = head_length + (separate ? 1u : 0u) + tail_length;
+    WCHAR *block;
+    *joined = NULL;
+    if (length >= WF_WINDOWS_HOST_PATH_MAX_UNITS) {
+        return ERROR_FILENAME_EXCED_RANGE;
+    }
+    block = wf_windows_units_take(length + 1);
+    if (block == NULL) {
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    memcpy(block, head, head_length * sizeof(WCHAR));
+    if (separate) {
+        block[head_length] = L'\\';
+    }
+    memcpy(block + head_length + (separate ? 1u : 0u), tail, tail_length * sizeof(WCHAR));
+    block[length] = 0;
+    *joined = block;
+    return 0;
+}
+
+/* The host's normalization of the terminated path `path`, terminated, in a
+ * block the caller gives back. */
+static DWORD wf_windows_full_path(
+    const WCHAR *path,
+    WCHAR **full,
+    size_t *length
+) {
+    DWORD needed = GetFullPathNameW(path, 0, NULL, NULL);
+    DWORD written;
+    WCHAR *block;
+    *full = NULL;
+    *length = 0;
+    for (;;) {
+        if (needed == 0) {
+            return wf_windows_last_error();
+        }
+        block = wf_windows_units_take(needed);
+        if (block == NULL) {
+            return ERROR_NOT_ENOUGH_MEMORY;
+        }
+        written = GetFullPathNameW(path, needed, block, NULL);
+        if (written == 0) {
+            DWORD error = wf_windows_last_error();
+            wf_windows_units_give(&block);
+            return error;
+        }
+        if (written < needed) {
+            break;
+        }
+        wf_windows_units_give(&block);
+        needed = written;
+    }
+    *full = block;
+    *length = written;
+    return 0;
+}
+
+/* The NT name `text` (its `count` units, terminated) selects as a host path
+ * looked up from `base`: `*name` is set over `*scratch`, a block the caller
+ * gives back after the lookup, and `*from` to base or to NULL for the root
+ * namespace. Returns 0 or the Win32 refusal. */
+static DWORD wf_windows_host_path_name(
+    HANDLE base,
+    const uint16_t *text,
+    size_t count,
+    UNICODE_STRING *name,
+    HANDLE *from,
+    WCHAR **scratch
+) {
+    WCHAR *spelling = NULL;
+    WCHAR *joined = NULL;
+    WCHAR *full = NULL;
+    WCHAR *native = NULL;
+    size_t spelling_length = 0;
+    size_t full_length = 0;
+    size_t native_length = 0;
+    size_t skip = 0;
+    int from_base = 0;
+    int unc;
+    DWORD error = 0;
+    memset(name, 0, sizeof(*name));
+    *from = NULL;
+    *scratch = NULL;
+    if (count >= 4 && text[0] == UINT16_C('\\') && text[1] == UINT16_C('\\')
+        && text[2] == UINT16_C('?') && text[3] == UINT16_C('\\')) {
+        /* An extended path names `\??\` and the rest as written. */
+        native = wf_windows_units_take(count + 1);
+        if (native == NULL) {
+            return ERROR_NOT_ENOUGH_MEMORY;
+        }
+        memcpy(native, L"\\??\\", 4 * sizeof(WCHAR));
+        memcpy(native + 4, text + 4, (count - 4) * sizeof(WCHAR));
+        native[count] = 0;
+        native_length = count;
+        goto named;
+    }
+    if (count >= 3 && wf_windows_path_separator(text[0])
+        && wf_windows_path_separator(text[1])
+        && (text[2] == UINT16_C('.') || text[2] == UINT16_C('?'))
+        && (count == 3 || wf_windows_path_separator(text[3]))) {
+        /* A device path names no file or directory of a volume. */
+        return ERROR_INVALID_NAME;
+    }
+    if (count >= 2 && wf_windows_path_separator(text[0])
+        && wf_windows_path_separator(text[1])) {
+        /* A UNC path names its share. */
+        error = wf_windows_full_path((const WCHAR *)(const void *)text, &full, &full_length);
+    } else if (count >= 2 && wf_windows_drive_letter(text[0])
+               && text[1] == UINT16_C(':')
+               && count >= 3 && wf_windows_path_separator(text[2])) {
+        /* A drive-absolute path names its drive. */
+        error = wf_windows_full_path((const WCHAR *)(const void *)text, &full, &full_length);
+    } else if (count >= 2 && wf_windows_drive_letter(text[0])
+               && text[1] == UINT16_C(':')) {
+        /* A drive-relative path starts at base on base's drive, and at the
+         * host's current directory for any other drive. */
+        error = wf_windows_directory_spelling(base, &spelling, &spelling_length);
+        if (error != 0) {
+            goto done;
+        }
+        if (spelling_length >= 2 && spelling[1] == L':'
+            && wf_windows_upper((uint16_t)spelling[0]) == wf_windows_upper(text[0])) {
+            from_base = 1;
+            error = wf_windows_join(spelling, spelling_length, text + 2, count - 2, &joined);
+            if (error == 0) {
+                error = wf_windows_full_path(joined, &full, &full_length);
+            }
+        } else {
+            error = wf_windows_full_path((const WCHAR *)(const void *)text, &full, &full_length);
+        }
+    } else {
+        error = wf_windows_directory_spelling(base, &spelling, &spelling_length);
+        if (error != 0) {
+            goto done;
+        }
+        if (wf_windows_path_separator(text[0])) {
+            /* A root-relative path starts at the root of base's drive or
+             * share: `C:` or `\\server\share`. */
+            size_t root = 2;
+            if (spelling_length >= 2 && spelling[0] == L'\\' && spelling[1] == L'\\') {
+                unsigned separators = 0;
+                for (root = 2; root < spelling_length; root++) {
+                    if (spelling[root] == L'\\' && ++separators == 2) {
+                        break;
+                    }
+                }
+            }
+            error = wf_windows_join(spelling, root, text, count, &joined);
+        } else {
+            from_base = 1;
+            error = wf_windows_join(spelling, spelling_length, text, count, &joined);
+        }
+        if (error == 0) {
+            error = wf_windows_full_path(joined, &full, &full_length);
+        }
+    }
+    if (error != 0) {
+        goto done;
+    }
+    if (full_length >= 4 && full[0] == L'\\' && full[1] == L'\\'
+        && (full[2] == L'.' || full[2] == L'?') && full[3] == L'\\') {
+        /* The normalization named a device, as it does a reserved name. */
+        error = ERROR_INVALID_NAME;
+        goto done;
+    }
+    if (from_base) {
+        size_t prefix = spelling_length;
+        if (prefix != 0 && spelling[prefix - 1] == L'\\') {
+            prefix -= 1;
+        }
+        if (full_length >= prefix
+            && memcmp(full, spelling, prefix * sizeof(WCHAR)) == 0
+            && (full_length == prefix || full[prefix] == L'\\')) {
+            /* Base itself, or a path below it, opens from base's handle. */
+            skip = full_length == prefix ? prefix : prefix + 1;
+            *from = base;
+            native = full;
+            full = NULL;
+            name->Buffer = native + skip;
+            native_length = full_length - skip;
+            goto named_from;
+        }
+    }
+    unc = full_length >= 2 && full[0] == L'\\' && full[1] == L'\\';
+    native_length = unc ? full_length - 2 + 8 : full_length + 4;
+    native = wf_windows_units_take(native_length + 1);
+    if (native == NULL) {
+        error = ERROR_NOT_ENOUGH_MEMORY;
+        goto done;
+    }
+    if (unc) {
+        memcpy(native, L"\\??\\UNC\\", 8 * sizeof(WCHAR));
+        memcpy(native + 8, full + 2, (full_length - 2) * sizeof(WCHAR));
+    } else {
+        memcpy(native, L"\\??\\", 4 * sizeof(WCHAR));
+        memcpy(native + 4, full, full_length * sizeof(WCHAR));
+    }
+    native[native_length] = 0;
+named:
+    name->Buffer = native;
+named_from:
+    *scratch = native;
+    if (native_length >= WF_WINDOWS_HOST_PATH_MAX_UNITS) {
+        wf_windows_units_give(scratch);
+        memset(name, 0, sizeof(*name));
+        *from = NULL;
+        error = ERROR_FILENAME_EXCED_RANGE;
+        goto done;
+    }
+    name->Length = (USHORT)(native_length * sizeof(WCHAR));
+    name->MaximumLength = name->Length;
+done:
+    wf_windows_units_give(&spelling);
+    wf_windows_units_give(&joined);
+    wf_windows_units_give(&full);
+    return error;
+}
+
 static int wf_windows_open_at_worker(
     HANDLE root,
     const char *path,
@@ -1220,6 +1570,9 @@ static int wf_windows_open_at_worker(
     DWORD wait_result;
     unsigned outcome;
     int descriptor;
+    const int host_path = flags == WF_WINDOWS_HOST_PATH;
+    HANDLE lookup_root = root;
+    WCHAR *host_name = NULL;
     (void)mode;
 
     if (error_code != NULL) {
@@ -1229,7 +1582,8 @@ static int wf_windows_open_at_worker(
         *open_outcome = WF_WINDOWS_OPEN_FAILED;
     }
     if (path == NULL || error_code == NULL || open_outcome == NULL
-        || (flags != 0 && flags != WF_WINDOWS_NO_FOLLOW)
+        || (flags != 0 && flags != WF_WINDOWS_NO_FOLLOW && !host_path)
+        || (host_path && create_directory)
         || has_mode > 1u || has_mode != 0u
         || expected_kind > WF_WINDOWS_EXPECT_DIRECTORY
         || !wf_windows_handle_valid(root)
@@ -1254,7 +1608,8 @@ static int wf_windows_open_at_worker(
         *error_code = ERROR_FILENAME_EXCED_RANGE;
         return -1;
     }
-    if (!wf__windows_relative_path_valid(units, (uint64_t)unit_count)) {
+    if (!host_path
+        && !wf__windows_relative_path_valid(units, (uint64_t)unit_count)) {
         wf_windows_record_error(ERROR_INVALID_NAME);
         *error_code = ERROR_INVALID_NAME;
         return -1;
@@ -1268,12 +1623,26 @@ static int wf_windows_open_at_worker(
     }
 
     memset(&name, 0, sizeof(name));
-    name.Length = (USHORT)(unit_count * sizeof(uint16_t));
-    name.MaximumLength = name.Length;
-    name.Buffer = (PWSTR)(void *)units;
+    if (host_path) {
+        /* [PRE-2] The Win32 dialect selects the NT name and where it is
+         * looked up; the name lives in host_name until the open is done. */
+        DWORD error = unit_count == 0
+            ? ERROR_INVALID_NAME
+            : wf_windows_host_path_name(root, units, unit_count, &name,
+                                        &lookup_root, &host_name);
+        if (error != 0) {
+            wf_windows_record_error(error);
+            *error_code = (int)error;
+            return -1;
+        }
+    } else {
+        name.Length = (USHORT)(unit_count * sizeof(uint16_t));
+        name.MaximumLength = name.Length;
+        name.Buffer = (PWSTR)(void *)units;
+    }
     memset(&attributes, 0, sizeof(attributes));
     attributes.Length = (ULONG)sizeof(attributes);
-    attributes.RootDirectory = root;
+    attributes.RootDirectory = lookup_root;
     attributes.ObjectName = &name;
     attributes.Attributes = OBJ_CASE_INSENSITIVE;
     memset(&io_status, 0, sizeof(io_status));
@@ -1292,6 +1661,11 @@ static int wf_windows_open_at_worker(
     }
     if (create_directory) {
         create_options |= FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT;
+    }
+    if (host_path && expected_kind == WF_WINDOWS_EXPECT_DIRECTORY) {
+        /* The host refuses a non-directory with ERROR_DIRECTORY, which is
+         * NotDirectory [PRE-2]. */
+        create_options |= FILE_DIRECTORY_FILE;
     }
     if (flags == WF_WINDOWS_NO_FOLLOW) {
         create_options |= FILE_OPEN_REPARSE_POINT;
@@ -1312,6 +1686,7 @@ static int wf_windows_open_at_worker(
     );
     if (status == WF_WINDOWS_STATUS_PENDING) {
         if (!wf_windows_handle_valid(opened)) {
+            wf_windows_units_give(&host_name);
             wf_windows_record_error(ERROR_INVALID_HANDLE);
             *error_code = ERROR_INVALID_HANDLE;
             return -1;
@@ -1325,12 +1700,14 @@ static int wf_windows_open_at_worker(
                 error = ERROR_GEN_FAILURE;
             }
             wf_windows_open_return_provisional_handle(&opened);
+            wf_windows_units_give(&host_name);
             wf_windows_record_error(error);
             *error_code = (int)error;
             return -1;
         }
         status = io_status.Status;
     }
+    wf_windows_units_give(&host_name);
     if (status == WF_WINDOWS_STATUS_PENDING
         || !wf_windows_nt_success(status)) {
         DWORD error = wf_windows_nt_error(&api, status);
@@ -1357,9 +1734,15 @@ static int wf_windows_open_at_worker(
         *open_outcome = WF_WINDOWS_OPEN_STATUS_FAILED;
         return -1;
     }
+    /* A host-path lookup followed every redirecting reparse point, so a
+     * reparse attribute left on the object it opened belongs to a tag the
+     * host resolves in place, and its kind is the object's own [PRE-2]. A
+     * name's open keeps refusing every reparse point. */
     outcome = wf_windows_kind_outcome(
         expected_kind,
-        tag_information.FileAttributes
+        host_path
+            ? tag_information.FileAttributes & ~(DWORD)FILE_ATTRIBUTE_REPARSE_POINT
+            : tag_information.FileAttributes
     );
     if (outcome != WF_WINDOWS_OPEN_SUCCEEDED) {
         wf_windows_open_return_provisional_handle(&opened);
@@ -1442,6 +1825,51 @@ int64_t wf__windows_completion_file_write_worker(
     return (int64_t)written;
 }
 
+size_t wf__windows_wtf8_write(
+    const unsigned char *native,
+    size_t units,
+    unsigned char *destination
+) {
+    size_t index = 0;
+    size_t written = 0;
+    while (index < units) {
+        uint32_t scalar = (uint32_t)native[2 * index]
+            | ((uint32_t)native[2 * index + 1] << 8);
+        size_t length;
+        index += 1;
+        if (scalar >= 0xd800u && scalar <= 0xdbffu && index < units) {
+            uint32_t low = (uint32_t)native[2 * index]
+                | ((uint32_t)native[2 * index + 1] << 8);
+            if (low >= 0xdc00u && low <= 0xdfffu) {
+                scalar = 0x10000u + ((scalar - 0xd800u) << 10) + (low - 0xdc00u);
+                index += 1;
+            }
+        }
+        length = scalar < 0x80u ? 1u : scalar < 0x800u ? 2u
+            : scalar < 0x10000u ? 3u : 4u;
+        if (destination != NULL) {
+            unsigned char *out = destination + written;
+            if (length == 1u) {
+                out[0] = (unsigned char)scalar;
+            } else if (length == 2u) {
+                out[0] = (unsigned char)(0xc0u | (scalar >> 6));
+                out[1] = (unsigned char)(0x80u | (scalar & 0x3fu));
+            } else if (length == 3u) {
+                out[0] = (unsigned char)(0xe0u | (scalar >> 12));
+                out[1] = (unsigned char)(0x80u | ((scalar >> 6) & 0x3fu));
+                out[2] = (unsigned char)(0x80u | (scalar & 0x3fu));
+            } else {
+                out[0] = (unsigned char)(0xf0u | (scalar >> 18));
+                out[1] = (unsigned char)(0x80u | ((scalar >> 12) & 0x3fu));
+                out[2] = (unsigned char)(0x80u | ((scalar >> 6) & 0x3fu));
+                out[3] = (unsigned char)(0x80u | (scalar & 0x3fu));
+            }
+        }
+        written += length;
+    }
+    return written;
+}
+
 static int wf_windows_directory_record_valid(
     const unsigned char *record_bytes,
     size_t remaining,
@@ -1485,7 +1913,9 @@ static int wf_windows_directory_record_valid(
             return 0;
         }
     }
-    *raw_extent = WF_WINDOWS_DIRECTORY_RAW_HEADER + name_bytes;
+    *raw_extent = WF_WINDOWS_DIRECTORY_RAW_HEADER + wf__windows_wtf8_write(
+        record_bytes + WF_WINDOWS_DIRECTORY_NATIVE_HEADER, name_bytes / 2, NULL
+    );
     return *raw_extent <= (size_t)USHRT_MAX;
 }
 
@@ -1527,8 +1957,7 @@ static int64_t wf_windows_directory_batch_worker(
     if (count == 0) {
         return 0;
     }
-    if (count < WF_WINDOWS_DIRECTORY_NATIVE_HEADER
-            + WF_WINDOWS_COMPONENT_MAX_BYTES
+    if (count < WF_WINDOWS_DIRECTORY_RAW_HEADER + WF_WINDOWS_NAME_MAX_BYTES
         || count > (uint64_t)INT64_MAX) {
         wf_windows_record_error(
             count > (uint64_t)INT64_MAX
@@ -1544,9 +1973,25 @@ static int64_t wf_windows_directory_batch_worker(
         );
         return -1;
     }
-    query_capacity = count < WF_WINDOWS_DIRECTORY_SCRATCH_BYTES
-        ? (ULONG)count
-        : (ULONG)WF_WINDOWS_DIRECTORY_SCRATCH_BYTES;
+    /* A record's WTF-8 name can be longer than its UTF-16 one, so the query
+     * asks for at most what fits once rewritten: a native record of n name
+     * bytes takes at least 64 + n bytes and its raw record at most
+     * 5 + 3n/2, a ratio largest at the longest name. A count of at least one
+     * longest raw record leaves room for one longest native record. */
+    {
+        uint64_t fitting = count
+            / (WF_WINDOWS_DIRECTORY_RAW_HEADER + WF_WINDOWS_NAME_MAX_BYTES)
+            * (WF_WINDOWS_DIRECTORY_NATIVE_HEADER
+               + WF_WINDOWS_COMPONENT_MAX_BYTES)
+            + count
+            % (WF_WINDOWS_DIRECTORY_RAW_HEADER + WF_WINDOWS_NAME_MAX_BYTES)
+            * (WF_WINDOWS_DIRECTORY_NATIVE_HEADER
+               + WF_WINDOWS_COMPONENT_MAX_BYTES)
+            / (WF_WINDOWS_DIRECTORY_RAW_HEADER + WF_WINDOWS_NAME_MAX_BYTES);
+        query_capacity = fitting < WF_WINDOWS_DIRECTORY_SCRATCH_BYTES
+            ? (ULONG)fitting
+            : (ULONG)WF_WINDOWS_DIRECTORY_SCRATCH_BYTES;
+    }
     event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (event == NULL) {
         wf_windows_record_error(GetLastError());
@@ -1629,7 +2074,6 @@ static int64_t wf_windows_directory_batch_worker(
         size_t native_extent;
         size_t raw_extent;
         size_t name_bytes = (size_t)record->file_name_length;
-        size_t index;
         (void)wf_windows_directory_record_valid(
             scratch.bytes + source,
             transferred - source,
@@ -1638,26 +2082,20 @@ static int64_t wf_windows_directory_batch_worker(
         );
         destination[required] = (uint8_t)(raw_extent & 0xffu);
         destination[required + 1] = (uint8_t)((raw_extent >> 8) & 0xffu);
-        destination[required + 2] = (uint8_t)(name_bytes & 0xffu);
-        destination[required + 3] =
-            (uint8_t)((name_bytes >> 8) & 0xffu);
+        destination[required + 2] = (uint8_t)(
+            (raw_extent - WF_WINDOWS_DIRECTORY_RAW_HEADER) & 0xffu
+        );
+        destination[required + 3] = (uint8_t)(
+            ((raw_extent - WF_WINDOWS_DIRECTORY_RAW_HEADER) >> 8) & 0xffu
+        );
         destination[required + 4] = wf_windows_directory_kind(
             record->file_attributes
         );
-        for (index = 0; index < name_bytes; index += sizeof(uint16_t)) {
-            uint16_t unit;
-            memcpy(
-                &unit,
-                scratch.bytes + source
-                    + WF_WINDOWS_DIRECTORY_NATIVE_HEADER + index,
-                sizeof(unit)
-            );
-            destination[required + WF_WINDOWS_DIRECTORY_RAW_HEADER + index] =
-                (uint8_t)(unit & UINT16_C(0xff));
-            destination[
-                required + WF_WINDOWS_DIRECTORY_RAW_HEADER + index + 1
-            ] = (uint8_t)(unit >> 8);
-        }
+        (void)wf__windows_wtf8_write(
+            scratch.bytes + source + WF_WINDOWS_DIRECTORY_NATIVE_HEADER,
+            name_bytes / 2,
+            destination + required + WF_WINDOWS_DIRECTORY_RAW_HEADER
+        );
         required += raw_extent;
         if (record->next_entry_offset == 0) {
             break;

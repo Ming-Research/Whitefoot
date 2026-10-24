@@ -31,6 +31,7 @@ mod floating;
 mod frames;
 mod frozen;
 mod generics;
+mod heap_alignment;
 mod heap_programs;
 mod indexed_reductions;
 mod integer_absolute;
@@ -475,6 +476,7 @@ fn append_runtime_units_with_library_defines(
             "completion/snapshot_export.c" | "completion/fork_capsule.c"
         ) {
             let object = directory.join(name).with_extension("o");
+            #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
             let output = Command::new(crate::clang_executable())
                 .args(HOST_OPTIMIZATION_ARGUMENTS)
                 .args(crate::RESTRICTED_CHILD_COMPILE_ARGUMENTS)
@@ -522,6 +524,7 @@ fn append_runtime_units_with_library_defines(
             library.arg(format!("-D{define}"));
         }
         let object = directory.join("ordinary_values.o");
+        #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
         let reached = library
             .arg(directory.join("ordinary_values.c"))
             .arg("-o")
@@ -667,6 +670,7 @@ fn build_linked_executable_inner(
             staged_units.extend(names.into_iter().map(|name| directory.join(name)));
         }
     }
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let compile = command
         .args(HOST_OPTIMIZATION_ARGUMENTS)
         .args(HOST_LINK_LIBRARIES)
@@ -759,6 +763,7 @@ fn compile_link_and_run_with(
 
 /// Returns the module as the host optimizer leaves it at the shipped level.
 fn host_optimized_module(llvm: &str) -> String {
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
     let mut child = Command::new(crate::clang_executable())
         .arg("-x")
         .arg("ir")
@@ -1309,11 +1314,10 @@ struct Outer {
   other: i32;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn exercise(flag: Bool) -> status: std::process::ExitStatus pure {
   let number = 1_i32;
   let inner = Inner(value: 2_i32);
   let outer = Outer(inner: inner, other: 7_i32);
-  let flag = True();
   if flag {
     set number = 42_i32;
     set outer.inner.value = number;
@@ -1326,9 +1330,6 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 1_u8);
   }
   let preserved = outer.other;
-  if preserved != 7_i32 {
-    return std::process::exit_status(code: 2_u8);
-  }
   let selected = if flag {
     set number = 43_i32;
     give number;
@@ -1339,25 +1340,35 @@ fn main() -> status: std::process::ExitStatus pure {
   if selected != 43_i32 {
     return std::process::exit_status(code: 3_u8);
   }
-  if number != 43_i32 {
-    return std::process::exit_status(code: 4_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let number_gap = number -wrap 43_i32;
+  let status_value = preserved +wrap number_gap;
+  let status_code = cvt.wrap::<i32, u8>(status_value);
+  return std::process::exit_status(code: status_code);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let chosen = True();
+  return exercise(flag: chosen);
 }
 "#;
+    // `exercise` takes the branch selector as its parameter, so both
+    // assignment branches and both value-if arms are emitted and joined. Its
+    // exit status is the untouched sibling field `outer.other` plus the root
+    // local's distance from 43 after the value-if, which the harness
+    // compares with the constructed 7, so a wrong joined `number` moves it.
     let llvm = emit(source);
-    let main = emitted_function(&llvm, "main");
-    assert!(main.contains(" = phi i32 "));
-    assert!(main.contains(&format!(
+    let exercise = emitted_function(&llvm, "exercise");
+    assert!(exercise.contains(" = phi i32 "));
+    assert!(exercise.contains(&format!(
         "store {} zeroinitializer, ptr ",
         nominal_type("Outer")
     )));
-    assert!(main.contains(&format!(
+    assert!(exercise.contains(&format!(
         "store {} zeroinitializer, ptr ",
         nominal_type("Inner")
     )));
     let mut value_addresses = Vec::new();
-    for line in main.lines() {
+    for line in exercise.lines() {
         let Some((address, operation)) = line.trim().split_once(" = ") else {
             continue;
         };
@@ -1373,7 +1384,7 @@ fn main() -> status: std::process::ExitStatus pure {
             value_addresses.push(address);
         }
     }
-    let value_stores = main
+    let value_stores = exercise
         .lines()
         .filter(|line| {
             line.trim().starts_with("store i32 ")
@@ -1388,7 +1399,7 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 
     let output = compile_and_run(&llvm);
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(7), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }
@@ -1483,17 +1494,6 @@ fn main() -> status: std::process::ExitStatus pure {
     Err(error: underflow) => {
     }
   }
-  let multiply_result = 6_i16 *checked 7_i16;
-  match multiply_result {
-    Ok(value: product) => {
-      if product != 42_i16 {
-        return std::process::exit_status(code: 3_u8);
-      }
-    }
-    Err(error: product_error) => {
-      return std::process::exit_status(code: 4_u8);
-    }
-  }
   let success = forward(value: 7_i32);
   match success {
     Ok(value: answer) => {
@@ -1544,7 +1544,16 @@ fn main() -> status: std::process::ExitStatus pure {
       return std::process::exit_status(code: 12_u8);
     }
   }
-  return std::process::exit_status(code: 0_u8);
+  let multiply_result = 6_i16 *checked 7_i16;
+  match multiply_result {
+    Ok(value: product) => {
+      let product_code = cvt::<i16, u8>(product);
+      return std::process::exit_status(code: product_code);
+    }
+    Err(error: product_error) => {
+      return std::process::exit_status(code: 4_u8);
+    }
+  }
 }
 "#;
     let llvm = compile(source);
@@ -1552,7 +1561,9 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(llvm.contains("@llvm.usub.with.overflow.i8"));
     assert!(llvm.contains("@llvm.smul.with.overflow.i16"));
     let output = compile_and_run(&llvm);
-    assert!(output.status.success());
+    // The last step returns the checked product `6 * 7` as the exit status;
+    // every earlier failure returns a code from 1 to 12.
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }

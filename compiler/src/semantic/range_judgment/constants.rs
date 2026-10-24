@@ -93,6 +93,8 @@ pub(crate) fn judge(
                         state.generation(container),
                         CheckedMeasure::Length,
                     ),
+                    projection: Vec::new(),
+                    barrier: None,
                 }
             }
             _ => PlaceView::Unknown,

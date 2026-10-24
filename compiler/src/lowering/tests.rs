@@ -524,7 +524,8 @@ fn aggregate_loop_frames_fit_the_selected_target_before_outlining() {
 
     for target in [
         TargetLayout::host().expect("supported test target"),
-        TargetLayout::for_triple("x86_64-pc-windows-msvc").expect("supported selected target"),
+        TargetLayout::for_triple(crate::target::WINDOWS_X86_64_TRIPLE)
+            .expect("supported selected target"),
     ] {
         for (length, expected_bytes) in [(1, Some(48)), (216, Some(256)), (217, None)] {
             let source = format!(
@@ -1991,7 +1992,9 @@ fn missing_lock_ledger_locations_preserve_lowering() {
         let ledger = &function(program, "main").lock_ledger;
         assert_eq!(ledger.len(), 1, "one lazy target group");
         assert!(
-            ledger[0].contains("targets(cell): u64  on every path; first use test.wf:"),
+            ledger[0]
+                .to_string()
+                .contains("targets(cell): u64  on every path; first use test.wf:"),
             "the witness reaches its lazy acquisition: {ledger:?}"
         );
         program.functions().to_vec()
@@ -2020,8 +2023,8 @@ fn missing_lock_ledger_locations_preserve_lowering() {
                     }
                 })
                 .expect("the witness contains an atomic statement");
-            let atomic_site = checked.data.lock_ledger_sources[&atomic].clone();
-            let first_use_site = checked.data.lock_ledger_sources[&first_use].clone();
+            let atomic_site = checked.data.lock_ledger_sources[&atomic].to_string();
+            let first_use_site = checked.data.lock_ledger_sources[&first_use].to_string();
             if missing_atomic && missing_first_use {
                 checked.data.lock_ledger_sources.clear();
             } else if missing_atomic {
@@ -2042,7 +2045,11 @@ fn missing_lock_ledger_locations_preserve_lowering() {
                 &first_use_site
             };
             assert_eq!(
-                function(&lowered, "main").lock_ledger,
+                function(&lowered, "main")
+                    .lock_ledger
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
                 [format!(
                     "LOCK main  {atomic_site}  targets(cell): u64  on every path; first use {first_use_site}"
                 )]
@@ -2427,10 +2434,16 @@ fn main() -> status: std::process::ExitStatus pure waits {
 /// handle's and a window operation that takes the handle's element back each
 /// still count it. So does a consume of a sibling field, by a move, a `match`
 /// or a destructuring `let`, which releases the handle's field with the rest
-/// of the owner [WIN-3].
+/// of the owner [WIN-3]. A handle to a linear state is never counted, even
+/// when the block moves it away: it ends only in a `shared_close`, which no
+/// block contains, so wherever it goes it still names the object [PROV-6].
 #[test]
 fn atomic_statements_count_a_handle_only_when_the_block_may_lose_it() {
-    let source = br#"struct Holder {
+    let source = br#"nodrop struct Pen {
+  strokes: u64;
+}
+
+struct Holder {
   count: u64;
   cell: Shared<u64>;
 }
@@ -2658,10 +2671,30 @@ fn element_taken_back() -> result: u64 pure waits {
   let slots = slots_new::<Shared<u64>, 4>();
   place_back(window: &slots, value: move cell);
   let seen = 0_u64;
-  if 0_u64 < slots.len {
-    atomic state = &slots[0_u64] {
-      let taken = take_back(window: &slots);
-      set seen = state^;
+  atomic state = &slots[0_u64] {
+    let taken = take_back(window: &slots);
+    set seen = state^;
+  }
+  return seen;
+}
+
+fn linear_moved_in_block() -> result: u64 pure waits {
+  let pen = Pen(strokes: 1_u64);
+  let desk = shared_new::<Pen>(value: move pen);
+  let out = slots_new::<Shared<Pen>, 1>();
+  let seen = 0_u64;
+  atomic state = &desk {
+    set seen = state^.strokes;
+    place_back(window: &out, value: move desk);
+  }
+  let moved = take_back(window: &out);
+  free_empty(window: move out);
+  match shared_close::<Pen>(shared: move moved) {
+    Some(value: returned) => {
+      let Pen(strokes: last) = move returned;
+      set seen = seen +wrap last;
+    }
+    None() => {
     }
   }
   return seen;
@@ -2691,6 +2724,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
             ("sibling_destructured", 1),
             ("element_replaced", 1),
             ("element_taken_back", 1),
+            ("linear_moved_in_block", 0),
         ] {
             let mut retains = 0;
             for block in function(program, name).blocks() {

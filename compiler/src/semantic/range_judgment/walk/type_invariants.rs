@@ -20,9 +20,7 @@ impl Walker<'_> {
             .cloned()
             .unwrap_or_default();
         for clause in &clauses {
-            let frame = self.frame(&mut state.clone(), clause, &|root| {
-                binding_value(state, root)
-            });
+            let frame = self.binding_frame(&mut state.clone(), clause, state);
             let fact = self.add_fact(clause.clone(), frame);
             state.facts.push(fact);
         }
@@ -43,10 +41,22 @@ impl Walker<'_> {
         };
         let bindings = atomic.bindings.clone();
         for clause in atomic.clauses.clone() {
-            let frame = self.frame(&mut state.clone(), &clause, &|root| match root {
-                CheckedRangeRoot::Binding(binding) => bindings.get(&binding).cloned(),
-                _ => None,
-            });
+            let frame = self.frame(
+                &mut state.clone(),
+                &clause,
+                &|root| match root {
+                    CheckedRangeRoot::Binding(binding) => bindings.get(&binding).cloned(),
+                    _ => None,
+                },
+                &|root| match root {
+                    CheckedRangeRoot::Binding(binding) => state
+                        .binding_reads
+                        .get(&binding)
+                        .cloned()
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                },
+            );
             self.require(state, &clause, &frame, node, "an atomic leaving edge");
         }
     }

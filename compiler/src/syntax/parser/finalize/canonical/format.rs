@@ -1,10 +1,10 @@
 use crate::syntax::grammar::Production;
 use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
 
-use super::{AuditWork, Stop};
+use super::{AuditWork, Stop, terminal_element};
 use crate::syntax::parser::finalize::outcome::{
     CanonicalCompilerFailure, CanonicalLimit, CanonicalLimits, CanonicalResourceFailure,
-    CanonicalStorage,
+    CanonicalStorage, FinalizedBundle,
 };
 use crate::syntax::parser::finalize::topology::{FinalizedExtent, FinalizedTopology, NodeId};
 
@@ -684,4 +684,69 @@ pub(super) fn gap_matches(
     let expected_len =
         u64::try_from(expected_len).map_err(|_| CanonicalCompilerFailure::CounterOverflow)?;
     Ok((matches, expected_len, gap))
+}
+
+/// The boundary after one terminal: the terminal the gap leads to, where that
+/// terminal starts, and what decides the gap's canonical bytes.
+///
+/// The auditor, the renderer and the repair that lists every difference read
+/// this one description, so the three cannot disagree about which boundary a
+/// gap is.
+pub(super) struct GapAfter {
+    /// The ordinal of the next terminal of the same source, when there is one.
+    pub(super) next: Option<usize>,
+    /// Where the next terminal starts in its source.
+    pub(super) right_start: Option<u64>,
+    pub(super) style: GapStyle,
+    pub(super) depth: u32,
+    /// The next terminal's attachment.
+    pub(super) right: Option<Attachment>,
+}
+
+/// Describes the gap after the terminal at `ordinal` among its source's
+/// terminals `..end`. After the last one the source ends in a bare newline,
+/// which is a depth-zero break.
+pub(super) fn gap_after(
+    finalized: &FinalizedBundle,
+    gaps: &[GapStyle],
+    ordinal: usize,
+    end: usize,
+) -> Result<GapAfter, Stop> {
+    let next = ordinal
+        .checked_add(1)
+        .ok_or(CanonicalCompilerFailure::CounterOverflow)?;
+    if next >= end {
+        return Ok(GapAfter {
+            next: None,
+            right_start: None,
+            style: GapStyle::Break,
+            depth: 0,
+            right: None,
+        });
+    }
+    let (right_token, right_predicate) = terminal_element(finalized, next)?;
+    let right = attachment(&finalized.topology, next, right_predicate)?;
+    let owner = finalized
+        .topology
+        .terminals
+        .get(next)
+        .and_then(|record| record.owner)
+        .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
+    let depth = finalized
+        .topology
+        .node(owner)
+        .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?
+        .terminal_depth(
+            u64::try_from(next).map_err(|_| CanonicalCompilerFailure::CounterOverflow)?,
+        );
+    let style = *gaps
+        .get(next)
+        .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
+    Ok(GapAfter {
+        next: Some(next),
+        right_start: Some(right_token.id().start().value()),
+        style,
+        depth,
+        right: Some(right),
+    })
 }

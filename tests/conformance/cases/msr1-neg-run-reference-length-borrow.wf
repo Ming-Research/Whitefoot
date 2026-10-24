@@ -1,0 +1,8 @@
+fn length_of(bytes: &Run<u8>) -> result: u64 reads(bytes.len) {
+  let n = &bytes^.len;
+  return n^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
