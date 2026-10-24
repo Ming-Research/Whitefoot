@@ -33,6 +33,7 @@ mod floating;
 mod frames;
 mod frozen;
 mod generics;
+mod handler_transfer;
 mod heap_alignment;
 mod heap_programs;
 mod indexed_reductions;
