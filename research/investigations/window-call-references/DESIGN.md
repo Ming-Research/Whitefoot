@@ -209,5 +209,7 @@ cover, because proving that needs B. A direct `place_back` never needed this:
 a page step is separated from `r.next` and `r.free` whatever the extent
 [WIN-2], and `take_back`, `remove_at` and `clear` invalidate by name [OP-10].
 `grow_paged` and a page index that is not one formation's own evaluation keep
-the unconditional invalidation. The cases are `ref2-pos-page-reference-*` and
-`ref2-neg-page-reference-*` in the conformance corpus.
+the unconditional invalidation, as does an element reference below a page: a
+helper's `last` write is a proper-prefix write of it, as of an interior
+reference below a `Slots` element. The cases are the conformance cases whose
+id starts `ref2-pos-` or `ref2-neg-` and contains `page-reference`.
