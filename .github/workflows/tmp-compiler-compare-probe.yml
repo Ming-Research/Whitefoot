@@ -1,0 +1,94 @@
+# Temporary probe of the inputs of compiler-compare.yml on a hosted runner
+# (wf-compiler-compare-14900k); removed before the full check.
+name: tmp-compiler-compare-probe
+
+on:
+  push:
+    branches: [wf-compiler-compare-14900k]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          which perf || echo "no perf"
+          cat /proc/sys/kernel/perf_event_paranoid || true
+          uname -r
+
+      - name: Build the compiler
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "3000"
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl probe/build make -C compiler build
+          ls -l compiler/target/gate/whitefootc
+
+      - name: Fetch Halo at two revisions and Silverfir-nano
+        run: |
+          set -x
+          mkdir -p "$RUNNER_TEMP/p"
+          for rev in c900a68b2f06af0de2adccfd0dd348d49af184de 47ca82efc7d5; do
+            git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/p/halo-$rev"
+            git -C "$RUNNER_TEMP/p/halo-$rev" checkout --quiet "$rev"
+            ls "$RUNNER_TEMP/p/halo-$rev" "$RUNNER_TEMP/p/halo-$rev/tests/halo-bench" "$RUNNER_TEMP/p/halo-$rev/research/experiments/halo-bench" || true
+          done
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/p/silverfir"
+          git -C "$RUNNER_TEMP/p/silverfir" checkout --quiet 5f248e4420102356be7edadbdb4db2ae105d3270
+          git -C "$RUNNER_TEMP/p/silverfir" rev-parse HEAD:benchmarks/wasi/coremark/coremark.wasm
+
+      - name: Compile Halo at each revision with the compiler
+        continue-on-error: true
+        run: |
+          wfc=$PWD/compiler/target/gate/whitefootc
+          for rev in c900a68b2f06af0de2adccfd0dd348d49af184de 47ca82efc7d5; do
+            d="$RUNNER_TEMP/p/halo-$rev"
+            graph=tests/halo-bench/modules.wfg
+            [ -f "$d/$graph" ] || graph=research/experiments/halo-bench/modules.wfg
+            echo "== $rev graph $graph"
+            ( cd "$d" && time "$wfc" --graph "$graph" --entry bench --full-lto -o "$RUNNER_TEMP/p/halo-image-$rev" ) 2>&1 | tail -30 || true
+          done
+
+      - name: Run fib on each Halo image
+        continue-on-error: true
+        run: |
+          for rev in c900a68b2f06af0de2adccfd0dd348d49af184de 47ca82efc7d5; do
+            d="$RUNNER_TEMP/p/halo-$rev"
+            fib="$d/research/experiments/halo-bench/kernels/fib.lua"
+            echo "== $rev"
+            grep -n '^local N' "$fib"
+            sed -E 's/^local N = [0-9]+$/local N = 27/' "$fib" > "$RUNNER_TEMP/p/fib27.lua"
+            ( time "$RUNNER_TEMP/p/halo-image-$rev" < "$RUNNER_TEMP/p/fib27.lua" ) 2>&1 | tail
+          done
+
+      - name: Compile v2h and run CoreMark briefly
+        continue-on-error: true
+        run: |
+          wfc=$PWD/compiler/target/gate/whitefootc
+          python3 -B research/experiments/match-dispatch/wasm/gen.py "$RUNNER_TEMP/p/v2h.wf"
+          ( time "$wfc" "$RUNNER_TEMP/p/v2h.wf" --cache "$RUNNER_TEMP/p/v2h-cache" -o "$RUNNER_TEMP/p/v2h-image" ) 2>&1 | tail -30
+          cd "$RUNNER_TEMP/p/silverfir/benchmarks/wasi/coremark"
+          ls
+          ( time "$RUNNER_TEMP/p/v2h-image" coremark.wasm 0x0 0x0 0x66 20 ) 2>&1 | tail -30
