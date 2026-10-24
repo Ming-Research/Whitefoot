@@ -688,11 +688,7 @@ jobs:
           git worktree add --detach "$out/base" "$base"
           git worktree add --detach "$out/s3" "$S3_COMMIT"
           git worktree add --detach "$out/r1" "$GITHUB_SHA"
-          # ctl: the merge base with only a block-alignment argument added to
-          # the host compiler's arguments, no branch weights at all.
-          git fetch --no-tags origin +refs/heads/claude/tbw-ctl-align-base:refs/remotes/origin/tbw-ctl-align-base
-          git worktree add --detach "$out/ctl" refs/remotes/origin/tbw-ctl-align-base
-          for arm in base s3 r1 ctl; do
+          for arm in base s3 r1; do
             perl .github/run-check.pl "tbw-rf-fetch-$arm" cargo fetch --locked --manifest-path "$out/$arm/compiler/Cargo.toml"
             perl .github/run-check.pl "tbw-rf-build-$arm" make -C "$out/$arm/compiler" build
           done
@@ -750,10 +746,10 @@ jobs:
           out="$RUNNER_TEMP/rf"
           sudo apt-get install -y valgrind >/dev/null
           bench=research/experiments/hash-map-compare/bench.wf
-          for arm in base s3 r1 ctl; do
+          for arm in base s3 r1; do
             "$out/$arm/compiler/target/gate/whitefootc" "$bench" -o "$out/img-$arm"
           done
-          for arm in base s3 r1 ctl; do
+          for arm in base s3 r1; do
             echo "== $arm: callgrind, removal (5) at 10000 pairs, one warmup and two samples"
             valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$out/cg.$arm.out" \
               "$out/img-$arm" 5 10000 2 0 > "$out/cg.$arm.rows" 2> "$out/cg.$arm.err" || echo "valgrind exit $?"
@@ -764,7 +760,7 @@ jobs:
           cat > "$out/layout.py" <<'EOF'
           import collections, re, subprocess, sys
           out = sys.argv[1]
-          ARMS = ("base", "s3", "r1", "ctl")
+          ARMS = ("base", "s3", "r1")
 
           def run(*command):
               return subprocess.run(command, capture_output=True, text=True, check=True).stdout
@@ -815,7 +811,7 @@ jobs:
                   for head, mod, body, kind in loops:
                       print(f"    loop head +{head:#x} (%64={mod:2d}), up to the {kind} {body} bytes")
                   found[(arm, short)] = collections.Counter(mask(t) for _, t in rows)
-          for arm in ("s3", "r1", "ctl"):
+          for arm in ("s3", "r1"):
               for (a, short), counter in sorted(found.items()):
                   if a != arm or ("base", short) not in found:
                       continue
