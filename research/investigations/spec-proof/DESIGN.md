@@ -824,8 +824,10 @@ rejected, citing [FN-8] and [FN-9], and two checker examples in the
 conformance harness keep them so, watched failing on the main line's checker
 by a temporary workflow. The fix gives a disequality no affine component, so
 its L0 facts alone prove it, as [ENT-6] normalizes only order relations and
-equalities. With the empty list put back, the proofs no longer check. The
-disposition's two other lists that count as proved when every member holds,
+equalities. With the empty list put back, the proofs no longer check: a
+temporary workflow watched the build fail at the disequality case of
+`bridges_spec`, the lemma that a relation's affine components give the
+relation. The disposition's two other lists that count as proved when every member holds,
 an L0 normalization's components and the affine alternatives, are never
 empty, read from the source.
 
@@ -839,15 +841,16 @@ beside `set`'s, which uses the same parts; and a value-level lemma for
 right-hand sides is added.
 
 The part adds 5,015 lines of Lean in four modules, changes the model's
-`bridges` and its one use, and adds no coverage mark. On the two `proof.yml`
-runs after the main line was merged in, the build of the model and harness
-took 56.5 s and 55.5 s, with the new modules 1.6 to 1.8 s, 4.9 s, 20 s and
-5.2 s beside the generator lemmas' 29 s. Both ran on the slower of the two
-host speeds the part's runs show, the parser building in 3.1 s and 3.2 s
-against 1.8 s on a faster host, and the build's provisional budget rises from
-65 s to 85 s, 1.5 times the 55.5 s of the final content's first run rounded up
-to 5 s. The part took eight engineer turns to the commit handed to review,
-two of them ending on network errors and one stopped by a pause. The draft was
+`bridges` and its one use, and adds no coverage mark. The build of the model
+and harness took 56.5 s and 55.5 s on the first two `proof.yml` runs after the
+main line was merged in, the new modules taking 1.6 to 1.8 s, 4.9 s, 20 s and
+5.2 s beside the generator lemmas' 29 s, and 41.9 s on the third, on a faster
+host: there the parser built in 2.3 s against 3.1 s and 3.2 s, and the new
+modules in 1.4 s, 3.6 s, 14 s and 3.0 s beside 20 s. The build's provisional
+budget rises from 65 s to 85 s, 1.5 times the 55.5 s of the final content's
+first run, rounded up to 5 s. Writing the part to the commit handed to review
+took nine engineer turns, two of them ending on network errors and one stopped
+by a pause. The draft was
 written without a local Lean and compiled outside the package by a temporary
 workflow: seven of its nine runs failed to compile, at between 1 and 28 places
 each. Moved into the package, the proofs checked on every `proof.yml` run; one
