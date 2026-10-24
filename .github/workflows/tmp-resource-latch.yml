@@ -1,8 +1,8 @@
 # Temporary (gran-canon-resource-latch): the focused checks of the resource
 # record race test, which a draft pull request's gate skips: the exhaustion
 # test module with its output shown, 25 repeats of the race test on an idle
-# machine and 25 with every processor busy, and the compiler lint. Removed
-# before the full check.
+# machine and 25 with every processor busy, the same module on macOS, and the
+# compiler lint. Removed before the full check.
 name: tmp-resource-latch
 
 on:
@@ -75,3 +75,22 @@ jobs:
         run: |
           perl .github/run-check.pl latch-lint cargo clippy --manifest-path compiler/Cargo.toml \
             --all-targets --locked --offline -- -D warnings
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          test -x /usr/bin/clang
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Run the exhaustion tests
+        run: |
+          perl .github/run-check.pl latch-macos cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --lib backend::tests::exhaustion:: -- --nocapture
+      - name: Repeat the race test
+        run: |
+          perl .github/run-check.pl latch-macos-repeat sh -c 'for i in $(seq 10); do cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- --exact backend::tests::exhaustion::failure_paths_racing_for_the_record_leave_exactly_one || exit 1; done'

@@ -552,8 +552,10 @@ fn run_racing_records(executable: &std::path::Path) -> std::process::Output {
 /// allocator together and reach the record writer together. The observer's
 /// `write` then holds the first record until the other path has asked for the
 /// latch and had time to write its own. A latch that arbitrates leaves the
-/// other path parked, and the output is one record. [PAR-1] needs that, for
-/// an execution's observables may not depend on which refusal came first.
+/// other path parked, and the output is one well-formed record. That is a
+/// runtime contract and no source outcome, since [SCOPE-3] keeps resource
+/// exhaustion outside the source execution model; without the latch, two
+/// threads refused at once would put two records on one channel.
 ///
 /// The control runs the same schedule with the writer's winner test replaced
 /// by a constant. It must write both records; if it did not, the schedule
