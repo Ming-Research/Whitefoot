@@ -1,7 +1,8 @@
 # Temporary (gran-canon-resource-latch): the focused checks of the resource
 # record race test, which a draft pull request's gate skips: the exhaustion
-# test module with its output shown, and the compiler lint. Removed before the
-# full check.
+# test module with its output shown, 25 repeats of the race test on an idle
+# machine and 25 with every processor busy, and the compiler lint. Removed
+# before the full check.
 name: tmp-resource-latch
 
 on:
@@ -38,6 +39,22 @@ jobs:
           ulimit -c 0
           perl .github/run-check.pl latch-race cargo test --manifest-path compiler/Cargo.toml \
             --profile gate --locked --offline --lib backend::tests::exhaustion:: -- --nocapture
+      - name: Repeat the race test on an idle machine
+        run: |
+          ulimit -c 0
+          perl .github/run-check.pl latch-repeat sh -c 'for i in $(seq 25); do cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- --exact backend::tests::exhaustion::failure_paths_racing_for_the_record_leave_exactly_one || exit 1; done'
+      - name: Repeat the race test with every processor busy
+        run: |
+          ulimit -c 0
+          pids=""
+          for i in $(seq "$(nproc)"); do
+            sh -c 'while :; do :; done' &
+            pids="$pids $!"
+          done
+          status=0
+          perl .github/run-check.pl latch-loaded sh -c 'for i in $(seq 25); do cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- --exact backend::tests::exhaustion::failure_paths_racing_for_the_record_leave_exactly_one || exit 1; done' || status=$?
+          kill $pids
+          exit "$status"
   lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
