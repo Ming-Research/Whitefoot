@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-24 A relative path is looked up component by component below its root
+
+Nodes: language/system-interface/writable-directory, language/system-interface/host-paths
+
+Summary: `open_read` took a `RelativePath` that kept its `..` components and let the host follow every link, so a program given only a read half of a subdirectory could read any file the process could reach, while every name operation already refused `.`, `..` and links. The writable-directory node gains a decision that `relative_path` refuses a `..` component and `open_read` looks the components up in order, each directly below the one before, ending the open at a link at any component, with three `Rejected:` lines for refusing only `..`, folding `..` lexically and keeping the host's lookup, and the host-paths node extends its no-follow clause from the single-name opens to that lookup, so the host-path opens remain the one deliberately unconfined route.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

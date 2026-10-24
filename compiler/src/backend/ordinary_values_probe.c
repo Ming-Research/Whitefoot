@@ -666,6 +666,80 @@ static void directory_probe(wf_inputs *inputs) {
 }
 
 #if defined(_WIN32)
+/* Whether `relative_path` accepts the UTF-16 text, and when it does, the
+ * outcome of `open_read` of it below the initial directory: 0 for a path
+ * `relative_path` refuses, 1 for an open that is refused, and the first byte
+ * of the file otherwise. */
+static unsigned windows_path_outcome(wf_inputs *inputs, const wchar_t *text) {
+    wf_value value = {{ (uint64_t)(uintptr_t)text, (uint64_t)wcslen(text), 0, 0 }};
+    wf_value_result path;
+    wf_open_result opened;
+    wf_close_result closed;
+    wf_read_result read;
+    unsigned char byte = 0;
+    wf_view destination = { &byte, 1 };
+    const uint64_t credits = WF_PROBE_INPUT_BUDGET;
+    DWORD handles_before = 0, handles_after = 0;
+    wf__body_relative_path(&path, &value);
+    if (path.tag != 0) return 0;
+    assert(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
+    wf__body_open_read(&opened, &inputs->handles, &inputs->cwd_read, &path.ok.value);
+    if (opened.tag != 0) {
+        assert(WF_PROBE_INPUT_BUDGET == credits);
+        assert(GetProcessHandleCount(GetCurrentProcess(), &handles_after));
+        assert(handles_after == handles_before);
+        return 1;
+    }
+    wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, 1);
+    assert(read.tag == 0 && read.ok.value == 1);
+    wf__body_close_read(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
+    assert(WF_PROBE_INPUT_BUDGET == credits);
+    return byte;
+}
+
+/* [PRE-2] A path of several components opens one component at a time, `/` and
+ * `\` both separating them and `.` and an empty component selecting the
+ * directory they are looked up in; a component `..` makes the path invalid,
+ * wherever it stands, and a reparse point at any component, a directory link
+ * before the last included, ends the open. The fixture is made in the initial
+ * directory, which is the process's own at this point. */
+static void windows_path_probe(wf_inputs *inputs) {
+    static const wchar_t directory_name[] = L"\x4242", inner_name[] = L"\x4242\\inner";
+    static const wchar_t dirlink_name[] = L"dirlink";
+    static const wchar_t *const readable[] = {
+        L"\x4242/inner", L"\x4242\\inner", L".\\\x4242//.\\inner", L"\x4242\\.\\inner"
+    };
+    static const wchar_t *const invalid[] = {
+        L"..", L"..\\x", L"../x", L"\x4242/../\x4241", L"\x4242\\..", L"a/b/../c", L"a\\..\\b"
+    };
+    static const wchar_t *const refused[] = { L"dirlink/inner", L"dirlink\\inner", L".\\dirlink\\inner" };
+    DWORD written = 0;
+    HANDLE file = CreateFileW(inner_name, GENERIC_WRITE, 0, NULL, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    BOOLEAN linked;
+    size_t index;
+    assert(file != INVALID_HANDLE_VALUE);
+    assert(WriteFile(file, "I", 1, &written, NULL) && written == 1);
+    assert(CloseHandle(file));
+    for (index = 0; index < sizeof(readable) / sizeof(readable[0]); index++)
+        assert(windows_path_outcome(inputs, readable[index]) == 'I');
+    for (index = 0; index < sizeof(invalid) / sizeof(invalid[0]); index++)
+        assert(windows_path_outcome(inputs, invalid[index]) == 0);
+    /* A component that merely starts or ends with two periods is an ordinary
+     * name, found missing here. */
+    assert(windows_path_outcome(inputs, L"..x") == 1);
+    assert(windows_path_outcome(inputs, L"x..") == 1);
+    linked = CreateSymbolicLinkW(dirlink_name, directory_name, 3u);
+    if (!linked && GetLastError() == ERROR_INVALID_PARAMETER)
+        linked = CreateSymbolicLinkW(dirlink_name, directory_name, 1u);
+    if (!linked) fprintf(stderr, "required real Windows symlink fixture failed: %lu\n", (unsigned long)GetLastError());
+    assert(linked);
+    for (index = 0; index < sizeof(refused) / sizeof(refused[0]); index++)
+        assert(windows_path_outcome(inputs, refused[index]) == 1);
+    assert(RemoveDirectoryW(dirlink_name));
+    assert(DeleteFileW(inner_name));
+}
+
 /* A saved production DirectoryRead, not the process cwd or a private NT
  * wrapper, owns these operations. This child has exclusive cwd ownership. */
 static void windows_namespace_probe(wf_inputs *inputs) {
@@ -726,7 +800,7 @@ static void windows_namespace_probe(wf_inputs *inputs) {
     assert(WF_PROBE_INPUT_BUDGET == credits);
 
     /* Component open must dispose its terminal reparse handle on refusal;
-     * RelativePath open deliberately follows that same link to the regular file. */
+     * RelativePath open refuses that same link and disposes it as well [PRE-2]. */
     DWORD handles_before = 0, handles_after = 0;
     assert(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
     name.data = (void *)link_bytes; name.length = sizeof(link_bytes) - 1;
@@ -740,13 +814,11 @@ static void windows_namespace_probe(wf_inputs *inputs) {
     wf_value_result path;
     wf__body_relative_path(&path, &text); assert(path.tag == 0);
     wf__body_open_read(&opened, &inputs->handles, &inputs->cwd_read, &path.ok.value);
-    assert(opened.tag == 0 && WF_PROBE_INPUT_BUDGET == credits - 1);
-    byte = 0;
-    wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, 1);
-    assert(read.tag == 0 && read.ok.value == 1 && byte == 'N');
-    wf__body_close_read(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
-    assert(WF_PROBE_INPUT_BUDGET == credits);
+    assert(opened.tag == 1 && WF_PROBE_INPUT_BUDGET == credits);
+    assert(GetProcessHandleCount(GetCurrentProcess(), &handles_after));
+    assert(handles_after == handles_before);
     assert(SetCurrentDirectoryW(L".."));
+    windows_path_probe(inputs);
     assert(DeleteFileW(link_name) && DeleteFileW(file_name));
     assert(RemoveDirectoryW(directory_name) && RemoveDirectoryW(L"ambient"));
 }

@@ -145,6 +145,71 @@ static void wf_socket_reuse_address(int descriptor) {
     (void)setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
 }
 
+/* The longest component `wf_file_open_beneath` copies out of a path; a longer
+ * one is a name too long for any host. */
+#define WF_FILE_COMPONENT_BYTES 1024
+
+/* [PRE-2] Opens `path` below `directory` without following a link at any
+ * component. Each component before the last, other than an empty one and `.`,
+ * which select the directory they are looked up in, is opened as a directory
+ * of the one before it with O_NOFOLLOW, so a link there ends the open; the
+ * last is opened with the caller's flags, which carry O_NOFOLLOW, and an empty
+ * last component opens the directory itself. The caller's `directory` is never
+ * closed, and a descriptor opened on the way is closed on every exit. A
+ * component is looked up from the descriptor of the one before it, so a rename
+ * or a link planted while the path is looked up cannot redirect a component
+ * that was already reached. */
+static int wf_file_open_beneath(int directory, const char *path, int flags,
+                                unsigned mode, unsigned has_mode) {
+    char component[WF_FILE_COMPONENT_BYTES];
+    int current = directory;
+    int owned = 0;
+    int descriptor;
+    int saved;
+    const char *cursor = path;
+    for (;;) {
+        const char *end = strchr(cursor, '/');
+        size_t length = end != NULL ? (size_t)(end - cursor) : strlen(cursor);
+        if (length >= sizeof component) {
+            errno = ENAMETOOLONG;
+            descriptor = -1;
+            break;
+        }
+        memcpy(component, cursor, length);
+        component[length] = '\0';
+        if (end == NULL) {
+            const char *name = length == 0 ? "." : component;
+            descriptor = has_mode != 0
+                ? WF_FILE_OPENAT(current, name, flags, (mode_t)mode)
+                : WF_FILE_OPENAT(current, name, flags);
+            break;
+        }
+        cursor = end + 1;
+        if (length == 0 || (length == 1 && component[0] == '.')) {
+            continue;
+        }
+        do {
+            descriptor = WF_FILE_OPENAT(
+                current, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+            );
+        } while (descriptor < 0 && errno == EINTR);
+        if (descriptor < 0) {
+            break;
+        }
+        if (owned) {
+            (void)close(current);
+        }
+        current = descriptor;
+        owned = 1;
+    }
+    saved = errno;
+    if (owned) {
+        (void)close(current);
+    }
+    errno = saved;
+    return descriptor;
+}
+
 static wf_file_result wf_file_execute_once(wf_file_request *request) {
     wf_file_result result;
     memset(&result, 0, sizeof(result));
@@ -237,7 +302,19 @@ static wf_file_result wf_file_execute_once(wf_file_request *request) {
             result.head.open_outcome = WF_FILE_OPEN_FAILED;
             return result;
         }
-        if (request->operation.open_at.has_mode != 0) {
+        if (wf_file_open_walks(request->operation.open_at.path,
+                               request->operation.open_at.flags)) {
+            result.head.value = wf_file_open_beneath(
+                request->operation.open_at.directory,
+                request->operation.open_at.path,
+                request->operation.open_at.flags
+                    | wf_file_open_kind_flags(
+                          request->operation.open_at.expected_kind
+                      ),
+                request->operation.open_at.mode,
+                request->operation.open_at.has_mode
+            );
+        } else if (request->operation.open_at.has_mode != 0) {
             result.head.value = WF_FILE_OPENAT(
                 request->operation.open_at.directory,
                 request->operation.open_at.path,
