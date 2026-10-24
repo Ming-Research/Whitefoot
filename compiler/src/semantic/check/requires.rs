@@ -1108,8 +1108,15 @@ impl<'unit> DeclarationInventory<'unit> {
         {
             return self.invalid_clause(clause, entry);
         }
-        if let Some(place) = self.tree.first_child_with(atom, Production::Place)? {
-            return self.validate_clause_place(clause, entry, place);
+        // [ENT-2] clause (b): whether a subscripted place is a term depends
+        // on the type it selects and on its offsets, which the typed half
+        // judges once the place is checked [`validate_clause_checked_forms`].
+        if self
+            .tree
+            .first_child_with(atom, Production::Place)?
+            .is_some()
+        {
+            return Ok(());
         }
         if self
             .tree
@@ -1119,27 +1126,6 @@ impl<'unit> DeclarationInventory<'unit> {
             return Ok(());
         }
         Err(SemanticCompilerFailure::InvalidCanonicalTree.into())
-    }
-    fn validate_clause_place(
-        &self,
-        clause: ClauseKind<'_>,
-        entry: NodeId,
-        place: NodeId,
-    ) -> Result<(), CheckStop> {
-        // [ENT-2] clause (b): a place formed with field selections,
-        // `^` suffixes and at least one subscript whose final step
-        // selects a readonly field is a term of the clause language,
-        // `rows^[i].len` and `nodes^[i].count` alike. A clause names no element value, so
-        // a subscript that ends the place is this rule's refusal here; one
-        // followed by a further step is judged against the selected field's
-        // declaration once the place is typed [`validate_clause_checked_forms`].
-        let suffixes = self.tree.children_with(place, Production::Psuffix)?;
-        for (position, &suffix) in suffixes.iter().enumerate() {
-            if self.tree.subscript_offset(suffix)?.is_some() && position + 1 == suffixes.len() {
-                return self.invalid_clause(clause, entry);
-            }
-        }
-        Ok(())
     }
     pub(super) fn invalid_clause<T>(
         &self,
@@ -2517,9 +2503,10 @@ impl<'unit> TypeContext<'unit> {
     /// as executable conversion obligations.
     ///
     /// A subscript is admitted only inside an [ENT-2] clause (b) place: a
-    /// measure read, or a read whose final step selects a readonly field of
-    /// one fragment type. Any other subscripted read names an element value,
-    /// which a clause cannot.
+    /// measure read, or a read that selects one fragment integer, an element
+    /// or an integer field inside one, every offset a tracked place or a
+    /// constant. Any other subscripted read is no term, which a clause cannot
+    /// name.
     pub(super) fn validate_clause_checked_forms(
         &self,
         clause: ClauseKind<'_>,
@@ -2541,10 +2528,8 @@ impl<'unit> TypeContext<'unit> {
                 .path
                 .iter()
                 .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
-                .then(|| root.readonly_field_term(&self.nominals)),
-            CheckedExpression::RangeIndex { place, .. } => {
-                Some(place.readonly_field_term(&self.nominals))
-            }
+                .then(|| root.integer_element_term()),
+            CheckedExpression::RangeIndex { place, .. } => Some(place.integer_element_term()),
             CheckedExpression::ArrayIndex { .. }
             | CheckedExpression::BufferIndex { .. }
             | CheckedExpression::BorrowRangeIndex { .. } => Some(None),

@@ -8,7 +8,6 @@ struct ProjectionEndpoint {
     ty: CheckedType,
     run: bool,
     indexed: bool,
-    readonly: bool,
     represented: bool,
 }
 
@@ -86,19 +85,17 @@ impl Input<'_, '_> {
                 Some(path)
             }
             // [ENT-2] clause (b): a subscripted place is a term exactly when
-            // its final step selects a readonly field of one fragment type.
-            // Its offsets are part of its identity, so only a place whose
-            // every offset was captured is one; the measure former keeps its
-            // own row in `measure_operand`.
+            // the value it selects is one fragment integer, an element or an
+            // integer field inside one. Its offsets are part of its identity,
+            // so only a place whose every offset was captured is one; the
+            // measure former keeps its own row in `measure_operand`.
             CheckedExpression::ReadStorage { root, .. }
-                if root.readonly_field_term(self.context.nominals)
-                    == Some(SubscriptedTerm::Represented) =>
+                if root.integer_element_term() == Some(SubscriptedTerm::Represented) =>
             {
                 Some(container_root_path(root))
             }
             CheckedExpression::RangeIndex { place, .. }
-                if place.readonly_field_term(self.context.nominals)
-                    == Some(SubscriptedTerm::Represented) =>
+                if place.integer_element_term() == Some(SubscriptedTerm::Represented) =>
             {
                 Some(place.proof_place())
             }
@@ -135,14 +132,7 @@ impl Input<'_, '_> {
             // prior type, so an untyped default cannot hide a new subscript.
             return projections.is_empty();
         };
-        self.typed_integer_place_admitted(
-            ty,
-            admission.root_is_range,
-            false,
-            true,
-            false,
-            &projections,
-        )
+        self.typed_integer_place_admitted(ty, admission.root_is_range, false, true, &projections)
     }
 
     fn written_integer_place_admitted(
@@ -151,28 +141,22 @@ impl Input<'_, '_> {
         root_is_range: bool,
         projections: &[PlaceStep],
     ) -> bool {
-        let (indexed, offsets, readonly) = match target {
-            CheckedSetTarget::Place(_) => (false, None, None),
+        let (indexed, offsets) = match target {
+            CheckedSetTarget::Place(_) => (false, None),
             CheckedSetTarget::Storage(place) => (
                 place
                     .path
                     .iter()
                     .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))),
                 place.subscripted_term(),
-                place.readonly_field_term(self.context.nominals),
             ),
-            CheckedSetTarget::RangeIndex(place) => (
-                true,
-                place.subscripted_term(),
-                place.readonly_field_term(self.context.nominals),
-            ),
+            CheckedSetTarget::RangeIndex(place) => (true, place.subscripted_term()),
         };
         self.typed_integer_place_admitted(
             target.ty(),
             root_is_range,
             indexed,
             !indexed || offsets == Some(SubscriptedTerm::Represented),
-            readonly == Some(SubscriptedTerm::Represented),
             projections,
         )
     }
@@ -186,7 +170,6 @@ impl Input<'_, '_> {
         run: bool,
         indexed: bool,
         represented: bool,
-        base_readonly: bool,
         projections: &[PlaceStep],
     ) -> bool {
         let Some(endpoint) = self.projection_endpoint(
@@ -194,7 +177,6 @@ impl Input<'_, '_> {
                 ty,
                 run,
                 indexed,
-                readonly: base_readonly,
                 represented,
             },
             projections,
@@ -202,7 +184,7 @@ impl Input<'_, '_> {
             return false;
         };
         endpoint.represented
-            && (!endpoint.indexed || (endpoint.readonly && fragment_type(endpoint.ty).is_some()))
+            && (!endpoint.indexed || fragment_type(endpoint.ty).is_some())
     }
 
     pub(super) fn goal_expression_projection_type(
@@ -217,7 +199,6 @@ impl Input<'_, '_> {
             ty: datum.ty(),
             run: false,
             indexed: false,
-            readonly: false,
             represented: true,
         };
         if let Some(admission) = datum.admission() {
@@ -254,8 +235,7 @@ impl Input<'_, '_> {
                     .unwrap_or(default_type),
                 run: admission.root_is_range,
                 indexed: false,
-                readonly: false,
-                represented: true,
+                    represented: true,
             },
             &suffix,
         )
@@ -358,7 +338,6 @@ impl Input<'_, '_> {
             )
         };
         for step in projections {
-            endpoint.readonly = false;
             match step {
                 PlaceStep::Index(offset) | PlaceStep::Page(offset) => {
                     endpoint.indexed = true;
@@ -388,7 +367,6 @@ impl Input<'_, '_> {
                     };
                     let field = fields.get(*field as usize)?;
                     endpoint.ty = field.ty;
-                    endpoint.readonly = field.readonly;
                     endpoint.run = false;
                 }
                 PlaceStep::Deref => {
@@ -402,12 +380,11 @@ impl Input<'_, '_> {
                     endpoint.ty = self.owned_path_type(endpoint.ty, &[*step])?;
                     endpoint.run = false;
                 }
-                // [OP-15, MSR-1] a measure is a readonly u64 field of the
-                // selected descriptor, so ENT-2(b) admits it below a
-                // subscript as it admits `table[i].len`.
+                // [OP-15, MSR-1] a measure is a u64 field of the selected
+                // descriptor, so ENT-2(b) admits it below a subscript as it
+                // admits `table[i].len`.
                 PlaceStep::Measure(_) => {
                     endpoint.ty = CheckedType::Integer(IntegerType::U64);
-                    endpoint.readonly = true;
                     endpoint.run = false;
                 }
                 _ => return None,

@@ -202,10 +202,10 @@ where
 -- spec FN-9 dc8c78b15eb05053
 -- spec FN-9 c41a9690f56f2e8f
 -- spec ENT-2 6cf8c7e39161964d
--- spec ENT-3.S5 96db5232821f2958
+-- spec ENT-3.S5 f114be3cfa53175a
 -- spec ENT-3.S5 031da783167c8ba8
 -- spec ENT-3.S5 34b6becc68fcb93b
--- spec ENT-3.S5 f55912d947d2e812
+-- spec ENT-3.S5 eeb08ad298606b31
 -- spec ENT-3.S7 c886ce025709bb26
 -- spec ENT-6 aaae558a8a1cf6f6
 /-- A whole-binding `set` [SET-1, ENT-3.S5, ENT-5, ENT-6]: a fragment-typed
@@ -528,7 +528,7 @@ def establishRequire (env : Env) (st : State) (r : Relation) : State :=
 
 -- spec FN-9 950a5f281ac705d5
 -- spec FN-9 06637cddd1138eb4
--- spec FN-9 13f9ec57ad442ca0
+-- spec FN-9 f1da929500ee7293
 -- spec FN-9 f224d0caa9568643
 /-- A postcondition's admitted shape [FN-9]: each side is a constant
 displacement of zero or one datum with coefficient one, at most one side also

@@ -61,6 +61,29 @@ jobs:
           grep -E -A6 '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
           grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
           exit "$status"
+  # The rest of the corpus group: the programs, documentation examples and
+  # CLI harnesses, since every element read in a body now forms a term.
+  corpus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Decline core dumps
+        run: sudo sysctl -w kernel.core_pattern=core
+      - name: Run the corpus tests except the conformance adapter
+        run: |
+          ulimit -c 0
+          perl .github/run-check.pl elements-programs cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --bins --test '*' --locked --offline -- --skip conformance::adapter::
   static:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
