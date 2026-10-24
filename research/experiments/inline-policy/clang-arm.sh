@@ -12,6 +12,10 @@
 #                 -Wl,-mllvm to every LTO link
 #   ARM_LTO       1 to turn an ordinary compile-and-link into a full-LTO one
 #                 (lld), which internalizes every symbol but the entry points
+#   ARM_HINT      1 to add `inlinehint` to attribute group #0, which every
+#                 emitted Whitefoot definition carries, in the emitted module
+#                 (module.ll) and its fragments (fragment-N.ll), and in no
+#                 compiler-owned runtime unit
 #   ARM_REMARKS   a file that collects the inline remarks of every invocation
 #   ARM_CLANG     the real clang (default /usr/bin/clang)
 set -euo pipefail
@@ -20,6 +24,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 ARM_OPT=2
 ARM_LLVM=
 ARM_LTO=0
+ARM_HINT=0
 ARM_REMARKS=
 ARM_CLANG=/usr/bin/clang
 if [ -f "$here/arm.conf" ]; then
@@ -35,6 +40,16 @@ for argument in "$@"; do
     -O2) argument="-O$ARM_OPT" ;;
     -c | -S | -E | --version | -dumpversion) compile_only=1 ;;
     -flto=*) lto=1 ;;
+    esac
+    case "$argument" in
+    */module.ll | */fragment-*.ll)
+        if [ "$ARM_HINT" = 1 ]; then
+            hinted="${argument%.ll}.hinted.ll"
+            grep -q '^attributes #0 = { ' "$argument"
+            sed 's/^attributes #0 = { /attributes #0 = { inlinehint /' "$argument" > "$hinted"
+            argument=$hinted
+        fi
+        ;;
     esac
     args+=("$argument")
 done

@@ -194,24 +194,15 @@ jobs:
         # base names the compiler of the base side: shrink, or main for the
         # library before shrinking.
         include:
-          - arm: same
+          - arm: hint
             base: shrink
-            conf: ARM_OPT=2
-          - arm: t275
+            conf: ARM_HINT=1
+          - arm: hint-lto
             base: shrink
-            conf: ARM_LLVM=-inline-threshold=275
-          - arm: t325
-            base: shrink
-            conf: ARM_LLVM=-inline-threshold=325
-          - arm: t400
-            base: shrink
-            conf: ARM_LLVM=-inline-threshold=400
-          - arm: lto-t325
-            base: shrink
-            conf: ARM_LTO=1 ARM_LLVM=-inline-threshold=325
-          - arm: t325-vs-main
+            conf: ARM_HINT=1 ARM_LTO=1
+          - arm: hint-vs-main
             base: main
-            conf: ARM_LLVM=-inline-threshold=325
+            conf: ARM_HINT=1
     steps:
       - uses: actions/checkout@v4
         with:

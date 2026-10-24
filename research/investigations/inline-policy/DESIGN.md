@@ -149,13 +149,8 @@ full-LTO link. This confirms from LLVM's own remarks the attribution that
 board item read from IR.
 
 **Census.** The census of today's settings counts call sites between
-Whitefoot definitions. Its costs for kept sites are truncated: LLVM stops
-pricing once the running cost passes the threshold, so a kept site's
-reported cost is a lower bound and this round's band counts above 1 do not
-measure distance from the threshold. Inlined sites are exact: 42 of 1,270
-in the bench, 26 of 1,009 in Halo and 3,254 of 111,000 in the corpus were
-inlined within 20% below the threshold. Round 2 repeats the census with
-full costs.
+Whitefoot definitions; its counts are given with round 2's, which priced
+every site in full.
 
 **Sweep.** Text size and compile time (median of two interleaved compiles)
 of each arm against today's settings:
@@ -226,3 +221,83 @@ comparison needs.
   225 decides how much a threshold moves across the corpus.
 - The comparison with the library before shrinking passes when no
   remove-insert interval lies wholly above 1.
+
+### Results
+
+[Run 40094784937](https://github.com/Ming-Research/Whitefoot/actions/runs/40094784937)
+on commit `68e63dfa8`. The same-settings arm (Intel Xeon Platinum 8573C) judged
+none of its 23 cells slower or faster and produced byte-identical images, so
+on a hosted runner a judged cell is not a frequent false alarm; the arms
+below ran on AMD EPYC 7763 except full LTO with threshold 325 (9V45).
+
+**Full-cost census.** `-inline-cost-full` changed no count of the default
+build's or the cached build's census: with remarks requested, LLVM already
+prices those sites in full. It changed Halo's full-LTO census, whose round 1
+costs were truncated. Kept call sites between Whitefoot definitions, with
+ordinary thresholds (cold sites, at 45, apart), and how many a higher base
+threshold would admit at their first pricing (the bonuses LLVM adds scale
+with the base):
+
+| Program | decisions | kept, priced | admitted at 275 | at 325 | at 400 | kept cold sites |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| bench (shrinking) | 2,136 | 819 | 66 | 162 | 189 | 58 |
+| Halo | 7,683 | 6,572 | 350 | 452 | 706 | 1,419 |
+| v2h | 3,636 | 1,209 | 94 | 178 | 222 | 226 |
+| corpus (97 programs) | 187,255 | 71,673 | 4,979 | 12,975 | 15,477 | 6,314 |
+
+So the witness is not alone: in the corpus 12,975 kept sites (18% of the kept
+ones) cost between the threshold and 1.44 times it, and Halo's
+`native_binding` is again 310 against 225 at its four sites. These are
+static counts, the first pricing of each site; admitting one changes the
+pricing of its callers.
+
+**Sweep.** Against today's settings with shrinking:
+
+| Arm | bench text | Halo text | corpus text | Halo compile | remove-insert 1,000 / 10,000 / 1,000,000 | fib | cells judged slower |
+| --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| threshold 275 | 1.036 | 1.044 | 1.031 | 1.023 | none / none / ? | 0.968 ? | lookup-miss 1,000 |
+| threshold 325 | 1.074 | 1.064 | 1.073 | 1.033 | 0.923 / 0.923 / 0.862 | 0.884 [0.881, 0.886] | iterate 1,000,000 1.003 |
+| threshold 400 | 1.115 | 1.189 | 1.120 | 1.081 | 0.989 / 0.995 / ? | 0.866 [0.857, 0.869] | remove 1,000 and 10,000; iterate 1,000,000 |
+| full LTO, threshold 325 | 0.442 | 1.064 | 0.437 | 1.072 | 0.969 / 0.959 / 0.914 | 0.897 ? | lookup-hit 1,000 |
+
+Threshold 325 with shrinking against today's settings without shrinking:
+remove-insert 0.972 [0.966, 0.985], 0.974 [0.968, 0.979] and 0.964
+[0.946, 0.985], fib 0.885, and draining a map to empty 1.96, 1.54 and 1.32
+times slower at the three sizes, which is shrinking's own rebuilding work,
+accepted on card hash-shrink-cold-path and not an inlining effect.
+
+Reading of round 2:
+
+- Threshold 325 repeats round 1 on the same runner model: the witness
+  recovers past the library before shrinking, and fib is 12% faster. 275
+  does not recover the witness; 400 recovers less of it than 325 and slows
+  draining, while fib gains slightly more. The response is not monotonic
+  in the threshold: admitting more sites moves the cliff to the callers'
+  callers. A threshold chosen by the witness is a position on that cliff,
+  which the next library change can move again; the number needs a ground
+  of its own.
+- Full LTO for the default build keeps its 56%–58% smaller text with
+  threshold 325 and the witness recovers there too; its round 1 iterate
+  slowdown does not repeat on this runner model.
+
+## Round 3: the hint level for Whitefoot's own definitions (hosted runners)
+
+Written before measuring. 325 is LLVM's own `inlinehint` threshold, the
+level clang gives a C++ function declared `inline` and rustc a Rust
+`#[inline]` function. Whitefoot has no inline annotation, so the compiler
+could state the hint itself for every source definition, with the IR
+attribute `inlinehint` instead of an LLVM command-line option: that keeps
+the compiler-owned C runtime at LLVM's defaults, keeps the cold-site cap of
+45 (a hint does not lift it), and travels through every build mode,
+fragments included, without `-mllvm` plumbing into each link. The arm adds
+the attribute to the attribute group every emitted definition carries.
+
+- The hint arm is preferred over a global threshold when, against today's
+  settings, it recovers the witness (both remove-insert intervals wholly
+  below 1) and fib improves with no cell judged slower beyond the 0.3%
+  iterate cell 325 already shows; it is compared with 325 by text size and
+  compile time.
+- Against today's settings without shrinking, no remove-insert interval
+  lies wholly above 1.
+- Hint with full LTO is measured to see whether the two compose as 325 and
+  full LTO did.
