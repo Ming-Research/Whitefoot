@@ -986,8 +986,9 @@ theorem start_safe {F : Model} {p : Program} (L : Laws F) (hp : p.accepts = true
   intro c0 hs n
   obtain ⟨f, hf, he⟩ := start_some hs
   have hf' : p.fns.find? (fun x => x.name == "main") = some f := hf
-  have hb : (f.name == "main") = true := List.find?_some hf'
-  have hname : f.name = "main" := beq_iff_eq.mp hb
+  have hname : f.name = "main" := by
+    have hb := List.find?_some hf'
+    simpa using hb
   have hfn : p.fn? f.name = some f := by
     rw [hname]
     exact hf
