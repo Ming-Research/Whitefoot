@@ -30,7 +30,7 @@ for kernel in "${kernels[@]}"; do
     for arm in baseline candidate; do
         directory=${!arm}
         for width in "${widths[@]}"; do
-            env WF_WORKERS="$width" timeout 60s "$directory/$kernel" verify \
+            env -u WF_SPLIT_WORK WF_WORKERS="$width" timeout 60s "$directory/$kernel" verify \
                 > "$results/logs/verify-$kernel-$arm-$width.log" 2>&1
         done
     done
@@ -48,7 +48,7 @@ for pass in {0..4}; do
                 if [[ $arm == candidate && ${4:-} == slow ]]; then control=(slow); fi
                 key=$kernel-$arm-$width-$pass
                 echo "measure $key"
-                env WF_WORKERS="$width" timeout 60s "$directory/$kernel" \
+                env -u WF_SPLIT_WORK WF_WORKERS="$width" timeout 60s "$directory/$kernel" \
                     measure "$arm" "$width" "$pass" "${control[@]}" \
                     > "$results/logs/$key.tsv" 2> "$results/logs/$key.log"
                 cat "$results/logs/$key.tsv" >> "$results/raw.tsv"

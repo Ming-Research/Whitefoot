@@ -7,14 +7,15 @@ demand, preserve ordinary sequential computation when no splitting is useful,
 and cover indexed reductions and handler-bearing values without introducing
 a second acceptance path?
 
-This is a stage-3 design proposal against main
-`5b7838b328632999712aacf8313717b6dca1ade6`, not an implemented capability or
-a measurement result. The compiler and runtime remain unchanged by this
-document. The proposed design-tree decisions await owner approval. The
-worth-splitting card remains open: proceed on option A, with runtime range
-lengths for loop pricing, static statement-group grain, no scheduling clock
-in stage 3, and adaptive pricing reopened by real-program mispricing evidence.
-The requested registration rule covers every lane, including helpers.
+This began as a stage-3 design proposal against main
+`5b7838b328632999712aacf8313717b6dca1ade6`; the sections headed "as built"
+record the implementation on this branch. It is not yet a measurement
+result: the acceptance registration below is unmeasured. The proposed
+design-tree decisions await owner approval. Worth-splitting follows the
+owner's ruling: runtime range lengths for loop pricing, static
+statement-group grain, no scheduling clock in stage 3, and adaptive pricing
+reopened by real-program mispricing evidence. The requested registration
+rule covers every lane, including helpers.
 
 Demand-driven recursive calls, a new recursion grain beyond experiment 6b,
 and centralizing all decisions in one pass belong to later stages. Existing
