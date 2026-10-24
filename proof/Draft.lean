@@ -2006,7 +2006,8 @@ theorem domain_l0 {ν : TermVal} {op : InfixOp} {t : IntTy} {va vb : Val} {x y :
     (hcs : (domainQuery goal op t va vb).l0 = some cs)
     (hall : ∀ c ∈ cs, ∃ fs ∈ c, FactsHold ν fs) : InfixDomain op t x y := by
   have hz := ν.val_z
-  simp only [domainQuery] at hcs
+  delta domainQuery at hcs
+  dsimp only at hcs
   rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
   · obtain ⟨⟨ta, ka⟩, hta⟩ : ∃ p, va.term = some p := by
       cases hta : va.term with
@@ -2172,7 +2173,8 @@ theorem domain_affine {G : Nat → Int} {op : InfixOp} {t : IntTy} {va vb : Val}
     (hbi : ∀ f, vb.image = some f → f.eval G = y)
     (hts : (domainQuery goal op t va vb).affine = some ts)
     (hall : ∀ q ∈ ts, q.1.Holds G) : InfixDomain op t x y := by
-  simp only [domainQuery] at hts
+  delta domainQuery at hts
+  dsimp only at hts
   rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
   · obtain ⟨fa, hfa⟩ : ∃ f, va.image = some f := by
       cases hfa : va.image with
@@ -2263,7 +2265,8 @@ theorem domain_affineAny {G : Nat → Int} {op : InfixOp} {t : IntTy} {va vb : V
     (hbi : ∀ f, vb.image = some f → f.eval G = y)
     (hts : ts ∈ (domainQuery goal op t va vb).affineAny)
     (hall : ∀ q ∈ ts, q.Holds G) : InfixDomain op t x y := by
-  simp only [domainQuery] at hts
+  delta domainQuery at hts
+  dsimp only at hts
   rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
   · cases hfa : va.image <;> cases hfb : vb.image <;> cases o <;> simp [hfa, hfb] at hts
   · simp only [InfixDomain, DivOp.defined, decide_eq_true_eq]
@@ -2303,7 +2306,8 @@ theorem domain_product {env : Env} {g : Gen} {st : State} {E E0 : Whitefoot.Env}
     (hp : (domainQuery goal op t va vb).product = some (a, b, t'))
     (hi : (intervalProduct (view env g st) st a b t').isSome = true) :
     InfixDomain op t x y := by
-  simp only [domainQuery] at hp
+  delta domainQuery at hp
+  dsimp only at hp
   rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
   · cases o with
     | add => cases hfa : va.image <;> cases hfb : vb.image <;> simp [hfa, hfb] at hp
@@ -2351,7 +2355,8 @@ theorem domain_product {env : Env} {g : Gen} {st : State} {E E0 : Whitefoot.Env}
 theorem domain_bridge_none {goal : GExpr} {op : InfixOp} {t : IntTy} {va vb : Val}
     {ts : List (Ineq × Option (Form × Term))}
     (hts : (domainQuery goal op t va vb).affine = some ts) : ∀ q ∈ ts, q.2 = none := by
-  simp only [domainQuery] at hts
+  delta domainQuery at hts
+  dsimp only at hts
   repeat' split at hts
   all_goals first
     | (simp only [Option.some.injEq] at hts; subst hts; simp)
@@ -2385,8 +2390,8 @@ theorem domainQuery_means {env : Env} {g : Gen} {st : State} {E E0 : Whitefoot.E
     fun ts hts hall => domain_affine hai hbi hts hall,
     fun ts hts q hq lhs r hr => ?_, fun ts hts hall => domain_affineAny hai hbi hts hall,
     fun a b t' hp hi => domain_product h hat hai hax hbt hbi hbx hp hi⟩
-  · simp only [domainQuery, Option.some.injEq] at he
-    subst he
+  · have he' : some goal = some e := he
+    cases he'
     exact hg hev
   · rw [domain_bridge_none hts q hq] at hr
     cases hr
@@ -2533,7 +2538,7 @@ theorem atomTy_litOk {sc : Static.Scope} :
     simp only [Static.atomTy] at h
     obtain ⟨_, -, h⟩ := Typing.bind_ok h
     obtain ⟨_, hot, -⟩ := Typing.bind_ok h
-    exact atomTy_litOk hot
+    exact (atomTy_litOk hot : off.LitOk)
 
 theorem mapM_litOk {sc : Static.Scope} :
     ∀ {as : List Atom} {ts : List Ty}, as.mapM (Static.atomTy sc) = .ok ts → ∀ a ∈ as, a.LitOk
@@ -2802,10 +2807,12 @@ theorem call_progress {env : Env} {st : State} {g g1 : Gen} {E E0 : Whitefoot.En
       obtain ⟨args, g2, -, hr⟩ := Discharge.run_bind hr
       obtain ⟨gen, g3, -, hr⟩ := Discharge.run_bind hr
       obtain ⟨u, g4, -, hr⟩ := Discharge.run_bind hr
-      obtain ⟨img, g5, -, hr⟩ := Discharge.run_bind hr
-      obtain ⟨hr', -⟩ := Discharge.run_pure hr
-      subst hr'
-      simp at hcall
+      split at hr
+      all_goals
+        obtain ⟨img, g5, -, hr⟩ := Discharge.run_bind hr
+        obtain ⟨hr', -⟩ := Discharge.run_pure hr
+        subst hr'
+        simp at hcall
     | exitStatus =>
       cases targs with
       | cons _ _ => exact absurd hty Typing.reject_ne
