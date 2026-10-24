@@ -1,5 +1,6 @@
 //! A completion that waits in the ring of a driver whose thread is computing
-//! reaches its context within 100 ms, whether or not another driver is idle.
+//! reaches its context within 100 ms (one second in a sanitized build),
+//! whether or not another driver is idle.
 //!
 //! `ring_assist.wf` accepts two loopback connections and serves each in a
 //! context of its own. One peer asks for a recurrence that never waits; the
@@ -46,7 +47,20 @@ const DOUBLINGS: u32 = 4;
 /// 1 ms look for ready contexts; a run where the idle driver took nothing is
 /// misplaced and run again.
 const SPLIT_SPIN: u64 = 20_000_000;
-const ECHO_LIMIT: Duration = Duration::from_millis(100);
+
+/// The bound on an echo's return. Without the ring trigger the echo waits for
+/// the whole computation, and a computation that ends before the bound decides
+/// nothing and is run again with more steps, so a longer bound tells the
+/// stall from the fix just as well. A sanitized run executes the runtime far
+/// more slowly, and the sanitized corpus shares its CPUs among many programs,
+/// so its bound is one second.
+fn echo_limit() -> Duration {
+    if crate::support::sanitizer().is_some() {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_millis(100)
+    }
+}
 /// Runs an arm may take to show its placement. The idle driver can take the
 /// echo's context before it parks, which makes that run split; on 2 CPUs three
 /// runs sometimes held none that stayed on the entry's driver. Every run still
@@ -235,6 +249,7 @@ fn run_arm(arm: &str, spin: u64, placed: impl Fn(&[DriverReport]) -> bool) -> Op
     let program = build_program(&compile_program("ring_assist.wf"));
     let mut misplaced = String::new();
     let mut steps = STEPS;
+    let echo_limit = echo_limit();
     let mut doublings = 0;
     let mut attempt = 0;
     let mut placements = 0;
@@ -242,8 +257,8 @@ fn run_arm(arm: &str, spin: u64, placed: impl Fn(&[DriverReport]) -> bool) -> Op
         attempt += 1;
         let run = run_once(&program, steps, spin)?;
         assert!(
-            run.echo < ECHO_LIMIT,
-            "{arm} arm, attempt {attempt}: the echo took {:?}, over {ECHO_LIMIT:?}, beside a computation of {steps} steps:\n{}",
+            run.echo < echo_limit,
+            "{arm} arm, attempt {attempt}: the echo took {:?}, over {echo_limit:?}, beside a computation of {steps} steps:\n{}",
             run.echo,
             run.stderr
         );

@@ -6,7 +6,8 @@
 //! never services a ring or changes scheduling. Sixteen runs also include a
 //! split control whose source spins until the child publishes entry; that
 //! control must record distinct threads. Both placements must occur, and every
-//! receive must release the computation within 100 ms of the peer's send.
+//! receive must release the computation within 100 ms of the peer's send, or
+//! within one second in a sanitized build.
 
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
@@ -18,7 +19,20 @@ use crate::support::ProgramChild;
 
 const RUNS: usize = 16;
 const START_LIMIT: Duration = Duration::from_secs(3);
-const RECEIVE_LIMIT: Duration = Duration::from_millis(100);
+
+/// The bound on the peer's send to the program's exit. The stall this case
+/// guards against does not end by itself: only the receive releases the
+/// computation, so a longer bound tells it from the fix just as well. A
+/// sanitized run executes the runtime and ends the process far more slowly,
+/// and the sanitized corpus shares its CPUs among many programs, so 100 ms
+/// failed one run of a thread-sanitized corpus in a full check.
+fn receive_limit() -> Duration {
+    if crate::support::sanitizer().is_some() {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_millis(100)
+    }
+}
 
 // GNU ld wrapping observes the ordinary runtime entry points on main and on
 // this branch. These calls retain their real behavior; no observer progresses
@@ -131,6 +145,7 @@ fn native_ring_count(child: &ProgramChild) -> usize {
 
 #[test]
 fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
+    let receive_limit = receive_limit();
     let program = build_program_with_driver_arguments(
         &compile_program("busy_ring_receive.wf"),
         Some(PLACEMENT_OBSERVER),
@@ -222,7 +237,7 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
         assert_eq!(rings, 1, "run {run}: the retained pre-spawn root ring");
         let mut peer = TcpStream::connect_timeout(&address, START_LIMIT)
             .expect("connect to the witness's TCP listener");
-        peer.set_write_timeout(Some(RECEIVE_LIMIT))
+        peer.set_write_timeout(Some(receive_limit))
             .expect("bound the peer's write");
         // Send only after observing both the native receive's suspension and
         // the child's acquired atomic statement. Equal thread IDs also prove
@@ -270,14 +285,18 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
             .expect("send one byte through the TCP connection");
         while child.try_wait().expect("inspect receive progress").is_none() {
             assert!(
-                sent.elapsed() < RECEIVE_LIMIT,
-                "run {run}: the receive did not release the atomic computation within {RECEIVE_LIMIT:?}; placement: {trace}"
+                sent.elapsed() < receive_limit,
+                "run {run}: the receive did not release the atomic computation within {receive_limit:?}; placement: {trace}"
             );
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(
-            sent.elapsed() < RECEIVE_LIMIT,
-            "run {run}: exit exceeded {RECEIVE_LIMIT:?}; placement: {trace}"
+            sent.elapsed() < receive_limit,
+            "run {run}: exit exceeded {receive_limit:?}; placement: {trace}"
+        );
+        println!(
+            "busy-ring receive run {run} split={split}: the program exited {:?} after the send",
+            sent.elapsed()
         );
         drop(peer);
         let output = child
