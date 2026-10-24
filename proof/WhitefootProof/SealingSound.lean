@@ -1475,7 +1475,7 @@ end Merge
 
 /-! ## Paths below a debt -/
 
-theorem Prefixed.symm {c₁ c₂ : List CStep} (h : Prefixed c₁ c₂) : Prefixed c₂ c₁ := h.symm
+theorem Prefixed.symm {c₁ c₂ : List CStep} (h : Prefixed c₁ c₂) : Prefixed c₂ c₁ := Or.symm h
 
 section Paths
 
@@ -1776,5 +1776,280 @@ theorem Ctx.bind_holds {M : Sem X} {f : F} {y : String} {rhs : Rhs T} {kb : Kill
       exact addDebts_keep (covers_recClosed M.eval r' π I) _ ⟨d1, mem_filter_not hd1 hpf, hc1'⟩
 
 end Events
+
+
+/-! ## Writes -/
+
+theorem CPlace.apart_symm {π ρ : CPlace} (h : π.Apart ρ) : ρ.Apart π := ⟨h.2, h.1⟩
+
+theorem CPlace.eq_of {π ρ : CPlace} (h1 : π.root = ρ.root) (h2 : π.path = ρ.path) : π = ρ := by
+  cases π
+  cases ρ
+  cases h1
+  cases h2
+  rfl
+
+/-- Two runtime places that are not apart lie on one path. -/
+theorem CPlace.not_apart {π ρ : CPlace} (h : ¬ π.Apart ρ) :
+    π.root = ρ.root ∧ Prefixed π.path ρ.path := by
+  apply Classical.byContradiction
+  intro hc
+  apply h
+  refine ⟨fun hb => ?_, fun hb => ?_⟩
+  · exact hc ⟨hb.1, Or.inr hb.2⟩
+  · exact hc ⟨hb.1.symm, Or.inl hb.2⟩
+
+/-- A place at or below a place apart from a third is apart from it. -/
+theorem CPlace.apart_of_below {π ρ σ : CPlace} (hb : π.Below ρ) (hap : ρ.Apart σ) :
+    π.Apart σ := by
+  refine ⟨fun hπσ => ?_, fun hσπ => hap.2 (CPlace.below_trans hσπ hb)⟩
+  obtain ⟨hr1, s₁, hs₁⟩ := hb
+  obtain ⟨hr2, s₂, hs₂⟩ := hπσ
+  rcases append_prefix_cases ρ.path s₁ σ.path s₂ (hs₁.trans hs₂.symm) with ⟨e, he⟩ | ⟨e, he⟩
+  · exact hap.2 ⟨hr2.symm.trans hr1, e, he⟩
+  · exact hap.1 ⟨hr1.symm.trans hr2, e, he⟩
+
+theorem Prefixed.eq_of_length {c₁ c₂ : List CStep} (h : Prefixed c₁ c₂)
+    (hl : c₁.length = c₂.length) : c₁ = c₂ := by
+  rcases h with ⟨e, he⟩ | ⟨e, he⟩
+  · have hl2 := congrArg List.length he
+    rw [List.length_append] at hl2
+    rw [List.eq_nil_of_length_eq_zero (by omega : e.length = 0), List.append_nil] at he
+    exact he
+  · have hl2 := congrArg List.length he
+    rw [List.length_append] at hl2
+    rw [List.eq_nil_of_length_eq_zero (by omega : e.length = 0), List.append_nil] at he
+    exact he.symm
+
+/-- A place above a place that exists exists. -/
+theorem Run.exists_of_above {r : Run} {π ω : CPlace} (hω : (r.get ω).isSome = true)
+    (hroot : π.root = ω.root) {e : List CStep} (he : π.path ++ e = ω.path) :
+    (r.get π).isSome = true := by
+  have hωe : ω = ⟨π.root, π.path ++ e⟩ := CPlace.eq_mk hroot.symm he.symm
+  rw [hωe] at hω
+  exact Run.get_prefix_isSome e hω
+
+/-- A path that begins neither below q nor at it, and lies on one path with q
+followed by more steps, lies strictly above q. -/
+theorem above_of_prefixed {p dp q ext : List CStep} (hnb : ¬ ∃ s, q ++ s = p)
+    (h : Prefixed (p ++ dp) (q ++ ext)) : ∃ e, p ++ e = q ∧ e ≠ [] := by
+  have key : ∀ (b d : List CStep), p ++ b = q ++ d → ∃ e, p ++ e = q ∧ e ≠ [] := by
+    intro b d hpq
+    rcases append_prefix_cases p b q d hpq with ⟨e, he⟩ | ⟨e, he⟩
+    · refine ⟨e, he, fun he0 => hnb ⟨[], ?_⟩⟩
+      rw [List.append_nil, ← he, he0, List.append_nil]
+    · exact (hnb ⟨e, he⟩).elim
+  rcases h with ⟨x, hx⟩ | ⟨x, hx⟩
+  · exact key (dp ++ x) ext (by rw [← List.append_assoc]; exact hx)
+  · exact key dp (ext ++ x) (by rw [← List.append_assoc]; exact hx.symm)
+
+section Write
+
+variable {X : Ctx T F}
+
+/-- An invariant that held before a step and fails after it reads a binder datum
+that lies on one path with a written place, when the step keeps the value of
+each place apart from every written place and keeps the place existing only
+where it existed. -/
+theorem Ctx.broken_reached {r r' : Run} {π : CPlace} {I : InvId} (W : CPlace → Prop)
+    (hkeep : ∀ ρ : CPlace, (∀ ω, W ω → ρ.Apart ω) → r'.get ρ = r.get ρ)
+    (hex : (r'.get π).isSome = true → (r.get π).isSome = true)
+    (h : X.InvHolds r π I) (hn : ¬ X.InvHolds r' π I) :
+    ∃ inv dp ω, X.decls.inv? I = some inv ∧ dp ∈ inv.data ∧ W ω ∧
+      ¬ CPlace.Apart ⟨π.root, π.path ++ dp⟩ ω := by
+  apply Classical.byContradiction
+  intro hno
+  apply hn
+  refine Ctx.invHolds_of_data hex ?_ h
+  intro inv hinv dp hdp
+  apply hkeep
+  intro ω hω
+  apply Classical.byContradiction
+  intro hap
+  exact hno ⟨inv, dp, ω, hinv, hdp, hω, hap⟩
+
+/-- The write rows of a write at a member followed by a projection cover each
+place strictly above the member's place whose invariant reads a binder datum on
+one path with the written place [TYPE-11.S3]: in the run before the statement
+and, settled by its kill batch, in the run after it. -/
+theorem Ctx.writeDebts_cover [DecidableEq T] {M : Sem X} {f : F} {kb : Kills T} {r r' : Run}
+    (hf : M.Facts f r) (hfr : M.Frame f kb r r') {m : Shape T} {th : Option (String × Nat)}
+    {πa : CPlace} (hm : m.Denotes M.eval r πa)
+    (hth : ∀ q b, th = some (q, b) →
+      ∃ ρ rest, r.refs q = some ρ ∧ b = ρ.path.length ∧ πa = ⟨ρ.root, ρ.path ++ rest⟩)
+    {proj : List (SStep T)} {ext : List CStep} (hproj : StepsDenote M.eval r proj ext)
+    {π : CPlace} (hroot : π.root = πa.root) {e : List CStep} (he : π.path ++ e = πa.path)
+    (hne : e ≠ []) {I : InvId} (hI : I ∈ X.invsOfPlace π) {inv : Inv}
+    (hinv : X.decls.inv? I = some inv) {dp : List CStep} (hdp : dp ∈ inv.data)
+    (hov : Prefixed (π.path ++ dp) (πa.path ++ ext)) :
+    ∃ d ∈ X.writeDebts f kb ⟨m.root, m.steps ++ proj⟩ m.steps.length th,
+      d.Covers M.eval r π I ∧ d.Covers M.eval r' π I := by
+  have hmlen : m.steps.length = πa.path.length := hm.2.length
+  have hk : π.path.length < m.steps.length := by
+    have hl := congrArg List.length he
+    rw [List.length_append] at hl
+    have hel : e.length ≠ 0 := fun h0 => hne (List.eq_nil_of_length_eq_zero h0)
+    omega
+  have htake : (m.steps ++ proj).take π.path.length = m.steps.take π.path.length :=
+    List.take_append_of_le_length (Nat.le_of_lt hk)
+  have hπpath : πa.path.take π.path.length = π.path := by
+    rw [← he]
+    exact List.take_left' rfl
+  have hst : StepsDenote M.eval r ((m.steps ++ proj).take π.path.length) π.path := by
+    have h1 := hm.2.take π.path.length
+    rw [hπpath] at h1
+    rw [htake]
+    exact h1
+  have hden : Shape.Denotes ⟨m.root, (m.steps ++ proj).take π.path.length⟩ M.eval r π :=
+    ⟨hm.1.trans hroot.symm, hst⟩
+  have hIa : I ∈ X.invsAt ⟨m.root, (m.steps ++ proj).take π.path.length⟩ := by
+    rw [Ctx.invsAt_eq X hden.1 hden.2.kinds]
+    exact hI
+  have hw : Shape.Denotes ⟨m.root, m.steps ++ proj⟩ M.eval r ⟨πa.root, πa.path ++ ext⟩ :=
+    ⟨hm.1, StepsDenote.append hm.2 hproj⟩
+  have hdat : Shape.Denotes ⟨m.root, (m.steps ++ proj).take π.path.length ++ dp.map CStep.lift⟩
+      M.eval r ⟨π.root, π.path ++ dp⟩ :=
+    ⟨hden.1, StepsDenote.append hst (StepsDenote.lift dp)⟩
+  have hreach : X.reaches f ⟨m.root, m.steps ++ proj⟩
+      ⟨m.root, (m.steps ++ proj).take π.path.length⟩ I = true := by
+    unfold Ctx.reaches
+    rw [hinv]
+    exact List.any_eq_true.2 ⟨dp, hdp, Ctx.mayOverlap_of M hf hw hdat hroot.symm hov.symm⟩
+  have hrec : Rec.Denotes (writeRec ⟨m.root, m.steps ++ proj⟩ π.path.length th) M.eval r π := by
+    cases th with
+    | none => trivial
+    | some qb =>
+      obtain ⟨q, b⟩ := qb
+      obtain ⟨ρ, rest, hq, hb, hπa⟩ := hth q b rfl
+      by_cases hbk : b ≤ π.path.length
+      · have e1 : writeRec ⟨m.root, m.steps ++ proj⟩ π.path.length (some (q, b)) =
+            some ⟨q, ((m.steps ++ proj).take π.path.length).drop b⟩ := by
+          simp only [writeRec, ite_eq_left hbk]
+        rw [e1]
+        have he' : π.path ++ e = ρ.path ++ rest := by rw [he, hπa]
+        obtain ⟨x, hx⟩ : ∃ x, ρ.path ++ x = π.path := by
+          rcases append_prefix_cases π.path e ρ.path rest he' with ⟨y, hy⟩ | ⟨y, hy⟩
+          · have hyl : y.length = 0 := by
+              have hl := congrArg List.length hy
+              rw [List.length_append] at hl
+              omega
+            rw [List.eq_nil_of_length_eq_zero hyl, List.append_nil] at hy
+            exact ⟨[], by rw [List.append_nil, hy]⟩
+          · exact ⟨y, hy⟩
+        have hdx : π.path.drop b = x := by
+          rw [← hx]
+          exact List.drop_left' hb.symm
+        have h2 := hst.drop b
+        rw [hdx] at h2
+        have hroot' : π.root = ρ.root := by rw [hroot, hπa]
+        exact ⟨ρ, x, hq, h2, CPlace.eq_mk hroot' hx.symm⟩
+      · have e1 : writeRec ⟨m.root, m.steps ++ proj⟩ π.path.length (some (q, b)) = none := by
+          simp only [writeRec, ite_eq_right hbk]
+        rw [e1]
+        trivial
+  have hc0 : (Debt.inv ⟨m.root, (m.steps ++ proj).take π.path.length⟩ I
+      (writeRec ⟨m.root, m.steps ++ proj⟩ π.path.length th)).Covers M.eval r π I :=
+    ⟨rfl, hden, hrec⟩
+  refine ⟨_, ?_, Ctx.covers_settle hfr hc0⟩
+  unfold Ctx.writeDebts
+  refine List.mem_flatMap.2 ⟨π.path.length, List.mem_range.2 (Nat.lt_min.2 ⟨hk, ?_⟩),
+    List.mem_filterMap.2 ⟨I, hIa, ?_⟩⟩
+  · show π.path.length < (m.steps ++ proj).length
+    rw [List.length_append]
+    omega
+  · show (if X.reaches f ⟨m.root, m.steps ++ proj⟩
+          ⟨m.root, (m.steps ++ proj).take π.path.length⟩ I = true then
+        some (X.settle f kb (.inv ⟨m.root, (m.steps ++ proj).take π.path.length⟩ I
+          (writeRec ⟨m.root, m.steps ++ proj⟩ π.path.length th))) else none) =
+      some (X.settle f kb (.inv ⟨m.root, (m.steps ++ proj).take π.path.length⟩ I
+          (writeRec ⟨m.root, m.steps ++ proj⟩ π.path.length th)))
+    rw [ite_eq_left hreach]
+
+/-- A commit at a place that is not a complete own local binding keeps the
+agreement [TYPE-11.S3, TYPE-11.S4]. -/
+theorem Ctx.store_holds [DecidableEq T] {M : Sem X} {f : F} {w : Place T} {rhs : Rhs T}
+    {kb : Kills T} {s s' : St T} {r r' : Run} (hh : X.Holds M s r) (hf : M.Facts f r)
+    (hs : X.step f s (.store w rhs kb) = some s') (hr : X.RunStep M f (.store w rhs kb) r r') :
+    X.Holds M s' r' := by
+  obtain ⟨πw, v, hw, hval, hset, hfr⟩ := hr
+  -- the state after the right-hand side's hand-off, and the stored value's validity
+  have key : ∃ s₀, X.Holds M s₀ r ∧ s' = X.storeRows f kb w s₀ ∧
+      ∀ (e : List CStep) (I : InvId) (u : Val) (inv : Inv),
+        I ∈ X.invsOfPlace ⟨πw.root, πw.path ++ e⟩ → Val.get v e = some u →
+        X.decls.inv? I = some inv → inv.HoldsOf u := by
+    cases rhs with
+    | fresh =>
+      refine ⟨s, hh, (Option.some.inj hs).symm, ?_⟩
+      intro e I u inv hI hu hinv
+      obtain ⟨t, ht⟩ := Ctx.tyOf_of_mem_append hI
+      exact hval t ht e I u inv (Ctx.mem_invsBelow_of_append ht hI) hu hinv
+    | read p mv =>
+      cases hho : X.handoff f s p with
+      | none =>
+        have h0 : X.step f s (.store w (.read p mv) kb) = none := by simp [Ctx.step, hho]
+        rw [h0] at hs
+        cases hs
+      | some s₀ =>
+        have h1 : X.step f s (.store w (.read p mv) kb) = some (X.storeRows f kb w s₀) := by
+          simp [Ctx.step, hho]
+        rw [h1] at hs
+        refine ⟨s₀, Ctx.handoff_holds hf hh hho, (Option.some.inj hs).symm, ?_⟩
+        obtain ⟨πp, hp, hvp, hty⟩ := hval
+        intro e I u inv hI hu hinv
+        obtain ⟨t, ht⟩ := Ctx.tyOf_of_mem_append hI
+        exact Ctx.handoff_valid hf hh hho hp t v (hty.trans ht) hvp e I u inv
+          (Ctx.mem_invsBelow_of_append ht hI) hu hinv
+  obtain ⟨s₀, hh₀, hs', hvok⟩ := key
+  subst hs'
+  refine ⟨?_, ?_⟩
+  · intro π I hI hn
+    by_cases hb : π.Below πw
+    · -- at or below the written place: the stored value's invariants hold
+      exfalso
+      apply hn
+      obtain ⟨e, rfl⟩ := CPlace.below_eq hb
+      intro u inv hu hinv
+      rw [Run.set_get_below hset e] at hu
+      exact hvok e I u inv hI hu hinv
+    · by_cases hold : X.InvHolds r π I
+      · -- the write breaks an invariant above the written place: a write-row debt
+        have hkeep : ∀ ρ : CPlace, (∀ ω, ω = πw → ρ.Apart ω) → r'.get ρ = r.get ρ :=
+          fun ρ hρ => Run.set_get_apart hset (CPlace.apart_symm (hρ πw rfl))
+        have hex : (r'.get π).isSome = true → (r.get π).isSome = true := by
+          intro hsome
+          by_cases hap : π.Apart πw
+          · rw [← hkeep π (fun ω hω => by rw [hω]; exact hap)]
+            exact hsome
+          · obtain ⟨hr0, hpre⟩ := CPlace.not_apart hap
+            rcases hpre with ⟨e, he⟩ | ⟨e, he⟩
+            · exact Run.exists_of_above (Run.set_get_isSome hset) hr0 he
+            · exact (hb ⟨hr0, e, he⟩).elim
+        obtain ⟨inv, dp, ω, hinv, hdp, hω, hna⟩ :=
+          Ctx.broken_reached (fun ω => ω = πw) hkeep hex hold hn
+        have hω' : ω = πw := hω
+        rw [hω'] at hna
+        obtain ⟨hr1, hpre1⟩ := CPlace.not_apart hna
+        have hr1' : π.root = πw.root := hr1
+        have hpre1' : Prefixed (π.path ++ dp) πw.path := hpre1
+        have hpre2 : Prefixed (π.path ++ dp) (πw.path ++ []) := by
+          rw [List.append_nil]
+          exact hpre1'
+        have hnb : ¬ ∃ x, πw.path ++ x = π.path := fun ⟨x, hx⟩ => hb ⟨hr1', x, hx⟩
+        obtain ⟨e, he, hne⟩ := above_of_prefixed hnb hpre2
+        obtain ⟨m, th, hmt, hmd, hth⟩ := St.resolveRec_denote hh₀.2 hw
+        obtain ⟨d, hd, _, hc'⟩ :=
+          Ctx.writeDebts_cover hf hfr hmd hth .nil hr1' he hne hI hinv hdp hpre2
+        refine addDebts_new (covers_recClosed M.eval r' π I) _ ?_ hc'
+        exact List.mem_flatMap.2 ⟨(m, th), hmt, hd⟩
+      · -- the invariant already failed: its debt stays
+        obtain ⟨d, hd, hc⟩ := hh₀.1 π I hI hold
+        have hd' := storeRemove_keep hh₀.2 hw hd hc hb
+        obtain ⟨e, he, _, he'⟩ := Ctx.killRow_cover hf hfr hd' hc hold
+        exact addDebts_keep (covers_recClosed M.eval r' π I) _ ⟨e, he, he'⟩
+  · intro q ρ hq
+    rw [Run.set_refs hset] at hq
+    exact Ctx.refsOk_kill hfr hh₀.2 hq
+
+end Write
 
 end Whitefoot.Seal
