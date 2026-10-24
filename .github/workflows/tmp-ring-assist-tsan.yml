@@ -12,13 +12,14 @@ env:
   CARGO_INCREMENTAL: 0
 jobs:
   loaded:
-    name: tsan programs ${{ matrix.rep }}
+    name: tsan exit sleep ${{ matrix.sleep }} ${{ matrix.rep }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        rep: [1, 2, 3, 4, 5, 6, 7, 8]
+        sleep: [keep, drop]
+        rep: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
       - name: Set the scratch root
@@ -42,6 +43,7 @@ jobs:
           WHITEFOOT_CHECK_TIMEOUT: 1500
         run: |
           set -u
+          if [ "${{ matrix.sleep }}" = keep ]; then export WF_TMP_KEEP_ATEXIT_SLEEP=1; fi
           out="$RUNNER_TEMP/loaded.txt"
           code=0
           make -C compiler test-corpus-tsan \

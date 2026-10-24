@@ -23,9 +23,8 @@ const START_LIMIT: Duration = Duration::from_secs(3);
 /// The bound on the peer's send to the program's exit. The stall this case
 /// guards against does not end by itself: only the receive releases the
 /// computation, so a longer bound tells it from the fix just as well. A
-/// sanitized run executes the runtime and ends the process far more slowly,
-/// and the sanitized corpus shares its CPUs among many programs, so 100 ms
-/// failed one run of a thread-sanitized corpus in a full check.
+/// sanitized run executes the runtime more slowly, and the sanitized corpus
+/// shares its CPUs among many programs, so its bound is one second.
 fn receive_limit() -> Duration {
     if crate::support::sanitizer().is_some() {
         Duration::from_secs(1)
@@ -143,6 +142,26 @@ fn native_ring_count(child: &ProgramChild) -> usize {
         .count()
 }
 
+/// ThreadSanitizer sleeps one second in the exiting main thread whenever
+/// another thread of the program is still alive, to give an at-exit race time
+/// to show (its `atexit_sleep_ms`, default 1000). The program's exit is the
+/// only event this witness observes after the computation is released, so the
+/// sleep would add a fixed second to the measured interval in the runs where
+/// a runtime thread outlives the main thread's last statement. Only that sleep
+/// is turned off for the witness: races are still reported, and every other
+/// program of the sanitized corpus keeps the default.
+fn without_thread_sanitizer_exit_sleep(command: &mut Command) {
+    if crate::support::sanitizer() != Some(whitefoot::Sanitizer::Thread) {
+        return;
+    }
+    let mut options = std::env::var("TSAN_OPTIONS").unwrap_or_default();
+    if !options.is_empty() {
+        options.push(':');
+    }
+    options.push_str("atexit_sleep_ms=0");
+    command.env("TSAN_OPTIONS", options);
+}
+
 // TEMPORARY diagnostic (ring-assist stall study), removed before the review.
 fn stall_report(child: &mut ProgramChild, run: usize, split: bool, trace: &str, sent: Instant) {
     let mut err = std::io::stderr().lock();
@@ -153,6 +172,31 @@ fn stall_report(child: &mut ProgramChild, run: usize, split: bool, trace: &str, 
         trace.replace('\n', "; ")
     )
     .ok();
+    let pid = child.id().to_string();
+    if let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) {
+        let mut count = 0;
+        for task in tasks.flatten() {
+            count += 1;
+            let read = |name: &str| {
+                std::fs::read_to_string(task.path().join(name))
+                    .unwrap_or_default()
+                    .trim_end()
+                    .chars()
+                    .take(60)
+                    .collect::<String>()
+            };
+            writeln!(
+                err,
+                "thread {}: comm={} wchan={} syscall={}",
+                task.file_name().to_string_lossy(),
+                read("comm"),
+                read("wchan"),
+                read("syscall")
+            )
+            .ok();
+        }
+        writeln!(err, "threads alive: {count}").ok();
+    }
     let mut exited_at = None;
     while sent.elapsed() < Duration::from_secs(5) {
         if child.try_wait().expect("inspect stalled child").is_some() {
@@ -233,6 +277,9 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
             .env("WF_DRIVERS", "2")
             .env("WF_SCHED_REPORT", "2")
             .env("WF_BUSY_RING_TRACE", &trace_path);
+        if std::env::var_os("WF_TMP_KEEP_ATEXIT_SLEEP").is_none() {
+            without_thread_sanitizer_exit_sleep(&mut command);
+        }
         let (mut child, ready) = ProgramChild::spawn_signalling_first_output(&mut command)
             .expect("start the busy-ring witness");
         ready.recv_timeout(START_LIMIT).unwrap_or_else(|error| {
