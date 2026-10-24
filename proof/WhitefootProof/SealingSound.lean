@@ -152,7 +152,7 @@ theorem Val.set_cons (v w : Val) (s : CStep) (p : List CStep) (v' : Val)
     | none => simp [Val.set, hc, hs] at h
     | some c' =>
       simp [Val.set, hc, hs] at h
-      exact ⟨c, c', rfl, rfl, by rw [h]⟩
+      exact ⟨c, c', rfl, hs, by rw [h]⟩
 
 theorem Val.set_get_same (w : Val) : ∀ (p : List CStep) (v v' : Val),
     Val.set v p w = some v' → Val.get v' p = some w
@@ -231,7 +231,7 @@ theorem Run.set_some {r r' : Run} {π : CPlace} {w : Val} (h : r.set π w = some
     | none => simp [Run.set, hv, hs] at h
     | some v' =>
       simp [Run.set, hv, hs] at h
-      exact ⟨v, v', rfl, rfl, by rw [h]⟩
+      exact ⟨v, v', rfl, hs, by rw [h]⟩
 
 theorem Run.set_refs {r r' : Run} {π : CPlace} {w : Val} (h : r.set π w = some r') :
     r'.refs = r.refs := by
@@ -266,8 +266,7 @@ theorem Run.set_get_apart {r r' : Run} {π ρ : CPlace} {w : Val} (h : r.set π 
       exact hap2 ⟨hroot, e, he⟩
     · intro e he
       exact hap1 ⟨hroot.symm, e, he⟩
-  · have hvx : ({ r with vals := override r.vals π.root (some v') } : Run).vals ρ.root =
-        r.vals ρ.root := by
+  · have hvx : override r.vals π.root (some v') ρ.root = r.vals ρ.root := by
       simp [override, hroot]
     simp only [Run.get, hvx]
 
@@ -636,8 +635,8 @@ theorem unite_left [DecidableEq T] {P : Debt T → Prop} (hP : RecClosed P) {e x
     cases x with
     | inv b J r₂ =>
       by_cases hr : r₁ = r₂
-      · simp only [Debt.unite, if_pos hr]; exact h
-      · simp only [Debt.unite, if_neg hr]; exact hP a I r₁ h
+      · simp only [Debt.unite, ite_eq_left hr]; exact h
+      · simp only [Debt.unite, ite_eq_right hr]; exact hP a I r₁ h
     | cover R => exact h
   | cover R => exact h
 
@@ -653,8 +652,8 @@ theorem unite_right [DecidableEq T] {P : Debt T → Prop} (hP : RecClosed P) {e 
       have hIJ' : I = J := of_decide_eq_true hIJ
       subst hab' hIJ'
       by_cases hr : r₁ = r₂
-      · simp only [Debt.unite, if_pos hr]; rw [hr]; exact h
-      · simp only [Debt.unite, if_neg hr]; exact hP _ _ _ h
+      · simp only [Debt.unite, ite_eq_left hr]; rw [hr]; exact h
+      · simp only [Debt.unite, ite_eq_right hr]; exact hP _ _ _ h
     | cover R => cases hk
   | cover R =>
     cases x with
@@ -682,7 +681,7 @@ theorem addDebt_new [DecidableEq T] {P : Debt T → Prop} (hP : RecClosed P) {D 
     obtain ⟨e, he, hk⟩ := List.any_eq_true.1 hany
     have hk' : e.sameKey x = true := hk
     refine ⟨if e.sameKey x then e.unite x else e, List.mem_map.2 ⟨e, he, rfl⟩, ?_⟩
-    rw [if_pos hk']
+    rw [ite_eq_left hk']
     exact unite_right hP hk' h
   · exact ⟨x, List.mem_append.2 (Or.inr (List.mem_singleton.2 rfl)), h⟩
 
@@ -713,16 +712,16 @@ variable {X : Ctx T F}
 
 theorem Ctx.restored_none {f : F} {a : Shape T} {J : InvId} (hk : a.steps.all SStep.known = true) :
     X.restored f (.inv a J none) = X.core.proves f ⟨.var a.root, a.steps⟩ J := by
-  simp only [Ctx.restored, Debt.instancePlace?, if_pos hk]
+  simp only [Ctx.restored, Debt.instancePlace?, ite_eq_left hk]
 
 theorem Ctx.restored_some {f : F} {a : Shape T} {J : InvId} {q : String} {p : List (SStep T)}
     (hk : a.steps.all SStep.known = true) :
     X.restored f (.inv a J (some ⟨q, p⟩)) = X.core.proves f ⟨.deref q, p⟩ J := by
-  simp only [Ctx.restored, Debt.instancePlace?, if_pos hk]
+  simp only [Ctx.restored, Debt.instancePlace?, ite_eq_left hk]
 
 theorem Ctx.restored_unknown {f : F} {a : Shape T} {J : InvId} {rc : Option (Rec T)}
     (hk : ¬ a.steps.all SStep.known = true) : X.restored f (.inv a J rc) = false := by
-  simp only [Ctx.restored, Debt.instancePlace?, if_neg hk]
+  simp only [Ctx.restored, Debt.instancePlace?, ite_eq_right hk]
 
 theorem Ctx.restored_cover {f : F} {R : Shape T} : X.restored f (.cover R) = false := by
   simp only [Ctx.restored, Debt.instancePlace?]
@@ -983,8 +982,8 @@ theorem lookupRefs_killRefs (X : Ctx T F) (f : F) (kb : Kills T) (q : String) :
     show lookupRefs ((q', ms.map (X.widenShape f kb)) :: X.killRefs f kb rest) q =
       (lookupRefs ((q', ms) :: rest) q).map (X.widenShape f kb)
     by_cases he : q' = q
-    · simp only [lookupRefs, if_pos he]
-    · simp only [lookupRefs, if_neg he]; exact ih
+    · simp only [lookupRefs, ite_eq_left he]
+    · simp only [lookupRefs, ite_eq_right he]; exact ih
 
 theorem lookupRefs_filter (p : String × List (Shape T) → Bool) (q : String)
     (hp : ∀ x : String × List (Shape T), x.1 = q → p x = true) :
@@ -994,16 +993,16 @@ theorem lookupRefs_filter (p : String × List (Shape T) → Bool) (q : String)
     have ih := lookupRefs_filter p q hp rest
     by_cases he : q' = q
     · rw [List.filter_cons_of_pos (hp (q', ms) he)]
-      simp only [lookupRefs, if_pos he]
+      simp only [lookupRefs, ite_eq_left he]
     · cases hpx : p (q', ms) with
       | true =>
         rw [List.filter_cons_of_pos hpx]
-        simp only [lookupRefs, if_neg he]
+        simp only [lookupRefs, ite_eq_right he]
         exact ih
       | false =>
         have hn : ¬ p (q', ms) = true := by rw [hpx]; decide
         rw [List.filter_cons_of_neg hn]
-        simp only [lookupRefs, if_neg he]
+        simp only [lookupRefs, ite_eq_right he]
         exact ih
 
 theorem lookupRefs_setRef_same (refs : List (String × List (Shape T))) (q : String)
@@ -1035,8 +1034,8 @@ theorem lookupRefs_map_key (G : String → String × List (Shape T)) (hG : ∀ x
   | x :: L, hq => by
     rw [List.map_cons, lookupRefs_cons, hG x]
     by_cases he : x = q
-    · rw [if_pos he, he]
-    · rw [if_neg he]
+    · rw [ite_eq_left he, he]
+    · rw [ite_eq_right he]
       rcases List.mem_cons.1 hq with h | h
       · exact absurd h.symm he
       · exact lookupRefs_map_key G hG q L h
@@ -1224,7 +1223,7 @@ theorem storeRemove_keep [DecidableEq T] {s : St T} (hok : RefsOk ev r s) {w : P
           exact absurd (below_of_recordsAt hw hp hr hc) hn
       have e1 : storeRemove s ⟨.deref q, steps⟩ D = D.filter fun d => !((s.members q).any fun m =>
           d.provedAtOrBelow ⟨m.root, m.steps ++ steps⟩ && d.recordsAt q m) := by
-        simp only [storeRemove, if_pos h2]
+        simp only [storeRemove, ite_eq_left h2]
       rw [e1]
       exact mem_filter_not hd hf
     · have hlen : (s.resolve ⟨.deref q, steps⟩).length < 2 := by
@@ -1232,7 +1231,7 @@ theorem storeRemove_keep [DecidableEq T] {s : St T} (hok : RefsOk ev r s) {w : P
         omega
       have e1 : storeRemove s ⟨.deref q, steps⟩ D =
           D.filter fun d => !((s.resolve ⟨.deref q, steps⟩).any fun m => d.provedAtOrBelow m) := by
-        simp only [storeRemove, if_neg h2]
+        simp only [storeRemove, ite_eq_right h2]
       rw [e1]
       exact mem_filter_not hd (not_any_proved_of_one hok hw hlen hc hn)
 
@@ -1353,6 +1352,7 @@ theorem Ctx.handoffs_holds {M : Sem X} {f : F} {r : Run} (hf : M.Facts f r) :
       rw [ht] at h'
       exact Ctx.handoffs_holds hf ps (Ctx.handoff_holds hf hh ht) h'
 
+omit [DecidableEq T] in
 /-- An instance the rules establish holds [TYPE-11.S7]. -/
 theorem Ctx.instance_true {M : Sem X} {f : F} {r : Run} (hf : M.Facts f r) {s : St T}
     (hh : X.Holds M s r) {p : Place T} {I : InvId} (hi : X.instance? f s p I = true)
@@ -1388,6 +1388,7 @@ section Merge
 
 variable {X : Ctx T F} [DecidableEq T]
 
+omit [DecidableEq T] in
 theorem Ctx.restoreAll_keep {M : Sem X} {f : F} {r : Run} (hf : M.Facts f r) {D : List (Debt T)}
     {d : Debt T} (hd : d ∈ D) {π : CPlace} {I : InvId} (hc : d.Covers M.eval r π I)
     (hn : ¬ X.InvHolds r π I) : d ∈ X.restoreAll f D := by
@@ -1471,5 +1472,309 @@ theorem Ctx.header_back_holds {M : Sem X} {entry : St T} {backs : List (F × St 
     exact ⟨m, Ctx.fold_absorb_refs_new backs he hm, hmd⟩
 
 end Merge
+
+/-! ## Paths below a debt -/
+
+theorem Prefixed.symm {c₁ c₂ : List CStep} (h : Prefixed c₁ c₂) : Prefixed c₂ c₁ := h.symm
+
+section Paths
+
+variable {ev : Run → T → Option Int} {r : Run}
+
+theorem StepsDenote.take {ss : List (SStep T)} {cs : List CStep} (h : StepsDenote ev r ss cs) :
+    ∀ (k : Nat), StepsDenote ev r (ss.take k) (cs.take k) := by
+  induction h with
+  | nil => intro k; cases k <;> exact .nil
+  | cons hd _ ih =>
+    intro k
+    cases k with
+    | zero => exact .nil
+    | succ k => exact .cons hd (ih k)
+
+theorem StepsDenote.drop {ss : List (SStep T)} {cs : List CStep} (h : StepsDenote ev r ss cs) :
+    ∀ (k : Nat), StepsDenote ev r (ss.drop k) (cs.drop k) := by
+  induction h with
+  | nil => intro k; cases k <;> exact .nil
+  | cons hd tl ih =>
+    intro k
+    cases k with
+    | zero => exact .cons hd tl
+    | succ k => exact ih k
+
+/-- The death row keeps each debt that covers a place of another root. -/
+theorem mem_deathRow {x : String} {D : List (Debt T)} {e : Debt T} {π : CPlace} {I : InvId}
+    (he : e ∈ D) (hc : e.Covers ev r π I) (hx : ¬ π.root = x) : e ∈ deathRow x D := by
+  refine List.mem_filter.2 ⟨he, ?_⟩
+  cases e with
+  | inv a J rc =>
+    obtain ⟨_, ⟨ha1, _⟩, _⟩ := hc
+    show (a.root != x) = true
+    rw [ha1]
+    simpa using hx
+  | cover R =>
+    obtain ⟨ρ, ⟨hR1, _⟩, hb1, _⟩ := hc
+    show (R.root != x) = true
+    rw [hR1, ← hb1]
+    simpa using hx
+
+/-- A debt that covers a place below a member's place, rebased from the member
+onto the binding y, covers the place y followed by the same path. -/
+theorem Debt.rebase_covers {r' : Run} {m : Shape T} {πp : CPlace} (hm : m.Denotes ev r πp)
+    {d : Debt T} {π : CPlace} {I : InvId} {y : String}
+    (hc : d.Covers ev r' ⟨πp.root, πp.path ++ π.path⟩ I) (hπ : π.root = y) :
+    (d.rebase m ⟨y, []⟩).Covers ev r' π I := by
+  have hlen : m.steps.length = πp.path.length := hm.2.length
+  cases d with
+  | inv a J rc =>
+    obtain ⟨hJ, ⟨_, ha2⟩, _⟩ := hc
+    obtain ⟨s₁, s₂, hsplit, h1, h2⟩ := StepsDenote.split_path ha2
+    have hl1 : s₁.length = m.steps.length := by rw [h1.length, hlen]
+    have hle : m.steps.length ≤ a.steps.length := by
+      rw [hsplit, List.length_append]
+      omega
+    have hdrop : a.steps.drop m.steps.length = s₂ := by
+      rw [hsplit]
+      exact List.drop_left' hl1
+    have e1 : Debt.rebase m ⟨y, []⟩ (.inv a J rc) =
+        .inv ⟨y, [] ++ a.steps.drop m.steps.length⟩ J none := by
+      simp only [Debt.rebase, ite_eq_left hle]
+    rw [e1, hdrop]
+    exact ⟨hJ, ⟨hπ.symm, h2⟩, trivial⟩
+  | cover R =>
+    obtain ⟨ρ, ⟨hR1, hR2⟩, hb1, x, hx⟩ := hc
+    by_cases hle : m.steps.length ≤ R.steps.length
+    · have hlR : πp.path.length ≤ ρ.path.length := by
+        rw [← hlen, ← hR2.length]
+        exact hle
+      obtain ⟨z, hz⟩ : ∃ z, πp.path ++ z = ρ.path := by
+        rcases append_prefix_cases ρ.path x πp.path π.path hx with ⟨e, he⟩ | ⟨e, he⟩
+        · have hel : e.length = 0 := by
+            have hl := congrArg List.length he
+            rw [List.length_append] at hl
+            omega
+          rw [List.eq_nil_of_length_eq_zero hel, List.append_nil] at he
+          exact ⟨[], by rw [List.append_nil, he]⟩
+        · exact ⟨e, he⟩
+      rw [← hz] at hR2
+      obtain ⟨s₁, s₂, hsplit, h1, h2⟩ := StepsDenote.split_path hR2
+      have hl1 : s₁.length = m.steps.length := by rw [h1.length, hlen]
+      have hdrop : R.steps.drop m.steps.length = s₂ := by
+        rw [hsplit]
+        exact List.drop_left' hl1
+      have e1 : Debt.rebase m ⟨y, []⟩ (.cover R) =
+          .cover ⟨y, [] ++ R.steps.drop m.steps.length⟩ := by
+        simp only [Debt.rebase, ite_eq_left hle]
+      rw [e1, hdrop]
+      refine ⟨⟨y, z⟩, ⟨rfl, h2⟩, hπ, x, ?_⟩
+      have hx' : πp.path ++ (z ++ x) = πp.path ++ π.path := by
+        rw [← List.append_assoc, hz]
+        exact hx
+      exact (List.append_right_inj _).1 hx'
+    · have e1 : Debt.rebase m ⟨y, []⟩ (.cover R) = .cover ⟨y, []⟩ := by
+        simp only [Debt.rebase, ite_eq_right hle]
+      rw [e1]
+      exact ⟨⟨y, []⟩, ⟨rfl, .nil⟩, hπ, π.path, rfl⟩
+
+end Paths
+
+/-! ## Events that write no place -/
+
+section Events
+
+variable {X : Ctx T F} [DecidableEq T]
+
+/-- A kill batch alone keeps the agreement [TYPE-11.S3]. -/
+theorem Ctx.kill_holds {M : Sem X} {f : F} {kb : Kills T} {s : St T} {r r' : Run}
+    (hh : X.Holds M s r) (hf : M.Facts f r) (hr : X.RunStep M f (.kill kb) r r') :
+    X.Holds M ⟨X.killRow f kb s.debts,
+      (X.killRefs f kb s.refs).filter fun e => !kb.rebound.contains e.1⟩ r' := by
+  obtain ⟨hv1, hv2, hrb, hfr⟩ := hr
+  have hget : ∀ π : CPlace, r'.get π = r.get π ∨ r'.get π = none := by
+    intro π
+    by_cases hx : π.root ∈ kb.ended
+    · exact Or.inr (Run.get_of_vals_none (hv2 _ hx))
+    · left
+      unfold Run.get
+      rw [hv1 _ hx]
+  refine ⟨?_, ?_⟩
+  · intro π I hI hn
+    have hn0 : ¬ X.InvHolds r π I := by
+      intro h0
+      apply hn
+      rcases hget π with h1 | h1
+      · exact (Ctx.invHolds_congr X I h1).2 h0
+      · intro v inv hv
+        rw [h1] at hv
+        cases hv
+    obtain ⟨d, hd, hc⟩ := hh.1 π I hI hn0
+    obtain ⟨e, he, _, he'⟩ := Ctx.killRow_cover hf hfr hd hc hn0
+    exact ⟨e, he, he'⟩
+  · intro q ρ hq
+    have hq' : q ∉ kb.rebound := fun hm => by
+      rw [hrb q hm] at hq
+      cases hq
+    have hq0 : r.refs q = some ρ := by
+      rw [← hfr.2 q hq']
+      exact hq
+    obtain ⟨m, hm, hmd⟩ := Ctx.refsOk_kill hfr hh.2 hq0
+    refine ⟨m, ?_, hmd⟩
+    show m ∈ lookupRefs ((X.killRefs f kb s.refs).filter fun e => !kb.rebound.contains e.1) q
+    rw [lookupRefs_filter (fun e : String × List (Shape T) => !kb.rebound.contains e.1) q
+      (fun x hx => by simp [hx, hq'])]
+    exact hm
+
+/-- The death of a root binding keeps the agreement [TYPE-11.S3]. -/
+theorem Ctx.death_holds {M : Sem X} {f : F} {x : String} {kb : Kills T} {s : St T}
+    {r r' : Run} (hh : X.Holds M s r) (hf : M.Facts f r)
+    (hr : X.RunStep M f (.death x kb) r r') :
+    X.Holds M ⟨deathRow x (X.killRow f kb s.debts), X.killRefs f kb s.refs⟩ r' := by
+  obtain ⟨hv, hrefs, hfr⟩ := hr
+  refine ⟨?_, ?_⟩
+  · intro π I hI hn
+    by_cases hx : π.root = x
+    · exfalso
+      apply hn
+      intro v inv h1
+      have h0 : r'.get π = none := by
+        apply Run.get_of_vals_none
+        rw [hv, hx]
+        simp [override]
+      rw [h0] at h1
+      cases h1
+    · have hget : r'.get π = r.get π := by
+        unfold Run.get
+        rw [hv]
+        simp [override, hx]
+      have hn0 : ¬ X.InvHolds r π I := fun h0 => hn ((Ctx.invHolds_congr X I hget).2 h0)
+      obtain ⟨d, hd, hc⟩ := hh.1 π I hI hn0
+      obtain ⟨e, he, _, he'⟩ := Ctx.killRow_cover hf hfr hd hc hn0
+      exact ⟨e, mem_deathRow he he' hx, he'⟩
+  · intro q ρ hq
+    rw [hrefs] at hq
+    exact Ctx.refsOk_kill hfr hh.2 hq
+
+/-- Binding a reference variable keeps the agreement [REF-1, TYPE-11.S3]. -/
+theorem Ctx.bindRef_holds {M : Sem X} {f : F} {q : String} {p : Place T} {kb : Kills T}
+    {s : St T} {r r' : Run} (hh : X.Holds M s r) (hf : M.Facts f r)
+    (hr : X.RunStep M f (.bindRef q p kb) r r') :
+    X.Holds M ⟨X.killRow f kb s.debts,
+      setRef (X.killRefs f kb s.refs) q ((s.resolve p).map (X.widenShape f kb))⟩ r' := by
+  obtain ⟨π, hp, hv, hrefs, hfr⟩ := hr
+  refine ⟨?_, ?_⟩
+  · intro ρ I hI hn
+    have hget : r'.get ρ = r.get ρ := by
+      unfold Run.get
+      rw [hv]
+    have hn0 : ¬ X.InvHolds r ρ I := fun h0 => hn ((Ctx.invHolds_congr X I hget).2 h0)
+    obtain ⟨d, hd, hc⟩ := hh.1 ρ I hI hn0
+    obtain ⟨e, he, _, he'⟩ := Ctx.killRow_cover hf hfr hd hc hn0
+    exact ⟨e, he, he'⟩
+  · intro q' ρ hq
+    by_cases hqq : q' = q
+    · rw [hqq] at hq ⊢
+      rw [hrefs] at hq
+      have hq2 : π = ρ := by simpa [override] using hq
+      rw [← hq2]
+      obtain ⟨m, hm, hmd⟩ := St.resolve_denote hh.2 hp
+      refine ⟨X.widenShape f kb m, ?_, hmd.1, (StepsDenote.widen hfr hmd.2 false).2⟩
+      show X.widenShape f kb m ∈
+        lookupRefs (setRef (X.killRefs f kb s.refs) q ((s.resolve p).map (X.widenShape f kb))) q
+      rw [lookupRefs_setRef_same]
+      exact List.mem_map.2 ⟨m, hm, rfl⟩
+    · rw [hrefs] at hq
+      have hq0 : r.refs q' = some ρ := by simpa [override, hqq] using hq
+      obtain ⟨m, hm, hmd⟩ := Ctx.refsOk_kill hfr hh.2 hq0
+      refine ⟨m, ?_, hmd⟩
+      show m ∈
+        lookupRefs (setRef (X.killRefs f kb s.refs) q ((s.resolve p).map (X.widenShape f kb))) q'
+      rw [lookupRefs_setRef_other _ _ hqq]
+      exact hm
+
+/-- A `let`, or a `set` of a complete own local binding, keeps the agreement
+[TYPE-11.S3]: a fresh value is valid, and a place read carries its debts onto
+the binding. -/
+theorem Ctx.bind_holds {M : Sem X} {f : F} {y : String} {rhs : Rhs T} {kb : Kills T}
+    {s s' : St T} {r r' : Run} (hh : X.Holds M s r) (hf : M.Facts f r)
+    (hs : X.step f s (.bind y rhs kb) = some s') (hr : X.RunStep M f (.bind y rhs kb) r r') :
+    X.Holds M s' r' := by
+  obtain ⟨v, hval, hv, hrefs, hfr⟩ := hr
+  have hget : ∀ π : CPlace, ¬ π.root = y → r'.get π = r.get π := by
+    intro π hπ
+    unfold Run.get
+    rw [hv]
+    simp [override, hπ]
+  have hgety : ∀ π : CPlace, π.root = y → r'.get π = Val.get v π.path := by
+    intro π hπ
+    apply Run.get_of_vals
+    rw [hv, hπ]
+    simp [override]
+  have hrefsOk : RefsOk M.eval r' ⟨[], X.killRefs f kb s.refs⟩ := by
+    intro q ρ hq
+    rw [hrefs] at hq
+    exact Ctx.refsOk_kill hfr hh.2 hq
+  cases rhs with
+  | fresh =>
+    have hs' : s' = ⟨X.killRow f kb (storeRemove s ⟨.var y, []⟩ s.debts), X.killRefs f kb s.refs⟩ :=
+      (Option.some.inj hs).symm
+    subst hs'
+    refine ⟨?_, hrefsOk⟩
+    intro π I hI hn
+    by_cases hπ : π.root = y
+    · exfalso
+      apply hn
+      intro u inv hu hinv
+      cases ht0 : X.tys y with
+      | none =>
+        have e0 : X.invsOfPlace π = [] := by simp [Ctx.invsOfPlace, Ctx.tyOf, hπ, ht0]
+        rw [e0] at hI
+        cases hI
+      | some t0 =>
+        have e1 : X.invsOfPlace π = X.invsBelow t0 π.path := by
+          simp [Ctx.invsOfPlace, Ctx.tyOf, Ctx.invsBelow, hπ, ht0]
+        rw [e1] at hI
+        exact hval t0 ht0 π.path I u inv hI (by rw [← hgety π hπ]; exact hu) hinv
+    · have hn0 : ¬ X.InvHolds r π I := fun h0 => hn ((Ctx.invHolds_congr X I (hget π hπ)).2 h0)
+      obtain ⟨d, hd, hc⟩ := hh.1 π I hI hn0
+      have hd' : d ∈ storeRemove s ⟨.var y, []⟩ s.debts :=
+        storeRemove_keep hh.2 (w := ⟨.var y, []⟩) (πw := ⟨y, []⟩) ⟨rfl, .nil⟩ hd hc
+          (fun hb => hπ hb.1)
+      obtain ⟨e, he, _, he'⟩ := Ctx.killRow_cover hf hfr hd' hc hn0
+      exact ⟨e, he, he'⟩
+  | read p mv =>
+    have hs' : s' = ⟨X.continueRow f s p y (X.killRow f kb s.debts), X.killRefs f kb s.refs⟩ :=
+      (Option.some.inj hs).symm
+    subst hs'
+    obtain ⟨πp, hp, hvp, hty⟩ := hval
+    refine ⟨?_, hrefsOk⟩
+    intro π I hI hn
+    by_cases hπ : π.root = y
+    · -- the place is y followed by a path, which holds the value at πp followed by it
+      have hσ : r'.get π = r.get ⟨πp.root, πp.path ++ π.path⟩ := by
+        rw [hgety π hπ, Run.get_append_some π.path hvp]
+      have e1 : X.tyOf π = X.tyOf ⟨πp.root, πp.path ++ π.path⟩ := by
+        rw [← Ctx.tyOf_rebase X hty π.path]
+        exact congrArg X.tyOf (CPlace.eq_mk hπ rfl)
+      have hI' : I ∈ X.invsOfPlace ⟨πp.root, πp.path ++ π.path⟩ := by
+        rw [← Ctx.invsOfPlace_congr X e1]
+        exact hI
+      have hn0 : ¬ X.InvHolds r ⟨πp.root, πp.path ++ π.path⟩ I :=
+        fun h0 => hn ((Ctx.invHolds_congr X I hσ).2 h0)
+      obtain ⟨d, hd, hc⟩ := hh.1 _ I hI' hn0
+      obtain ⟨d1, hd1, hc1, hc1'⟩ := Ctx.killRow_cover hf hfr hd hc hn0
+      obtain ⟨m, hm, hmd⟩ := St.resolve_denote hh.2 hp
+      have hmay : X.mayAtOrBelow f m d1 = true := Ctx.mayAtOrBelow_of_covers M hf hmd hc1
+      refine addDebts_new (covers_recClosed M.eval r' π I) _ ?_ (Debt.rebase_covers hmd hc1' hπ)
+      exact List.mem_flatMap.2 ⟨m, hm, List.mem_map.2 ⟨d1, List.mem_filter.2 ⟨hd1, hmay⟩, rfl⟩⟩
+    · have hn0 : ¬ X.InvHolds r π I := fun h0 => hn ((Ctx.invHolds_congr X I (hget π hπ)).2 h0)
+      obtain ⟨d, hd, hc⟩ := hh.1 π I hI hn0
+      obtain ⟨d1, hd1, hc1, hc1'⟩ := Ctx.killRow_cover hf hfr hd hc hn0
+      have hpf : d1.provedAtOrBelow ⟨y, []⟩ = false := by
+        cases hpr : d1.provedAtOrBelow ⟨y, []⟩ with
+        | false => rfl
+        | true =>
+          exact absurd (below_of_provedAtOrBelow (m := ⟨y, []⟩) (πw := ⟨y, []⟩) ⟨rfl, .nil⟩ hpr hc1).1 hπ
+      exact addDebts_keep (covers_recClosed M.eval r' π I) _ ⟨d1, mem_filter_not hd1 hpf, hc1'⟩
+
+end Events
 
 end Whitefoot.Seal
