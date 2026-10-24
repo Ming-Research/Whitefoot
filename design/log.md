@@ -9,7 +9,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 
 Nodes: language/checks-and-proofs/requires-entry-contract
 
-Summary: A requirement whose complete goal is one integer comparison establishes an exact two-term relation at body entry when each side reduces to at most one term plus a folded constant through term-free sums, differences and products and widening conversions, because those preserve the mathematical value, the postcondition side already admits a datum displaced by a constant, and the checker already did so. Refused was narrowing the checker to bare terms, constants and measure terms, which would have made writers' natural `i + 1 <= b` chains need explicit proof steps.
+Summary: A requirement whose complete goal is one integer comparison establishes an exact two-term relation at body entry when each side reduces to at most one term plus a folded constant through term-free sums, differences and products and widening conversions, because those preserve the mathematical value, the postcondition side already admits a datum displaced by a constant, and the checker already did so. The entry rule defines this projection itself and uses it for the root, the members of the signed decomposition and the ordering leaves that take no affine premise, and a symbolic const-generic parameter counts as a term. Refused were narrowing the checker to bare terms, constants and measure terms, which would have made writers' natural `i + 1 <= b` chains need explicit proof steps, and widening ENT-2's L0 projection to the same sides, which would reach goals outside the requirement-entry registration.
 
 ## 2026-10-23 Cooperative switches account invocations per executor and unwind for pending host work
 

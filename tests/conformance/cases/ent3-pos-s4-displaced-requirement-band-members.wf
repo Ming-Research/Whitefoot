@@ -1,0 +1,20 @@
+fn pick(i: u32, b: u32, c: u32, n: u32) -> out: u32 pure contract {
+  define step1 = i + 1_u32 <= b;
+  define step2 = b + 1_u32 <= c;
+  define step3 = c + 1_u32 <= n;
+  define rest = band(step2, step3);
+  requires i < 100_u32;
+  requires b < 100_u32;
+  requires c < 100_u32;
+  requires band(step1, rest);
+} {
+  let j1 = i + 1_u32;
+  let j2 = j1 + 1_u32;
+  let j3 = j2 + 1_u32;
+  let out = n - j3;
+  return out;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
