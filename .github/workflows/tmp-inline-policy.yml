@@ -107,6 +107,7 @@ jobs:
             cp "$RUNNER_TEMP/bin/whitefootc-$compiler" "$arm/whitefootc"
             cp research/experiments/inline-policy/clang-arm.sh "$arm/clang"
             chmod +x "$arm/whitefootc" "$arm/clang"
+            ln -s "$(readlink -f /usr/bin/ld.lld)" "$arm/ld.lld"
             echo 'ARM_REMARKS=${CENSUS_REMARKS:-}' > "$arm/arm.conf"
           done
       - name: Compile each program, collecting its remarks
@@ -240,6 +241,7 @@ jobs:
             cp "$RUNNER_TEMP/bin/whitefootc-shrink" "$tree/compiler/target/gate/whitefootc"
             cp research/experiments/inline-policy/clang-arm.sh "$tree/compiler/target/gate/clang"
             chmod +x "$tree/compiler/target/gate/whitefootc" "$tree/compiler/target/gate/clang"
+            ln -s "$(readlink -f /usr/bin/ld.lld)" "$tree/compiler/target/gate/ld.lld"
             echo 'ARM_REMARKS=${CENSUS_REMARKS:-}' > "$tree/compiler/target/gate/arm.conf"
           done
           echo "$CONF" >> "$out/arms/candidate/compiler/target/gate/arm.conf"

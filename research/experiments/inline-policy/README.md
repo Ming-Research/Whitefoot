@@ -7,7 +7,9 @@ investigation closes.
 - `clang-arm.sh` turns one compiler binary into an arm. whitefootc uses a
   `clang` beside its own executable when one is there
   (`design/compiler/toolchain-resolution.md`), so a directory holding a copy
-  of `whitefootc`, this script copied in as `clang`, and an `arm.conf` that
+  of `whitefootc`, this script copied in as `clang`, an `ld.lld` link to the
+  host's lld (a sibling clang selects the packaged layout, which requires
+  one), and an `arm.conf` that
   sets the arm's variables (listed in the script's header) compiles every
   program with those settings: an optimization level in place of `-O2`,
   LLVM options for compiles and LTO links, full LTO for the default build,
