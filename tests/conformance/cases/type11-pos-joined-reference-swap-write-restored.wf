@@ -1,4 +1,4 @@
-struct Index {
+nocopy struct Index {
   value: u64;
 }
 
@@ -15,9 +15,9 @@ fn lookup(holder: &Holder, table: &Array<u64, 16>) -> result: u64 reads(holder),
 
 fn pick(flag: Bool, table: &Array<u64, 16>) -> result: u64 reads(table) {
   let first = Index(value: 1_u64);
-  let left = Holder(index: first);
+  let left = Holder(index: move first);
   let second = Index(value: 2_u64);
-  let right = Holder(index: second);
+  let right = Holder(index: move second);
   let target = &left;
   if flag {
     set target = &right;

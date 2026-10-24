@@ -1,11 +1,10 @@
-struct Index {
+nocopy struct Index {
   value: u64;
   invariant bounded(index): index.value < 16_u64;
 }
 
 fn fresh() -> made: Index pure {
-  let index = Index(value: 4_u64);
-  return index;
+  return Index(value: 4_u64);
 }
 
 fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
