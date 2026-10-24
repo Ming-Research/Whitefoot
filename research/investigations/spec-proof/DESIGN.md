@@ -1180,14 +1180,14 @@ harness took 25.4 s, 32.5 s and 48.7 s on the three green `proof.yml` runs,
 within the build's budget of the time, 65 s, against 39.9 s to 42.2 s on the
 main line's three runs of the same day; on the last run the three modules
 built in 3.4 s, 1.8 s and 5.4 s, with 5.8 s, 2.6 s and 0.9 s more for their
-object code. With those lemmas merged in, the build took 61.5 s and 66.1 s on
-the next two runs, the three modules 3.3 to 3.6 s, 1.5 to 2.1 s and 5.1 to
-5.3 s, and the build's provisional budget rises from 85 s to 100 s, 1.5 times
-66.1 s rounded up to 5 s. The study's estimate was about 1,200 lines of
-definitions and 4,000 of proof. The part took two engineer turns, the first of
-which also made the study, nine `proof.yml` runs and one run of the temporary
-workflow to its review. Three runs failed to compile: the meaning of a cover
-named a place it had not bound, three steps of the first lemmas did not
+object code. With those lemmas merged in, the build took 61.5 s, 66.1 s and
+64.5 s on the next three runs, the three modules 3.3 to 3.6 s, 1.5 to 2.1 s and
+5.1 to 5.7 s, and the build's provisional budget rises from 85 s to 100 s,
+1.5 times 66.1 s rounded up to 5 s. The study's estimate was about 1,200 lines
+of definitions and 4,000 of proof. The part took two engineer turns, the first
+of which also made the study, ten `proof.yml` runs and three runs of the
+temporary workflow to its review. Three runs failed to compile: the meaning of
+a cover named a place it had not bound, three steps of the first lemmas did not
 type-check, and a lemma's proof referred to itself.
 
 ## Cost
