@@ -5,11 +5,11 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-10-24 A compiler-owned integer update keeps its proved range as an exact operation
+## 2026-10-24 A counted loop's hidden increment keeps its proved range as an exact operation
 
 Nodes: compiler/backend-facts
 
-Summary: A counted loop's hidden unit increment was emitted as a wrapping add although its true guard `binder < upper` already proves the result representable, so a loop such as `for t in 0..taps { acc = acc + x[i - t] * h[t]; }` reached LLVM with no no-wrap fact on its induction variable. The node gains a decision: a compiler-owned integer update whose dominating guards and checked storage immutability prove the result representable is lowered as an exact IR operation and emitted with the no-wrap flag, instead of modular IR that discards the proof. It covers the counted binder's increment, range splitting's width, midpoint and budget decrement, and the byte probe's advance; a source wrapping add and arithmetic ahead of those guards stay modular, since the source operation is defined at every operand.
+Summary: A counted loop's hidden unit increment was emitted as a wrapping add although its true guard `binder < upper` already proves the result representable, so a loop such as `for t in 0..taps { acc = acc + x[i - t] * h[t]; }` reached LLVM with no no-wrap fact on its induction variable. The node gains a decision: that increment is lowered as an exact IR operation and emitted with the no-wrap flag, instead of modular IR that discards the proof; the specification already makes it representable [FN-1] and the checker discharges it, so the ancestor decision's licence for a no-wrap flag on an exact operation covers it. The decision stops there: range splitting's width, midpoint and budget decrement and the byte probe's advance are synthesized by lowering with no checker judgment behind them, so they stay modular until the ancestor decision and DIAG-2 are changed to license them or the checker proves them; a source wrapping add stays modular since the source operation is defined at every operand.
 
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 

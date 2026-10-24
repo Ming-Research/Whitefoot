@@ -810,16 +810,6 @@ fn a_permitted_loop_is_outlined_split_and_joined() {
     let splitter_symbol = synthesized(&module, "@wf__par_split_");
     let chunk_symbol = synthesized(&module, "@wf__par_chunk_");
     let splitter = function_body(&module, &splitter_symbol);
-    assert_eq!(
-        splitter.matches("= sub nuw i64").count(),
-        2,
-        "the guarded range width and positive budget decrement are exact:\n{splitter}"
-    );
-    assert_eq!(
-        splitter.matches("= add nuw i64").count(),
-        1,
-        "the midpoint carries its bounded unsigned domain:\n{splitter}"
-    );
     for step in [
         "call ptr @wf__par_acquire_lane(",
         "call void @wf__par_publish(",

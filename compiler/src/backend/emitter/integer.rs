@@ -78,11 +78,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     _ => return Err(BackendFailure::InvalidIr),
                 };
                 // The `exact` family retains either a discharged source
-                // domain obligation [OP-2] or a compiler-owned operation's
-                // complete range proof, so its result is in range by a proof
-                // the emitted module may state (compiler/backend-facts).
-                // The `wrap` family is defined at every operand and carries
-                // no such flag.
+                // domain obligation [OP-2] or a counted loop's hidden update,
+                // whose representability the checker proves [FN-1], so its
+                // result is in range by a proof the emitted module may state
+                // (compiler/backend-facts). The `wrap` family is defined at
+                // every operand and carries no such flag.
                 let domain = match operation {
                     IrIntegerOperation::AddExact
                     | IrIntegerOperation::SubtractExact
