@@ -1,7 +1,9 @@
 # Temporary (board item wf-need-firn-hash-shrink), on a probe branch that is
 # never merged: compares the machine code of the grow-only cells of the
 # hash-map comparison's bench image under the merge base's library and this
-# commit's, to tell a change in the timed code from a change in its placement.
+# commit's, to tell a change in the timed code from a change in its placement,
+# and the growth path: the base's rebuild against the candidate's rebuild and
+# migrate, and the insertion functions they serve.
 name: tmp-hash-shrink-probe
 
 on:
@@ -118,4 +120,36 @@ jobs:
               awk -v f="$f" '$0 ~ "^<.*" f ".*>:$"{p=1} p&&/^$/{p=0} p' "$out/dis-$arm.txt" | sed -E 's/0x[0-9a-f]+/ADDR/g; s/<([^>+]+)\+0x[0-9a-f]+>/<\1+OFF>/g' > "$out/$f-$arm.s"
             done
             diff "$out/$f-base.s" "$out/$f-candidate.s" && echo "identical"
+          done
+      - name: Growth path, whole functions
+        run: |
+          out="$RUNNER_TEMP/out"
+          dump() {
+            awk -v f="$2" '$0 ~ "^<" f ">:$"{p=1} p&&/^$/{p=0} p' "$out/dis-$1.txt" | sed -E 's/0x[0-9a-f]+/ADDR/g; s/<([^>+]+)\+0x[0-9a-f]+>/<\1+OFF>/g; s/\$instance\$[0-9a-f]+/$I/g'
+          }
+          rb='wf_std\.collections\.hash_map\.hash_map_rebuild\$instance\$[0-9a-f]+'
+          mg='wf_std\.collections\.hash_map\.hash_map_migrate\$instance\$[0-9a-f]+'
+          pt='wf_std\.collections\.hash_map\.hash_map_put\$instance\$[0-9a-f]+'
+          tp='wf_std\.collections\.hash_map\.hash_map_try_put\$instance\$[0-9a-f]+'
+          dump base "$rb" > "$out/rebuild-base.s"
+          dump candidate "$mg" > "$out/migrate-candidate.s"
+          dump candidate "$rb" > "$out/rebuild-candidate.s"
+          wc -l "$out"/rebuild-base.s "$out"/migrate-candidate.s "$out"/rebuild-candidate.s
+          echo "== base rebuild"; cat "$out/rebuild-base.s"
+          echo "== candidate migrate"; cat "$out/migrate-candidate.s"
+          echo "== candidate rebuild"; cat "$out/rebuild-candidate.s"
+          echo "== diff base rebuild -> candidate migrate"
+          diff "$out/rebuild-base.s" "$out/migrate-candidate.s" || true
+          for f in "$pt" "$tp"; do
+            dump base "$f" > "$out/f-base.s"; dump candidate "$f" > "$out/f-candidate.s"
+            echo "== diff $f"; wc -l < "$out/f-base.s"; wc -l < "$out/f-candidate.s"
+            diff "$out/f-base.s" "$out/f-candidate.s" && echo identical
+          done
+          echo "== who calls rebuild, migrate, shrink"
+          for arm in base candidate; do
+            grep -E "call.*hash_map_(rebuild|migrate|shrink|try_put|put)" "$out/disaddr-$arm.txt" | sed -E 's/^ *[0-9a-f]+:\s*//' | sort | uniq -c | sed "s/^/$arm /"
+          done
+          echo "== function of each call site to rebuild or migrate"
+          for arm in base candidate; do
+            awk -v arm="$arm" '/^[0-9a-f]+ <.*>:$/{fn=$2} /call.*hash_map_(rebuild|migrate)/{print arm, fn, $NF}' "$out/disaddr-$arm.txt" | sort | uniq -c
           done
