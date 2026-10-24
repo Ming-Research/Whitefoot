@@ -1,0 +1,153 @@
+# Temporary dry run of compiler-compare.yml's stages on a hosted runner
+# (wf-compiler-compare-14900k); removed before the full check. The job `port`
+# compiles and runs the wasm interpreter with a cached compiler, `lint` checks
+# the real workflow file, and `dry` runs every stage of research/experiments/
+# compiler-compare/run.sh at a small scale: the null run (this commit as both
+# arms) and a comparison with the compiler of PR 420.
+name: tmp-compiler-compare-dry
+
+on:
+  push:
+    branches: [wf-compiler-compare-14900k]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-compiler-compare-dry
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  HALO: df3eb9ec00f4d7db992e82b6d8ab35f8a643a317
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color .github/workflows/compiler-compare.yml
+      - name: Self-tests
+        run: |
+          OUT=/tmp/out bash research/experiments/compiler-compare/run.sh selftest
+          bash -n research/experiments/compiler-compare/run.sh research/experiments/compiler-compare/arms.sh
+      - name: Dispatch inputs the workflow declares
+        run: python3 -c "import yaml,sys; d=yaml.safe_load(open('.github/workflows/compiler-compare.yml')); print(len(d[True]['workflow_dispatch']['inputs']), 'inputs')"
+
+  port:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - uses: actions/cache@v4
+        id: compiler-cache
+        with:
+          path: compiler/target/gate/whitefootc
+          key: tmp-dry-whitefootc-${{ hashFiles('compiler/**') }}
+      - name: Build the compiler
+        if: steps.compiler-cache.outputs.cache-hit != 'true'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "3000"
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl dry/build make -C compiler build
+      - name: Fetch Silverfir-nano
+        run: |
+          mkdir -p "$RUNNER_TEMP/p"
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/p/silverfir"
+          git -C "$RUNNER_TEMP/p/silverfir" checkout --quiet 5f248e4420102356be7edadbdb4db2ae105d3270
+      - name: Generate, compile and run the wasm interpreter
+        run: |
+          wfc=$PWD/compiler/target/gate/whitefootc
+          python3 -B research/experiments/match-dispatch/wasm/gen.py "$RUNNER_TEMP/p/v2h.wf"
+          ( time "$wfc" "$RUNNER_TEMP/p/v2h.wf" --cache "$RUNNER_TEMP/p/v2h-cache" -o "$RUNNER_TEMP/p/v2h-image" ) 2>&1 | cut -c1-600 | head -200
+          test -x "$RUNNER_TEMP/p/v2h-image"
+          cp "$RUNNER_TEMP/p/silverfir/benchmarks/wasi/coremark/coremark.wasm" "$RUNNER_TEMP/p/coremark.wasm"
+          echo "== absolute path, 2000 iterations"
+          ( time taskset -c 1 "$RUNNER_TEMP/p/v2h-image" "$RUNNER_TEMP/p/coremark.wasm" 0x0 0x0 0x66 2000 ) 2>&1 | tail -30
+          echo "== relative path"
+          cd "$RUNNER_TEMP/p"
+          ( time taskset -c 1 "$RUNNER_TEMP/p/v2h-image" coremark.wasm 0x0 0x0 0x66 2000 ) 2>&1 | tail -30
+      - name: Perf availability
+        continue-on-error: true
+        run: |
+          which perf || echo "no perf"
+          cat /proc/sys/kernel/perf_event_paranoid
+          perf stat -x, -e instructions:u,cycles:u -- true 2>&1 | head
+          ls /sys/bus/event_source/devices/
+
+  dry:
+    needs: [lint, port]
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [null, cross]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      CANDIDATE: ${{ github.sha }}
+      BASE: ${{ matrix.case == 'null' && github.sha || 'claude/cold-branch-weights' }}
+      RUNNER_KIND: github
+      SIZES: "1000,10000"
+      MIN_ROUNDS: "6"
+      MAX_ROUNDS: "8"
+      INTERP_MIN_ROUNDS: "6"
+      INTERP_MAX_ROUNDS: "8"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Stages
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "12000"
+        run: |
+          export OUT="$RUNNER_TEMP/out"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          run=research/experiments/compiler-compare/run.sh
+          bash $run tools
+          bash $run selftest
+          perl .github/run-check.pl dry/arms bash $run arms
+          status=0
+          perl .github/run-check.pl dry/hashmap bash $run hashmap || status=$?
+          perl .github/run-check.pl dry/interp bash $run interp || status=$?
+          bash $run summary
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dry-${{ matrix.case }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/out/manifest.txt
+            ${{ runner.temp }}/out/hashmap/summary.txt
+            ${{ runner.temp }}/out/hashmap/raw.tsv
+            ${{ runner.temp }}/out/interp/summary.txt
+            ${{ runner.temp }}/out/interp/time.tsv
+            ${{ runner.temp }}/out/interp/manifest.txt
