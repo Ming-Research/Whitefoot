@@ -1419,3 +1419,157 @@ unfair comparison against PUC Lua built without one); whether an opt-in
 profile-guided build mode is worth offering is a separate question for the
 owner. E2 above records the subsequent S1 + S2 + S3 compiler results and the
 owner's selection of C2; it does not select a profile-guided build mode.
+
+### Result: S3 against a call-free return, and the rule restricted to a loop continuation
+
+Question. S3 as first selected (compiler revision 9e5b6689f) marks the
+call-containing side of a two-way branch unlikely against any side that
+returns without a call. R1 (revision a3f254c) marks it only inside a split
+dispatch loop and only against a side that reaches the restored header
+without a call on every path. Does S3 slow the ordinary `HashMap` removal,
+and what does R1 keep of S3's gain on Halo's `fib`? The removal slowdown was
+first seen in a hosted remove-then-insert timing and then explained with the
+inlining record; no criterion was written before those runs, so the S3
+findings below are exploratory. S3 counts as unfit as a general rule if
+`hash_map_find` is no longer inlined into the removal, or remove-then-insert
+is slower than the unweighted compiler beyond the twin's noise.
+
+**Inlining record** ([run 40052494556](https://github.com/Ming-Research/Whitefoot/actions/runs/40052494556),
+`-Rpass=inline`, `hash_map_find` into `hash_map_remove`, cost 155). The
+unweighted compiler and R1 inline it at threshold 225; S3 declines at
+threshold 45, the smaller budget the host gives a call site it believes
+rarely runs. Machine code agrees: with S3, `wf_remove_one` and
+`hash_map_remove` keep a call to `hash_map_find`; with the unweighted
+compiler and R1 they do not. S3's weight comes from `if before == 0 { return
+None }`, a call-free return on an empty map, set against the continuation
+that calls `find`.
+
+**Remove-then-insert on hosted runners** (descriptive, pinned to one
+CPU; median over rounds of candidate/base nanoseconds per operation, with the
+twin of base as control; a cell is judged a regression only when its 95%
+interval lies wholly above 1 and the twin's interval holds 1).
+
+| Run | CPU | S3 at 1,000 | S3 at 10,000 | R1 at 1,000 | R1 at 10,000 |
+|---|---|---:|---:|---:|---:|
+| [40050822548](https://github.com/Ming-Research/Whitefoot/actions/runs/40050822548) | AMD EPYC 7763 | 1.0309 | 1.0347 | 0.9974 | 0.9916 |
+| [40051610729](https://github.com/Ming-Research/Whitefoot/actions/runs/40051610729) | AMD EPYC 9V74 | 1.0075 | 0.9939 | 0.9695 | 0.9844 |
+| [40052494556](https://github.com/Ming-Research/Whitefoot/actions/runs/40052494556) | Intel Xeon Platinum 8370C | 1.0305 | 1.0370 | 0.9947 | 0.9919 |
+| [40094855753](https://github.com/Ming-Research/Whitefoot/actions/runs/40094855753) | Intel Xeon 6973P-C | 1.0146 | 1.0112 | 0.9984 | 0.9950 |
+
+S3 is slower on three of four CPUs (1.1% to 3.7%) and unchanged on the
+EPYC 9V74; R1 is never slower. The criterion holds for S3.
+
+**Halo instruction counts** (run 40052494556, Xeon Platinum 8370C, callgrind;
+the three compilers build the same Halo-wf draft port to the current
+prelude, because the previously pinned Halo does not compile with current
+`main`; CoreMark's wasm interpreter source does not compile with the current
+compiler, so it is not counted). Counts are deterministic.
+
+| Instructions per Lua call on fib(32) | main | S3 | R1 |
+|---|---:|---:|---:|
+| executable self | 793.03 | 752.03 | 778.03 |
+| gain against main | | 41.00 | 15.00 |
+
+| Whole-process instructions | main | S3 vs main | R1 vs main |
+|---|---:|---:|---:|
+| fib | 5,590,683,495 | −5.17% | −1.89% |
+| loop | 725,669,348 | −2.07% | −2.07% |
+| string-key | 114,663,382 | −3.30% | −1.04% |
+| concat | 361,909,460 | +1.50% | −1.05% |
+| binary-trees | 5,152,150,048 | +2.32% | −0.37% |
+| sort | 282,805,499 | −0.17% | +0.11% |
+| integer-table | 676,176,945 | −0.44% | +1.18% |
+
+R1 keeps 15.00 of S3's 41.00 instructions per Lua call, short of the
+item's 25. Only R1's integer-table (+1.18%) and sort (+0.11%) rise; S3
+raises concat and binary-trees, which R1 lowers. The log of item
+wf-req-halo-dispatch-arm-spills-own attributes 25 of S3's 41 instructions to
+the small guard function `native_binding` no longer being called. Why S3
+changes that is read from the IR, not confirmed with an inlining record: of
+that function's three guards, S3 marks the continuing direction of two
+(bounds and released) unlikely and, correctly, the Lua-callback side of the
+third, so it predicts the first two backwards. That is the same shape as the
+removal's early return, and here it happens to help. This reading is a
+hypothesis, not a result.
+
+**14900K** ([run 40091755274](https://github.com/Ming-Research/Whitefoot/actions/runs/40091755274),
+instrument 05e4c58, candidate = R1 at a3f254c, base = merge base 6d220b46e,
+Halo df3eb9ec; one twin of base per arm; clang 22.1.8). Wall time over 10
+rounds, ratio candidate/base (twin in brackets): fib 1.0011 [0.9978,
+1.0022] (twin 1.0003), CoreMark 1.0004 [0.9986, 1.0013] (twin 1.0001); both
+judged no change. `perf stat`, user mode, medians of five rounds:
+
+| Candidate/base | fib | CoreMark | fib twin |
+|---|---:|---:|---:|
+| instructions | 0.98109 | 1.00150 | 1.00000 |
+| cycles | 0.97412 | 0.99979 | 1.00037 |
+| branches | 1.03755 | 1.00213 | 1.00000 |
+| branch misses | 0.87430 | 0.94149 | 1.00389 |
+| L1D loads | 0.95938 | 1.00292 | 1.00000 |
+
+fib's IPC rises from 5.433 to 5.472 and its branch-miss rate falls from
+0.207% to 0.174%. Fewer instructions and 2.6% fewer cycles do not appear as
+less wall time: the five-round `perf stat` and the ten-round wall-time ratio
+disagree, and this run does not explain why. The run measured R1; the
+approved S3 has no 14900K timing. The `HashMap` benchmark on the same
+compilers (21 cells; floor from the run itself): improvement 4, no change
+11, not counted 3, regression 3.
+
+| Cell | Candidate/base | 95% interval | Twin deviation (floor) |
+|---|---:|---|---|
+| remove 10,000 | 1.1849 | [1.1760, 1.1929] | 0.0035 (0.0136) |
+| remove 1,000,000 | 1.0135 | [1.0097, 1.0164] | 0.0029 (0.0107) |
+| insert-presized 10,000 | 1.0231 | [1.0093, 1.0311] | 0.0063 (0.0114) |
+| insert-growing 10,000 | 0.9495 | [0.9407, 0.9593] | |
+| remove-insert 1,000 | 0.9829 | [0.9801, 0.9869] | |
+| remove-insert 10,000 | 0.9787 | [0.9751, 0.9819] | |
+| insert-growing 1,000 | 0.9915 | [0.9771, 0.9977] | |
+
+Memory cells are identical on both sides. The remove-insert cells that S3
+slowed on the hosted runners are not slower under R1 on the 14900K.
+
+**Position control for remove 10,000** ([run 40096747209](https://github.com/Ming-Research/Whitefoot/actions/runs/40096747209),
+instrument 3c73453). The candidate is the unweighted merge base with one
+driver option, `-mllvm -align-all-nofallthru-blocks=5`, which aligns blocks
+without a fall-through predecessor to 32 bytes and changes no weight. The
+compiler and image digests differ from base; the twin equals base. Criterion,
+written in the log of item wf-req-halo-dispatch-arm-spills-own before the
+run and not in this record: if the
+option also makes remove 10,000 slower by at least 5%, that cell is
+sensitive to code position and R1's 18.5% cannot be charged to the weights
+alone. Result: remove 10,000 is 1.1957 [1.1800,
+1.2055] (twin deviation 0.0035, floor 0.0136), remove 1,000,000 1.0131; the
+same option also lowers iterate 10,000 to 0.2044 [0.2027, 0.2068] and
+iterate 1,000 to 0.7357. Over 21 cells: improvement 9, no change 8,
+regression 4. The criterion is met.
+
+The perturbation does not execute more instructions
+([run 40097164563](https://github.com/Ming-Research/Whitefoot/actions/runs/40097164563),
+hosted, callgrind, remove at 10,000, one warm-up and two sampled passes):
+
+| Compiler | Instructions | Conditional branches |
+|---|---:|---:|
+| merge base | 242,079,010 | 29,864,949 |
+| merge base with block alignment | 242,077,920 | 29,864,944 |
+| R1 | 234,788,709 | 29,865,362 |
+
+With alignment the four affected functions differ from base only in padding
+instructions. R1 executes 3.0% fewer instructions than base. Its
+`hash_map_remove`, `hash_map_find` and `wf_remove_one` have the same
+instructions as base's; only the copy inlined into the timing loop differs,
+in register allocation (the loop counter lives on the stack in one build and
+in a register in the other). Remove-then-insert calls the separate
+`wf_remove_one` and does not slow.
+
+This is consistent with the [code-placement
+investigation](../code-placement/DESIGN.md#exploratory-local-readings),
+whose exploratory local readings spread one kernel by 32, 36 and 42 percent
+at widths 1, 2 and 4 by moving identical code with a pad of 0 to 48 bytes
+linked ahead of it.
+
+Not settled. Whether R1's 18.5% on remove 10,000 and the alignment option's
+19.6% have the same mechanism (loop placement or the changed register
+allocation); why that cell's placement in base is fast (no hardware counters
+of that cell exist); the 26-instruction difference between S3 and R1 on
+`fib` (above); the `perf stat` and wall-time disagreement on `fib`; S3's
+timing on the 14900K.
