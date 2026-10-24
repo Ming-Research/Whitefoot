@@ -643,12 +643,12 @@ theorem get_of_mem : ∀ {E : Whitefoot.Env}, (E.map (·.1)).Nodup → ∀ {x : 
     rw [Whitefoot.Env.get_cons]
     rcases List.mem_cons.mp h with he | he
     · cases he
-      rw [if_pos rfl]
+      rw [ite_eq_left rfl]
     · have hne : n ≠ x := by
         rintro rfl
         have hm := List.mem_map_of_mem (f := fun p : String × Value => p.1) he
         exact hnd.1 hm
-      rw [if_neg hne]
+      rw [ite_eq_right hne]
       exact get_of_mem hnd.2 he
 
 theorem eraseDups_length_le : ∀ (n : Nat) (l : List String), l.length ≤ n →

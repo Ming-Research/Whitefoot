@@ -516,13 +516,13 @@ theorem Snapshot.HoldsWith.mint {s : Snapshot} {E E0 : Env} {G : Nat → Int} {�
     by_cases hy : x = y
     · subst hy
       simp [hz.1, hz.2]
-    · rw [if_neg hy]
+    · rw [ite_eq_right hy]
       have hne : ¬ y = x := fun e => hy e.symm
-      simp only [if_neg hne]
+      simp only [ite_eq_right hne]
       exact h.atoms y
   · intro y hy
     have hne : ¬ y = x := by omega
-    simp only [if_neg hne]
+    simp only [ite_eq_right hne]
 
 theorem Snapshot.Holds.atoms_mono {s : Snapshot} {fr : Env × Env} {n : Nat}
     {new : List (Nat × Int × Int)} (h : s.Holds fr) (hf : s.Fresh n)
@@ -609,7 +609,7 @@ theorem Good.typeAtom_ext {g : Gen} {G : Nat → Int} {t : IntTy} {z : Int} :
       (fun y => if y = g.next then z else G y) :=
   ⟨Nat.le_succ _, fun x hx => by
     have hne : ¬ x = g.next := by omega
-    simp only [if_neg hne]⟩
+    simp only [ite_eq_right hne]⟩
 
 /-- A tracked binding's place takes the value its image gives. -/
 theorem _root_.Whitefoot.Snapshot.HoldsWith.image_place {vars : List Var} {st : State}

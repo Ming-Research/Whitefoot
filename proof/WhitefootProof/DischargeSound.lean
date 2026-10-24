@@ -114,7 +114,7 @@ theorem candidates_sound {env : Env} {st : State} {A : List (Nat × Int × Int)}
         cases x with
         | place id ty =>
           have hat : Term.place id ty ∈ (Term.sum a b).atoms := by
-            simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hx
+            simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
             rcases hx with hxa | hxb
             · rw [← hxa]
               simp [Term.atoms]
@@ -653,7 +653,7 @@ theorem diffFacts_sound {ν : TermVal} {val : String → Int} {op : CmpOp} {la l
       · simp at h
   · simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at h
     obtain ⟨⟨t, k⟩, hl, h⟩ := h
-    simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+    simp only at h
     obtain ⟨⟨u, j⟩, hl2, h⟩ := h
     have hv := hs x t k hl
     have hw := hs y u j hl2
@@ -1703,7 +1703,7 @@ theorem domain_affineAny {G : Nat → Int} {op : InfixOp} {t : IntTy} {va vb : V
   delta domainQuery at hts
   dsimp only at hts
   rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
-  · cases hfa : va.image <;> cases hfb : vb.image <;> cases o <;> simp [hfa, hfb] at hts
+  · cases o <;> simp at hts
   · simp only [InfixDomain, DivOp.defined, decide_eq_true_eq]
     obtain ⟨fa, hfa⟩ : ∃ f, va.image = some f := by
       cases hfa : va.image with
@@ -1745,8 +1745,8 @@ theorem domain_product {env : Env} {g : Gen} {st : State} {E E0 : Whitefoot.Env}
   dsimp only at hp
   rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
   · cases o with
-    | add => cases hfa : va.image <;> cases hfb : vb.image <;> simp [hfa, hfb] at hp
-    | sub => cases hfa : va.image <;> cases hfb : vb.image <;> simp [hfa, hfb] at hp
+    | add => simp at hp
+    | sub => simp at hp
     | mul =>
       obtain ⟨fa, hfa⟩ : ∃ f, va.image = some f := by
         cases hfa : va.image with
@@ -1784,7 +1784,7 @@ theorem domain_product {env : Env} {g : Gen} {st : State} {E E0 : Whitefoot.Env}
           exact ⟨corners_le_mul hA.1 hA.2 hB.1 hB.2 c00.2.1 c01.2.1 c10.2.1 c11.2.1,
             mul_le_corners hA.1 hA.2 hB.1 hB.2 c00.2.2 c01.2.2 c10.2.2 c11.2.2⟩
         · simp at hi
-  · cases hfa : va.image <;> cases hfb : vb.image <;> simp [hfa, hfb] at hp
+  · simp at hp
   · exact trivial
 
 /-- A domain query's affine targets carry no bridge term. -/
