@@ -79,8 +79,11 @@ theorem walkStmt_loop_ok {env : Env} {st : State} {pos : Pos} {label : Option St
       (∀ ir ∈ invs, relHolds env g st ir.2 = true) ∧
       (loopHead env st (killList { normal := true, loops := [(label, false, true)] } body).eraseDups
         invs).run { g with next := g.next + 1 } = .ok (head, g2) ∧
-      (walkList { env with loops := { id := g.next, label, headers := invs.map (·.2),
-          outside := env.vars } :: env.loops } head (pos ++ [0]) 0 body).run g2 = .ok (ob, g3) ∧
+      (walkList
+          { env with
+            loops := { id := g.next, label, headers := invs.map (·.2), outside := env.vars } ::
+              env.loops }
+          head (pos ++ [0]) 0 body).run g2 = .ok (ob, g3) ∧
       (∀ s ∈ (ob.normal ++ (ob.conts.filter (·.1 == g.next)).map (·.2)).map (·.exit env.vars),
         s.contra = false → ∀ ir ∈ invs, relHolds env g3 s ir.2 = true) ∧
       (merge env ((ob.breaks.filter (·.1 == g.next)).map (·.2.exit env.vars))).run g3 =
@@ -171,8 +174,9 @@ theorem checkFn_ok {p : Program} {f : FnDecl} (hp : p.accepts = true) (hf : f �
   · rename_i u hc
     simp only [Program.check] at hc
     obtain ⟨_, -, h1⟩ := Typing.bind_ok hc
+    obtain ⟨_, h2, -⟩ := Typing.bind_ok h1
     refine Typing.forIn_ok (P := fun f : FnDecl => ∃ u gF, (checkFn p f).run {} = .ok (u, gF))
-      ?_ h1 f hf
+      ?_ h2 f hf
     intro f' s hs
     obtain ⟨r, hr, hs'⟩ := Typing.bind_ok hs
     obtain ⟨a, ha⟩ := Typing.discard_ok hr
@@ -231,8 +235,9 @@ theorem reachStmt_loop (k : Checker.Reach) (l : Option String) (invs : List (Str
 theorem killStmt_loop (k : Checker.Reach) (l : Option String) (invs : List (String × Relation))
     (body : List Stmt) :
     Checker.killStmt k (.loop l invs body) =
-      Checker.killList { normal := Checker.reachStmt k (.loop l invs body),
-        loops := (l, k.normal, Checker.reachStmt k (.loop l invs body)) :: k.loops } body := by
+      Checker.killList
+        { normal := Checker.reachStmt k (.loop l invs body),
+          loops := (l, k.normal, Checker.reachStmt k (.loop l invs body)) :: k.loops } body := by
   first | rfl | rw [Checker.killStmt] | simp only [Checker.killStmt]
 
 /-! ## The watches of a loop's body -/
@@ -251,9 +256,11 @@ end and its `continue` go to the inner head, which reaches the outer head when
 the inner loop does; its `break` goes where the inner loop's exit does. -/
 def Watch.inside (label : Option String) (invs : List (String × Relation)) (body : List Stmt)
     (w : Watch) : Watch :=
-  { w with reach := { normal := Checker.reachStmt w.reach (.loop label invs body),
-    loops := (label, w.reach.normal, Checker.reachStmt w.reach (.loop label invs body)) ::
-      w.reach.loops } }
+  { w with
+    reach :=
+      { normal := Checker.reachStmt w.reach (.loop label invs body),
+        loops := (label, w.reach.normal, Checker.reachStmt w.reach (.loop label invs body)) ::
+          w.reach.loops } }
 
 theorem Watch.inside_reach {w : Watch} {label : Option String} {invs : List (String × Relation)}
     {body : List Stmt} (hr : Checker.reachList (w.inside label invs body).reach body = true) :
@@ -263,9 +270,10 @@ theorem Watch.inside_reach {w : Watch} {label : Option String} {invs : List (Str
   | false =>
     have h1 := hh
     rw [reachStmt_loop] at h1
-    have hr' : Checker.reachList { normal := Checker.reachStmt w.reach (.loop label invs body),
-        loops := (label, w.reach.normal, Checker.reachStmt w.reach (.loop label invs body)) ::
-          w.reach.loops } body = true := hr
+    have hr' : Checker.reachList
+        { normal := Checker.reachStmt w.reach (.loop label invs body),
+          loops := (label, w.reach.normal, Checker.reachStmt w.reach (.loop label invs body)) ::
+            w.reach.loops } body = true := hr
     rw [hh, h1] at hr'
     cases hr'
 
@@ -354,7 +362,7 @@ theorem find_hit {k : Checker.Reach} {lab label : Option String} {a b : Bool}
   | some l =>
     have h1 : (some l == label) = true := hl
     have h2 : (label == some l) = true := by
-      rw [beq_comm]
+      rw [Bool.beq_comm]
       exact h1
     have h3 : ((label, a, b) :: ls).find? (fun e : Option String × Bool × Bool => e.1 == some l) =
         some (label, a, b) := List.find?_cons_of_pos h2
@@ -370,7 +378,7 @@ theorem find_miss {k k' : Checker.Reach} {lab label : Option String} {a b : Bool
   | some l =>
     have h1 : (some l == label) = false := hl
     have h2 : (label == some l) = false := by
-      rw [beq_comm]
+      rw [Bool.beq_comm]
       exact h1
     have h3 : ((label, a, b) :: k'.loops).find?
         (fun e : Option String × Bool × Bool => e.1 == some l) =
@@ -433,7 +441,7 @@ theorem target_cons {lc0 lc : Checker.LoopCtx} {ls : List Checker.LoopCtx} {lab 
       cases h
       refine Or.inl ⟨?_, rfl⟩
       have hb' := hb
-      rw [beq_comm] at hb'
+      rw [Bool.beq_comm] at hb'
       exact hb'
     | false =>
       have h1 : Checker.target (lc0 :: ls) (some l) = Checker.target ls (some l) :=
@@ -443,7 +451,7 @@ theorem target_cons {lc0 lc : Checker.LoopCtx} {ls : List Checker.LoopCtx} {lab 
       rw [h1] at h
       refine Or.inr ⟨?_, h⟩
       have hb' := hb
-      rw [beq_comm] at hb'
+      rw [Bool.beq_comm] at hb'
       exact hb'
 
 theorem target_mem {loops : List Checker.LoopCtx} {lab : Option String} {lc : Checker.LoopCtx}
@@ -463,8 +471,11 @@ theorem target_mem {loops : List Checker.LoopCtx} {lab : Option String} {lc : Ch
 theorem stepStmt_loop (p : Program) (f : Frame) (callers : List Frame) (pos : Pos)
     (label : Option String) (invs : List (String × Relation)) (body : List Stmt) (k : List Kont) :
     stepStmt p f callers pos (.loop label invs body) k =
-      .next { frames := { f with kont := .stmts (pos ++ [0]) 0 body ::
-        .loop label (pos ++ [0]) body f.env.length :: k } :: callers } := rfl
+      .next
+        { frames :=
+            { f with
+              kont := .stmts (pos ++ [0]) 0 body :: .loop label (pos ++ [0]) body f.env.length :: k } ::
+              callers } := rfl
 
 theorem findLoop_loop (lab l : Option String) (blk : Pos) (body : List Stmt) (d : Nat)
     (rest : List Kont) :
@@ -497,8 +508,11 @@ theorem stepContinue_of_findLoop {f : Frame} {callers : List Frame} {lab : Optio
     {k : List Kont} {l : Option String} {blk : Pos} {body : List Stmt} {d : Nat}
     {rest : List Kont} (h : findLoop lab k = some (l, blk, body, d, rest)) :
     stepStmt.stepContinue f callers lab k =
-      .next { frames := { f with env := f.env.restore d,
-        kont := .stmts blk 0 body :: .loop l blk body d :: rest } :: callers } := by
+      .next
+        { frames :=
+            { f with
+              env := f.env.restore d,
+              kont := .stmts blk 0 body :: .loop l blk body d :: rest } :: callers } := by
   unfold stepStmt.stepContinue
   rw [h]
   all_goals rfl
@@ -520,8 +534,11 @@ theorem stepContinue_loop_hit {f : Frame} {callers : List Frame} {lab l : Option
     {blk : Pos} {body : List Stmt} {d : Nat} {rest : List Kont}
     (h : (lab.isNone || lab == l) = true) :
     stepStmt.stepContinue f callers lab (.loop l blk body d :: rest) =
-      .next { frames := { f with env := f.env.restore d,
-        kont := .stmts blk 0 body :: .loop l blk body d :: rest } :: callers } :=
+      .next
+        { frames :=
+            { f with
+              env := f.env.restore d,
+              kont := .stmts blk 0 body :: .loop l blk body d :: rest } :: callers } :=
   stepContinue_of_findLoop (findLoop_hit h)
 
 theorem stepContinue_loop_miss {f : Frame} {callers : List Frame} {lab l : Option String}
@@ -560,15 +577,18 @@ theorem stmt_loop {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (label : 
   have hfo := hBF _ _ _ _ _ _ _ hwb hHF
   have hvars3 : ∀ v ∈ env.vars, v.id < g3.next := ids_mono (L.fresh_ids hF) (by omega)
   have hpts3 : PtsOK p fn g3 := PtsOK.of_prefix hpts ⟨[], by rw [List.append_nil, hgm.2]⟩
-  have henvB : EnvOK p fn { env with loops := { id := g.next, label, headers := invs.map (·.2),
-      outside := env.vars } :: env.loops } := by
+  have henvB : EnvOK p fn
+      { env with
+        loops := { id := g.next, label, headers := invs.map (·.2), outside := env.vars } ::
+          env.loops } := by
     refine ⟨henv.prog, henv.fn_eq, henv.accepts, henv.fn_of, fun lc hlc rel hrel => ?_⟩
     rcases List.mem_cons.mp hlc with rfl | hlc'
     · obtain ⟨ir, hir, rfl⟩ := List.mem_map.mp hrel
       exact ⟨cx.scope, hinvs ir hir⟩
     · exact henv.headers lc hlc' rel hrel
-  have hlpB : ∀ lc ∈ ({ env with loops := { id := g.next, label, headers := invs.map (·.2),
-      outside := env.vars } :: env.loops } : Checker.Env).loops, lc.id < g2.next := by
+  have hlpB : ∀ lc ∈ ({ env with
+        loops := { id := g.next, label, headers := invs.map (·.2), outside := env.vars } ::
+          env.loops } : Checker.Env).loops, lc.id < g2.next := by
     intro lc hlc
     rcases List.mem_cons.mp hlc with rfl | hlc'
     · show g.next < g2.next
@@ -965,8 +985,9 @@ theorem start_safe {F : Model} {p : Program} (L : Laws F) (hp : p.accepts = true
     ∀ c0, p.start = some c0 → ∀ n, SafeAt F p n c0 := by
   intro c0 hs n
   obtain ⟨f, hf, he⟩ := start_some hs
-  have hname : f.name = "main" :=
-    beq_iff_eq.mp (List.find?_some (show p.fns.find? _ = some f from hf))
+  have hf' : p.fns.find? (fun x => x.name == "main") = some f := hf
+  have hb : (f.name == "main") = true := List.find?_some hf'
+  have hname : f.name = "main" := beq_iff_eq.mp hb
   have hfn : p.fn? f.name = some f := by
     rw [hname]
     exact hf
