@@ -12,9 +12,8 @@ fn main() -> status: ExitStatus pure {
   let duplicate = original;
   set duplicate.tag = 9_u64;
   set duplicate.bytes[1_u64] = 'Z'_u8;
-  if duplicate.bytes[1_u64] != 'Z'_u8 {
-    return exit_status(code: 2_u8);
-  }
+  let patched = duplicate.bytes[1_u64];
+  let drift = patched - 'Z'_u8;
   if original.bytes[1_u64] != 'b'_u8 {
     return exit_status(code: 4_u8);
   }
@@ -23,5 +22,6 @@ fn main() -> status: ExitStatus pure {
   let tens = copied_tag * 10_u64;
   let combined = tens + static_tag;
   let code = cvt::<u64, u8>(combined);
-  return exit_status(code: code);
+  let status_code = code + drift;
+  return exit_status(code: status_code);
 }

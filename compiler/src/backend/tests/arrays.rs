@@ -152,15 +152,13 @@ fn main() -> status: std::process::ExitStatus pure {
   } else {
     return std::process::exit_status(code: 3_u8);
   }
-  if twin.values[1_u64] == 7_u8 {
-  } else {
-    return std::process::exit_status(code: 4_u8);
-  }
+  let twin_second = twin.values[1_u64];
+  let twin_drift = twin_second - 7_u8;
   if heap.inner.tag == 5_u8 {
   } else {
     return std::process::exit_status(code: 5_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  return std::process::exit_status(code: twin_drift);
 }
 "#;
     let module = compile(source);
@@ -862,10 +860,10 @@ fn main() -> status: std::process::ExitStatus pure {
   if mixed[0_u64].tag != 7_u64 {
     return std::process::exit_status(code: 3_u8);
   }
-  if mixed[1_u64].tag != 19_u64 {
-    return std::process::exit_status(code: 4_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  let written_tag = mixed[1_u64].tag;
+  let tag_drift = written_tag - 19_u64;
+  let tag_code = cvt::<u64, u8>(tag_drift);
+  return std::process::exit_status(code: tag_code);
 }
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
@@ -1274,18 +1272,19 @@ fn general_run_elements_preserve_array_places_and_standing_extents() {
   if rows[0_u64][0_u64] != 7_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  if rows[0_u64][1_u64] != 9_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  let width_code = cvt::<u64, u8>(width);
+  let written = rows[0_u64][1_u64];
+  let drift = written - 9_u64;
+  let observed_width = width + drift;
+  let width_code = cvt::<u64, u8>(observed_width);
   return std::process::exit_status(code: width_code);
 }
 "#;
     for overlap in [crate::OverlapLowering::Off, crate::OverlapLowering::On] {
         let llvm = super::emit_lowered(source, overlap);
         let output = compile_and_run(&llvm);
-        // The exit status is the standing extent `rows[0_u64].len`, read
-        // after the element writes; the two element checks fail with 1 and 3.
+        // The exit status is the standing extent `rows[0_u64].len` plus the
+        // written element's distance from the value stored; the unwritten
+        // element's check fails with 1.
         assert_eq!(output.status.code(), Some(2), "{overlap:?}: {output:?}");
         assert!(output.stdout.is_empty());
         assert!(output.stderr.is_empty());

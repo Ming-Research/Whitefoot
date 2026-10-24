@@ -1019,6 +1019,12 @@ impl<'unit> Checker<'_, 'unit> {
                     definition,
                     value,
                 )?;
+                if clause_places.hides_computed_offset(value) {
+                    return self
+                        .types
+                        .declarations
+                        .invalid_clause(ClauseKind::Postcondition(record), definition);
+                }
                 self.types.validate_clause_copy_local(
                     check_context,
                     ClauseKind::Postcondition(record),
@@ -1069,6 +1075,12 @@ impl<'unit> Checker<'_, 'unit> {
                 clause,
                 &condition.expression,
             )?;
+            if clause_places.hides_computed_offset(&condition.expression) {
+                return self
+                    .types
+                    .declarations
+                    .invalid_clause(ClauseKind::Postcondition(record), clause);
+            }
             if condition.mode != CheckedMode::Own || condition.expression.ty() != CheckedType::Bool
             {
                 return self.types.declarations.issue_node(
@@ -1077,19 +1089,24 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticIssueKind::InvalidPredicateCondition,
                 );
             }
-            let expanded = self.types.build_clause_expression(
+            let mut expanded = self.types.build_clause_expression(
                 check_context,
                 expression,
                 &condition.expression,
                 bindings,
                 &expanded_bindings,
             )?;
+            expanded.instantiate_const_offsets(function);
             // [ENT-2, FN-9] each clause forms every place its expansion
             // reaches, at every return that selects it, each over the state
             // it denotes [MSR-3].
             let entry_suffixes = self.types.declarations.entry_former_suffixes(contract)?;
             let places = clause_places
-                .clause(&condition.expression, &mut HashSet::new())
+                .clause(
+                    &condition.expression,
+                    &mut HashSet::new(),
+                    &self.types.captured_places,
+                )
                 .into_iter()
                 .map(|expression| PostconditionFormedPlace {
                     denotation: place_denotation(function, bindings, &expression, &entry_suffixes),
@@ -1257,15 +1274,13 @@ impl<'unit> Checker<'_, 'unit> {
                     ty: *ty,
                 })
             }
-            // [FN-9] a parameter or named-const datum carries field and
-            // Box-content projections only: a subscripted readonly field is an
-            // [ENT-2] clause (b) term a requirement may name, but no relation
-            // datum in this version, and only a measure member of a formal
-            // place reaches a relation through a subscript (the arm below).
-            ExpandedClauseExpression::Datum(
-                ExpandedClauseDatum::Parameter { projections, .. }
-                | ExpandedClauseDatum::NamedConst { projections, .. },
-            ) if projections.iter().any(|projection| {
+            // [FN-9] a named-const datum carries field and Box-content
+            // projections only; a parameter datum may also carry the
+            // subscripts of an [ENT-2] clause (b) place.
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
+                projections,
+                ..
+            }) if projections.iter().any(|projection| {
                 matches!(
                     projection,
                     GoalProjection::Subscript(_)
@@ -1787,6 +1802,8 @@ impl<'unit> DeclarationInventory<'unit> {
             // entry names only a declaration-boundary place: projection
             // reads are checked by the ordinary FN-9 fragment judgment, and
             // indexed selections are not part of its projection language.
+            // A subscript after the former is judged where the clause place
+            // is expanded, which knows whether it reaches a measure.
             for suffix in self.tree.children_with(base, Production::Psuffix)? {
                 if matches!(
                     self.tree.place_suffix(suffix)?,

@@ -16,7 +16,7 @@ namespace Whitefoot
 namespace Fact
 
 -- spec ENT-2 6d7c00a90d650dc8
--- spec ENT-2 2ee0c58e4df361d7
+-- spec ENT-2 3c8500e720232cd3
 -- spec ENT-2 b9d2de7c65d7a579
 -- spec ENT-2 19149e7a56339ac4
 -- spec ENT-2 49ee19c7462f77c7
@@ -44,7 +44,7 @@ inductive Term where
 
 namespace Term
 
--- spec ENT-5 a201ec3868283ac7
+-- spec ENT-5 c7857991638b5382
 -- spec ENT-5 4a80a2e784e658c3
 -- spec ENT-5 8f3fa6bdbfdae21e
 /-- The bindings whose places a term reads: its support [ENT-5]. Z, commit

@@ -3548,10 +3548,7 @@ pub(super) fn call_projections(
     projections: &[GoalProjection],
     arguments: &[GoalExpression],
 ) -> Option<Vec<GoalProjection>> {
-    let named = |declaration| match context.constant(declaration)?.value {
-        CheckedValue::Integer { bits, .. } => Some(bits),
-        _ => None,
-    };
+    let named = |declaration| Some(context.constant(declaration)?.value.clone());
     projections
         .iter()
         .map(|projection| {

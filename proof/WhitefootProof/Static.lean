@@ -173,9 +173,9 @@ def exprTy (p : Program) (sc : Scope) : Expr → Judge Ty
     | some (.fn _), _ => rejectBy "OP-1" "a nongeneric function takes no written argument"
     | _, _ => rejectBy "TYPE-6" s!"the callee `{"::".intercalate path}` does not resolve"
 
--- spec FN-8 ef741fd6cc43a493
+-- spec FN-8 5786b570c3883cca
 -- spec FN-8 50b1578b2547bad0
--- spec FN-9 71118b8660d37bed
+-- spec FN-9 90fa2e98f690c3d2
 -- spec INV-1 97e537c1a0782695
 -- spec INV-1 4d9283cbf102401b
 -- spec INV-1 c9ca441f8ba0930e

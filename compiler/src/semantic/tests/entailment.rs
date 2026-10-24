@@ -7960,7 +7960,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_nested_index_offset_is_no_term_and_renders_its_canonical_bytes() {
+fn a_nested_index_offset_without_a_bound_renders_its_canonical_bytes() {
     let source = br#"const count: u64 = 4_u64;
 
 const lens: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
@@ -7987,7 +7987,7 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     assert!(
         !outcomes[1].discharged,
-        "an index-bearing offset is no term [ENT-2], so the outer obligation is underivable"
+        "order[j] is a clause (b) term [ENT-2], but no fact bounds it, so the outer obligation is unproved"
     );
     assert_eq!(outcomes[1].residual.as_deref(), Some("order[j] < lens.len"));
 }
@@ -9936,7 +9936,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(direct[0].discharged);
     assert!(
         !direct[1].discharged,
-        "the nested subscript remains no term"
+        "no fact bounds the nested element, which S9 does not read through a constant's field"
     );
     assert_eq!(
         direct[1].residual.as_deref(),
@@ -12939,7 +12939,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn indexed_writable_defined_guard_proves_exact_domain_without_integer_place() {
+fn indexed_writable_defined_guard_proves_exact_domain_with_integer_place() {
     let source = br#"struct Cell {
   len: u8;
 }
@@ -12988,7 +12988,8 @@ fn main() -> status: std::process::ExitStatus pure {
             ..
         }
     ));
-    assert!(!summary.inventory.terms.iter().any(|term| matches!(term,
+    // [ENT-2] clause (b): the integer field below the element is a term.
+    assert!(summary.inventory.terms.iter().any(|term| matches!(term,
         TermKind::Place(place, IntegerType::U8)
             if place.path.iter().any(|step| matches!(step, PlaceStep::Index(_)))
                 && matches!(place.path.last(), Some(PlaceStep::Field(_))))));

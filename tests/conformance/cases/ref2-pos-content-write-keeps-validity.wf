@@ -7,9 +7,7 @@ fn main() -> status: ExitStatus pure {
   let p = &a[1_u64];
   set a[1_u64] = 8_u64;
   let seen = p^;
-  if seen == 8_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let drift = seen - 8_u64;
+  let code = cvt::<u64, u8>(drift);
+  return exit_status(code: code);
 }
