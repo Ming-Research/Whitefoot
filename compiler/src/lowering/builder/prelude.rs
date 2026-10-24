@@ -944,8 +944,8 @@ fn ceiling_pair(
         // `Array<T>` is a pointer and a length.
         IrType::Run { .. } => (Finite(24), 8),
         IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } => (Finite(16), 8),
-        // A key set is its count and its store's pointer; the entries an
-        // entry binding names are the statement's record [SHARE-1, SHARE-2].
+        // A key set is its count and its store's pointer; the entries a
+        // key-set subscript selects are a record in the frame [OP-4, SHARE-1].
         IrType::KeySet => (Finite(16), 8),
         IrType::Entries { .. } => (Finite(24), 8),
         IrType::Address(_) => (Finite(8), 8),

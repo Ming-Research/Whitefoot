@@ -505,7 +505,7 @@ impl<'unit> Checker<'_, 'unit> {
             }
             return Ok(CheckedType::KeySet);
         }
-        // [SHARE-2] the entries an entry binding names over a key set: one
+        // [OP-4, SHARE-1] the entries a key-set subscript selects: one
         // prelude `Option<V>` place per key.
         if shape == crate::ContainerShape::Entries {
             let [value] = arguments.as_slice() else {

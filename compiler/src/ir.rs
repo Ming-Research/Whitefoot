@@ -107,7 +107,7 @@ pub enum IrAddressed {
     },
     /// One `KeySet` place [SHARE-1].
     KeySet,
-    /// The entries an entry binding over a key set names [SHARE-2].
+    /// The entries a key-set subscript selects [OP-4, SHARE-1].
     Entries {
         element: IrElement,
     },
@@ -242,10 +242,11 @@ pub enum IrType {
     /// One `KeySet` [SHARE-1]: its key count, the type's one measure, then a
     /// pointer to the runtime's store of its keys and payloads, `{ i64, ptr }`.
     KeySet,
-    /// The entries an entry binding over a key set names [SHARE-2]: the
-    /// statement's record of its hold, the position of the set's first key in
-    /// that hold and the set's count, `{ ptr, i64, i64 }`. It is only ever
-    /// reached through its address, which the binding names.
+    /// The entries a key-set subscript selects [OP-4, SHARE-1]: a pointer to
+    /// what selects them, the map's hold for a write or a private read
+    /// selection, the position of the set's first key there and the set's
+    /// count, `{ ptr, i64, i64 }`. It is only ever reached through its
+    /// address, the reference the subscript forms.
     Entries {
         element: IrElement,
     },
@@ -409,11 +410,11 @@ pub enum IrShared {
     Map { entry: IrType },
 }
 
-/// A record a statement keeps in its frame for the runtime
+/// A record a function keeps in its frame for the runtime
 /// (compiler/waiting-contexts/state-locks): the lock of one entry, a hold of
-/// a table's entries, the entries an entry binding over a key set names, or
-/// a guard's watch. A function numbers its records; the backend reserves
-/// each once in the frame, so a statement inside a loop reuses its own.
+/// a table's entries, the entries a key-set subscript selects, or a guard's
+/// watch. It numbers its records; the backend reserves each once in the
+/// frame, so a statement inside a loop reuses its own.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IrRecord {
     pub(crate) index: u32,
@@ -1331,7 +1332,8 @@ pub enum IrOperation {
     /// Native snapshot signal preparation before any atomic acquisition.
     /// Erased when the composition uses no snapshot export.
     SnapshotAtomicBegin,
-    /// Activates prepared captures after all atomic targets are released.
+    /// Activates prepared captures after the statement has released every
+    /// lock unit it holds.
     SnapshotAtomicEnd,
     /// [SHARE-2, SHARE-3] waits until this context holds the object alone.
     /// Defines `Unit`.

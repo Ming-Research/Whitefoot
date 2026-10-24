@@ -3593,9 +3593,9 @@ pub(super) fn llvm_type_with_references(
         IrType::Range { .. } => Ok("{ ptr, i64 }".to_owned()),
         IrType::Run { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
         // [SHARE-1] a key set is its count, its one measure, and a pointer to
-        // the runtime's store; the entries an entry binding names are the
-        // statement's record of its hold, the set's first position in it and
-        // the set's count [SHARE-2].
+        // the runtime's store; the entries a key-set subscript selects are a
+        // pointer to what selects them, the set's first position there and
+        // the set's count [OP-4].
         IrType::KeySet => Ok("{ i64, ptr }".to_owned()),
         IrType::Entries { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
         // compiler/storage-representation: a runtime-capacity `Array<T>` is

@@ -613,10 +613,10 @@ pub(crate) enum CheckedType {
     /// lexicographic order, each with a `u64` payload. Its `len` is its key
     /// count, the one measure of the type and a bounded one [MSR-1].
     KeySet,
-    /// The `Entries<V>` an entry binding names over a key set [SHARE-2]:
-    /// one `Option<V>` place per key of the set, `element` being that
-    /// `Option<V>`. It exists only as the binding's referent; its `len` is the
-    /// set's [MSR-1].
+    /// The `Entries<V>` a key-set subscript selects [OP-4, SHARE-1]: one
+    /// `Option<V>` place per key of the set, `element` being that
+    /// `Option<V>`. It exists only as the referent of the reference that
+    /// subscript forms; its `len` is the set's [MSR-1].
     Entries {
         element: CheckedElement,
     },

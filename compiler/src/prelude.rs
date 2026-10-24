@@ -110,9 +110,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
-    // A keyed table [SHARE-1]: its entries are reached only through the entry
-    // bindings of an atomic statement, so it declares no field; `V: drop`
-    // because releasing a table drops every value its entries hold.
+    // A keyed table [SHARE-1]: its entries are reached only through its
+    // subscripts [OP-4], so it declares no field; `V: drop` because releasing
+    // a table drops every value its entries hold.
     (
         "prelude/ConcurrentHashMap.wf",
         PreludeSource::Opaque,
@@ -120,8 +120,8 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
-    // A key set [SHARE-1] and the entries an entry binding names over one
-    // [SHARE-2]: their readonly fields declare the measures [MSR-1].
+    // A key set [SHARE-1] and the entries a key-set subscript selects over one
+    // [OP-4]: their readonly fields declare the measures [MSR-1].
     (
         "prelude/KeySet.wf",
         PreludeSource::Opaque,

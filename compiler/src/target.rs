@@ -1896,9 +1896,9 @@ impl<'types> LayoutComputer<'types> {
             }
             // [SHARE-1] a key set is its count and its store's pointer.
             IrType::KeySet => Ok(Layout { size: 16, align: 8 }),
-            // [SHARE-2] the statement's record of the entries an entry binding
-            // over a key set names: its hold, the set's first position and
-            // its count.
+            // [SHARE-1] the record of the entries a key-set subscript selects:
+            // a pointer to what selects them, the set's first position there
+            // and its count.
             IrType::Entries { element } => {
                 self.element(element)?;
                 Ok(Layout { size: 24, align: 8 })

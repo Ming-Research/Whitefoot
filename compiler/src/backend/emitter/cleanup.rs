@@ -922,8 +922,8 @@ fn emit_cleanup_jobs(
                 // cell arm below is the one route to its release, exactly as
                 // it is for a runtime-capacity window. Reaching here would
                 // mean a value of a type no storage can hold.
-                // The entries an entry binding names are its statement's
-                // record and own nothing [SHARE-2].
+                // The entries a key-set subscript selects are a record in the
+                // frame and own nothing [SHARE-1].
                 IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Entries { .. } => {
                     return Err(BackendFailure::InvalidIr);
                 }

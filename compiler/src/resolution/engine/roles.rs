@@ -465,10 +465,9 @@ fn classify_node(
             roles,
             complete_counts,
         )?,
-        // The binders are the statement's direct IDENTs: the first names the
-        // state and every later one an entry binding; the places and the
-        // guard are child productions that classify their own names
-        // [SHARE-2].
+        // The binder is the statement's one direct IDENT, which names the
+        // state; the place and the guard are child productions that classify
+        // their own names [GRAM-4, SHARE-2].
         Production::AtomicStmt => add_all(
             classified,
             owner,
