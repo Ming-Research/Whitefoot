@@ -3294,7 +3294,11 @@ theorem evalRhs_call_none {env : Env} {st : State} {g g1 : Gen} {e : Expr} {r : 
       cases ce with
       | fn f => exact absurd hce (hn path targs as f rfl)
       | exitStatus => walk_pure hr
-      | arrayFilled => walk_pure hr
+      | arrayFilled =>
+        -- The arm also inspects the type arguments, so the match reduces only
+        -- once they are constructors; a split would keep the `fn` arm.
+        rcases targs with _ | ⟨(et | _ | _ | ⟨_, _⟩ | _) | _, _ | ⟨_ | n, _ | ⟨_, _⟩⟩⟩ <;>
+          dsimp only at hr <;> walk_pure hr
   · simp only [evalRhs] at hr
     walk_pure hr
 
