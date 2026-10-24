@@ -103,18 +103,24 @@ jobs:
               if code == 0:
                   print('compiled after', iteration, 'fixes')
                   break
-              errors = re.findall(r'error\[OP-5\]: RedundantCondition\n\s+source:\s+(.*)\n.*\n.*\n\s+decided: (\w+)', out)
+              errors = re.findall(r'v2h\.wf:(\d+):\d+: error\[OP-5\]: RedundantCondition\n\s+source:\s+(.*)\n.*\n.*\n\s+decided: (\w+)', out)
               if not errors:
                   print(out[:6000])
                   raise SystemExit('a different error')
               fixed = 0
-              for source, decided in errors:
+              generated = open(tmp + '/v2h.wf').read().split('\n')
+              # One error at a time: a fix moves the lines the others name.
+              for lineno, source, decided in errors[:1]:
                   cond = source.strip()
                   hits = [(f, i) for f in files for i, l in enumerate(texts[f]) if l.strip() == cond]
-                  print('redundant:', cond, 'decided', decided, 'hits', hits)
-                  if decided != 'True' or len(hits) != 1:
+                  seen = [i for i, l in enumerate(generated) if l.strip() == cond]
+                  print('redundant:', cond, 'decided', decided, 'at generated line', lineno, 'hits', hits, 'seen', seen)
+                  # The sources are copied in order, so the error's place among the
+                  # generated copies of the line is its place among the source hits.
+                  if decided != 'True' or len(hits) != len(seen) or int(lineno) - 1 not in seen:
                       print(out[:6000])
                       raise SystemExit('needs a manual edit: ' + cond)
+                  hits = [hits[seen.index(int(lineno) - 1)]]
                   f, k = hits[0]
                   lines = texts[f]
                   end = block_end(lines, k)
