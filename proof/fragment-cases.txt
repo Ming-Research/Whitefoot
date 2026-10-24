@@ -65,12 +65,16 @@ fn9-neg-affine-wrong-actual
 fn9-neg-division-floor-equality
 fn9-neg-entry-image-kill
 fn9-neg-result-beside-module-alias
+fn9-neg-return-call-result
+fn9-neg-return-computed-unrelated
+fn9-neg-return-subscript-element
 fn9-neg-unproved-selected-return
 fn9-neg-wrapped-negation-nonnegative
 fn9-pos-affine-parameter-bound
 fn9-pos-affine-unit-parameter-coefficient
 fn9-pos-direct-set-receiver
 fn9-pos-result-beside-function
+fn9-pos-return-computed-value
 fn9-pos-two-signed-result-bounds
 form1-neg-unknown-construct
 form1-pos-canonical
