@@ -157,6 +157,24 @@ jobs:
           echo "== relative path, 2000 iterations"
           cd "$RUNNER_TEMP/p"
           ( time taskset -c 1 "$RUNNER_TEMP/p/v2h-image" coremark.wasm 0x0 0x0 0x66 2000 ) 2>&1 | tail -30
+      - name: Which inputs of the compile change the image bytes
+        continue-on-error: true
+        run: |
+          wfc=$PWD/compiler/target/gate/whitefootc
+          p=$RUNNER_TEMP/p
+          mkdir -p "$p/copy"
+          cp "$p/v2h.wf" "$p/copy/v2h.wf"
+          "$wfc" "$p/v2h.wf" --cache "$p/c2" -o "$p/image-othercache"
+          "$wfc" "$p/v2h.wf" --cache "$p/v2h-cache" -o "$p/image-warm"
+          "$wfc" "$p/v2h.wf" -o "$p/image-nocache"
+          "$wfc" "$p/copy/v2h.wf" --cache "$p/c3" -o "$p/image-othersource"
+          "$wfc" "$p/v2h.wf" --cache "$p/c4" -o "$p/image-othercache2"
+          cd "$p"
+          sha256sum v2h-image image-*
+          ls -l v2h-image image-*
+          for f in image-*; do echo "$f differs from v2h-image in $(cmp -l v2h-image "$f" | wc -l) bytes"; done
+          cmp -l v2h-image image-othercache | head -20
+          cmp image-othercache image-othercache2 && echo "two other caches agree" || echo "two other caches differ"
       - name: Perf availability
         continue-on-error: true
         run: |
