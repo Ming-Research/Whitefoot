@@ -300,6 +300,19 @@ def merge (env : Env) : List State → M (Option State)
   | [s] => return some s
   | ss => some <$> joinStates env ss
 
+/-- A loop's head state [ENT-5, INV-1]: the entering state with each binding
+of `killed` that is in scope written, each such integer binding given a fresh
+atom over its type as its image, and then each invariant established. -/
+def loopHead (env : Env) (st : State) (killed : List String)
+    (invs : List (String × Relation)) : M State := do
+  let mut head := st
+  for x in killed do
+    if let some v := env.var? x then
+      head := head.write v.id
+      if let .int t := v.ty then
+        head := head.setImage v.id (← typeAtom t)
+  return invs.foldl (fun s (_, r) => establishRel env s r) head
+
 mutual
 -- spec ENT-2 e1dbb8e4dc9adc24
 -- spec ENT-5 a8904d6cd3a8ddaa
@@ -456,13 +469,7 @@ def walkStmt (env : Env) (st : State) (pos : Pos) (s : Stmt) : M (Env × Out) :=
       if !relHolds env gen st r then fail "INV-1" s!"the invariant `{n}` is not proved on entry"
     let id ← freshId
     let killed := (killList { normal := true, loops := [(label, false, true)] } body).eraseDups
-    let mut head := st
-    for x in killed do
-      if let some v := env.var? x then
-        head := head.write v.id
-        if let .int t := v.ty then
-          head := head.setImage v.id (← typeAtom t)
-    head := invs.foldl (fun s (_, r) => establishRel env s r) head
+    let head ← loopHead env st killed invs
     let lc : LoopCtx := { id, label, headers := invs.map (·.2), outside := env.vars }
     let o ← walkList { env with loops := lc :: env.loops } head (pos ++ [0]) 0 body
     let inputs := (o.normal ++ (o.conts.filter (·.1 == id)).map (·.2)).map (·.exit env.vars)
@@ -566,6 +573,25 @@ def consistent (p : Program) (f : FnDecl) : Judge Unit := do
   let s := close [] (facts.flatMap (·.1)) (facts.flatMap (·.2.1))
   if s.contra then rejectBy "CALL-6" s!"the postconditions of `{f.name}` are contradictory"
 
+/-- A function's entry environment and state [ENT-3.S4, FN-8, FN-9]: each
+parameter bound to a fresh identity and, for an integer parameter, given a
+fresh atom over its type as its entry image; every parameter's entry image
+stable; then each requirement established. -/
+def entryState (p : Program) (f : FnDecl) : M (Env × State) := do
+  let mut vars : List Var := []
+  let mut st : State := {}
+  for prm in f.params do
+    let id ← freshId
+    let ty := Static.normTy p prm.ty
+    vars := { name := prm.name, id, ty } :: vars
+    if let .int t := ty then
+      st := st.setImage id (← typeAtom t)
+  let env : Env := { prog := p, fn := f, vars, params := vars.map (fun v => (v.name, v.id)), loops := [] }
+  st := { st with stable := vars.map (·.id), l0 := close env.live [] [] }
+  for r in f.requires do
+    st := establishRequire env st r
+  return (env, st)
+
 mutual
 /-- Whether a statement list holds a `return`: a postcondition's selected
 returns [FN-9]. -/
@@ -598,18 +624,7 @@ then the walk of its body from the entry state of its requirements. -/
 def checkFn (p : Program) (f : FnDecl) : M Unit := do
   for r in f.ensures do StateT.lift (ensuresShape f r)
   StateT.lift (consistent p f)
-  let mut vars : List Var := []
-  let mut st : State := {}
-  for prm in f.params do
-    let id ← freshId
-    let ty := Static.normTy p prm.ty
-    vars := { name := prm.name, id, ty } :: vars
-    if let .int t := ty then
-      st := st.setImage id (← typeAtom t)
-  let env : Env := { prog := p, fn := f, vars, params := vars.map (fun v => (v.name, v.id)), loops := [] }
-  st := { st with stable := vars.map (·.id), l0 := close env.live [] [] }
-  for r in f.requires do
-    st := establishRequire env st r
+  let (env, st) ← entryState p f
   if !f.ensures.isEmpty && !returns f.body && !st.contra then
     fail "FN-9" s!"`{f.name}` has postconditions and no return to prove them at"
   discard <| walkList env st [] 0 f.body
