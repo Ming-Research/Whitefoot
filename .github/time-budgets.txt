@@ -91,9 +91,9 @@ linux-runtime-tsan              10         10         10         10          -  
 # checker), the build of its model, proofs and conformance harness, and its run
 # over the conformance cases. Provisional until 20 runs are recorded: 1.5 times
 # the longest run of the stage's current content, rounded up to 5 s, under the
-# 10 s floor (coverage 2.7 s, build 55.5 s, conformance run 5.2 s).
+# 10 s floor (coverage 2.8 s, build 66.1 s, conformance run 5.4 s).
 proof-coverage                  10         10         10         10          -      -
-proof-build                     85         85         85         85          -      -
+proof-build                    100        100        100        100          -      -
 proof-conformance               10         10         10         10          -      -
 
 # sanitizers.yml: the corpus target under one sanitizer, building its test

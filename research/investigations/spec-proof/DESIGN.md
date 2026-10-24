@@ -1081,6 +1081,19 @@ sequences with a small fact core, and the build checks each verdict with
   five checks of a debt widened when its offset moves.
 - The gap's example above: rejected.
 
+A temporary workflow put back, one per job, the rule each of three of these
+cases protects, and required the cases to fail and the proofs not to check.
+With the fifteenth round's joined store, a store through a reference with
+several members removing the debts proved at or below every member, the checks
+of `type11-neg-joined-reference-store-keeps-debt` and
+`type11-neg-swap-after-joined-write-store-keeps-debt` failed and
+`storeRemove_keep` did not check. With the sixteenth round's recorded swap, an
+exchanged debt keeping its recorded reference, the checks of the two
+`type11-neg-swap-after-joined-write-…` cases failed and `Debt.exchange_covers`
+did not check. With the literal reading of the gap, the gap's case failed and
+`Ctx.writeDebts_cover` and `Ctx.store_holds` did not check. No other check
+failed.
+
 ### Line by line
 
 Each line of the nine rules on Whitefoot#484's branch, numbered as the
@@ -1167,11 +1180,15 @@ harness took 25.4 s, 32.5 s and 48.7 s on the three green `proof.yml` runs,
 within the build's budget of the time, 65 s, against 39.9 s to 42.2 s on the
 main line's three runs of the same day; on the last run the three modules
 built in 3.4 s, 1.8 s and 5.4 s, with 5.8 s, 2.6 s and 0.9 s more for their
-object code. The study's estimate was about 1,200 lines of definitions and
-4,000 of proof. The part took two engineer turns, the first of which also made
-the study, and seven `proof.yml` runs to its review. Three runs failed to
-compile: the meaning of a cover named a place it had not bound, three steps of
-the first lemmas did not type-check, and a lemma's proof referred to itself.
+object code. With those lemmas merged in, the build took 61.5 s and 66.1 s on
+the next two runs, the three modules 3.3 to 3.6 s, 1.5 to 2.1 s and 5.1 to
+5.3 s, and the build's provisional budget rises from 85 s to 100 s, 1.5 times
+66.1 s rounded up to 5 s. The study's estimate was about 1,200 lines of
+definitions and 4,000 of proof. The part took two engineer turns, the first of
+which also made the study, nine `proof.yml` runs and one run of the temporary
+workflow to its review. Three runs failed to compile: the meaning of a cover
+named a place it had not bound, three steps of the first lemmas did not
+type-check, and a lemma's proof referred to itself.
 
 ## Cost
 
