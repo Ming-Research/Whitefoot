@@ -1,34 +1,24 @@
 import WhitefootProof.Points
 
 -- Temporary (spec-proof-theorems): prints the elaborated shapes of the
--- definitions the simulation takes apart, and the library lemmas it uses;
--- removed with its workflow.
+-- definitions the simulation takes apart next (a loop's walk and step, a
+-- function's entry); removed with its workflow.
 
 set_option pp.notation false
 
-#check @Whitefoot.Static.stmt.eq_6
-#check @Whitefoot.Static.stmt.eq_8
-#check @Whitefoot.Static.stmt.eq_10
-#check @Whitefoot.Static.stmt.eq_11
-#check @Whitefoot.Static.stmt.eq_12
-#check @Whitefoot.Checker.walkStmt.eq_6
-#check @Whitefoot.Checker.walkStmt.eq_8
-#check @Whitefoot.Checker.walkStmt.eq_10
-#check @Whitefoot.Checker.merge.eq_3
+#check @Whitefoot.Checker.walkStmt.eq_7
+#print Whitefoot.Checker.loopHead
+#print Whitefoot.Checker.entryState
+#print Whitefoot.Checker.checkFn
 
 set_option pp.notation true
 
-#check @List.forIn_cons
-#check @List.forIn_nil
-#check @List.mem_map
-#check @beq_self_eq_true
-#check @List.mem_append_left
-#check @List.mem_append
-#check @List.prefix_append
-#check @List.IsPrefix.trans
-#check @List.find?_some
-#check @List.mem_cons
-#check @List.drop_append_of_le_length
-#check @List.length_drop
-#check @List.getElem_drop
-#check @Nat.lt_irrefl
+#check @Whitefoot.Checker.walkStmt.eq_7
+#check @Whitefoot.stepStmt.stepLoop.eq_def
+#check @Whitefoot.stepStmt.stepBreak.eq_def
+#check @Whitefoot.stepStmt.stepContinue.eq_def
+#check @Whitefoot.step.eq_def
+#print Whitefoot.enter
+#check @List.filter_cons
+#check @List.mem_filter
+#check @List.eraseDups
