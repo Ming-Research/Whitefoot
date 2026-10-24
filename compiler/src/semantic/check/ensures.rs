@@ -1,7 +1,7 @@
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::FunctionContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
-use crate::semantic::entailment::integer_value;
+use crate::semantic::entailment::{computed_integer_image, integer_value};
 use std::collections::{HashMap, HashSet};
 
 use crate::FixedTerminal;
@@ -1572,10 +1572,24 @@ const fn representable_bits(ty: CheckedType, value: i128) -> Option<u64> {
     Some((value & ((1_i128 << width) - 1)) as u64)
 }
 
+/// [FN-9] a returned fragment-integer expression that [ENT-3] relates to its
+/// operands as the initializer of an ordinary `let`, and that is no place,
+/// literal or named const, gives the return's evaluated value for its
+/// ordinal. Every other expression gives no datum.
+fn evaluated_return_datum(
+    value: &CheckedExpression,
+    ordinal: u32,
+) -> Option<PostconditionReturnDatum> {
+    let CheckedType::Integer(ty) = value.ty() else {
+        return None;
+    };
+    computed_integer_image(value).then_some(PostconditionReturnDatum::Evaluated { ordinal, ty })
+}
+
 /// [FN-9, CALL-4] whether one selected return's value, projected by a
 /// result datum's owned descendant projection, is inside the concrete integer
-/// fragment: an integer place, literal or success payload for a value datum,
-/// and a place for a measured one. A construction selects the operand of its
+/// fragment: an integer place, literal, evaluated value or success payload
+/// for a value datum, and a place for a measured one. A construction selects the operand of its
 /// field and continues below it.
 fn returned_projection_is_fragment(
     value: &PostconditionReturnDatum,
@@ -1603,7 +1617,9 @@ fn returned_projection_is_fragment(
         PostconditionReturnDatum::Literal { value, .. } => {
             !measured && projections.is_empty() && matches!(value.ty(), CheckedType::Integer(_))
         }
-        PostconditionReturnDatum::Measure(..) => !measured && projections.is_empty(),
+        PostconditionReturnDatum::Measure(..) | PostconditionReturnDatum::Evaluated { .. } => {
+            !measured && projections.is_empty()
+        }
     }
 }
 
@@ -3200,6 +3216,7 @@ impl<'unit> TypeContext<'unit> {
                                 node_path,
                                 binding_info,
                             )?
+                            .or_else(|| evaluated_return_datum(produced, ordinal))
                         };
                         if datum.is_none() && named.contains(&ordinal) {
                             return self.declarations.invalid_postcondition_return(node_path);

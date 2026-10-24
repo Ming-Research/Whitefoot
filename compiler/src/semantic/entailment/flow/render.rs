@@ -994,6 +994,7 @@ impl Reasoning<'_, '_, '_> {
             | TermKind::Place(_, ty)
             | TermKind::ResultPayload { ty, .. }
             | TermKind::CommitValue { ty, .. }
+            | TermKind::ReturnedValue { ty, .. }
             | TermKind::CallDatum { ty, .. }
             | TermKind::EntryDatum { ty, .. }
             | TermKind::MeasureDatum { ty, .. } => Some(*ty),
@@ -1097,6 +1098,7 @@ impl Reasoning<'_, '_, '_> {
                 })
             }
             TermKind::CommitValue { .. } => "<assigned value>".to_owned(),
+            TermKind::ReturnedValue { .. } => "<returned value>".to_owned(),
             TermKind::CallDatum { measure, .. } => measure.map_or_else(
                 || "<argument value at the call>".to_owned(),
                 |measure| format!("<argument {} at the call>", measure.spelling()),

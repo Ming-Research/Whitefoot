@@ -65,6 +65,7 @@ use walk::*;
 use sources::{bound_place, capture_counted_preheader};
 
 use results::{ResultDemand, ResultEvidence};
+pub(crate) use sources::computed_integer_image;
 use sources::{MeasureCarry, ValueImage};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
