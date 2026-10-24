@@ -227,6 +227,8 @@ jobs:
           PERF_CALLERS: ${{ inputs.compare_callers && '1' || '' }}
           PERF_FREQUENCY: ${{ inputs.compare_callers && '999' || '4999' }}
           WHITEFOOT_CHECK_TIMEOUT: "6000"
+          RINGCOUNT: "400"
+          RINGCOUNT_FORCE: ${{ inputs.compare_runner != '14900k' && '1' || '' }}
         run: |
           {
             echo "kernel: $(uname -srvmo)"

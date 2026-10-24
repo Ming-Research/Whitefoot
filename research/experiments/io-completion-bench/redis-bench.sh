@@ -603,6 +603,86 @@ compare_client() {
         }' "$OUT/compare-client.csv"
 }
 
+# TEMPORARY (firn-req-ring-assist): reads the scheduler report that the ring
+# image prints at a normal exit. Firn stops by itself once it has accepted
+# RINGCOUNT connections and its clients are gone, so a run opens and closes
+# connections until the server exits, then keeps the report from its stderr.
+if [ "$MODE" = compare ] && [ -n "$RINGCOUNT" ]; then
+    ring_alive() {
+        state=$(sed 's/^.*) //' "/proc/$server/stat" 2>/dev/null | cut -c1)
+        test -n "$state" && test "$state" != Z
+    }
+    ring_start() {
+        PORT=$((PORT + 1))
+        WF_SCHED_REPORT=2 WF_DRIVERS=$1 taskset -c "$SERVER_CPUS" \
+            "$(image_path ring)" "$PORT" "$RINGCOUNT" - 0 >"$OUT/server.log" 2>&1 &
+        server=$!
+        tries=0
+        until redis-cli -p "$PORT" PING 2>/dev/null | grep -q PONG; do
+            tries=$((tries + 1))
+            if [ "$tries" -gt 400 ]; then
+                echo "ringcount: the server never answered on $PORT" >&2
+                exit 1
+            fi
+            sleep 0.05
+        done
+    }
+    ring_stop() {
+        tries=0
+        while ring_alive; do
+            redis-cli -p "$PORT" PING >/dev/null 2>&1 || true
+            tries=$((tries + 1))
+            if [ "$tries" -gt $((RINGCOUNT + 100)) ]; then
+                echo "ringcount,still_running_after,$tries"
+                kill "$server" 2>/dev/null || true
+                break
+            fi
+        done
+        status=0
+        wait "$server" 2>/dev/null || status=$?
+        echo "ringcount,exit_status,$status,connections_tried,$tries"
+        sed 's/^/ringcount,report,/' "$OUT/server.log"
+        echo "ringcount,report_end"
+    }
+    for n in ${COMPARE_CPUS:-1 2}; do
+        if [ -n "$RINGCOUNT_FORCE" ]; then
+            # A hosted runner has no spare physical cores for place; this
+            # only checks the mechanics of the run.
+            SERVER_CPUS=1
+            CLIENT_CPUS=2,3
+            CLIENT_THREADS=2
+        else
+            status=0
+            place "$n" 16 || status=$?
+            if [ "$status" -ne 0 ]; then
+                echo "skip,$n server CPUs,placement status $status"
+                continue
+            fi
+        fi
+        drivers=$(cpu_count "$SERVER_CPUS")
+        # The control: two drivers always print their report, so a missing
+        # line below means zero counts and not a report that failed to print.
+        echo "ringcount,control,$n,drivers=2"
+        ring_start 2
+        echo "ringcount,control_run,$(compare_client mset 16 1000000)"
+        ring_stop
+        for cell in "mset 16" "set 16"; do
+            set -- $cell
+            pass=1
+            while [ "$pass" -le "${COMPARE_PASSES:-3}" ]; do
+                echo "ringcount,run,$n,$1,$2,pass=$pass,drivers=$drivers"
+                ring_start "$drivers"
+                rate=$(compare_client "$1" "$2" 1000000 | cut -d, -f1)
+                requests=$(awk -v r="$rate" -v s="${COMPARE_SECONDS:-5}" 'BEGIN { printf "%d", r * s }')
+                echo "ringcount,measured,$n,$1,$2,pass=$pass,$requests,$(compare_client "$1" "$2" "$requests")"
+                ring_stop
+                pass=$((pass + 1))
+            done
+        done
+    done
+    exit 0
+fi
+
 # The comparison of prebuilt images. A line whose replies fail verify stops
 # the run; every sample is kept as compare.csv's line,pass,cpus,test,depth,
 # requests,rps,server_cpu_us_per_request,p50_ms,p99_ms, and each test's
