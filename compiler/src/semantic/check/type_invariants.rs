@@ -4,24 +4,27 @@
 //! function whose one parameter is the invariant's binder, into a predicate
 //! over a parameter at ordinal zero [FN-8] and a difference-bound relation
 //! over that parameter's exit state [FN-9]. Every use substitutes its own
-//! subject for ordinal zero: a callable's parameter or referent, its exit
-//! state, a result ordinal, or a construction's field operands.
+//! subject for ordinal zero: a parameter or referent the contract-read
+//! footprint reads, a construction's field operands, an atomic target's
+//! referent, or a sealed anchor [TYPE-11.S1].
 
 use std::collections::HashMap;
 
 use super::requires::{ClauseKind, ExpandedClauseDatum, ExpandedClauseExpression};
 use super::*;
 use crate::semantic::goal::{
-    CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalProjection, GoalTemplate,
+    CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
+    GoalTemplate,
 };
+use crate::semantic::model::CheckedAffineInvariant;
 use crate::semantic::postcondition::{
-    CheckedPostconditionSelector, CheckedRoutedRequirement, NormalizedRelation, ParameterDenotation,
-    PayloadRoute, PostconditionPlace, PostconditionPlaceRoot, RelationDatum, RelationTemplate,
-    RelationTerm,
+    NormalizedRelation, ParameterDenotation, PostconditionPlace, PostconditionPlaceRoot,
+    RelationDatum, RelationTemplate,
 };
 use crate::FixedTerminal;
 
 const TYPE11_DROP_THE_GENERICS: &str = "declare the invariant on a struct without generics, or state the relation as a `requires` and `ensures` pair on each function that takes the value";
+const TYPE11_INSTANCE_INDEPENDENT_DATA: &str = "relate only fields whose declared types name no type parameter, such as `u64` fields, or the `len` of a field whose type names one, such as a `Slots<T, 8>` field";
 const TYPE11_DROP_OPAQUE: &str = "declare the invariant on a struct that is not `opaque`";
 const TYPE11_RENAME_THE_INVARIANT: &str = "give each type invariant of the struct its own name";
 const TYPE11_STATE_ONE_COMPARISON: &str = "state the invariant as one comparison between two sides, such as `table.next < table.slots.len`; write two invariants for a conjunction";
@@ -39,21 +42,15 @@ pub(super) struct TypeInvariantTemplate {
     /// The predicate, as a requirement of a function whose parameter zero is
     /// a value of the struct [FN-8].
     pub(super) goal: GoalTemplate,
-    /// The same relation, as a postcondition over parameter zero's exit
-    /// state [FN-9, MSR-3].
+    /// The same relation over parameter zero's exit state [FN-9, MSR-3],
+    /// which a constant construction evaluates.
     pub(super) relation: RelationTemplate,
-    /// The clause as a contract expression over parameter zero's exit
-    /// state, the form a callable boundary compares [FN-4].
-    pub(super) expanded: ExpandedClauseExpression,
-    /// The binder's origin, the source candidate of every selector the
-    /// relation's postconditions carry.
-    pub(super) binder: crate::SourceOrigin,
 }
 
 impl<'unit> Checker<'_, 'unit> {
     /// [TYPE-11] forms every struct's type invariants once, before any
-    /// function is checked, so that each callable taking or returning the
-    /// struct receives them as implicit clauses.
+    /// function is checked, so that every construction, atomic target and
+    /// sealed anchor of the struct reads them.
     pub(super) fn collect_type_invariants(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -68,19 +65,9 @@ impl<'unit> Checker<'_, 'unit> {
             let Some(first) = invariants.first().copied() else {
                 continue;
             };
-            if tree
+            let generic = tree
                 .first_child_with(template.node, Production::Generics)?
-                .is_some()
-            {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Type11,
-                    first,
-                    SemanticIssueKind::InvalidTypeInvariant {
-                        reason: "its struct declares generics",
-                        mechanical_fix: TYPE11_DROP_THE_GENERICS,
-                    },
-                );
-            }
+                .is_some();
             if tree.has_fixed(template.node, FixedTerminal::Opaque)? {
                 return self.types.declarations.issue_node(
                     SemanticRule::Type11,
@@ -114,10 +101,20 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
             }
-            let nominal = self
-                .types
-                .source_nominal_instance(template.declaration, &GenericSubstitution::default())
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            // [FN-2] a generic struct's invariants are formed once, over its
+            // symbolic instance, where each parameter stands for itself.
+            let checkpoint = generic.then(|| self.types.view.clone());
+            let nominal = if generic {
+                let substitution = Checker::symbolic_nominal_substitution(
+                    &template.generic_parameters,
+                    &template.region_parameters,
+                )?;
+                self.ensure_source_nominal_instance(check_context, template_index, substitution)?
+            } else {
+                self.types
+                    .source_nominal_instance(template.declaration, &GenericSubstitution::default())
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            };
             let mut names = Vec::with_capacity(invariants.len());
             let mut formed = Vec::with_capacity(invariants.len());
             for invariant in invariants {
@@ -151,6 +148,16 @@ impl<'unit> Checker<'_, 'unit> {
                 }
                 names.push(name.clone());
                 if let Some(range) = range {
+                    if generic {
+                        return self.types.declarations.issue_node(
+                            SemanticRule::Type11,
+                            invariant,
+                            SemanticIssueKind::InvalidTypeInvariant {
+                                reason: "it is a range type invariant and its struct declares generics",
+                                mechanical_fix: TYPE11_DROP_THE_GENERICS,
+                            },
+                        );
+                    }
                     let clause = self.form_range_type_invariant(
                         check_context,
                         template.declaration,
@@ -165,20 +172,71 @@ impl<'unit> Checker<'_, 'unit> {
                         .push(clause);
                     continue;
                 }
-                formed.push(self.form_type_invariant(
+                let one = self.form_type_invariant(
                     check_context,
                     template.declaration,
                     invariant,
                     name,
                     nominal,
-                )?);
+                )?;
+                if generic {
+                    self.admit_generic_type_invariant(invariant, nominal, &one)?;
+                }
+                formed.push(one);
+            }
+            if let Some(checkpoint) = checkpoint {
+                self.types.select_view(checkpoint);
+                self.types
+                    .generic_type_invariants
+                    .insert(template.declaration, formed);
+                let instances = self
+                    .types
+                    .nominals_by_declaration
+                    .get(&template.declaration)
+                    .into_iter()
+                    .flatten()
+                    .map(|instance| instance.id)
+                    .collect::<Vec<_>>();
+                for instance in instances {
+                    self.types.attach_type_invariants(instance)?;
+                }
+                continue;
             }
             if !formed.is_empty()
                 && let Some(record) = self.types.nominals.get_mut(nominal.0 as usize)
             {
                 record.type_invariant = true;
+                record.affine_invariants = formed.iter().map(affine_invariant).collect();
             }
             self.types.type_invariants.insert(nominal, formed);
+        }
+        Ok(())
+    }
+
+    /// [TYPE-11, FN-2] in a struct that declares generics, a binder datum
+    /// reads the same data at every instance: each field its projection
+    /// selects has a declared type that names no type parameter, or is
+    /// followed at once by the datum's final measure member, and the datum
+    /// is a fragment integer.
+    fn admit_generic_type_invariant(
+        &self,
+        invariant: NodeId,
+        nominal: NominalId,
+        template: &TypeInvariantTemplate,
+    ) -> Result<(), CheckStop> {
+        let mut data = Vec::new();
+        typed_binder_data(&template.goal.root, &mut data);
+        for datum in data {
+            if !self.types.instance_independent_datum(nominal, &datum)? {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Type11,
+                    invariant,
+                    SemanticIssueKind::InvalidTypeInvariant {
+                        reason: "a binder datum reads a field whose declared type names a type parameter",
+                        mechanical_fix: TYPE11_INSTANCE_INDEPENDENT_DATA,
+                    },
+                );
+            }
         }
         Ok(())
     }
@@ -307,15 +365,11 @@ impl<'unit> Checker<'_, 'unit> {
                 .into_goal_expression()
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?,
         );
-        let relation = self
-            .types
-            .type_invariant_relation(invariant, expanded.clone())?;
+        let relation = self.types.type_invariant_relation(invariant, expanded)?;
         Ok(TypeInvariantTemplate {
             clause,
             goal,
             relation,
-            expanded,
-            binder: binder.origin().clone(),
         })
     }
 
@@ -340,13 +394,10 @@ impl<'unit> Checker<'_, 'unit> {
             .then_some(nominal)
     }
 
-    /// [TYPE-11] the requirements a callable's type invariants add after its
-    /// written ones: each invariant of each parameter's declared struct, in
-    /// parameter order. The prelude's `shared_new` and `frozen_new` take
-    /// their argument's this way, as a parameter of type T at the struct
-    /// [SHARE-1]; atomic targets establish a shared state's, and no read of
-    /// a frozen value establishes them yet (board item
-    /// `proof-bl-frozen-invariant-reads`).
+    /// [TYPE-11, FN-3] each invariant of each parameter's declared struct,
+    /// over that parameter or its referent, in parameter order: the places
+    /// they read belong to the callable's contract-read footprint. A call
+    /// owes them only as the debts its hand-offs require [TYPE-11.S4].
     pub(super) fn implicit_type_invariant_requirements(
         &self,
         signature: &FunctionSignature,
@@ -402,195 +453,13 @@ impl<'unit> Checker<'_, 'unit> {
             .into_iter()
             .flatten()
             .map(|invariant| CheckedRequirement {
-                template: GoalTemplate::new(substitute_goal(
-                    &invariant.goal.root,
-                    ordinal,
-                    reference,
-                )),
+                template: GoalTemplate::new(
+                    invariant.goal.root.over_parameter(ordinal, reference),
+                ),
                 clause: invariant.clause.clone(),
                 subject: Some(ordinal),
             })
             .collect()
-    }
-
-    /// [TYPE-11] each variant field of an own enum type that holds a struct
-    /// with type invariants, with that struct, in variant and then field
-    /// declaration order. The type is a parameter's or result's after the
-    /// function instance's substitution [FN-2], so a payload written as a
-    /// type parameter that the instance binds to such a struct is one.
-    pub(super) fn invariant_payload_routes(
-        &self,
-        ty: CheckedType,
-    ) -> Result<Vec<(PayloadRoute, NominalId)>, CheckStop> {
-        let CheckedType::Nominal(nominal) = ty else {
-            return Ok(Vec::new());
-        };
-        let CheckedNominalKind::Enum { variants } = &self.types.nominal(nominal)?.kind else {
-            return Ok(Vec::new());
-        };
-        let mut routes = Vec::new();
-        for (variant_index, variant) in variants.iter().enumerate() {
-            for (field_index, field) in variant.fields.iter().enumerate() {
-                let CheckedType::Nominal(payload) = field.ty else {
-                    continue;
-                };
-                if self
-                    .types
-                    .type_invariants
-                    .get(&payload)
-                    .is_some_and(|invariants| !invariants.is_empty())
-                {
-                    routes.push((
-                        PayloadRoute {
-                            variant: u32::try_from(variant_index)
-                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                            field: u32::try_from(field_index)
-                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                            tag: variant.tag,
-                        },
-                        payload,
-                    ));
-                }
-            }
-        }
-        Ok(routes)
-    }
-
-    /// [TYPE-11] the requirements an own parameter of enum type adds: each
-    /// type invariant of each struct one of its variant fields holds,
-    /// restricted to a value holding that variant [FN-8], in parameter
-    /// order and then route and declaration order.
-    pub(super) fn routed_type_invariant_requirements(
-        &self,
-        signature: &FunctionSignature,
-    ) -> Result<Vec<CheckedRoutedRequirement>, CheckStop> {
-        let mut requirements = Vec::new();
-        for (ordinal, parameter) in signature.parameters.iter().enumerate() {
-            if parameter.mode != CheckedMode::Own {
-                continue;
-            }
-            let subject =
-                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-            for (route, payload) in self.invariant_payload_routes(parameter.ty)? {
-                for invariant in self
-                    .types
-                    .type_invariants
-                    .get(&payload)
-                    .into_iter()
-                    .flatten()
-                {
-                    requirements.push(CheckedRoutedRequirement {
-                        clause: invariant.clause.clone(),
-                        subject,
-                        route,
-                        payload: CheckedType::Nominal(payload),
-                        goal: invariant.goal.clone(),
-                        relation: substitute_relation(
-                            &invariant.relation,
-                            InvariantSubject::Result(0),
-                        ),
-                    });
-                }
-            }
-        }
-        Ok(requirements)
-    }
-
-    /// [TYPE-11] each type invariant a callable's boundary promises after its
-    /// written postconditions [FN-9]: over the exit state of each reference
-    /// parameter whose row writes it, then over each result ordinal, each
-    /// with the invariant, its subject and a selector of every explicit
-    /// return. Each position's type is the instance's [FN-2]. A callable
-    /// whose definition the build supplies promises none, since no body
-    /// proves them: `take_back` at a struct with type invariants hands out
-    /// a storage element nothing checked.
-    pub(super) fn type_invariant_postcondition_selectors(
-        &self,
-        function: &FunctionSignature,
-    ) -> Result<
-        Vec<(
-            TypeInvariantTemplate,
-            InvariantSubject,
-            CheckedPostconditionSelector,
-        )>,
-        CheckStop,
-    > {
-        if self.supplied_definition(function)? {
-            return Ok(Vec::new());
-        }
-        let mut subjects = Vec::new();
-        for (ordinal, parameter) in function.parameters.iter().enumerate() {
-            if parameter.mode != CheckedMode::Reference
-                || !super::ensures::parameter_has_exit_state(function, parameter)
-            {
-                continue;
-            }
-            if let Some(nominal) = self.declared_invariant_struct(parameter) {
-                let ordinal =
-                    u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-                subjects.push((nominal, InvariantSubject::ExitParameter(ordinal), 0, None));
-            }
-        }
-        for (ordinal, result) in function.results.iter().enumerate() {
-            let CheckedType::Nominal(nominal) = result.ty else {
-                continue;
-            };
-            if result.mode != CheckedMode::Own || !self.types.type_invariants.contains_key(&nominal)
-            {
-                continue;
-            }
-            let ordinal =
-                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-            subjects.push((nominal, InvariantSubject::Result(ordinal), ordinal, None));
-        }
-        for (ordinal, result) in function.results.iter().enumerate() {
-            if result.mode != CheckedMode::Own {
-                continue;
-            }
-            let ordinal =
-                u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
-            for (route, payload) in self.invariant_payload_routes(result.ty)? {
-                subjects.push((
-                    payload,
-                    InvariantSubject::Result(ordinal),
-                    ordinal,
-                    Some(route),
-                ));
-            }
-        }
-        let mut selectors = Vec::new();
-        for (nominal, subject, result_ordinal, route) in subjects {
-            for invariant in self
-                .types
-                .type_invariants
-                .get(&nominal)
-                .into_iter()
-                .flatten()
-            {
-                let selector = CheckedPostconditionSelector {
-                    function: function.id,
-                    block: invariant.clause.clone(),
-                    selector: invariant.clause.clone(),
-                    candidate: invariant.binder.clone(),
-                    ordinal: result_ordinal,
-                    variant: None,
-                    field: None,
-                    route,
-                    generated: true,
-                    // A routed ordinal's datum is the routed field's value.
-                    result_type: if route.is_some() {
-                        CheckedType::Nominal(nominal)
-                    } else {
-                        function
-                            .results
-                            .get(result_ordinal as usize)
-                            .map_or(function.result, |result| result.ty)
-                    },
-                };
-                selectors.push((invariant.clone(), subject, selector));
-            }
-        }
-        Ok(selectors)
     }
 
     /// [TYPE-11] each type invariant a construction of `nominal` owes, over
@@ -924,7 +793,7 @@ impl TypeContext<'_> {
         };
         let ExpandedClauseExpression::Operation {
             row:
-                crate::semantic::goal::GoalOperation::Integer {
+                GoalOperation::Integer {
                     operation,
                     operand_type,
                 },
@@ -976,42 +845,278 @@ impl TypeContext<'_> {
             normalized,
         })
     }
-}
 
-/// [TYPE-11] the predicate over the parameter at `ordinal`: its value, or
-/// its referent when `reference`, in place of parameter zero.
-fn substitute_goal(expression: &GoalExpression, ordinal: u32, reference: bool) -> GoalExpression {
-    match expression {
-        GoalExpression::Datum(GoalDatum::Parameter {
-            ordinal: 0,
-            projections,
-            ty,
-        }) => GoalExpression::Datum(GoalDatum::Parameter {
-            ordinal,
-            projections: reference
-                .then_some(GoalProjection::Deref)
-                .into_iter()
-                .chain(projections.iter().copied())
-                .collect(),
-            ty: *ty,
-        }),
-        GoalExpression::Datum(datum) => GoalExpression::Datum(datum.clone()),
-        GoalExpression::Operation {
-            row,
-            type_arguments,
-            const_arguments,
-            result,
-            arguments,
-        } => GoalExpression::Operation {
-            row: *row,
-            type_arguments: type_arguments.clone(),
-            const_arguments: const_arguments.clone(),
-            result: *result,
-            arguments: arguments
-                .iter()
-                .map(|argument| substitute_goal(argument, ordinal, reference))
-                .collect(),
-        },
+    /// [TYPE-11, FN-2] whether one binder datum of a value of `nominal`
+    /// reads the same data at every instance of a generic struct: each field
+    /// it selects has a declared type that names no type parameter or is
+    /// followed at once by the datum's final measure member, and the datum
+    /// is a fragment integer.
+    fn instance_independent_datum(
+        &self,
+        nominal: NominalId,
+        datum: &BinderDatum<'_>,
+    ) -> Result<bool, CheckStop> {
+        if !matches!(datum.ty, CheckedType::Integer(_)) {
+            return Ok(false);
+        }
+        // A measure written as the last projection measures the place the
+        // projection reaches before it, as a measure row's operand does.
+        let (steps, measured) = match datum.projections.split_last() {
+            Some((GoalProjection::Measure(_), steps)) => (steps, true),
+            _ => (datum.projections, datum.measured),
+        };
+        let mut current = CheckedType::Nominal(nominal);
+        for (index, projection) in steps.iter().enumerate() {
+            let CheckedType::Nominal(owner) = current else {
+                return Ok(false);
+            };
+            current = match (projection, &self.nominal(owner)?.kind) {
+                (GoalProjection::Field(field), CheckedNominalKind::Struct { fields }) => {
+                    let declared = fields
+                        .get(*field as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                        .ty;
+                    let measured_next = measured && index + 1 == steps.len();
+                    if !measured_next && self.names_type_parameter(declared)? {
+                        return Ok(false);
+                    }
+                    declared
+                }
+                (GoalProjection::Deref, CheckedNominalKind::Box { referent, .. }) => *referent,
+                _ => return Ok(false),
+            };
+        }
+        Ok(true)
+    }
+
+    /// Whether `ty` names a type parameter: is one, or holds one as an
+    /// element, a source instance's type argument or a prelude type's
+    /// argument.
+    fn names_type_parameter(&self, ty: CheckedType) -> Result<bool, CheckStop> {
+        Ok(match ty {
+            CheckedType::Generic(_) | CheckedType::GenericInt(_) | CheckedType::GenericFloat(_) => {
+                true
+            }
+            CheckedType::Array { element, .. }
+            | CheckedType::Buffer { element }
+            | CheckedType::Window { element, .. }
+            | CheckedType::Segments { element }
+            | CheckedType::Entries { element } => {
+                self.names_type_parameter(self.element_type(element)?)?
+            }
+            CheckedType::Nominal(id) => match self.prelude_type(id) {
+                Some(PreludeType::Option(value)) => self.names_type_parameter(value)?,
+                Some(PreludeType::Result(value, error)) => {
+                    self.names_type_parameter(value)? || self.names_type_parameter(error)?
+                }
+                Some(_) => false,
+                None => {
+                    let arguments = self
+                        .source_nominal_instance_entry(id)?
+                        .map(|(_, substitution)| substitution.bindings().to_vec())
+                        .unwrap_or_default();
+                    let mut names = false;
+                    for (_, argument) in arguments {
+                        if let super::generics::GenericArgument::Type(argument) = argument
+                            && self.names_type_parameter(argument)?
+                        {
+                            names = true;
+                            break;
+                        }
+                    }
+                    names
+                }
+            },
+            CheckedType::Unit
+            | CheckedType::Bool
+            | CheckedType::Integer(_)
+            | CheckedType::Float(_)
+            | CheckedType::KeySet => false,
+        })
+    }
+
+    /// [TYPE-11, FN-2] gives an instance of a generic struct the invariants
+    /// formed over its symbolic instance, each read at the instance's own
+    /// const arguments. A derived const argument, which only a generic
+    /// schema writes, forms no constant term [ENT-2], so that schema reads
+    /// no invariant that names it; each concrete instance is checked on its
+    /// own and reads every one.
+    pub(super) fn attach_type_invariants(&mut self, id: NominalId) -> Result<(), CheckStop> {
+        let Some((template, substitution)) = self.source_nominal_instance_entry(id)? else {
+            return Ok(());
+        };
+        let declaration = self
+            .nominal_templates
+            .get(template)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .declaration;
+        let Some(templates) = self.generic_type_invariants.get(&declaration) else {
+            return Ok(());
+        };
+        let (templates, substitution) = (templates.clone(), substitution.clone());
+        let mut formed = Vec::with_capacity(templates.len());
+        for template in &templates {
+            if let Some(instance) = self.instantiate_type_invariant(template, &substitution)? {
+                formed.push(instance);
+            }
+        }
+        if formed.is_empty() {
+            return Ok(());
+        }
+        let record = self
+            .nominals
+            .get_mut(id.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        record.type_invariant = true;
+        record.affine_invariants = formed.iter().map(affine_invariant).collect();
+        self.type_invariants.insert(id, formed);
+        Ok(())
+    }
+
+    /// One invariant formed over a generic struct's symbolic instance, at
+    /// the instance `substitution` names: each const generic it reads is the
+    /// instance's argument, and so is the constant of each measured type it
+    /// reads a measure of. A measure reads only its type's shape and constant
+    /// [MSR-1], so an element type stays as formed. `None` when an argument
+    /// it reads is a derived const.
+    fn instantiate_type_invariant(
+        &mut self,
+        template: &TypeInvariantTemplate,
+        substitution: &GenericSubstitution,
+    ) -> Result<Option<TypeInvariantTemplate>, CheckStop> {
+        let Some(goal) = self.instantiate_invariant_goal(&template.goal.root, substitution)? else {
+            return Ok(None);
+        };
+        let mut relation = template.relation.clone();
+        for term in &mut relation.operands {
+            for datum in std::iter::once(&mut term.datum).chain(term.parameter.as_mut()) {
+                match datum {
+                    RelationDatum::Literal { value, .. } => {
+                        let Some(instance) = self.instantiate_invariant_value(value, substitution)?
+                        else {
+                            return Ok(None);
+                        };
+                        *value = instance;
+                    }
+                    RelationDatum::Measure(_, place) => {
+                        place.ty = match place.ty {
+                            CheckedType::Array { element, length } => CheckedType::Array {
+                                element,
+                                length: self.instantiate_const(length, substitution)?,
+                            },
+                            CheckedType::Window {
+                                shape,
+                                element,
+                                capacity: Some(capacity),
+                            } => CheckedType::Window {
+                                shape,
+                                element,
+                                capacity: Some(self.instantiate_const(capacity, substitution)?),
+                            },
+                            ty => ty,
+                        };
+                    }
+                    RelationDatum::Result { .. }
+                    | RelationDatum::Parameter { .. }
+                    | RelationDatum::NamedConst { .. } => {}
+                }
+            }
+        }
+        Ok(Some(TypeInvariantTemplate {
+            clause: template.clause.clone(),
+            goal: GoalTemplate::new(goal),
+            relation,
+        }))
+    }
+
+    fn instantiate_invariant_goal(
+        &mut self,
+        expression: &GoalExpression,
+        substitution: &GenericSubstitution,
+    ) -> Result<Option<GoalExpression>, CheckStop> {
+        Ok(Some(match expression {
+            GoalExpression::Datum(GoalDatum::Literal(value)) => {
+                match self.instantiate_invariant_value(value, substitution)? {
+                    Some(value) => GoalExpression::Datum(GoalDatum::Literal(value)),
+                    None => return Ok(None),
+                }
+            }
+            GoalExpression::Datum(datum) => GoalExpression::Datum(datum.clone()),
+            GoalExpression::Operation {
+                row,
+                type_arguments,
+                const_arguments,
+                result,
+                arguments,
+            } => {
+                let mut operands = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    let Some(operand) = self.instantiate_invariant_goal(argument, substitution)?
+                    else {
+                        return Ok(None);
+                    };
+                    operands.push(operand);
+                }
+                let mut constants = Vec::with_capacity(const_arguments.len());
+                for constant in const_arguments {
+                    constants.push(self.instantiate_const(*constant, substitution)?);
+                }
+                let row = match *row {
+                    GoalOperation::ArrayMeasure {
+                        measure,
+                        element,
+                        length,
+                    } => GoalOperation::ArrayMeasure {
+                        measure,
+                        element,
+                        length: self.instantiate_const(length, substitution)?,
+                    },
+                    GoalOperation::ContainerMeasure {
+                        measure,
+                        measured,
+                        element,
+                        constant,
+                    } => GoalOperation::ContainerMeasure {
+                        measure,
+                        measured,
+                        element,
+                        constant: constant
+                            .map(|constant| self.instantiate_const(constant, substitution))
+                            .transpose()?,
+                    },
+                    row => row,
+                };
+                GoalExpression::Operation {
+                    row,
+                    type_arguments: type_arguments.clone(),
+                    const_arguments: constants,
+                    result: *result,
+                    arguments: operands,
+                }
+            }
+        }))
+    }
+
+    /// [MSR-6] a const generic's value at an instance: its concrete
+    /// argument, or the const parameter of its own that the instance passes
+    /// on; `None` for a derived const. Every other value is unchanged.
+    fn instantiate_invariant_value(
+        &mut self,
+        value: &CheckedValue,
+        substitution: &GenericSubstitution,
+    ) -> Result<Option<CheckedValue>, CheckStop> {
+        let CheckedValue::ConstGeneric { declaration, ty } = value else {
+            return Ok(Some(value.clone()));
+        };
+        Ok(
+            match self.instantiate_const(CheckedConst::Parameter(*declaration), substitution)? {
+                CheckedConst::Value(bits) => Some(CheckedValue::Integer { ty: *ty, bits }),
+                CheckedConst::Parameter(declaration) => {
+                    Some(CheckedValue::ConstGeneric { declaration, ty: *ty })
+                }
+                CheckedConst::Derived(_) => None,
+            },
+        )
     }
 }
 
@@ -1056,6 +1161,91 @@ fn construct_goal(
     }
 }
 
+/// [TYPE-11.S1] one formed invariant as the sealing rules read it: its
+/// predicate over parameter zero, and the projection of each binder datum.
+fn affine_invariant(template: &TypeInvariantTemplate) -> CheckedAffineInvariant {
+    let mut data = Vec::new();
+    binder_data(&template.goal.root, &mut data);
+    CheckedAffineInvariant {
+        clause: template.clause.clone(),
+        goal: template.goal.root.clone(),
+        data,
+        relation: template.relation.clone(),
+    }
+}
+
+/// One binder datum a type invariant reads: the projection from parameter
+/// zero, the datum's type, and whether a measure row reads the measure of
+/// the place the projection reaches.
+struct BinderDatum<'goal> {
+    projections: &'goal [GoalProjection],
+    ty: CheckedType,
+    measured: bool,
+}
+
+/// Each binder datum `expression` reads.
+fn typed_binder_data<'goal>(expression: &'goal GoalExpression, data: &mut Vec<BinderDatum<'goal>>) {
+    match expression {
+        GoalExpression::Datum(GoalDatum::Parameter {
+            ordinal: 0,
+            projections,
+            ty,
+        }) => data.push(BinderDatum {
+            projections,
+            ty: *ty,
+            measured: false,
+        }),
+        GoalExpression::Datum(_) => {}
+        GoalExpression::Operation {
+            row,
+            result,
+            arguments,
+            ..
+        } => {
+            let measure = matches!(
+                row,
+                GoalOperation::ArrayMeasure { .. }
+                    | GoalOperation::BufferMeasure { .. }
+                    | GoalOperation::ContainerMeasure { .. }
+            );
+            if measure
+                && let [
+                    GoalExpression::Datum(GoalDatum::Parameter {
+                        ordinal: 0,
+                        projections,
+                        ..
+                    }),
+                ] = arguments.as_slice()
+            {
+                data.push(BinderDatum {
+                    projections,
+                    ty: *result,
+                    measured: true,
+                });
+                return;
+            }
+            for argument in arguments {
+                typed_binder_data(argument, data);
+            }
+        }
+    }
+}
+
+/// Each distinct binder datum `expression` reads, as its projection from
+/// parameter zero: a measure member's projection ends with its measure, so
+/// two measures of one place are two data [MSR-2].
+fn binder_data(expression: &GoalExpression, data: &mut Vec<Vec<GoalProjection>>) {
+    if let Some((datum, _)) = expression.binder_datum() {
+        if !data.contains(&datum) {
+            data.push(datum);
+        }
+    } else if let GoalExpression::Operation { arguments, .. } = expression {
+        for argument in arguments {
+            binder_data(argument, data);
+        }
+    }
+}
+
 /// [TYPE-11] the predicate over an atomic statement's binder: parameter
 /// zero's place is the place the binder names.
 fn binder_goal(expression: &GoalExpression, binding: BindingId) -> Option<GoalExpression> {
@@ -1088,144 +1278,5 @@ fn binder_goal(expression: &GoalExpression, binding: BindingId) -> Option<GoalEx
                 .map(|argument| binder_goal(argument, binding))
                 .collect::<Option<Vec<_>>>()?,
         }),
-    }
-}
-
-/// Where a type invariant's relation is a postcondition [TYPE-11, FN-9].
-#[derive(Clone, Copy)]
-pub(super) enum InvariantSubject {
-    /// The exit state of the reference parameter at this ordinal.
-    ExitParameter(u32),
-    /// The declared result at this ordinal.
-    Result(u32),
-}
-
-/// [TYPE-11] the relation over `subject` in place of parameter zero's exit
-/// state.
-pub(super) fn substitute_relation(
-    relation: &RelationTemplate,
-    subject: InvariantSubject,
-) -> RelationTemplate {
-    let term = |term: &RelationTerm| RelationTerm {
-        datum: substitute_relation_datum(&term.datum, subject),
-        displacement: term.displacement,
-        parameter: term
-            .parameter
-            .as_ref()
-            .map(|datum| substitute_relation_datum(datum, subject)),
-    };
-    RelationTemplate {
-        operation: relation.operation,
-        operands: [term(&relation.operands[0]), term(&relation.operands[1])],
-        normalized: relation.normalized,
-    }
-}
-
-fn substitute_relation_datum(datum: &RelationDatum, subject: InvariantSubject) -> RelationDatum {
-    match (datum, subject) {
-        (
-            RelationDatum::Parameter {
-                ordinal: 0,
-                projections,
-                ty,
-                denotation: ParameterDenotation::ExitState,
-            },
-            InvariantSubject::ExitParameter(ordinal),
-        ) => RelationDatum::Parameter {
-            ordinal,
-            projections: std::iter::once(GoalProjection::Deref)
-                .chain(projections.iter().copied())
-                .collect(),
-            ty: *ty,
-            denotation: ParameterDenotation::ExitState,
-        },
-        (
-            RelationDatum::Parameter {
-                ordinal: 0,
-                projections,
-                ty,
-                denotation: ParameterDenotation::ExitState,
-            },
-            InvariantSubject::Result(ordinal),
-        ) => RelationDatum::Result {
-            ordinal,
-            projections: projections.clone(),
-            ty: *ty,
-        },
-        (
-            RelationDatum::Measure(
-                measure,
-                PostconditionPlace {
-                    root: PostconditionPlaceRoot::ExitParameter { ordinal: 0 },
-                    projections,
-                    ty,
-                },
-            ),
-            subject,
-        ) => RelationDatum::Measure(
-            *measure,
-            match subject {
-                InvariantSubject::ExitParameter(ordinal) => PostconditionPlace {
-                    root: PostconditionPlaceRoot::ExitParameter { ordinal },
-                    projections: std::iter::once(GoalProjection::Deref)
-                        .chain(projections.iter().copied())
-                        .collect(),
-                    ty: *ty,
-                },
-                InvariantSubject::Result(ordinal) => PostconditionPlace {
-                    root: PostconditionPlaceRoot::Result { ordinal },
-                    projections: projections.clone(),
-                    ty: *ty,
-                },
-            },
-        ),
-        (datum, _) => datum.clone(),
-    }
-}
-
-/// [TYPE-11] the clause as a contract expression over `subject` in place of
-/// parameter zero's exit state [FN-4].
-pub(super) fn substitute_expanded(
-    expression: &ExpandedClauseExpression,
-    subject: InvariantSubject,
-) -> ExpandedClauseExpression {
-    match expression {
-        ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
-            ordinal: 0,
-            projections,
-            ty,
-            denotation: ParameterDenotation::ExitState,
-        }) => ExpandedClauseExpression::Datum(match subject {
-            InvariantSubject::ExitParameter(ordinal) => ExpandedClauseDatum::Parameter {
-                ordinal,
-                projections: std::iter::once(GoalProjection::Deref)
-                    .chain(projections.iter().copied())
-                    .collect(),
-                ty: *ty,
-                denotation: ParameterDenotation::ExitState,
-            },
-            InvariantSubject::Result(ordinal) => ExpandedClauseDatum::Result {
-                ordinal,
-                projections: projections.clone(),
-                ty: *ty,
-            },
-        }),
-        ExpandedClauseExpression::Operation {
-            row,
-            type_arguments,
-            const_arguments,
-            result,
-            arguments,
-        } => ExpandedClauseExpression::Operation {
-            row: *row,
-            type_arguments: type_arguments.clone(),
-            const_arguments: const_arguments.clone(),
-            result: *result,
-            arguments: arguments
-                .iter()
-                .map(|argument| substitute_expanded(argument, subject))
-                .collect(),
-        },
-        other => other.clone(),
     }
 }

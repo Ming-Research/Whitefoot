@@ -1,0 +1,29 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn close_given(cell: Shared<State>, flag: Bool, table: &Array<u64, 16>) -> result: u64 reads(table) waits {
+  atomic s = &cell {
+    set s^.single.value = 31_u64;
+  }
+  let closed = if flag {
+    give shared_close::<State>(shared: move cell);
+  } else {
+    give shared_close::<State>(shared: move cell);
+  }
+  match closed {
+    Some(value: state) => {
+      let at = state.single.value;
+      let got = table^[at];
+      return got;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}

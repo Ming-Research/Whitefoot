@@ -226,6 +226,7 @@ impl<'unit> TypeContext<'unit> {
             // [PRE-1] `opaque nocopy struct Box<T>`.
             nocopy: true,
             type_invariant: false,
+            affine_invariants: Vec::new(),
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);
@@ -265,6 +266,7 @@ impl<'unit> TypeContext<'unit> {
             linear: false,
             nocopy: false,
             type_invariant: false,
+            affine_invariants: Vec::new(),
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);
@@ -434,6 +436,7 @@ impl<'unit> TypeContext<'unit> {
             linear: false,
             nocopy: false,
             type_invariant: false,
+            affine_invariants: Vec::new(),
         });
         self.nominal_nodes.push(None);
         self.nominal_states.push(2);

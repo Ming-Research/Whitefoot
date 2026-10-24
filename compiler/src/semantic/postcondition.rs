@@ -28,13 +28,9 @@ pub(crate) struct CheckedPostconditionSelector {
     pub(crate) variant: Option<ResolvedTarget>,
     pub(crate) field: Option<PostconditionFieldIdentity>,
     /// The variant field a routed clause restricts its ordinal to [FN-9]:
-    /// one declared field for a written route or a generated type-invariant
-    /// route [TYPE-11]. `None` for an unrouted clause.
+    /// one declared field of its written route. `None` for an unrouted
+    /// clause.
     pub(crate) route: Option<PayloadRoute>,
-    /// [TYPE-11] whether a type invariant generated this clause, rather than
-    /// a writer. A generated routed clause that no exit selects holds
-    /// vacuously.
-    pub(crate) generated: bool,
     /// The type of the ordinal's datum: the declared result type of an
     /// unrouted clause, the routed field's type of a routed one.
     pub(crate) result_type: CheckedType,
@@ -50,38 +46,11 @@ pub(crate) struct PayloadRoute {
     pub(crate) tag: u32,
 }
 
-/// [TYPE-11] one type invariant of the struct a parameter's enum carries in
-/// one variant field: a requirement restricted to a value of that parameter
-/// holding the variant, over that field [FN-8]. A call owes it in the
-/// argument's conditional context for the route, and body entry establishes
-/// it in the parameter's [ENT-5].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CheckedRoutedRequirement {
-    /// The `type_invariant` occurrence.
-    pub(crate) clause: NodePath,
-    /// The parameter ordinal the requirement is taken over.
-    pub(crate) subject: u32,
-    pub(crate) route: PayloadRoute,
-    /// The struct the routed field holds.
-    pub(crate) payload: CheckedType,
-    /// The predicate over the payload as parameter zero [FN-8].
-    pub(crate) goal: super::goal::GoalTemplate,
-    /// The same relation over the payload as result ordinal zero, the form
-    /// a conditional context holds it in [ENT-5].
-    pub(crate) relation: RelationTemplate,
-}
-
 impl CheckedPostconditionSelector {
-    /// Whether this clause is routed: written with a variant-field route, or
-    /// generated over a variant field [FN-9, TYPE-11].
+    /// Whether this clause is routed: written with a variant-field route
+    /// [FN-9].
     pub(crate) const fn is_routed(&self) -> bool {
         self.variant.is_some() || self.route.is_some()
-    }
-
-    /// [TYPE-11] whether this is a routed clause a type invariant generated,
-    /// which holds vacuously where no exit selects it.
-    pub(crate) const fn vacuous_when_unselected(&self) -> bool {
-        self.generated && self.route.is_some()
     }
 }
 

@@ -1,0 +1,24 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+  let at = index^.value;
+  let got = table^[at];
+  return got;
+}
+
+fn alias_write(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let seed = Index(value: 3_u64);
+  let holder = Holder(index: seed);
+  let r = &holder.index;
+  let s = r;
+  set s^.value = 31_u64;
+  let got = lookup(index: r, table: table);
+  return got;
+}

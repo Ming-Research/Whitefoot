@@ -1,0 +1,21 @@
+struct Stack {
+  slots: Slots<u64, 8>;
+  invariant nonempty(stack): stack.slots.len >= 1_u64;
+}
+
+struct Deep {
+  stack: Stack;
+  invariant two(deep): deep.stack.slots.len >= 2_u64;
+}
+
+fn replace_last(stack: &Stack, value: u64) -> result: unit writes(stack.slots.last), writes(stack.slots.next), writes(stack.slots.len) {
+  let old = take_back(window: &stack^.slots);
+  place_back(window: &stack^.slots, value: value);
+  return unit;
+}
+
+fn second_after(deep: Deep) -> result: u64 pure {
+  let second = &deep.stack.slots[1_u64];
+  replace_last(stack: &deep.stack, value: 7_u64);
+  return second^;
+}

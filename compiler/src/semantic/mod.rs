@@ -1234,6 +1234,21 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: String,
     },
+    /// A hand-off of a value with a debt the body did not restore
+    /// [TYPE-11.S4]. The issue's rule is the hand-off's: FN-8 at a call,
+    /// FN-9 at an exit, TYPE-11 at a give, a construction or a store.
+    UnrestoredTypeInvariant {
+        /// The `type_invariant` the debt names, when it names one.
+        type_invariant: Option<SemanticLocation>,
+        /// The anchor whose value the hand-off passes on.
+        anchor: String,
+        /// The first conclusion not established.
+        instantiated_goal: String,
+        /// Each write that created the debt, in walk order.
+        breaking_events: Vec<SemanticLocation>,
+        /// The repair [DIAG-1].
+        mechanical_fix: String,
+    },
     /// A `public` field without `readonly` in a struct that declares a type
     /// invariant, which code outside the module could write [TYPE-11].
     TypeInvariantWritableField {

@@ -1951,11 +1951,13 @@ impl<'unit> TypeContext<'unit> {
             linear: template.linear,
             nocopy: template.nocopy,
             type_invariant: false,
+            affine_invariants: Vec::new(),
         });
         self.nominals_by_declaration
             .entry(template.declaration)
             .or_default()
             .push(NominalInstance { id, substitution });
+        self.attach_type_invariants(id)?;
         Ok(id)
     }
     /// One declaration's constructors, read off its symbolic instance

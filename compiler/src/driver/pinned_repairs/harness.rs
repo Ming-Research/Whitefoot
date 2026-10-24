@@ -68,6 +68,7 @@ pub(super) fn run_pairs() {
         .chain(super::writer_references::WRITER_REFERENCES)
         .chain(super::postcondition_places::POSTCONDITION_PLACES)
         .chain(super::common_syntax::COMMON_SYNTAX)
+        .chain(super::type_invariants::TYPE_INVARIANTS)
         .chain(super::reserved_names::RESERVED_NAMES)
     {
         let failure = compile(

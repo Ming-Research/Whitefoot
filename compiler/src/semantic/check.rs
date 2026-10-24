@@ -55,7 +55,9 @@ use crate::{
     SemanticRule,
 };
 
-use super::entailment::{EntailmentCallee, collect_statement_calls, finalize_function_entailment};
+use super::entailment::{
+    CalleeSealing, EntailmentCallee, collect_statement_calls, finalize_function_entailment,
+};
 use super::goal::{
     CheckedCallRequirement, CheckedRequirement, ConcreteGoal, GoalDatum, GoalExpression,
     GoalOperation, GoalProjection,
@@ -637,6 +639,10 @@ struct TypeContext<'unit> {
     behavior: behavior::BehaviorInventory,
     /// [TYPE-11] each struct's formed type invariants, in declaration order.
     type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
+    /// [TYPE-11, FN-2] each generic struct's type invariants, formed once
+    /// over its symbolic instance; every instance takes them under its own
+    /// substitution as it is declared.
+    generic_type_invariants: HashMap<DeclarationId, Vec<type_invariants::TypeInvariantTemplate>>,
     range_type_invariants: HashMap<NominalId, Vec<super::range_facts::CheckedRangeClause>>,
     /// [EFF-2] the paths each checked body writes, by function. A row may
     /// declare a wider path than any of these; a repair that offers to
@@ -2003,7 +2009,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // judgment below reaches once an operand fixes W. Every other generic
         // row, prelude or source, keeps its symbolic judgment.
         let unsupplied_window_row = self.types.has_unsupplied_window_type_parameter(signature)?;
-        let (mut requirements, mut requirement_places) = if let Some(node) = self
+        let (requirements, requirement_places) = if let Some(node) = self
             .types
             .declarations
             .tree
@@ -2025,11 +2031,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         } else {
             (Vec::new(), Vec::new())
         };
-        for requirement in self.implicit_type_invariant_requirements(signature)? {
-            requirements.push(requirement);
-            requirement_places.push(Vec::new());
-        }
-        let routed_requirements = self.routed_type_invariant_requirements(signature)?;
 
         let mut postcondition_selectors = if unsupplied_window_row {
             Vec::new()
@@ -2243,22 +2244,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 },
             );
         }
-        // [TYPE-11, FN-2] generated promises follow the written clauses in
-        // both concrete and symbolic instances. A known invariant struct
-        // supplies its ordinary integer relations even while another type
-        // remains symbolic. Schema admission and renamed-instance reuse
-        // must retain those clauses with the written ones, so FN-4's actual
-        // premises have the FN-9 summaries a bound call requires.
-        for (invariant, subject, selector) in
-            self.type_invariant_postcondition_selectors(signature)?
-        {
-            postcondition_selectors.push(selector);
-            postcondition_relations.push(type_invariants::substitute_relation(
-                &invariant.relation,
-                subject,
-            ));
-            postcondition_places.push(Vec::new());
-        }
         let postconditions = if signature.substitution.is_concrete(&self.types.elements) {
             postcondition_selectors
                 .into_iter()
@@ -2378,7 +2363,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             held_parameters: signature.checked_held_parameters()?,
             held_calls: std::mem::take(&mut self.body.checked_held_calls),
             requirement_places,
-            routed_requirements,
             postconditions,
             range_facts: std::mem::take(&mut self.body.range_facts),
             body: (!declaration_only || supplied_release).then_some(checked.statements),
@@ -2471,12 +2455,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
     ) -> Result<(), CheckStop> {
         let requirements = functions
             .iter()
-            .map(|checked| {
-                (
-                    checked.function.requirements.clone(),
-                    checked.function.routed_requirements.clone(),
-                )
-            })
+            .map(|checked| checked.function.requirements.clone())
             .collect::<Vec<_>>();
         for checked in functions {
             if !self.types.view.contains_function(checked.function.id) {
@@ -2493,7 +2472,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
         statements: &mut [CheckedStatement],
-        requirements: &[CalleeRequirements],
+        requirements: &[Vec<CheckedRequirement>],
     ) -> Result<(), CheckStop> {
         for statement in statements {
             match statement {
@@ -2601,7 +2580,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         &mut self,
         check_context: &CheckContext<'_>,
         expression: &mut CheckedExpression,
-        requirements: &[CalleeRequirements],
+        requirements: &[Vec<CheckedRequirement>],
     ) -> Result<(), CheckStop> {
         match expression {
             CheckedExpression::UserCall {
@@ -2612,7 +2591,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 goal_regions,
                 formal_contract,
                 requirements: call_requirements,
-                routed_requirements: call_routed_requirements,
                 ..
             } => {
                 for argument in arguments.iter_mut() {
@@ -2631,13 +2609,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 if let Some(effects) = formal_effects {
                     effects.allocates = signature.declared_effects.allocates;
                 }
-                let (callee_requirements, callee_routed) = requirements
+                let callee_requirements = requirements
                     .get(function.0 as usize)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                // [TYPE-11] the routed requirements are the selected actual's
-                // own: a formal's parameter types equal its actual's, so the
-                // two carry the same ones.
-                call_routed_requirements.clone_from(callee_routed);
                 let boundary = match formal_contract {
                     Some(boundary) => boundary.requirements.as_slice(),
                     None => callee_requirements.as_slice(),
@@ -2990,8 +2964,19 @@ impl<'unit> TypeContext<'unit> {
                 &signature.declared_effects.writes,
                 self.exhibited_writes.get(&signature.id).map(Vec::as_slice),
             );
-            callee.relocation = matches!(signature.name.as_str(), "grow" | "grow_paged")
-                && self.declarations.tree.is_prelude_node(signature.node)?;
+            let prelude = self.declarations.tree.is_prelude_node(signature.node)?;
+            callee.relocation = matches!(signature.name.as_str(), "grow" | "grow_paged") && prelude;
+            // [TYPE-11.S3] the arguments of `swap`, `release` and `map_clear`
+            // are no hand-offs: their supplied definitions exchange, release
+            // or clear values and read none.
+            callee.sealing = match signature.name.as_str() {
+                "swap" if prelude => CalleeSealing::Exchange,
+                "release" | "map_clear" if prelude => CalleeSealing::Release,
+                _ => CalleeSealing::HandsOff,
+            };
+            // [TYPE-11.S2] the state `shared_close` returns is sealed only in
+            // its own invariants, which every atomic block owes.
+            callee.closes_state = signature.name == "shared_close" && prelude;
             callees.push(callee);
         }
         for (callee, checked) in callees.iter_mut().zip(functions) {
@@ -3093,19 +3078,27 @@ impl<'unit> TypeContext<'unit> {
         value: CheckedConst,
         signature: &FunctionSignature,
     ) -> Result<CheckedConst, CheckStop> {
+        self.instantiate_const(value, &signature.substitution)
+    }
+    /// One const under `substitution` [FN-2]: a parameter it binds reads its
+    /// argument, and a derived const combines its instantiated operands.
+    fn instantiate_const(
+        &mut self,
+        value: CheckedConst,
+        substitution: &GenericSubstitution,
+    ) -> Result<CheckedConst, CheckStop> {
         Ok(match value {
             CheckedConst::Value(_) => value,
-            CheckedConst::Parameter(declaration) => signature
-                .substitution
-                .const_argument(declaration)
-                .unwrap_or(value),
+            CheckedConst::Parameter(declaration) => {
+                substitution.const_argument(declaration).unwrap_or(value)
+            }
             CheckedConst::Derived(id) => {
                 let derived = self.derived_const(id)?;
-                let left = self.instantiate_goal_const(derived.left, signature)?;
-                let right = self.instantiate_goal_const(derived.right, signature)?;
-                // The owning instance body was accepted, so the same
-                // evaluation already succeeded at its source node; a failure
-                // here is a trusted-invariant breach, not a source verdict.
+                let left = self.instantiate_const(derived.left, substitution)?;
+                let right = self.instantiate_const(derived.right, substitution)?;
+                // The owning instance was formed, so the same evaluation
+                // already succeeded at its source node; a failure here is a
+                // trusted-invariant breach, not a source verdict.
                 self.combine_const(derived.operation, left, right)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?
             }
@@ -3615,6 +3608,7 @@ impl<'unit> TypeContext<'unit> {
             captured_places: Default::default(),
             behavior: Default::default(),
             type_invariants: Default::default(),
+            generic_type_invariants: Default::default(),
             range_type_invariants: Default::default(),
             exhibited_writes: Default::default(),
             exhibited_rows: Default::default(),
@@ -3625,10 +3619,3 @@ impl<'unit> TypeContext<'unit> {
         }
     }
 }
-
-/// One callee's requirement templates: its written and type-invariant
-/// requirements, and its routed type-invariant requirements [FN-8, TYPE-11].
-type CalleeRequirements = (
-    Vec<CheckedRequirement>,
-    Vec<super::postcondition::CheckedRoutedRequirement>,
-);

@@ -143,6 +143,83 @@ impl GoalExpression {
         datum.set_ty(ty);
         Some(self)
     }
+
+    /// [TYPE-11] a type invariant's predicate over the parameter at
+    /// `ordinal`: its value, or its referent when `reference`, in place of
+    /// parameter zero, the invariant's binder.
+    pub(crate) fn over_parameter(&self, ordinal: u32, reference: bool) -> Self {
+        match self {
+            Self::Datum(GoalDatum::Parameter {
+                ordinal: 0,
+                projections,
+                ty,
+            }) => Self::Datum(GoalDatum::Parameter {
+                ordinal,
+                projections: reference
+                    .then_some(GoalProjection::Deref)
+                    .into_iter()
+                    .chain(projections.iter().copied())
+                    .collect(),
+                ty: *ty,
+            }),
+            Self::Datum(datum) => Self::Datum(datum.clone()),
+            Self::Operation {
+                row,
+                type_arguments,
+                const_arguments,
+                result,
+                arguments,
+            } => Self::Operation {
+                row: *row,
+                type_arguments: type_arguments.clone(),
+                const_arguments: const_arguments.clone(),
+                result: *result,
+                arguments: arguments
+                    .iter()
+                    .map(|argument| argument.over_parameter(ordinal, reference))
+                    .collect(),
+            },
+        }
+    }
+
+    /// [TYPE-11] the binder datum this expression reads whole, with its
+    /// type: a projection from parameter zero, or a measure row over one,
+    /// which reads the measure member of the place that projection reaches
+    /// and is written as the projection followed by the measure [OP-15].
+    pub(crate) fn binder_datum(&self) -> Option<(Vec<GoalProjection>, CheckedType)> {
+        match self {
+            Self::Datum(GoalDatum::Parameter {
+                ordinal: 0,
+                projections,
+                ty,
+            }) => Some((projections.clone(), *ty)),
+            Self::Datum(_) => None,
+            Self::Operation {
+                row:
+                    GoalOperation::ArrayMeasure { measure, .. }
+                    | GoalOperation::BufferMeasure { measure, .. }
+                    | GoalOperation::ContainerMeasure { measure, .. },
+                result,
+                arguments,
+                ..
+            } => {
+                let [
+                    Self::Datum(GoalDatum::Parameter {
+                        ordinal: 0,
+                        projections,
+                        ..
+                    }),
+                ] = arguments.as_slice()
+                else {
+                    return None;
+                };
+                let mut datum = projections.clone();
+                datum.push(GoalProjection::Measure(*measure));
+                Some((datum, *result))
+            }
+            Self::Operation { .. } => None,
+        }
+    }
 }
 
 /// One typed leaf in a requirement template or concrete proof goal.

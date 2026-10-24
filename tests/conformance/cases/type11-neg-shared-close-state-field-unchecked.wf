@@ -1,0 +1,30 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+  let at = index^.value;
+  let got = table^[at];
+  return got;
+}
+
+fn close_and_look(cell: Shared<State>, table: &Array<u64, 16>) -> result: u64 reads(table) waits {
+  atomic s = &cell {
+    set s^.single.value = 31_u64;
+  }
+  let got = 0_u64;
+  let closed = shared_close::<State>(shared: move cell);
+  match closed {
+    Some(value: state) => {
+      set got = lookup(index: &state.single, table: table);
+    }
+    None() => {
+    }
+  }
+  return got;
+}

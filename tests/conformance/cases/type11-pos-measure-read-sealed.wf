@@ -1,0 +1,55 @@
+struct Stack {
+  slots: Slots<u64, 8>;
+  invariant nonempty(stack): stack.slots.len >= 1_u64;
+}
+
+struct Holder {
+  stack: Stack;
+}
+
+fn field(holder: &Holder) -> result: u64 reads(holder) {
+  let n = holder^.stack.slots.len;
+  let got = holder^.stack.slots[0_u64];
+  return got;
+}
+
+fn payload(maybe: &Option<Stack>) -> result: u64 reads(maybe) {
+  match &maybe^ {
+    Some(value: stack) => {
+      let n = stack^.slots.len;
+      let got = stack^.slots[0_u64];
+      return got;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn element(stacks: &Slots<Stack, 4>) -> result: u64 reads(stacks) contract {
+  requires stacks^.len > 0_u64;
+} {
+  let n = stacks^[0_u64].slots.len;
+  let got = stacks^[0_u64].slots[0_u64];
+  return got;
+}
+
+fn shifted(stacks: &Slots<Stack, 4>, i: u64) -> result: u64 reads(stacks) contract {
+  requires i < 3_u64;
+  requires stacks^.len == 4_u64;
+} {
+  let j = i + 1_u64;
+  let n = stacks^[j].slots.len;
+  let share = 64_u64 / n;
+  return share;
+}
+
+fn ordered(stacks: &Slots<Stack, 4>, order: &Slots<u64, 4>) -> result: u64 reads(stacks), reads(order) contract {
+  requires stacks^.len == 4_u64;
+  requires order^.len > 0_u64;
+  requires forall small(k in 0_u64..order^.len): order^[k] < 4_u64;
+} {
+  let n = stacks^[order^[0_u64]].slots.len;
+  let share = 64_u64 / n;
+  return share;
+}

@@ -229,6 +229,9 @@ pub(crate) enum FlowEventKind {
     /// [ENT-3.S16] a proved header or local invariant's exact L0 conclusion.
     S16,
     S17,
+    /// [ENT-3.S18] the instance of an affine type invariant at a sealed
+    /// anchor [TYPE-11.S6, TYPE-11.S7].
+    S18,
     /// [MSR-3] one entry datum minted at body entry, per parameter measure a
     /// declared relation names.
     Entry,
@@ -350,7 +353,8 @@ pub(crate) enum DerivationNode {
     TransportedHeaderRelation {
         detail: Box<TransportedHeaderRelation>,
     },
-    /// The fixed affine projection of an established S4 ordering leaf.
+    /// The fixed affine projection of an established S4 ordering leaf, or of
+    /// a sealed type invariant instance's [ENT-3.S18].
     RequirementAffineImage {
         goal: GoalId,
         sign: GoalSign,

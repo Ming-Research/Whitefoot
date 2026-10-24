@@ -320,6 +320,29 @@ impl<'program> Walker<'program> {
                 state.conds.push(literal);
             }
         }
+        // So does the instance of each affine type invariant at each
+        // parameter of its struct and at each reference parameter's
+        // referent, which the caller handed off sealed [TYPE-11.S7]. A
+        // range parameter's type is its element's, so it takes none.
+        let nominals = self.nominals;
+        for (ordinal, parameter) in (0_u32..).zip(&function.parameters) {
+            if !matches!(parameter.mode, CheckedMode::Own | CheckedMode::Reference) {
+                continue;
+            }
+            let CheckedType::Nominal(nominal) = parameter.ty else {
+                continue;
+            };
+            let Some(record) = nominals.get(nominal.0 as usize) else {
+                continue;
+            };
+            let reference = parameter.mode == CheckedMode::Reference;
+            for invariant in &record.affine_invariants {
+                let instance = invariant.goal.over_parameter(ordinal, reference);
+                if let Some(literal) = self.goal_literal(&mut state, &instance) {
+                    state.conds.push(literal);
+                }
+            }
+        }
         for clause in &function.range_facts.requirements {
             let roots = state.values.clone();
             let frame = self.frame(

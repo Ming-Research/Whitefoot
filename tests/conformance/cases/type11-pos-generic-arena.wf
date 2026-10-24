@@ -1,0 +1,21 @@
+struct Arena<T: drop> {
+  entries: Slots<T, 8>;
+  next: u64;
+  invariant bounded(arena): arena.next <= arena.entries.len;
+}
+
+fn push<T: drop>(arena: &Arena<T>, value: T) -> result: unit writes(arena.entries.next), writes(arena.entries.len), writes(arena.next) contract {
+  requires arena^.entries.len < 8_u64;
+} {
+  place_back(window: &arena^.entries, value: move value);
+  set arena^.next = arena^.next + 1_u64;
+  return unit;
+}
+
+fn read_at(arena: &Arena<u64>, k: u64) -> result: u64 reads(arena) {
+  if k < arena^.next {
+    let got = arena^.entries[k];
+    return got;
+  }
+  return 0_u64;
+}

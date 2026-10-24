@@ -15,34 +15,16 @@ impl Input<'_, '_> {
         let render_datum = |datum: &RelationDatum| {
             self.render_postcondition_datum(datum, postcondition, selected, returned)
         };
-        if let Some(clause) = self
+        // Every relation postcondition is a written ensures clause, and its
+        // check registered the clause's display form [FN-9].
+        let Some(clause) = self
             .context
             .postcondition_clauses
             .get(&(self.function.id, postcondition.selector.block.clone()))
-        {
-            return self.render_written_postcondition(clause, &render_datum, false);
-        }
-        // A type invariant can generate a postcondition without a written
-        // ensures expression. Its admitted operands still retain their order.
-        let operands = postcondition
-            .relation
-            .operands
-            .iter()
-            .map(|operand| {
-                let mut text = render_datum(&operand.datum);
-                if let Some(parameter) = &operand.parameter {
-                    text = format!("({text} + {})", render_datum(parameter));
-                }
-                if operand.displacement != 0 {
-                    text = format!(
-                        "({text} + {})",
-                        self.render_normalized_integer(operand.displacement, operand.ty()),
-                    );
-                }
-                text
-            })
-            .collect::<Vec<_>>();
-        render::render_operation_spelling(postcondition.relation.operation.spelling(), &operands)
+        else {
+            return "?".to_owned();
+        };
+        self.render_written_postcondition(clause, &render_datum, false)
     }
 
     fn render_written_postcondition(

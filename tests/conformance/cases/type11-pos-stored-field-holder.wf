@@ -1,0 +1,19 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+  let at = index^.value;
+  let got = table^[at];
+  return got;
+}
+
+fn stored(holder: &Holder, table: &Array<u64, 16>) -> result: u64 reads(holder.index), reads(table) {
+  let got = lookup(index: &holder^.index, table: table);
+  return got;
+}

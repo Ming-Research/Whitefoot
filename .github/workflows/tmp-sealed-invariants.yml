@@ -1,0 +1,419 @@
+# Temporary: the focused checks of the sealed type invariant work (the
+# compiler build and lint, every unit test after main's merge, every
+# conformance case's verdict with each failing case listed, the documentation
+# examples main's check reads through the branch's compiler, and the
+# programs main's merges brought in: the HashMap's container and snapshot
+# programs, the window clear program, the contexts taking turns with a
+# parked file, the context, traversal, host path and file replacement
+# programs), the trial compile of the downstream programs with the branch's
+# compiler and main's at the branch's latest merge of it, the cases of a
+# reference that may name several places, among them a swap after a write
+# through such a reference and a call's or swap's write through one, and of
+# a grow's relocation write, each checked with main's compiler, the branch's
+# head, the head whose exchanged debt keeps the reference it recorded and
+# the head whose call and swap writes record no reference, and the
+# repository-level static checks and the change-log check against the
+# branch's fork point. Removed before the branch is ready.
+name: tmp-sealed-invariants
+
+on:
+  push:
+    branches: [claude/invariant-sealed-values]
+
+permissions:
+  contents: read
+
+jobs:
+  sealed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo --version
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      # As the gate does: a program that dies would otherwise wait for
+      # systemd-coredump, which kept three deadlock reports past their
+      # 60-second deadline here.
+      - name: Decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          cat /proc/sys/kernel/core_pattern
+      - name: Build the compiler
+        run: |
+          perl .github/run-check.pl sealed-build cargo build --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --bin whitefootc
+      - name: Lint the compiler as the gate does
+        if: always()
+        run: |
+          rustup component add clippy
+          perl .github/run-check.pl sealed-lint cargo clippy --manifest-path compiler/Cargo.toml \
+            --all-targets --locked --offline -- -D warnings
+      - name: Run every unit test, since main's merge reaches the whole checker
+        run: |
+          perl .github/run-check.pl sealed-unit cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --lib
+      - name: Reach every conformance verdict and list each failing case
+        if: always()
+        run: |
+          ulimit -c 0
+          set +e
+          perl .github/run-check.pl sealed-corpus cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --test corpus -- \
+            conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path \
+            --nocapture > "$RUNNER_TEMP/corpus.log" 2>&1
+          status=$?
+          set -e
+          grep -E '^  Fail ' "$RUNNER_TEMP/corpus.log" || true
+          grep -E 'conformance adapter: Pass=' "$RUNNER_TEMP/corpus.log" || tail -60 "$RUNNER_TEMP/corpus.log"
+          exit "$status"
+      - name: Check every documentation example through the branch's compiler
+        if: always()
+        run: |
+          ulimit -c 0
+          perl .github/run-check.pl sealed-doc-examples cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --test corpus -- doc_examples:: --nocapture
+      - name: Check main's new programs through the branch's compiler
+        if: always()
+        run: |
+          ulimit -c 0
+          perl .github/run-check.pl sealed-main-programs cargo test --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --test corpus -- \
+            programs::containers:: programs::snapshot_export:: \
+            programs::parallel::contexts_take_turns_appending_to_one_parked_file \
+            programs::contexts:: programs::traversal:: programs::host_paths:: \
+            programs::wfgrep_hosts:: conformance::file_replacement:: --nocapture
+  # The repository-level static checks the gate's static group runs, which
+  # a draft skips: the specification's archive, prose and references, and
+  # the design tree's form against the branch's fork point, which prints the
+  # node, depth and decision counts; then the readiness check that the
+  # change logs name every changed node and rule. `make static` runs each
+  # stage under the check runner itself.
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Run the static checks and the change-log check
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+          base=$(git merge-base HEAD origin/main)
+          git log --oneline -1 "$base"
+          make --no-print-directory static DESIGN_REVIEW_BASE="$base"
+          perl .github/run-check.pl tmp-design-ready make --no-print-directory design-ready \
+            DESIGN_REVIEW_BASE="$base"
+
+  # The trial compile: each module of the downstream programs checked with
+  # the branch's compiler and the base's, one module at a time so that one
+  # rejection hides no other, then Firn's entry composed, which also judges
+  # the standard library modules it selects. Each verdict comes as the
+  # compiler's report, which lists one task per failing function, and both
+  # verdicts and both task lists are compared, since a module the base
+  # already rejects can hide a new failure behind the old one. A function
+  # reports only its first failure, and the base's redundant-test rule
+  # [OP-5] stops many functions first, so a second pass runs both compilers
+  # with that rule's check of conditions switched off, each printing every
+  # condition it decides, and compares those lists too: a condition only
+  # the branch decides is a test the branch's instances make redundant. The
+  # programs predate
+  # the base's reserved words `held`, `not` and `unchanged`, its prelude
+  # variant `Open` and its prelude function `clear`, which Halo's text and
+  # lexer modules also declare, so their copies rename each before either
+  # compiler reads them.
+  trial:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        pass: [as-written, without-redundant-test-rule]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Build the branch's compiler and the base's
+        run: |
+          git fetch --depth=1 origin 6d220b46e212495b259fd2d119c36f5b626b90ef
+          git worktree add "$RUNNER_TEMP/base" FETCH_HEAD
+          if [ "${{ matrix.pass }}" = without-redundant-test-rule ]; then
+            # A decided condition counts as discharged in both compilers,
+            # and each compiler prints it where it judges the function.
+            for tree in "$GITHUB_WORKSPACE" "$RUNNER_TEMP/base"; do
+              perl -0777 -pi -e 's/(Self::Condition\(index\) => entailment\s*\.conditions\s*\.get\(index\)\s*)\.is_some_and\(\|outcome\| outcome\.decided\.is_none\(\)\)/$1.is_some()/ or die "the condition discharge is gone\n"' \
+                "$tree/compiler/src/semantic/obligations.rs"
+              perl -0777 -pi -e 's/(\n            if answer\.discharged\(entailment\) \{\n                continue;\n            \})/\n            if let RecordAnswer::Condition(condition) = answer {\n                if let Some(outcome) = entailment.conditions.get(condition).filter(|outcome| outcome.decided.is_some()) {\n                    eprintln!("trial decided condition: {:?} {:?} {:?}", self.declarations.source_location(&outcome.node_path).ok(), outcome.decided, outcome.residual);\n                }\n            }$1/ or die "the acceptance loop is gone\n"' \
+                "$tree/compiler/src/semantic/check/acceptance.rs"
+              git -C "$tree" diff --stat
+            done
+          fi
+          perl .github/run-check.pl trial-build cargo build --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --offline --bin whitefootc
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml"
+          perl .github/run-check.pl trial-base-build cargo build \
+            --manifest-path "$RUNNER_TEMP/base/compiler/Cargo.toml" \
+            --profile gate --locked --offline --bin whitefootc
+      - name: Check each downstream module with both compilers
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "900"
+        run: |
+          set +e
+          work="$RUNNER_TEMP/trial"
+          mkdir -p "$work/logs"
+          for repo in Firn-wf Halo-wf Snowghost-wf; do
+            git clone --quiet --depth=1 --recurse-submodules \
+              "https://github.com/Ming-Research/$repo" "$work/$repo"
+            git -C "$work/$repo" log -1 --format="$repo %H"
+          done
+          # Names only: a string literal keeps its text, whose length a
+          # fixed-size text constant states.
+          find "$work" -type f \( -name '*.wf' -o -name '*.wfm' \) -print0 | xargs -0 perl -pi -e \
+            'BEGIN { %r = (held => "trial_held", not => "trial_not", unchanged => "trial_unchanged", Open => "TrialOpen", clear => "trial_clear") }
+             s{("(?:[^"\\]|\\.)*")|\b(held|not|unchanged|Open|clear)\b}{defined $1 ? $1 : $r{$2}}ge'
+          same_accepted=0
+          same_rejected=0
+          differ=0
+          tasks_differ=0
+          decided_differ=0
+          branch="$PWD/compiler/target/gate/whitefootc"
+          base="$RUNNER_TEMP/base/compiler/target/gate/whitefootc"
+          # One line per failing task of a rejected verdict: its subject,
+          # kind, function, place as written, rule and the failure's name; a
+          # list the report could not finish says so on a line of its own.
+          key='def key($s): "\($s): \(.kind) \(.function // "-") at \(.file // "-"):\(.line // "-"):\(.column // "-") [\(.rule // "-")] \(.failure | split("\n")[0] | sub("^.*error\\[[^]]*\\]: "; ""))";'
+          tasks="$key"'
+            (fromjson? // {verdict: "unreadable"}) as $v
+            | if $v.verdict == "unreadable" then "an unreadable verdict line"
+              elif $v.verdict == "rejected" then ($v.module // $v.entry) as $s
+                | ($v.tasks[] | key($s)),
+                  (if $v.complete then empty else "\($s): further failures may follow the last listed task" end)
+              else empty end'
+          # The whole failure of each task the file `only` lists.
+          details="$key"'
+            ($only | split("\n")) as $wanted
+            | (fromjson? // {}) as $v
+            | select($v.verdict == "rejected") | ($v.module // $v.entry) as $s
+            | $v.tasks[] | key($s) as $k | select($wanted | any(. == $k))
+            | "== \($k)\n\(.failure | split("\n") | .[0:40] | join("\n"))"'
+          # One judgment with both compilers, run in the given directory. A
+          # verdict or task list that differs prints both task lists and the
+          # whole failure of each task only one compiler reports; a shared
+          # rejection prints the first tasks.
+          judge() {
+            label="$1"
+            dir="$2"
+            shift 2
+            for compiler in branch base; do
+              bin="$branch"
+              [ "$compiler" = base ] && bin="$base"
+              (cd "$dir" && perl "$GITHUB_WORKSPACE/.github/run-check.pl" "trial-$compiler" \
+                "$bin" "$@" --report) > "$work/logs/$label.$compiler" 2>&1
+              echo $? > "$work/logs/$label.$compiler.exit"
+              # The tasks of each verdict, and any error printed outside one.
+              { grep '^{' "$work/logs/$label.$compiler" | jq -R -r "$tasks"
+                grep -v '^{' "$work/logs/$label.$compiler" | grep -E 'error\[' ; } \
+                | sort -u > "$work/logs/$label.$compiler.tasks"
+              grep '^trial decided condition: ' "$work/logs/$label.$compiler" | sort -u \
+                > "$work/logs/$label.$compiler.decided"
+            done
+            if ! cmp -s "$work/logs/$label.branch.decided" "$work/logs/$label.base.decided"; then
+              decided_differ=$((decided_differ + 1))
+              echo "---- $label: conditions only the branch decides"
+              comm -23 "$work/logs/$label.branch.decided" "$work/logs/$label.base.decided"
+              echo "---- $label: conditions only the base decides"
+              comm -13 "$work/logs/$label.branch.decided" "$work/logs/$label.base.decided"
+            fi
+            mine=$(cat "$work/logs/$label.branch.exit")
+            theirs=$(cat "$work/logs/$label.base.exit")
+            seconds=$(sed -n 's/^== END [^:]*: \([0-9.]*\) s.*/\1/p' "$work/logs/$label.branch" | tr '\n' ' ')
+            printf '%-50s branch %s base %s (%s s)\n' "$label" "$mine" "$theirs" "$seconds"
+            if [ "$mine" != "$theirs" ]; then
+              differ=$((differ + 1))
+              echo "---- $label: the verdicts differ"
+            fi
+            if ! cmp -s "$work/logs/$label.branch.tasks" "$work/logs/$label.base.tasks"; then
+              tasks_differ=$((tasks_differ + 1))
+              for side in branch base; do
+                if [ "$side" = branch ]; then
+                  comm -23 "$work/logs/$label.branch.tasks" "$work/logs/$label.base.tasks" > "$work/only"
+                else
+                  comm -13 "$work/logs/$label.branch.tasks" "$work/logs/$label.base.tasks" > "$work/only"
+                fi
+                echo "---- $label: tasks only the $side reports"
+                cat "$work/only"
+                grep '^{' "$work/logs/$label.$side" | jq -R -r --rawfile only "$work/only" "$details"
+                grep -v '^{' "$work/logs/$label.$side" | grep -v -E '^== (START|RUNNING|BUDGET)' | head -20
+              done
+            elif [ "$mine" != 0 ]; then
+              same_rejected=$((same_rejected + 1))
+              echo "---- $label rejected by both with the same tasks:"
+              head -12 "$work/logs/$label.branch.tasks"
+            else
+              same_accepted=$((same_accepted + 1))
+            fi
+          }
+          graph() {
+            name="$1"
+            dir="$2"
+            for module in $(sed -n 's/^\(pkg[a-z_:]*\):.*/\1/p' "$dir/modules.wfg"); do
+              judge "$name $module" "$dir" --graph modules.wfg --check-module "$module"
+            done
+          }
+          graph snowghost "$work/Snowghost-wf/renderer"
+          for lib in msgpack json halo; do
+            graph "halo-$lib" "$work/Halo-wf/lib/$lib"
+          done
+          graph firn "$work/Firn-wf/firn"
+          judge "firn composed" "$work/Firn-wf/firn" --graph modules.wfg --check-modules
+          echo "pass ${{ matrix.pass }}: accepted by both $same_accepted, rejected by both with the same tasks $same_rejected, verdicts that differ $differ, task lists that differ $tasks_differ, lists of decided conditions that differ $decided_differ"
+          for side in branch base; do
+            echo "$side decided conditions: $(cat "$work"/logs/*."$side".decided | wc -l) over every judgment"
+          done
+          for side in branch base; do
+            cat "$work"/logs/*."$side".tasks | sed -n 's/.* \[\([^]]*\)\] .*/\1/p' | sort | uniq -c \
+              | sed "s/^/$side tasks by rule: /"
+          done
+
+  # The cases of references that may name several places, among them a
+  # swap after a write through such a reference followed by a whole store
+  # of a sealed value or a field write through the same reference, and a
+  # call's or swap's write below such a reference's referent restored
+  # through it, and the cases of a grow's relocation write under a struct's
+  # invariant, each checked with main's compiler at the branch's latest
+  # merge of it, the branch's head, the head whose exchanged debt keeps the
+  # reference it recorded, which must accept both swap-after-write cases,
+  # and the head whose call and swap writes record no reference, which
+  # must reject both call and swap cases; each verdict is printed with its
+  # first error and the opening of each rejection. One probe stores below a
+  # recorded debt's anchor's field instead of at the reference's referent.
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [main, head, exchange-keeps-record, projected-write-records-nothing]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Build the compiler
+        run: |
+          tree="$GITHUB_WORKSPACE"
+          case "${{ matrix.compiler }}" in
+            main) revision=6d220b46e212495b259fd2d119c36f5b626b90ef ;;
+            *) revision= ;;
+          esac
+          if [ -n "$revision" ]; then
+            git fetch --depth=1 origin "$revision"
+            git worktree add "$RUNNER_TEMP/compiler" FETCH_HEAD
+            tree="$RUNNER_TEMP/compiler"
+          fi
+          case "${{ matrix.compiler }}" in
+            exchange-keeps-record)
+              perl -0777 -pi -e 's/(fn exchanged\(.*?)\n\s*through: None,/$1/s or die "the exchanged record is gone\n"' \
+                compiler/src/semantic/entailment/flow/sealing.rs
+              git diff
+              ;;
+            projected-write-records-nothing)
+              perl -0777 -pi -e 's/let through = spelled\.map\(/let through = spelled.filter(|_| false).map(/ or die "the call record is gone\n"' \
+                compiler/src/semantic/entailment/flow/sealing.rs
+              git diff
+              ;;
+          esac
+          git -C "$tree" log -1 --format='compiler %H'
+          cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+          perl .github/run-check.pl probe-build cargo build \
+            --manifest-path "$tree/compiler/Cargo.toml" \
+            --profile gate --locked --offline --bin whitefootc
+          echo "WHITEFOOTC=$tree/compiler/target/gate/whitefootc" >> "$GITHUB_ENV"
+      - name: Check each probe and case
+        run: |
+          mkdir -p "$RUNNER_TEMP/probes"
+          cd "$RUNNER_TEMP/probes"
+          check() {
+            if "$WHITEFOOTC" --check "$2" > "$1.log" 2>&1; then
+              verdict=accept
+            else
+              verdict="reject: $(grep -m1 -E 'error\[' "$1.log" || head -1 "$1.log")"
+              { echo "::group::$1"; head -30 "$1.log"; echo "::endgroup::"; } >> rejections.txt
+            fi
+            printf '%-58s %s\n' "$1" "$verdict" >> verdicts.txt
+          }
+          cat > p01-two-target-field-store-restores.wf <<'EOF'
+          struct Index {
+            value: u64;
+            invariant bounded(index): index.value < 16_u64;
+          }
+
+          struct Holder {
+            index: Index;
+            count: u64;
+          }
+
+          fn fresh() -> made: Index pure {
+            let index = Index(value: 4_u64);
+            return index;
+          }
+
+          fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+            let at = index^.value;
+            let got = table^[at];
+            return got;
+          }
+
+          fn pick(flag: Bool, table: &Array<u64, 16>) -> result: u64 reads(table) {
+            let first = Index(value: 1_u64);
+            let left = Holder(index: first, count: 1_u64);
+            let second = Index(value: 2_u64);
+            let right = Holder(index: second, count: 2_u64);
+            let target = &left;
+            if flag {
+              set target = &right;
+            }
+            set target^.index.value = 31_u64;
+            set target^.index = fresh();
+            let got = lookup(index: &right.index, table: table);
+            return got;
+          }
+          EOF
+          check p01-two-target-field-store-restores p01-two-target-field-store-restores.wf
+          cases="$GITHUB_WORKSPACE/tests/conformance/cases"
+          for case in type11-neg-joined-reference-store-keeps-debt \
+            type11-pos-joined-reference-store-restores \
+            type11-neg-joined-reference-field-store-keeps-debt \
+            type11-pos-reference-two-targets-restored type11-neg-reference-rebound-before-restored \
+            type11-neg-swap-joined-reference-keeps-debt type11-pos-call-result-sealed-at-receiver \
+            type11-pos-grow-keeps-length-sealed type11-neg-grow-capacity-keeps-debt \
+            type11-neg-swap-after-joined-write-store-keeps-debt \
+            type11-neg-swap-after-joined-write-restore-keeps-debt \
+            type11-pos-joined-reference-call-write-restored \
+            type11-pos-joined-reference-swap-write-restored; do
+            check "case $case" "$cases/$case.wf"
+          done
+          echo "compiler ${{ matrix.compiler }}:"
+          cat verdicts.txt
+          cat rejections.txt 2>/dev/null || true

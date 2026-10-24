@@ -204,6 +204,7 @@ outside SET-1 7582c01f12f8706a writable roots: every binding in scope in the fra
 outside SET-1 b6063d961df1f1fe old-value disposition: integer values have none; a later phase
 outside SET-1 230959a1123ad547 old-value disposition: integer values have none; a later phase
 outside SET-1 63ce5d8e73bf0e13 the atomic in-place update: outside the first phase
+outside SET-1 550cc3667b396785 type invariants: outside the first phase
 outside SET-1 7b0b517b489c158a lowering, which the model does not describe
 
 rule FN-1
@@ -497,7 +498,7 @@ outside ENT-5 e1f3451be4d621d8 relocation writes of `grow`: a later phase
 outside ENT-5 d637b1c20617366b references and `Box`: a later phase
 outside ENT-5 2e024b62a7aec6bc integer exclusions of `match`: a later phase
 outside ENT-5 c8ead8b6c716abf9 integer exclusions of `match`: a later phase
-outside ENT-5 783f90370c9ed2f8 conditional payload contexts of `enum` values and `checked` operations: a later phase
+outside ENT-5 beb1915a1b35e26e conditional payload contexts of `enum` values and `checked` operations: a later phase
 outside ENT-5 a8fceb320c95b461 conditional payload contexts of `enum` values and `checked` operations: a later phase
 outside ENT-5 a9ae9373f338f462 conditional payload contexts of `enum` values and `checked` operations: a later phase
 outside ENT-5 66a36e9d83b6e095 conditional payload contexts of `enum` values and `checked` operations: a later phase
@@ -529,6 +530,7 @@ outside ENT-5 38fd55ca948d82e3 value delivery by `give`: a later phase
 outside ENT-5 7713badb2d086ced measures and subscripted operands: a later phase
 outside ENT-5 fbf0abf14bb7ad1b measures and subscripted operands: a later phase
 outside ENT-5 1823de7a6c893772 the i128 formation limit and the structural ceilings: no fragment case reaches them; a later slice
+outside ENT-5 72e4dce1161e0491 type invariants: outside the first phase
 outside ENT-5 a923eab9114e1132 a sentence for the reader; it adds no condition
 outside ENT-5 f55f34943cae1065 `match`: a later phase
 outside ENT-5 7a3afe2cae3cb53b integer exclusions of `match`: a later phase
@@ -574,7 +576,7 @@ outside ENT-6 6ab83aa4d795068c measures: a later phase
 outside ENT-6 94227b1eb3653ca6 tracked field places: a later phase
 outside ENT-6 ef1b29d779782ba1 tracked field places: a later phase
 outside ENT-6 6aac3c375217a67a tracked field places: a later phase
-outside ENT-6 304282ebd285288b tracked field places: a later phase
+outside ENT-6 64d889eb98fb5618 tracked field places: a later phase
 outside ENT-6 92d0c8ae3efc2a1b tracked field places: a later phase
 outside ENT-6 b992a158dfaf9888 a sentence for the reader; it adds no condition
 outside ENT-6 043446e17e3aa7d6 a sentence for the reader; it adds no condition

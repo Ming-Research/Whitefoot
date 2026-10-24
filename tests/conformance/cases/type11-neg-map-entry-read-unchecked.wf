@@ -1,0 +1,17 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn peek_entry(map: &ConcurrentHashMap<Index>, key: &[u8], table: &Array<u64, 16>) -> result: u64 reads(map), reads(key), reads(table) {
+  match &map^[key] {
+    Some(value: found) => {
+      let at = found^.value;
+      let got = table^[at];
+      return got;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}

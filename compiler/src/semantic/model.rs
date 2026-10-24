@@ -1137,6 +1137,26 @@ pub(crate) struct CheckedNominal {
     /// invariants, which an enum payload of its type carries across a
     /// function boundary.
     pub(crate) type_invariant: bool,
+    /// [TYPE-11.S1] the affine type invariants of this struct, in
+    /// declaration order: the ones every value of it a body receives
+    /// satisfies until a write breaks one.
+    pub(crate) affine_invariants: Vec<CheckedAffineInvariant>,
+}
+
+/// [TYPE-11.S1] one affine type invariant, as a requirement of a function
+/// whose parameter zero is a value of the struct [FN-8], with the projection
+/// of each binder datum it reads from parameter zero.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedAffineInvariant {
+    /// The `type_invariant` occurrence.
+    pub(crate) clause: NodePath,
+    pub(crate) goal: super::goal::GoalExpression,
+    /// Each binder datum's projection from parameter zero, once each; a
+    /// measure member's ends with its measure [OP-15].
+    pub(crate) data: Vec<Vec<super::goal::GoalProjection>>,
+    /// The same relation over parameter zero's exit state, which an exit's
+    /// clause reads at an anchor of a value it hands back [TYPE-11.S7].
+    pub(crate) relation: super::postcondition::RelationTemplate,
 }
 
 impl CheckedNominal {
@@ -2509,10 +2529,6 @@ pub(crate) enum CheckedExpression {
         /// Filled from the complete phase-A inventory before entailment runs,
         /// in callee `requires_clause` source order.
         requirements: Vec<super::goal::CheckedCallRequirement>,
-        /// [TYPE-11] the callee's requirements over its parameters' enum
-        /// payloads, each owed in its argument's conditional context for its
-        /// route [ENT-5]; filled with `requirements`.
-        routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
         result: CheckedType,
         /// For a borrow-mode result admitted under the reborrow extension:
         /// the caller-side storage the result borrow is conservatively rooted
@@ -3267,10 +3283,6 @@ pub(crate) struct CheckedFunction {
     /// at body entry in the state holding the requirements before it, where
     /// its subscripts owe [OP-4]. A hypothetical premise set forms none.
     pub(crate) requirement_places: Vec<Vec<CheckedExpression>>,
-    /// [TYPE-11] the type invariants of each struct a parameter's enum
-    /// carries in a variant field, each restricted to that variant, in
-    /// parameter order and then variant, field and declaration order.
-    pub(crate) routed_requirements: Vec<super::postcondition::CheckedRoutedRequirement>,
     /// Verified-relation surfaces in `ensures_clause` source order. H1
     /// constructs this metadata; the shared entailment flow proves every
     /// clause at every selected exit.

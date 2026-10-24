@@ -1,0 +1,25 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn lookup(index: &Index) -> result: u64 reads(index) {
+  let got = index^.value;
+  return got;
+}
+
+fn hand_entry(slots: &Entries<Index>, at: u64) -> result: u64 reads(slots) contract {
+  requires at < slots^.len;
+} {
+  let got = 0_u64;
+  match &slots^[at] {
+    Some(value: found) => {
+      if found^.value < 16_u64 {
+        set got = lookup(index: found);
+      }
+    }
+    None() => {
+    }
+  }
+  return got;
+}

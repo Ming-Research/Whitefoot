@@ -3643,7 +3643,6 @@ impl<'unit> TypeContext<'unit> {
             variant,
             field,
             route,
-            generated: false,
             result_type,
         })
     }

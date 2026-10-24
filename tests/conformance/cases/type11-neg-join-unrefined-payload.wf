@@ -1,0 +1,26 @@
+struct Never {
+  v: u64;
+  invariant impossible(probe): probe.v < 0_u64;
+}
+
+enum Either {
+  First(n: Never);
+  Second();
+}
+
+fn join_payload() -> result: u64 pure {
+  let table = array_filled::<u64, 2>(value: 0_u64);
+  let e = Either::Second();
+  let x = 0_u64;
+  match &e {
+    First(n: m) => {
+      set m^.v = 5_u64;
+      set x = 1_u64;
+    }
+    Second() => {
+      set x = 9_u64;
+    }
+  }
+  let got = table[x];
+  return got;
+}

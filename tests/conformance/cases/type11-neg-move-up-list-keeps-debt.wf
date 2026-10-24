@@ -1,0 +1,42 @@
+struct Chain {
+  v: u64;
+  next: Option<Box<Chain>>;
+  invariant small(chain): chain.v < 16_u64;
+}
+
+fn drop_chain(chain: Option<Box<Chain>>) -> result: unit pure {
+  return unit;
+}
+
+fn lift() -> result: unit pure {
+  let end = None<Box<Chain>>();
+  let tail = Chain(v: 1_u64, next: move end);
+  let tail_box = box_new::<Chain>(value: move tail);
+  let more = Some<Box<Chain>>(value: move tail_box);
+  let head = Chain(v: 2_u64, next: move more);
+  let head_box = box_new::<Chain>(value: move head);
+  let y = Some<Box<Chain>>(value: move head_box);
+  match &y {
+    Some(value: first) => {
+      match &first^.inner.next {
+        Some(value: second) => {
+          set second^.inner.v = 31_u64;
+        }
+        None() => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  match move y {
+    Some(value: first) => {
+      let node = move first.inner;
+      let rest = move node.next;
+      drop_chain(chain: move rest);
+    }
+    None() => {
+    }
+  }
+  return unit;
+}

@@ -1,0 +1,29 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Cursor {
+  k: u64;
+}
+
+fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+  let at = index^.value;
+  let got = table^[at];
+  return got;
+}
+
+fn move_then_hand(cursor: &Cursor, v: u64, table: &Array<u64, 16>) -> result: u64 reads(table), writes(cursor) contract {
+  requires cursor^.k < 2_u64;
+} {
+  let seed = Index(value: 3_u64);
+  let cells = array_filled::<Index, 2>(value: seed);
+  set cells[cursor^.k].value = v;
+  set cursor^.k = 1_u64;
+  if cells[cursor^.k].value < 16_u64 {
+    let got = lookup(index: &cells[cursor^.k], table: table);
+    set got = lookup(index: &cells[0_u64], table: table);
+    return got;
+  }
+  return 0_u64;
+}

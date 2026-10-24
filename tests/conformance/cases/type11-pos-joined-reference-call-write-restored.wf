@@ -1,0 +1,34 @@
+struct Index {
+  value: u64;
+}
+
+struct Holder {
+  index: Index;
+  invariant bounded(holder): holder.index.value < 16_u64;
+}
+
+fn spoil(index: &Index) -> result: unit writes(index.value) {
+  set index^.value = 31_u64;
+  return unit;
+}
+
+fn lookup(holder: &Holder, table: &Array<u64, 16>) -> result: u64 reads(holder), reads(table) {
+  let at = holder^.index.value;
+  let got = table^[at];
+  return got;
+}
+
+fn pick(flag: Bool, table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let first = Index(value: 1_u64);
+  let left = Holder(index: first);
+  let second = Index(value: 2_u64);
+  let right = Holder(index: second);
+  let target = &left;
+  if flag {
+    set target = &right;
+  }
+  spoil(index: &target^.index);
+  set target^.index.value = 7_u64;
+  let got = lookup(holder: &right, table: table);
+  return got;
+}

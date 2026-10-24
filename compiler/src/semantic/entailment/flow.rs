@@ -46,6 +46,7 @@ mod prover;
 mod relations;
 mod render;
 mod results;
+mod sealing;
 mod sources;
 mod walk;
 
@@ -60,6 +61,7 @@ use loop_summary::*;
 use postconditions::*;
 use prover::*;
 use relations::*;
+use sealing::*;
 use walk::*;
 
 use sources::{bound_place, capture_counted_preheader};
@@ -123,7 +125,7 @@ use super::{
     LoopInvariantProof, MeasureKillNote, ObligationFamily, ObligationOutcome,
     PostconditionAggregate, PostconditionDisposition, PostconditionEntryImage,
     PostconditionEntryImageOutcome, PostconditionExit, RangeEndpointReading, RangeLengthReading,
-    SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
+    SealingFailure, SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
     VerifiedPostconditionSummaryRef, fragment_type, overflow_conjuncts_for_values,
 };
 
@@ -273,6 +275,8 @@ struct AtomicFrame {
     loop_depth: usize,
     give_depth: usize,
     invariants: Vec<crate::semantic::goal::CheckedCallRequirement>,
+    /// The target bindings, whose referents no read seals [TYPE-11.S7].
+    targets: Vec<BindingId>,
 }
 
 /// A value initializer collecting give-edge states for its continuation.
@@ -381,6 +385,9 @@ struct ProofFlowState {
     /// edge every one must be an event of the summary its head subtracted
     /// [ENT-5].
     continuing: Vec<KillEvent>,
+    /// [TYPE-11.S2] the writes on this edge that may have broken an affine
+    /// type invariant of a value since the hand-off that delivered it.
+    debts: Debts,
 }
 
 /// [DIAG-1] one write that reached a measure term: the statement that wrote,
@@ -1371,7 +1378,8 @@ pub(super) fn analyze_candidate(
 /// Runs one [FN-4] declaration-level implication query through the same S4
 /// premise establishment and AUTO proof entry as an ordinary call goal. The
 /// synthetic function has no body: its parameters are alpha-renamed contract
-/// datums, and no hypothetical premise escapes this query as a body fact.
+/// datums, each holding its body-entry type invariant instances, and no
+/// hypothetical premise escapes this query as a body fact.
 pub(super) fn contract_implies(
     function: &CheckedFunction,
     context: &EntailmentContext<'_>,
@@ -1395,6 +1403,10 @@ pub(super) fn contract_implies(
             .reasoning()
             .establish_requirement_affine_images(requirement, ordinal, &mut state);
     }
+    // [FN-4] the formal and the actual share the implicit requirement and
+    // postcondition [TYPE-11], so every datum the query ranges over, an
+    // entry state, an exit state or a result, holds its entry instances.
+    analyzer.seal_body_entry(&mut state);
     let Some(goal) = analyzer.input.body_goal_expression(goal) else {
         return FunctionEntailment::default();
     };
@@ -1453,6 +1465,7 @@ fn entailment_from_run(function: &CheckedFunction, run: AnalysisRun) -> Function
         unrecorded: Vec::new(),
         derivations: run.derivations,
         inventory: run.inventory,
+        sealing_failures: run.sealing_failures,
     };
     (entailment.answers, entailment.unrecorded) = super::answer_records(function, &entailment);
     entailment
@@ -1474,15 +1487,47 @@ struct AnalysisRun {
     permission_separations: Vec<PermissionSeparationProof>,
     derivations: DerivationLedger,
     inventory: DerivationInventory,
+    sealing_failures: Vec<SealingFailure>,
 }
 
 fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisRun {
-    run_analyzer(Analyzer::new(context, function))
+    run_settled(function, context, |_| {})
 }
 
-fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> AnalysisRun {
-    let function = analyzer.input.function;
+/// [TYPE-11.S6] walks the body from empty loop-header debts, and again from
+/// the debts the last walk found on each loop's backedges, until no backedge
+/// carries a debt its header did not start with, or one its header's would
+/// restore over other terms [TYPE-11.S5]: the least set, reached by monotone
+/// iteration, since a walk from more debts leaves no fewer. `prepare` sets up
+/// every walk's analyzer alike.
+fn run_settled(
+    function: &CheckedFunction,
+    context: &EntailmentContext<'_>,
+    prepare: impl Fn(&mut Analyzer<'_, '_>),
+) -> AnalysisRun {
     let _work = super::work::function(&function.name);
+    let mut seeds = HashMap::new();
+    loop {
+        let mut analyzer = Analyzer::new(context, function);
+        analyzer.input.debt_seeds = seeds.clone();
+        prepare(&mut analyzer);
+        let (run, backedges) = run_analyzer(analyzer);
+        let settled = backedges.iter().all(|(id, debts)| {
+            seeds
+                .get(id)
+                .is_some_and(|seed: &Debts| debts.settled_within(seed))
+        });
+        if settled {
+            return run;
+        }
+        for (id, debts) in backedges {
+            seeds.entry(id).or_default().union(&debts);
+        }
+    }
+}
+
+fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> (AnalysisRun, HashMap<CheckedLoopId, Debts>) {
+    let function = analyzer.input.function;
     analyzer.input.collect_bindings();
     analyzer.input.collect_postcondition_entry_images();
     let mut state = ProofFlowState {
@@ -1521,7 +1566,7 @@ fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> AnalysisRun {
             .reasoning()
             .establish_requirement_affine_images(requirement, ordinal, &mut state);
     }
-    analyzer.establish_routed_requirements(&mut state);
+    analyzer.seal_body_entry(&mut state);
     let body_disposition = {
         let closed = close(
             &state.facts,
@@ -1563,7 +1608,7 @@ fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> AnalysisRun {
         measure_bounds,
         goals: analyzer.vocabulary.goals.into_inventory(),
     };
-    AnalysisRun {
+    let run = AnalysisRun {
         diagnostic_contradiction: analyzer
             .input
             .restored_summary
@@ -1583,7 +1628,9 @@ fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> AnalysisRun {
         permission_separations,
         derivations: analyzer.vocabulary.derivations,
         inventory,
-    }
+        sealing_failures: analyzer.output.sealing_failures,
+    };
+    (run, analyzer.output.debt_backedges)
 }
 
 impl<'check, 'unit> Analyzer<'check, 'unit> {
@@ -1601,6 +1648,11 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 result_demand: ResultDemand::default(),
                 entry_images: Vec::new(),
                 postcondition_entry_images: Vec::new(),
+                sealing: context
+                    .nominals
+                    .iter()
+                    .any(|nominal| !nominal.affine_invariants.is_empty()),
+                debt_seeds: HashMap::new(),
                 restored_summary: None,
             },
             vocabulary: Vocabulary {
@@ -1651,6 +1703,8 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                     })
                     .collect(),
                 judged_separations: HashSet::new(),
+                sealing_failures: Vec::new(),
+                debt_backedges: HashMap::new(),
             },
             frames: Frames {
                 branches: Vec::new(),
@@ -2001,6 +2055,12 @@ struct Input<'check, 'unit> {
     /// flow state tracks invalidation once per structural image, while each
     /// FN-9 proof consults only the images its own relation references.
     postcondition_entry_images: Vec<Vec<usize>>,
+    /// [TYPE-11] whether some struct of the program declares an affine type
+    /// invariant; without one no write records a debt.
+    sealing: bool,
+    /// [TYPE-11.S6] the debts an earlier walk of this body found on each
+    /// loop's backedges, which its header starts with.
+    debt_seeds: HashMap<CheckedLoopId, Debts>,
     /// Populated only by the rejection-only counterfactual query. Neither
     /// this premise nor any result of that private walk is retained.
     restored_summary: Option<RestoredSummary>,
@@ -2041,13 +2101,15 @@ pub(super) fn unavailable_summary_discharges_record(
     if discharged(&baseline) != Some(false) {
         return false;
     }
-    let mut analyzer = Analyzer::new(context, function);
-    analyzer.input.restored_summary = Some(RestoredSummary {
-        call: call.clone(),
-        postconditions: postconditions.to_vec(),
-        contradiction: std::cell::Cell::new(false),
+    // [TYPE-11.S6] the private walk settles its loop-header debts as the
+    // ordinary one does, each walk with its own contradiction observer.
+    let restored = run_settled(function, context, |analyzer| {
+        analyzer.input.restored_summary = Some(RestoredSummary {
+            call: call.clone(),
+            postconditions: postconditions.to_vec(),
+            contradiction: std::cell::Cell::new(false),
+        });
     });
-    let restored = run_analyzer(analyzer);
     if restored.diagnostic_contradiction {
         return false;
     }
@@ -2289,6 +2351,10 @@ struct Output {
     /// The effect and demanded reference-preservation questions already
     /// judged, distinguished by query even when they share a write event.
     judged_separations: HashSet<usize>,
+    /// [TYPE-11.S4] each hand-off that left a debt unrestored.
+    sealing_failures: Vec<SealingFailure>,
+    /// [TYPE-11.S6] the debts left on each loop's backedges and `continue`s.
+    debt_backedges: HashMap<CheckedLoopId, Debts>,
 }
 
 /// The walk's own frames: open scopes, loops and value initializers, and the
@@ -2532,7 +2598,6 @@ mod indexed_goal_kill_tests {
             held_parameters: Vec::new(),
             held_calls: Vec::new(),
             requirement_places: Vec::new(),
-            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,
@@ -2783,7 +2848,6 @@ mod range_argument_kill_tests {
             held_parameters: Vec::new(),
             held_calls: Vec::new(),
             requirement_places: Vec::new(),
-            routed_requirements: Vec::new(),
             postconditions: Vec::new(),
             range_facts: Default::default(),
             body: None,

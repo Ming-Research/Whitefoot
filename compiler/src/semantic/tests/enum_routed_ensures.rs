@@ -35,7 +35,6 @@ fn separate_fields_retain_distinct_route_identities_and_verified_summaries() {
         for proof in &function.entailment.postconditions {
             assert!(proof.aggregate.discharged);
             assert!(proof.summary.is_some());
-            assert!(!proof.vacuous);
         }
     });
 }
@@ -219,63 +218,5 @@ fn read(value: u64, unknown: Outcome) -> result: u8 pure {
         let start = usize::try_from(coordinate.start().value()).expect("offset fits");
         let end = usize::try_from(coordinate.end().value()).expect("offset fits");
         assert_eq!(&unbounded.as_bytes()[start..end], b"cvt::<u64, u8>(value)");
-    });
-}
-
-#[test]
-fn a_call_requirement_retains_its_copied_argument_route() {
-    let source = br#"struct Span {
-  low: u64;
-  high: u64;
-  invariant ordered(span): span.low <= span.high;
-}
-
-fn take(value: Option<Span>) -> result: u64 pure {
-  return 0_u64;
-}
-
-fn caller() -> result: u64 pure {
-  let span = Span(low: 2_u64, high: 9_u64);
-  let made = Some<Span>(value: span);
-  let copied = made;
-  return take(value: copied);
-}
-"#;
-    with_semantics(source, |outcome| {
-        assert!(
-            matches!(outcome, SemanticOutcome::Complete(_)),
-            "the call must receive the copied payload invariant: {outcome:?}"
-        );
-    });
-
-    // Construct a valid Span first, then invalidate it before wrapping and
-    // copying. An unknown Option<Span> parameter would instead establish the
-    // routed invariant at body entry and would not be a negative control.
-    let unordered = std::str::from_utf8(source)
-        .expect("UTF-8 witness")
-        .replace(
-            "  let made = Some<Span>(value: span);",
-            "  set span.low = 10_u64;\n  let made = Some<Span>(value: span);",
-        );
-    with_semantics(unordered.as_bytes(), |outcome| {
-        let SemanticOutcome::SourceIssue { issue } = outcome else {
-            panic!("the invalid copied payload must reject at its call: {outcome:?}");
-        };
-        assert_eq!(issue.rule(), SemanticRule::Fn8);
-        let SemanticIssueKind::UndischargedCallRequirement(detail) = issue.kind() else {
-            panic!("expected the routed call requirement, got {:?}", issue.kind());
-        };
-        assert_eq!(detail.concrete_callee, "take");
-        let cited = |location: &SemanticLocation| {
-            let SemanticLocation::SourceNode(_, coordinate) = location;
-            let start = usize::try_from(coordinate.start().value()).expect("offset fits");
-            let end = usize::try_from(coordinate.end().value()).expect("offset fits");
-            &unordered.as_bytes()[start..end]
-        };
-        assert_eq!(cited(issue.location()), b"take(value: copied)");
-        assert_eq!(
-            cited(&detail.requires_clause),
-            b"invariant ordered(span): span.low <= span.high;"
-        );
     });
 }

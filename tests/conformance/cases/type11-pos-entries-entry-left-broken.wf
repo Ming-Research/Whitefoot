@@ -1,0 +1,17 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn corrupt(slots: &Entries<Index>, at: u64) -> result: unit writes(slots) contract {
+  requires at < slots^.len;
+} {
+  match &slots^[at] {
+    Some(value: found) => {
+      set found^.value = 31_u64;
+    }
+    None() => {
+    }
+  }
+  return unit;
+}

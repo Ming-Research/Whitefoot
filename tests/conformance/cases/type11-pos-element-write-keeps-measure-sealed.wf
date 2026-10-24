@@ -1,0 +1,15 @@
+struct Small {
+  slots: Slots<u64, 8>;
+  invariant small(value): value.slots.len <= 4_u64;
+}
+
+struct Holder {
+  small: Small;
+}
+
+fn bump(holder: &Holder) -> result: unit writes(holder) contract {
+  requires holder^.small.slots.len > 0_u64;
+} {
+  set holder^.small.slots[0_u64] = 7_u64;
+  return unit;
+}

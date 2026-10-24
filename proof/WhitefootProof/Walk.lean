@@ -358,7 +358,7 @@ termination_by structural ss
 -- spec INV-1 88bc417515d7176f
 -- spec INV-1 cff164cd3ac022fc
 -- spec ENT-3 51beaca4e6f7738a
--- spec ENT-3 599970b0de9dee7a
+-- spec ENT-3 41525860031f13a2
 -- spec ENT-5 3de9430bb0118835
 -- spec ENT-5 cfc1c375dfcd207f
 -- spec ENT-5 875741ec34db74d3
@@ -586,7 +586,7 @@ end
 -- spec FN-8 bb2990933c08779c
 -- spec FN-8 1430be0afedd31ac
 -- spec FN-8 a79bf222767a72f3
--- spec FN-9 b0a9b84c308b546c
+-- spec FN-9 479de5dc32587436
 -- spec FN-9 dce09a5a2521286a
 -- spec FN-9 c0af4afad7d89490
 -- spec ENT-2 14d61dc0f4018056

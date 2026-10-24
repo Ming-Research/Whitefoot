@@ -119,36 +119,46 @@ impl Input<'_, '_> {
             return true;
         }
         supports.iter().any(|support| {
-            writes.iter().any(|write| {
-                if !self.places.overlaps(separations, support, write) {
-                    return false;
-                }
-                if support.path.len() < write.path.len() {
-                    return true;
-                }
-                let mut selected_cell = support.clone();
-                selected_cell.path.truncate(write.path.len());
-                // [OWN-7] two positions of one fixed slot shape are equal
-                // or disjoint. In both cases relocation preserves a filled
-                // descendant or length of the selected cell. An unresolved
-                // descendant cover or shifted range needs actual identity,
-                // exactly as the shared exchange judgment requires.
-                if !write.exchange_safe(separations, &selected_cell) {
-                    return true;
-                }
-                let suffix = &support.path[write.path.len()..];
-                // The Box's identity, logical length, and every descendant
-                // of an already filled selection remain the same value.
-                !matches!(
-                    suffix,
-                    [] | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
-                        | [PlaceStep::Deref, PlaceStep::Index(_), ..]
-                        | [PlaceStep::Deref, PlaceStep::Range(_), ..]
-                        | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
-                        | [PlaceStep::Deref, PlaceStep::Page(_), ..]
-                )
-            })
+            writes.iter().any(|write| self.relocation_reaches(separations, support, write))
         })
+    }
+
+    /// [ENT-5] whether a relocation write at the resolved cell `write`
+    /// reaches the resolved `support`: the cell's identity, its window's
+    /// length word and every descendant of a filled selection survive it.
+    pub(super) fn relocation_reaches(
+        &self,
+        separations: &dyn SeparationOracle,
+        support: &ResolvedPlace,
+        write: &ResolvedPlace,
+    ) -> bool {
+        if !self.places.overlaps(separations, support, write) {
+            return false;
+        }
+        if support.path.len() < write.path.len() {
+            return true;
+        }
+        let mut selected_cell = support.clone();
+        selected_cell.path.truncate(write.path.len());
+        // [OWN-7] two positions of one fixed slot shape are equal or
+        // disjoint. In both cases relocation preserves a filled descendant or
+        // length of the selected cell. An unresolved descendant cover or
+        // shifted range needs actual identity, exactly as the shared exchange
+        // judgment requires.
+        if !write.exchange_safe(separations, &selected_cell) {
+            return true;
+        }
+        let suffix = &support.path[write.path.len()..];
+        // The Box's identity, logical length, and every descendant of an
+        // already filled selection remain the same value.
+        !matches!(
+            suffix,
+            [] | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
+                | [PlaceStep::Deref, PlaceStep::Index(_), ..]
+                | [PlaceStep::Deref, PlaceStep::Range(_), ..]
+                | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
+                | [PlaceStep::Deref, PlaceStep::Page(_), ..]
+        )
     }
 
     /// [MSR-2] whether one event kills a measure of `support`.
@@ -299,19 +309,31 @@ impl Input<'_, '_> {
     ) -> bool {
         self.offset_support(support)
             .iter()
-            .any(|(read, holders)| match event {
-                KillEvent::Write { place: written, .. }
-                | KillEvent::EntryImageHolderWrite { place: written, .. } => {
-                    self.resolved_places_overlap(separations, read, written)
-                        || holders.iter().any(|holder| {
-                            written.root == PlaceRoot::Binding(*holder) && written.path.is_empty()
-                        })
-                }
-                KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
-                    read.root == PlaceRoot::Binding(*binding) || holders.contains(binding)
-                }
-                KillEvent::EntryImageHolderConsume { .. } => false,
-            })
+            .any(|(read, holders)| self.event_kills_read(separations, read, holders, event))
+    }
+
+    /// [ENT-5] whether one event replaces or consumes `read`, a place an
+    /// offset reads through the reference holders `holders`.
+    pub(super) fn event_kills_read(
+        &self,
+        separations: &dyn SeparationOracle,
+        read: &ResolvedPlace,
+        holders: &[BindingId],
+        event: &KillEvent,
+    ) -> bool {
+        match event {
+            KillEvent::Write { place: written, .. }
+            | KillEvent::EntryImageHolderWrite { place: written, .. } => {
+                self.resolved_places_overlap(separations, read, written)
+                    || holders.iter().any(|holder| {
+                        written.root == PlaceRoot::Binding(*holder) && written.path.is_empty()
+                    })
+            }
+            KillEvent::Rebind { binding, .. } | KillEvent::Consume { binding, .. } => {
+                read.root == PlaceRoot::Binding(*binding) || holders.contains(binding)
+            }
+            KillEvent::EntryImageHolderConsume { .. } => false,
+        }
     }
 
     /// Integer selectors read their exact field and reference-holder chain.
@@ -325,15 +347,26 @@ impl Input<'_, '_> {
             let Some(term) = term else {
                 continue;
             };
-            for read in self.context.captured_places.support(term) {
+            supports.extend(self.term_support(term));
+        }
+        supports
+    }
+
+    /// The places one offset term reads, each with the reference holder it
+    /// reads through [ENT-5].
+    pub(super) fn term_support(&self, term: CapturedTerm) -> Vec<(ResolvedPlace, Vec<BindingId>)> {
+        self.context
+            .captured_places
+            .support(term)
+            .into_iter()
+            .map(|read| {
                 let holders = match read.root {
                     PlaceRoot::Binding(root) if self.places.is_reference(root) => vec![root],
                     _ => Vec::new(),
                 };
-                supports.push((read, holders));
-            }
-        }
-        supports
+                (read, holders)
+            })
+            .collect()
     }
 
     fn scope_kills_offset_support(
@@ -1236,12 +1269,22 @@ impl Reasoning<'_, '_, '_> {
         events: &[KillEvent],
         shared_event: Option<FlowEventId>,
     ) {
+        // [TYPE-11.S3] the widening row for the offsets the batch writes or
+        // ends, offered for restoration before its kills.
+        self.seal_offset_kills(separations, states, events);
         self.invalidate_lost_headers(separations, states, events);
         let removed = self.apply_kills_one(separations, &mut states.facts, events);
         self.record_measure_kills(separations, states, events, &removed);
         self.apply_affine_kills(separations, &mut states.affine, events);
         self.invalidate_entry_images(states, separations, events, shared_event);
         states.record_writes(events);
+        // [TYPE-11.S3] a consumed root binding's debts die with it; a
+        // continuation took the moved value's debts before this event.
+        for event in events {
+            if let KillEvent::Consume { binding, .. } = event {
+                states.debts.remove_rooted(*binding);
+            }
+        }
     }
 
     /// Diagnostic relations describe the images at their failed join. Keep
@@ -1627,6 +1670,8 @@ impl Analyzer<'_, '_> {
     /// component: the Result states, the facts and the affine images, in that
     /// order. Both scope transfers apply them through here.
     pub(super) fn exit_scope_components(&mut self, states: &mut ProofFlowState, depth: usize) {
+        // [TYPE-11.S3] restoration is offered before the scope's kills.
+        self.seal_scope_exit(states, depth);
         self.exit_result_scopes(states, depth);
         self.exit_scopes_to_one(&mut states.facts, depth);
         self.exit_affine_scopes_to(&mut states.affine, depth);

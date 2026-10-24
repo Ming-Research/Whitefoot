@@ -1,0 +1,29 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct State {
+  single: Index;
+}
+
+fn close_through<T, fn close(shared: Shared<T>) -> result: Option<T> pure waits>(cell: Shared<T>) -> result: Option<T> pure waits {
+  return close(shared: move cell);
+}
+
+fn close_and_look(cell: Shared<State>, table: &Array<u64, 16>) -> result: u64 reads(table) waits {
+  atomic s = &cell {
+    set s^.single.value = 31_u64;
+  }
+  let closed = close_through::<State, fn shared_close::<State>>(cell: move cell);
+  match closed {
+    Some(value: state) => {
+      let at = state.single.value;
+      let got = table^[at];
+      return got;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}

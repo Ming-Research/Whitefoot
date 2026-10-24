@@ -70,6 +70,13 @@ the work-branch and merge boundary.
 - [Range type invariants](investigations/range-type-invariants/DESIGN.md):
   a struct's range fact over its own stores, kept by its module's writers and
   assumed by every function that receives the struct.
+- [Sealed type invariants](investigations/sealed-invariants/DESIGN.md):
+  the soundness argument for a struct's invariant travelling with its value
+  into fields, payloads, containers and shared states, broken only between
+  hand-offs, with the checker's debt state, its finite container evidence,
+  a bound on its added work, polynomial in the body's size and in the debts
+  an atomic block's entry and a map or `Entries` parameter's body entry
+  start with, and the specification changes it needs.
 - [Writer-lost facts](investigations/writer-lost-facts/DESIGN.md): facts
   agent writers established and the checker dropped (loop exit, conjunction,
   value `if`, `Option`, chained certificates), each classified against v0.77

@@ -3,7 +3,9 @@
 //! verified relation at a call.
 
 use super::super::super::entailment::SelectedReturnBound;
-use super::super::super::postcondition::{PlaceDenotation, SelectedPostconditionReturn};
+use super::super::super::postcondition::{
+    PlaceDenotation, PostconditionPlace, RelationTerm, SelectedPostconditionReturn,
+};
 use super::*;
 
 /// A call datum's operand: the parameter ordinal, the projections below it,
@@ -931,7 +933,6 @@ impl Reasoning<'_, '_, '_> {
         block: &crate::NodePath,
         relation_ordinal: u32,
         parents: Option<Vec<DerivationId>>,
-        vacuous: bool,
     ) -> PostconditionAggregate {
         if self.input.function.formal_hypothesis || self.input.function.body.is_none() {
             let node = self.vocabulary.derivations.intern(
@@ -949,7 +950,7 @@ impl Reasoning<'_, '_, '_> {
                 derivation: Some(node),
             };
         }
-        let Some(parents) = parents.filter(|parents| vacuous || !parents.is_empty()) else {
+        let Some(parents) = parents.filter(|parents| !parents.is_empty()) else {
             return PostconditionAggregate {
                 discharged: false,
                 derivation: None,
@@ -969,6 +970,90 @@ impl Reasoning<'_, '_, '_> {
         PostconditionAggregate {
             discharged: true,
             derivation: Some(node),
+        }
+    }
+
+    /// [TYPE-11.S7] the instance of each affine invariant at each anchor of
+    /// a value or written referent this return hands back that a datum of
+    /// `postcondition` reads through, over the terms the clause's own datums
+    /// take here: the return's hand-off leaves each such anchor sealed.
+    pub(super) fn establish_exit_instances(
+        &mut self,
+        postcondition: &CheckedPostcondition,
+        results: &[Option<TermId>],
+        returns: &[Option<PostconditionReturnDatum>],
+        facts: &mut FactState,
+    ) {
+        if !self.input.sealing {
+            return;
+        }
+        let mut anchors = Vec::new();
+        for datum in postcondition
+            .relation
+            .operands
+            .iter()
+            .flat_map(RelationTerm::datums)
+        {
+            let Some((root, projections)) = handed_back(datum) else {
+                continue;
+            };
+            // A written referent is the anchor its parameter's leading `^`
+            // names, as the body reads it [ENT-2].
+            let projections = match (root, projections.split_first()) {
+                (HandedBack::Exit(_), Some((GoalProjection::Deref, rest))) => rest,
+                _ => projections,
+            };
+            for depth in 0..=projections.len() {
+                let anchor = (root, projections[..depth].to_vec());
+                if !anchors.contains(&anchor) {
+                    anchors.push(anchor);
+                }
+            }
+        }
+        for (root, prefix) in anchors {
+            let base = match root {
+                HandedBack::Result(ordinal) if ordinal == postcondition.selector.ordinal => {
+                    Some(postcondition.selector.result_type)
+                }
+                // One field of a result list [CALL-4].
+                HandedBack::Result(ordinal) => self
+                    .input
+                    .payload_path_type(self.input.function.result, &[PlaceStep::Field(ordinal)]),
+                HandedBack::Exit(ordinal) => self
+                    .input
+                    .function
+                    .parameters
+                    .get(ordinal as usize)
+                    .map(|parameter| parameter.ty),
+            };
+            let steps = prefix
+                .iter()
+                .map(|projection| projection.place_step())
+                .collect::<Vec<_>>();
+            let Some(ty) = base.and_then(|base| self.input.payload_path_type(base, &steps)) else {
+                continue;
+            };
+            let instances = self
+                .input
+                .affine_invariants(ty)
+                .iter()
+                .map(|invariant| {
+                    (
+                        invariant.clause.clone(),
+                        rerooted_relation(&invariant.relation, root, &prefix),
+                    )
+                })
+                .collect::<Vec<_>>();
+            for (clause, template) in instances {
+                let Some(relation) = self.instantiate_relation_template(&template, results, returns)
+                else {
+                    continue;
+                };
+                let event = self
+                    .vocabulary
+                    .proof_event(FlowEventKind::S18, Some(&clause));
+                facts.establish(&relation, &mut self.vocabulary.derivations, event);
+            }
         }
     }
 
@@ -2670,7 +2755,6 @@ impl Judging<'_, '_, '_> {
                     .expect("postcondition relation ordinal exceeds u32"),
                 summary: None,
                 exits: Vec::new(),
-                vacuous: postcondition.selector.vacuous_when_unselected(),
                 aggregate: aggregate(),
             })
             .collect();
@@ -2689,13 +2773,9 @@ impl Judging<'_, '_, '_> {
                         .flatten()
                 })
                 .collect::<Option<Vec<_>>>();
-            // [TYPE-11] a routed relation a type invariant generates holds
-            // vacuously where no exit selects it: no value the instance
-            // returns holds its variant.
-            let vacuous = self.output.postconditions[index].vacuous;
             self.output.postconditions[index].aggregate = self
                 .reasoning()
-                .retain_postcondition_aggregate(&block, relation_ordinal, parents, vacuous);
+                .retain_postcondition_aggregate(&block, relation_ordinal, parents);
         }
     }
 
@@ -2721,9 +2801,8 @@ impl Judging<'_, '_, '_> {
             else {
                 continue;
             };
-            // [FN-9, TYPE-11] the forwarded value's context for the route
-            // this clause is restricted to, whether written or generated
-            // by a type invariant.
+            // [FN-9] the forwarded value's context for the route this clause
+            // is restricted to.
             let forwarded = forwarded_return(postcondition, forwarded);
             if conditional_return(&selected)
                 && forwarded.is_some_and(|result| result.definitely_err)
@@ -2732,7 +2811,7 @@ impl Judging<'_, '_, '_> {
                 // success return, including after copies and value joins.
                 continue;
             }
-            let conditional_facts =
+            let mut conditional_facts =
                 selected_return_facts(&selected, states, forwarded, &self.vocabulary.derivations);
             // [CALL-4] one term per declared result ordinal, in written order.
             let results = selected
@@ -2755,6 +2834,12 @@ impl Judging<'_, '_, '_> {
             ) else {
                 continue;
             };
+            self.reasoning().establish_exit_instances(
+                postcondition,
+                &results,
+                &selected.values,
+                &mut conditional_facts,
+            );
             // [MSR-4] the affine route over the relation's own instantiated
             // terms, which is what carries a measure operand: a measure has
             // an affine atom [MSR-4] and no result value image, so the datum
@@ -3442,6 +3527,107 @@ fn forwarded_return<'a>(
             }
             None => result.success,
         })
+}
+
+/// Where a clause datum is rooted among what an exit hands back: a result
+/// ordinal, or a written reference parameter's exit state.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HandedBack {
+    Result(u32),
+    Exit(u32),
+}
+
+/// The handed-back root and projection one clause datum reads, if any.
+fn handed_back(datum: &RelationDatum) -> Option<(HandedBack, &[GoalProjection])> {
+    match datum {
+        RelationDatum::Result {
+            ordinal,
+            projections,
+            ..
+        } => Some((HandedBack::Result(*ordinal), projections)),
+        RelationDatum::Parameter {
+            ordinal,
+            projections,
+            denotation: ParameterDenotation::ExitState,
+            ..
+        } => Some((HandedBack::Exit(*ordinal), projections)),
+        RelationDatum::Measure(_, place) => match place.root {
+            PostconditionPlaceRoot::Result { ordinal } => {
+                Some((HandedBack::Result(ordinal), &place.projections))
+            }
+            PostconditionPlaceRoot::ExitParameter { ordinal } => {
+                Some((HandedBack::Exit(ordinal), &place.projections))
+            }
+            PostconditionPlaceRoot::Parameter { .. } => None,
+        },
+        RelationDatum::Parameter { .. }
+        | RelationDatum::NamedConst { .. }
+        | RelationDatum::Literal { .. } => None,
+    }
+}
+
+/// [TYPE-11.S7] an invariant's relation over its binder, parameter zero,
+/// read at the anchor `prefix` reaches below `root` instead.
+fn rerooted_relation(
+    template: &RelationTemplate,
+    root: HandedBack,
+    prefix: &[GoalProjection],
+) -> RelationTemplate {
+    let below = |projections: &[GoalProjection]| {
+        prefix
+            .iter()
+            .chain(projections)
+            .copied()
+            .collect::<Vec<_>>()
+    };
+    let reroot = |datum: &RelationDatum| match datum {
+        RelationDatum::Parameter {
+            ordinal: 0,
+            projections,
+            ty,
+            ..
+        } => match root {
+            HandedBack::Result(ordinal) => RelationDatum::Result {
+                ordinal,
+                projections: below(projections),
+                ty: *ty,
+            },
+            HandedBack::Exit(ordinal) => RelationDatum::Parameter {
+                ordinal,
+                projections: below(projections),
+                ty: *ty,
+                denotation: ParameterDenotation::ExitState,
+            },
+        },
+        RelationDatum::Measure(measure, place)
+            if matches!(
+                place.root,
+                PostconditionPlaceRoot::Parameter { ordinal: 0 }
+                    | PostconditionPlaceRoot::ExitParameter { ordinal: 0 }
+            ) =>
+        {
+            RelationDatum::Measure(
+                *measure,
+                PostconditionPlace {
+                    root: match root {
+                        HandedBack::Result(ordinal) => PostconditionPlaceRoot::Result { ordinal },
+                        HandedBack::Exit(ordinal) => {
+                            PostconditionPlaceRoot::ExitParameter { ordinal }
+                        }
+                    },
+                    projections: below(&place.projections),
+                    ty: place.ty,
+                },
+            )
+        }
+        other => other.clone(),
+    };
+    let mut rerooted = template.clone();
+    for operand in &mut rerooted.operands {
+        operand.datum = reroot(&operand.datum);
+        operand.parameter = operand.parameter.as_ref().map(reroot);
+    }
+    rerooted
 }
 
 /// [FN-9, TYPE-11] whether one selected return reads its routed ordinal's

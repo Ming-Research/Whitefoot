@@ -1,0 +1,21 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+}
+
+fn peek_holder(maybe: &Option<Holder>, table: &Array<u64, 16>) -> result: u64 reads(maybe), reads(table) {
+  match &maybe^ {
+    Some(value: h) => {
+      let at = h^.index.value;
+      let got = table^[at];
+      return got;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}

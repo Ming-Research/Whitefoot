@@ -1,0 +1,19 @@
+nocopy struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+  let at = index^.value;
+  let got = table^[at];
+  return got;
+}
+
+fn move_then_restore(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let a = Index(value: 3_u64);
+  set a.value = 99_u64;
+  let b = move a;
+  set b.value = 3_u64;
+  let got = lookup(index: &b, table: table);
+  return got;
+}

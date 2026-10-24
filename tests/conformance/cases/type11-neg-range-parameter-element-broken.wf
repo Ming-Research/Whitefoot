@@ -1,0 +1,11 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn corrupt(part: &[Index], at: u64) -> result: unit writes(part) contract {
+  requires at < part^.len;
+} {
+  set part^[at].value = 31_u64;
+  return unit;
+}

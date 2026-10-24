@@ -1,0 +1,16 @@
+struct Member {
+  index: u64;
+}
+
+struct Holder {
+  member: Member;
+  size: u64;
+  invariant fits(holder): holder.member.index < holder.size;
+  invariant capped(holder): holder.size <= 16_u64;
+}
+
+fn reach(holder: &Holder) -> result: unit reads(holder.size), writes(holder.member.index) {
+  let edge = holder^.size;
+  set holder^.member.index = edge;
+  return unit;
+}

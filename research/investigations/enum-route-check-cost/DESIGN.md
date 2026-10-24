@@ -1,5 +1,13 @@
 # Enum route checking cost
 
+> Superseded in part: [sealed type invariants](../sealed-invariants/DESIGN.md)
+> retire the routed type-invariant requirements and postconditions, so the
+> third candidate's demand inventory reads no routed requirement of a nested
+> call, establishes none at body entry and meets no generated routed return
+> clause; its other readers and its transfer edges stand as designed, and
+> the measurements below were taken before that change. Historical design
+> evidence; the active specification owns the normative text.
+
 ## Question and prior evidence
 
 Does unnecessary ordinary closure preparation for an already contradictory

@@ -1,5 +1,22 @@
 # Type invariants through enum payloads
 
+> Superseded in part: [sealed type invariants](../sealed-invariants/DESIGN.md)
+> carry a struct's invariant into every payload a handed-off value owns,
+> which retires the routed type-invariant requirements and postconditions
+> this note designs, their vacuity rule and the scope limits its nested and
+> generic payload section draws. Still in force: the owner's ruling that
+> section records, that a position written `T` takes the invariants of the
+> struct T is bound to (option B), now on the ground the
+> [checks and proofs node](../../../design/language/checks-and-proofs.md)
+> gives, not the generic wrapper's exit; the strong induction argument of
+> the recursion section, which grounds [DIAG-2]'s induction hypotheses,
+> though DIAG-2 now gives a component member every callee postcondition, so
+> that section's selected direction and its reason for withholding written
+> ones are retired; and the value-carrier section, which still carries a
+> producer's written bounds and a branch's own proofs to the receiver.
+> Historical design evidence; the active specification owns the normative
+> text.
+
 Status: direction selected by the owner on 2026-10-12 (board item on type
 invariants through `Result` at function boundaries, option A). This note
 records the soundness argument written before implementation, the scope

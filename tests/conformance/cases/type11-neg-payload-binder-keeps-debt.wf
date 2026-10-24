@@ -1,0 +1,25 @@
+struct Window {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(window): window.next < window.slots.len;
+}
+
+fn take(window: Option<Window>) -> result: u64 pure {
+  let local = move window;
+  match &local {
+    Some(value: w) => {
+      set w^.next = 5_u64;
+    }
+    None() => {
+    }
+  }
+  match move local {
+    Some(value: w) => {
+      let got = w.slots[0_u64];
+      return got;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}

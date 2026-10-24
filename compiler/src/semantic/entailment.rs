@@ -148,6 +148,12 @@ pub(crate) struct EntailmentCallee {
     /// `None` for a body-less row, whose declared row is all there is.
     pub(crate) parameter_exhibited_writes: Option<Vec<Vec<Vec<super::model::CheckedEffectStep>>>>,
     pub(crate) parameter_transports: Vec<CallTransport>,
+    /// [TYPE-11.S4] whether the call hands its arguments off.
+    pub(crate) sealing: CalleeSealing,
+    /// [TYPE-11.S2] whether the call is the supplied `shared_close`, whose
+    /// result holds a state no atomic block restored below its own
+    /// invariants.
+    pub(crate) closes_state: bool,
 }
 
 impl EntailmentCallee {
@@ -178,6 +184,8 @@ impl EntailmentCallee {
         Self {
             range_boundary: false,
             relocation: false,
+            sealing: CalleeSealing::HandsOff,
+            closes_state: false,
             parameter_exhibited_writes: exhibited.map(rooted),
             parameter_declarations: parameters
                 .iter()
@@ -1095,9 +1103,6 @@ pub(crate) struct FunctionPostconditionProof {
     /// function-local derivation IDs.
     pub(crate) summary: Option<VerifiedPostconditionSummary>,
     pub(crate) exits: Vec<PostconditionExit>,
-    /// [TYPE-11] whether the relation is a routed one a type invariant
-    /// generated, which holds vacuously where no exit selects it.
-    pub(crate) vacuous: bool,
     pub(crate) aggregate: PostconditionAggregate,
 }
 
@@ -1384,6 +1389,86 @@ pub(crate) struct FunctionEntailment {
     /// Canonical term and goal identities moved from the analyzer so every
     /// retained dense ID remains exact and interpretable after analysis.
     pub(crate) inventory: DerivationInventory,
+    /// [TYPE-11.S4] each hand-off that left a debt unrestored, in walk order.
+    pub(crate) sealing_failures: Vec<SealingFailure>,
+}
+
+/// [TYPE-11.S4] the rule one failed hand-off cites.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SealingRule {
+    /// A call argument, at the `call` [FN-8].
+    Fn8,
+    /// A return or a propagated error exit [FN-9].
+    Fn9,
+    /// A give, a construction operand or a stored right-hand side [TYPE-11].
+    Type11,
+}
+
+/// One hand-off that left a debt unrestored [TYPE-11.S4]: the anchor, the
+/// invariant, the first conclusion not established and each breaking event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SealingFailure {
+    pub(crate) rule: SealingRule,
+    /// The hand-off's site: the `call`, `return_stmt`, `let_stmt`,
+    /// `give_stmt` or `set_stmt`.
+    pub(crate) site: NodePath,
+    /// The `type_invariant` the debt names; for a cover, the first one its
+    /// place's struct declares, when it declares one.
+    pub(crate) clause: Option<NodePath>,
+    /// The anchor as a residual renders it.
+    pub(crate) anchor: String,
+    /// The place whose whole replacement removes the debt: the anchor, or
+    /// the place its first unknown position lies in.
+    pub(crate) replaced: String,
+    /// The instance not established; `None` for a cover or an anchor at the
+    /// unknown position, which form none.
+    pub(crate) goal: Option<ConcreteGoal>,
+    pub(crate) rendered_goal: String,
+    /// The writes that created the debt, in walk order.
+    pub(crate) events: Vec<NodePath>,
+    /// Whether a widening lost the identity the debt was restorable through.
+    pub(crate) widened: bool,
+    /// What created the debt, which the repair reads.
+    pub(crate) origin: SealingOrigin,
+    /// Whether the goal is the instance at the handed position of a debt at
+    /// the unknown position [TYPE-11.S5], which no whole replacement of
+    /// that position removes.
+    pub(crate) member: bool,
+}
+
+/// What created a debt [TYPE-11.S2], which the repair of a hand-off that
+/// leaves it unrestored reads.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum SealingOrigin {
+    /// A write that may have broken the invariant [TYPE-11.S3].
+    #[default]
+    Written,
+    /// An atomic block's entry, for a value its target owns, with no write.
+    Entered,
+    /// A continuation or a `swap` that moved the debt to a place no relation
+    /// names, as the cover of that place [TYPE-11.S2, TYPE-11.S3].
+    Moved,
+    /// Body entry, for a value an entry of a map or an `Entries` holds: no
+    /// hand-off delivers those entries valid [TYPE-11.S1, TYPE-11.S2].
+    Unsealed,
+    /// A `shared_close` result, for a value its state owns: an atomic block
+    /// owes only its target's own invariants [TYPE-11, TYPE-11.S2].
+    Closed,
+    /// A hand-off of a `shared_close` result itself, whose state owns a value
+    /// with an invariant that no relation names [TYPE-11.S4].
+    ClosedResult,
+}
+
+/// [TYPE-11.S3, TYPE-11.S4] what a call does with the values its arguments
+/// name: an ordinary call hands them off, the supplied `swap` exchanges them,
+/// and the supplied `release` and `map_clear` release them, none of them
+/// reading them.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum CalleeSealing {
+    #[default]
+    HandsOff,
+    Exchange,
+    Release,
 }
 
 /// Answers each obligation record of `function` with the judgment that

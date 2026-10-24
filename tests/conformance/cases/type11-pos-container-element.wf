@@ -1,0 +1,19 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+fn pick_slot(table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let first = Index(value: 1_u64);
+  let second = Index(value: 2_u64);
+  let indexes = slots_new::<Index, 2>();
+  place_back(window: &indexes, value: first);
+  place_back(window: &indexes, value: second);
+  let r = &indexes[1_u64];
+  let at = r^.value;
+  let a = table^[at];
+  let v = indexes[1_u64].value;
+  let b = table^[v];
+  let sum = a +wrap b;
+  return sum;
+}

@@ -50,7 +50,22 @@ impl Analyzer<'_, '_> {
         inputs: &[ProofFlowState],
         sites: &[crate::NodePath],
     ) -> ProofFlowState {
+        // [TYPE-11.S6] each input settles its debts, and the instances the
+        // join establishes on it, before the fact states are joined.
+        let mut sealed = Vec::new();
+        let debts = if inputs.iter().any(|input| !input.debts.is_empty()) {
+            sealed = inputs.to_vec();
+            self.seal_join(&mut sealed)
+        } else {
+            Debts::default()
+        };
+        let inputs = if sealed.is_empty() {
+            inputs
+        } else {
+            sealed.as_slice()
+        };
         let mut output = self.judging().join_flows(inputs);
+        output.debts = debts;
         self.vocabulary.promote_flow_contradiction(&mut output);
         if output.facts.all_derivable {
             return output;

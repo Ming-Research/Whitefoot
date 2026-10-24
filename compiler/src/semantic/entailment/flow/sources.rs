@@ -16,7 +16,7 @@ use super::super::super::model::{
     BindingId, CheckedArrayRoot, CheckedConst, CheckedConversionMode, CheckedEnumType,
     CheckedExpression, CheckedIntegerOperation, CheckedMeasure, CheckedNominalKind,
     CheckedNumericType, CheckedPlaceStep, CheckedSetTarget, CheckedType, CheckedValue, IntegerType,
-    MeasuredKind, NominalId, SubscriptedTerm,
+    MeasuredKind, NominalId,
 };
 use super::super::super::places::CapturedTerm;
 use super::super::fragment_type;
@@ -1316,63 +1316,11 @@ impl Reasoning<'_, '_, '_> {
 
     /// The measure term one [MSR-1] measure former reads, over the same
     /// place the obligation judgment forms for P, so both name one term
-    /// [ENT-2]. A place whose subscript offsets are not all captured terms
-    /// or constants is no term: its identity could not tell two elements
-    /// apart.
+    /// [ENT-2].
     pub(super) fn measure_operand(&mut self, value: &CheckedExpression) -> Option<TermId> {
-        let represented = |term| term == Some(SubscriptedTerm::Represented);
-        let (measure, place, measured, array_length) = match value {
-            CheckedExpression::ArrayMeasure {
-                measure,
-                root,
-                length,
-            } => (
-                *measure,
-                array_root_place(root),
-                MeasuredKind::ConstantArray,
-                Some(*length),
-            ),
-            CheckedExpression::BufferMeasure { measure, root }
-                if represented(root.subscripted_term()) =>
-            {
-                (
-                    *measure,
-                    root.proof_place(),
-                    MeasuredKind::RuntimeArray,
-                    None,
-                )
-            }
-            // [MSR-1, REF-4] a range reference's one measure, over the place
-            // the reference names [REF-1].
-            CheckedExpression::RangeMeasure { measure, root } => {
-                (*measure, root.proof_place(), MeasuredKind::Range, None)
-            }
-            // [MSR-1] a storage shape's measure reader names the
-            // same [ENT-2] term the clause and the invariant name, so a `let`
-            // over one is the ordinary [ENT-3.S6] equality a buffer's is.
-            CheckedExpression::ContainerMeasure { measure, root }
-                if represented(root.subscripted_term()) =>
-            {
-                return Some(self.place_measure_term(
-                    *measure,
-                    container_root_path(root),
-                    root.measured()?,
-                    root.type_constant(),
-                ));
-            }
-            CheckedExpression::RangeElementMeasure { measure, place, .. }
-                if represented(place.subscripted_term()) =>
-            {
-                return Some(self.place_measure_term(
-                    *measure,
-                    place.proof_place(),
-                    place.measured()?,
-                    place.type_constant(),
-                ));
-            }
-            _ => return None,
-        };
-        Some(self.place_measure_term(measure, place, measured, array_length))
+        let read = measure_read(value)?;
+        let (measured, constant) = read.term?;
+        Some(self.place_measure_term(read.measure, read.place, measured, constant))
     }
 }
 
@@ -2880,6 +2828,19 @@ impl Reasoning<'_, '_, '_> {
         let Some(expression) = self.input.body_requirement_goal(requirement) else {
             return;
         };
+        self.establish_affine_images(expression, Some(ordinal), state);
+    }
+
+    /// The affine images of one goal established as an S4 goal is: a
+    /// requirement's, rooted at its ordinal, or a sealed type invariant
+    /// instance's [ENT-3.S18], kept while a proof uses it. An instance
+    /// established again over the same images adds none.
+    pub(super) fn establish_affine_images(
+        &mut self,
+        expression: GoalExpression,
+        requirement: Option<usize>,
+        state: &mut ProofFlowState,
+    ) {
         let goal = self.intern_goal_expression(expression);
         let mut members = vec![(goal, GoalSign::Positive)];
         members.extend(self.signed_boolean_decomposition(goal, GoalSign::Positive, &state.facts));
@@ -2895,22 +2856,34 @@ impl Reasoning<'_, '_, '_> {
             else {
                 continue;
             };
+            if requirement.is_none()
+                && state
+                    .affine
+                    .facts
+                    .iter()
+                    .any(|fact| fact.inequality == inequality)
+            {
+                continue;
+            }
             let parent = state
                 .facts
                 .opaque_proofs
                 .get(&(self.vocabulary.goals.canonical(goal), sign))
                 .copied()
-                .expect("every S4 decomposition member is established");
+                .expect("every established decomposition member has its proof");
             let parent = self.vocabulary.derivations.intern(
                 super::super::state::DerivationNode::RequirementAffineImage { goal, sign, parent },
             );
-            self.vocabulary.derivations.add_root(
-                DerivationRootKind::RequirementAffineImage {
-                    requirement: u32::try_from(ordinal).expect("requirement ordinal exceeds u32"),
-                    member: u32::try_from(member).expect("decomposition ordinal exceeds u32"),
-                },
-                parent,
-            );
+            if let Some(ordinal) = requirement {
+                self.vocabulary.derivations.add_root(
+                    DerivationRootKind::RequirementAffineImage {
+                        requirement: u32::try_from(ordinal)
+                            .expect("requirement ordinal exceeds u32"),
+                        member: u32::try_from(member).expect("decomposition ordinal exceeds u32"),
+                    },
+                    parent,
+                );
+            }
             state.affine.facts.push(ActiveAffineFact {
                 inequality,
                 evidence: AffineFactEvidence::Derivation(parent),
@@ -3358,6 +3331,7 @@ impl Analyzer<'_, '_> {
             measure_kills: source.measure_kills.clone(),
             lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
+            debts: Debts::default(),
         };
         // The forward substitution happens above before the ordinary edge
         // kills, so the carrier's own branch scope cannot delete a
@@ -3460,6 +3434,7 @@ impl Analyzer<'_, '_> {
             measure_kills: source.measure_kills.clone(),
             lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
+            debts: Debts::default(),
         };
         self.kill_scopes_to(&mut image, context.scope_depth);
         self.exit_counted_loops_from(&mut image, context.loop_depth);

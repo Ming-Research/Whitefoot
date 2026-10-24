@@ -1,0 +1,30 @@
+nocopy struct Index {
+  value: u64;
+}
+
+struct Holder {
+  index: Index;
+  invariant bounded(holder): holder.index.value < 16_u64;
+}
+
+fn lookup(holder: &Holder, table: &Array<u64, 16>) -> result: u64 reads(holder), reads(table) {
+  let at = holder^.index.value;
+  let got = table^[at];
+  return got;
+}
+
+fn pick(flag: Bool, table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let first = Index(value: 1_u64);
+  let left = Holder(index: move first);
+  let second = Index(value: 2_u64);
+  let right = Holder(index: move second);
+  let target = &left;
+  if flag {
+    set target = &right;
+  }
+  let spare = Index(value: 31_u64);
+  swap(first: &target^.index, second: &spare);
+  set target^.index.value = 7_u64;
+  let got = lookup(holder: &right, table: table);
+  return got;
+}

@@ -33,7 +33,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use super::super::entailment::{SelectedReturnBound, TermRead};
+use super::super::entailment::{SealingOrigin, SelectedReturnBound, TermRead};
 use super::super::goal::{
     EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
 };
@@ -1014,6 +1014,69 @@ pub(super) fn constant_construction_invariant(text: &str) -> String {
     format!(
         "`{text}` is false for the field values this constant writes: write values that satisfy it, or declare the constant with a struct that states no such invariant"
     )
+}
+
+/// [TYPE-11.S4] a hand-off of `place`'s value while a write since the
+/// hand-off that delivered it may have broken `goal`; `None` when the debt
+/// forms no instance, as a cover or an unknown position does. `place` is
+/// the debt's anchor, or the place its first unknown position lies in,
+/// whose whole replacement removes the debt. `widened`
+/// says the debt lost the identity it was restorable through [TYPE-11.S3],
+/// `origin` what created it [TYPE-11.S2], and `member` that `goal` is the
+/// instance at the handed position of a debt at the unknown position, which
+/// replacing that position whole leaves in place [TYPE-11.S5].
+pub(super) fn unrestored_type_invariant(
+    goal: Option<&str>,
+    place: &str,
+    widened: bool,
+    origin: SealingOrigin,
+    member: bool,
+) -> String {
+    let entered = origin == SealingOrigin::Entered;
+    match (goal, widened, entered) {
+        (Some(goal), false, _) if origin == SealingOrigin::Unsealed => format!(
+            "`{goal}` is not proved: an entry of a map or an `Entries` carries no type invariant, since no hand-off delivers a map's entries valid, so prove it before this hand-off, such as by checking the fields it relates"
+        ),
+        (None, false, _) if origin == SealingOrigin::Unsealed => format!(
+            "an entry of a map or an `Entries` carries no type invariant, and no relation names each one at or below `{place}`, so they cannot be proved: hand off the value of one entry whose invariants the body proves, or replace `{place}` whole with a value a construction or a call returns before this hand-off"
+        ),
+        (_, false, _) if origin == SealingOrigin::ClosedResult => String::from(
+            "a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, and no relation names it while no binding holds the result: bind the result with `let`, then prove the invariants of the values below its state before handing it on, such as by checking the fields they relate"
+        ),
+        (Some(goal), false, _) if origin == SealingOrigin::Closed && member => format!(
+            "`{goal}` is not proved: a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, so prove it before this hand-off, such as by checking the fields it relates"
+        ),
+        (Some(goal), false, _) if origin == SealingOrigin::Closed => format!(
+            "`{goal}` is not proved: a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, so prove it before this hand-off, such as by checking the fields it relates, or replace `{place}` whole with a value a construction or a call returns"
+        ),
+        (None, false, _) if origin == SealingOrigin::Closed => format!(
+            "a value the state of a `shared_close` result owns carries no type invariant, since an atomic block owes only its target's own, and no relation names each one at or below `{place}`, so they cannot be proved: hand off one field or element whose invariants the body proves, or replace `{place}` whole with a value a construction or a call returns before this hand-off"
+        ),
+        (Some(goal), false, false) if member => format!(
+            "`{goal}` is not proved: a write at a position not known to differ from `{place}` may have broken it, so prove it before this hand-off, such as by checking or writing the fields it relates"
+        ),
+        (Some(goal), false, true) if member => format!(
+            "`{goal}` is not proved: a value an atomic block's target owns carries no type invariant from the block's entry, so prove it before this hand-off, such as by checking the fields it relates"
+        ),
+        (Some(goal), false, false) => format!(
+            "`{goal}` is not restored since a write that may have broken it: restore it before this hand-off, writing the fields it relates so the body shows it holds, or replace `{place}` whole with a value a construction or a call returns"
+        ),
+        (Some(goal), false, true) => format!(
+            "`{goal}` is not proved: a value an atomic block's target owns carries no type invariant from the block's entry, so prove it before this hand-off, such as by checking the fields it relates, or replace `{place}` whole with a value a construction or a call returns"
+        ),
+        (_, true, _) => format!(
+            "a write that may have broken a type invariant at or below `{place}` went through a position or reference that changed before the invariant was restored, so no relation names it any more: restore the invariant before that position or reference changes, or replace `{place}` whole with a value a construction or a call returns before this hand-off"
+        ),
+        (None, false, false) if origin == SealingOrigin::Moved => format!(
+            "a write may have broken a type invariant below a value that moved to `{place}`, and no relation names the broken place there, so it cannot be restored: restore the invariant before the value moves, or replace `{place}` whole with a value a construction or a call returns before this hand-off"
+        ),
+        (None, false, false) => format!(
+            "a write reached `{place}` through a position or reference that no relation can name any more, so its type invariants cannot be restored: replace `{place}` whole with a value a construction or a call returns before this hand-off, or make the write through a place the body still names"
+        ),
+        (None, false, true) => format!(
+            "a value an atomic block's target owns carries no type invariant from the block's entry, and no relation names each one at or below `{place}`, so they cannot be proved: hand off one field or element whose invariants the body proves, or replace `{place}` whole with a value a construction or a call returns before this hand-off"
+        ),
+    }
 }
 
 /// [TYPE-11] a type invariant of an object's state at an edge that leaves

@@ -105,7 +105,72 @@ impl Input<'_, '_> {
             _ => None,
         }
     }
+}
 
+/// One [OP-15] measure read: the measure, the place it measures as that
+/// place's proof path spells it [ENT-2], and, when the measure is a term,
+/// the place's measured kind and constant [MSR-1].
+pub(super) struct MeasureRead {
+    pub(super) measure: CheckedMeasure,
+    pub(super) place: ResolvedPlace,
+    pub(super) term: Option<(MeasuredKind, Option<CheckedConst>)>,
+}
+
+/// The measure read `value` is, if it is one. A place whose subscript
+/// offsets are not all captured terms or constants is no term: its identity
+/// could not tell two elements apart.
+pub(super) fn measure_read(value: &CheckedExpression) -> Option<MeasureRead> {
+    let represented = |term| term == Some(SubscriptedTerm::Represented);
+    let (measure, place, term) = match value {
+        CheckedExpression::ArrayMeasure {
+            measure,
+            root,
+            length,
+        } => (
+            *measure,
+            array_root_place(root),
+            Some((MeasuredKind::ConstantArray, Some(*length))),
+        ),
+        CheckedExpression::BufferMeasure { measure, root } => (
+            *measure,
+            root.proof_place(),
+            represented(root.subscripted_term()).then_some((MeasuredKind::RuntimeArray, None)),
+        ),
+        // [MSR-1, REF-4] a range reference's one measure, over the place
+        // the reference names [REF-1].
+        CheckedExpression::RangeMeasure { measure, root } => (
+            *measure,
+            root.proof_place(),
+            Some((MeasuredKind::Range, None)),
+        ),
+        // [MSR-1] a storage shape's measure reader names the same [ENT-2]
+        // term the clause and the invariant name, so a `let` over one is the
+        // ordinary [ENT-3.S6] equality a buffer's is.
+        CheckedExpression::ContainerMeasure { measure, root } => (
+            *measure,
+            container_root_path(root),
+            root.measured()
+                .filter(|_| represented(root.subscripted_term()))
+                .map(|measured| (measured, root.type_constant())),
+        ),
+        CheckedExpression::RangeElementMeasure { measure, place, .. } => (
+            *measure,
+            place.proof_place(),
+            place
+                .measured()
+                .filter(|_| represented(place.subscripted_term()))
+                .map(|measured| (measured, place.type_constant())),
+        ),
+        _ => return None,
+    };
+    Some(MeasureRead {
+        measure,
+        place,
+        term,
+    })
+}
+
+impl Input<'_, '_> {
     /// Integer data must be terms at the written destination followed by
     /// its projections [CALL-4, MSR-3, ENT-2]. Resolving a reference alias
     /// to indexed storage does not add a subscript to its written spelling.
@@ -1453,6 +1518,7 @@ impl Judging<'_, '_, '_> {
                 losses
             },
             continuing,
+            debts: Debts::default(),
         }
     }
 }

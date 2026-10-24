@@ -73,7 +73,6 @@ fn with_render_context(
         held_parameters: Vec::new(),
         held_calls: Vec::new(),
         requirement_places: Vec::new(),
-        routed_requirements: Vec::new(),
         postconditions: Vec::new(),
         range_facts: Default::default(),
         body: None,
@@ -148,6 +147,7 @@ fn aggregate_goal_values_use_const_source_constructors_and_lists() {
             linear: false,
             nocopy: false,
             type_invariant: false,
+            affine_invariants: Vec::new(),
         }];
         let spellings = HashMap::from([(nominal, "Bundle<u64>".to_owned())]);
         let elements = [integer, nominal, CheckedType::Integer(IntegerType::U8)];
@@ -217,6 +217,7 @@ fn proof_goal_projections_spell_literal_indices_and_enum_payload_names() {
             linear: false,
             nocopy: false,
             type_invariant: false,
+            affine_invariants: Vec::new(),
         }];
         let elements = [nominal];
         let context = EntailmentContext {

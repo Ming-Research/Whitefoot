@@ -1,0 +1,17 @@
+struct Stack {
+  slots: Slots<u64, 8>;
+  invariant nonempty(stack): stack.slots.len >= 1_u64;
+}
+
+struct Holder {
+  stack: Stack;
+}
+
+fn drained(holder: Holder) -> result: u64 pure {
+  let n = holder.stack.slots.len;
+  let old = take_back(window: &holder.stack.slots);
+  let m = holder.stack.slots.len;
+  let got = holder.stack.slots[0_u64];
+  let sum = got +wrap old;
+  return sum;
+}
