@@ -22,11 +22,13 @@ The programs are the instrument's, not the commits': this checkout (the ref
 the workflow is dispatched on) holds `compare.py`, `bench.wf` and `interp.py`,
 and the inputs below come from pinned revisions, so that both arms compile
 the same source. The source must be accepted by both compilers. The wasm
-interpreter's generator is the candidate tree's own
-(`research/experiments/match-dispatch/wasm/gen.py`), and the Halo revision is
-the workflow input `halo`; a language change that makes either unacceptable
-to one of the compilers fails the build step with that compiler's diagnostic
-rather than comparing different programs. Each group builds its own twin: a
+interpreter's generator and sources are this checkout's
+(`research/experiments/match-dispatch/wasm/`, not a commit's own: a commit
+older than the specification they were last edited for may reject them), and
+the Halo revision is the workflow input `halo`; a language change that makes
+either unacceptable to one of the compilers fails the build step with that
+compiler's diagnostic rather than comparing different programs. Each group
+builds its own twin: a
 byte copy of the base image, whose difference from the base measures nothing
 but this run's noise.
 
@@ -93,7 +95,9 @@ interval, so nothing is judged: the table shows the medians, the IPC and the
 miss and stall rates per image, then each event's candidate/base and
 twin/base ratio with its range over the rounds. On a hybrid CPU a generic
 event is one row per PMU; the rows of a PMU whose CPUs exclude the pinned CPU
-are ignored and the rest summed.
+are ignored and the rest summed. A `perf stat` that fails leaves the timed
+table written, with a line saying that no counter table exists, and fails the
+job.
 
 ## Controls
 
@@ -117,9 +121,15 @@ today. The cause is not identified.
 `interp.py self-test` and `compare.py self-test` exercise
 the reducers on synthetic rows, including a slowdown and an improvement the
 reducer must find, a noisy or offset twin that must leave the workload
-unresolved, a floor, and every output check. The interpreters group has no
-slow control like `hash-map-compare`'s, which injects extra work inside the
-timed interval; its sensitivity is what the synthetic rows show.
+unresolved, a floor, and every output check. `interp.py self-test` also runs
+`time` (Linux only) on stand-in images of known speeds, through the real
+launch path: the base and the twin sleep 0.05 s and the candidate 0.2 s, and
+the rows must show the candidate's median ratio above 2 and the twin's between
+0.7 and 1.4, which finds an image launched for the wrong arm or a row written
+under the wrong label. The interpreters group has no slow control like
+`hash-map-compare`'s, which injects extra work inside the timed interval; its
+sensitivity is what the synthetic rows and the stand-in images show.
+`run.sh selftest` also checks the `groups` list.
 
 ## Running and outputs
 
@@ -132,7 +142,9 @@ gh workflow run compiler-compare.yml --ref main -f runner=14900k \
 ```
 
 `groups` selects `hash_map`, `interpreters` and `perf` (a comma-separated
-list; `perf` runs inside the `interpreters` stage, on the 14900K only). The
+list; `perf` runs inside the `interpreters` stage, on the 14900K only, so it
+needs `interpreters`). The first step refuses a list that names no group, an
+unknown name or `perf` without `interpreters`, before anything is built. The
 job summary holds each group's `summary.txt`; the artifact holds the raw rows
 (`raw.tsv`, `memory.tsv`, `hold.tsv`, `time.tsv`, `perf.json` and the
 `perf stat` CSV files) and the manifests with the resolved commits, compiler

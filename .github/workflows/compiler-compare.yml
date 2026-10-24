@@ -14,11 +14,13 @@
 # file lives on main; the instrument (this checkout) is the dispatch ref's, and
 # the compilers are built from the candidate and base commits.
 #
-# FAILURE POLICY. The job fails when a compiler or image does not build, when
+# FAILURE POLICY. The job fails when `groups` names no group, an unknown one,
+# or perf without interpreters, when a compiler or image does not build, when
 # a reducer's self-test fails, when a process fails or its rows are missing,
-# malformed or differ from the workload's expected checks or output, and when
-# a floor is given that is malformed or misses a measured cell. No verdict of
-# an ordinary run fails it. `timeout-minutes` bounds a stuck runner.
+# malformed or differ from the workload's expected checks or output (a failed
+# perf stat included; the timed table is still written), and when a floor is
+# given that is malformed or misses a measured cell. No verdict of an ordinary
+# run fails it. `timeout-minutes` bounds a stuck runner.
 #
 # The summary a decision relies on is copied by hand into the consuming
 # item's research record with its run id, because artifacts expire.
@@ -45,11 +47,11 @@ on:
         type: string
         default: ""
       groups:
-        description: Comma-separated groups to run, of hash_map, interpreters and perf (perf stat of the interpreters, 14900K only)
+        description: Comma-separated groups to run, of hash_map, interpreters and perf (perf stat of the interpreters, 14900K only; perf needs interpreters)
         type: string
         default: "hash_map,interpreters,perf"
       halo:
-        description: Commit of Ming-Research/Halo-wf whose interpreter is built by both compilers; it must compile with both
+        description: Commit of Ming-Research/Halo-wf whose interpreter is built by both compilers; it must compile with both. The default is a commit of Halo-wf's main line (its PR 71) that compiles under the current compiler
         type: string
         default: df3eb9ec00f4d7db992e82b6d8ab35f8a643a317
       min_rounds:
@@ -105,6 +107,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # A groups list that selects nothing measurable would end in a green job
+      # with no data: stop before any build.
+      - name: Check the groups
+        env:
+          OUT: ${{ runner.temp }}/out
+          GROUP_LIST: ${{ inputs.groups }}
+        run: bash research/experiments/compiler-compare/run.sh groups
 
       # The hosted image's clang predates the calling convention the
       # compiler emits; take the pinned LLVM major as the gate does. The

@@ -3,7 +3,9 @@
 # compiles and runs the wasm interpreter with a cached compiler, `lint` checks
 # the real workflow file, and `dry` runs every stage of research/experiments/
 # compiler-compare/run.sh at a small scale: the null run (this commit as both
-# arms) and a comparison with the compiler of PR 420.
+# arms), a comparison with the compiler of PR 420 as the base (cross) and as the
+# candidate against its merge base with main (live, the 14900K verification's
+# shape).
 name: tmp-compiler-compare-dry
 
 on:
@@ -41,6 +43,17 @@ jobs:
         run: |
           OUT=/tmp/out bash research/experiments/compiler-compare/run.sh selftest
           bash -n research/experiments/compiler-compare/run.sh research/experiments/compiler-compare/arms.sh
+      - name: The groups stage as the workflow calls it
+        if: ${{ !cancelled() }}
+        run: |
+          run=research/experiments/compiler-compare/run.sh
+          export OUT=/tmp/out
+          GROUP_LIST=hash_map,interpreters,perf bash $run groups
+          GROUP_LIST=interpreters bash $run groups
+          for list in perf "" hash_map,intepreters; do
+            if GROUP_LIST=$list bash $run groups; then echo "groups '$list' was accepted"; exit 1; fi
+          done
+          if env -u GROUP_LIST bash $run groups; then echo "an unset list was accepted"; exit 1; fi
       - name: Dispatch inputs the workflow declares
         if: ${{ !cancelled() }}
         run: python3 -c "import yaml,sys; d=yaml.safe_load(open('.github/workflows/compiler-compare.yml')); print(len(d[True]['workflow_dispatch']['inputs']), 'inputs')"
@@ -188,12 +201,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [zero, cross, scale]
+        case: [zero, cross, live, scale]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
-      CANDIDATE: ${{ github.sha }}
-      BASE: ${{ matrix.case != 'cross' && github.sha || 'claude/cold-branch-weights' }}
+      CANDIDATE: ${{ matrix.case == 'live' && 'claude/cold-branch-weights' || github.sha }}
+      BASE: ${{ matrix.case == 'cross' && 'claude/cold-branch-weights' || github.sha }}
+      CASE: ${{ matrix.case }}
       RUNNER_KIND: github
       SIZES: ${{ matrix.case == 'scale' && '1000,10000,1000000' || '1000,10000' }}
       MIN_ROUNDS: "6"
@@ -227,6 +241,8 @@ jobs:
           export OUT="$RUNNER_TEMP/out"
           echo "OUT=$OUT" >> "$GITHUB_ENV"
           run=research/experiments/compiler-compare/run.sh
+          # The live case leaves the base empty: the candidate's merge base with main.
+          if [ "$CASE" = live ]; then BASE=; export BASE; fi
           bash $run tools
           bash $run selftest
           perl .github/run-check.pl dry/arms bash $run arms
@@ -235,6 +251,28 @@ jobs:
           perl .github/run-check.pl dry/interp bash $run interp || status=$?
           bash $run summary
           exit $status
+      - name: The 14900K branch of the tools stage runs on a hosted runner
+        if: ${{ matrix.case == 'zero' && !cancelled() }}
+        run: |
+          # ps | sed under pipefail, loadavg and the pinned-CPU default.
+          OUT="$RUNNER_TEMP/out" RUNNER_KIND=14900k PERF=0 bash research/experiments/compiler-compare/run.sh tools
+      - name: A failed perf stat leaves the timed table and fails the stage
+        if: ${{ matrix.case == 'zero' && !cancelled() }}
+        run: |
+          export OUT="$RUNNER_TEMP/out"
+          run=research/experiments/compiler-compare/run.sh
+          # Hosted runners refuse perf stat; asking for the 14900K's perf stage
+          # makes the stage run it, and it must fail after reducing the timed rows.
+          set +e
+          RUNNER_KIND=14900k CPU=1 PERF=1 INTERP_MIN_ROUNDS=6 INTERP_MAX_ROUNDS=6 bash $run interp
+          code=$?
+          set -e
+          echo "interp exit $code"
+          cat "$OUT/interp/summary.txt"
+          test "$code" != 0
+          grep -q "^fib " "$OUT/interp/summary.txt"
+          grep -q "^coremark " "$OUT/interp/summary.txt"
+          grep -q "perf stat failed" "$OUT/interp/summary.txt"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

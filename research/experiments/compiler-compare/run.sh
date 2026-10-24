@@ -5,10 +5,12 @@
 #
 #   run.sh STAGE
 #
-# Stages: tools, selftest, arms, hashmap, interp, summary; the workflow
-# decides which groups run. The inputs are
+# Stages: groups, tools, selftest, arms, hashmap, interp, summary; the
+# workflow decides which groups run. The inputs are
 # environment variables; OUT, CANDIDATE and RUNNER_KIND (github or 14900k)
 # are required, the others default as the workflow's inputs do:
+#   GROUP_LIST      the groups stage checks the workflow's groups input: names
+#                   of hash_map, interpreters and perf, separated by commas
 #   BASE            base commit or branch; empty means the merge base with main
 #   CPU             the CPU every timed process is pinned to; empty means 2 on
 #                   the 14900K and 1 on GitHub
@@ -42,7 +44,41 @@ if [ "${RUNNER_KIND:-}" != 14900k ]; then perf=0; fi
 silverfir_revision=5f248e4420102356be7edadbdb4db2ae105d3270
 coremark_blob=70b4d2165e7fbbd797e47b43032fc06302c1774f
 
+# check_groups LIST: whether LIST selects something to measure. The groups are
+# hash_map, interpreters and perf; perf is measured inside interpreters, so it
+# needs it. A list that names nothing measurable would end in a green job that
+# holds no data.
+check_groups() {
+    local list=${1//[[:space:]]/} name
+    local -a names=()
+    local hash_map=0 interpreters=0 counters=0
+    IFS=, read -ra names <<< "$list"
+    for name in ${names[@]+"${names[@]}"}; do
+        case "$name" in
+        hash_map) hash_map=1 ;;
+        interpreters) interpreters=1 ;;
+        perf) counters=1 ;;
+        *)
+            echo "unknown group '$name': the groups are hash_map, interpreters and perf" >&2
+            return 1
+            ;;
+        esac
+    done
+    if [ $((hash_map + interpreters + counters)) = 0 ]; then
+        echo "no group is selected: name at least one of hash_map, interpreters and perf" >&2
+        return 1
+    fi
+    if [ "$counters" = 1 ] && [ "$interpreters" = 0 ]; then
+        echo "perf is measured inside the interpreters group: add interpreters" >&2
+        return 1
+    fi
+}
+
 case "$stage" in
+groups)
+    check_groups "${GROUP_LIST-}"
+    ;;
+
 tools)
     # A runner service starts without the login shell's PATH, where rustup
     # puts cargo; the stage stops on the first missing tool and names it.
@@ -65,7 +101,9 @@ tools)
     lscpu
     if [ "${RUNNER_KIND:-}" = 14900k ]; then
         echo "load: $(cat /proc/loadavg)"
-        ps -eo pid,pcpu,args --sort=-pcpu | head -8
+        # sed reads all of ps's output: a reader that stops early would give ps
+        # SIGPIPE, and pipefail would fail the stage.
+        ps -eo pid,pcpu,args --sort=-pcpu | sed -n 1,8p
     fi
     if [ "${PERF:-1}" = 1 ] && [ "${RUNNER_KIND:-}" != 14900k ]; then
         echo "perf stat is skipped: it runs on the 14900K only"
@@ -79,6 +117,16 @@ tools)
 selftest)
     python3 -B "$compare" self-test
     python3 -B "$interp" self-test
+    # check_groups takes what the groups input may hold and refuses the rest.
+    failed=0
+    for list in hash_map interpreters "hash_map, interpreters" hash_map,interpreters,perf interpreters,perf; do
+        check_groups "$list" 2>/dev/null || { echo "FAIL groups: '$list' is refused"; failed=1; }
+    done
+    for list in "" , perf hash_map,perf hash_map,intepreters "hash_map interpreters" 'hash_map;perf'; do
+        if check_groups "$list" 2>/dev/null; then echo "FAIL groups: '$list' is accepted"; failed=1; fi
+    done
+    if [ "$failed" != 0 ]; then exit 1; fi
+    echo "groups check: passed"
     ;;
 
 arms)
@@ -123,18 +171,23 @@ interp)
         echo "silverfir $(git -C "$OUT/inputs/silverfir" rev-parse HEAD)"
     } >> "$dir/manifest.txt"
     python3 -B "$interp" build --base-wfc "$wfc_base" --candidate-wfc "$wfc_candidate" \
-        --halo "$OUT/inputs/halo" --silverfir "$OUT/inputs/silverfir" \
-        --v2h-generator "$arms/candidate/research/experiments/match-dispatch/wasm/gen.py" --out "$dir"
+        --halo "$OUT/inputs/halo" --silverfir "$OUT/inputs/silverfir" --out "$dir"
     # The timed data and the counters are separate acquisitions: a failed
-    # perf stat leaves the timed result, which is still reduced.
+    # perf stat leaves the timed result, which is still reduced, and the stage
+    # still fails.
     status=0
     python3 -B "$interp" time --out "$dir" --cpu "$cpu" \
         --min-rounds "${INTERP_MIN_ROUNDS:-10}" --max-rounds "${INTERP_MAX_ROUNDS:-30}" || status=$?
-    if [ "$status" = 0 ] && [ "$perf" = 1 ]; then
-        python3 -B "$interp" perf --out "$dir" --cpu "$cpu" --rounds "${PERF_ROUNDS:-5}" || status=$?
-    fi
     if [ "$status" = 0 ]; then
+        perf_status=0
+        if [ "$perf" = 1 ]; then
+            python3 -B "$interp" perf --out "$dir" --cpu "$cpu" --rounds "${PERF_ROUNDS:-5}" || perf_status=$?
+        fi
         python3 -B "$interp" reduce --out "$dir" --floor "${INTERP_FLOOR:-}" || status=$?
+        if [ "$perf_status" != 0 ]; then
+            echo "perf stat failed (exit $perf_status): no counter table; see the step's log" >> "$dir/summary.txt"
+            if [ "$status" = 0 ]; then status=$perf_status; fi
+        fi
     fi
     exit "$status"
     ;;

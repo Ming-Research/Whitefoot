@@ -22,6 +22,7 @@ and consistent, whatever the verdicts; 1 for missing, malformed or
 inconsistent data or floor; 2 for usage.
 """
 import argparse
+import contextlib
 import csv
 import hashlib
 import io
@@ -35,6 +36,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -604,6 +606,46 @@ def perf_text(counts, pmu="cpu_core"):
     return "\n".join(lines) + "\n"
 
 
+def timing_harness_test(expect):
+    """`time` on stand-in images of known speeds, through the real launch path:
+    the base and its twin sleep 0.05 s, the candidate 0.2 s, and each prints
+    its workload's expected output. The rows must show the candidate about
+    four times the base and the twin equal to it, so that an image launched
+    for the wrong arm, or a row written under the wrong label, is found."""
+    if sys.platform != "linux":
+        print("self-test: the timing harness is checked on Linux only (taskset, timeout)")
+        return
+    outputs = {"halo": f"{FIB_VALUE}\n",
+               "v2h": "".join(f"[0]{k} : {v}\n" for k, v in CRC.items()) + f"[0]crcfinal : {CRC_FINAL}\n"}
+    out = tempfile.mkdtemp(prefix="interp-self-test-")
+    try:
+        os.makedirs(os.path.join(out, "images"))
+        os.makedirs(os.path.join(out, "inputs"))
+        for name in ("fib.lua", "coremark.wasm"):
+            open(os.path.join(out, "inputs", name), "w").close()
+        for kind, text in outputs.items():
+            for arm, seconds in (("base", 0.05), ("candidate", 0.2)):
+                path = os.path.join(out, "images", f"{kind}-{arm}")
+                with open(path, "w") as f:
+                    f.write(f"#!/bin/sh\nsleep {seconds}\ncat <<'EOF'\n{text}EOF\n")
+                os.chmod(path, 0o755)
+            shutil.copyfile(os.path.join(out, "images", f"{kind}-base"), os.path.join(out, "images", f"{kind}-twin"))
+            os.chmod(os.path.join(out, "images", f"{kind}-twin"), 0o755)
+        args = argparse.Namespace(out=out, cpu=max(os.sched_getaffinity(0)), min_rounds=6, max_rounds=6)
+        with contextlib.redirect_stdout(io.StringIO()):
+            time_rounds(args)
+        cells = timed_cells(read_raw(os.path.join(out, "time.tsv")))
+    except (Invalid, subprocess.CalledProcessError, OSError) as error:
+        expect("timing harness runs", f"failed: {error}", "ran")
+        return
+    finally:
+        shutil.rmtree(out)
+    for workload in WORKLOADS:
+        candidate, twin, _ = cells[workload]
+        expect(f"{workload} candidate is the slow arm", statistics.median(candidate) > 2, True)
+        expect(f"{workload} twin equals the base", 0.7 < statistics.median(twin) < 1.4, True)
+
+
 def self_test():
     failures = []
 
@@ -728,6 +770,7 @@ def self_test():
     buffer = io.StringIO()
     reduce_perf(perf_data(0.9, 1.0), buffer)
     expect("perf ratio printed", "0.90000" in buffer.getvalue(), True)
+    timing_harness_test(expect)
     text_out.close()
     sink.close()
     for failure in failures:
