@@ -621,7 +621,8 @@ def reduce_perf(data, out):
     print(file=out)
     print("Wall time, CPU time and page faults of the same runs, medians over rounds (seconds, faults a count).", file=out)
     print("Wall, user, sys and faults are those of the whole launch: taskset, timeout, perf stat and the", file=out)
-    print("workload, the same wrapper for every arm. Window is perf's counting window; outside = wall - window.", file=out)
+    print("workload, the same wrapper for every arm. Window is perf's counting window; outside is wall - window", file=out)
+    print("of each run.", file=out)
     header = f"{'workload':<9} {'arm':<10}" + "".join(f" {label:>10}" for label, _, _ in USAGE_COLUMNS)
     print(header, file=out)
     for workload in WORKLOADS:
@@ -741,16 +742,18 @@ def timing_harness_test(expect):
 def usage_harness_test(expect):
     """`launch` on stand-in images of known resource use, through the real
     launch path: the base sleeps (wall time and almost no CPU time), the
-    candidate touches 40 MB and then burns user CPU time, and the twin makes
-    system calls. The usage must show each image's own resource: CPU time
+    candidate touches 40 MB and then burns user CPU time, and the twin reads
+    /dev/zero in large blocks, which is kernel time. The usage must show each image's own resource: CPU time
     far below the wall time for the sleeper, user above sys for the burner,
     sys above user for the caller, and page faults counted."""
     if sys.platform != "linux":
         print("self-test: the usage harness is checked on Linux only (taskset, timeout, dd)")
         return
     # A counted loop: a loop on a clock would make a system call each time round.
-    burn = f'"{sys.executable}" -c \'b = b"x" * 40000000\ni = 0\nwhile i < 10000000: i += 1\''
-    calls = "dd if=/dev/zero of=/dev/null bs=1 count=300000 2>/dev/null"
+    burn = f'"{sys.executable}" -c \'b = b"x" * 40000000\ni = 0\nwhile i < 15000000: i += 1\''
+    # Large reads of /dev/zero: the kernel clears the buffer, and dd itself does
+    # next to nothing, so the time is sys on a fast host too.
+    calls = "dd if=/dev/zero of=/dev/null bs=1M count=10000 2>/dev/null"
     try:
         with stand_in_images({"base": "sleep 0.3", "candidate": burn, "twin": calls}) as out:
             cpu = max(os.sched_getaffinity(0))

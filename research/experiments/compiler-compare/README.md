@@ -107,7 +107,8 @@ CPU time and the page faults the kernel accounted to every process of the
 launch: `taskset`, `timeout`, `perf stat` and the workload, the same wrapper
 for every arm. The user and sys split is sampled by the scheduler tick, so
 only their sum is exact. The table prints the medians per image, with
-`outside` = wall - window, and then the candidate's and the twin's difference
+`outside` the median of each run's wall - window (not the difference of two
+medians), and then the candidate's and the twin's difference
 to the base (seconds, or a count of faults) and ratio, each with its range over
 the rounds.
 
@@ -139,7 +140,7 @@ launch path: the base and the twin sleep 0.05 s and the candidate 0.2 s, and
 the rows must show the candidate's median ratio above 2 and the twin's between
 0.7 and 1.4, which finds an image launched for the wrong arm or a row written
 under the wrong label. On Linux it also launches stand-in images of known
-resource use (one sleeps, one counts in a loop, one makes system calls), whose
+resource use (one sleeps, one counts in a loop, one reads /dev/zero in large blocks), whose
 usage must show wall time without CPU time, user time above sys time and sys
 time above user time, and runs `perf` and `reduce` end to end with a stand-in
 `perf` script that writes the CSV of a CPU that is not hybrid, which finds a
