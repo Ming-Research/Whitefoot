@@ -42,7 +42,7 @@ jobs:
           sudo ln -sf "/usr/bin/llvm-nm-$version" /usr/bin/llvm-nm
           rustup default stable
       - name: Build the merge base's library and the PR head's
-        run: bash research/experiments/hash-map-compare/arms.sh 441a6bfae9e541a0662a377b56d9505aecef35ca cb5be3621aa31b9a47f4fe8847887ccff8f4fb2f "$RUNNER_TEMP/out"
+        run: bash research/experiments/hash-map-compare/arms.sh 4497af68baa83fb7ea6e9b561c80951bca3ba124 89a0815fc5f14f7bff913a37aac2bf7fa0080aeb "$RUNNER_TEMP/out"
       - name: Bench images and their symbols
         run: |
           out="$RUNNER_TEMP/out"
@@ -153,45 +153,3 @@ jobs:
           for arm in base candidate; do
             awk -v arm="$arm" '/^[0-9a-f]+ <.*>:$/{fn=$2} /call.*hash_map_(rebuild|migrate)/{print arm, fn, $NF}' "$out/disaddr-$arm.txt" | sort | uniq -c
           done
-      - name: A single rebuild that also shrinks
-        # single: the candidate library with migrate folded back into rebuild,
-        # whose refusal becomes a count below the length, and the shrink
-        # calling rebuild; to see whether the moving loop regains the base's
-        # machine code.
-        run: |
-          out="$RUNNER_TEMP/out"
-          arm="$out/arms/single"
-          git worktree add --detach "$arm" 441a6bfae9e541a0662a377b56d9505aecef35ca
-          python3 - "$arm/lib/std/collections/hash_map/hash-map.wf" <<'PY'
-          import sys
-          path = sys.argv[1]
-          text = open(path).read()
-          start = text.index("fn hash_map_rebuild<")
-          mig = text.index("fn hash_map_migrate<")
-          text = text[:start] + text[mig:]
-          sig_old = "fn hash_map_migrate<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, buckets: u64, env: &E) -> result: unit reads(env), writes(map) {\n"
-          sig_new = "fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, buckets: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {\n"
-          assert text.count(sig_old) == 1
-          head = text.index(sig_old)
-          doc_end = text.index("\n", head + len(sig_old)) + 1
-          refuse = "  let live = map^.length;\n  if buckets < live {\n    return Err<unit, unit>(error: unit);\n  }\n"
-          text = text[:head] + sig_new + text[head + len(sig_old):doc_end] + refuse + text[doc_end:]
-          tail_old = "  set map^.vacated = 0_u64;\n  return unit;\n}"
-          assert text.count(tail_old) == 1
-          text = text.replace(tail_old, "  set map^.vacated = 0_u64;\n  return Ok<unit, unit>(value: unit);\n}")
-          assert text.count("hash_map_migrate::<") == 2
-          text = text.replace("hash_map_migrate::<", "let shrunk = hash_map_rebuild::<")
-          open(path, "w").write(text)
-          PY
-          git -C "$arm" diff
-          make -C "$arm/compiler" build
-          "$arm/compiler/target/gate/whitefootc" research/experiments/hash-map-compare/bench.wf -o "$out/bench-single"
-          llvm-objdump -d --no-show-raw-insn --no-leading-addr "$out/bench-single" > "$out/dis-single.txt"
-          F='wf_std\.collections\.hash_map\.hash_map_rebuild\$instance\$[0-9a-f]+' awk '$0 ~ ("^<" ENVIRON["F"] ">:$"){p=1} p&&/^$/{p=0} p' "$out/dis-single.txt" \
-            | sed -E 's/0x[0-9a-f]+/ADDR/g; s/<([^>+]+)\+0x[0-9a-f]+>/<\1+OFF>/g; s/\$instance\$[0-9a-f]+/$I/g' > "$out/rebuild-single.s"
-          wc -l "$out/rebuild-base.s" "$out/rebuild-single.s"
-          echo "== single rebuild"; cat "$out/rebuild-single.s"
-          echo "== diff base rebuild -> single rebuild"
-          diff "$out/rebuild-base.s" "$out/rebuild-single.s" || true
-          echo "== movabsq per function"
-          for f in rebuild-base migrate-candidate rebuild-single; do printf '%s ' "$f"; grep -c movabsq "$out/$f.s"; done
