@@ -702,7 +702,7 @@ def self_test():
 
     # Kernel selection keeps exactly the chosen arm, and refuses a chain it
     # does not recognize instead of staging a program with the wrong kernel.
-    vm = (HERE.parents[1] / "match-dispatch" / "wf" / "vm.wf").read_text()
+    vm = (HERE.parents[2] / PROGRAMS["vm-loop"]["source"]).read_text()
     for which in range(VM_KERNELS):
         staged = select_vm_kernel(vm, which)
         expect("which" not in staged,
