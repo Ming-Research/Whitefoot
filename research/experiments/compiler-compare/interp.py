@@ -748,8 +748,8 @@ def usage_harness_test(expect):
     if sys.platform != "linux":
         print("self-test: the usage harness is checked on Linux only (taskset, timeout, dd)")
         return
-    burn = (f'"{sys.executable}" -c \'import time\nb = b"x" * 40000000\n'
-            "end = time.process_time() + 0.3\nwhile time.process_time() < end: pass'")
+    # A counted loop: a loop on a clock would make a system call each time round.
+    burn = f'"{sys.executable}" -c \'b = b"x" * 40000000\ni = 0\nwhile i < 10000000: i += 1\''
     calls = "dd if=/dev/zero of=/dev/null bs=1 count=300000 2>/dev/null"
     try:
         with stand_in_images({"base": "sleep 0.3", "candidate": burn, "twin": calls}) as out:
@@ -761,7 +761,7 @@ def usage_harness_test(expect):
     cpu_time = lambda run_: run_.usage["user_ns"] + run_.usage["sys_ns"]
     expect("sleeper wall time", sleeper.wall_ns >= 0.3e9, True)
     expect("sleeper uses little CPU", cpu_time(sleeper) < sleeper.wall_ns / 2, True)
-    expect("burner user time", burner.usage["user_ns"] >= 0.2e9, True)
+    expect("burner user time", burner.usage["user_ns"] >= 0.1e9, True)
     expect("burner user above sys", burner.usage["user_ns"] > burner.usage["sys_ns"], True)
     expect("caller sys time", caller.usage["sys_ns"] >= 0.05e9, True)
     expect("caller sys above user", caller.usage["sys_ns"] > caller.usage["user_ns"], True)
