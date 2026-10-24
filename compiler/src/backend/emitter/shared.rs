@@ -426,9 +426,11 @@ impl FunctionEmitter<'_, '_> {
         Ok(())
     }
 
-    /// Empties a table: the runtime settles the statement's own entries,
+    /// Empties a table: the runtime settles the entries its whole hold took,
     /// reading each tag as a hold's release does, and hands the old entries
-    /// to the table's drop helper once the hold is given up.
+    /// to the table's drop helper once a statement's hold is given up, or at
+    /// once under the hold the table keeps for writes no statement holds it
+    /// for.
     pub(super) fn emit_keyed_table_clear(
         &mut self,
         result: IrValueId,

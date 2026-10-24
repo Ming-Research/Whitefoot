@@ -140,8 +140,9 @@ struct wf_cmap {
      * (wf__keyed_table_settle in keyed_table.c). */
     wf_cmap_holding *local_hold;
     /* Maps holding the entries a clear took out under the whole hold
-     * (wf_cmap_clear), released after it: the list's head on the cleared
-     * map, and on each listed map the next one and its release. */
+     * (wf_cmap_clear), released after a statement's hold and at once under
+     * the map's own: the list's head on the cleared map, and on each listed
+     * map the next one and its release. */
     struct wf_cmap *cleared;
     struct wf_cmap *cleared_next;
     void (*cleared_release)(void *);

@@ -242,10 +242,11 @@ uint64_t wf_cmap_scan_within(wf_cmap *map, uint64_t cursor, uint64_t count, uint
 
 /* Empties a map its caller's hold holds whole, as wf_cmap_swap with a new
  * empty map of its layout would, and keeps that map, now holding the old
- * entries, for the caller to release once the hold is given up:
- * wf_cmap_take_cleared, before the hold's release, answers the maps
- * cleared under it, and wf_cmap_release_cleared, after, runs each one's
- * release on it, which drains and frees it. */
+ * entries, for the caller to release: wf_cmap_take_cleared answers the
+ * maps cleared under the hold, and wf_cmap_release_cleared runs each one's
+ * release on it, which drains and frees it. A statement's hold takes them
+ * before its release and releases them after it; the hold a map keeps for
+ * writes no statement holds it for releases them at once (keyed_table.c). */
 void wf_cmap_clear(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
                    void (*release)(void *));
 wf_cmap *wf_cmap_take_cleared(wf_cmap *map);

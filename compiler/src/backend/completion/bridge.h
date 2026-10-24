@@ -495,7 +495,9 @@ uint64_t wf__key_set_read_key(const struct wf_key_set *set, uint64_t index, unsi
  * its tag in *needs (Next = 0, Needs = 1). `wf__keyed_table_clear`
  * empties a table its caller's hold holds whole; the entries go to a table
  * of their own, which `release`, the table's drop helper, drains and frees
- * when that hold is given up (`wf__table_hold_release`). */
+ * when a statement's hold is given up (`wf__table_hold_release`), or at
+ * once under the hold the table keeps for writes no statement holds it
+ * for. */
 void *wf__map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
 uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 uint64_t *wf__keyed_table_drain(void *table);

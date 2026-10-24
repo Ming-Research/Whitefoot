@@ -1407,7 +1407,8 @@ pub enum IrOperation {
     },
     /// [SHARE-1] makes every entry of the table `table` `None`; the values
     /// they held are released once the statement holding the table gives
-    /// its hold up. Defines `Unit`.
+    /// its hold up, or at once under the hold the table keeps for writes no
+    /// statement holds it for. Defines `Unit`.
     ConcurrentHashMapClear {
         table: IrValueId,
     },
