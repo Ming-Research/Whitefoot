@@ -175,3 +175,33 @@ jobs:
           for mode in old new old new; do
             "$RUNNER_TEMP/stress-src/stress" "$mode" 16 3000 "$RUNNER_TEMP/stress-files" | tee -a "$GITHUB_STEP_SUMMARY"
           done
+
+  # The new test of the helper must fail when the helper stops waiting: the
+  # guard that retries a busy start is switched off and the test is run.
+  broken-helper:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    name: the helper test with the wait removed
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+      - name: Remove the wait, then run the test
+        run: |
+          sed -i 's/Err(error) if error.kind() == ErrorKind::ExecutableFileBusy => {/Err(error) if false \&\& error.kind() == ErrorKind::ExecutableFileBusy => {/' compiler/src/toolchain/resolution.rs
+          git diff --stat
+          git diff | grep '^[-+] ' | head
+          perl .github/run-check.pl tft-fetch cargo fetch --locked --manifest-path compiler/Cargo.toml
+          if perl .github/run-check.pl tft-broken cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib -- toolchain::resolution::tests::a_script_open_for_writing_is_waited_for 2>&1 | tee "$RUNNER_TEMP/broken.txt"; then
+            echo "the helper test passed with the wait removed"
+            exit 1
+          fi
+          grep -E "Text file busy|test result: FAILED" "$RUNNER_TEMP/broken.txt"
+          grep -q "cannot start .*Text file busy" "$RUNNER_TEMP/broken.txt"
+          echo "the helper test fails with the wait removed, with the busy error"
