@@ -1,5 +1,6 @@
 import WhitefootProof.Safety
 import WhitefootProof.GenGrows
+import WhitefootProof.Align
 
 /-!
 # The simulation of a function's run by its walk
@@ -35,7 +36,7 @@ holds on (so its values fit the bindings) and that differs from the frame `E1`
 the loop was entered with only at the newest binding of a name the head
 kills. -/
 structure Laws (F : Model) : Prop where
-  names : ∀ {s : Snapshot} {E E0 : Env}, F.Holds s (E, E0) → E.map (·.1) = s.vars.map (·.name)
+  fits : ∀ {s : Snapshot} {E E0 : Env}, F.Holds s (E, E0) → E.Fits s.vars
   not_contra : ∀ {s : Snapshot} {fr : Env × Env}, F.Holds s fr → s.state.contra = false
   atoms_mono : ∀ {s : Snapshot} {fr : Env × Env} {n : Nat} {new : List (Nat × Int × Int)},
     F.Holds s fr → F.Fresh s n → (∀ a ∈ new, n ≤ a.1 ∧ a.2.1 ≤ a.2.2) →
@@ -84,12 +85,12 @@ structure Laws (F : Model) : Prop where
     {args : List (String × Value)},
     F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) → F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
     (Checker.evalRhs env st e).run g = .ok (r, g1) →
-    (∃ sc t, Static.exprTy env.prog sc e = .ok t) → env.prog.accepts = true →
-    e = .call path targs as → r.call = some (f, vs) → callArgs E as = .ok args →
-    args.map (·.1) = f.params.map (·.name) → allHold args.reverse f.requires = .ok true
+    (∃ t, Static.exprTy env.prog (Checker.scopeOf env.vars) e = .ok t) →
+    env.prog.accepts = true → e = .call path targs as → r.call = some (f, vs) →
+    callArgs E as = .ok args → allHold args.reverse f.requires = .ok true
   target_progress : ∀ {env : Checker.Env} {st : Checker.State} {g g1 : Checker.Gen}
     {b : String} {off : Atom} {val : Checker.Val} {E E0 : Env},
-    F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) →
+    F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) → F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
     (Checker.evalAtom env st (.index b off)).run g = .ok (val, g1) →
     (∃ sc t, Static.atomTy sc (.index b off) = .ok t) →
     ∀ k, evalAtom E (.index b off) ≠ .error (.stuck k)
@@ -101,12 +102,16 @@ structure Laws (F : Model) : Prop where
     env.prog.fn? env.fn.name = some env.fn → r.call = none →
     (Checker.returnedValue env st e r).run g1 = .ok ((st2, ret), g2) →
     (Checker.checkReturn env st2 ret).run g2 = .ok ((), g3) → evalExpr env.prog E e = .ok v →
+    v.Typed (Static.normTy env.prog env.fn.resultTy) →
+    (∀ prm ∈ env.fn.params, ∃ vr, env.var? prm.name = some vr ∧
+      env.params.find? (·.1 == prm.name) = some (prm.name, vr.id)) →
+    EnvTyped E0 (Typing.paramScope env.prog env.fn) →
     F.InRange v ∧ allHold ((env.fn.result, v) :: E0) env.fn.ensures = .ok true
   relHolds_sound : ∀ {env : Checker.Env} {st : Checker.State} {g : Checker.Gen}
     {rel : Relation} {E E0 : Env},
-    F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) → F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
-    (∃ sc, Static.invariantOk sc rel = .ok ()) → Checker.relHolds env g st rel = true →
-    Relation.holds E rel = .ok true
+    F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) →
+    Static.invariantOk (Checker.scopeOf env.vars) rel = .ok () →
+    Checker.relHolds env g st rel = true → Relation.holds E rel = .ok true
   let_sound : ∀ {env : Checker.Env} {st st' : Checker.State} {g g1 g2 : Checker.Gen}
     {x : String} {e : Expr} {r : Checker.Rhs} {E E0 : Env} {val : Value},
     F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) → F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
@@ -282,6 +287,21 @@ theorem Laws.lift {F : Model} (L : Laws F) {vars : List Checker.Var} {st : Check
   have h := L.atoms_mono (new := new) hH hF fun a ha' => ⟨(hb a ha').1, (hb a ha').2.2⟩
   rw [ha]
   exact h
+
+/-- A frame a snapshot holds on has the snapshot's names in its order. -/
+theorem Laws.names {F : Model} (L : Laws F) {s : Snapshot} {E E0 : Env}
+    (h : F.Holds s (E, E0)) : E.map (·.1) = s.vars.map (·.name) :=
+  (L.fits h).names
+
+/-- A snapshot's identities stay below the counter once more atoms are
+minted. -/
+theorem fresh_lift {F : Model} (L : Laws F) {vars : List Checker.Var} {st : Checker.State}
+    {g g' : Checker.Gen} (hF : F.Fresh ⟨vars, st, g.atoms⟩ g.next) (hm : g.Mints g') :
+    F.Fresh ⟨vars, st, g'.atoms⟩ g'.next := by
+  obtain ⟨hn, new, ha, hb⟩ := hm
+  have h' := L.fresh_mono (new := new) hF hn fun a ha' => (hb a ha').2.1
+  rw [ha]
+  exact h'
 
 /-! ## Results of the interpreter's evaluations -/
 
@@ -764,9 +784,21 @@ function's table, whose positions are distinct. -/
 def PtsOK (p : Program) (fn : FnDecl) (g : Checker.Gen) : Prop :=
   g.points <+: p.points fn ∧ ((p.points fn).map (·.1)).Nodup
 
-/-- The statement passed the judgments without facts, in some context. -/
-def StaticStmtOK (p : Program) (fn : FnDecl) (s : Stmt) : Prop :=
-  ∃ c r, Static.stmt p fn c s = .ok r
+/-- The statement passed the judgments without facts, in a context in line
+with the walk's environment. -/
+def StaticStmtOK (p : Program) (fn : FnDecl) (env : Checker.Env) (s : Stmt) : Prop :=
+  ∃ c r, CtxOK fn env c ∧ Static.stmt p fn c s = .ok r
+
+/-- A return is safe, and the parameters' entry values are of their declared
+types. -/
+def RetOKT (F : Model) (p : Program) (n : Nat) (fn : FnDecl) (E0 : Env) (D : Dest)
+    (callers : List Frame) : Prop :=
+  EnvTyped E0 (Typing.paramScope p fn) ∧ RetOK F p n fn E0 D callers
+
+theorem RetOKT.mono {F : Model} {p : Program} {m n : Nat} {fn : FnDecl} {E0 : Env} {D : Dest}
+    {callers : List Frame} (h : RetOKT F p n fn E0 D callers) (hmn : m ≤ n) :
+    RetOKT F p m fn E0 D callers :=
+  ⟨h.1, h.2.mono hmn⟩
 
 /-- Entering a function is safe for every step count up to `n`. -/
 def FnSafeTo (F : Model) (p : Program) (n : Nat) : Prop :=
@@ -788,13 +820,13 @@ def StmtOK (F : Model) (p : Program) (fn : FnDecl) (s : Stmt) : Prop :=
     (k0 k : List Kont) (D : Dest) (callers : List Frame),
     EnvOK p fn env → (∀ lc ∈ env.loops, lc.id < g.next) →
     (Checker.walkStmt env st pos s).run g = .ok ((env', o), g') →
-    StaticStmtOK p fn s → PtsOK p fn g' →
+    StaticStmtOK p fn env s → PtsOK p fn g' →
     F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) → F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
     (∀ w ∈ W, w.AtStmt s E) →
     NormalOK F p n W env'.vars g'.atoms o.normal fn E0 k D callers →
     BreakOK F p n W env.loops env.vars g'.atoms g'.next o.breaks fn E0 k D callers →
     ContOK F p n W env.loops env.vars g'.atoms g'.next o.conts fn E0 k D callers →
-    RetOK F p n fn E0 D callers → FnSafeTo F p n →
+    RetOKT F p n fn E0 D callers → FnSafeTo F p n →
     StepOK (SafeAt F p n)
       (stepStmt p { fn, env := E, entry := E0, kont := k0, dest := D } callers pos s k)
 
@@ -807,16 +839,17 @@ theorem stmt_let {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (x : Strin
   obtain ⟨hprog, hfneq, hacc, _, _⟩ := henv
   subst hprog
   subst hfneq
-  have ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t := by
-    obtain ⟨c, _, hc⟩ := hs
-    obtain ⟨t, ht⟩ := Static.stmt_let_ok hc
-    exact ⟨c.scope, t, ht⟩
+  have hts : ∃ t, Static.exprTy env.prog (Checker.scopeOf env.vars) e = .ok t := by
+    obtain ⟨c, _, hcx, hc⟩ := hs
+    rw [← hcx.scope]
+    exact Static.stmt_let_ok hc
+  have ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t := ⟨_, hts⟩
   rw [stepStmt_let]
   refine stepOK_evalRhs (fun path targs as g2 hg hc => ?_) (fun hnc => ?_)
   · obtain ⟨vs, hrc, _⟩ := L.evalRhs_call_some hr hg hc
     refine ⟨L.callArgs_progress hH hF hr ht hg hrc, fun args hargs => ?_⟩
     refine hFn.now g2 args (.bind x) _ (callee_fn hc) (L.callArgs_inRange hH hF hr ht hg hrc hargs)
-      (L.call_requires hH hF hr ht hacc hg hrc hargs) ?_
+      (fun _ => L.call_requires hH hF hr hts hacc hg hrc hargs) ?_
     intro E' k' w hw hens
     exact stepOK_doReturn_bind rfl hens fun hty =>
       hN st' (List.Mem.head _) _ (L.let_call_sound hH hF hr ht hacc hg hrc hb hargs hw hty hens)
@@ -835,16 +868,18 @@ theorem stmt_setVar {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (x : St
   obtain ⟨hprog, hfneq, hacc, _, _⟩ := henv
   subst hprog
   subst hfneq
-  have ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t := by
-    obtain ⟨c, _, hc⟩ := hs
-    obtain ⟨t, ht⟩ := Static.stmt_setVar_ok hc
-    exact ⟨c.scope, t, ht⟩
+  have hts : ∃ t, Static.exprTy env.prog (Checker.scopeOf env.vars) e = .ok t := by
+    obtain ⟨c, _, hcx, hc⟩ := hs
+    rw [← hcx.scope]
+    exact Static.stmt_setVar_ok hc
+  have ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t := ⟨_, hts⟩
   rw [stepStmt_setTo]
   refine stepOK_evalRhs (fun path targs as g2 hg hc => ?_) (fun hnc => ?_)
   · obtain ⟨vs, hrc, _⟩ := L.evalRhs_call_some hr hg hc
     refine ⟨L.callArgs_progress hH hF hr ht hg hrc, fun args hargs => ?_⟩
     refine hFn.now g2 args (.assign (.var x)) _ (callee_fn hc)
-      (L.callArgs_inRange hH hF hr ht hg hrc hargs) (L.call_requires hH hF hr ht hacc hg hrc hargs) ?_
+      (L.callArgs_inRange hH hF hr ht hg hrc hargs)
+      (fun _ => L.call_requires hH hF hr hts hacc hg hrc hargs) ?_
     intro E' k' w hw hens
     refine stepOK_doReturn_assign rfl hens fun hty => ?_
     refine stepOK_ofEval (commitTo_var_noStuck _ _ _) fun fr' hc' => ?_
@@ -871,22 +906,28 @@ theorem stmt_setIndex {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (b : 
   subst hprog
   subst hfneq
   have hst : (∃ sc t, Static.atomTy sc (.index b off) = .ok t) ∧
-      ∃ sc t, Static.exprTy env.prog sc e = .ok t := by
-    obtain ⟨c, _, hc⟩ := hs
+      ∃ t, Static.exprTy env.prog (Checker.scopeOf env.vars) e = .ok t := by
+    obtain ⟨c, _, hcx, hc⟩ := hs
     obtain ⟨⟨t1, h1⟩, t2, h2⟩ := Static.stmt_setIndex_ok hc
-    exact ⟨⟨c.scope, t1, h1⟩, c.scope, t2, h2⟩
-  obtain ⟨hta, ht⟩ := hst
+    refine ⟨⟨c.scope, t1, h1⟩, t2, ?_⟩
+    rw [← hcx.scope]
+    exact h2
+  obtain ⟨hta, hts⟩ := hst
+  have ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t := ⟨_, hts⟩
   rw [stepStmt_setTo]
   refine stepOK_evalRhs (fun path targs as g3 hg hc => ?_) (fun hnc => ?_)
   · obtain ⟨vs, hrc, _⟩ := L.evalRhs_call_some hr hg hc
     have hp := published_call hpub hrc
     refine ⟨L.callArgs_progress hH hF hr ht hg hrc, fun args hargs => ?_⟩
     refine hFn.now g3 args (.assign (.index b off)) _ (callee_fn hc)
-      (L.callArgs_inRange hH hF hr ht hg hrc hargs) (L.call_requires hH hF hr ht hacc hg hrc hargs) ?_
+      (L.callArgs_inRange hH hF hr ht hg hrc hargs)
+      (fun _ => L.call_requires hH hF hr hts hacc hg hrc hargs) ?_
     intro E' k' w hw hens
     refine stepOK_doReturn_assign rfl hens fun hty => ?_
     have hH1 := L.publish_sound hH hF hr ht hacc hg hrc hp hargs hw hty hens
-    refine stepOK_ofEval (commitTo_index_noStuck (L.target_progress hH1 hat hta)) fun fr' hc' => ?_
+    have hF1 := L.publish_fresh hF hr hrc hp
+    refine stepOK_ofEval (commitTo_index_noStuck (L.target_progress hH1 hF1 hat hta))
+      fun fr' hc' => ?_
     obtain ⟨hshape, new, hput⟩ := commitTo_index_shape hc'
     rw [hshape]
     exact hN _ (List.Mem.head _) _
@@ -897,8 +938,10 @@ theorem stmt_setIndex {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (b : 
     subst st1
     subst g2
     have hH1 := L.lift hH hF (Checker.evalRhs_grows hr).1
+    have hF1 := fresh_lift L hF (Checker.evalRhs_grows hr).1
     refine ⟨L.evalRhs_progress hH hF hr ht hrc, fun val hval => ?_⟩
-    refine stepOK_ofEval (commitTo_index_noStuck (L.target_progress hH1 hat hta)) fun fr' hc' => ?_
+    refine stepOK_ofEval (commitTo_index_noStuck (L.target_progress hH1 hF1 hat hta))
+      fun fr' hc' => ?_
     obtain ⟨hshape, new, hput⟩ := commitTo_index_shape hc'
     rw [hshape]
     exact hN _ (List.Mem.head _) _ (L.setIndex_sound hH hF hv hr ht hta hrc hat hval hc' rfl)
@@ -913,17 +956,18 @@ theorem stmt_call {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (e : Expr
   obtain ⟨hprog, hfneq, hacc, _, _⟩ := henv
   subst hprog
   subst hfneq
-  have ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t := by
-    obtain ⟨c, _, hc⟩ := hs
-    obtain ⟨t, ht⟩ := Static.stmt_call_ok hc
-    exact ⟨c.scope, t, ht⟩
+  have hts : ∃ t, Static.exprTy env.prog (Checker.scopeOf env.vars) e = .ok t := by
+    obtain ⟨c, _, hcx, hc⟩ := hs
+    rw [← hcx.scope]
+    exact Static.stmt_call_ok hc
+  have ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t := ⟨_, hts⟩
   rw [stepStmt_call]
   refine stepOK_evalRhs (fun path targs as g2 hg hc => ?_) (fun hnc => ?_)
   · obtain ⟨vs, hrc, _⟩ := L.evalRhs_call_some hr hg hc
     have hp := published_call hpub hrc
     refine ⟨L.callArgs_progress hH hF hr ht hg hrc, fun args hargs => ?_⟩
     refine hFn.now g2 args .discard _ (callee_fn hc) (L.callArgs_inRange hH hF hr ht hg hrc hargs)
-      (L.call_requires hH hF hr ht hacc hg hrc hargs) ?_
+      (fun _ => L.call_requires hH hF hr hts hacc hg hrc hargs) ?_
     intro E' k' w hw hens
     exact stepOK_doReturn_discard rfl hens fun hty =>
       hN st1 (List.Mem.head _) _ (L.publish_sound hH hF hr ht hacc hg hrc hp hargs hw hty hens)
@@ -946,10 +990,12 @@ theorem stmt_ret {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (e : Expr)
   obtain ⟨hprog, hfneq, hacc, hfnof, _⟩ := henv
   subst hprog
   subst hfneq
-  have ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t := by
-    obtain ⟨c, _, hc⟩ := hs
-    obtain ⟨t, ht⟩ := Static.stmt_ret_ok hc
-    exact ⟨c.scope, t, ht⟩
+  obtain ⟨c, _, hcx, hst⟩ := hs
+  have hte := (Typing.stmt_ret hst).1
+  have hts : ∃ t, Static.exprTy env.prog (Checker.scopeOf env.vars) e = .ok t := by
+    rw [← hcx.scope]
+    exact ⟨_, hte⟩
+  have ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t := ⟨_, hts⟩
   rw [stepStmt_ret]
   refine stepOK_evalRhs (fun path targs as g4 hg hc => ?_) (fun hnc => ?_)
   · obtain ⟨vs, hrc, hterm⟩ := L.evalRhs_call_some hr hg hc
@@ -958,10 +1004,10 @@ theorem stmt_ret {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (e : Expr)
     have hens0 : env.fn.ensures = [] := checkReturn_ensures_nil hret (by rw [hret']; exact hterm)
     refine ⟨L.callArgs_progress hH hF hr ht hg hrc, fun args hargs => ?_⟩
     refine hFn.now g4 args .ret _ (callee_fn hc) (L.callArgs_inRange hH hF hr ht hg hrc hargs)
-      (L.call_requires hH hF hr ht hacc hg hrc hargs) ?_
+      (fun _ => L.call_requires hH hF hr hts hacc hg hrc hargs) ?_
     intro E' k' w hw hens
     refine stepOK_doReturn_ret rfl hens fun _ => ?_
-    refine hR E k w hw ?_
+    refine hR.2 E k w hw ?_
     rw [hens0]
     all_goals rfl
   · have hrc : r.call = none := L.evalRhs_call_none hr hnc
@@ -969,8 +1015,16 @@ theorem stmt_ret {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (e : Expr)
     subst st1
     subst g2
     refine ⟨L.evalRhs_progress hH hF hr ht hrc, fun v hv => ?_⟩
-    obtain ⟨hin, hens⟩ := L.return_ensures hH hF hr ht hacc hfnof hrc hrv hret hv
-    exact hR E k0 v hin hens
+    have hE : EnvTyped E c.scope := by
+      rw [hcx.scope]
+      exact L.fits hH
+    have hwt : v.Typed (Static.normTy env.prog env.fn.resultTy) := by
+      have h := Typing.evalExpr_ok hE hte hnc
+      rw [show evalExpr env.prog E e = .ok v from hv] at h
+      exact h
+    obtain ⟨hin, hens⟩ :=
+      L.return_ensures hH hF hr ht hacc hfnof hrc hrv hret hv hwt hcx.params hR.1
+    exact hR.2 E k0 v hin hens
 
 theorem stmt_invariant {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (nm : String)
     (rel : Relation) : StmtOK F p fn (.invariant nm rel) := by
@@ -979,12 +1033,14 @@ theorem stmt_invariant {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (nm 
   subst env'
   subst o
   subst g'
-  have hinv : ∃ sc, Static.invariantOk sc rel = .ok () := by
-    obtain ⟨c, _, hc⟩ := hs
-    exact ⟨c.scope, Static.stmt_invariant_ok hc⟩
+  obtain ⟨c, _, hcx, hc⟩ := hs
+  have hinv := Static.stmt_invariant_ok hc
+  have hinv' : Static.invariantOk (Checker.scopeOf env.vars) rel = .ok () := by
+    rw [← hcx.scope]
+    exact hinv
   rw [stepStmt_invariant]
   exact hN _ (List.Mem.head _) E
-    (L.establishRel_sound hH hF hinv (L.relHolds_sound hH hF hinv hrel))
+    (L.establishRel_sound hH hF ⟨c.scope, hinv⟩ (L.relHolds_sound hH hinv' hrel))
     (watch_same (fun _ => rfl) hW)
 
 theorem stmt_brk {F : Model} {p : Program} {fn : FnDecl} (label : Option String) :

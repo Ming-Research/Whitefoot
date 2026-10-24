@@ -205,11 +205,6 @@ theorem StFresh.lift {F : Model} (L : Laws F) {st : Checker.State} {g g' : Check
   rw [ha]
   exact h'
 
-theorem fresh_lift {F : Model} (L : Laws F) {vars : List Checker.Var} {st : Checker.State}
-    {g g' : Checker.Gen} (h : F.Fresh ⟨vars, st, g.atoms⟩ g.next) (hm : g.Mints g') :
-    F.Fresh ⟨vars, st, g'.atoms⟩ g'.next :=
-  StFresh.at L (StFresh.lift L (StFresh.of L h) hm) (ids_mono (L.fresh_ids h) hm.1)
-
 /-- Every state a walk leaves, by its normal edges, `break`s and `continue`s, is
 fresh. -/
 structure OutFresh (F : Model) (o : Checker.Out) (A : List (Nat × Int × Int)) (n : Nat) :
@@ -504,9 +499,10 @@ theorem list_fresh_cons {F : Model} (L : Laws F) {s : Stmt} {rest : List Stmt}
 
 /-! ## What a statement list carries -/
 
-/-- The statements passed the judgments without facts, in some context. -/
-def StaticListOK (p : Program) (fn : FnDecl) (ss : List Stmt) : Prop :=
-  ∃ c live fl, Static.stmts p fn c live ss = .ok fl
+/-- The statements passed the judgments without facts, in a context in line
+with the walk's environment. -/
+def StaticListOK (p : Program) (fn : FnDecl) (env : Checker.Env) (ss : List Stmt) : Prop :=
+  ∃ c live fl, CtxOK fn env c ∧ Static.stmts p fn c live ss = .ok fl
 
 /-- Leaving a statement list off its end: as `NormalOK` says, under the
 bindings `vars` the list began with and any bindings its `let`s opened, minted
@@ -526,13 +522,13 @@ def ListOK (F : Model) (p : Program) (fn : FnDecl) (ss : List Stmt) : Prop :=
     (callers : List Frame),
     EnvOK p fn env → (∀ lc ∈ env.loops, lc.id < g.next) →
     (Checker.walkList env st blk i ss).run g = .ok (o, g') →
-    StaticListOK p fn ss → PtsOK p fn g' →
+    StaticListOK p fn env ss → PtsOK p fn g' →
     F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) → F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
     (∀ w ∈ W, w.At ss E) →
     EndOK F p n W env.vars g'.atoms g'.next o.normal fn E0 k D callers →
     BreakOK F p n W env.loops env.vars g'.atoms g'.next o.breaks fn E0 k D callers →
     ContOK F p n W env.loops env.vars g'.atoms g'.next o.conts fn E0 k D callers →
-    RetOK F p n fn E0 D callers → FnSafeTo F p n →
+    RetOKT F p n fn E0 D callers → FnSafeTo F p n →
     SafeAt F p (n + 1) (cfg fn E E0 (.stmts blk i ss :: k) D callers)
 
 theorem SafeAt.zero {F : Model} {p : Program} {c : Config} : SafeAt F p 0 c := by
@@ -694,12 +690,15 @@ theorem list_nil {F : Model} {p : Program} {fn : FnDecl} : ListOK F p fn [] := b
 
 theorem list_cons {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) {s : Stmt}
     {rest : List Stmt} (hS : StmtOK F p fn s) (hV : StmtEnv s) (hSF : StmtFresh F s)
-    (hL : ListOK F p fn rest) : ListOK F p fn (s :: rest) := by
+    (hA : StmtAlign p fn s) (hL : ListOK F p fn rest) : ListOK F p fn (s :: rest) := by
   intro env st blk i g g' o n W E E0 k D callers henv hlp hw hs hpts hH hF hW hN hB hC hR hFn
   obtain ⟨env', os, g2, hws, hnil, hcons⟩ := Checker.walkList_cons_ok hw
   obtain ⟨new, rfl, hnew⟩ := hV _ _ _ _ _ _ _ hws
-  obtain ⟨cx, live, fl, hst⟩ := hs
+  obtain ⟨cx, live, fl, hcx, hst⟩ := hs
   obtain ⟨_, cs, fs, fr, hstmt, hrest⟩ := Static.stmts_cons_ok hst
+  -- The rest of the list is judged from a context in line with the bindings
+  -- the statement leaves.
+  have hcs := hA env st _ _ g2 _ os cx cs fs henv.prog hws hstmt hcx
   obtain ⟨hm2, L2, hp2, _⟩ := Checker.walkStmt_grows hws
   have hfo := hSF _ _ _ _ _ _ _ hws hF
   have hvars : ∀ v ∈ env.vars, v.id < g2.next := ids_mono (L.fresh_ids hF) hm2.1
@@ -769,7 +768,7 @@ theorem list_cons {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) {s : Stmt
           refine hL { env with vars := new ++ env.vars } st' blk (i + 1) g3 g' orest m W E' E0 k D
             callers henv'
             (fun lc hlc => Nat.lt_of_lt_of_le (hlp lc hlc) (Nat.le_trans hm2.1 hgm.1.1))
-            hwr ⟨cs, fs.normal, fr, hrest⟩ hpts hH3 hF3 ?_ ?_ ?_ ?_ (hR.mono (Nat.le_succ m))
+            hwr ⟨cs, fs.normal, fr, hcs, hrest⟩ hpts hH3 hF3 ?_ ?_ ?_ ?_ (hR.mono (Nat.le_succ m))
             (hFn.mono (Nat.le_succ m))
           · intro w hw
             obtain ⟨hl, hag⟩ := hWr w hw
@@ -791,7 +790,7 @@ theorem list_cons {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) {s : Stmt
   · rw [step_stmts_cons]
     exact hS env st (blk ++ [i])
       { g with points := g.points ++ [(blk ++ [i], ⟨env.vars, st, g.atoms⟩)] } g2 _ os n
-      (W.map (Watch.before rest)) E E0 _ _ D callers henv hlp hws ⟨cx, _, hstmt⟩
+      (W.map (Watch.before rest)) E E0 _ _ D callers henv hlp hws ⟨cx, _, hcx, hstmt⟩
       (PtsOK.of_prefix hpts hpre) hH hF hW0 hN' hB' hC' hR hFn
 
 /-! ## `if` -/
@@ -849,14 +848,14 @@ theorem block_entry {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) {blk : 
     {breaks conts : List (Nat × Checker.State)}
     (henv : EnvOK p fn env) (hlp : ∀ lc ∈ env.loops, lc.id < gA.next)
     (hwb : (Checker.walkList env st0 bpos 0 blk).run gA = .ok (ob, gB))
-    (hs : StaticListOK p fn blk) (hpts : PtsOK p fn gB) (hm : gB.Mints g')
+    (hs : StaticListOK p fn env blk) (hpts : PtsOK p fn gB) (hm : gB.Mints g')
     (hH : F.Holds ⟨env.vars, st0, gA.atoms⟩ (E, E0))
     (hF : F.Fresh ⟨env.vars, st0, gA.atoms⟩ gA.next) (hfo : OutFresh F ob gB.atoms gB.next)
     (hW : ∀ w ∈ W, w.At blk E)
     (hN : NormalOK F p n W env.vars g'.atoms normal fn E0 k D callers)
     (hB : BreakOK F p n W env.loops env.vars g'.atoms g'.next breaks fn E0 k D callers)
     (hC : ContOK F p n W env.loops env.vars g'.atoms g'.next conts fn E0 k D callers)
-    (hR : RetOK F p n fn E0 D callers) (hFn : FnSafeTo F p n)
+    (hR : RetOKT F p n fn E0 D callers) (hFn : FnSafeTo F p n)
     (hnorm : ∀ s ∈ ob.normal, s.exit env.vars ∈ normal)
     (hbrk : ∀ b ∈ ob.breaks, b ∈ breaks) (hcnt : ∀ b ∈ ob.conts, b ∈ conts) :
     SafeAt F p n (cfg fn E E0 (.stmts bpos 0 blk :: .scope E.length :: k) D callers) := by
@@ -896,12 +895,15 @@ theorem stmt_if {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (c : Expr)
   obtain ⟨r, g1, st1, g2, ot, gT, oe, hr, hpub, hwt, hwe, henv', ho⟩ := Checker.walkStmt_if_ok hw
   subst env'
   subst o
-  obtain ⟨cx, rx, hcx⟩ := hs
+  obtain ⟨cx, rx, hcxk, hcx⟩ := hs
   obtain ⟨⟨tc, htc⟩, ⟨flT, hflT⟩, flE, hflE⟩ := Static.stmt_if_ok hcx
   have henv0 := henv
   obtain ⟨hprog, hfneq, hacc, _, _⟩ := henv
   subst hprog
   subst hfneq
+  have hts : ∃ t, Static.exprTy env.prog (Checker.scopeOf env.vars) c = .ok t := by
+    rw [← hcxk.scope]
+    exact ⟨tc, htc⟩
   have ht : ∃ sc t, Static.exprTy env.prog sc c = .ok t := ⟨cx.scope, tc, htc⟩
   have hm02 : g.Mints g2 :=
     Checker.Gen.Mints.trans (Checker.evalRhs_grows hr).1 (published_mints hpub)
@@ -940,14 +942,14 @@ theorem stmt_if {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (c : Expr)
     intro b hHb
     cases b with
     | true =>
-      exact block_entry L hT henv0 hlp2 hwt ⟨cx, true, flT, hflT⟩
+      exact block_entry L hT henv0 hlp2 hwt ⟨cx, true, flT, hcxk, hflT⟩
         (PtsOK.of_prefix hpts ⟨LE, hpE.symm⟩) hmE hHb (hO true) (hTF _ _ _ _ _ _ _ hwt (hO true))
         hWT hN hB hC hR hFn
         (fun s hs => List.mem_map.mpr ⟨s, List.mem_append.mpr (Or.inl hs), rfl⟩)
         (fun b hb => List.mem_append.mpr (Or.inl hb)) (fun b hb => List.mem_append.mpr (Or.inl hb))
     | false =>
       have hFb := fresh_lift L (hO false) hmT
-      exact block_entry L hE henv0 hlpT hwe ⟨cx, true, flE, hflE⟩ hpts
+      exact block_entry L hE henv0 hlpT hwe ⟨cx, true, flE, hcxk, hflE⟩ hpts
         (Checker.Gen.Mints.refl _) (L.lift hHb (hO false) hmT) hFb (hEF _ _ _ _ _ _ _ hwe hFb) hWE
         hN hB hC hR hFn
         (fun s hs => List.mem_map.mpr ⟨s, List.mem_append.mpr (Or.inr hs), rfl⟩)
@@ -959,7 +961,7 @@ theorem stmt_if {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (c : Expr)
     refine ⟨L.callArgs_progress hH hF hr ht hg hrc, fun args hargs => ?_⟩
     refine hFn.now g3 args (.test pos thn els) _ (callee_fn hc)
       (L.callArgs_inRange hH hF hr ht hg hrc hargs)
-      (L.call_requires hH hF hr ht hacc hg hrc hargs) ?_
+      (fun _ => L.call_requires hH hF hr hts hacc hg hrc hargs) ?_
     intro E' k' w hw hens
     refine stepOK_doReturn_test rfl hens fun hty => ?_
     have hH1 := L.publish_sound hH hF hr ht hacc hg hrc hp hargs hw hty hens

@@ -187,22 +187,20 @@ end Checker
 
 namespace Sim
 
-/-- A `loop` passed the judgments without facts: its invariants' relations,
-and its body in some context. -/
+/-- A `loop`'s invariants passed the judgments without facts, in the scope
+the loop is judged in. -/
 theorem static_loop {p : Program} {fn : FnDecl} {c : Static.Ctx} {label : Option String}
     {invs : List (String × Relation)} {body : List Stmt} {r : Static.Ctx × Static.Flow}
     (h : Static.stmt p fn c (.loop label invs body) = .ok r) :
-    (∀ ir ∈ invs, Static.invariantOk c.scope ir.2 = .ok ()) ∧
-      ∃ c' fb, Static.stmts p fn c' true body = .ok fb := by
+    ∀ ir ∈ invs, Static.invariantOk c.scope ir.2 = .ok () := by
   cases label with
   | none =>
     simp only [Static.stmt, Typing.reject_bind] at h
     obtain ⟨-, h⟩ := Typing.ite_reject h
     obtain ⟨_, -, h⟩ := Typing.bind_ok h
-    obtain ⟨_, hfor, h⟩ := Typing.bind_ok h
-    obtain ⟨fb, hfb, -⟩ := Typing.bind_ok h
-    refine ⟨Typing.forIn_ok (P := fun ir : String × Relation =>
-      Static.invariantOk c.scope ir.2 = .ok ()) (fun a s hs => ?_) hfor, _, fb, hfb⟩
+    obtain ⟨_, hfor, -⟩ := Typing.bind_ok h
+    refine Typing.forIn_ok (P := fun ir : String × Relation =>
+      Static.invariantOk c.scope ir.2 = .ok ()) (fun a s hs => ?_) hfor
     obtain ⟨nm, rel⟩ := a
     obtain ⟨u, hu, hs'⟩ := Typing.bind_ok hs
     exact ⟨by cases u; exact hu, by cases hs'; rfl⟩
@@ -211,10 +209,9 @@ theorem static_loop {p : Program} {fn : FnDecl} {c : Static.Ctx} {label : Option
     obtain ⟨-, h⟩ := Typing.ite_reject h
     obtain ⟨-, h⟩ := Typing.ite_reject h
     obtain ⟨_, -, h⟩ := Typing.bind_ok h
-    obtain ⟨_, hfor, h⟩ := Typing.bind_ok h
-    obtain ⟨fb, hfb, -⟩ := Typing.bind_ok h
-    refine ⟨Typing.forIn_ok (P := fun ir : String × Relation =>
-      Static.invariantOk c.scope ir.2 = .ok ()) (fun a s hs => ?_) hfor, _, fb, hfb⟩
+    obtain ⟨_, hfor, -⟩ := Typing.bind_ok h
+    refine Typing.forIn_ok (P := fun ir : String × Relation =>
+      Static.invariantOk c.scope ir.2 = .ok ()) (fun a s hs => ?_) hfor
     obtain ⟨nm, rel⟩ := a
     obtain ⟨u, hu, hs'⟩ := Typing.bind_ok hs
     exact ⟨by cases u; exact hu, by cases hs'; rfl⟩
@@ -563,8 +560,13 @@ theorem stmt_loop {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (label : 
     Checker.walkStmt_loop_ok hw
   subst env'
   subst o
-  obtain ⟨cx, rx, hcx⟩ := hst0
-  obtain ⟨hinvs, cb, fb, hfb⟩ := static_loop hcx
+  obtain ⟨cx, rx, hcxk, hcx⟩ := hst0
+  have hinvs := static_loop hcx
+  obtain ⟨fb, hfb, -⟩ := Typing.stmt_loop hcx
+  have hinvs' : ∀ ir ∈ invs, Static.invariantOk (Checker.scopeOf env.vars) ir.2 = .ok () := by
+    intro ir hir
+    rw [← hcxk.scope]
+    exact hinvs ir hir
   have hlenv : E.length = env.vars.length := holds_length L hH
   have hF1 : F.Fresh ⟨env.vars, st, g.atoms⟩ (g.next + 1) :=
     fresh_lift L hF (Checker.freshId_grows (Checker.freshId_run g)).1
@@ -612,7 +614,6 @@ theorem stmt_loop {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (label : 
       -- The body's end and a `continue` to this loop both run the body again
       -- from the bindings in scope at the loop.
       have next : ∀ (new : List Checker.Var) (s : Checker.State) (E2 : Env),
-          (∀ v ∈ new, v.id < g3.next) → StFresh F s g3.atoms g3.next →
           s.exit env.vars ∈ (ob.normal ++ (ob.conts.filter (·.1 == g.next)).map (·.2)).map
             (·.exit env.vars) →
           F.Holds ⟨new ++ env.vars, s, g3.atoms⟩ (E2, E0) →
@@ -620,7 +621,7 @@ theorem stmt_loop {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (label : 
           (∀ w ∈ W, Checker.reachStmt w.reach (.loop label invs body) = true → w.Agree E2) →
           SafeAt F p m (cfg fn (E2.restore E.length) E0 (.stmts (pos ++ [0]) 0 body ::
             .loop label (pos ++ [0]) body E.length :: k) D callers) := by
-        intro new s E2 hnew hsf hin hH2 hown2 hag
+        intro new s E2 hin hH2 hown2 hag
         have hlE2 : E.length ≤ E2.length := hown2.length_le
         have hlen2 : (E2.restore E.length).length = E.length := by
           simp only [Env.restore, List.length_drop]
@@ -628,19 +629,19 @@ theorem stmt_loop {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (label : 
         have hx : F.Holds ⟨env.vars, s.exit env.vars, g3.atoms⟩ (E2.restore E.length, E0) := by
           rw [hlenv]
           exact L.exit_sound hH2
-        have hxf : F.Fresh ⟨env.vars, s.exit env.vars, g3.atoms⟩ g3.next :=
-          L.exit_fresh (StFresh.at L hsf (ids_append hnew hvars3))
         have hown3 := hown2.restore (Nat.le_refl E.length)
         have hHead := L.loopHead_sound (g := { g with next := g.next + 1 }) hH hF1 hlh hx
           (hown3.slots hlen2) fun ir hir =>
-            ⟨L.relHolds_sound hx hxf ⟨cx.scope, hinvs ir hir⟩
-              (hpres _ hin (L.not_contra hx) ir hir), cx.scope, hinvs ir hir⟩
+            ⟨L.relHolds_sound hx (hinvs' ir hir) (hpres _ hin (L.not_contra hx) ir hir),
+              cx.scope, hinvs ir hir⟩
         refine ih (by omega) _ hHead hown3 fun w hw => ?_
         have hl0 : w.E1.length ≤ E.length := (hW w hw).1
         exact ⟨by rw [hlen2]; exact hl0, fun hr => (hag w hw hr).restore hl0⟩
       refine hB _ head (pos ++ [0]) 0 g2 g3 ob m
         (ownWatch label body env.vars E :: W.map (Watch.inside label invs body)) E' E0
-        (.loop label (pos ++ [0]) body E.length :: k) D callers henvB hlpB hwb ⟨cb, true, fb, hfb⟩
+        (.loop label (pos ++ [0]) body E.length :: k) D callers henvB hlpB hwb
+        ⟨{ cx with loops := label :: cx.loops, invariants := invs.map (·.1) ++ cx.invariants },
+          true, fb, ⟨hcxk.scope, hcxk.taken, hcxk.params⟩, hfb⟩
         hpts3 hH' hHF ?_ ?_ ?_ ?_ (hR.mono (by omega)) (hFn.mono (by omega))
       · -- The watches at the body's start.
         intro w hw
@@ -651,12 +652,12 @@ theorem stmt_loop {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (label : 
           exact ⟨hl, fun hr => (hag (Watch.inside_reach hr)).inside label invs body,
             fun x hx => (hW w0 hw0).2.2 x (by rw [← Watch.inside_kill]; exact hx)⟩
       · -- The body's end: the loop's marker runs the body again.
-        intro new hnew s hs E2 hH2 hW2
+        intro new _ s hs E2 hH2 hW2
         cases m with
         | zero => exact SafeAt.zero
         | succ j =>
           refine Safe.of_next (point_loop _ _ _ _ _ _ _ _ _ _) (step_loop _ _ _ _ _ _ _ _ _ _ _) ?_
-          refine SafeAt.mono (Nat.le_succ j) (next new s E2 hnew (hfo.normal s hs) ?_ hH2
+          refine SafeAt.mono (Nat.le_succ j) (next new s E2 ?_ hH2
             ((hW2 _ (List.Mem.head _)).2 rfl) fun w hw hr => ?_)
           · exact List.mem_map.mpr ⟨s, List.mem_append.mpr (Or.inl hs), rfl⟩
           · obtain ⟨-, hag⟩ := hW2 (w.inside label invs body)
@@ -721,7 +722,7 @@ theorem stmt_loop {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (label : 
           rw [stepContinue_loop_hit hhit']
           show SafeAt F p m (cfg fn (E2.restore E.length) E0 (.stmts (pos ++ [0]) 0 body ::
             .loop label (pos ++ [0]) body E.length :: k) D callers)
-          refine next new s E2 hnew (hfo.conts _ hs) ?_ hH2
+          refine next new s E2 ?_ hH2
             ((hW2 _ (List.Mem.head _)).2 (sel2_of_find (ownWatch_find_hit (body := body)
               (vars := env.vars) (E1 := E) hhit'))) fun w hw hr => ?_
           · exact List.mem_map.mpr ⟨s, List.mem_append.mpr (Or.inr (List.mem_map.mpr
@@ -747,7 +748,7 @@ theorem stmt_loop {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (label : 
             (body := body) hmiss') (·.2)).trans hsel)).of_inside⟩
   have hHead0 := L.loopHead_sound (g := { g with next := g.next + 1 }) hH hF1 hlh hH
     (fun _ _ _ => Or.inl rfl) fun ir hir =>
-      ⟨L.relHolds_sound hH hF ⟨cx.scope, hinvs ir hir⟩ (hinv0 ir hir), cx.scope, hinvs ir hir⟩
+      ⟨L.relHolds_sound hH (hinvs' ir hir) (hinv0 ir hir), cx.scope, hinvs ir hir⟩
   rw [stepStmt_loop]
   show SafeAt F p n (cfg fn E E0 (.stmts (pos ++ [0]) 0 body ::
     .loop label (pos ++ [0]) body E.length :: k) D callers)
@@ -793,6 +794,70 @@ theorem fresh_loop {F : Model} (L : Laws F) (label : Option String)
 
 /-! ## Every statement list's triple -/
 
+/-- Every statement's walk and judgment keep a context in line: a `let` by
+`align_let`, and every other statement leaves the walk's bindings and the
+context's scope and names as they were. -/
+theorem align_stmt {p : Program} {fn : FnDecl} (s : Stmt) : StmtAlign p fn s := by
+  intro env st pos g g' env' o c c' fl hprog hw hc hcx
+  cases s with
+  | let_ x e => exact align_let x e env st pos g g' env' o c c' fl hprog hw hc hcx
+  | set t e =>
+    cases t with
+    | var x =>
+      obtain ⟨_, _, _, _, _, _, _, henv', -⟩ := Checker.walkStmt_setVar_ok hw
+      obtain ⟨_, _, _, hr⟩ := Typing.stmt_set_var hc
+      subst henv'
+      cases hr
+      exact hcx
+    | index b off =>
+      obtain ⟨_, _, _, _, _, _, _, _, _, _, henv', -⟩ := Checker.walkStmt_setIndex_ok hw
+      obtain ⟨_, _, _, hr⟩ := Typing.stmt_set_index hc
+      subst henv'
+      cases hr
+      exact hcx
+  | call e =>
+    obtain ⟨_, _, _, _, _, henv', -⟩ := Checker.walkStmt_call_ok hw
+    obtain ⟨_, _, hr⟩ := Typing.stmt_call hc
+    subst henv'
+    cases hr
+    exact hcx
+  | ret e =>
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, henv', -⟩ := Checker.walkStmt_ret_ok hw
+    obtain ⟨_, hr⟩ := Typing.stmt_ret hc
+    subst henv'
+    cases hr
+    exact hcx
+  | if_ cnd thn els he =>
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, henv', -⟩ := Checker.walkStmt_if_ok hw
+    obtain ⟨_, _, _, _, _, hr⟩ := Typing.stmt_if hc
+    subst henv'
+    cases hr
+    exact hcx
+  | loop label invs body =>
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, henv', -⟩ := Checker.walkStmt_loop_ok hw
+    obtain ⟨_, _, hr⟩ := Typing.stmt_loop hc
+    subst henv'
+    cases hr
+    exact hcx
+  | brk label =>
+    obtain ⟨_, _, henv', -, -⟩ := Checker.walkStmt_brk_ok hw
+    obtain ⟨_, hr⟩ := Typing.stmt_brk hc
+    subst henv'
+    cases hr
+    exact hcx
+  | cont label =>
+    obtain ⟨_, _, henv', -, -⟩ := Checker.walkStmt_cont_ok hw
+    obtain ⟨_, hr⟩ := Typing.stmt_cont hc
+    subst henv'
+    cases hr
+    exact hcx
+  | invariant nm rel =>
+    obtain ⟨_, henv', -, -⟩ := Checker.walkStmt_invariant_ok hw
+    have hr := Typing.stmt_invariant hc
+    subst henv'
+    cases hr
+    exact ⟨hcx.scope, hcx.taken, hcx.params⟩
+
 mutual
 theorem stmt_all {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (s : Stmt) :
     StmtOK F p fn s ∧ StmtEnv s ∧ StmtFresh F s :=
@@ -824,7 +889,7 @@ theorem list_all {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (ss : List
   | s :: rest =>
     have hs := stmt_all (p := p) (fn := fn) L s
     have hr := list_all (p := p) (fn := fn) L rest
-    ⟨list_cons L hs.1 hs.2.1 hs.2.2 hr.1, list_fresh_cons L hs.2.2 hs.2.1 hr.2⟩
+    ⟨list_cons L hs.1 hs.2.1 hs.2.2 (align_stmt s) hr.1, list_fresh_cons L hs.2.2 hs.2.1 hr.2⟩
 termination_by structural ss
 end
 
@@ -936,6 +1001,15 @@ theorem fnSafe_succ {F : Model} {p : Program} (L : Laws F) (hp : p.accepts = tru
   obtain ⟨env, st, g1, o, hent, hwalk⟩ := Checker.checkFn_walk hck
   obtain ⟨hF0, hprog, hfneq, hloops⟩ := L.entry_fresh hent
   have hH0 := L.entry_sound hp hfn hent hn ht hin (hreq hn)
+  -- The body is judged from a context in line with the entry's bindings, and
+  -- the arguments have the parameters' types.
+  have hfit : EnvTyped args.reverse (Checker.scopeOf env.vars) := L.fits hH0
+  have hsc : Checker.scopeOf env.vars = Typing.paramScope p g := scopeOf_entry hfit hn ht
+  have hE0 : EnvTyped args.reverse (Typing.paramScope p g) := by
+    rw [← hsc]
+    exact hfit
+  have hctx : CtxOK g env (Typing.initCtx p g) :=
+    ctxOK_entry hsc (Checker.entryState_params hent)
   obtain ⟨_, hs⟩ := Typing.checkProgram_inv (Typing.accepts_static hp) g hg
   obtain ⟨-, -, fl, hfl, -⟩ := Typing.checkFn_inv hs
   have hpts : p.points g = gF.points := by
@@ -946,12 +1020,12 @@ theorem fnSafe_succ {F : Model} {p : Program} (L : Laws F) (hp : p.accepts = tru
     ⟨hprog, hfneq, hp, hfn, fun lc hlc => by rw [hloops] at hlc; cases hlc⟩
   exact (list_all (p := p) (fn := g) L g.body).1 env st [] 0 g1 gF o m [] args.reverse
     args.reverse [] D callers henv (fun lc hlc => by rw [hloops] at hlc; cases hlc) hwalk
-    ⟨_, true, fl, hfl⟩
+    ⟨_, true, fl, hctx, hfl⟩
     ⟨by rw [hpts]; exact ⟨[], List.append_nil _⟩,
       by rw [hpts]; exact Checker.checkFn_points hck⟩
     hH0 hF0 (fun w hw => by cases hw) (fun _ _ _ _ _ _ _ => safeAt_kont_nil)
     (by rw [hloops]; exact breakOK_nil) (by rw [hloops]; exact contOK_nil)
-    (hR.mono (Nat.le_succ m)) hFn
+    ⟨hE0, hR.mono (Nat.le_succ m)⟩ hFn
 
 theorem fnSafeTo_all {F : Model} {p : Program} (L : Laws F) (hp : p.accepts = true) :
     ∀ n, FnSafeTo F p n

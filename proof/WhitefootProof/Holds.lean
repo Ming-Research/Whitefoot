@@ -101,6 +101,19 @@ theorem not_not_true {b : Bool} (h : ¬((!b) = true)) : b = true := by
 
 end CheckerRun
 
+/-- Follow a checker run that succeeded to the `pure` it ends in, closing the
+branches that fail, and prove the goal there by `rfl`. -/
+syntax "walk_pure " ident : tactic
+macro_rules
+  | `(tactic| walk_pure $h:ident) => `(tactic|
+      repeat' first
+        | exact (CheckerRun.run_fail $h).elim
+        | (obtain ⟨_, _, hf, -⟩ := CheckerRun.run_bind $h; exact (CheckerRun.run_fail hf).elim)
+        | (obtain ⟨hpe, -⟩ := CheckerRun.run_pure $h; subst hpe; rfl)
+        | (obtain ⟨_, _, -, $h:ident⟩ := CheckerRun.run_bind $h)
+        | (split at $h:ident)
+        | (dsimp only at $h:ident))
+
 /-! ## Values, frames and the binding table -/
 
 /-- A value lies in its type's range: an integer is a member of its type, and
