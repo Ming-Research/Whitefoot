@@ -22,7 +22,7 @@ defaults:
     shell: bash
 
 concurrency:
-  group: tmp-inline-policy-${{ github.ref }}
+  group: tmp-inline-policy-${{ github.sha }}
   cancel-in-progress: true
 
 env:
@@ -96,10 +96,15 @@ jobs:
           sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
           rustup default stable
           cargo fetch --locked --manifest-path compiler/Cargo.toml
+      # make static's stages but repository-invariants, which refuses any
+      # workflow that reads research/, as this temporary one does by design.
       - name: Static checks, the design tree's included
         env:
           DESIGN_REVIEW_BASE: origin/main
-        run: make static
+        run: |
+          for stage in spec-archives readme-translation spec-prose-integrity guidance source-size design-lint safety-claims; do
+            perl .github/run-check.pl "tmp-$stage" make --no-print-directory "$stage"
+          done
       - name: The inline hint on every definition
         run: perl .github/run-check.pl tmp-effect-attributes cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib effect_attributes
       - name: The attribute group's stack probes and their negative controls
