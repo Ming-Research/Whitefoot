@@ -1313,9 +1313,8 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
-        // An element read is no term [ENT-2], but it is part of the goal's
-        // identity, which a condition naming the same expression establishes
-        // [ENT-3].
+        // An element read is an [ENT-2] clause (b) term, which a condition
+        // naming the same place establishes [ENT-3].
         name: "integer-domain-over-an-element.wf",
         rejected: br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
   let y = values^[0_u64] + 1_u8;

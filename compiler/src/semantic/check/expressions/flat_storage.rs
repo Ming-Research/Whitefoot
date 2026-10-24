@@ -1875,6 +1875,26 @@ impl<'unit> Checker<'_, 'unit> {
         offset: &CheckedExpression,
     ) -> Option<CapturedValue> {
         let capture = CaptureId::source(u32::try_from(occurrence.index()).unwrap_or(u32::MAX - 1));
+        // [CONST-2] an integer field of a named const is the integer it
+        // holds, as the call substituting the same field reads it.
+        if let CheckedExpression::ReadStorage { root, .. } = offset
+            && let PlaceRoot::Constant(id) = root.root
+        {
+            let mut value = &self.types.constant(id).ok()?.value;
+            for step in &root.path {
+                let CheckedPlaceStep::Field(index) = step else {
+                    return None;
+                };
+                let super::super::super::model::CheckedValue::Struct { fields, .. } = value else {
+                    return None;
+                };
+                value = fields.get(*index as usize)?;
+            }
+            let super::super::super::model::CheckedValue::Integer { bits, .. } = value else {
+                return None;
+            };
+            return Some(CapturedValue::new(capture, CapturedTerm::Literal(*bits)));
+        }
         match offset {
             CheckedExpression::Constant(super::super::super::model::CheckedValue::Integer {
                 bits,
