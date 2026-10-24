@@ -68,9 +68,9 @@ fn paired_spin(step: &Step) -> result: u64 reads(step) {
 
 fn weigh(owner: &Owner) -> result: u64 reads(owner) {
   match owner^ {
-    Boxed(frame: held) => {
-      let spun = spin(step: &held^.inner.step, count: 2_u64);
-      return spun +wrap held^.inner.bias;
+    Boxed(frame: stored) => {
+      let spun = spin(step: &stored^.inner.step, count: 2_u64);
+      return spun +wrap stored^.inner.bias;
     }
     Empty() => {
       return 0_u64;
