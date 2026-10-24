@@ -14,8 +14,9 @@
 #                 (lld), which internalizes every symbol but the entry points
 #   ARM_HINT      1 to add `inlinehint` to attribute group #0, which every
 #                 emitted Whitefoot definition carries, in the emitted module
-#                 (module.ll) and its fragments (fragment-N.ll), and in no
-#                 compiler-owned runtime unit
+#                 (which whitefootc pipes to clang as `-x ir -`) and its
+#                 fragments (fragment-N.ll), and in no compiler-owned runtime
+#                 unit; each rewrite is logged in hinted.log beside this script
 #   ARM_REMARKS   a file that collects the inline remarks of every invocation
 #   ARM_CLANG     the real clang (default /usr/bin/clang)
 set -euo pipefail
@@ -32,26 +33,41 @@ if [ -f "$here/arm.conf" ]; then
     . "$here/arm.conf"
 fi
 
+# hint FILE: the module FILE with the hint added; fails when FILE has no
+# attribute group #0, so a module the rewrite misses cannot pass unhinted.
+hint() {
+    local hinted
+    hinted=$(mktemp --suffix=.ll)
+    grep -q '^attributes #0 = { ' "$1"
+    sed 's/^attributes #0 = { /attributes #0 = { inlinehint /' "$1" > "$hinted"
+    echo "$1" >> "$here/hinted.log"
+    echo "$hinted"
+}
+
 args=()
 compile_only=0
 lto=0
+previous=
 for argument in "$@"; do
     case "$argument" in
     -O2) argument="-O$ARM_OPT" ;;
     -c | -S | -E | --version | -dumpversion) compile_only=1 ;;
     -flto=*) lto=1 ;;
     esac
-    case "$argument" in
-    */module.ll | */fragment-*.ll)
-        if [ "$ARM_HINT" = 1 ]; then
-            hinted="${argument%.ll}.hinted.ll"
-            grep -q '^attributes #0 = { ' "$argument"
-            sed 's/^attributes #0 = { /attributes #0 = { inlinehint /' "$argument" > "$hinted"
-            argument=$hinted
-        fi
-        ;;
-    esac
+    if [ "$ARM_HINT" = 1 ]; then
+        case "$argument" in
+        fragment-*.ll | */fragment-*.ll) argument=$(hint "$argument") ;;
+        -)
+            if [ "$previous" = ir ]; then
+                piped=$(mktemp --suffix=.ll)
+                cat > "$piped"
+                argument=$(hint "$piped")
+            fi
+            ;;
+        esac
+    fi
     args+=("$argument")
+    previous=$argument
 done
 links=$((1 - compile_only))
 if [ "$ARM_LTO" = 1 ] && [ "$links" = 1 ] && [ "$lto" = 0 ]; then

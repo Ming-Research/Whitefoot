@@ -301,3 +301,15 @@ the attribute to the attribute group every emitted definition carries.
   lies wholly above 1.
 - Hint with full LTO is measured to see whether the two compose as 325 and
   full LTO did.
+
+### Results
+
+[Run 40097435146](https://github.com/Ming-Research/Whitefoot/actions/runs/40097435146)
+on commit `66a13639e` measured nothing about the hint: whitefootc pipes the
+emitted module to clang as `-x ir -`, and the wrapper rewrote only named
+module files, so both hint arms built byte-identical images to their bases
+(the thresholds met did not move). The wrapper now rewrites the piped module
+and the fragments, logs each rewrite, and the workflow fails a hint arm that
+rewrote nothing. One observation stands: full LTO for the default build
+again slowed iterate by 3.3%–4.5% at all three sizes on an AMD EPYC 9V74,
+as in round 1 on the same model, while on a 9V45 (round 2) it did not.

@@ -255,6 +255,8 @@ jobs:
           git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo"
           git -C "$RUNNER_TEMP/halo" checkout --quiet "$HALO"
       - name: The arm reaches the compiler's decisions
+        env:
+          CONF: ${{ matrix.conf }}
         run: |
           wfc="$OUT/arms/candidate/compiler/target/gate/whitefootc"
           mkdir -p "$RUNNER_TEMP/check"
@@ -262,6 +264,13 @@ jobs:
           graph=tests/halo-bench/modules.wfg
           [ -e "$RUNNER_TEMP/halo/$graph" ] || graph=research/experiments/halo-bench/modules.wfg
           (cd "$RUNNER_TEMP/halo" && CENSUS_REMARKS="$RUNNER_TEMP/check/halo.txt" "$wfc" --graph "$graph" --entry bench --full-lto -o "$RUNNER_TEMP/check/halo")
+          # A hint arm must have rewritten the modules it compiled.
+          case "$CONF" in
+          *ARM_HINT=1*)
+            echo "hinted modules: $(wc -l < "$OUT/arms/candidate/compiler/target/gate/hinted.log")"
+            test -s "$OUT/arms/candidate/compiler/target/gate/hinted.log"
+            ;;
+          esac
           for name in bench halo; do
             files=$(ls "$RUNNER_TEMP/check/$name".txt "$RUNNER_TEMP/check/$name".txt.lto.*.yaml 2>/dev/null || true)
             # shellcheck disable=SC2086
