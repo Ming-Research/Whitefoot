@@ -2580,11 +2580,11 @@ impl<'unit> TypeContext<'unit> {
                 _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             }
         };
-        if self
+        let entry_former = self
             .declarations
             .tree
-            .has_fixed(pbase, FixedTerminal::Entry)?
-        {
+            .has_fixed(pbase, FixedTerminal::Entry)?;
+        if entry_former {
             let ExpandedClauseExpression::Datum(ExpandedClauseDatum::Parameter {
                 denotation, ..
             }) = &mut expression
@@ -2650,6 +2650,33 @@ impl<'unit> TypeContext<'unit> {
                 bindings,
                 expanded_bindings,
             )?;
+            // [MSR-3] an entry datum is a measure, or a fragment-integer
+            // place selected by field and dereference steps: a subscript
+            // after the former reaches only a measure, as in
+            // `entry(rows)^[i].len`, and an element under the former is no
+            // entry datum.
+            if entry_former
+                && measure.is_none()
+                && projections.iter().any(|projection| {
+                    matches!(
+                        projection,
+                        GoalProjection::Subscript(_)
+                            | GoalProjection::Page(_)
+                            | GoalProjection::FormalSubscript { .. }
+                            | GoalProjection::FormalPage { .. }
+                            | GoalProjection::FormalPlaceSubscript { .. }
+                            | GoalProjection::FormalPlacePage { .. }
+                    )
+                })
+            {
+                return self.declarations.issue_node(
+                    SemanticRule::Msr3,
+                    pbase,
+                    SemanticIssueKind::InvalidEntryFormer {
+                        mechanical_fix: "select a fragment integer of a written reference parameter by fields and dereferences, or a measure below its subscripts",
+                    },
+                );
+            }
             for projection in projections {
                 expression = expression
                     .with_projection(projection, final_ty)

@@ -1324,9 +1324,9 @@ fn main() -> status: std::process::ExitStatus pure {
   if x[1_u64] != 8_u32 {
     return std::process::exit_status(code: 2_u8);
   }
-  if x[9_u64] != 5_u32 {
-    return std::process::exit_status(code: 3_u8);
-  }
+  let kept = x[9_u64];
+  let kept_drift = kept - 5_u32;
+  let kept_code = cvt::<u32, u8>(kept_drift);
   if y[15_u64] != 2_u32 {
     return std::process::exit_status(code: 4_u8);
   }
@@ -1336,7 +1336,7 @@ fn main() -> status: std::process::ExitStatus pure {
   if first.inner != 2_u64 {
     return std::process::exit_status(code: 5_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  return std::process::exit_status(code: kept_code);
 }
 "#;
 

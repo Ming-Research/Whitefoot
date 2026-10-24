@@ -568,6 +568,14 @@ pub(crate) trait SeparationOracle {
     /// and the answer is `false`. Answering `false` is sound: the pair then
     /// overlaps. Answering `true` is sound only for places of one state.
     fn window_length_is_shared(&self, window: &ResolvedPlace) -> bool;
+
+    /// Whether two index, page or range steps at one position may be told
+    /// apart by their offsets. A loop head's continuing kills tell none
+    /// apart [ENT-5]: an offset an event reads may hold another value at
+    /// each iteration, so the two steps overlap there whatever their offsets.
+    fn compares_offsets(&self) -> bool {
+        true
+    }
 }
 
 /// One resolved place [OWN-7]: its root and the ordered steps below it.
@@ -1033,6 +1041,20 @@ fn separation(
             } else {
                 StepSeparation::Separate
             }
+        }
+        // At a loop head two subscripts at one position overlap whatever
+        // their offsets [ENT-5]; later field steps may still separate them.
+        (PlaceStep::Index(_), PlaceStep::Index(_)) | (PlaceStep::Page(_), PlaceStep::Page(_))
+            if !oracle.compares_offsets() =>
+        {
+            StepSeparation::Same
+        }
+        (PlaceStep::Range(_), PlaceStep::Range(_))
+        | (PlaceStep::Index(_), PlaceStep::Range(_))
+        | (PlaceStep::Range(_), PlaceStep::Index(_))
+            if !oracle.compares_offsets() =>
+        {
+            StepSeparation::Overlapping
         }
         // Two index steps of one base. Unproved distinctness is not overlap:
         // both bases are the same storage, so a later step still separates

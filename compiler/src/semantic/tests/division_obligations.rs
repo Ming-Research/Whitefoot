@@ -848,11 +848,14 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn writing_the_indexed_collection_invalidates_its_old_defined_fact() {
-    let source = br#"fn increment_after_write(values: Slots<u8, 1>) -> result: u8 pure contract {
+    // The written value is a parameter, so the element's new fact bounds it
+    // by nothing beyond its type: a surviving old goal would discharge the
+    // addition, and only its kill leaves it unproved.
+    let source = br#"fn increment_after_write(values: Slots<u8, 1>, next: u8) -> result: u8 pure contract {
   requires values.len >= 1_u64;
 } {
   if values[0_u64] +defined 1_u8 {
-    set values[0_u64] = 255_u8;
+    set values[0_u64] = next;
     let result = values[0_u64] + 1_u8;
     return result;
   } else {
@@ -863,7 +866,7 @@ fn writing_the_indexed_collection_invalidates_its_old_defined_fact() {
 fn main() -> status: std::process::ExitStatus pure {
   let filled = array_filled::<u8, 1>(value: 0_u8);
   let values = slots_from_array::<u8, 1>(values: filled);
-  let result = increment_after_write(values: move values);
+  let result = increment_after_write(values: move values, next: 255_u8);
   return std::process::exit_status(code: result);
 }
 "#;

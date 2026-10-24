@@ -53,6 +53,7 @@ fn main() -> status: ExitStatus pure {
   let spans = array_filled::<Span, 2>(value: span);
   set spans[1_u64].len = 8_u32;
   let changed = spans[1_u64].len;
+  let drift = changed - 8_u32;
   set spans[1_u64].len = 7_u32;
   let room = spans[1_u64].cap;
   let origin = spans[1_u64].head;
@@ -64,9 +65,6 @@ fn main() -> status: ExitStatus pure {
   invariant head_fits: origin <= 255_u8;
   invariant array_length: array.len == 2_u64;
   let viewed = check_run(spans: &spans[0_u64..2_u64]);
-  if changed != 8_u32 {
-    return exit_status(code: 1_u8);
-  }
   if limited != 3_u32 {
     return exit_status(code: 2_u8);
   }
@@ -79,6 +77,7 @@ fn main() -> status: ExitStatus pure {
   if viewed != 2_u8 {
     return exit_status(code: 6_u8);
   }
-  let status_code = cvt::<u32, u8>(static_len);
+  let status_len = static_len + drift;
+  let status_code = cvt::<u32, u8>(status_len);
   return exit_status(code: status_code);
 }

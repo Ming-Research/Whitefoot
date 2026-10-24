@@ -1801,28 +1801,9 @@ impl<'unit> DeclarationInventory<'unit> {
             // entry names only a declaration-boundary place: projection
             // reads are checked by the ordinary FN-9 fragment judgment, and
             // indexed selections are not part of its projection language.
-            // The former's projection comprises the steps inside it followed
-            // by those outside it, so an [ENT-2] clause (b) element term does
-            // not widen this boundary; a range postcondition keeps its own
-            // [RANGE-1] places.
-            let mut in_range_clause = false;
-            let mut ancestor = self.tree.parent(base)?;
-            while let Some(node) = ancestor {
-                if self.tree.production(node)? == Production::RangeClause {
-                    in_range_clause = true;
-                    break;
-                }
-                ancestor = self.tree.parent(node)?;
-            }
-            let mut suffixes = self.tree.children_with(base, Production::Psuffix)?;
-            if !in_range_clause {
-                let place = self
-                    .tree
-                    .parent(base)?
-                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                suffixes.extend(self.tree.children_with(place, Production::Psuffix)?);
-            }
-            for suffix in suffixes {
+            // A subscript after the former is judged where the clause place
+            // is expanded, which knows whether it reaches a measure.
+            for suffix in self.tree.children_with(base, Production::Psuffix)? {
                 if matches!(
                     self.tree.place_suffix(suffix)?,
                     crate::syntax::views::PlaceSuffix::Index { .. }

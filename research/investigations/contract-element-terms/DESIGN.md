@@ -90,10 +90,23 @@ before any overlapping write.
    conditional transport to indexed enum values, so a scalar call result
    stored into an element publishes to the element.
 6. **Unchanged boundaries.** Explicit `entry` datums stay limited to field and
-   dereference projections [MSR-3]; owned result-array elements stay outside
-   [CALL-4]'s result data; range facts keep their own judgment; direct affine
-   images of elements are not added; erased clause reads join the contract
-   footprint under [EFF-5] as every clause read does.
+   dereference projections [MSR-3]; a subscript after the former reaches only
+   a measure, as `entry(rows)^[i].len` already did, and MSR-3 now says so;
+   owned result-array elements stay outside [CALL-4]'s result data; a
+   returned subscripted place still gives no term [FN-9], so a body binds the
+   element before returning it; range facts keep their own judgment; direct
+   affine images of elements are not added; erased clause reads join the
+   contract footprint under [EFF-5] as every clause read does.
+7. **Loop heads.** A continuing kill compares no two subscripts at one
+   position by their offsets [ENT-5], so a body write of `a[1]` removes a fact
+   over `a[2]` at the head even though the literals differ.
+8. **Redundant conditions.** Item 4 makes `set a[k] = v;` decide a later
+   `if a[k] != v`, and a copy `let x = a[k];` relates x to the element, so
+   [OP-5] rejects such a test as redundant, exactly as it rejects the same
+   test of an integer variable after `set x = v;`. Programs and tests that
+   checked an element right after writing it were rewritten: the value is
+   folded into the observed exit status where the run is observed, and the
+   decided test is removed where only acceptance is observed.
 
 Cost: more ordinary terms and overlap queries in programs that read mutable
 elements. No timing establishes its size; facts over elements written in

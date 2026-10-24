@@ -29,12 +29,12 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   set pages.inner.pages[0_u64][0_u64].inner[0_u64][1_u64] = 13_u64;
   let selected = &pages.inner.pages[0_u64][0_u64].inner[0_u64][1_u64];
-  if selected^ != 13_u64 {
-    return std::process::exit_status(code: 4_u8);
-  }
+  let observed = selected^;
+  let drift = observed - 13_u64;
   let passed = read_selected(s: &pages.inner.pages[0_u64][0_u64].inner, i: 0_u64, j: 1_u64);
   if passed != 13_u64 {
     return std::process::exit_status(code: 6_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(drift);
+  return std::process::exit_status(code: code);
 }

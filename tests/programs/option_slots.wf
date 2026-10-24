@@ -172,10 +172,9 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
       return 22_u8;
     }
   }
-  if states[1_u64] == 2_u64 {
-  } else {
-    return 30_u8;
-  }
+  let written_state = states[1_u64];
+  let state_drift = written_state - 2_u64;
+  let state_code = cvt::<u64, u8>(state_drift);
   let through_first_collision = view_box_entry(stored_entry: &entries[2_u64], same: &entries[2_u64]);
   match through_first_collision {
     Empty() => {
@@ -403,7 +402,7 @@ fn run_boxes(first: Box<u64>, second: Box<u64>, replacement: Box<u64>, inserted:
         return 77_u8;
       }
       if final_payload5.inner == 11_u64 {
-        return 0_u8;
+        return state_code;
       }
       return 78_u8;
     }
