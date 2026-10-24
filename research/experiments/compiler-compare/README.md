@@ -54,7 +54,9 @@ investigation did; the component CRCs of the 2K performance run and the final
 CRC that investigation recorded for 2000 iterations must all match. A
 mismatch is invalid data, not a measurement. Both are native programs, so the
 timed quantity is the wall time of the whole process, pinned to one CPU with
-`taskset`, after one untimed run of each image.
+`taskset`, after one untimed run of each image. The wasm interpreter opens its
+module relative to its working directory and rejects an absolute path, so each
+run starts in the directory that holds the inputs.
 
 ## Criterion
 
@@ -131,6 +133,8 @@ The programs are two interpreters and one library at one key and value type,
 one CPU and one input size each; a compiler change that matters elsewhere is
 not measured. The interpreters' timing is whole-process wall time: it includes
 process start-up, which is the same for the arms. The wasm interpreter's
-source was edited to compile under the specification of 2026-10-23 (a
-reserved word, a redundant condition); older revisions accepted either form
-of the second, not the first.
+source was edited to compile under the specification of 2026-10-23: a field
+and a local named with a reserved word (`held`, now `held_local`) and seven
+conditions the compiler proves always true (`if i < v^.inner.len` inside a
+loop over that length, or after a guard that returns) are removed. The
+edits keep what the program computes.
