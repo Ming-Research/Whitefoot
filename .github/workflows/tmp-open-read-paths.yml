@@ -106,6 +106,7 @@ jobs:
         if: matrix.stage == 'programs' || matrix.stage == 'base-programs'
         continue-on-error: ${{ matrix.stage == 'base-programs' }}
         run: |
+          set -o pipefail
           ulimit -c 0
           cargo test --manifest-path compiler/Cargo.toml --profile gate --test corpus --locked --offline -- \
             programs::open_read_paths:: programs::ordinary_io:: programs::wfgrep:: programs::host_paths:: \
@@ -117,6 +118,7 @@ jobs:
         env:
           WHITEFOOT_CONFORMANCE_SHARD: ${{ matrix.shard }}
         run: |
+          set -o pipefail
           ulimit -c 0
           cargo test --manifest-path compiler/Cargo.toml --profile gate --test corpus --locked --offline -- \
             conformance::adapter:: --nocapture 2>&1 | tee "$RUNNER_TEMP/adapter.log"

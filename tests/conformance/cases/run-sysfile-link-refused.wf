@@ -79,8 +79,8 @@ fn refuses_open(args: &Args, root: &DirectoryRead, files: &HandleFactory, positi
 }
 
 fn exercise(args: &Args, files: &HandleFactory, root: &DirectoryRead) -> result: u8 reads(args), reads(root), writes(files) waits {
-  let entry = reads_marker(args: args, root: root, files: files, position: 1_u64);
-  if entry {
+  let plain = reads_marker(args: args, root: root, files: files, position: 1_u64);
+  if plain {
   } else {
     return 10_u8;
   }

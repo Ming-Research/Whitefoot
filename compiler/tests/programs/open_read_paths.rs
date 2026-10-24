@@ -141,9 +141,9 @@ fn make_link(target: &Path, at: &Path, directory: bool) {
         // Creating a symbolic link takes the privilege the hosted runner's
         // account holds.
         if directory {
-            std::os::windows::fs::symlink_dir(target, link)
+            std::os::windows::fs::symlink_dir(target, at)
         } else {
-            std::os::windows::fs::symlink_file(target, link)
+            std::os::windows::fs::symlink_file(target, at)
         }
         .unwrap_or_else(|error| panic!("symlink {at:?}: {error}"));
     }
