@@ -2,14 +2,17 @@
 
 ## Status and question
 
-**This is a draft proposal. The owner ruled for candidate (c), extending
-the monitor's whole-role reassignment, and sub-step 1 of section 5 is
-implemented on the work branch with the tests of section 7. The hosted
-gate, `io-hosts` and the mutants workflow pass. The formal program test's
-hosted runs (4 CPUs) kept every echo inside 100 ms. The registered
-experiment of section 6.1 (1 and 2 CPUs, base controls, 3 then 30 runs per
-arm) and the 14900K cost comparison of section 6.2 have not run, so the
-latency and ordinary-I/O results are still unmeasured and nothing here
+**The owner ruled for candidate (c), extending the monitor's whole-role
+reassignment. Sub-step 1 of section 5 is implemented on the work branch with
+the tests of section 7; sub-step 2 is not, and its gap stays recorded in
+section 1.4. The branch's hosted runs pass the native cases and the program
+witnesses, and the quick workflow's nine runtime mutants and its witness
+mutant (the base's deadline-only trigger) each fail the case written for
+them. The registered experiment of section 6.1 (1 and 2 CPUs, base controls, 3 then 30
+runs per arm) did not run: the program witnesses stand in for it at the
+hosted runner's 4 CPUs, with the base's deadline-only trigger as the control
+that must fail. The 14900K cost comparison of section 6.2 runs on the head
+that merges, and this record states no ordinary-I/O result. Nothing here
 promises a latency.** The study itself was read-only, of `main` at
 `51c5f4263` (2026-10-12): no code changed, and no compiler, build or test
 was run to write it. The runtime evidence comes from two places: the
@@ -457,7 +460,7 @@ scan. The CQ tail and head lines are written by the kernel and the owner, so
 this is at most about one coherence miss per driver per millisecond.
 Ordinary I/O context runs last microseconds, so a token is expected not
 to survive two scans and the trigger is expected not to fire. This is not yet
-measured; section 6.2 checks it with a counter and the cost comparison.
+measured; section 6.2 checks it with the cost comparison.
 
 **Interaction.**
 
@@ -690,7 +693,9 @@ run starts a new sighting.
 - Any comparison cell has throughput ring ÷ base below 0.97, or a p99 ratio
   above 1.05 that the twin's spread resolves.
 - `ring_reassignments` fires in ordinary comparison runs at a rate whose cost
-  appears in the profile.
+  appears in the profile. Firn's comparison cannot print the counter (the
+  amendment in 6.2), so only the throughput and p99 bullets above can reject
+  on the comparison; the count stays checkable where a program exits normally.
 
 Rejection reopens (a) for the idle-peer case, or a different staleness rule.
 It never weakens the criterion.
@@ -751,6 +756,11 @@ ring and an owner held outside service in user space.
 | T6: no spare free, so the ring path returns 0, `reserve_misses` rises by 1, the token is back to `OUTSIDE` and `wf_drivers_moving` is restored. | the miss path | M8: `PROBE` or the moving count leaked on a miss. |
 | T7 (sub-step 2, `driver_service_test.c`): an overdue non-sleep wait with an idle peer is reassigned; an overdue sleep with an idle peer is not (the borrow serves it). | narrowed deferral | M9: deferral for every deadline (base). M10: no deferral at all. |
 | T8 (sub-step 2): after a borrow completes the only due sleep, the victim's `deadline_hint` no longer reads as due. | probe churn | M11: the hint is not refreshed. |
+
+Mutants M1 to M8 were run as listed. A different M9 was run in place of the
+planned one: the claim compares against the `OUTSIDE` word read afresh, not
+the sighted one, and T5's stale-word case fails it. The planned M9 to M11 and
+T7 and T8 belong to sub-step 2, which is not implemented.
 
 The existing `reassignment_races` case (no reassignment with an idle peer for
 a timer sleep) must keep passing unchanged. These tests join the existing
