@@ -143,6 +143,54 @@ fn native_ring_count(child: &ProgramChild) -> usize {
         .count()
 }
 
+// TEMPORARY diagnostic (ring-assist stall study), removed before the review.
+fn stall_report(child: &mut ProgramChild, run: usize, split: bool, trace: &str, sent: Instant) {
+    let mut err = std::io::stderr().lock();
+    writeln!(
+        err,
+        "=== STALL BEGIN run {run} split={split} at {:?}: {}",
+        sent.elapsed(),
+        trace.replace('\n', "; ")
+    )
+    .ok();
+    let mut exited_at = None;
+    while sent.elapsed() < Duration::from_secs(5) {
+        if child.try_wait().expect("inspect stalled child").is_some() {
+            exited_at = Some(sent.elapsed());
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    if let Some(at) = exited_at {
+        writeln!(err, "=== STALL RECOVERED: the program exited {at:?} after the send").ok();
+    } else {
+        writeln!(err, "=== STALL NOT RECOVERED after 5s; stacks follow").ok();
+        let pid = child.id().to_string();
+        let dump = Command::new("sudo")
+            .args([
+                "-n", "gdb", "-p", &pid, "-batch", "-ex", "info threads", "-ex",
+                "thread apply all bt 20",
+            ])
+            .output();
+        match dump {
+            Ok(output) => {
+                err.write_all(&output.stdout).ok();
+                err.write_all(&output.stderr).ok();
+            }
+            Err(error) => {
+                writeln!(err, "gdb did not run: {error}").ok();
+            }
+        }
+        if let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) {
+            for task in tasks.flatten() {
+                let stat = std::fs::read_to_string(task.path().join("stat")).unwrap_or_default();
+                writeln!(err, "task {}", stat.trim_end()).ok();
+            }
+        }
+    }
+    writeln!(err, "=== STALL END").ok();
+}
+
 #[test]
 fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
     let receive_limit = receive_limit();
@@ -284,6 +332,9 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
         peer.write_all(b"\n")
             .expect("send one byte through the TCP connection");
         while child.try_wait().expect("inspect receive progress").is_none() {
+            if sent.elapsed() >= receive_limit {
+                stall_report(&mut child, run, split, &trace, sent);
+            }
             assert!(
                 sent.elapsed() < receive_limit,
                 "run {run}: the receive did not release the atomic computation within {receive_limit:?}; placement: {trace}"
