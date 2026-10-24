@@ -132,11 +132,13 @@ jobs:
             find research/experiments/par-demand -type f -exec sha256sum {} + | sort -k2
           } > "$RUNNER_TEMP/host.txt"
           { echo "BASE=$base"; echo "BASE_TREE=$base_tree"; echo "CANDIDATE=$(git rev-parse HEAD)"; } >> "$GITHUB_ENV"
-      - name: Check the reducer and the identity checker with wrong evidence
+      - name: Check the reducer and the identity checker with wrong evidence and its unit tests
         run: |
           set -euo pipefail
           python3 -B research/experiments/par-default/accept.py --self-test
           python3 -B research/experiments/par-default/identity.py --self-test --clang /usr/bin/clang
+          (cd research/experiments/par-default && python3 -B -m unittest test_identity test_identity_entry \
+            test_identity_image test_identity_ir test_identity_projection test_identity_stencil)
       - name: Build current main's compiler and the candidate compiler
         run: |
           set -euo pipefail
