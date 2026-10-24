@@ -530,7 +530,6 @@ fn split_caller(name: &str, callee: &str) -> String {
     }}
   }}
 }}
-
 "
     )
 }
@@ -548,6 +547,9 @@ fn work_arm<'module>(module: &'module str, name: &str) -> &'module str {
 fn small_callee_cutoff_is_exactly_sixteen_ir_instructions() {
     let mut source = String::from(COMMAND);
     for count in [16, 17] {
+        if count == 17 {
+            source.push('\n');
+        }
         source.push_str(&format!(
             "fn leaf{count}(seed: u64) -> result: u64 pure {{\n"
         ));
@@ -708,7 +710,8 @@ fn shared_call(command: Command, flag: Bool, seed: u64) -> result: u64 pure {
 }
 
 "# + &split_caller("tiny_call", "tiny")
-        + r#"fn intrinsic_call(command: Command, flag: Bool, seed: u64) -> result: u64 pure {
+        + r#"
+fn intrinsic_call(command: Command, flag: Bool, seed: u64) -> result: u64 pure {
   loop {
     match command {
       Work() => {
@@ -760,6 +763,8 @@ fn tail_call(command: Command, flag: Bool, leave: Bool, seed: u64) -> result: u6
 
 #[test]
 fn weighted_result_and_call_edges_preserve_exit_status_in_both_modes() {
+    // counted_call_loop is a split dispatch loop that ends after `rounds`
+    // passes, so both the predicted call edge and its continuation run.
     let sized = (0..24).fold(3_u64, |value, _| value.rotate_left(5) ^ 3);
     let expected = sized.wrapping_add(1);
     let source = String::from(COMMAND)
@@ -785,8 +790,6 @@ fn call_or_identity(flag: Bool, seed: u64) -> result: u64 pure {{
   return seed;
 }}
 
-// A split dispatch loop that ends after `rounds` passes, so both the
-// predicted call edge and its continuation run.
 fn counted_call_loop(command: Command, flag: Bool, seed: u64, rounds: u64) -> result: u64 pure {{
   loop {{
     match command {{

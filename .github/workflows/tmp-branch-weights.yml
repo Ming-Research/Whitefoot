@@ -109,6 +109,12 @@ jobs:
           git show "$PROBE_REVISION:research/investigations/halo-call-path/probe/measure.py" > "$E2_OUT/inputs/measure.py"
           git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo-e2-halo"
           git -C "$RUNNER_TEMP/halo-e2-halo" checkout --quiet "$HALO_REVISION"
+          # `held` became a reserved word after this Halo revision (HOLD-1);
+          # the compilers built here reject it as the name of a binding in the
+          # collector. Rename that one binding; no other source changes.
+          sed -i 's/\bheld\b/held_value/g' "$RUNNER_TEMP/halo-e2-halo/lib/halo/heap/gc.wf"
+          test "$(grep -cw held_value "$RUNNER_TEMP/halo-e2-halo/lib/halo/heap/gc.wf")" = 2
+          if grep -qw held "$RUNNER_TEMP/halo-e2-halo/lib/halo/heap/gc.wf"; then exit 1; fi
           git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/halo-e2-silverfir"
           git -C "$RUNNER_TEMP/halo-e2-silverfir" checkout --quiet "$SILVERFIR_REVISION"
           module=benchmarks/wasi/coremark/coremark.wasm
@@ -123,6 +129,7 @@ jobs:
             echo "base_merge_base=$base"
             echo "s3_commit=$S3_COMMIT"
             echo "halo=$(git -C "$RUNNER_TEMP/halo-e2-halo" rev-parse HEAD)"
+            echo "halo_patch=lib/halo/heap/gc.wf: binding held renamed held_value (reserved word)"
             echo "probe=$PROBE_REVISION"
             echo "probe_path=research/investigations/halo-call-path/probe/measure.py"
             echo "silverfir=$(git -C "$RUNNER_TEMP/halo-e2-silverfir" rev-parse HEAD)"
