@@ -2052,4 +2052,421 @@ theorem Ctx.store_holds [DecidableEq T] {M : Sem X} {f : F} {w : Place T} {rhs :
 
 end Write
 
+/-! ## Swaps -/
+
+section SwapPlaces
+
+variable {X : Ctx T F}
+
+/-- A debt that covers a place whose invariant fails is not restored, so a
+restoration filter keeps it. -/
+theorem Ctx.unrestored_keep {M : Sem X} {f : F} {r : Run} (hf : M.Facts f r)
+    {D : List (Debt T)} {d : Debt T} (hd : d ∈ D) {π : CPlace} {I : InvId}
+    (hc : d.Covers M.eval r π I) (hn : ¬ X.InvHolds r π I) (g : Debt T → Bool) :
+    d ∈ D.filter fun e => !(g e && X.restored f e) := by
+  have hr : X.restored f d = false := by
+    cases h' : X.restored f d with
+    | false => rfl
+    | true => exact absurd (Ctx.restored_sound M hf hc h') hn
+  exact List.mem_filter.2 ⟨hd, by simp [hr]⟩
+
+/-- Two targets the swap check accepts are one place or apart [OP-11]: targets
+on one path have members that may overlap, which the check requires to be at
+one level. -/
+theorem Ctx.swap_apart {M : Sem X} {f : F} {r : Run} (hf : M.Facts f r) {s : St T}
+    (hok : RefsOk M.eval r s) {fp sp : Place T} {πf πs : CPlace}
+    (hpf : fp.Denotes M.eval r πf) (hps : sp.Denotes M.eval r πs)
+    (hchk : ((s.resolve fp).all fun a => (s.resolve sp).all fun b =>
+      !X.mayOverlap f a b || a.steps.length == b.steps.length) = true)
+    (hne : πf ≠ πs) : πf.Apart πs := by
+  apply Classical.byContradiction
+  intro hap
+  obtain ⟨hroot, hpre⟩ := CPlace.not_apart hap
+  obtain ⟨mf, hmf, hmfd⟩ := St.resolve_denote hok hpf
+  obtain ⟨ms, hms, hmsd⟩ := St.resolve_denote hok hps
+  have h1 : (!X.mayOverlap f mf ms || mf.steps.length == ms.steps.length) = true :=
+    List.all_eq_true.1 (List.all_eq_true.1 hchk mf hmf) ms hms
+  rw [Ctx.mayOverlap_of M hf hmfd hmsd hroot hpre] at h1
+  have hlen : mf.steps.length = ms.steps.length := by simpa using h1
+  have hlen' : πf.path.length = πs.path.length := by
+    rw [← hmfd.2.length, ← hmsd.2.length]
+    exact hlen
+  exact hne (CPlace.eq_of hroot (Prefixed.eq_of_length hpre hlen'))
+
+/-- A debt that covers a place below the member o, exchanged onto the member t,
+covers the place t followed by the same path. -/
+theorem Debt.exchange_covers {ev : Run → T → Option Int} {r : Run} {o t : Shape T}
+    {πo πt : CPlace} (hod : o.Denotes ev r πo) (htd : t.Denotes ev r πt) {d : Debt T}
+    {e : List CStep} {I : InvId} (hc : d.Covers ev r ⟨πo.root, πo.path ++ e⟩ I) :
+    (d.exchange o t).Covers ev r ⟨πt.root, πt.path ++ e⟩ I := by
+  cases d with
+  | inv a J rc =>
+    obtain ⟨hJ, ⟨_, ha2⟩, _⟩ := hc
+    by_cases hl : a.steps.length = o.steps.length
+    · have e1 : Debt.exchange o t (.inv a J rc) = .inv t J none := by
+        simp only [Debt.exchange, ite_eq_left hl]
+      have h1 : a.steps.length = πo.path.length + e.length := by rw [ha2.length]; simp
+      have h2 : o.steps.length = πo.path.length := hod.2.length
+      have he : e = [] := List.eq_nil_of_length_eq_zero (by omega)
+      rw [e1, he, List.append_nil]
+      exact ⟨hJ, htd, trivial⟩
+    · have e1 : Debt.exchange o t (.inv a J rc) = .cover t := by
+        simp only [Debt.exchange, ite_eq_right hl]
+      rw [e1]
+      exact ⟨πt, htd, CPlace.below_append πt e⟩
+  | cover R =>
+    show (Debt.cover t).Covers ev r ⟨πt.root, πt.path ++ e⟩ I
+    exact ⟨πt, htd, CPlace.below_append πt e⟩
+
+end SwapPlaces
+
+section SwapRow
+
+variable {X : Ctx T F} [DecidableEq T]
+
+/-- A debt that covers a place outside a target is not proved at or below it
+when the target resolves to one member. -/
+theorem provedOne_false {ev : Run → T → Option Int} {r : Run} {s : St T} (hok : RefsOk ev r s)
+    {p : Place T} {πp : CPlace} (hp : p.Denotes ev r πp) {d : Debt T} {π : CPlace} {I : InvId}
+    (hc : d.Covers ev r π I) (hn : ¬ π.Below πp) : provedOne (s.resolve p) d = false := by
+  cases hL : s.resolve p with
+  | nil => rfl
+  | cons m rest =>
+    cases rest with
+    | nil =>
+      cases hpr : d.provedAtOrBelow m with
+      | false => exact hpr
+      | true =>
+        have hm : m ∈ s.resolve p := by rw [hL]; exact List.mem_singleton.2 rfl
+        have hlen : (s.resolve p).length < 2 := by rw [hL]; simp
+        exact absurd (below_of_provedAtOrBelow (St.resolve_one hok hp hlen m hm) hpr hc) hn
+    | cons m' rest' => rfl
+
+/-- A debt that covers a place outside both targets of a swap stays where it
+is. -/
+theorem Ctx.swapStay_keep {ev : Run → T → Option Int} {r : Run} {s : St T}
+    (hok : RefsOk ev r s) {fp sp : Place T} {πf πs : CPlace} (hpf : fp.Denotes ev r πf)
+    (hps : sp.Denotes ev r πs) {f : F} {D : List (Debt T)} {d : Debt T} (hd : d ∈ D)
+    {π : CPlace} {I : InvId} (hc : d.Covers ev r π I) (hnf : ¬ π.Below πf)
+    (hns : ¬ π.Below πs) : d ∈ X.swapStay f (s.resolve fp) (s.resolve sp) D := by
+  unfold Ctx.swapStay
+  split
+  · exact hd
+  · refine List.mem_filter.2 ⟨hd, ?_⟩
+    simp [provedOne_false hok hpf hc hnf, provedOne_false hok hps hc hns]
+
+/-- At a swap of two targets that may be one place, every debt stays where it
+is. -/
+theorem Ctx.swapStay_same {M : Sem X} {f : F} {r : Run} (hf : M.Facts f r) {s : St T}
+    (hok : RefsOk M.eval r s) {fp sp : Place T} {π : CPlace} (hpf : fp.Denotes M.eval r π)
+    (hps : sp.Denotes M.eval r π) (D : List (Debt T)) :
+    X.swapStay f (s.resolve fp) (s.resolve sp) D = D := by
+  obtain ⟨mf, hmf, hmfd⟩ := St.resolve_denote hok hpf
+  obtain ⟨ms, hms, hmsd⟩ := St.resolve_denote hok hps
+  have hov : X.mayOverlap f mf ms = true :=
+    Ctx.mayOverlap_of M hf hmfd hmsd rfl (Or.inl ⟨[], List.append_nil _⟩)
+  have hlen : mf.steps.length = ms.steps.length := by rw [hmfd.2.length, hmsd.2.length]
+  have hany : ((s.resolve fp).any fun a => (s.resolve sp).any fun b =>
+      X.mayOverlap f a b && a.steps.length == b.steps.length) = true :=
+    List.any_eq_true.2 ⟨mf, hmf, List.any_eq_true.2 ⟨ms, hms, by simp [hov, hlen]⟩⟩
+  unfold Ctx.swapStay
+  exact if_pos hany
+
+/-- A debt that covers a place below a member o of one swap target is taken
+across: exchanged onto a member t of the other target and settled, it covers t
+followed by the same path. -/
+theorem Ctx.across_cover {M : Sem X} {f : F} {kb : Kills T} {r r' : Run} (hf : M.Facts f r)
+    (hfr : M.Frame f kb r r') {D : List (Debt T)} {d : Debt T} (hd : d ∈ D)
+    {src dst : List (Shape T)} {o t : Shape T} (ho : o ∈ src) (ht : t ∈ dst)
+    {πo πt : CPlace} (hod : o.Denotes M.eval r πo) (htd : t.Denotes M.eval r πt)
+    {e : List CStep} {I : InvId} (hc : d.Covers M.eval r ⟨πo.root, πo.path ++ e⟩ I) :
+    ∃ x ∈ X.across f kb D src dst, x.Covers M.eval r ⟨πt.root, πt.path ++ e⟩ I ∧
+      x.Covers M.eval r' ⟨πt.root, πt.path ++ e⟩ I := by
+  have hmay : X.mayAtOrBelow f o d = true := Ctx.mayAtOrBelow_of_covers M hf hod hc
+  refine ⟨X.settle f kb (d.exchange o t), ?_,
+    Ctx.covers_settle hfr (Debt.exchange_covers hod htd hc)⟩
+  unfold Ctx.across
+  exact List.mem_flatMap.2 ⟨o, ho, List.mem_flatMap.2 ⟨d,
+    List.mem_filter.2 ⟨hd, by simp [hmay]⟩, List.mem_map.2 ⟨t, ht, rfl⟩⟩⟩
+
+theorem Ctx.swapRow_keep {f : F} {kb : Kills T} {fs ss : List (Shape T)} {D : List (Debt T)}
+    {P : Debt T → Prop} (hP : RecClosed P) {d : Debt T} (hd : d ∈ X.swapStay f fs ss D)
+    (h : P d) : ∃ e ∈ X.swapRow f kb fs ss D, P e := by
+  unfold Ctx.swapRow
+  exact addDebts_keep hP _ ⟨d, hd, h⟩
+
+theorem Ctx.swapRow_new {f : F} {kb : Kills T} {fs ss : List (Shape T)} {D : List (Debt T)}
+    {P : Debt T → Prop} (hP : RecClosed P) {x : Debt T}
+    (hx : x ∈ X.across f kb D fs ss ++ X.across f kb D ss fs) (h : P x) :
+    ∃ e ∈ X.swapRow f kb fs ss D, P e := by
+  unfold Ctx.swapRow
+  exact addDebts_new hP _ hx h
+
+/-- The sealing invariant after a swap the rules accept, given the debts D the
+exchange starts from: each debt that covers a failing invariant before the
+swap, and each write-row debt of its targets, has a debt in D that covers the
+same place before and after the swap. Each target then holds the other's value,
+whose debts the exchange carries onto it; an invariant above a target that the
+swap breaks has its write-row debt; and a debt that covers a place outside both
+targets stays. -/
+theorem Ctx.swap_sealed {M : Sem X} {f : F} {kb : Kills T} {s : St T} {r r' : Run}
+    (hh : X.Holds M s r) (hf : M.Facts f r) (hfr : M.Frame f kb r r') {fp sp : Place T}
+    {πf πs : CPlace} {vf vs : Val} (hpf : fp.Denotes M.eval r πf)
+    (hps : sp.Denotes M.eval r πs) (hvf : r.get πf = some vf) (hvs : r.get πs = some vs)
+    (hty : X.tyOf πf = X.tyOf πs)
+    (hrun : if πf = πs then r' = r
+      else ∃ r₁ : Run, r.set πf vs = some r₁ ∧ r₁.set πs vf = some r')
+    (hchk : ((s.resolve fp).all fun a => (s.resolve sp).all fun b =>
+      !X.mayOverlap f a b || a.steps.length == b.steps.length) = true)
+    {D : List (Debt T)}
+    (hD : ∀ {π : CPlace} {I : InvId} {d : Debt T}, d ∈ s.debts → d.Covers M.eval r π I →
+      ¬ X.InvHolds r π I → ∃ e ∈ D, e.Covers M.eval r π I ∧ e.Covers M.eval r' π I)
+    (hW : ∀ {π : CPlace} {I : InvId} {x : Debt T},
+      x ∈ X.writeRows f kb s fp [] ++ X.writeRows f kb s sp [] →
+      x.Covers M.eval r π I → x.Covers M.eval r' π I →
+      ∃ e ∈ D, e.Covers M.eval r π I ∧ e.Covers M.eval r' π I) :
+    X.Sealed M.eval r' (X.swapRow f kb (s.resolve fp) (s.resolve sp) D) := by
+  intro π I hI hn
+  obtain ⟨mf, hmf, hmfd⟩ := St.resolve_denote hh.2 hpf
+  obtain ⟨ms, hms, hmsd⟩ := St.resolve_denote hh.2 hps
+  by_cases heq : πf = πs
+  · -- one place: the run is unchanged, and every debt stays
+    rw [if_pos heq] at hrun
+    rw [hrun] at hn ⊢
+    rw [heq] at hpf
+    obtain ⟨d, hd, hc⟩ := hh.1 π I hI hn
+    obtain ⟨e, he, hce, _⟩ := hD hd hc hn
+    refine Ctx.swapRow_keep (covers_recClosed M.eval r π I) ?_ hce
+    rw [Ctx.swapStay_same hf hh.2 hpf hps]
+    exact he
+  · have hap : πf.Apart πs := Ctx.swap_apart hf hh.2 hpf hps hchk heq
+    rw [if_neg heq] at hrun
+    obtain ⟨r₁, h1, h2⟩ := hrun
+    have hgf : ∀ e, r'.get ⟨πf.root, πf.path ++ e⟩ = r.get ⟨πs.root, πs.path ++ e⟩ := by
+      intro e
+      rw [Run.set_get_apart h2
+          (CPlace.apart_symm (CPlace.apart_of_below (CPlace.below_append πf e) hap)),
+        Run.set_get_below h1 e, Run.get_append_some e hvs]
+    have hgs : ∀ e, r'.get ⟨πs.root, πs.path ++ e⟩ = r.get ⟨πf.root, πf.path ++ e⟩ := by
+      intro e
+      rw [Run.set_get_below h2 e, Run.get_append_some e hvf]
+    have hkeep : ∀ ρ : CPlace, (∀ ω, (ω = πf ∨ ω = πs) → ρ.Apart ω) → r'.get ρ = r.get ρ := by
+      intro ρ hρ
+      rw [Run.set_get_apart h2 (CPlace.apart_symm (hρ πs (Or.inr rfl))),
+        Run.set_get_apart h1 (CPlace.apart_symm (hρ πf (Or.inl rfl)))]
+    by_cases hbf : π.Below πf
+    · -- below the first target, which now holds the second's value
+      obtain ⟨e, rfl⟩ := CPlace.below_eq hbf
+      have hI' : I ∈ X.invsOfPlace ⟨πs.root, πs.path ++ e⟩ := by
+        rw [← Ctx.invsOfPlace_congr X (Ctx.tyOf_append_congr X hty e)]
+        exact hI
+      have hn0 : ¬ X.InvHolds r ⟨πs.root, πs.path ++ e⟩ I :=
+        fun h0 => hn ((Ctx.invHolds_congr X I (hgf e)).2 h0)
+      obtain ⟨d, hd, hc⟩ := hh.1 _ I hI' hn0
+      obtain ⟨d1, hd1, hc1, _⟩ := hD hd hc hn0
+      obtain ⟨x, hx, _, hx'⟩ := Ctx.across_cover hf hfr hd1 hms hmf hmsd hmfd hc1
+      exact Ctx.swapRow_new (covers_recClosed M.eval r' _ I) (List.mem_append.2 (Or.inr hx)) hx'
+    · by_cases hbs : π.Below πs
+      · -- below the second target, which now holds the first's value
+        obtain ⟨e, rfl⟩ := CPlace.below_eq hbs
+        have hI' : I ∈ X.invsOfPlace ⟨πf.root, πf.path ++ e⟩ := by
+          rw [← Ctx.invsOfPlace_congr X (Ctx.tyOf_append_congr X hty.symm e)]
+          exact hI
+        have hn0 : ¬ X.InvHolds r ⟨πf.root, πf.path ++ e⟩ I :=
+          fun h0 => hn ((Ctx.invHolds_congr X I (hgs e)).2 h0)
+        obtain ⟨d, hd, hc⟩ := hh.1 _ I hI' hn0
+        obtain ⟨d1, hd1, hc1, _⟩ := hD hd hc hn0
+        obtain ⟨x, hx, _, hx'⟩ := Ctx.across_cover hf hfr hd1 hmf hms hmfd hmsd hc1
+        exact Ctx.swapRow_new (covers_recClosed M.eval r' _ I) (List.mem_append.2 (Or.inl hx)) hx'
+      · by_cases hold : X.InvHolds r π I
+        · -- the swap breaks an invariant above a target: a write-row debt
+          have hex : (r'.get π).isSome = true → (r.get π).isSome = true := by
+            intro hsome
+            by_cases hapf : π.Apart πf
+            · by_cases haps : π.Apart πs
+              · rw [← hkeep π (fun ω hω => by rcases hω with h | h <;> rw [h] <;> assumption)]
+                exact hsome
+              · obtain ⟨hr0, hpre⟩ := CPlace.not_apart haps
+                rcases hpre with ⟨e, he⟩ | ⟨e, he⟩
+                · exact Run.exists_of_above (by simp [hvs]) hr0 he
+                · exact (hbs ⟨hr0, e, he⟩).elim
+            · obtain ⟨hr0, hpre⟩ := CPlace.not_apart hapf
+              rcases hpre with ⟨e, he⟩ | ⟨e, he⟩
+              · exact Run.exists_of_above (by simp [hvf]) hr0 he
+              · exact (hbf ⟨hr0, e, he⟩).elim
+          obtain ⟨inv, dp, ω, hinv, hdp, hω, hna⟩ :=
+            Ctx.broken_reached (fun ω => ω = πf ∨ ω = πs) hkeep hex hold hn
+          obtain ⟨hr1, hpre1⟩ := CPlace.not_apart hna
+          have hr1' : π.root = ω.root := hr1
+          have hpre2 : Prefixed (π.path ++ dp) (ω.path ++ []) := by
+            rw [List.append_nil]
+            exact hpre1
+          -- the target ω is one the swap's places spell
+          have hwp : ∃ w : Place T, w.Denotes M.eval r ω ∧
+              ∀ x, x ∈ X.writeRows f kb s w [] →
+                x ∈ X.writeRows f kb s fp [] ++ X.writeRows f kb s sp [] := by
+            rcases hω with h | h
+            · rw [h]
+              exact ⟨fp, hpf, fun x hx => List.mem_append.2 (Or.inl hx)⟩
+            · rw [h]
+              exact ⟨sp, hps, fun x hx => List.mem_append.2 (Or.inr hx)⟩
+          have hwb : ¬ π.Below ω := by
+            rcases hω with h | h
+            · rw [h]; exact hbf
+            · rw [h]; exact hbs
+          obtain ⟨w, hwd, hwm⟩ := hwp
+          have hnb : ¬ ∃ x, ω.path ++ x = π.path := fun ⟨x, hx⟩ => hwb ⟨hr1', x, hx⟩
+          obtain ⟨e, he, hne⟩ := above_of_prefixed hnb hpre2
+          obtain ⟨m, th, hmt, hmd, hth⟩ := St.resolveRec_denote hh.2 hwd
+          obtain ⟨d, hd, hcd, hcd'⟩ :=
+            Ctx.writeDebts_cover hf hfr hmd hth .nil hr1' he hne hI hinv hdp hpre2
+          obtain ⟨d1, hd1, hc1, hc1'⟩ :=
+            hW (hwm d (List.mem_flatMap.2 ⟨(m, th), hmt, hd⟩)) hcd hcd'
+          exact Ctx.swapRow_keep (covers_recClosed M.eval r' π I)
+            (Ctx.swapStay_keep (X := X) (f := f) hh.2 hpf hps hd1 hc1 hbf hbs) hc1'
+        · -- the invariant already failed: its debt stays
+          obtain ⟨d, hd, hc⟩ := hh.1 π I hI hold
+          obtain ⟨d1, hd1, hc1, hc1'⟩ := hD hd hc hold
+          exact Ctx.swapRow_keep (covers_recClosed M.eval r' π I)
+            (Ctx.swapStay_keep (X := X) (f := f) hh.2 hpf hps hd1 hc1 hbf hbs) hc1'
+
+/-- A `swap` keeps the agreement [OP-11, TYPE-11.S3]: its restoration removes
+only restored debts, and `Ctx.swap_sealed` gives the sealing invariant after
+the exchange. -/
+theorem Ctx.swap_holds {M : Sem X} {f : F} {fp sp : Place T} {kb : Kills T} {s s' : St T}
+    {r r' : Run} (hh : X.Holds M s r) (hf : M.Facts f r)
+    (hs : X.step f s (.swap fp sp kb) = some s') (hr : X.RunStep M f (.swap fp sp kb) r r') :
+    X.Holds M s' r' := by
+  obtain ⟨πf, πs, vf, vs, hpf, hps, hvf, hvs, hty, hrun, hfr⟩ := hr
+  simp only [Ctx.step] at hs
+  split at hs
+  · rename_i hchk
+    have hs' := (Option.some.inj hs).symm
+    subst hs'
+    refine ⟨Ctx.swap_sealed hh hf hfr hpf hps hvf hvs hty hrun hchk ?_ ?_, ?_⟩
+    · -- restoration at the swap, then the kill row
+      intro π I d hd hc hn
+      obtain ⟨e, he, hce⟩ := Ctx.killRow_cover hf hfr
+        (Ctx.unrestored_keep hf hd hc hn fun x =>
+          (s.resolve fp ++ s.resolve sp).any fun m => X.mayAtOrBelow f m x) hc hn
+      exact addDebts_keep (covers2_recClosed M.eval r r' π I) _ ⟨e, he, hce⟩
+    · -- the write rows of the two targets
+      intro π I x hx hc hc'
+      exact addDebts_new (covers2_recClosed M.eval r r' π I) _ hx ⟨hc, hc'⟩
+    · intro q ρ hq
+      have hrefs : r'.refs = r.refs := by
+        split at hrun
+        · rw [hrun]
+        · obtain ⟨r₁, h1, h2⟩ := hrun
+          rw [Run.set_refs h2, Run.set_refs h1]
+      rw [hrefs] at hq
+      exact Ctx.refsOk_kill hfr hh.2 hq
+  · cases hs
+
+/-! ## Calls -/
+
+/-- A call keeps the agreement [TYPE-11.S3, TYPE-11.S4, EFF-2]: its hand-offs
+remove only restored debts; each place at or below a written referent is valid
+when the callee returns; an invariant above one that the call breaks gets a
+write-row debt; and a debt that covers any other place stays. -/
+theorem Ctx.call_holds {M : Sem X} {f : F} {handed : List (Place T)}
+    {ws : List (Place T × List (SStep T))} {kb : Kills T} {s s' : St T} {r r' : Run}
+    (hh : X.Holds M s r) (hf : M.Facts f r) (hs : X.step f s (.call handed ws kb) = some s')
+    (hr : X.RunStep M f (.call handed ws kb) r r') : X.Holds M s' r' := by
+  obtain ⟨hkeep0, hex0, hvalid, hrefs, hfr⟩ := hr
+  have hs1 : (handed.foldlM (fun t p => X.handoff f t p) s).map (fun s₁ =>
+      (⟨addDebts (X.killRow f kb s₁.debts) (ws.flatMap fun pw => X.writeRows f kb s₁ pw.1 pw.2),
+        X.killRefs f kb s₁.refs⟩ : St T)) = some s' := hs
+  cases hho : handed.foldlM (fun t p => X.handoff f t p) s with
+  | none =>
+    rw [hho] at hs1
+    simp at hs1
+  | some s₁ =>
+    rw [hho] at hs1
+    have hs' : s' = ⟨addDebts (X.killRow f kb s₁.debts)
+        (ws.flatMap fun pw => X.writeRows f kb s₁ pw.1 pw.2), X.killRefs f kb s₁.refs⟩ :=
+      (Option.some.inj hs1).symm
+    subst hs'
+    have hh₁ : X.Holds M s₁ r := Ctx.handoffs_holds hf handed hh hho
+    refine ⟨?_, ?_⟩
+    · intro π I hI hn
+      by_cases hin : ∃ (p : Place T) (proj : List (SStep T)) (πa : CPlace),
+          (p, proj) ∈ ws ∧ p.Denotes M.eval r πa ∧ π.Below πa
+      · -- at or below a written referent, which the callee leaves valid
+        exfalso
+        obtain ⟨p, proj, πa, hmem, hpa, hb⟩ := hin
+        obtain ⟨e, rfl⟩ := CPlace.below_eq hb
+        apply hn
+        intro u inv hu hinv
+        obtain ⟨v, hv, hve⟩ := Run.get_append_inv e hu
+        obtain ⟨t, ht⟩ := Ctx.tyOf_of_mem_append hI
+        exact hvalid p proj hmem πa hpa t v ht hv e I u inv
+          (Ctx.mem_invsBelow_of_append ht hI) hve hinv
+      · have hnb : ∀ (p : Place T) (proj : List (SStep T)), (p, proj) ∈ ws →
+            ∀ πa : CPlace, p.Denotes M.eval r πa → ¬ π.Below πa :=
+          fun p proj hmem πa hpa hb => hin ⟨p, proj, πa, hmem, hpa, hb⟩
+        by_cases hold : X.InvHolds r π I
+        · -- the call breaks an invariant above a written referent: a write-row debt
+          have hkeep : ∀ ρ : CPlace, (∀ ω, (∃ (p : Place T) (proj : List (SStep T))
+              (πa : CPlace) (ext : List CStep), (p, proj) ∈ ws ∧ p.Denotes M.eval r πa ∧
+                StepsDenote M.eval r proj ext ∧ ω = ⟨πa.root, πa.path ++ ext⟩) → ρ.Apart ω) →
+              r'.get ρ = r.get ρ := by
+            intro ρ hρ
+            apply hkeep0 ρ
+            intro p proj hmem πa ext hpa hext
+            exact hρ _ ⟨p, proj, πa, ext, hmem, hpa, hext, rfl⟩
+          obtain ⟨inv, dp, ω, hinv, hdp, hω, hna⟩ :=
+            Ctx.broken_reached _ hkeep (hex0 π hnb) hold hn
+          obtain ⟨p, proj, πa, ext, hmem, hpa, hext, rfl⟩ := hω
+          obtain ⟨hr1, hpre⟩ := CPlace.not_apart hna
+          have hr1' : π.root = πa.root := hr1
+          have hpre' : Prefixed (π.path ++ dp) (πa.path ++ ext) := hpre
+          have hnb' : ¬ ∃ x, πa.path ++ x = π.path :=
+            fun ⟨x, hx⟩ => hnb p proj hmem πa hpa ⟨hr1', x, hx⟩
+          obtain ⟨e, he, hne⟩ := above_of_prefixed hnb' hpre'
+          obtain ⟨m, th, hmt, hmd, hth⟩ := St.resolveRec_denote hh₁.2 hpa
+          obtain ⟨d, hd, _, hc'⟩ :=
+            Ctx.writeDebts_cover hf hfr hmd hth hext hr1' he hne hI hinv hdp hpre'
+          refine addDebts_new (covers_recClosed M.eval r' π I) _ ?_ hc'
+          exact List.mem_flatMap.2 ⟨(p, proj), hmem, List.mem_flatMap.2 ⟨(m, th), hmt, hd⟩⟩
+        · -- the invariant already failed: its debt stays
+          obtain ⟨d, hd, hc⟩ := hh₁.1 π I hI hold
+          obtain ⟨e, he, _, he'⟩ := Ctx.killRow_cover hf hfr hd hc hold
+          exact addDebts_keep (covers_recClosed M.eval r' π I) _ ⟨e, he, he'⟩
+    · intro q ρ hq
+      rw [hrefs] at hq
+      exact Ctx.refsOk_kill hfr hh₁.2 hq
+
+/-! ## Every event -/
+
+/-- Each event the rules accept keeps the sealing state's agreement with the
+run [TYPE-11.S3]. -/
+theorem Ctx.step_holds {M : Sem X} {f : F} {s s' : St T} {e : Event T} {r r' : Run}
+    (hh : X.Holds M s r) (hf : M.Facts f r) (hs : X.step f s e = some s')
+    (hr : X.RunStep M f e r r') : X.Holds M s' r' := by
+  cases e with
+  | store w rhs kb => exact Ctx.store_holds hh hf hs hr
+  | bind y rhs kb => exact Ctx.bind_holds hh hf hs hr
+  | swap fp sp kb => exact Ctx.swap_holds hh hf hs hr
+  | call handed ws kb => exact Ctx.call_holds hh hf hs hr
+  | death x kb =>
+    have hs' : s' = ⟨deathRow x (X.killRow f kb s.debts), X.killRefs f kb s.refs⟩ :=
+      (Option.some.inj hs).symm
+    subst hs'
+    exact Ctx.death_holds hh hf hr
+  | bindRef q p kb =>
+    have hs' : s' = ⟨X.killRow f kb s.debts,
+        setRef (X.killRefs f kb s.refs) q ((s.resolve p).map (X.widenShape f kb))⟩ :=
+      (Option.some.inj hs).symm
+    subst hs'
+    exact Ctx.bindRef_holds hh hf hr
+  | kill kb =>
+    have hs' : s' = ⟨X.killRow f kb s.debts,
+        (X.killRefs f kb s.refs).filter fun d => !kb.rebound.contains d.1⟩ :=
+      (Option.some.inj hs).symm
+    subst hs'
+    exact Ctx.kill_holds hh hf hr
+
+end SwapRow
+
 end Whitefoot.Seal
