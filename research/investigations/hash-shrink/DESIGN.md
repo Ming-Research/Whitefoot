@@ -403,6 +403,23 @@ reloaded two of its three hash constants for every pair and stored each
 pair in two halves; folding the helper back into one rebuild restores the
 base's loop, which the [implementation](#implementation) now does.
 
+The rerun on the revision to merge, against its new merge base with the same
+floor, judged one grow-only cell slower: lookup miss at 1,000 pairs, 1.0060
+[1.0018, 1.0144], with the twin at 1.0005 [0.9992, 1.0071]. The other eleven
+showed no change except growing insertion at 10,000, again faster, 0.8531
+[0.8429, 0.8606]; the three cells of the first run now show none. Read from
+the two bench images' disassembly: the timed lookup and the functions it
+calls are identical instruction for instruction once addresses are removed,
+64-byte aligned in both and placed 192 bytes lower, so the remaining lookup
+cell is attributed to code placement, an attribution read, not measured.
+The faster growing insertion at 10,000 pairs is measured only; its cause is
+neither read from the machine code nor isolated by a measurement, and stays
+unexplained. The ordinary removal cells, recorded without a verdict, were
+1.0119 [1.0048, 1.0214], 1.0044 [1.0019, 1.0061] and 1.0893
+[1.0781, 1.1043] for remove-insert at 1,000, 10,000 and 1,000,000 pairs; the
+longest single removal of the 1,000,000-pair drain took 11.39 ms, the
+rebuild from a capacity of 1,572,864 pairs to 786,432.
+
 ## Owner decisions
 
 - Automatic shrinking after a successful removal, below one eighth, into
