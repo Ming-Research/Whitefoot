@@ -2225,9 +2225,10 @@ fn stamp_two_ranges(first: &[u8], second: &[u8]) -> result: u64 writes(first), w
 /// is `[4..5]`. `observed` snapshots that carried value before the rebinding,
 /// so alias closure must retain the header alternative and deny the pair,
 /// while using the freshly formed `current` in that same iteration keeps the
-/// ordinary range-separation permission. The dominating length guards admit
-/// each helper's real element store without supplying an affine image for the
-/// carried range endpoints.
+/// ordinary range-separation permission. The dominating length guard on the
+/// carried range admits each helper's real element store without supplying an
+/// affine image for its endpoints; each current-iteration range is formed one
+/// element long, so its length needs no guard.
 #[test]
 fn loop_carried_range_generations_do_not_reuse_the_current_iteration_image() {
     let source = format!(
@@ -2244,10 +2245,8 @@ fn shifted(values: &Array<u8, 8>) -> result: u64 writes(values) {{
     let other = &values^[other_start..other_end];
     let observed = saved;
     if 0_u64 < observed^.len {{
-      if 0_u64 < other^.len {{
-        let a = stamp_range(part: observed);
-        let b = stamp_range(part: other);
-      }}
+      let a = stamp_range(part: observed);
+      let b = stamp_range(part: other);
     }}
     set saved = &current^[0_u64..current^.len];
   }}
@@ -2262,12 +2261,8 @@ fn current_iteration(values: &Array<u8, 8>) -> result: u64 writes(values) {{
     let other_end = 7_u64 - i;
     let current = &values^[current_start..current_end];
     let other = &values^[other_start..other_end];
-    if 0_u64 < current^.len {{
-      if 0_u64 < other^.len {{
-        let a = stamp_range(part: current);
-        let b = stamp_range(part: other);
-      }}
-    }}
+    let a = stamp_range(part: current);
+    let b = stamp_range(part: other);
   }}
   return 0_u64;
 }}
@@ -2307,9 +2302,7 @@ fn shifted(values: &Array<u8, 8>) -> result: u64 writes(values) {{
     let other = &values^[other_start..other_end];
     let observed = saved;
     if 0_u64 < observed^.len {{
-      if 0_u64 < other^.len {{
-        let conflict = stamp_two_ranges(first: observed, second: other);
-      }}
+      let conflict = stamp_two_ranges(first: observed, second: other);
     }}
     set saved = &current^[0_u64..current^.len];
   }}
@@ -2435,14 +2428,14 @@ fn halves(values: &Array<u8, 4>, split: u64) -> result: u64 writes(values) contr
 /// does not join the `let` that formed the reference in a run.
 #[test]
 fn a_set_through_a_reference_reads_the_let_that_formed_it() {
-    let source = br#"fn clear(values: &Array<u8, 4>) -> result: unit writes(values) {
+    let source = br#"fn wipe(values: &Array<u8, 4>) -> result: unit writes(values) {
   let head = &values^[0_u64..2_u64];
   set head^[0_u64] = 0_u8;
   return unit;
 }
 "#;
     let table = permission_of(source);
-    let permissions = function_table(&table, "clear");
+    let permissions = function_table(&table, "wipe");
     assert!(
         !permissions.runs.iter().any(|run| {
             run.sites
@@ -3025,7 +3018,7 @@ fn bound_await(body: &str) -> Option<u32> {
          fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure waits {{\n  \
          std::fs::close_directory(factory: &factory, directory: move directory);\n  return weight;\n}}\n\n\
          fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
-         let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;\n  \
+         let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;\n  \
          let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;\n  \
          std::fs::close_directory_write(factory: &handles, directory: move cwd_write);\n  \
          let factory = std::io::factory_share(factory: &handles);\n  \
@@ -3083,7 +3076,7 @@ fn a_bound_context_is_joined_before_a_statement_that_may_leave_its_block() {
     // precedes the whole loop.
     assert_eq!(
         bound_await(
-            "  let other = 5_u64;\n  loop @spin {\n    if other > 3_u64 {\n      return std::process::exit_status(code: 1_u8);\n    }\n    break @spin;\n  }\n  let total = bound +wrap other;"
+            "  let other = std::text::args_count(args: &unused_args);\n  loop @spin {\n    if other > 3_u64 {\n      return std::process::exit_status(code: 1_u8);\n    }\n    break @spin;\n  }\n  let total = bound +wrap other;"
         ),
         Some(2)
     );
@@ -3173,8 +3166,8 @@ fn a_bound_context_is_joined_before_a_give_that_leaves_its_block() {
     // A `give` inside a value construct delivers to that construct.
     assert_eq!(
         started_await(
-            "  let bound = spawn weigh(weight: 7_u64);\n  let limit = 5_u64;\n  \
-             let picked = if limit > 3_u64 {\n    give 1_u64;\n  } else {\n    give 2_u64;\n  }\n  \
+            "  let bound = spawn weigh(weight: 7_u64);\n  let (low, high) = pair(value: 5_u64);\n  \
+             let picked = if low > 3_u64 {\n    give 1_u64;\n  } else {\n    give 2_u64;\n  }\n  \
              let total = bound +wrap picked;"
         ),
         Some(3)
@@ -3182,7 +3175,7 @@ fn a_bound_context_is_joined_before_a_give_that_leaves_its_block() {
     // A `give` of the arm the `let` stands in leaves its block.
     assert_eq!(
         started_await(
-            "  let limit = 5_u64;\n  let picked = if limit > 3_u64 {\n    \
+            "  let (low, high) = pair(value: 5_u64);\n  let picked = if low > 3_u64 {\n    \
              let bound = spawn weigh(weight: 7_u64);\n    let other = 2_u64;\n    give other;\n  \
              } else {\n    give 2_u64;\n  }\n  let total = picked +wrap 1_u64;"
         ),
@@ -3218,14 +3211,14 @@ fn a_bound_context_is_joined_before_an_atomic_statement_or_match_that_names_it()
     // A match arm's body names it.
     assert_eq!(
         started_await(&format!(
-            "{prefix}  let limit = 5_u64;\n  if limit > 3_u64 {{\n    let copied = bound;\n  }}"
+            "{prefix}  let (low, high) = pair(value: 5_u64);\n  if low > 3_u64 {{\n    let copied = bound;\n  }}"
         )),
         Some(2)
     );
     // A match arm's body that does not name it proceeds alongside.
     assert_eq!(
         started_await(&format!(
-            "{prefix}  let limit = 5_u64;\n  if limit > 3_u64 {{\n    let copied = limit;\n  }}\n  \
+            "{prefix}  let (low, high) = pair(value: 5_u64);\n  if low > 3_u64 {{\n    let copied = low;\n  }}\n  \
              let total = bound +wrap 1_u64;"
         )),
         Some(3)
@@ -3340,11 +3333,11 @@ fn a_bound_context_unused_in_its_block_is_joined_at_the_block_end() {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let factory = std::io::factory_share(factory: &handles);
-  let flag = 1_u64;
+  let flag = std::text::args_count(args: &unused_args);
   if flag == 1_u64 {
     let bound = spawn weigh(factory: move factory, directory: move cwd, weight: 7_u64);
     let other = 5_u64;

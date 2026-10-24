@@ -20,13 +20,19 @@ rather than reporting an empty success.
 Because it tests the LANGUAGE (source -> verdict), not a compiler's internals, this
 suite outlives compiler implementations.
 
-Verdict = ("accept",) | ("reject", rule, span?) | ("run", exit) | ("unsupported", why)
+Verdict = ("accept",) | ("reject", [DIAGNOSTIC...]) | ("run", exit) | ("unsupported", why)
 
 Manifest line (JSON):
   {"id": str, "rules": [rule_id...], "expect": EXPECT, "arrange": ARRANGE?,
    "status": "runnable", "doc": str}
-  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R,"span":SPAN?} | {"kind":"run","exit":N}
+  EXPECT = {"kind":"accept"} | {"kind":"reject","rule":R,"span":SPAN?}
+         | {"kind":"reject","diagnostics":[DIAGNOSTIC...]} | {"kind":"run","exit":N}
          | {"kind":"unsupported","why":str}
+  DIAGNOSTIC = {"rule":R, "source_ordinal":N, "byte_start":N, "byte_end":N,
+                "expected":[terminal_label...]?}
+  A rule-only rejection asserts exactly one diagnostic. A diagnostics list is
+  nonempty and fixes every rejection in report order; expected, when present,
+  fixes the exact ordered terminal labels rather than diagnostic prose.
 
   SPAN = {"start":N,"end":N}: zero-based, half-open byte offsets in the
          case's single `.wf` source, as DIAG-1 defines them. Only a reject
@@ -54,11 +60,19 @@ never executed must not carry one. Every byte string is lowercase hex so the
 corpus can express non-UTF-8 argument and path bytes exactly and diff them
 readably:
 
-  ARRANGE = {"argv": ["<hex>"...]?,          the complete native argument vector
+  ARRANGE = {"argv": [BYTES...]?,            the complete native argument vector
              "stdin": "<hex>"?,              standard input body
              "files": [FIXTURE...]?,         fixtures under the initial directory
              "redirect": {"stdout": NAME?, "stderr": NAME?}?}
-  FIXTURE = {"path":"<hex>", "bytes":"<hex>"} | {"path":"<hex>", "directory":true}
+  FIXTURE = {"path":"<hex>", "bytes":BYTES} | {"path":"<hex>", "directory":true}
+          | {"path":"<hex>", "link":"<hex>"}
+  BYTES   = "<hex>" | {"initial":"<hex>"}
+
+A `link` fixture is a symbolic link whose target is the given bytes. A BYTES
+object denotes the absolute path of the invocation's initial directory, a `/`,
+then the given bytes, so a case can name a file by an absolute path although
+the adapter chooses where the initial directory is. Fixtures are made in
+listed order.
 
 `argv` is the COMPLETE native argument vector, position 0 included, exactly as
 the ordinary Args library value delivers it: `argv[i]` is what the program
@@ -95,9 +109,26 @@ ADAPTER = None
 
 def matches(v, expect):
     k = expect["kind"]
+    if k == "reject" and v[0] == "reject":
+        if "diagnostics" in expect:
+            reached = v[1]
+            return (isinstance(reached, list)
+                    and len(reached) == len(expect["diagnostics"])
+                    and all(all(actual.get(key) == value for key, value in wanted.items())
+                            for actual, wanted in zip(reached, expect["diagnostics"])))
+        if isinstance(v[1], str):
+            # A rule-only verdict may carry the rejection's span as a third element.
+            return (v[1] == expect["rule"]
+                    and ("span" not in expect or (len(v) > 2 and v[2] == expect["span"])))
+        if not (isinstance(v[1], list) and len(v[1]) == 1
+                and v[1][0].get("rule") == expect["rule"]):
+            return False
+        # The span is in the case's single source, bundle ordinal 0.
+        return ("span" not in expect
+                or (v[1][0].get("source_ordinal") == 0
+                    and v[1][0].get("byte_start") == expect["span"]["start"]
+                    and v[1][0].get("byte_end") == expect["span"]["end"]))
     return ((k == "accept" and v[0] == "accept")
-            or (k == "reject" and v[0] == "reject" and v[1] == expect["rule"]
-                and ("span" not in expect or (len(v) > 2 and v[2] == expect["span"])))
             or (k == "run" and v[0] == "run" and v[1] == expect["exit"])
             # `why` is the adapter's prose; the corpus asserts the verdict kind,
             # never a diagnostic's wording.
@@ -191,6 +222,16 @@ def hex_errors(label, value, allow_empty=True):
     return []
 
 
+def arranged_bytes_errors(label, value):
+    """A BYTES value: a hex byte string, or an object whose one member
+    `initial` is the hex suffix after the initial directory's absolute path."""
+    if isinstance(value, dict):
+        if set(value) != {"initial"}:
+            return [f"{label} must be a hex byte string or an object with exactly the member initial"]
+        return hex_errors(f"{label}.initial", value["initial"])
+    return hex_errors(label, value)
+
+
 def arrange_errors(label, arrange):
     """Check one invocation arrangement. Keys are a closed set: an unknown key is a
     silently ignored intention, which is worse in a corpus than a rejected line."""
@@ -207,7 +248,7 @@ def arrange_errors(label, arrange):
             errors.append(f"{label}: argv must be a nonempty list")
         else:
             for position, argument in enumerate(argv):
-                errors += hex_errors(f"{label}: argv[{position}]", argument)
+                errors += arranged_bytes_errors(f"{label}: argv[{position}]", argument)
 
     if "stdin" in arrange:
         errors += hex_errors(f"{label}: stdin", arrange["stdin"])
@@ -223,16 +264,18 @@ def arrange_errors(label, arrange):
                 if not isinstance(fixture, dict):
                     errors.append(f"{where} must be an object")
                     continue
-                unknown = sorted(set(fixture) - {"path", "bytes", "directory"})
+                unknown = sorted(set(fixture) - {"path", "bytes", "directory", "link"})
                 if unknown:
                     errors.append(f"{where}: unknown fixture keys: {' '.join(unknown)}")
                 errors += hex_errors(f"{where}.path", fixture.get("path"), allow_empty=False)
                 paths.append(fixture.get("path"))
-                is_file, is_directory = "bytes" in fixture, "directory" in fixture
-                if is_file == is_directory:
-                    errors.append(f"{where} must carry exactly one of bytes, directory")
-                elif is_file:
-                    errors += hex_errors(f"{where}.bytes", fixture["bytes"])
+                kinds = [kind for kind in ("bytes", "directory", "link") if kind in fixture]
+                if len(kinds) != 1:
+                    errors.append(f"{where} must carry exactly one of bytes, directory, link")
+                elif kinds == ["bytes"]:
+                    errors += arranged_bytes_errors(f"{where}.bytes", fixture["bytes"])
+                elif kinds == ["link"]:
+                    errors += hex_errors(f"{where}.link", fixture["link"], allow_empty=False)
                 elif fixture["directory"] is not True:
                     errors.append(f"{where}.directory must be true")
             duplicate = sorted({path for path in paths if paths.count(path) > 1})
@@ -330,6 +373,10 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
         kind = expect.get("kind") if isinstance(expect, dict) else None
         if kind not in expectation_fields:
             errors.append(f"{case_id}: invalid expectation {kind!r}")
+        elif kind == "reject" and "diagnostics" in expect:
+            if set(expect) != {"kind", "diagnostics"}:
+                errors.append(f"{case_id}: reject expectation needs exactly one of rule, diagnostics")
+            errors += diagnostic_errors(case_id, expect["diagnostics"], case_rules)
         elif set(expect) != expectation_fields[kind] and not (
             kind == "reject" and set(expect) == expectation_fields[kind] | {"span"}
         ):
@@ -387,6 +434,40 @@ def validate_manifest(cases, annots, root=ROOT, cases_dir=CASES):
         raise ValueError("invalid conformance manifest:\n  " + "\n  ".join(errors))
 
 
+def diagnostic_errors(case_id, diagnostics, case_rules):
+    """Ordered rejection evidence is closed data, never a subset match."""
+    if not isinstance(diagnostics, list) or not diagnostics:
+        return [f"{case_id}: diagnostics must be a nonempty list"]
+    errors = []
+    coordinates = []
+    required = {"rule", "source_ordinal", "byte_start", "byte_end"}
+    for position, diagnostic in enumerate(diagnostics):
+        label = f"{case_id}: diagnostics[{position}]"
+        if not isinstance(diagnostic, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        if not required <= set(diagnostic) or set(diagnostic) - required - {"expected"}:
+            errors.append(f"{label}: fields must be rule, source_ordinal, byte_start, byte_end and optional expected")
+        if diagnostic.get("rule") not in case_rules:
+            errors.append(f"{label}: reject rule must appear in case rules")
+        coordinate = [diagnostic.get(key) for key in ("source_ordinal", "byte_start", "byte_end")]
+        if any(type(value) is not int or value < 0 for value in coordinate):
+            errors.append(f"{label}: coordinate fields must be nonnegative integers")
+        elif coordinate[1] > coordinate[2]:
+            errors.append(f"{label}: byte_start must not exceed byte_end")
+        else:
+            coordinates.append(tuple(coordinate[:2]))
+        if "expected" in diagnostic:
+            expected = diagnostic["expected"]
+            if (not isinstance(expected, list) or not expected
+                    or any(not isinstance(terminal, str) or not terminal for terminal in expected)
+                    or len(set(expected)) != len(expected)):
+                errors.append(f"{label}: expected must be a nonempty list of distinct terminal labels")
+    if coordinates != sorted(coordinates):
+        errors.append(f"{case_id}: diagnostics must be in source ordinal and byte order")
+    return errors
+
+
 def coverage(cases, annots):
     rules, spec_name = spec_rule_ids()
     tagged, pos, neg = set(), set(), set()
@@ -398,7 +479,10 @@ def coverage(cases, annots):
         # expectation is a qualification stop: neither a positive exercise of
         # the rule nor a rejection citing it.
         if kind == "reject":
-            neg.add(c["expect"]["rule"])
+            if "diagnostics" in c["expect"]:
+                neg |= {diagnostic["rule"] for diagnostic in c["expect"]["diagnostics"]}
+            else:
+                neg.add(c["expect"]["rule"])
         elif kind != "unsupported":
             pos |= {base_rule(r) for r in c["rules"]}
     annotated = {a["rule"] for a in annots} & rules

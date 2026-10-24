@@ -118,7 +118,7 @@ impl Checker<'_, '_> {
         self.types.declarations.issue_node(SemanticRule::Snap1, node, SemanticIssueKind::SnapshotResource { owned_path, mechanical_fix: "select a value type whose complete owned graph contains only primitives, declared structs and enums, storage shapes and owned Box contents" })
     }
     pub(super) fn held_failure<T>(&self, node: NodeId, reason: String) -> Result<T, CheckStop> {
-        self.types.declarations.issue_node(SemanticRule::Hold1, node, SemanticIssueKind::InvalidHeldContract { reason, mechanical_fix: REPAIR })
+        self.types.declarations.issue_node(SemanticRule::Hold1, node, SemanticIssueKind::InvalidHeldContract { reason, mechanical_fix: REPAIR.to_owned() })
     }
 
     pub(super) fn form_held_parameters(&self, node: NodeId, parameters: &[ParameterSignature], waits: bool, effects: &EffectSet) -> Result<Vec<usize>, CheckStop> {
@@ -277,7 +277,10 @@ impl Checker<'_, '_> {
                     && !writes.iter().any(|(_, write)| places_overlap(&BlockSeparations, &ResolvedPlace::binding(binding), write))
                 { value } else { CapturedValue::unknown() }
             }
-            CapturedTerm::Superseded(_) | CapturedTerm::Opaque => CapturedValue::unknown(),
+            CapturedTerm::Superseded(_)
+            | CapturedTerm::Place(_)
+            | CapturedTerm::SupersededPlace(_)
+            | CapturedTerm::Opaque => CapturedValue::unknown(),
         };
         let mut result = place.clone();
         // A Descendant identity denotes a current target within one state,

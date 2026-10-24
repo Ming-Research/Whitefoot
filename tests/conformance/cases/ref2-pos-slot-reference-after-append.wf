@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn probe(front: &Slots<u64, 8>, back: &Slots<u64, 8>) -> result: u64 writes(front), writes(back) contract {
+  requires front^.len >= 1_u64;
+  requires back^.len <= front^.cap - front^.len;
+} {
+  doc "Append preserves the destination's entry length lower bound, so its first slot reference stays valid.";
+  let first = &front^[0_u64];
+  append(destination: front, source: back);
+  return first^;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

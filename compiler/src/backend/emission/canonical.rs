@@ -601,6 +601,13 @@ impl Module {
                         {
                             return Err(BackendFailure::InvalidIr);
                         }
+                        // A source constant keeps its structured source parts,
+                        // so a cached module still rebinds it [STOR-7].
+                        if let Some(description) = canonical.source_constants.get(index) {
+                            imported
+                                .source_constants
+                                .insert(imported.entities.len(), description.clone());
+                        }
                         imported.define(value);
                     }
                 }
@@ -657,6 +664,11 @@ impl Module {
                 _ => {}
             }
         }
+        // The closure was emitted from the same sources; its source readings
+        // decide whether a cached module may be reused.
+        imported
+            .source_path_constraints
+            .extend(canonical.source_path_constraints.iter().cloned());
         self.append(imported);
         Ok(())
     }

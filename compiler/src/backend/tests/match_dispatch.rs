@@ -1461,20 +1461,14 @@ fn main() -> status: ExitStatus pure {
   let c3 = Op::Halt();
   let p3 = push(code: &code, op: c3);
   let regs = box_slots_new::<u64>(capacity: 2_u64);
-  if regs.inner.len < regs.inner.cap {
-    place_back(window: &regs.inner, value: 0_u64);
-  }
-  if regs.inner.len < regs.inner.cap {
-    place_back(window: &regs.inner, value: 1000_u64);
-  }
+  place_back(window: &regs.inner, value: 0_u64);
+  place_back(window: &regs.inner, value: 1000_u64);
   if code.inner.len > 0_u64 {
-    if regs.inner.len >= 2_u64 {
-      let r = NAME(code: &code, regs: &regs, start: 0_u64);
-      if r == 3000_u64 {
-        return exit_status(code: 0_u8);
-      }
-      return exit_status(code: 1_u8);
+    let r = NAME(code: &code, regs: &regs, start: 0_u64);
+    if r == 3000_u64 {
+      return exit_status(code: 0_u8);
     }
+    return exit_status(code: 1_u8);
   }
   return exit_status(code: 2_u8);
 }
@@ -1646,7 +1640,7 @@ fn rarely_read_values_spill_before_a_box_read_through_projections_and_a_pin() {
         .replace("r == 3000_u64", "r == 3030_u64")
         .replace(
             "  if code.inner.len > 0_u64 {",
-            "  let rare = box_slots_new::<u64>(capacity: 1_u64);\n  if rare.inner.len < rare.inner.cap {\n    place_back(window: &rare.inner, value: 0_u64);\n  }\n  if code.inner.len > 0_u64 {",
+            "  let rare = box_slots_new::<u64>(capacity: 1_u64);\n  place_back(window: &rare.inner, value: 0_u64);\n  if code.inner.len > 0_u64 {",
         );
     let module = emit(source.as_bytes());
     assert_split(&module, "wf_pressure", 4);
@@ -1839,22 +1833,18 @@ fn main() -> status: ExitStatus pure {
   let c3 = Op::Halt();
   let p3 = push(code: &code, op: c3);
   let regs = box_slots_new::<u64>(capacity: 1_u64);
-  if regs.inner.len < regs.inner.cap {
-    place_back(window: &regs.inner, value: 0_u64);
-  }
+  place_back(window: &regs.inner, value: 0_u64);
   if code.inner.len > 0_u64 {
-    if regs.inner.len >= 1_u64 {
-      let r = run(code: &code, regs: &regs, start: 0_u64, seed: 0_u64, steps: 1000_u64, e0: 1_u64, e1: 2_u64, e2: 3_u64, e3: 4_u64, e4: 5_u64, e5: 6_u64, e6: 7_u64, e7: 8_u64, e8: 9_u64, e9: 10_u64, e10: 11_u64, e11: 12_u64, e12: 13_u64, e13: 14_u64, e14: 15_u64, e15: 16_u64, e16: 17_u64, e17: 18_u64, e18: 19_u64, e19: 20_u64, e20: 21_u64, e21: 22_u64, e22: 23_u64, e23: 24_u64);
-      match r {
-        Done(value: v) => {
-          if v == 404000_u64 {
-            return exit_status(code: 0_u8);
-          }
-          return exit_status(code: 1_u8);
+    let r = run(code: &code, regs: &regs, start: 0_u64, seed: 0_u64, steps: 1000_u64, e0: 1_u64, e1: 2_u64, e2: 3_u64, e3: 4_u64, e4: 5_u64, e5: 6_u64, e6: 7_u64, e7: 8_u64, e8: 9_u64, e9: 10_u64, e10: 11_u64, e11: 12_u64, e12: 13_u64, e13: 14_u64, e14: 15_u64, e15: 16_u64, e16: 17_u64, e17: 18_u64, e18: 19_u64, e19: 20_u64, e20: 21_u64, e21: 22_u64, e22: 23_u64, e23: 24_u64);
+    match r {
+      Done(value: v) => {
+        if v == 404000_u64 {
+          return exit_status(code: 0_u8);
         }
-        Failed() => {
-          return exit_status(code: 3_u8);
-        }
+        return exit_status(code: 1_u8);
+      }
+      Failed() => {
+        return exit_status(code: 3_u8);
       }
     }
   }

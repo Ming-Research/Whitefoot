@@ -859,4 +859,51 @@ mod tests {
             "view support is killed independently"
         );
     }
+
+    /// An exclusion decides a comparison registered after the closure was
+    /// remembered. The old closure would answer the new goal at query time
+    /// but never materialized its opaque sign and proof, which a later
+    /// snapshot reads, so the remembered view must be recomputed.
+    #[test]
+    fn an_appended_goal_an_exclusion_decides_recomputes_the_remembered_view() {
+        use crate::semantic::model::CheckedIntegerOperation;
+        let (state, terms, mut goals, mut ledger, _term, expression) = fixture(&[5]);
+        goals.mark_metadata_complete(expression);
+        let first = close(&state, &terms, &goals, &mut ledger);
+        let comparison = GoalExpression::Operation {
+            row: GoalOperation::Integer {
+                operation: CheckedIntegerOperation::NotEqual,
+                operand_type: CheckedType::Integer(IntegerType::U64),
+            },
+            type_arguments: Vec::new(),
+            const_arguments: Vec::new(),
+            result: CheckedType::Bool,
+            arguments: vec![
+                goals.expression(expression).clone(),
+                GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                    ty: IntegerType::U64,
+                    bits: 5,
+                })),
+            ],
+        };
+        let goal = goals.intern(comparison, None, None, goals.support(expression).to_vec());
+        let exact_expression = goals.expression(expression).clone();
+        goals
+            .integer_comparisons
+            .insert(goal, (exact_expression, 5, GoalSign::Positive));
+        goals.mark_metadata_complete(goal);
+        assert!(first.derives_goal(goal, GoalSign::Positive, &goals));
+        let key = (goals.canonical(goal), GoalSign::Positive);
+        assert!(!first.opaque.contains(&key));
+
+        let second = close(&state, &terms, &goals, &mut ledger);
+        assert!(!Rc::ptr_eq(&first, &second));
+        let fresh = close_with_excluded_term(&state, &terms, &goals, &mut ledger, None);
+        assert!(second.opaque.contains(&key));
+        assert_eq!(
+            second.opaque_proofs.get(&key),
+            fresh.opaque_proofs.get(&key)
+        );
+        assert!(second.opaque_proofs.contains_key(&key));
+    }
 }

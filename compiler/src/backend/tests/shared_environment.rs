@@ -405,7 +405,7 @@ fn a_borrow_passed_on_unchanged_on_every_edge_joins_the_record() {
     // branches: window now joins the record, so it was the narrowed edge
     // alone that kept it out above.
     let source = PROGRAM
-        .replacen("      let rest = &window^[start..count];\n", "", 1)
+        .replacen("    let rest = &window^[start..count];\n", "", 1)
         .replacen("window: rest,", "window: window,", 1);
     assert!(
         !source.contains("window^[start..count]") && !source.contains("window: rest"),

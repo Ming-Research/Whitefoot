@@ -16,7 +16,13 @@ use whitefoot::{
     split_module,
 };
 
-use crate::support::{CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects};
+use crate::support::{
+    CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects,
+    append_runtime_objects_with_guard_counters, require_sanitized, sanitized,
+};
+// Only `build_app`, which exists on Linux alone, selects a sanitizer.
+#[cfg(target_os = "linux")]
+use crate::support::sanitizer;
 pub(super) use crate::support::{ProgramChild, output_within, run_command};
 
 static NEXT_EXECUTION: AtomicU64 = AtomicU64::new(0);
@@ -118,6 +124,24 @@ fn link_module_with_driver_arguments(
     directory: &Path,
     driver_arguments: &[&str],
 ) -> Result<(), String> {
+    link_module_with_driver_and_counters(
+        units,
+        executable,
+        llvm,
+        directory,
+        driver_arguments,
+        false,
+    )
+}
+
+fn link_module_with_driver_and_counters(
+    units: &[&Path],
+    executable: &Path,
+    llvm: &str,
+    directory: &Path,
+    driver_arguments: &[&str],
+    guard_counters: bool,
+) -> Result<(), String> {
     let driver = directory.join("driver.c");
     // An explicit host caller can supply a library's arguments and result route.
     if !driver.exists() {
@@ -125,6 +149,7 @@ fn link_module_with_driver_arguments(
     }
     let mut command = Command::new(CLANG);
     for unit in units {
+        require_sanitized(&std::fs::read_to_string(unit).expect("read an emitted unit"));
         command.arg("-x").arg("ir").arg(unit);
     }
     command.args(COMPILE_ARGUMENTS);
@@ -141,8 +166,11 @@ fn link_module_with_driver_arguments(
     // when the module it wraps does not.
     let needs_heap = whitefoot::module_requires_heap_runtime(llvm)
         || std::fs::read_to_string(&driver).is_ok_and(|source| source.contains("wf__empty_window"));
-    let (sources, objects) =
-        append_runtime_objects(&mut command, directory, None, None, needs_heap);
+    let (sources, objects) = if guard_counters {
+        append_runtime_objects_with_guard_counters(&mut command, directory, needs_heap)
+    } else {
+        append_runtime_objects(&mut command, directory, None, None, needs_heap)
+    };
     let compilation = run_command(
         command
             .args(HOST_OPTIMIZATION_ARGUMENTS)
@@ -213,18 +241,23 @@ fn unit_and_exit_status_repairs_keep_running_in_the_program_harness() {
             CompilerLimits::default(),
         )
         .expect("the executable entry checks");
-        assert_eq!(compile_and_run(&llvm).status.code(), Some(expected));
+        assert_eq!(
+            compile_and_run(&sanitized(llvm)).status.code(),
+            Some(expected)
+        );
     }
 }
 
 #[test]
 fn a_host_driver_can_call_a_checked_library_without_the_bundled_runner() {
     let source = b"fn main() -> result: u8 pure {\n  return 7_u8;\n}\n";
-    let mut llvm = compile(
-        &[SourceInput::new("entry.wf", source)],
-        CompilerLimits::default(),
+    let mut llvm = sanitized(
+        compile(
+            &[SourceInput::new("entry.wf", source)],
+            CompilerLimits::default(),
+        )
+        .expect("a u8 entry is valid library source"),
     )
-    .expect("a u8 entry is valid library source")
     .into_string();
     // The C host supplies the floor ABI's callback. Declaring it makes the
     // fallback's call valid LLVM without generating a bundled entry runner.
@@ -306,6 +339,9 @@ pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
         .arg(&cache)
         .arg("-o")
         .arg(&executable);
+    if let Some(selected) = sanitizer() {
+        command.arg("--sanitize").arg(selected.name());
+    }
     // A cold build compiles the whole program; the ordinary child deadline
     // is sized for running programs, not for building one.
     let output = crate::support::timed("whitefoot-and-native-app-build", || {
@@ -336,7 +372,7 @@ fn compile_app(root: &Path, name: &str, entry: &str) -> whitefoot::LlvmModule {
                 .in_module(source.module, source.role)
         })
         .collect::<Vec<_>>();
-    crate::support::timed("whitefoot-compile", || {
+    sanitized(crate::support::timed("whitefoot-compile", || {
         whitefoot::compile_module_program(
             &graph,
             &inputs,
@@ -345,18 +381,20 @@ fn compile_app(root: &Path, name: &str, entry: &str) -> whitefoot::LlvmModule {
             OverlapLowering::On,
         )
         .unwrap_or_else(|failure| panic!("{name} must compile: {failure}"))
-    })
+    }))
 }
 
 /// Compiles the explicit sequential lowering used by paired corpus controls.
 pub fn compile_program_without_overlap(name: &str) -> whitefoot::LlvmModule {
     let source = read_program(name);
-    compile_with_overlap(
-        &[SourceInput::new(name, &source)],
-        CompilerLimits::default(),
-        OverlapLowering::Off,
+    sanitized(
+        compile_with_overlap(
+            &[SourceInput::new(name, &source)],
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+        )
+        .expect("sequential program corpus source must compile"),
     )
-    .expect("sequential program corpus source must compile")
 }
 
 pub fn compile_programs(names: &[&str]) -> whitefoot::LlvmModule {
@@ -369,9 +407,9 @@ pub fn compile_programs(names: &[&str]) -> whitefoot::LlvmModule {
         .zip(&sources)
         .map(|(name, source)| SourceInput::new(name, source))
         .collect::<Vec<_>>();
-    crate::support::timed("whitefoot-compile", || {
+    sanitized(crate::support::timed("whitefoot-compile", || {
         compile(&inputs, CompilerLimits::default()).expect("program corpus source must compile")
-    })
+    }))
 }
 
 /// [`compile_programs_with_overlap`] returning a compilation failure to the
@@ -399,6 +437,7 @@ fn try_compile_programs_with_overlap_mode(
     crate::support::timed("whitefoot-compile-par", || {
         compile_with_overlap(&inputs, CompilerLimits::default(), overlap)
     })
+    .map(sanitized)
 }
 
 /// Compiles one corpus program with the [PAR-1 candidate] overlap lowering
@@ -434,14 +473,14 @@ pub fn compile_sources_with_cli_parallel_defaults(
         .iter()
         .map(|(name, source)| SourceInput::new(name, source))
         .collect::<Vec<_>>();
-    crate::support::timed("whitefoot-compile-par", || {
+    sanitized(crate::support::timed("whitefoot-compile-par", || {
         compile_with_overlap(
             &inputs,
             CompilerLimits::default(),
             OverlapLowering::OnWithCallGrain,
         )
         .expect("integration sources must compile")
-    })
+    }))
 }
 
 /// Compiles one corpus program and returns its permission ledger lines.
@@ -465,9 +504,9 @@ pub fn compile_sources(sources: &[(&str, &[u8])]) -> whitefoot::LlvmModule {
         .iter()
         .map(|(name, source)| SourceInput::new(name, source))
         .collect::<Vec<_>>();
-    crate::support::timed("whitefoot-compile", || {
+    sanitized(crate::support::timed("whitefoot-compile", || {
         compile(&inputs, CompilerLimits::default()).expect("integration sources must compile")
-    })
+    }))
 }
 
 pub fn compile_and_run(llvm: &str) -> Output {
@@ -521,6 +560,21 @@ pub fn build_program_with_driver_arguments(
     driver: Option<&str>,
     driver_arguments: &[&str],
 ) -> CompiledProgram {
+    build_program_with_driver_and_counters(llvm, driver, driver_arguments, false)
+}
+
+/// Links the program and its observer with the bridge's existing guard
+/// counters enabled; every other native unit retains its ordinary build.
+pub fn build_program_with_guard_counters(llvm: &str, driver: &str) -> CompiledProgram {
+    build_program_with_driver_and_counters(llvm, Some(driver), &[], true)
+}
+
+fn build_program_with_driver_and_counters(
+    llvm: &str,
+    driver: Option<&str>,
+    driver_arguments: &[&str],
+    guard_counters: bool,
+) -> CompiledProgram {
     let sequence = NEXT_EXECUTION.fetch_add(1, Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
         "whitefoot-program-{}-{sequence}",
@@ -534,12 +588,13 @@ pub fn build_program_with_driver_arguments(
         std::fs::write(directory.join("driver.c"), driver).expect("write program host driver");
     }
     crate::support::timed("native-build", || {
-        link_module_with_driver_arguments(
+        link_module_with_driver_and_counters(
             &[&module],
             &executable,
             llvm,
             &directory,
             driver_arguments,
+            guard_counters,
         )
         .unwrap_or_else(|failure| panic!("{failure}"));
     });
@@ -658,9 +713,21 @@ impl CompiledProgram {
     /// Fresh process with explicit scheduler settings; used for the shipped
     /// report and policy integration, never a test observer's synthetic report.
     pub fn run_with_settings(&self, workers: Option<&str>, settings: &[(&str, &str)]) -> Output {
+        self.run_with_settings_and_arguments(workers, settings, &[])
+    }
+
+    /// Runs one fresh process with explicit scheduler settings and invocation
+    /// arguments, retaining the environment handling of [`Self::run_with_settings`].
+    pub fn run_with_settings_and_arguments(
+        &self,
+        workers: Option<&str>,
+        settings: &[(&str, &str)],
+        arguments: &[&[u8]],
+    ) -> Output {
         let mut command = Command::new(&self.executable);
         command
             .current_dir(&self.directory)
+            .args(arguments.iter().map(|bytes| invocation_argument(bytes)))
             .env_remove("WF_SCHED_REPORT");
         match workers {
             Some(count) => command.env("WF_WORKERS", count),

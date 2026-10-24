@@ -84,7 +84,10 @@ impl Reasoning<'_, '_, '_> {
         state: &mut ProofFlowState,
     ) {
         if !matches!(captured.capture, CaptureId::Source(_))
-            || !matches!(captured.term, CapturedTerm::Binding(_))
+            || !matches!(
+                captured.term,
+                CapturedTerm::Binding(_) | CapturedTerm::Place(_)
+            )
         {
             return;
         }
@@ -183,6 +186,28 @@ impl Judging<'_, '_, '_> {
         } else {
             self.input.range_length_readings(&goal.root)
         };
+        let lost_header = if disposition == CallGoalDisposition::Unproved
+            && !written.lost_headers.is_empty()
+        {
+            let mut vocabulary = self.vocabulary.explanation_copy();
+            let mut explanation = Reasoning {
+                input: self.input,
+                vocabulary: &mut vocabulary,
+            };
+            let target = explanation.affine_goal_ordering_target(&goal.root, context.affine);
+            let mut state = written.clone();
+            state.facts = context.facts.clone();
+            state.affine = context.affine.clone();
+            explanation.explain_lost_header(
+                &state,
+                &[ProofGoal::Signed {
+                    expression: &goal.root,
+                    affine: target.as_ref(),
+                }],
+            )
+        } else {
+            None
+        };
         self.output.call_goals.push(CallGoalOutcome {
             node_path: node_path.clone(),
             callee,
@@ -197,6 +222,7 @@ impl Judging<'_, '_, '_> {
             derivation,
             written_before: written.written_before(disposition == CallGoalDisposition::Discharged),
             range_lengths,
+            lost_header,
         });
         (disposition, derivation)
     }
@@ -210,11 +236,32 @@ impl Judging<'_, '_, '_> {
     /// pair is discharged here by the fixed [ENT-6] families under [MSR-4]'s
     /// disposition, and a discharged pair is recorded on the current edge so
     /// that later dominated [OWN-7] questions can read it. A set reaches this
-    /// judgment after RHS effects, using target captures evaluated before it.
+    /// judgment after RHS effects, with its target evaluated in the state
+    /// they left [SET-1].
     pub(super) fn judge_call_separations(
         &mut self,
         site: &crate::NodePath,
         state: &mut ProofFlowState,
+    ) -> bool {
+        self.judge_event_preservations(site, state, false)
+    }
+
+    /// [OP-10] ask the captured selection bound in the call's exit state,
+    /// after its ordinary kills and exit postconditions. Later guards may
+    /// not restore a reference that this event invalidates [REF-2].
+    pub(super) fn judge_window_bounds(
+        &mut self,
+        site: &crate::NodePath,
+        state: &mut ProofFlowState,
+    ) {
+        self.judge_event_preservations(site, state, true);
+    }
+
+    fn judge_event_preservations(
+        &mut self,
+        site: &crate::NodePath,
+        state: &mut ProofFlowState,
+        post_call: bool,
     ) -> bool {
         let pending: Vec<_> = self
             .input
@@ -223,7 +270,15 @@ impl Judging<'_, '_, '_> {
             .iter()
             .enumerate()
             .filter(|(query, _)| !self.output.judged_separations.contains(query))
-            .filter(|(_, separation)| separation.site.components().starts_with(site.components()))
+            .filter(|(_, separation)| {
+                if post_call {
+                    separation.occasion == CheckedSeparationOccasion::WindowBound
+                        && separation.site == *site
+                } else {
+                    separation.occasion != CheckedSeparationOccasion::WindowBound
+                        && separation.site.components().starts_with(site.components())
+                }
+            })
             .map(|(query, separation)| (query, separation.clone()))
             .collect();
         let mut all_discharged = true;
@@ -309,8 +364,11 @@ impl Judging<'_, '_, '_> {
                     .prove_index_outside_range(index, range, state),
                 CheckedCallSeparationPositions::RangeWithinLength(range) => {
                     separation.window.as_ref().and_then(|window| {
-                        self.reasoning()
-                            .range_within_length_proof(window, range, state)
+                        if separation.occasion == CheckedSeparationOccasion::WindowBound {
+                            self.reasoning().range_bound_proof(window, range, state)
+                        } else {
+                            self.reasoning().range_within_length_proof(window, range, state)
+                        }
                     })
                 }
             };
@@ -362,6 +420,9 @@ impl Judging<'_, '_, '_> {
                         u32::try_from(query).expect("atomic-target separation queries exceed u32"),
                     )
                 }
+                (None, CheckedSeparationOccasion::WindowBound) => {
+                    unreachable!("window bounds always belong to a reference use")
+                }
                 (None, CheckedSeparationOccasion::Call) => ObligationFamily::CallSeparation(
                     u32::try_from(query).expect("call-separation queries exceed u32"),
                 ),
@@ -373,6 +434,16 @@ impl Judging<'_, '_, '_> {
             refuted: false,
             contradictory: proof.is_some_and(|proof| proof.route == Some(ProofRoute::Contradiction)),
             residual: (!discharged).then(|| match separation.positions.first() {
+                Some(CheckedCallSeparationPositions::Live(_))
+                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
+                        "{} requires its captured index below {}.len after the call",
+                        separation.left_spelling, separation.right_spelling
+                    ),
+                Some(CheckedCallSeparationPositions::RangeWithinLength(_))
+                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
+                        "{} requires its captured end at or below {}.len after the call",
+                        separation.left_spelling, separation.right_spelling
+                    ),
                 Some(CheckedCallSeparationPositions::Indices(..)) => format!(
                     "{} and {} require their captured indices to be distinct",
                     separation.left_spelling, separation.right_spelling
@@ -404,6 +475,7 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
             killed_by: Vec::new(),
+            lost_header: None,
             selected_return: None,
         });
         discharged
@@ -564,6 +636,7 @@ impl Judging<'_, '_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by: Vec::new(),
+            lost_header: None,
             selected_return: None,
         });
     }
@@ -812,7 +885,7 @@ impl Analyzer<'_, '_> {
                         .is_none_or(|_| contract_parents.as_ref().is_some());
                 let postconditions = self
                     .input
-                    .available_call_postconditions(*function, formal_contract.as_deref());
+                    .available_call_postconditions(call, *function, formal_contract.as_deref());
                 let prepared_call = (|| {
                     let mut parents = actual_parents?;
                     if !reached
@@ -1723,6 +1796,14 @@ impl Analyzer<'_, '_> {
                 _ => Vec::new(),
             }
         };
+        // A failed optional transport is not a theorem. Put its frozen
+        // output relation on a private affine copy only after the ordinary
+        // judgment failed, and retain no proof from this explanatory query.
+        let lost_header = if discharged || refuted {
+            None
+        } else {
+            self.reasoning().explain_lost_header(states, &[goal()])
+        };
         let ordinal = u32::try_from(self.output.obligations.len())
             .expect("ENT obligation-root ordinal exceeds the u32 identity space");
         if let Some(root) = derivation {
@@ -1750,6 +1831,7 @@ impl Analyzer<'_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by,
+            lost_header,
             selected_return: None,
         });
     }
@@ -1982,6 +2064,7 @@ impl Analyzer<'_, '_> {
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
             killed_by: Vec::new(),
+            lost_header: None,
             selected_return: None,
         });
     }
