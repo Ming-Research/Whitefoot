@@ -498,6 +498,7 @@ fn ordered_map_cursor_mark(cursor: &OrderedCursor, level: u64, index: u64) -> re
   let narrow = cvt.wrap::<u64, u8>(index);
   set cursor^.path[level] = narrow;
   set cursor^.depth = level + 1_u64;
+  return unit;
 }
 
 fn ordered_map_edge_node<K, V>(node: &OrderedNode<K, V>, cursor: &OrderedCursor, level: u64, last: Bool) -> result: OrderedMove reads(node), writes(cursor) {
