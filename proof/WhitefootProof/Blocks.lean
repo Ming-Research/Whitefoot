@@ -279,7 +279,7 @@ theorem branchState_none {env : Checker.Env} {st : Checker.State} {r : Checker.R
         (if r.call.isSome then {} else Checker.origins env st c r.val.gexpr) b =
       Checker.branchState env st (Checker.origins env st c r.val.gexpr) b := by
   have hc : ¬(r.call.isSome = true) := by simp [h]
-  rw [if_neg hc]
+  rw [ite_eq_right hc]
 
 /-- A condition that calls a function of the program enters its blocks with
 the state the call left. -/
@@ -288,7 +288,7 @@ theorem branchState_call {env : Checker.Env} {st : Checker.State} {r : Checker.R
     Checker.branchState env st
       (if r.call.isSome then {} else Checker.origins env st c r.val.gexpr) b = st := by
   have hc : r.call.isSome = true := by simp [h]
-  rw [if_pos hc, branchState_empty]
+  rw [ite_eq_left hc, branchState_empty]
 
 /-- The state an `if` enters either block with is fresh. -/
 theorem if_entry_fresh {F : Model} (L : Laws F) {env : Checker.Env} {st st1 : Checker.State}
@@ -364,7 +364,7 @@ theorem fresh_let {F : Model} (L : Laws F) (x : String) (e : Expr) : StmtFresh F
   intro env st pos g g' env' o hw hF
   obtain ⟨r, g1, st', hr, hb, _, ho⟩ := Checker.walkStmt_let_ok hw
   subst o
-  refine ⟨fun s hs => ?_, fun b hb => by cases hb, fun b hb => by cases hb⟩
+  refine ⟨fun s hs => ?_, (fun b hb => by cases hb), fun b hb => by cases hb⟩
   cases hs with
   | head => exact StFresh.of L (L.let_fresh hF hr hb)
   | tail _ h => cases h
@@ -374,7 +374,7 @@ theorem fresh_setVar {F : Model} (L : Laws F) (x : String) (e : Expr) :
   intro env st pos g g' env' o hw hF
   obtain ⟨v, r, g1, st', hv, hr, hsv, _, ho⟩ := Checker.walkStmt_setVar_ok hw
   subst o
-  refine ⟨fun s hs => ?_, fun b hb => by cases hb, fun b hb => by cases hb⟩
+  refine ⟨fun s hs => ?_, (fun b hb => by cases hb), fun b hb => by cases hb⟩
   cases hs with
   | head => exact StFresh.of L (L.setVar_fresh hF hv hr hsv)
   | tail _ h => cases h
@@ -385,7 +385,7 @@ theorem fresh_setIndex {F : Model} (L : Laws F) (b : String) (off : Atom) (e : E
   obtain ⟨v, r, g1, st1, g2, val, _, hr, hpub, hat, _, ho⟩ := Checker.walkStmt_setIndex_ok hw
   subst o
   have h1 := fresh_lift L (published_fresh L hF hr hpub) (Checker.evalAtom_grows hat).1
-  refine ⟨fun s hs => ?_, fun b hb => by cases hb, fun b hb => by cases hb⟩
+  refine ⟨fun s hs => ?_, (fun b hb => by cases hb), fun b hb => by cases hb⟩
   cases hs with
   | head => exact StFresh.of L (L.write_fresh h1)
   | tail _ h => cases h
@@ -394,7 +394,7 @@ theorem fresh_call {F : Model} (L : Laws F) (e : Expr) : StmtFresh F (.call e) :
   intro env st pos g g' env' o hw hF
   obtain ⟨r, g1, st1, hr, hpub, _, ho⟩ := Checker.walkStmt_call_ok hw
   subst o
-  refine ⟨fun s hs => ?_, fun b hb => by cases hb, fun b hb => by cases hb⟩
+  refine ⟨fun s hs => ?_, (fun b hb => by cases hb), fun b hb => by cases hb⟩
   cases hs with
   | head => exact StFresh.of L (published_fresh L hF hr hpub)
   | tail _ h => cases h
@@ -403,7 +403,7 @@ theorem fresh_ret {F : Model} (e : Expr) : StmtFresh F (.ret e) := by
   intro env st pos g g' env' o hw _
   obtain ⟨_, _, _, _, _, _, _, _, ho⟩ := Checker.walkStmt_ret_ok hw
   subst o
-  exact ⟨fun s hs => by cases hs, fun b hb => by cases hb, fun b hb => by cases hb⟩
+  exact ⟨(fun s hs => by cases hs), (fun b hb => by cases hb), fun b hb => by cases hb⟩
 
 theorem fresh_invariant {F : Model} (L : Laws F) (nm : String) (rel : Relation) :
     StmtFresh F (.invariant nm rel) := by
@@ -411,7 +411,7 @@ theorem fresh_invariant {F : Model} (L : Laws F) (nm : String) (rel : Relation) 
   obtain ⟨_, _, ho, hg'⟩ := Checker.walkStmt_invariant_ok hw
   subst o
   subst g'
-  refine ⟨fun s hs => ?_, fun b hb => by cases hb, fun b hb => by cases hb⟩
+  refine ⟨fun s hs => ?_, (fun b hb => by cases hb), fun b hb => by cases hb⟩
   cases hs with
   | head => exact StFresh.of L (L.establishRel_fresh hF)
   | tail _ h => cases h
@@ -421,7 +421,7 @@ theorem fresh_brk {F : Model} (L : Laws F) (label : Option String) : StmtFresh F
   obtain ⟨l, _, _, ho, hg'⟩ := Checker.walkStmt_brk_ok hw
   subst o
   subst g'
-  refine ⟨fun s hs => by cases hs, fun b hb => ?_, fun b hb => by cases hb⟩
+  refine ⟨(fun s hs => by cases hs), fun b hb => ?_, fun b hb => by cases hb⟩
   cases hb with
   | head => exact StFresh.of L hF
   | tail _ h => cases h
@@ -432,7 +432,7 @@ theorem fresh_cont {F : Model} (L : Laws F) (label : Option String) :
   obtain ⟨l, _, _, ho, hg'⟩ := Checker.walkStmt_cont_ok hw
   subst o
   subst g'
-  refine ⟨fun s hs => by cases hs, fun b hb => by cases hb, fun b hb => ?_⟩
+  refine ⟨(fun s hs => by cases hs), (fun b hb => by cases hb), fun b hb => ?_⟩
   cases hb with
   | head => exact StFresh.of L hF
   | tail _ h => cases h
@@ -470,7 +470,7 @@ theorem list_fresh_nil {F : Model} (L : Laws F) : ListFresh F [] := by
   intro env st blk i g g' o hw hF
   rw [Checker.walkList] at hw
   obtain ⟨rfl, rfl⟩ := Checker.run_pure_ok hw
-  refine ⟨fun s hs => ?_, fun b hb => by cases hb, fun b hb => by cases hb⟩
+  refine ⟨fun s hs => ?_, (fun b hb => by cases hb), fun b hb => by cases hb⟩
   cases hs with
   | head => exact StFresh.of L hF
   | tail _ h => cases h
@@ -789,8 +789,9 @@ theorem list_cons {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) {s : Stmt
     rw [hpt]
     exact hH
   · rw [step_stmts_cons]
-    exact hS env st (blk ++ [i]) _ g2 _ os n (W.map (Watch.before rest)) E E0 _ _ D callers henv
-      hlp hws ⟨cx, _, hstmt⟩
+    exact hS env st (blk ++ [i])
+      { g with points := g.points ++ [(blk ++ [i], ⟨env.vars, st, g.atoms⟩)] } g2 _ os n
+      (W.map (Watch.before rest)) E E0 _ _ D callers henv hlp hws ⟨cx, _, hstmt⟩
       (PtsOK.of_prefix hpts hpre) hH hF hW0 hN' hB' hC' hR hFn
 
 /-! ## `if` -/
@@ -811,8 +812,10 @@ theorem branch_noStuck (f : Frame) (v : Value) (pos : Pos) (thn els : List Stmt)
 block it selects, with a block end that restores its bindings. -/
 theorem branch_ok {f f' : Frame} {v : Value} {pos : Pos} {thn els : List Stmt}
     (h : branch f v pos thn els = .ok f') :
-    ∃ b, v = .bool b ∧ f' = { f with kont := .stmts (pos ++ [if b then 0 else 1]) 0
-      (if b then thn else els) :: .scope f.env.length :: f.kont } := by
+    ∃ b, v = .bool b ∧
+      f' = { f with
+        kont := .stmts (pos ++ [if b then 0 else 1]) 0 (if b then thn else els) ::
+          .scope f.env.length :: f.kont } := by
   cases v with
   | bool b =>
     refine ⟨b, rfl, ?_⟩
