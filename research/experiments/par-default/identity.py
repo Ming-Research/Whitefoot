@@ -6,6 +6,8 @@ optimizer. Unsupported dispatch shapes fail construction. ABI registers,
 constants, memory offsets, branch topology and external symbol names survive
 normalization. Only consistent renaming of nonvolatile integer temporaries
 and caller-clobbered r10/r11 is admitted. Never collapse all registers to REG.
+The one exception is the entry-version comparison (`layout_free_difference`),
+which reduces registers to a class and is recorded as weaker than identity.
 """
 import argparse
 import bisect
@@ -776,11 +778,24 @@ def thread_pointer_states(instructions):
     return incoming
 
 
-def normalized(instructions, selected=None, omitted=(), image=None):
-    """Preserve instruction order and label destinations, not absolute PCs."""
+def normalized(instructions, selected=None, omitted=(), image=None, forced=None):
+    """Preserve instruction order and label destinations, not absolute PCs.
+
+    `forced` maps an omitted branch to the one destination a projection
+    keeps; one that is not the next kept instruction becomes a `jmp` there,
+    so the rows keep the projection's control flow.
+    """
     selected = set(range(len(instructions))) if selected is None else set(selected)
     omitted = set(omitted)
     live = [at for at in sorted(selected) if at not in omitted]
+    jumps = {}
+    for branch, destination in (forced or {}).items():
+        following = next((at for at in live if at > branch), None)
+        if branch not in omitted or destination not in live:
+            raise IdentityError('a forced edge must leave an omitted branch for a kept instruction')
+        if destination != following:
+            jumps[branch] = destination
+    live = sorted(set(live) | set(jumps))
     labels = {instructions[at].address: f'I{index}' for index, at in enumerate(live)}
     tls_states = thread_pointer_states(instructions)
     renaming = {}
@@ -811,6 +826,9 @@ def normalized(instructions, selected=None, omitted=(), image=None):
     rows = []
     for at in live:
         insn = instructions[at]
+        if at in jumps:
+            rows.append(f'jmp {labels[instructions[jumps[at]].address]}')
+            continue
         if insn.mnemonic in ('syscall', 'sysenter', 'int', 'int3'):
             raise IdentityError('unsupported implicit-register system instruction')
         operands, _, comment = insn.operands.partition('#')
@@ -887,10 +905,13 @@ def first_difference(left, right):
 # Choosing the version once at each function's entry puts the sequential path
 # and the parallel path in one machine function, so the register allocator
 # gives the sequential path other saved registers, spill slots and frame size
-# than the canonical sequential function has. The strict comparison above can
-# then never be textually equal. `skeleton` compares what the allocator may not
-# change: opcodes, immediates, memory shapes, call targets and branch topology.
-# It is deliberately weaker than machine identity; callers record that.
+# than the canonical sequential function has, and the optimizer may inline a
+# cheap region's sequential clone into that function and lay out its blocks
+# in another order. The strict comparison above can then never be textually
+# equal. `layout_free_difference` compares what the allocator and the block
+# layout may not change: opcodes, immediates, memory shapes, call targets and
+# branch topology. It is deliberately weaker than machine identity; callers
+# record that.
 
 def _split_operands(text):
     parts, depth, current = [], 0, ''
@@ -913,54 +934,164 @@ def _slot(operand):
 
 
 NOISE = re.compile(r'(?:(?:data16|cs|ds) )*(?:nop[wlq]?|xchg %ax,%ax|endbr64)(?: |$)')
+LOCAL_TARGET = re.compile(r'I(\d+)')
+# Each condition with the one that holds exactly when it does not.
+INVERSE_CONDITION = {}
+for _left, _right in (('e', 'ne'), ('z', 'nz'), ('a', 'be'), ('ae', 'b'), ('g', 'le'), ('ge', 'l'),
+                      ('s', 'ns'), ('o', 'no'), ('p', 'np')):
+    INVERSE_CONDITION['j' + _left], INVERSE_CONDITION['j' + _right] = 'j' + _right, 'j' + _left
 
 
-def skeleton(lines):
-    """Allocator-insensitive projection of normalized instruction text.
+def _plumbing(line):
+    """Allocator and layout plumbing the shape comparison leaves out.
 
-    Dropped: callee-saved pushes and pops, constant stack-pointer adjustments,
-    register-to-register moves, register/stack-slot moves and padding. Kept
-    text has register names reduced to a class and branch targets renumbered
-    over the kept instructions, so the branch topology is compared.
+    Callee-saved pushes and pops, constant stack-pointer adjustments,
+    register-to-register moves, register/stack-slot moves, padding, and an
+    unconditional jump to a local instruction, which is block placement.
     """
-    kept = []
-    for at, line in enumerate(lines):
-        head, _, rest = line.partition(' ')
-        operands = _split_operands(rest.strip())
-        if NOISE.match(line):
-            continue
-        if head in ('push', 'pop') and len(operands) == 1 and _register(operands[0]):
-            continue
-        if head in ('sub', 'add') and len(operands) == 2 and operands[1] == '%rsp' and operands[0].startswith('$'):
-            continue
-        if head == 'mov' and len(operands) == 2:
-            first, second = operands
-            if (_register(first) and (_register(second) or _slot(second))) or (_slot(first) and _register(second)):
-                continue
-        if head in ('movaps', 'movapd', 'movdqa', 'movups', 'movupd', 'movdqu') and len(operands) == 2:
-            first, second = operands
-            if ((first.startswith('%xmm') and (second.startswith('%xmm') or _slot(second)))
-                    or (_slot(first) and second.startswith('%xmm'))):
-                continue
-        kept.append((at, line))
-    kept_at = [at for at, _ in kept]
-    result = []
-    for _, line in kept:
-        head, _, rest = line.partition(' ')
-        if head.startswith('j'):
-            match = re.fullmatch(r'I(\d+)', rest.strip())
-            if match:
-                result.append(f'{head} K{bisect.bisect_left(kept_at, int(match[1]))}')
-                continue
-        text = re.sub(r'%[xy]mm\d+', '%X', line)
-        text = re.sub(r'%(?!rsp\b|rip\b|X\b)[a-z][\w.]*', '%R', text)
-        text = re.sub(r'(?:-?0x[0-9a-f]+)?\(%rsp', 'S(%rsp', text)
-        result.append(text)
-    return result
+    head, _, rest = line.partition(' ')
+    operands = _split_operands(rest.strip())
+    if NOISE.match(line):
+        return True
+    if head == 'jmp' and LOCAL_TARGET.fullmatch(rest.strip()):
+        return True
+    if head in ('push', 'pop') and len(operands) == 1 and _register(operands[0]):
+        return True
+    if head in ('sub', 'add') and len(operands) == 2 and operands[1] == '%rsp' and operands[0].startswith('$'):
+        return True
+    if head == 'mov' and len(operands) == 2:
+        first, second = operands
+        if (_register(first) and (_register(second) or _slot(second))) or (_slot(first) and _register(second)):
+            return True
+    if head in ('movaps', 'movapd', 'movdqa', 'movups', 'movupd', 'movdqu') and len(operands) == 2:
+        first, second = operands
+        if ((first.startswith('%xmm') and (second.startswith('%xmm') or _slot(second)))
+                or (_slot(first) and second.startswith('%xmm'))):
+            return True
+    return False
 
 
-def skeleton_difference(left, right):
-    return first_difference(skeleton(left), skeleton(right))
+def _shape(line):
+    """Register names reduced to a class, stack offsets erased; the rest kept."""
+    text = re.sub(r'%[xy]mm\d+', '%X', line)
+    text = re.sub(r'%(?!rsp\b|rip\b|X\b)[a-z][\w.]*', '%R', text)
+    return re.sub(r'(?:-?0x[0-9a-f]+)?\(%rsp', 'S(%rsp', text)
+
+
+def line_successors(lines, at):
+    """Successor line indices of one normalized line, a branch's taken edge first.
+
+    A conditional branch's missing fall-through is None. A jump that names no
+    local instruction leaves the compared code (a tail transfer); an indirect
+    one has unknown destinations and is refused.
+    """
+    head, _, rest = lines[at].partition(' ')
+    local = LOCAL_TARGET.fullmatch(rest.strip())
+    following = at + 1 if at + 1 < len(lines) else None
+    if head.startswith('j'):
+        if rest.strip().startswith('*'):
+            raise IdentityError(f'indirect jump in compared code: {lines[at]}')
+        if head == 'jmp':
+            return [int(local[1])] if local else []
+        if not local:
+            raise IdentityError(f'conditional branch leaves the compared code: {lines[at]}')
+        return [int(local[1]), following]
+    if head.startswith('ret') or head in ('ud2', 'hlt'):
+        return []
+    return [following]
+
+
+def line_reach(lines, roots):
+    seen, todo = set(), [root for root in roots if root is not None]
+    while todo:
+        at = todo.pop()
+        if at in seen:
+            continue
+        seen.add(at)
+        todo.extend(successor for successor in line_successors(lines, at) if successor is not None)
+    return seen
+
+
+def _computation(lines, at):
+    """The first compared instruction on the one path from `at`, or None at an exit."""
+    passed = set()
+    while at is not None and _plumbing(lines[at]):
+        if at in passed:
+            raise IdentityError('a cycle of allocator plumbing only')
+        passed.add(at)
+        successors = line_successors(lines, at)
+        at = successors[0] if successors else None
+    return at
+
+
+def layout_free_difference(left, right, left_root=0, right_root=0):
+    """None when two normalized functions have the same rooted shape graph.
+
+    A walk from both roots pairs compared instructions one to one: each pair
+    has equal `_shape` text and its successors pair in order. A conditional
+    branch also pairs with its inverse condition when its two successors are
+    swapped, so block order is not compared; plumbing is skipped.
+    """
+    forward, backward = {}, {}
+    pending = [(_computation(left, left_root), _computation(right, right_root))]
+    while pending:
+        a, b = pending.pop()
+
+        def difference(reason):
+            return {'reason': reason,
+                    'seq_instruction': None if a is None else a + 1, 'demand_instruction': None if b is None else b + 1,
+                    'seq': '<exit>' if a is None else left[a], 'demand': '<exit>' if b is None else right[b],
+                    'paired_instructions': len(forward)}
+        if a is None or b is None:
+            if a is None and b is None:
+                continue
+            return difference('one path exits where the other continues')
+        if a in forward or b in backward:
+            if forward.get(a) == b and backward.get(b) == a:
+                continue
+            return difference('paths join at different instructions')
+        forward[a], backward[b] = b, a
+        head_a, head_b = left[a].partition(' ')[0], right[b].partition(' ')[0]
+        successors_a, successors_b = line_successors(left, a), line_successors(right, b)
+        if head_a in INVERSE_CONDITION and head_b in INVERSE_CONDITION:
+            if head_b == INVERSE_CONDITION[head_a]:
+                successors_b = successors_b[::-1]
+            elif head_a != head_b:
+                return difference('branch conditions differ')
+        elif _shape(left[a]) != _shape(right[b]) or len(successors_a) != len(successors_b):
+            return difference('instruction shapes differ')
+        pending.extend((None if x is None else _computation(left, x), None if y is None else _computation(right, y))
+                       for x, y in reversed(list(zip(successors_a, successors_b))))
+    return None
+
+
+SPLIT_CALL = re.compile(r'call wf__par_split_')
+
+
+def inlined_clone_root(seq_lines, demand_lines):
+    """Where a cheap region's inlined sequential clone begins in its function.
+
+    The decision and the parallel path are the lines from which a call of a
+    parallel split is reachable. Each line outside them that one of them can
+    enter is a candidate; exactly one must have the canonical sequential
+    function's whole shape graph. Returns that line and the decision lines
+    that reach it.
+    """
+    splits = [at for at, line in enumerate(demand_lines) if SPLIT_CALL.match(line)]
+    if not splits:
+        raise IdentityError('cheap region without a parallel split call')
+    parallel = {at for at in range(len(demand_lines)) if line_reach(demand_lines, [at]) & set(splits)}
+    entered = line_reach(demand_lines, [0])
+    candidates = sorted({successor for at in parallel & entered
+                         for successor in line_successors(demand_lines, at)
+                         if successor is not None and successor not in parallel})
+    matches = {_computation(demand_lines, at): at for at in candidates
+               if layout_free_difference(seq_lines, demand_lines, 0, at) is None}
+    if len(matches) != 1:
+        raise IdentityError(f'{len(matches)} of {len(candidates)} sequential entries have the canonical shape')
+    root = next(iter(matches.values()))
+    decision = {at for at in parallel & entered if root in line_reach(demand_lines, [at])}
+    return root, decision
 
 
 def clone_transfer(instructions, clone):
@@ -988,9 +1119,16 @@ def clone_transfer(instructions, clone):
 
 
 def entry_compare_bound(blocks):
-    """How many machine comparisons the entry block's IR can explain."""
+    """How many machine comparisons the entry block's IR can explain.
+
+    A comparison, a min/max or abs, an overflow-checked operation (its flag
+    is tested where a select reads it) and a division by a non-constant
+    (whose quotient the backend may bound by a compare) each explain one.
+    """
     return sum(1 for line in blocks.get('par.region.entry', [])
-               if re.search(r'\bicmp\b', line) or re.search(r'@llvm\.(?:[us](?:max|min)|abs)\b', line))
+               if re.search(r'\bicmp\b', line) or re.search(r'@llvm\.(?:[us](?:max|min)|abs)\b', line)
+               or re.search(r'@llvm\.[us](?:add|sub|mul)\.with\.overflow\b', line)
+               or re.search(r'=\s*[us](?:div|rem)\b[^,]*,\s*%', line))
 
 
 def ir_call_reach(ir, root):
@@ -1012,11 +1150,13 @@ def project_pool(instructions, active):
 
     Nondecision setup/cleanup remains in the comparison. If backend inlining
     changes the wrapper ABI or code around dispatch, that is a mismatch.
+    Returns the selected and omitted instructions, the pool decision count and
+    the branch's one kept edge.
     """
     edges = assembly_edges(instructions)
     polls = [at for at, insn in enumerate(instructions) if insn.mnemonic.startswith('call') and target(insn) and target(insn)[1].removesuffix('@plt') == 'wf__par_pool_active']
     if not polls:
-        return reachable(edges), set(), 0
+        return reachable(edges), set(), 0, {}
     if len(polls) != 1:
         raise IdentityError(f'expected at most one pool dispatch, found {len(polls)}')
     at = polls[0]
@@ -1051,7 +1191,7 @@ def project_pool(instructions, active):
     index = {insn.address: node for node, insn in enumerate(instructions)}
     taken = bool(active) if branch.mnemonic in ('jne', 'jnz') else not active
     edges[branch_at] = [index[destination] if taken else branch_at + 1]
-    return reachable(edges), {at, test_at, branch_at}, 1
+    return reachable(edges), {at, test_at, branch_at}, 1, {branch_at: edges[branch_at][0]}
 
 
 ABI_ARGUMENTS = ('rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9')
@@ -1602,7 +1742,7 @@ def verified_adapter_evidence(wrapper, evidence, compared, canonical_machine_clo
             evidence['original_header'], evidence['demand_header'])
         projection = evidence['optimized_pool_projection']
         instructions = snapshot_instructions(projection['instructions'])
-        selected, omitted, count = project_pool(instructions, False)
+        selected, omitted, count, _ = project_pool(instructions, False)
         closure, declarations = adapter_ir_inventory(evidence['canonical_ir_closure'],
             evidence['inactive_ir_root'], set(evidence['canonical_ir_declarations']))
         allowed = set(closure) | declarations
@@ -1677,10 +1817,14 @@ def observed_difference(failure):
 
 
 PROJECTION_ROLE = 'conservative actual W1 wrapper CFG projection; all nondecision instructions retained'
+INLINED_ROLE = 'cheap-region clone inlined into its entry-version function; layout-free shape graph from the clone root'
+ENTRY_VERSION_QUALIFICATION = ('default --par picks the version once at function entry, so the allocator re-assigns saved registers, '
+                               'spill slots and frame and the optimizer may inline the clone and reorder its blocks; opcodes, immediates, '
+                               'memory shapes, call targets and branch topology are identical, machine identity is not proved')
 
 
 def verified_entry_version(record, wrapper, failure):
-    """Replay: the wrapper's strict difference is exactly the stored one and its skeletons agree."""
+    """Replay: the wrapper's strict difference is exactly the stored one and its shape graphs agree."""
     evidence = record.get('entry_version_evidence')
     if (not isinstance(evidence, dict) or evidence.get('wrapper') != wrapper
             or evidence.get('wrapper_pool_calls') != record.get('dispatch', {}).get('pool_decisions_per_timed_call')
@@ -1695,7 +1839,7 @@ def verified_entry_version(record, wrapper, failure):
                 return False
             strict = first_difference(seq, demand)
             return (strict is not None and all(failure.get(key) == value for key, value in strict.items())
-                    and skeleton_difference(seq, demand) is None)
+                    and layout_free_difference(seq, demand) is None)
     return False
 
 
@@ -1713,9 +1857,7 @@ def _classify_construction(record, wrapper, selected_roots, writer_evidence, inv
             failure.update(category='latched-writer', evidence=evidence)
         elif verified_entry_version(record, wrapper, failure):
             failure.update(category='entry-version', evidence={
-                'timed_wrapper': wrapper,
-                'qualification': 'default --par picks the version once at function entry, so the allocator re-assigns saved registers, spill slots and frame; '
-                                 'opcodes, immediates, memory shapes, call targets and branch topology are identical, machine identity is not proved'})
+                'timed_wrapper': wrapper, 'qualification': ENTRY_VERSION_QUALIFICATION})
         else:
             failure['category'] = 'ordinary'
             if failure['function'] != wrapper:
@@ -1786,6 +1928,16 @@ def _classify_construction(record, wrapper, selected_roots, writer_evidence, inv
     path = record.get('entry_version_active_path', {})
     entry_version_path = (path.get('verified') is True
                           and path.get('regions') == sorted(region['function'] for region in regions))
+    # Replay each inlined clone's shape comparison from its retained rows.
+    inlined_shapes = all(any(row['function'] == region['function'] and row['role'] == INLINED_ROLE
+                             and type(row.get('demand_root')) is int and row['demand_root'] + 1 == region.get('inlined_clone_root')
+                             and isinstance(row.get('seq_instructions'), list) and bool(row['seq_instructions'])
+                             and isinstance(row.get('demand_instructions'), list) and bool(row['demand_instructions'])
+                             and all(isinstance(line, str) for line in row['seq_instructions'] + row['demand_instructions'])
+                             and layout_free_difference(row['seq_instructions'], row['demand_instructions'],
+                                                        0, row['demand_root']) is None
+                             for row in record['comparisons'])
+                         for region in regions if region.get('clone_transfer') == 'inlined')
     decisions_complete = (type(pool) is int and pool in (0, 1) and dispatch.get('outside_loops') is True
         and (proven_ir_entrance or entry.get('W1', {}).get('outside_loops') is True
              and entry['W1'].get('decision_trace', []).count('pool-active') == pool
@@ -1802,6 +1954,7 @@ def _classify_construction(record, wrapper, selected_roots, writer_evidence, inv
              and all(type(value) is int for value in entry['W2/W4/W8']['inputs'].values())
              and entry['W2/W4/W8'].get('decision_trace', []).count('pool-active') == pool
              and entry['W2/W4/W8'].get('decision_trace', []).count('cheap-region') == len(regions))
+        and inlined_shapes
         and all(type(width) is int for width in record.get('covered_widths', []))
         and {1, *([2, 4, 8] if regions else [])} <= set(record.get('covered_widths', [])))
     categories = {category: [failure for failure in record['failures'] if failure['category'] == category]
@@ -1894,11 +2047,11 @@ def check_workload(name, build):
             record['entry_state_proof'] = {'status': 'unverified', 'reason': str(error)}
             pending = set()
             try:
-                selected, omitted, count = project_pool(demand[wrapper], False)
+                selected, omitted, count, forced = project_pool(demand[wrapper], False)
                 if 'dispatch' in record and count != record['dispatch']['pool_decisions_per_timed_call']:
                     raise IdentityError('LLVM and optimized assembly dynamic pool counts disagree')
                 left = normalized(seq[wrapper], image=seq_image)
-                right = normalized(demand[wrapper], selected, omitted, image=demand_image)
+                right = normalized(demand[wrapper], selected, omitted, image=demand_image, forced=forced)
                 diff = first_difference(left, right)
                 record['comparisons'].append({'function': wrapper,
                     'seq_instructions': left, 'demand_instructions': right,
@@ -1921,10 +2074,9 @@ def check_workload(name, build):
                         'state_preservation': 'unverified; CFG selection does not establish ABI preservation'}
                     record['entry_adapter_provenance'] = provenance
                 if diff:
-                    skeleton_diff = skeleton_difference(left, right)
+                    shape_diff = layout_free_difference(left, right)
                     failure(wrapper, 'normalized timed sequential wrapper differs',
-                            dict(diff, **({'skeleton_difference': skeleton_diff, 'skeleton_lengths': [len(skeleton(left)), len(skeleton(right))]}
-                                          if skeleton_diff else {})))
+                            dict(diff, **({'shape_difference': shape_diff} if shape_diff else {})))
                 else:
                     # Text equality after deleting a call cannot prove that
                     # live caller-clobbered values or flags survive that call.
@@ -1943,18 +2095,23 @@ def check_workload(name, build):
             inventory_roots.update(match[1] for line in block if (match := re.search(r'\bcall\b.*?@(wf__par_seq_[\w.$]+)\(', line)))
         pending.update(inventory_roots)
         seen = set()
-        while pending:
-            function = min(pending)
-            pending.remove(function)
-            if function in seen:
-                continue
-            seen.add(function)
+
+        def compare_closure(pending):
+            while pending:
+                function = min(pending)
+                pending.remove(function)
+                if function in seen:
+                    continue
+                seen.add(function)
+                compare_body(function, pending)
+
+        def compare_body(function, pending):
             original = canonical_symbol(function)
             if not function.startswith(('wf_', 'wf.')) or function == 'wf__par_pool_active':
-                continue  # identical external symbols are retained in the caller
+                return  # identical external symbols are retained in the caller
             if function not in demand or original not in seq:
                 failure(function, 'missing corresponding sequential disassembly function')
-                continue
+                return
             try:
                 left, right = normalized(seq[original], image=seq_image), normalized(demand[function], image=demand_image)
                 diff = first_difference(left, right)
@@ -1971,6 +2128,8 @@ def check_workload(name, build):
                 pending.update(direct_calls(demand[function], functions=demand))
             except IdentityError as error:
                 failure(function, str(error))
+
+        compare_closure(pending)
         if 'dispatch' in record:
             regions = record['dispatch']['regions']
             inventory = {function for function, blocks in ir.items() if 'par.region.entry' in blocks}
@@ -2003,24 +2162,42 @@ def check_workload(name, build):
                 if 'W2/W4/W8' in record.get('actual_entry', {}):
                     record['covered_widths'] = [1, 2, 4, 8]
                 shapes_ok = True
-                for region in regions:
-                    clone = 'wf__par_seq_' + region['function'].removeprefix('wf_')
-                    if clone not in seen:
-                        failure(region['function'], 'cheap-region sequential body was not covered by timed-path inventory')
-                        shapes_ok = False
                 # A raw-IR branch alone cannot establish that optimized dispatch
                 # executes outside machine loops. Demand region asm must consist
-                # of an acyclic prefix ending in the one direct transfer to the
-                # clone: a tail jump, or a call whose continuation is only
-                # result plumbing. The machine comparisons must be explained by
-                # the comparisons and min/max operations of the entry block's IR.
+                # of an acyclic decision prefix leading to the sequential path:
+                # one direct transfer to the clone (a tail jump, or a call whose
+                # continuation is only result plumbing), or the clone inlined,
+                # whose shape graph must then be the canonical function's. The
+                # machine comparisons must be explained by the entry block's IR.
                 for region in regions:
                     function = region['function']
                     instructions = demand.get(function, [])
                     edges = assembly_edges(instructions)
                     clone = 'wf__par_seq_' + function.removeprefix('wf_')
+                    transfers = [insn for insn in instructions if insn.mnemonic in ('jmp', 'call') and target(insn)
+                                 and target(insn)[1].removesuffix('@plt') == clone]
                     try:
-                        exit_at, kind = clone_transfer(instructions, clone)
+                        if transfers:
+                            exit_at, kind = clone_transfer(instructions, clone)
+                            prefix = {node for node in reachable(edges) if exit_at in reachable(edges, node)}
+                            if clone not in seen:
+                                failure(function, 'cheap-region sequential body was not covered by timed-path inventory')
+                                shapes_ok = False
+                        else:
+                            kind = 'inlined'
+                            if function not in seq:
+                                raise IdentityError('missing canonical sequential function of the inlined clone')
+                            left = normalized(seq[function], image=seq_image)
+                            right = normalized(instructions, image=demand_image)
+                            root, prefix = inlined_clone_root(left, right)
+                            record['comparisons'].append({'function': function, 'seq_function': function,
+                                'seq_instructions': left, 'demand_instructions': right, 'demand_root': root,
+                                'role': INLINED_ROLE, 'identical': False})
+                            region['inlined_clone_root'] = root + 1
+                            region['sequential_identity'] = ENTRY_VERSION_QUALIFICATION
+                            if any(instructions[node].mnemonic.startswith('call') for node in prefix):
+                                raise IdentityError('the decision before the inlined clone calls a function')
+                            compare_closure(direct_calls(instructions, line_reach(right, [root]), demand))
                     except IdentityError as error:
                         addresses = {insn.address for insn in instructions}
                         failure(function, f'unsupported optimized cheap-region shape: {error}', {'diagnostic': {
@@ -2031,7 +2208,6 @@ def check_workload(name, build):
                             'instructions': [f'{insn.mnemonic} {insn.operands}'[:90] for insn in instructions[:120]]}})
                         shapes_ok = False
                         continue
-                    prefix = {node for node in reachable(edges) if exit_at in reachable(edges, node)}
                     if any(on_cycle(edges, node) for node in prefix):
                         failure(function, 'optimized cheap-region decision can execute inside a loop')
                         shapes_ok = False
@@ -2050,7 +2226,8 @@ def check_workload(name, build):
                         # active path is the region entries just checked.
                         record['entry_version_active_path'] = {
                             'verified': True, 'regions': sorted(region['function'] for region in regions),
-                            'basis': 'each region function is an acyclic cheap prefix ending in its one clone transfer'}
+                            'basis': 'each region function is an acyclic cheap prefix leading to its one clone transfer '
+                                     'or to its inlined clone, whose shape graph is the canonical function\'s'}
                         record['covered_widths'] = [1, 2, 4, 8]
                     else:
                         failure(wrapper, 'actual active cheap-region path remains unproved')
@@ -2072,7 +2249,7 @@ def shape_self_test():
               'add $0x28,%rsp', 'pop %saved1.0', 'pop %saved0.0', 'ret']
     if first_difference(seq, demand) is None:
         raise IdentityError('shape self-test fixture is not strictly different')
-    if skeleton_difference(seq, demand) is not None:
+    if layout_free_difference(seq, demand) is not None:
         raise IdentityError('shape self-test rejected an allocator-only difference')
     wrong = {
         'immediate': [line.replace('$0x14', '$0x15') for line in demand],
@@ -2080,17 +2257,62 @@ def shape_self_test():
         'other callee': [line.replace('wf__heap_take', 'wf__heap_change') for line in demand],
         'branch topology': [line.replace('jne I10', 'jne I8') for line in demand],
         'dropped operation': [line for line in demand if not line.startswith('sub %r8')],
+        'inverted condition': [line.replace('jne I10', 'je I10') for line in demand],
     }
+    # The same function with the taken block placed first: the inverted
+    # branch and a placement jump are layout, not computation.
+    reordered = ['push %saved0.0', 'sub $0x18,%rsp', 'mov %r9,%saved0.0', 'sub %r8,%saved0.0', 'je I8',
+                 'add $0x18,%rsp', 'pop %saved0.0', 'ret', 'mov $0x14,%rdi', 'call wf__heap_take', 'jmp I5']
+    if layout_free_difference(seq, reordered) is not None:
+        raise IdentityError('shape self-test rejected a block reordering')
+    wrong['reordered without inversion'] = [line.replace('je I8', 'jne I8') for line in reordered]
+    # Paths that join in the canonical function must join here too.
+    wrong['duplicated join'] = reordered[:-1] + ['add $0x18,%rsp', 'pop %saved0.0', 'ret']
     for name, lines in wrong.items():
-        if skeleton_difference(seq, lines) is None:
+        if layout_free_difference(seq, lines) is None:
             raise IdentityError(f'shape self-test accepted a wrong shape: {name}')
 
-    if skeleton_difference(['movaps %xmm0,%xmm1', 'addsd %xmm1,%xmm2', 'movaps %xmm2,0x10(%rsp)', 'ret'],
-                           ['addsd %xmm0,%xmm3', 'ret']) is not None:
+    if layout_free_difference(['movaps %xmm0,%xmm1', 'addsd %xmm1,%xmm2', 'movaps %xmm2,0x10(%rsp)', 'ret'],
+                              ['addsd %xmm0,%xmm3', 'ret']) is not None:
         raise IdentityError('shape self-test rejected vector register copies')
-    if skeleton_difference(['movaps %xmm0,%xmm1', 'addsd %xmm1,%xmm2', 'ret'],
-                           ['mulsd %xmm0,%xmm3', 'ret']) is None:
+    if layout_free_difference(['movaps %xmm0,%xmm1', 'addsd %xmm1,%xmm2', 'ret'],
+                              ['mulsd %xmm0,%xmm3', 'ret']) is None:
         raise IdentityError('shape self-test accepted a changed vector operation')
+
+    # An inlined clone: a decision prefix, the parallel path through a split
+    # call, and the canonical function's code entered from the decision.
+    prefix = ['push %saved0.0', 'cmp $0x2,%rdi', 'jb I{clone}']
+    parallel = ['mov $0x1,%rsi', 'call wf__par_split_f.0', 'pop %saved0.0', 'ret']
+    def inlined(body):
+        clone = len(prefix) + len(parallel)
+        lines = [line.replace('{clone}', str(clone)) for line in prefix] + parallel
+        return lines + [re.sub(r'I(\d+)', lambda match: f'I{int(match[1]) + clone}', line) for line in body]
+    region = inlined(demand)
+    found, decision = inlined_clone_root(seq, region)
+    if found != len(prefix) + len(parallel) or decision != {0, 1, 2}:
+        raise IdentityError('shape self-test missed an inlined clone')
+    for name in ('immediate', 'other callee', 'branch topology'):
+        try:
+            inlined_clone_root(seq, inlined(wrong[name]))
+        except IdentityError:
+            continue
+        raise IdentityError(f'shape self-test accepted a wrong inlined clone: {name}')
+    try:
+        inlined_clone_root(seq, [line for line in region if not line.startswith('call wf__par_split_')])
+    except IdentityError:
+        pass
+    else:
+        raise IdentityError('shape self-test accepted a cheap region without a parallel split')
+
+    # A projection whose kept edge is a taken branch keeps that edge.
+    projected = [Instruction(0x10, 'call', '400 <wf__par_pool_active>'), Instruction(0x15, 'test', '%eax,%eax'),
+                 Instruction(0x17, 'je', '20 <wf_f+0x10>'), Instruction(0x19, 'call', '500 <wf_g>'),
+                 Instruction(0x1e, 'ret', ''), Instruction(0x20, 'mov', '$0x1,%eax'), Instruction(0x25, 'ret', '')]
+    rows = normalized(projected, {0, 1, 2, 4, 5, 6}, {0, 1, 2}, forced={2: 5})
+    if rows != ['jmp I2', 'ret', 'mov $0x1,%eax', 'ret']:
+        raise IdentityError(f'shape self-test lost a forced projection edge: {rows}')
+    if normalized(projected, {0, 1, 2, 3, 4}, {0, 1, 2}, forced={2: 3}) != ['call wf_g', 'ret']:
+        raise IdentityError('shape self-test added a jump for a fall-through projection edge')
 
     def code(*rows):
         return [Instruction(address, mnemonic, operands) for address, mnemonic, operands in rows]
@@ -2116,8 +2338,11 @@ def shape_self_test():
         except IdentityError:
             continue
         raise IdentityError(f'shape self-test accepted a wrong clone transfer: {name}')
-    blocks = {'par.region.entry': ['%a = icmp ult i64 %x, 2', '%b = call i64 @llvm.umax.i64(i64 %y, i64 1)', 'br i1 %a, label %p, label %q']}
-    if entry_compare_bound(blocks) != 2:
+    blocks = {'par.region.entry': ['%a = icmp ult i64 %x, 2', '%b = call i64 @llvm.umax.i64(i64 %y, i64 1)',
+                                   '%c = call { i64, i1 } @llvm.umul.with.overflow.i64(i64 13, i64 %y)',
+                                   '%d = udiv i64 149999, %b', '%e = udiv i64 %b, 16',
+                                   '%f = call i64 @llvm.uadd.sat.i64(i64 %b, i64 3)', 'br i1 %a, label %p, label %q']}
+    if entry_compare_bound(blocks) != 4:
         raise IdentityError('shape self-test miscounted the entry block comparisons')
     print(json.dumps({'entry_version_shape_self_test': 'pass', 'wrong_shapes_rejected': sorted(wrong) + sorted(bad)}))
 
@@ -2273,7 +2498,7 @@ def main():
     for record in records.values():
         for failure in record['failures']:
             print(f"{failure['workload']} / {failure['function']} [{failure['category']}]: {failure['reason']}" + (f"; instruction {failure['instruction']}: seq={failure['seq']!r}, demand={failure['demand']!r}" if 'instruction' in failure else '')
-                  + (f"; skeleton difference {failure['skeleton_difference']} of lengths {failure['skeleton_lengths']}" if 'skeleton_difference' in failure else '')
+                  + (f"; shape difference {failure['shape_difference']}" if 'shape_difference' in failure else '')
                   + (f"; transfers {failure['diagnostic']['external_transfers']}, {failure['diagnostic']['instruction_count']} instructions" if 'diagnostic' in failure else ''))
     for category, rows in categories.items():
         print(f"{category}: {len(rows)} evidenced differences")

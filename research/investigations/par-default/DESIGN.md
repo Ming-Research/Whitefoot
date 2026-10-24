@@ -601,9 +601,22 @@ flags equal, or construction stops; programs are staged once and compiled by
 both compilers. Every image passes its oracle at every width before timing,
 and every timed call or process is checked again. Machine-code identity of
 the ordinary closure and of every selected cheap region (`seq` against
-`demand`, widths 1/2/4/8) is checked by the frozen identity checker under
-[option D](https://github.com/Ming-Research/Whitefoot/blob/73aaab85a92479ada6bf57fa996e17b163e019ed/research/investigations/par-demand/DESIGN.md#identity-construction-option-d)
-before timing; its failure stops the run.
+`demand`, widths 1/2/4/8) is checked before timing by
+[`identity.py`](../../experiments/par-default/identity.py), the prototype's
+checker moved onto this branch, under
+[option D](https://github.com/Ming-Research/Whitefoot/blob/73aaab85a92479ada6bf57fa996e17b163e019ed/research/investigations/par-demand/DESIGN.md#identity-construction-option-d);
+its failure stops the run. Choosing the version at each function's entry
+puts both paths in one machine function, so two shapes are admitted at
+entry-version strength, opcodes, immediates, memory shapes, call targets and
+branch topology equal, machine identity not proved: a timed wrapper whose
+registers, frame or block order differ, and a cheap region whose sequential
+clone the optimizer inlined. Both are compared as rooted control-flow graphs
+over the instructions left after allocator plumbing (callee-saved pushes and
+pops, stack adjustments, register and spill moves, padding, placement jumps)
+is dropped; an inlined clone's root is the one instruction outside the code
+that can still reach a parallel split call whose graph is the canonical
+function's. The owner chose this comparison over marking the clone
+`noinline` and over checking the shape alone.
 
 ### Workloads
 

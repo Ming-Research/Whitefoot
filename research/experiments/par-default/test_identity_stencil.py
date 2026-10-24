@@ -30,7 +30,7 @@ class StencilProjectionTests(unittest.TestCase):
 
     def test_non_tail_pool_with_argument_restores_keeps_all_nondecision_work(self):
         wrapper = self.wrapper()
-        selected, omitted, count = project_pool(wrapper, False)
+        selected, omitted, count, _ = project_pool(wrapper, False)
         self.assertEqual((omitted, count), ({13, 17, 18}, 1))
         self.assertTrue({14, 15, 16, 22, 23, 24, 25, 26, 27}.issubset(selected))
         self.assertNotIn(19, selected)
@@ -40,14 +40,14 @@ class StencilProjectionTests(unittest.TestCase):
         # agrees after projection; no restores or result stores are discarded.
         seq = [row for index, row in enumerate(wrapper) if index not in {13, 17, 18, 19, 20}]
         self.assertIsNone(first_difference(normalized(seq), normalized(wrapper, selected, omitted)))
-        active, _, active_count = project_pool(wrapper, True)
+        active, _, active_count, _ = project_pool(wrapper, True)
         self.assertEqual(active_count, 1)
         self.assertIn(19, active)
         self.assertNotIn(21, active)
 
     def test_mutated_restore_remains_a_computation_difference(self):
         wrapper = self.wrapper()
-        selected, omitted, _ = project_pool(wrapper, False)
+        selected, omitted, _, _ = project_pool(wrapper, False)
         changed = list(wrapper)
         changed[16] = Instruction(changed[16].address, 'mov', '%r13,%rdx')
         difference = first_difference(normalized(wrapper, selected, omitted),
@@ -56,7 +56,7 @@ class StencilProjectionTests(unittest.TestCase):
 
     def test_added_saves_do_not_disappear_with_pool_decision(self):
         wrapper = self.wrapper()
-        selected, omitted, _ = project_pool(wrapper, False)
+        selected, omitted, _, _ = project_pool(wrapper, False)
         seq = instructions([('push', '%r15'), ('push', '%r14'), ('push', '%rbx'),
                             ('mov', '%r9,%rbx'), ('mov', '%r8,%r14'), ('mov', '%rcx,%r15'),
                             ('call', '600 <wf_body>'), ('mov', '(%rax),%rcx'),

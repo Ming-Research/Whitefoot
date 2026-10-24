@@ -58,7 +58,7 @@ define i64 @wf__par_seq_body(i64 %value) {
             machine = insns([('call', '500 <wf__par_pool_active>'), ('test', '%eax,%eax'),
                 ('jne', '114 <wf_bench_fixture+0x14>'), ('call', '600 <wf__par_seq_body>'),
                 ('ret', ''), ('call', '700 <wf_body>'), ('ret', '')])
-            selected, _, count = project_pool(machine, False)
+            selected, _, count, _ = project_pool(machine, False)
             evidence['optimized_pool_projection'] = {'pool_decisions_per_timed_call': count,
                 'outside_loops': True, 'instructions': instruction_snapshot(machine),
                 'selected_instruction_addresses': [machine[at].address for at in sorted(selected)],
