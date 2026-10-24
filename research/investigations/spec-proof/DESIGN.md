@@ -749,6 +749,34 @@ ended on an API error; the first draft was written without a local Lean and
 failed to compile in about 30 places, the second run in 9, and the two later
 runs changed only warnings and this record.
 
+### The generator lemmas
+
+`GenGrows.lean` proves that the checker's walk only grows its generator, the
+state that numbers atoms and records snapshots: the counter never falls, every
+atom registered on the way has a number between the old and the new counter
+and a nonempty interval, and the snapshot table only gains entries at its end,
+at points below the block walked and each recorded once. A function's final
+table therefore holds each point at most once. The delta atom a join
+registers needs its own proof that its interval is nonempty: its ends are the
+least lower and the greatest upper end of the inputs' constant intervals, and
+each input's interval stays nonempty through the fold that builds it. To state
+the lemmas over named functions, the loop head's state and a function's entry
+state move out of the walk into `Checker.loopHead` and `Checker.entryState`,
+with no change of behavior; the model's run over the conformance cases is
+unchanged.
+
+The part adds 740 lines of Lean in one module and no coverage mark. The
+module alone built in 14.8 s and 15.6 s, and the build of the model and
+harness took 26.9 s and 38.6 s on the first two `proof.yml` runs that
+compiled it, against 16.5 s and 16.9 s on the main line's runs of the same
+day. With the typing lemmas merged in from the main line it took 24.2 s,
+42.2 s, 29.5 s and 41.4 s on four runs of the same content, and the build's
+provisional budget rises from the main line's 30 s to 65 s, 1.5 times the
+longest of them rounded up to 5 s: a budget from the first, faster run failed
+on the slower host. Four earlier runs failed to compile: a tactic macro could
+not resolve lemma names defined after it, then, once it could, a lemma's
+proof referred to itself, and two proofs needed steps the tactic did not take.
+
 ## Cost
 
 Precedents with measured sizes:
