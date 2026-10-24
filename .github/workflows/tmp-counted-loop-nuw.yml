@@ -99,7 +99,7 @@ jobs:
         run: >
           perl .github/run-check.pl shape-tests
           cargo test --manifest-path compiler/Cargo.toml --profile gate
-          --locked --offline --lib
+          --locked --offline --lib --
           backend::tests::arithmetic_obligations
           backend::tests::loop_split
           lowering::tests
