@@ -188,14 +188,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [zero, cross]
+        case: [zero, cross, scale]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
       CANDIDATE: ${{ github.sha }}
-      BASE: ${{ matrix.case == 'zero' && github.sha || 'claude/cold-branch-weights' }}
+      BASE: ${{ matrix.case != 'cross' && github.sha || 'claude/cold-branch-weights' }}
       RUNNER_KIND: github
-      SIZES: "1000,10000"
+      SIZES: ${{ matrix.case == 'scale' && '1000,10000,1000000' || '1000,10000' }}
       MIN_ROUNDS: "6"
       MAX_ROUNDS: "8"
       INTERP_MIN_ROUNDS: "6"

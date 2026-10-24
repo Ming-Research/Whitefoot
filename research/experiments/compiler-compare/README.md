@@ -101,7 +101,12 @@ The twin is the null control in every run, and the null run (the same commit
 as candidate and base) checks the instrument end to end: a rate of false
 verdicts near the 95% intervals' (about 2% of workloads or cells per tail)
 is expected, so a few cells judged a regression or an improvement are not by
-themselves a defect. `interp.py self-test` and `compare.py self-test` exercise
+themselves a defect. In the null run the base and candidate images of the
+programs compiled with `--cache` are two files, not one: the same compiler on
+the same source writes images of equal size that differ in about 24 bytes (a
+run of 20 consecutive bytes near the start of the file, and a few more) when
+the cache directory differs, and byte for byte equal images when it is the
+same warm one; Halo, built without a cache, is identical. `interp.py self-test` and `compare.py self-test` exercise
 the reducers on synthetic rows, including a slowdown and an improvement the
 reducer must find, a noisy or offset twin that must leave the workload
 unresolved, a floor, and every output check. The interpreters group has no
