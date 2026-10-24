@@ -17,9 +17,11 @@ defaults:
   run:
     shell: bash
 
+# One group per commit: the run on the commit before a fix keeps going, so its
+# result can be read beside the fixed commit's.
 concurrency:
-  group: tmp-toolchain-flaky-${{ github.ref }}
-  cancel-in-progress: true
+  group: tmp-toolchain-flaky-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: never
