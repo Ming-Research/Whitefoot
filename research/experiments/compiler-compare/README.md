@@ -36,7 +36,7 @@ but this run's noise.
 | --- | --- | --- |
 | `hash_map` | the seven `HashMap` operations at three sizes, memory cells and the candidate's scan hold times of [hash-map-compare](../hash-map-compare/README.md) | its decision rule, unchanged |
 | `interpreters` | Halo (Lua) running `fib(32)`, and the wasm interpreter v2h running CoreMark, 2000 iterations | the same rule, below |
-| `perf` (in the `interpreters` stage, 14900K only) | the same two programs under `perf stat` | not judged: counts and ratios |
+| `perf` (in the `interpreters` stage, 14900K only) | the same two programs under `perf stat` | not judged: counts, times, page faults and ratios |
 
 `hash_map`: `compare.py build` takes the base's own runtime for the memory
 cell's observed image (`--base-runtime-root`) and accepts equal images
@@ -98,6 +98,18 @@ event is one row per PMU; the rows of a PMU whose CPUs exclude the pinned CPU
 are ignored and the rest summed. A `perf stat` that fails leaves the timed
 table written, with a line saying that no counter table exists, and fails the
 job.
+
+Counters of user mode leave out what the kernel does for the process and
+whatever happens outside the counting window, so each `perf stat` run also
+records, in `perf.json`, its wall time (the launch's elapsed time), perf's
+counting window (the enabled time its CSV rows report), and the user and sys
+CPU time and the page faults the kernel accounted to every process of the
+launch: `taskset`, `timeout`, `perf stat` and the workload, the same wrapper
+for every arm. The user and sys split is sampled by the scheduler tick, so
+only their sum is exact. The table prints the medians per image, with
+`outside` = wall - window, and then the candidate's and the twin's difference
+to the base (seconds, or a count of faults) and ratio, each with its range over
+the rounds.
 
 ## Controls
 
