@@ -96,23 +96,20 @@ jobs:
       - name: Fetch locked compiler dependencies
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
 
-      # A checker that judges a rebound binding's leaving edge as before: the
-      # affine rebound-binding case must be accepted, and the pinned repair
-      # test must fail at the pair that rebinds its binding because that pair
-      # is accepted or loses its repair, not for another rule.
-      - name: rebound-binding rule switched off
+      # A checker that leaves a loop's range invariant out of the statement's
+      # invariants: the ledger test must fail and name the loop range
+      # invariant witness alone, since each other witness sets the statement's
+      # flag another way.
+      - name: ledger test without the loop range invariant branch
         run: |
-          sed -i 's/^            if let Some(rebound) = &rebound {$/            if let Some(rebound) = rebound.as_ref().filter(|_| false) {/' compiler/src/semantic/entailment/flow/walk.rs
-          grep -n 'rebound.as_ref().filter(|_| false)' compiler/src/semantic/entailment/flow/walk.rs
-          perl .github/run-check.pl tmp/watch-build cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc
+          sed -i '/^                || loops\.get(id)\.is_some_and(|range| !range\.invariants\.is_empty())$/d' compiler/src/semantic/check/control/atomic.rs
+          if grep -n 'loops.get(id)' compiler/src/semantic/check/control/atomic.rs; then exit 1; fi
           set +e
-          compiler/target/gate/whitefootc --check tests/conformance/cases/type11-neg-atomic-rebound-binder.wf
-          case_status=$?
-          perl .github/run-check.pl tmp/watch-repairs cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib driver::pinned_repairs::each_pinned_repair_is_carried_out_by_its_programs > "$RUNNER_TEMP/repairs.log" 2>&1
-          repairs_status=$?
+          perl .github/run-check.pl tmp/watch-ledger cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses > "$RUNNER_TEMP/ledger.log" 2>&1
+          status=$?
           set -e
-          cat "$RUNNER_TEMP/repairs.log"
-          echo "the affine case's check exits $case_status; the pinned repair test exits $repairs_status"
-          test "$case_status" -eq 0
-          test "$repairs_status" -ne 0
-          grep -nE 'atomic-block-rebinds-its-binding.wf: (the rejection no longer carries this repair|LlvmModule)' "$RUNNER_TEMP/repairs.log"
+          cat "$RUNNER_TEMP/ledger.log"
+          echo "the ledger test exits $status"
+          test "$status" -ne 0
+          grep -n '"a loop range invariant: ' "$RUNNER_TEMP/ledger.log"
+          if grep -nE '"(an affine type invariant|a range type invariant|a local invariant|a loop affine invariant): ' "$RUNNER_TEMP/ledger.log"; then exit 1; fi

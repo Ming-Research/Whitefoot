@@ -302,10 +302,13 @@ fn lock_ledger_names_an_entry_lock_and_a_whole_map_lock() {
 /// An invariant the statement's checking uses may name parts of the state
 /// its code never reaches, so the statement takes every unit, the map whole,
 /// before its block, although the block reaches only the map's entry under
-/// one key [SHARE-3]: an affine and a range type invariant of the state, a
-/// local invariant and a loop invariant in the block. Without an invariant
-/// the same block takes the entry alone (the entry witness above), so a
-/// lowering that leaves one kind out reports one line and fails.
+/// one key [SHARE-3]: an affine and a range type invariant of the state, and
+/// a local invariant, a loop's affine invariant and a loop's range invariant
+/// in the block. The checker keeps a loop's range invariants apart from its
+/// affine ones, so each has a witness; the range one names only a local
+/// array. Without an invariant the same block takes the entry alone (the
+/// entry witness above), so a checker or lowering that leaves one kind out
+/// reports one line and fails.
 #[test]
 fn lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses() {
     let affine = (
@@ -330,11 +333,19 @@ fn lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses() {
             lock_ledger_source(MAP_FIRST, "", "    invariant bounded: 0_u64 <= m^.meta.count;"),
         ),
         (
-            "a loop invariant",
+            "a loop affine invariant",
             lock_ledger_source(
                 MAP_FIRST,
                 "",
                 "    let seen = 0_u8;\n    for (\n      at in 0_u64..1_u64,\n      invariant bounded: 0_u64 <= m^.meta.count\n    ) {\n      set seen = 1_u8;\n    }",
+            ),
+        ),
+        (
+            "a loop range invariant",
+            lock_ledger_source(
+                MAP_FIRST,
+                "",
+                "    let cells = array_filled::<u64, 1>(value: 0_u64);\n    for (\n      at in 0_u64..1_u64,\n      invariant forall zero(k in 0_u64..at): cells[k] == 0_u64\n    ) {\n      set cells[at] = 0_u64;\n    }",
             ),
         ),
     ];
