@@ -512,15 +512,13 @@ fn ordered_map_edge_node<K, V>(node: &OrderedNode<K, V>, cursor: &OrderedCursor,
       return OrderedMove::OrderedLost();
     }
     let final = count - 1_u64;
-    if final < node^.entries.len {
-      if node^.entries[final].after.len > 0_u64 {
-        let marked = ordered_map_cursor_mark(cursor: cursor, level: level, index: count);
-        if marked {
-          let next = level + 1_u64;
-          return ordered_map_edge_node::<K, V>(node: &node^.entries[final].after[0_u64].inner, cursor: cursor, level: next, last: last);
-        }
-        return OrderedMove::OrderedLost();
+    if node^.entries[final].after.len > 0_u64 {
+      let marked = ordered_map_cursor_mark(cursor: cursor, level: level, index: count);
+      if marked {
+        let next = level + 1_u64;
+        return ordered_map_edge_node::<K, V>(node: &node^.entries[final].after[0_u64].inner, cursor: cursor, level: next, last: last);
       }
+      return OrderedMove::OrderedLost();
     }
     let placed = ordered_map_cursor_mark(cursor: cursor, level: level, index: final);
     if placed {
