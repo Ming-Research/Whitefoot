@@ -37,10 +37,12 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
           ./actionlint -color .github/workflows/compiler-compare.yml
       - name: Self-tests
+        if: ${{ !cancelled() }}
         run: |
           OUT=/tmp/out bash research/experiments/compiler-compare/run.sh selftest
           bash -n research/experiments/compiler-compare/run.sh research/experiments/compiler-compare/arms.sh
       - name: Dispatch inputs the workflow declares
+        if: ${{ !cancelled() }}
         run: python3 -c "import yaml,sys; d=yaml.safe_load(open('.github/workflows/compiler-compare.yml')); print(len(d[True]['workflow_dispatch']['inputs']), 'inputs')"
 
   port:
@@ -75,6 +77,70 @@ jobs:
           mkdir -p "$RUNNER_TEMP/p"
           git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/p/silverfir"
           git -C "$RUNNER_TEMP/p/silverfir" checkout --quiet 5f248e4420102356be7edadbdb4db2ae105d3270
+      - name: Compile the wasm interpreter, fixing each redundant condition in the sources until it compiles
+        run: |
+          wfc=$PWD/compiler/target/gate/whitefootc
+          python3 -B - "$wfc" "$RUNNER_TEMP/p" <<'PY'
+          import re, subprocess, sys
+          wfc, tmp = sys.argv[1], sys.argv[2]
+          dirp = 'research/experiments/match-dispatch/wasm/'
+          files = [dirp + 'interp_head.wf', dirp + 'interp_tail.wf']
+          texts = {f: open(f).read().split('\n') for f in files}
+          def compile_once():
+              subprocess.run([sys.executable, '-B', dirp + 'gen.py', tmp + '/v2h.wf'], check=True)
+              r = subprocess.run([wfc, tmp + '/v2h.wf', '--cache', tmp + '/v2h-cache', '-o', tmp + '/v2h-image'],
+                                 capture_output=True, text=True)
+              return r.returncode, r.stdout + r.stderr
+          def block_end(lines, k):
+              depth = 0
+              for j in range(k, len(lines)):
+                  depth += lines[j].count('{') - lines[j].count('}')
+                  if depth == 0:
+                      return j
+              raise SystemExit('unbalanced block at line %d' % (k + 1))
+          for iteration in range(60):
+              code, out = compile_once()
+              if code == 0:
+                  print('compiled after', iteration, 'fixes')
+                  break
+              errors = re.findall(r'error\[OP-5\]: RedundantCondition\n\s+source:\s+(.*)\n.*\n.*\n\s+decided: (\w+)', out)
+              if not errors:
+                  print(out[:6000])
+                  raise SystemExit('a different error')
+              fixed = 0
+              for source, decided in errors:
+                  cond = source.strip()
+                  hits = [(f, i) for f in files for i, l in enumerate(texts[f]) if l.strip() == cond]
+                  print('redundant:', cond, 'decided', decided, 'hits', hits)
+                  if decided != 'True' or len(hits) != 1:
+                      print(out[:6000])
+                      raise SystemExit('needs a manual edit: ' + cond)
+                  f, k = hits[0]
+                  lines = texts[f]
+                  end = block_end(lines, k)
+                  indent = len(lines[k]) - len(lines[k].lstrip())
+                  body_end = end
+                  tail = lines[end].strip()
+                  if tail.startswith('} else {'):
+                      body_end = end
+                      end = block_end(lines, end)  # the else block closes at 'end'
+                  elif tail != '}':
+                      raise SystemExit('else-if chain after: ' + cond)
+                  body = [l[2:] if l.startswith(' ' * (indent + 2)) else l for l in lines[k + 1:body_end]]
+                  lines[k:end + 1] = body
+                  fixed += 1
+              for f in files:
+                  open(f, 'w').write('\n'.join(texts[f]))
+              print('fixed', fixed, 'in iteration', iteration)
+          else:
+              raise SystemExit('still failing after 60 iterations')
+          PY
+          git --no-pager diff --stat -- research/experiments/match-dispatch
+          git --no-pager diff -- research/experiments/match-dispatch | tee "$RUNNER_TEMP/port.diff"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: port-diff
+          path: ${{ runner.temp }}/port.diff
       - name: Generate, compile and run the wasm interpreter
         run: |
           wfc=$PWD/compiler/target/gate/whitefootc
@@ -116,6 +182,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: port-diff
+          path: ${{ runner.temp }}/diff
+      - name: Apply the port's source fixes
+        run: |
+          if [ -s "$RUNNER_TEMP/diff/port.diff" ]; then git apply "$RUNNER_TEMP/diff/port.diff"; fi
+          git status --short
       - name: Install the host toolchain
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"

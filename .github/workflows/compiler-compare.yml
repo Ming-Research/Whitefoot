@@ -125,9 +125,10 @@ jobs:
         if: inputs.runner == '14900k'
         run: |
           set -uo pipefail
-          ps -eo pid,args | grep -E 'compiler-compare/(interp|run)|hash-map-compare/compare\.py' |
-            grep -v grep | tee "$RUNNER_TEMP/leftover.txt" || true
-          awk '{print $1}' "$RUNNER_TEMP/leftover.txt" | xargs -r kill 2>/dev/null || true
+          pids=$(pgrep -f 'compiler-compare/(interp|run)|hash-map-compare/compare\.py' || true)
+          echo "leftover processes: ${pids:-none}"
+          # shellcheck disable=SC2086
+          if [ -n "$pids" ]; then kill $pids 2>/dev/null || true; fi
           sleep 2
           lock=/tmp/whitefoot-check-$(id -u).lock
           if [ -e "$lock" ]; then
