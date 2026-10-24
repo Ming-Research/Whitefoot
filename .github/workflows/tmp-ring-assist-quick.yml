@@ -242,8 +242,8 @@ jobs:
           fi
 
   # The registered latency arms of the study's section 6.1 for the program
-  # witnesses: both placement arms at 1 and at 2 CPUs, ten invocations of
-  # three attempts per arm each, every echo within the bound.
+  # witnesses: both placement arms at 1, 2 and 4 CPUs, ten invocations each,
+  # every echo within the bound; each run's placement is counted.
   latency-arms:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -259,19 +259,21 @@ jobs:
           rustup default stable
           cargo fetch --locked --manifest-path compiler/Cargo.toml
           nproc
-      - name: Both placement arms at 1 and 2 CPUs
+      - name: Both placement arms at 1, 2 and 4 CPUs
         run: |
           set -u
           status=0
           export WF_REQUIRE_LINUX_IO_URING=1
           out="$RUNNER_TEMP/arms.txt"
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run
-          for cpus in 0 0,1; do
+          for cpus in 0 0,1 0-3; do
             passed=0
+            : > "$RUNNER_TEMP/runs-$cpus.txt"
             for i in 1 2 3 4 5 6 7 8 9 10; do
               code=0
               taskset -c "$cpus" timeout 900s cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline \
-                --test corpus programs::ring_assist:: -- --test-threads=1 > "$out" 2>&1 || code=$?
+                --test corpus programs::ring_assist:: -- --test-threads=1 --nocapture > "$out" 2>&1 || code=$?
+              grep -E '^(same-driver|split) arm, attempt [0-9]+: echo' "$out" >> "$RUNNER_TEMP/runs-$cpus.txt" || true
               if [ "$code" = 0 ]; then
                 passed=$((passed + 1))
               else
@@ -281,6 +283,12 @@ jobs:
               fi
             done
             echo "CPUs $cpus: $passed of 10 invocations passed"
+            for arm in same-driver split; do
+              total=$(grep -c "^$arm arm" "$RUNNER_TEMP/runs-$cpus.txt" || true)
+              shown=$(grep -c "^$arm arm.*the arm's placement" "$RUNNER_TEMP/runs-$cpus.txt" || true)
+              slowest=$(grep "^$arm arm" "$RUNNER_TEMP/runs-$cpus.txt" | sed -E 's/.*echo ([0-9.]+)(µs|ms|s),.*/\1 \2/' | awk '{u=($2=="µs")?1:(($2=="ms")?1000:1000000); v=$1*u; if (v>m) m=v} END {print m " µs"}')
+              echo "CPUs $cpus, $arm arm: $total runs, $shown showed the placement, longest echo $slowest"
+            done
             if [ "$passed" != 10 ]; then status=1; fi
           done
           exit $status

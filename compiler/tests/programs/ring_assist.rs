@@ -47,7 +47,11 @@ const DOUBLINGS: u32 = 4;
 /// misplaced and run again.
 const SPLIT_SPIN: u64 = 20_000_000;
 const ECHO_LIMIT: Duration = Duration::from_millis(100);
-const ATTEMPTS: usize = 3;
+/// Runs an arm may take to show its placement. The idle driver can take the
+/// echo's context before it parks, which makes that run split; on 2 CPUs three
+/// runs sometimes held none that stayed on the entry's driver. Every run still
+/// has to keep its echo inside the bound.
+const ATTEMPTS: usize = 8;
 
 /// The recurrence `mix` in `ring_assist.wf` computes, advanced by squaring
 /// the step's affine map instead of stepping it, so the oracle is independent
@@ -266,7 +270,13 @@ fn run_arm(arm: &str, spin: u64, placed: impl Fn(&[DriverReport]) -> bool) -> Op
             continue;
         }
         placements += 1;
-        if placed(&run.reports) {
+        let shown = placed(&run.reports);
+        println!(
+            "{arm} arm, attempt {attempt}: echo {:?}, {}",
+            run.echo,
+            if shown { "the arm's placement" } else { "misplaced" }
+        );
+        if shown {
             return Some(run);
         }
         misplaced.push_str(&format!("attempt {attempt}, echo {:?}:\n{}", run.echo, run.stderr));
