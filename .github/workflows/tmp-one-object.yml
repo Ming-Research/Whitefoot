@@ -1,7 +1,8 @@
-# Temporary (one-object-core): the gate's static group on Linux for a change
-# to comments only, which a draft pull request's gate skips; the group runs
-# the repository's prose and reference checks and the compiler's lint over
-# every target. Removed before the full check.
+# Temporary (one-object-core): the gate's static and runtime groups on Linux
+# for a change to comments only, which a draft pull request's gate skips: the
+# static group runs the repository's prose and reference checks and the
+# compiler's lint over every target, and the runtime group builds and runs the
+# C runtime whose headers changed. Removed before the full check.
 name: tmp-one-object
 
 on:
@@ -16,10 +17,14 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  static:
-    name: static
+  group:
+    name: ${{ matrix.stage }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [static, runtime]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,6 +40,7 @@ jobs:
           git branch -f main origin/main
 
       - name: Select the design review base
+        if: matrix.stage == 'static'
         run: echo "DESIGN_REVIEW_BASE=$(git merge-base main HEAD)" >> "$GITHUB_ENV"
 
       - name: Install the host toolchain
@@ -51,7 +57,10 @@ jobs:
       - name: Fetch locked compiler dependencies
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
 
-      - name: static
+      - name: Decline core dumps
+        run: sudo sysctl -w kernel.core_pattern=core
+
+      - name: ${{ matrix.stage }}
         env:
           WHITEFOOT_CHECK_TIMEOUT: 2400
-        run: make check-group GROUP=static
+        run: make check-group GROUP="${{ matrix.stage }}"
