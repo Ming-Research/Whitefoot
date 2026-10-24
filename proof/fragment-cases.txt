@@ -20,10 +20,12 @@ ent3-neg-affine-requirement-scalar-replaced
 ent3-neg-runtime-division-dividend-replaced
 ent3-neg-runtime-division-divisor-replaced
 ent3-neg-runtime-division-quotient-replaced
+ent3-neg-s4-scaled-requirement-chain
 ent3-neg-s7-signed-remainder-one-past
 ent3-neg-s7-wrap-may-wrap
 ent3-pos-s12-a-published-relation-reaches-a-let-binder
 ent3-pos-s12-a-published-relation-reaches-a-set-target
+ent3-pos-s4-displaced-requirement-chain
 ent3-pos-s7-division-rows
 ent4-neg-offset-join-missing
 ent4-neg-offset-killed
