@@ -833,6 +833,19 @@ theorem evalArgs_sound {env : Env} {st : State} {E E0 : Whitefoot.Env} {ν : Ter
 
 /-! ## Calls -/
 
+/-- Follow a checker run that succeeded to the `pure` it ends in, closing the
+branches that fail, and prove the goal there by `rfl`. -/
+local syntax "walk_pure " ident : tactic
+local macro_rules
+  | `(tactic| walk_pure $h:ident) => `(tactic|
+      repeat' first
+        | exact (CheckerRun.run_fail $h).elim
+        | (obtain ⟨_, _, hf, -⟩ := CheckerRun.run_bind $h; exact (CheckerRun.run_fail hf).elim)
+        | (obtain ⟨hpe, -⟩ := CheckerRun.run_pure $h; subst hpe; rfl)
+        | (obtain ⟨_, _, -, $h:ident⟩ := CheckerRun.run_bind $h)
+        | (split at $h:ident)
+        | (dsimp only at $h:ident))
+
 set_option maxHeartbeats 1000000 in
 /-- A right-hand side that calls no function of the program publishes no
 call. -/

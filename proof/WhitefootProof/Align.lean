@@ -16,12 +16,62 @@ taken, and each parameter's binding is the one the walk's parameter list names.
 A function's entry starts in line (`Sim.ctxOK_entry`), and each statement's
 walk and judgment keep it in line (`Sim.StmtAlign`). A `let` does because a
 right-hand side's checker value has the type its judgment gives
-(`Checker.evalRhs_ty`).
+(`Checker.evalRhs_ty`). That lemma reads the type off every value a checker
+computation can return (`Checker.Yields`), without following the checks the
+computation runs on its way.
 -/
 
 namespace Whitefoot
 
 namespace Checker
+
+/-! ## What every successful run returns -/
+
+/-- Every successful run of `m` returns a value that satisfies `P`. -/
+def Yields {α : Type} (P : α → Prop) (m : M α) : Prop :=
+  ∀ g a g', m.run g = .ok (a, g') → P a
+
+theorem Yields.run {α : Type} {P : α → Prop} {m : M α} {g g' : Gen} {a : α}
+    (hm : Yields P m) (h : m.run g = .ok (a, g')) : P a :=
+  hm g a g' h
+
+theorem Yields.of_pure {α : Type} {P : α → Prop} {a : α} (h : P a) : Yields P (pure a) :=
+  fun _ _ _ hr => by
+    obtain ⟨rfl, -⟩ := CheckerRun.run_pure hr
+    exact h
+
+theorem Yields.of_bind {α β : Type} {P : β → Prop} {m : M α} {f : α → M β}
+    (hf : ∀ a, Yields P (f a)) : Yields P (m >>= f) :=
+  fun g b g' hr => by
+    obtain ⟨a, g1, -, h2⟩ := CheckerRun.run_bind hr
+    exact hf a g1 b g' h2
+
+theorem Yields.of_fail {α : Type} {P : α → Prop} (rule msg : String) :
+    Yields P (fail rule msg : M α) :=
+  fun _ _ _ hr => (CheckerRun.run_fail hr).elim
+
+theorem Yields.of_fail_bind {α β : Type} {P : β → Prop} {rule msg : String} {f : α → M β} :
+    Yields P (fail rule msg >>= f) :=
+  fun _ _ _ hr => by
+    obtain ⟨_, _, hf, -⟩ := CheckerRun.run_bind hr
+    exact (CheckerRun.run_fail hf).elim
+
+/-- Follows a checker computation through its binds, matches and conditionals
+to each `pure` it can end in, and proves the predicate there by `rfl`. A bind's
+first computation is passed over, and each step matches the computation's head
+at reducible transparency, so the checks a computation runs on its way, such
+as a discharge query, are never unfolded. -/
+syntax "yields" : tactic
+
+macro_rules
+  | `(tactic| yields) => `(tactic| repeat' first
+      | rfl
+      | with_reducible exact Yields.of_fail _ _
+      | with_reducible exact Yields.of_fail_bind
+      | (with_reducible refine Yields.of_bind fun _ => ?_)
+      | (with_reducible refine Yields.of_pure ?_)
+      | dsimp only
+      | split)
 
 /-! ## A right-hand side's value has its judged type -/
 
@@ -90,7 +140,8 @@ theorem evalAtom_ty {env : Env} {st : State} {a : Atom} {g g' : Gen} {v : Val} {
         dsimp only at ht
         split at ht
         · cases ht
-          walk_pure h
+          refine Yields.run (P := fun v : Val => v.ty = _) ?_ h
+          yields
         · exact absurd ht Typing.reject_ne
       | int _ => exact absurd ht Typing.reject_ne
       | unit => exact absurd ht Typing.reject_ne
@@ -205,7 +256,6 @@ theorem mapM_evalAtom_ty {env : Env} {st : State} :
     show t1 :: ts' = v.ty :: vs'.map (·.ty)
     rw [evalAtom_ty hv ht1, mapM_evalAtom_ty hvs hts]
 
-set_option maxHeartbeats 1000000 in
 theorem infix_ty {env : Env} {st : State} {a b : Atom} {op : InfixOp} {g g' : Gen} {r : Rhs}
     {t : Ty} (h : (evalRhs env st (.infix a op b)).run g = .ok (r, g'))
     (ht : Static.exprTy env.prog (scopeOf env.vars) (.infix a op b) = .ok t) :
@@ -216,12 +266,12 @@ theorem infix_ty {env : Env} {st : State} {a b : Atom} {op : InfixOp} {g g' : Ge
   obtain ⟨ta, hta, ht⟩ := Typing.bind_ok ht
   obtain ⟨tb, -, ht⟩ := Typing.bind_ok ht
   rw [infixTy_res ht, ← evalAtom_ty hva hta]
+  refine Yields.run (P := fun r : Rhs => r.val.ty = infixRes op va.ty) ?_ h
   rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
-  · cases m <;> cases hvt : va.ty <;> rw [hvt] at h <;> walk_pure h
-  · cases m <;> cases hvt : va.ty <;> rw [hvt] at h <;> walk_pure h
-  · walk_pure h
+  · cases m <;> cases va.ty <;> yields
+  · cases m <;> cases va.ty <;> yields
+  · yields
 
-set_option maxHeartbeats 1000000 in
 theorem op_ty {env : Env} {st : State} {o : TableOp} {as : List Atom} {g g' : Gen} {r : Rhs}
     {t : Ty} (h : (evalRhs env st (.op o as)).run g = .ok (r, g'))
     (ht : Static.exprTy env.prog (scopeOf env.vars) (.op o as) = .ok t) :
@@ -230,23 +280,23 @@ theorem op_ty {env : Env} {st : State} {o : TableOp} {as : List Atom} {g g' : Ge
   obtain ⟨vs, g1, hvs, h⟩ := CheckerRun.run_bind h
   obtain ⟨ts, hts, ht⟩ := Typing.bind_ok ht
   rw [opTy_res ht, mapM_evalAtom_ty hvs hts]
+  refine Yields.run (P := fun r : Rhs => r.val.ty = opRes o (vs.map (·.ty))) ?_ h
   rcases vs with _ | ⟨va, _ | ⟨vb, _ | ⟨vc, rest⟩⟩⟩
-  · cases o <;> walk_pure h
+  · cases o <;> yields
   · simp only [List.map_cons, List.map_nil]
     cases o with
     | unary u m =>
-      dsimp only at h
-      -- Reduce the match on the operand's type and the mode first: splitting
-      -- it would leave the matched type's width as an unsolved equation.
-      cases m <;> cases hvt : va.ty <;> rw [hvt] at h <;> dsimp only at h <;> walk_pure h
-    | band => walk_pure h
-    | bor => walk_pure h
-    | bxor => walk_pure h
-    | bnot => walk_pure h
-  · cases o <;> walk_pure h
-  · cases o <;> walk_pure h
+      -- Select the operator's arm first, so the cases on the operand's type
+      -- reach the match on it.
+      dsimp only
+      cases m <;> cases va.ty <;> yields
+    | band => yields
+    | bor => yields
+    | bxor => yields
+    | bnot => yields
+  · cases o <;> yields
+  · cases o <;> yields
 
-set_option maxHeartbeats 1000000 in
 theorem call_ty {env : Env} {st : State} {path : List String} {targs : List TArg}
     {as : List (String × Atom)} {g g' : Gen} {r : Rhs} {t : Ty}
     (h : (evalRhs env st (.call path targs as)).run g = .ok (r, g'))
@@ -268,7 +318,8 @@ theorem call_ty {env : Env} {st : State} {path : List String} {targs : List TArg
         obtain ⟨_, -, ht⟩ := Typing.bind_ok ht
         obtain ⟨_, -, ht⟩ := Typing.bind_ok ht
         cases ht
-        walk_pure h
+        refine Yields.run (P := fun r : Rhs => r.val.ty = _) ?_ h
+        yields
     | exitStatus =>
       cases targs with
       | cons _ _ => exact absurd ht Typing.reject_ne
@@ -276,15 +327,16 @@ theorem call_ty {env : Env} {st : State} {path : List String} {targs : List TArg
         obtain ⟨_, -, ht⟩ := Typing.bind_ok ht
         obtain ⟨_, -, ht⟩ := Typing.bind_ok ht
         cases ht
-        walk_pure h
+        refine Yields.run (P := fun r : Rhs => r.val.ty = _) ?_ h
+        yields
     | arrayFilled =>
       rcases targs with _ | ⟨(et | _ | _ | ⟨_, _⟩ | _) | _, _ | ⟨_ | n, _ | ⟨_, _⟩⟩⟩ <;>
         try exact absurd ht Typing.reject_ne
       obtain ⟨_, -, ht⟩ := Typing.bind_ok ht
       obtain ⟨_, -, ht⟩ := Typing.bind_ok ht
       cases ht
-      dsimp only at h
-      walk_pure h
+      refine Yields.run (P := fun r : Rhs => r.val.ty = _) ?_ h
+      yields
 
 /-- A right-hand side's checker value has the type the judgment without facts
 gives it in the binding table's scope. -/
@@ -309,8 +361,10 @@ does. -/
 theorem entryState_params {p : Program} {f : FnDecl} {g g' : Gen} {es : Env × State}
     (h : (entryState p f).run g = .ok (es, g')) :
     es.1.params = es.1.vars.map fun v => (v.name, v.id) := by
-  unfold entryState at h
-  walk_pure h
+  refine Yields.run
+    (P := fun es : Env × State => es.1.params = es.1.vars.map fun v => (v.name, v.id)) ?_ h
+  unfold entryState
+  yields
 
 end Checker
 
