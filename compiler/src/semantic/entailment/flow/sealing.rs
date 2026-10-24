@@ -2635,7 +2635,22 @@ impl Analyzer<'_, '_> {
                 .into_iter()
                 .map(|(referent, _)| referent)
                 .collect();
+            // [TYPE-11.S3] a write through an argument spelled through a
+            // rebindable reference records that reference on each debt at or
+            // below its referent, as a commit's does: that referent is each
+            // argument referent less the steps the argument spells below it.
+            let spelled = named_place(argument).and_then(|named| match named.root {
+                PlaceRoot::Binding(binding)
+                    if self.input.places.reference_holder(binding).is_some() =>
+                {
+                    Some((binding, named.steps.len() + named.suffix.len()))
+                }
+                _ => None,
+            });
             for referent in uncovered(referents) {
+                let through = spelled.map(|(binding, below)| {
+                    (binding, referent.path.len().saturating_sub(below))
+                });
                 let written_places = if transport.writes_element_storage() {
                     vec![element_write_place(
                         referent.clone(),
@@ -2662,7 +2677,7 @@ impl Analyzer<'_, '_> {
                         &state.separations,
                         &written,
                         referent.path.len(),
-                        None,
+                        through,
                         relocation,
                         call,
                     );

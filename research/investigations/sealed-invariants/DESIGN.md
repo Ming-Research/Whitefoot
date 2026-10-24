@@ -395,17 +395,19 @@ restored debts are removed.
 
 T6 **Call.** After the hand-offs of its arguments (T5), the callee's
 projected writes apply T2 to the anchors strictly above each argument's
-place, and to no anchor at or below a reference argument's referent: the
-callee left a referent it received in a hand-off sealed (T7 at a source
-callee's exits, parametricity at a supplied definition's), and `swap` and
-`map_clear`, whose arguments are no hand-offs, move (T10) or clear (T5's
-release) the values below theirs without writing into one. The call's
-results carry no debt, and a binding that receives a `shared_close` result
-takes the unfolding below its state. This rule needs only the callee's
-declared row, the declared parameter and result types and whether the callee
-is `shared_close` or one of T5's three prelude rows, never its body; at a
-concrete instance, a call through a function-kind parameter is a call of its
-actual ([below](#prelude-host-and-module-boundaries)).
+place, those at or below the referent of a reference the argument is
+spelled through recording that reference [TYPE-11.S3], and to no anchor at
+or below a reference argument's referent: the callee left a referent it
+received in a hand-off sealed (T7 at a source callee's exits, parametricity
+at a supplied definition's), and `swap` and `map_clear`, whose arguments
+are no hand-offs, move (T10) or clear (T5's release) the values below
+theirs without writing into one. The call's results carry no debt, and a
+binding that receives a `shared_close` result takes the unfolding below its
+state. This rule needs only the callee's declared row, the declared
+parameter and result types and whether the callee is `shared_close` or one
+of T5's three prelude rows, never its body; at a concrete instance, a call
+through a function-kind parameter is a call of its actual
+([below](#prelude-host-and-module-boundaries)).
 
 T7 **Body exit.** Each `return` and propagated error exit is a hand-off of
 the returned value and of the referent of every reference parameter whose
@@ -459,11 +461,13 @@ proved at or below s onto f. A debt that only may be at or below f — an
 index not proved equal to f's, a reference whose path set holds several
 targets — stays where it is and an exchanged copy is added at s; likewise
 for s. When the two targets may be the same place, both receive the union.
-T2 adds debts above each target. An exchanged debt, moved or copied,
-records no reference [TYPE-11.S2]: T8 restores a recorded debt over `r^`
-because its breaking events wrote the place r names, and the exchange put
-the value they broke at the other target, which r need not name; a debt
-that stays where it is keeps its record, since r still names its place.
+T2 adds debts above each target, those at or below the referent of a
+reference the target is spelled through recording that reference
+[TYPE-11.S3]. An exchanged debt, moved or copied, records no reference
+[TYPE-11.S2]: T8 restores a recorded debt over `r^` because its breaking
+events wrote the place r names, and the exchange put the value they broke
+at the other target, which r need not name; a debt that stays where it is
+keeps its record, since r still names its place.
 A debt exchanged onto a target t names its invariant at t itself when its
 anchor lies at the other target's level, and is the cover of t otherwise:
 an exchange appends no steps below t. So after
@@ -1302,6 +1306,8 @@ other verdicts accept.
 | `type11-neg-joined-reference-field-store-keeps-debt` | a reference chooses between two `Holder`s; a write through it breaks the holder's own invariant, then a sealed store replaces only its `index` field; the hand-off of one holder | reject FN-8 |
 | `type11-neg-swap-after-joined-write-store-keeps-debt` | the reference that chooses `&left` or `&right` writes 31 through `target^.value`, then `swap(first: &left, second: &right);` moves each debt onto the other local recording no reference (T10), so `set target^ = fresh();` removes neither; the hand-off of `&right` | reject FN-8 |
 | `type11-neg-swap-after-joined-write-restore-keeps-debt` | the same write and `swap`, then `set target^.value = 7_u64;`, over which no exchanged debt is restored (T8); the hand-off of `&right` | reject FN-8 |
+| `type11-pos-joined-reference-call-write-restored` | a reference chooses between two `Holder`s whose own invariant bounds `index.value`; `spoil(index: &target^.index)` writes 31 there, each debt it adds above the field recording the reference (T6), then `set target^.index.value = 7_u64;` and the hand-off of `&right` | accept |
+| `type11-pos-joined-reference-swap-write-restored` | the same holders; `swap(first: &target^.index, second: &spare);` with `spare` holding 31, each debt T2 adds above the first target recording the reference (T10), then `set target^.index.value = 7_u64;` and the hand-off of `&right` | accept |
 | `type11-pos-grow-keeps-length-sealed` | `struct Stack { window: Box<Slots<u64>>; invariant short(stack): stack.window.inner.len < 16_u64; }` held in a `Holder`; `grow(cell: &holder^.stack.window, ...)`, then the hand-off of `&holder^.stack` with no read of its length (T2's relocation table keeps the length word) | accept |
 | `type11-neg-grow-capacity-keeps-debt` | the same window under `invariant roomy(stack): stack.window.inner.cap <= 16_u64;`; `grow(cell: &stack^.window, capacity: 32_u64);`, then the hand-off of `stack` | reject FN-8 |
 | `type11-neg-map-clear-other-target` | `atomic m1 = &h1, m2 = &h2 { ... break the payload of an entry through m2 ...; map_clear(map: m1); }` with h1, h2 handles of one map type | reject TYPE-11 at the atomic statement |

@@ -8,11 +8,12 @@
 # programs), the trial compile of the downstream programs with the branch's
 # compiler and main's at the branch's latest merge of it, the cases of a
 # reference that may name several places, among them a swap after a write
-# through such a reference, and of a grow's relocation write, each checked
-# with main's compiler, the branch's head and the head whose exchanged debt
-# keeps the reference it recorded, and the repository-level static checks
-# and the change-log check against the branch's fork point. Removed before
-# the branch is ready.
+# through such a reference and a call's or swap's write through one, and of
+# a grow's relocation write, each checked with main's compiler, the branch's
+# head, the head whose exchanged debt keeps the reference it recorded and
+# the head whose call and swap writes record no reference, and the
+# repository-level static checks and the change-log check against the
+# branch's fork point. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -292,21 +293,23 @@ jobs:
 
   # The cases of references that may name several places, among them a
   # swap after a write through such a reference followed by a whole store
-  # of a sealed value or a field write through the same reference, and the
-  # cases of a grow's relocation write under a struct's invariant, each
-  # checked with main's compiler at the branch's latest merge of it, the
-  # branch's head, and the head whose exchanged debt keeps the reference it
-  # recorded, which must accept both swap cases; each verdict is printed
-  # with its first error and the opening of each rejection. One probe
-  # stores below a recorded debt's anchor's field instead of at the
-  # reference's referent.
+  # of a sealed value or a field write through the same reference, and a
+  # call's or swap's write below such a reference's referent restored
+  # through it, and the cases of a grow's relocation write under a struct's
+  # invariant, each checked with main's compiler at the branch's latest
+  # merge of it, the branch's head, the head whose exchanged debt keeps the
+  # reference it recorded, which must accept both swap-after-write cases,
+  # and the head whose call and swap writes record no reference, which
+  # must reject both call and swap cases; each verdict is printed with its
+  # first error and the opening of each rejection. One probe stores below a
+  # recorded debt's anchor's field instead of at the reference's referent.
   probe:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        compiler: [main, head, exchange-keeps-record]
+        compiler: [main, head, exchange-keeps-record, projected-write-records-nothing]
     steps:
       - uses: actions/checkout@v4
       - name: Install the host toolchain
@@ -332,6 +335,11 @@ jobs:
           case "${{ matrix.compiler }}" in
             exchange-keeps-record)
               perl -0777 -pi -e 's/(fn exchanged\(.*?)\n\s*through: None,/$1/s or die "the exchanged record is gone\n"' \
+                compiler/src/semantic/entailment/flow/sealing.rs
+              git diff
+              ;;
+            projected-write-records-nothing)
+              perl -0777 -pi -e 's/let through = spelled\.map\(/let through = spelled.filter(|_| false).map(/ or die "the call record is gone\n"' \
                 compiler/src/semantic/entailment/flow/sealing.rs
               git diff
               ;;
@@ -401,7 +409,9 @@ jobs:
             type11-neg-swap-joined-reference-keeps-debt type11-pos-call-result-sealed-at-receiver \
             type11-pos-grow-keeps-length-sealed type11-neg-grow-capacity-keeps-debt \
             type11-neg-swap-after-joined-write-store-keeps-debt \
-            type11-neg-swap-after-joined-write-restore-keeps-debt; do
+            type11-neg-swap-after-joined-write-restore-keeps-debt \
+            type11-pos-joined-reference-call-write-restored \
+            type11-pos-joined-reference-swap-write-restored; do
             check "case $case" "$cases/$case.wf"
           done
           echo "compiler ${{ matrix.compiler }}:"
