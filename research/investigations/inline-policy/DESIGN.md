@@ -121,4 +121,107 @@ Written before measuring:
 
 ### Results
 
-Pending the first run.
+[Run 40091914632](https://github.com/Ming-Research/Whitefoot/actions/runs/40091914632)
+on commit `b8fb5a166`, GitHub-hosted runners (AMD EPYC 7763, 9V45 and 9V74;
+each arm ran on one runner, named below), clang 22. Every arm's remarks
+show its setting reached the decisions: the thresholds met moved to the
+arm's value in the default build and in Halo's full-LTO link. Firn's main
+line (`7cf12df4c`) does not compile with this compiler (its Halo dependency
+names a binding `held`, now a reserved word), so it is left out; 97 of the
+103 standalone programs under `tests/programs/` compiled.
+
+**The witness.** In the default build of the bench with today's settings, the
+unshrunk removal's entry is inlined into the timed loop at cost 205 against
+225. With shrinking, LLVM first inlines `hash_map_shrink` (cost 90, the
+wrapper that tests the load and calls the rebuild) into the removal's body,
+and the removal then prices at 310 against 225 at all three of its call
+sites and stays out of line; `hash_map_rebuild` stays out of line in both.
+The removal was already at 91% of the threshold before shrinking. The
+instructions LLVM charges in the optimized removal are its own hash, probe
+and compare work (loads, compares, branches, shifts and multiplies of the
+hash); `print<inline-cost>` shows no checks or wrappers that the source does
+not ask for. So approach C has nothing to remove in the witness.
+
+**Halo.** `native_binding`, the guard on the Lua call path that
+wf-req-halo-dispatch-arm-spills-own names, is not inlined into `prepare` (two
+call sites), `collect_if_due` or `cjson_reclaim`: cost 310 against 225 in the
+full-LTO link. This confirms from LLVM's own remarks the attribution that
+board item read from IR.
+
+**Census.** The census of today's settings counts call sites between
+Whitefoot definitions. Its costs for kept sites are truncated: LLVM stops
+pricing once the running cost passes the threshold, so a kept site's
+reported cost is a lower bound and this round's band counts above 1 do not
+measure distance from the threshold. Inlined sites are exact: 42 of 1,270
+in the bench, 26 of 1,009 in Halo and 3,254 of 111,000 in the corpus were
+inlined within 20% below the threshold. Round 2 repeats the census with
+full costs.
+
+**Sweep.** Text size and compile time (median of two interleaved compiles)
+of each arm against today's settings:
+
+| Arm (runner) | bench text | Halo text | v2h text | corpus text | bench compile | Halo compile | v2h compile |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| threshold 325 (7763) | 1.074 | 1.064 | 1.055 | 1.073 | 1.065 | 1.035 | 1.029 |
+| threshold 500 (9V45) | 1.159 | 1.288 | 1.115 | 1.159 | 1.120 | 1.124 | 1.016 |
+| threshold 1000 (7763) | 1.546 | 2.091 | 1.419 | 1.493 | 1.473 | 1.388 | 1.127 |
+| threshold 2000 (9V74) | 1.833 | 4.178 | 1.644 | 1.762 | 1.667 | 2.236 | 1.152 |
+| `-O3` (7763) | 1.104 | 1.092 | 1.066 | 1.090 | 1.062 | 1.033 | 1.014 |
+| full LTO for the default build (9V74) | 0.412 | 1.000 | 1.000 | 0.400 | 0.885 | 0.981 | 1.005 |
+
+Timing, candidate/base ratio with its 95% interval (no floor: verdicts are
+exploratory; `none` is no detected change, `?` unresolved after 20 rounds):
+
+| Arm | remove-insert 1,000 | remove-insert 10,000 | remove-insert 1,000,000 | fib | CoreMark | other cells judged slower |
+| --- | --- | --- | --- | --- | --- | --- |
+| 325 | 0.927 [0.923, 0.930] | 0.922 [0.912, 0.935] | 0.844 ? | 0.882 [0.875, 0.886] | ? | iterate 1,000,000 1.003 |
+| 500 | 1.012 none | 1.010 [1.000, 1.021] | 0.971 [0.966, 0.990] | 0.885 ? | ? | insert-presized 1,000,000, insert-growing 1,000, remove 1,000 and 10,000 |
+| 1000 | 0.970 [0.957, 0.974] | 0.959 [0.948, 0.969] | 0.869 [0.849, 0.883] | 0.881 [0.879, 0.909] | ? | none |
+| 2000 | 0.959 [0.949, 0.965] | 0.961 [0.958, 0.966] | 0.900 [0.888, 0.923] | 0.995 [0.995, 0.999] | none | iterate 1,000,000 1.023 |
+| `-O3` | none | none | ? | 0.966 [0.959, 0.970] | ? | iterate 1,000 and 1,000,000 |
+| full LTO | 0.984 [0.977, 0.988] | 0.979 [0.976, 0.992] | 0.980 [0.968, 0.997] | none | none | iterate at all three sizes, 1.03–1.06 |
+
+Halo and v2h are built the same way in the full-LTO arm (Halo already with
+full LTO, v2h with cached ThinLTO), and both their images and their timing
+are unchanged there, as they must be.
+
+Reading of round 1, against the criteria written before it:
+
+- Thresholds 325, 1,000 and 2,000 recover the witness (both intervals wholly
+  below 1); 500 does not, on a different runner model, which the hosted
+  noise does not let this round separate from a real difference. `-O3` does
+  not; its locally-hot boost does not reach the bench's call sites. Full LTO
+  alone moves remove-insert about 2%, not the 4%–4.5% that shrinking cost.
+- Code size grows steeply above 500: Halo's text doubles at 1,000 and
+  quadruples at 2,000, so those are rejected as a global setting whatever
+  their timing.
+- Threshold 325 gives the largest single gain seen, Halo fib 12% faster,
+  consistent with `native_binding` (cost 310) being inlined at 325 and not
+  at 225; that attribution is deduced, and round 2 checks it in the remarks.
+- Linking the default build with full LTO, which internalizes every symbol
+  but the entry points, cuts the default build's text by 59% and its compile
+  time by 12% here: every definition being external keeps the whole
+  standard library and runtime in the image. It is independent of the
+  threshold question and a candidate on its own, but the iterate cells it
+  slows need attribution first.
+
+## Round 2: full-cost census and the threshold's neighbourhood (hosted runners)
+
+Written before measuring. The census repeats with `-inline-cost-full`, which
+prices every site completely without changing a decision, and reports
+Halo's `native_binding` sites. The sweep compares, each on its own runner:
+today's settings against themselves (how often this hosted comparison judges
+a cell when nothing differs); thresholds 275, 325 and 400; full LTO with
+threshold 325 against today's settings; and threshold 325 with shrinking
+against today's settings without shrinking, which the acceptance's second
+comparison needs.
+
+- Threshold 325 is confirmed when it again recovers the witness and fib
+  improves; the same-settings arm sets how many judged cells an arm may show
+  and still count as no regression on hosted runners.
+- If 275 already recovers the witness and fib with less growth, the lowest
+  threshold that does is preferred; the choice still needs a structural
+  ground, not only the witness, so the full-cost census's distribution near
+  225 decides how much a threshold moves across the corpus.
+- The comparison with the library before shrinking passes when no
+  remove-insert interval lies wholly above 1.

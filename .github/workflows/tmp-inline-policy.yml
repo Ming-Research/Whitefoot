@@ -1,11 +1,12 @@
 # Temporary (board item wf-inline-policy); remove before the branch is ready.
-# The inline-policy investigation's first round on hosted runners
+# The inline-policy investigation's rounds on hosted runners
 # (research/investigations/inline-policy/DESIGN.md): the census of LLVM's
-# inline decisions over the programs, and each arm of the threshold sweep
-# against today's settings, measured on the HashMap cells, Halo's fib and
-# CoreMark, code size and compile time. Every arm is this commit's compiler
-# with the shrinking HashMap of wf-need-firn-hash-shrink; only the clang
-# wrapper beside it differs (research/experiments/inline-policy/).
+# inline decisions over the programs, and each arm of the sweep against
+# today's settings, measured on the HashMap cells, Halo's fib and CoreMark,
+# code size and compile time. The candidate side of every arm is this
+# commit's compiler with the shrinking HashMap of wf-need-firn-hash-shrink;
+# the base side is that compiler or this commit's own, and only the clang
+# wrapper beside each differs (research/experiments/inline-policy/).
 name: tmp-inline-policy
 
 on:
@@ -96,8 +97,6 @@ jobs:
           mkdir -p "$inputs"
           git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$inputs/halo"
           git -C "$inputs/halo" checkout --quiet "$HALO"
-          git clone --quiet --recurse-submodules https://github.com/Ming-Research/Firn-wf.git "$inputs/firn"
-          echo "firn $(git -C "$inputs/firn" rev-parse HEAD)"
           python3 -B research/experiments/match-dispatch/wasm/gen.py "$inputs/v2h.wf"
       - name: Today's settings, with remarks
         run: |
@@ -108,7 +107,9 @@ jobs:
             cp research/experiments/inline-policy/clang-arm.sh "$arm/clang"
             chmod +x "$arm/whitefootc" "$arm/clang"
             ln -s "$(readlink -f /usr/bin/ld.lld)" "$arm/ld.lld"
-            echo 'ARM_REMARKS=${CENSUS_REMARKS:-}' > "$arm/arm.conf"
+            # Full costs: LLVM otherwise stops pricing a call site once it
+            # passes the threshold, so a kept site's cost would be truncated.
+            printf '%s\n' 'ARM_REMARKS=${CENSUS_REMARKS:-}' 'ARM_LLVM=-inline-cost-full=true' > "$arm/arm.conf"
           done
       - name: Compile each program, collecting its remarks
         run: |
@@ -124,8 +125,6 @@ jobs:
           [ -e "$inputs/halo/$graph" ] || graph=research/experiments/halo-bench/modules.wfg
           (cd "$inputs/halo" && CENSUS_REMARKS="$remarks/halo.txt" wfc shrink --graph "$graph" --entry bench --full-lto -o "$images/halo")
           CENSUS_REMARKS="$remarks/v2h.txt" wfc shrink "$inputs/v2h.wf" --cache "$RUNNER_TEMP/cache-v2h" -o "$images/v2h"
-          (cd "$inputs/firn" && CENSUS_REMARKS="$remarks/firn.txt" wfc shrink --graph firn/modules.wfg --entry firn --cache "$RUNNER_TEMP/cache-firn" -o "$images/firn") \
-            || echo "firn does not compile with this compiler"
           compiled=0; failed=0
           for program in tests/programs/*.wf; do
             name=$(basename "$program" .wf)
@@ -140,7 +139,7 @@ jobs:
       - name: Census
         run: |
           remarks="$RUNNER_TEMP/remarks"
-          for name in bench-main bench-shrink halo v2h firn corpus; do
+          for name in bench-main bench-shrink halo v2h corpus; do
             files=$(ls "$remarks/$name".txt "$remarks/$name".txt.lto.*.yaml 2>/dev/null || true)
             # shellcheck disable=SC2086
             [ -n "$files" ] && python3 -B research/experiments/inline-policy/census.py reduce --name "$name" $files || true
@@ -152,18 +151,16 @@ jobs:
             echo "== $name"
             { grep -h "hash_map_remove" "$remarks/$name.txt" || true; } | sed 's/^.*remark: //' | cut -c1-400 | sort | uniq -c | sort -rn | sed -n '1,40p'
           done
-          echo "== firn"
-          cat "$remarks"/firn.txt.lto.*.yaml 2>/dev/null | grep -c "hash_map_remove" || true
-          python3 - "$remarks" <<'EOF'
+      - name: Halo's call sites of native_binding
+        run: |
+          python3 - "$RUNNER_TEMP/remarks" <<'EOF'
           import glob, sys
           sys.path.insert(0, "research/experiments/inline-policy")
           import census
-          decisions = []
-          for path in glob.glob(f"{sys.argv[1]}/firn.txt.lto.*.yaml"):
-              decisions.extend(census.parse_yaml(open(path, errors="replace").read()))
-          for d in decisions:
-              if "hash_map_remove" in d["callee"]:
-                  print("firn", "inlined" if d["inlined"] else "kept", d["reason"], d["cost"], d["threshold"], d["callee"][:120], "<-", d["caller"][:120])
+          for path in glob.glob(f"{sys.argv[1]}/halo.txt.lto.*.yaml"):
+              for d in census.parse_yaml(open(path, errors="replace").read()):
+                  if d["callee"].endswith("native_binding"):
+                      print("inlined" if d["inlined"] else "kept", d["reason"], d["cost"], d["threshold"], d["callee"], "<-", d["caller"])
           EOF
       - name: Inline cost of the remaining removal calls, instruction by instruction
         run: |
@@ -194,19 +191,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # base names the compiler of the base side: shrink, or main for the
+        # library before shrinking.
         include:
+          - arm: same
+            base: shrink
+            conf: ARM_OPT=2
+          - arm: t275
+            base: shrink
+            conf: ARM_LLVM=-inline-threshold=275
           - arm: t325
+            base: shrink
             conf: ARM_LLVM=-inline-threshold=325
-          - arm: t500
-            conf: ARM_LLVM=-inline-threshold=500
-          - arm: t1000
-            conf: ARM_LLVM=-inline-threshold=1000
-          - arm: t2000
-            conf: ARM_LLVM=-inline-threshold=2000
-          - arm: o3
-            conf: ARM_OPT=3
-          - arm: lto
-            conf: ARM_LTO=1
+          - arm: t400
+            base: shrink
+            conf: ARM_LLVM=-inline-threshold=400
+          - arm: lto-t325
+            base: shrink
+            conf: ARM_LTO=1 ARM_LLVM=-inline-threshold=325
+          - arm: t325-vs-main
+            base: main
+            conf: ARM_LLVM=-inline-threshold=325
     steps:
       - uses: actions/checkout@v4
         with:
@@ -238,17 +243,19 @@ jobs:
             tree="$out/arms/$side"
             git worktree add --detach "$tree" HEAD
             mkdir -p "$tree/compiler/target/gate"
-            cp "$RUNNER_TEMP/bin/whitefootc-shrink" "$tree/compiler/target/gate/whitefootc"
+            compiler=shrink
+            if [ "$side" = base ]; then compiler=${{ matrix.base }}; fi
+            cp "$RUNNER_TEMP/bin/whitefootc-$compiler" "$tree/compiler/target/gate/whitefootc"
             cp research/experiments/inline-policy/clang-arm.sh "$tree/compiler/target/gate/clang"
             chmod +x "$tree/compiler/target/gate/whitefootc" "$tree/compiler/target/gate/clang"
             ln -s "$(readlink -f /usr/bin/ld.lld)" "$tree/compiler/target/gate/ld.lld"
             echo 'ARM_REMARKS=${CENSUS_REMARKS:-}' > "$tree/compiler/target/gate/arm.conf"
           done
-          echo "$CONF" >> "$out/arms/candidate/compiler/target/gate/arm.conf"
+          for setting in $CONF; do echo "$setting" >> "$out/arms/candidate/compiler/target/gate/arm.conf"; done
           {
             echo "instrument $(git rev-parse HEAD)"
             echo "candidate arm ${{ matrix.arm }}: $CONF"
-            echo "base: today's settings"
+            echo "base: the ${{ matrix.base }} compiler with today's settings"
             cat "$RUNNER_TEMP/bin/manifest.txt"
             echo "clang $(/usr/bin/clang --version | head -1)"
             echo "cpu model $(lscpu | sed -n 's/^Model name: *//p')"
@@ -256,7 +263,6 @@ jobs:
           python3 -B research/experiments/match-dispatch/wasm/gen.py "$RUNNER_TEMP/v2h.wf"
           git clone --quiet https://github.com/Ming-Research/Halo-wf.git "$RUNNER_TEMP/halo"
           git -C "$RUNNER_TEMP/halo" checkout --quiet "$HALO"
-          git clone --quiet --recurse-submodules https://github.com/Ming-Research/Firn-wf.git "$RUNNER_TEMP/firn"
       - name: The arm reaches the compiler's decisions
         run: |
           wfc="$OUT/arms/candidate/compiler/target/gate/whitefootc"
@@ -288,11 +294,6 @@ jobs:
               echo "halo $side $repeat $(awk "BEGIN {print $e - $s}") $(text "$sizes/halo-$side")" | tee -a "$sizes/rows.txt"
               s=$(date +%s.%N); "$wfc" "$RUNNER_TEMP/v2h.wf" --cache "$sizes/cache-$side/v2h" -o "$sizes/v2h-$side"; e=$(date +%s.%N)
               echo "v2h $side $repeat $(awk "BEGIN {print $e - $s}") $(text "$sizes/v2h-$side")" | tee -a "$sizes/rows.txt"
-              s=$(date +%s.%N)
-              if (cd "$RUNNER_TEMP/firn" && "$wfc" --graph firn/modules.wfg --entry firn --cache "$sizes/cache-$side/firn" -o "$sizes/firn-$side"); then
-                e=$(date +%s.%N)
-                echo "firn $side $repeat $(awk "BEGIN {print $e - $s}") $(text "$sizes/firn-$side")" | tee -a "$sizes/rows.txt"
-              fi
             done
           done
           for side in base candidate; do
