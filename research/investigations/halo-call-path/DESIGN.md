@@ -1451,13 +1451,39 @@ interval lies wholly above 1 and the twin's interval holds 1).
 
 | Run | CPU | S3 at 1,000 | S3 at 10,000 | R1 at 1,000 | R1 at 10,000 |
 |---|---|---:|---:|---:|---:|
+| [40034526904](https://github.com/Ming-Research/Whitefoot/actions/runs/40034526904) | AMD EPYC 7763 | 1.0283 | 1.0350 | 0.9928 | 0.9946 |
+| [40049776146](https://github.com/Ming-Research/Whitefoot/actions/runs/40049776146) | AMD EPYC 9V45 | 1.0001 | 0.9962 | 0.9813 | 0.9765 |
 | [40050822548](https://github.com/Ming-Research/Whitefoot/actions/runs/40050822548) | AMD EPYC 7763 | 1.0309 | 1.0347 | 0.9974 | 0.9916 |
 | [40051610729](https://github.com/Ming-Research/Whitefoot/actions/runs/40051610729) | AMD EPYC 9V74 | 1.0075 | 0.9939 | 0.9695 | 0.9844 |
 | [40052494556](https://github.com/Ming-Research/Whitefoot/actions/runs/40052494556) | Intel Xeon Platinum 8370C | 1.0305 | 1.0370 | 0.9947 | 0.9919 |
 | [40094855753](https://github.com/Ming-Research/Whitefoot/actions/runs/40094855753) | Intel Xeon 6973P-C | 1.0146 | 1.0112 | 0.9984 | 0.9950 |
 
-S3 is slower on three of four CPUs (1.1% to 3.7%) and unchanged on the
-EPYC 9V74; R1 is never slower. The criterion holds for S3.
+The compiler code of R1 is the same in all six runs (`compiler/` does not
+differ between revisions 83f096a, 1e9a782 and a3f254c). S3 is slower on
+three of the five CPU models (1.1% to 3.7%) and unchanged on the two newer
+EPYC models; R1 is never slower on this cell. The criterion holds for S3.
+
+The same runs show `remove` at 10,000 elements (candidate/base) moving the
+other way for R1:
+
+| CPU | S3 | R1 |
+|---|---:|---:|
+| AMD EPYC 7763 (two runs) | 1.0110, 1.0113 | 0.9763, 0.9800 |
+| AMD EPYC 9V74 | 1.1106 | 1.2294 [1.2008, 1.2412] |
+| AMD EPYC 9V45 | 1.1276 | 1.2546 [1.2504, 1.2681] |
+| Intel Xeon Platinum 8370C | 1.0040 | not a regression |
+| Intel Xeon 6973P-C | not a regression | not a regression |
+
+On the two newer EPYC models R1 is 22.9% and 25.5% slower on this cell, as it
+is on the 14900K (18.5% below), and on EPYC 9V45 `remove` at 1,000 elements
+is 5.9% slower (1.0586). S3 is also slower on these EPYC models there
+(11.1% and 12.8%), for a different reason: it does not inline `find`. Other
+hosted regressions of R1, all small and descriptive: lookup-hit at 1,000 and
+10,000 elements 2.1% each on the Xeon 6973P-C (S3: 1.7%, 1.6%), lookup-hit at
+1,000 elements 1.8% and insert-growing at 10,000 elements 1.5% on the Xeon
+8370C, insert-presized at 10,000 elements 1.05% on the EPYC 9V74. The
+position control below was made on the 14900K only; the EPYC runs have no
+control and no counters beyond the timings.
 
 **Halo instruction counts** (run 40052494556, Xeon Platinum 8370C, callgrind;
 the three compilers build the same Halo-wf draft port to the current
