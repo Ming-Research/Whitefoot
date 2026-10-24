@@ -177,3 +177,56 @@ jobs:
         run: |
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
             --test corpus -- programs::open_read_paths:: programs::host_paths:: programs::wfgrep_hosts::
+
+  # The base commit's Windows runtime under the new Windows program tests: the
+  # parent and link tests must fail here.
+  windows-base:
+    name: windows-base-runtime
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      WINDOWS_CLANG: clang --target=x86_64-w64-windows-gnu
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the pinned llvm-mingw
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          root=$(bash .github/toolchain/fetch-llvm-mingw.sh .github/toolchain/llvm-assets.json \
+            "$RUNNER_TEMP/llvm-mingw-archives" "$RUNNER_TEMP/llvm-mingw" | tail -n 1)
+          echo "LLVM_MINGW_ROOT=$root" >> "$GITHUB_ENV"
+          cygpath -w "$root/bin" >> "$GITHUB_PATH"
+
+      - name: Restore the base commit's runtime sources
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          base=$(git merge-base origin/main HEAD)
+          git checkout "$base" -- \
+            compiler/src/backend/ordinary_values.c \
+            compiler/src/backend/windows_runtime.c \
+            compiler/src/backend/completion/file_posix.c \
+            compiler/src/backend/completion/file_posix.h \
+            compiler/src/backend/completion/linux_io_uring.c
+          git status --short
+
+      - name: Windows program cases that read paths (expected red)
+        continue-on-error: true
+        timeout-minutes: 12
+        env:
+          CARGO_BUILD_JOBS: 2
+          RUST_TEST_THREADS: 2
+          RUST_MIN_STACK: 8388608
+        run: |
+          set -o pipefail
+          cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
+            --test corpus -- programs::open_read_paths:: 2>&1 | tee "$RUNNER_TEMP/windows-base.log"
+
+      - name: Failing tests of the unfixed Windows runtime
+        run: |
+          grep -E "^test |test result" "$RUNNER_TEMP/windows-base.log" || true
