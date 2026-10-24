@@ -8,12 +8,11 @@ the tests of section 7; sub-step 2 is not, and its gap stays recorded in
 section 1.4. The branch's hosted runs pass the native cases and the program
 witnesses, and the quick workflow's nine runtime mutants and its witness
 mutant (the base's deadline-only trigger) each fail the case written for
-them. The registered experiment of section 6.1 (1 and 2 CPUs, base controls, 3 then 30
-runs per arm) did not run: the program witnesses stand in for it at the
-hosted runner's 4 CPUs, with the base's deadline-only trigger as the control
-that must fail. The 14900K cost comparison of section 6.2 runs on the head
-that merges, and this record states no ordinary-I/O result. Nothing here
-promises a latency.** The study itself was read-only, of `main` at
+them. The latency arms of section 6.1 ran as the program witnesses at 1, 2 and
+4 CPUs, 30 invocations each, and every echo stayed inside 100 ms; "What ran"
+in 6.1 lists the differences from the registered apparatus. The 14900K cost
+comparison of section 6.2 runs on the head that merges, and this record
+states no ordinary-I/O result. Nothing here promises a latency.** The study itself was read-only, of `main` at
 `51c5f4263` (2026-10-12): no code changed, and no compiler, build or test
 was run to write it. The runtime evidence comes from two places: the
 earlier driver-handoff measurements
@@ -646,6 +645,48 @@ echo, with the oracle's value.
   If they are fast without it, the attribution has failed: the run is
   inconclusive and the cause must be found.
 - Split runs must be fast in both base and candidate.
+
+### What ran
+
+The registered witness `research/experiments/ring-assist/` was not built. The
+arms ran as the program witnesses of section 7, `ring_assist.rs` and
+`ring_assist.wf`, which keep the registered shape: one source for both
+placement arms, a recurrence the client checks against its own oracle, the
+send-to-echo time on the client's monotonic clock, and each run's placement
+read from the drivers' report lines. The criterion (every echo inside 100 ms
+in both arms at each CPU count, the same-driver echoes credited to the ring
+trigger) is unchanged. The apparatus differs from the registered plan:
+
+- The computation is 1.5 billion steps first, about 0.2 s on the hosted
+  runners, not about 2 s. A run whose computation answers before an echo that
+  stayed inside the bound decides nothing and is repeated with twice the
+  steps, up to four doublings.
+- The base arm is the same files under the deadline-only trigger (the work
+  branch with its ring trigger switched off), not the base compiler, which
+  lacks the `ring_reassignments` field the placement reads. The control
+  "same-driver echoes after 1 s or more" therefore reads "after the
+  computation ends": 134.8 ms, over the bound, in the quick workflow run
+  `40052611550`. The busy-ring receive test reads no new field, so it also ran
+  on main itself, where the receive did not release the computation within
+  100 ms (the same run, job `main-busy`; and `d1a3efcba`, section 9).
+- Configurations: hosted ubuntu-24.04 with the program pinned by `taskset` to
+  1, 2 and 4 CPUs and `WF_DRIVERS=2`, 30 invocations each, not 3 runs then 30
+  interleaved with base runs. No zero-step control and no 14900K latency run
+  were made.
+- The idle driver may take the echo's context before it parks, which makes
+  that run split. An arm therefore takes up to eight runs to show its
+  placement, and the echo of every run, shown or not, has to be inside the
+  bound. An earlier run with a cap of three had one 2-CPU invocation in ten
+  whose three runs were all split, with echoes of 76 to 105 µs.
+
+Result on head `079390bd6` (quick workflow run `40052611550`, job
+`latency-arms`): all 30 invocations passed at each CPU count. At 1 CPU, 30
+same-driver and 30 split runs, every one showing its arm's placement. At 2
+CPUs, 40 same-driver runs, of which 30 showed the placement and 10 were
+split, and 30 split runs. At 4 CPUs, 30 and 30. The longest echo of any run
+was 4.0 ms (split arm, 1 CPU), against the 100 ms bound. Each invocation's
+same-driver run that showed the placement had `ring_reassignments` of at least
+1 on the computing driver, which the case asserts.
 
 ### 6.2 No regression on ordinary I/O
 
